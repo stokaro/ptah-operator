@@ -338,6 +338,7 @@ MYSQL_URL_FILE=$WORK_DIR/mysql.url
 REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 RESULT_ASSERT_BINARY=$WORK_DIR/e2e-resultassert
 RESULT_LOG_FILE=$WORK_DIR/runner-result.log
+PUBLISH_RESULT_ERROR_FILE=$WORK_DIR/publish-result-parse-error.txt
 REGISTRY_OUTAGE_EVIDENCE_BEFORE=$WORK_DIR/registry-outage-evidence-before.json
 REGISTRY_OUTAGE_EVIDENCE_AFTER=$WORK_DIR/registry-outage-evidence-after.json
 REGISTRY_OUTAGE_SCHEMA_INPUT=$WORK_DIR/registry-outage-schema-input.json
@@ -359,6 +360,7 @@ PERIODIC_NOOP_CHECKPOINT=
 : >"$AUDITED_JOBS_FILE"
 : >"$FULLY_AUDITED_JOBS_FILE"
 : >"$OBSERVED_JOBS_FILE"
+: >"$PUBLISH_RESULT_ERROR_FILE"
 : >"$LIVE_JOB_EVIDENCE_ERROR_FILE"
 mkdir "$JOB_EVIDENCE_DIR"
 chmod 700 "$JOB_EVIDENCE_DIR"
@@ -1258,10 +1260,20 @@ publish_completed_job_evidence() {
 	printf '%s\n' "$(jq -c . "$publish_pod_file")" >"$publish_stage/pod.json"
 	cp "$publish_log_file" "$publish_stage/ptah.log" ||
 		fail "could not stage the UID-bounded ptah transport for exact Pod $publish_pod_name UID $publish_pod_uid"
-	"$RESULT_ASSERT_BINARY" \
+	# This site holds bytes, not a Pod, so it cannot wait for a frame: the
+	# transport was settled where it was captured. What it can do is say which
+	# frame it refused and why, instead of leaving the phase to report a bare
+	# status and the archive contract to report a missing protocol binding.
+	if ! "$RESULT_ASSERT_BINARY" \
 		--logs "$publish_stage/ptah.log" \
 		--operation "$publish_operation" \
-		--operation-id "$publish_operation_id" >"$publish_stage/result.json"
+		--operation-id "$publish_operation_id" \
+		>"$publish_stage/result.json" 2>"$PUBLISH_RESULT_ERROR_FILE"; then
+		sed 's/^/e2e data plane:   /' "$PUBLISH_RESULT_ERROR_FILE" >&2
+		: >"$PUBLISH_RESULT_ERROR_FILE"
+		fail "the $publish_operation result frame for Job UID $publish_job_uid cannot be archived"
+	fi
+	: >"$PUBLISH_RESULT_ERROR_FILE"
 	chmod 600 "$publish_stage/job.json" "$publish_stage/pod.json" \
 		"$publish_stage/ptah.log" "$publish_stage/result.json"
 	for publish_material in \
@@ -1472,12 +1484,25 @@ audit_completed_jobs() {
 		materialize_owned_pod_records "$audit_owned_pods"
 		audit_evidence_pod_object=
 		audit_evidence_log_file=
+		audit_evidence_result_file=
+		audit_operation=
+		audit_operation_id=
 		if [ "$audit_managed_complete" -eq 1 ]; then
 			audit_key=$(job_evidence_key "$audit_uid")
 			audit_evidence_log_file=$WORK_DIR/audit-ptah-$audit_key.log
+			audit_evidence_result_file=$WORK_DIR/audit-result-$audit_key.json
 			if [ -e "$audit_evidence_log_file" ] || [ -L "$audit_evidence_log_file" ]; then
 				fail "UID-bounded ptah log evidence already exists for Job UID $audit_uid"
 			fi
+			# The retained transport is read against the same operation binding
+			# the archive is published under, so the frame the audit accepts is
+			# the frame the publisher will parse.
+			audit_operation=$(printf '%s\n' "$audit_job_object" |
+				jq -er '.metadata.labels["operator.ptah.run/operation"]') ||
+				fail "completed managed Job $audit_name UID $audit_uid has no operation to bind its result to"
+			audit_operation_id=$(printf '%s\n' "$audit_job_object" |
+				jq -er '.metadata.annotations["operator.ptah.run/operation-id"]') ||
+				fail "completed managed Job $audit_name UID $audit_uid has no operation ID to bind its result to"
 		fi
 		while IFS="$(printf '\t')" read -r audit_pod_uid audit_pod_name; do
 			[ -n "$audit_pod_uid" ] || continue
@@ -1557,10 +1582,22 @@ audit_completed_jobs() {
 				fi
 				scan_file_for_credentials "$LOG_FILE" \
 					"$audit_container logs for exact Pod $audit_pod_name UID $audit_pod_uid"
+				# The read above is one read, and the runner's result frame is
+				# its last output, so it can land in the window where the
+				# container runtime has not finished copying that write. Those
+				# bytes end inside the frame, and retaining them archives a
+				# frame that never closed. Nothing is retained from that read:
+				# the transport is settled first, which reads the log again
+				# while the frame may still be arriving and refuses a frame
+				# that is present and wrong at once, by its reason.
 				if [ "$audit_managed_complete" -eq 1 ] && [ "$audit_container" = ptah ]; then
-					cp "$LOG_FILE" "$audit_evidence_log_file" ||
-						fail "could not retain UID-bounded ptah logs for exact Pod $audit_pod_name UID $audit_pod_uid"
-					chmod 600 "$audit_evidence_log_file"
+					read_result_transport "$audit_pod_name" "$audit_evidence_log_file" \
+						"$audit_operation" "$audit_operation_id" "$audit_evidence_result_file"
+					chmod 600 "$audit_evidence_log_file" "$audit_evidence_result_file"
+					scan_file_for_credentials "$audit_evidence_log_file" \
+						"the settled ptah transport for exact Pod $audit_pod_name UID $audit_pod_uid"
+					scan_file_for_credentials "$audit_evidence_result_file" \
+						"the validated $audit_operation result for exact Pod $audit_pod_name UID $audit_pod_uid"
 				fi
 			done
 			audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json 2>/dev/null) ||

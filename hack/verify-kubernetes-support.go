@@ -3161,6 +3161,20 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("durable Job archive private staging", `publish_stage=$(mktemp -d "$JOB_EVIDENCE_DIR/.${publish_key}.XXXXXX") ||`),
 		exactSourceLine("durable Job archive private staging mode", `chmod 700 "$publish_stage"`),
 		exactSourceLine("durable Job archive UID-bounded log copy", `cp "$publish_log_file" "$publish_stage/ptah.log" ||`),
+		// The publisher holds bytes rather than a Pod, so it cannot wait for a
+		// frame. It can name the one it refused: without this the phase ends on
+		// a bare status under set -e, and a shell that suspends set -e archives
+		// an empty result until the manifest contract objects to something else.
+		exactSourceLineSequence("durable Job archive reported result refusal", []string{
+			`if ! "$RESULT_ASSERT_BINARY" \`,
+			`--logs "$publish_stage/ptah.log" \`,
+			`--operation "$publish_operation" \`,
+			`--operation-id "$publish_operation_id" \`,
+			`>"$publish_stage/result.json" 2>"$PUBLISH_RESULT_ERROR_FILE"; then`,
+			`sed 's/^/e2e data plane:   /' "$PUBLISH_RESULT_ERROR_FILE" >&2`,
+			`: >"$PUBLISH_RESULT_ERROR_FILE"`,
+			`fail "the $publish_operation result frame for Job UID $publish_job_uid cannot be archived"`,
+		}),
 		exactSourceLineSequence("durable Job archive private staged file modes", []string{
 			`chmod 600 "$publish_stage/job.json" "$publish_stage/pod.json" \`,
 			`"$publish_stage/ptah.log" "$publish_stage/result.json"`,
@@ -3211,11 +3225,17 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`.apiVersion == "batch/v1" and .kind == "Job" and`,
 			`.uid == $jobUID and .name == $jobName and .controller == true)] | length) == 1`,
 		}),
-		exactSourceLineSequence("durable Job archive UID-bounded audited log capture", []string{
+		// The audit's own read is one read, and a runner's result frame is its
+		// last output: a read that lands before the container runtime finished
+		// copying it ends inside the frame. Retaining those bytes archives a
+		// frame that never closed, so the transport is settled before it is
+		// kept -- read again while the frame may still be arriving, refused at
+		// once when it is present and wrong.
+		exactSourceLineSequence("durable Job archive settled UID-bounded audited log capture", []string{
 			`if [ "$audit_managed_complete" -eq 1 ] && [ "$audit_container" = ptah ]; then`,
-			`cp "$LOG_FILE" "$audit_evidence_log_file" ||`,
-			`fail "could not retain UID-bounded ptah logs for exact Pod $audit_pod_name UID $audit_pod_uid"`,
-			`chmod 600 "$audit_evidence_log_file"`,
+			`read_result_transport "$audit_pod_name" "$audit_evidence_log_file" \`,
+			`"$audit_operation" "$audit_operation_id" "$audit_evidence_result_file"`,
+			`chmod 600 "$audit_evidence_log_file" "$audit_evidence_result_file"`,
 		}),
 		exactSourceLineSequence("durable Job archive post-log exact Pod UID check", []string{
 			`audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json 2>/dev/null) ||`,
