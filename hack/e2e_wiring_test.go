@@ -4642,6 +4642,54 @@ func TestVerifySQLStatementSelftestWiringRejectsMutations(t *testing.T) {
 	}
 }
 
+// The identity hook's log is the only thing that says why a refused upgrade was
+// refused, and the shell that captures it races the cluster from both ends: the
+// Pod exists before its container does, and Helm deletes the hook a moment
+// after it succeeds. A capture that lost that race printed a record over an
+// empty file, which reads exactly like a hook that printed nothing. So the gate
+// has to keep running the self-test that measures it.
+func TestVerifyHookLogCaptureSelftestWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # hook-log capture self-test removed`,
+			wantError:   "hook-log capture self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$ROOT_DIR/hack/e2e-hook-log-capture-selftest.sh" || true`,
+			wantError:   "hook-log capture self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-hook-log-capture-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+	}
+	const invocation = `"$ROOT_DIR/hack/e2e-hook-log-capture-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
 // The self-test proves the helpers; this proves the call sites still reach
 // them. Both phases surround their two guarded statements with thirty-odd
 // value queries that differ by one word, so the way the defect comes back is a

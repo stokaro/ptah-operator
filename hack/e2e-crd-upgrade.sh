@@ -63,8 +63,18 @@ IDENTITY_HOOK_CAPTURE_STATUS_FILE=$WORK_DIR/identity-hook-capture-status
 IDENTITY_HOOK_CAPTURE_ERRORS_FILE=$WORK_DIR/identity-hook-capture-errors
 IDENTITY_HOOK_WAIT_FILE=$WORK_DIR/identity-hook-wait
 IDENTITY_HOOK_PODS_FILE=$WORK_DIR/identity-hook-pods.json
+IDENTITY_HOOK_RECHECK_FILE=$WORK_DIR/identity-hook-recheck.json
 IDENTITY_HOOK_JOB_FILE=$WORK_DIR/identity-hook-job.json
 IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE=$WORK_DIR/identity-hook-credential-patterns
+# How long the hook log is worth asking for again. A read still failing this
+# long against a Pod that is still the one we validated is not losing a race.
+#
+# finish_identity_hook_log_capture waits this long too, rather than a figure of
+# its own. Helm can return while the worker is mid-retry -- an identity-hook
+# failure returns almost at once -- and a grace shorter than this deadline
+# would kill the worker before the window it was given had run out, which is
+# the undiagnosed capture this whole path exists to stop.
+IDENTITY_HOOK_LOG_READ_DEADLINE_SECONDS=30
 LATE_ACTIVATION_HOOK_CAPTURE_BINARY=$WORK_DIR/hooklogcapture
 LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=
 LATE_ACTIVATION_PREFLIGHT_LOG_FILE=$WORK_DIR/late-activation-preflight.log
@@ -1307,6 +1317,99 @@ materialize_identity_hook_credential_patterns() {
 		fail "identity-hook credential scanner lacks the complete non-empty pattern set"
 }
 
+# Is the Pod whose identity was validated still the Pod of that name?
+#
+# The answer has three values, and collapsing them is how a record comes to
+# blame the wrong thing. --ignore-not-found separates a Pod that is gone, which
+# exits zero having printed nothing, from an API server that could not answer,
+# which exits non-zero: the first is a fact about the hook, the second is a
+# fact about the cluster and a reason to ask again. A Pod of that name carrying
+# a different UID is the Pod we were reading gone and replaced, so it counts as
+# gone; anything jq could not parse is an answer we did not get, so it counts
+# as unknown.
+identity_hook_pod_presence() {
+	presence_pod_name=$1
+	presence_pod_uid=$2
+	if ! kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=15s \
+		-n "$E2E_OPERATOR_NAMESPACE" get pod "$presence_pod_name" \
+		--ignore-not-found -o json \
+		>"$IDENTITY_HOOK_RECHECK_FILE" 2>>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE"; then
+		printf '%s\n' unknown
+		return 0
+	fi
+	if [ ! -s "$IDENTITY_HOOK_RECHECK_FILE" ]; then
+		printf '%s\n' gone
+		return 0
+	fi
+	presence_status=0
+	jq -e --arg expected_uid "$presence_pod_uid" \
+		'(.metadata.uid // "") == $expected_uid' \
+		"$IDENTITY_HOOK_RECHECK_FILE" >/dev/null 2>&1 || presence_status=$?
+	case "$presence_status" in
+	0) printf '%s\n' present ;;
+	1) printf '%s\n' gone ;;
+	*) printf '%s\n' unknown ;;
+	esac
+}
+
+# Read the hook Pod's log, and keep asking while the answer can still change.
+#
+# The read races the cluster from both ends. The Pod object exists before its
+# container does, so an early read is answered "is waiting to start" and exits
+# non-zero having written nothing; and this hook carries
+# helm.sh/hook-delete-policy: hook-succeeded, so Helm removes the Pod within a
+# moment of the Job completing and a late read is answered "not found". One
+# attempt reported both of those as log-read-failed over an empty file, which
+# names neither, and left a failing phase with a diagnostic that said nothing
+# about why it was failing.
+#
+# So retry while the Pod is still the one whose identity was validated, and
+# stop the moment the answer is settled: evidence in hand, a stream that ended
+# by itself having printed nothing, or the Pod gone. An empty log from a clean
+# read is never retried. That is a hook which produced no evidence, and it has
+# to go on reading as one.
+read_identity_hook_log() {
+	read_pod_name=$1
+	read_pod_uid=$2
+	read_deadline=$(($(date +%s) + IDENTITY_HOOK_LOG_READ_DEADLINE_SECONDS))
+	capture_status=log-read-failed
+	while :; do
+		kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=70s \
+			-n "$E2E_OPERATOR_NAMESPACE" logs --follow "pod/$read_pod_name" \
+			-c identity-probe --pod-running-timeout=60s \
+			>"$IDENTITY_HOOK_LOG_FILE" 2>>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" &
+		capture_child_pid=$!
+		read_log_status=0
+		wait "$capture_child_pid" || read_log_status=$?
+		capture_child_pid=
+		if [ "$capture_interrupted" -eq 1 ]; then
+			capture_status=terminated
+			return 0
+		fi
+		# Whatever the stream delivered is evidence, a stream that was cut
+		# short included: the phase prints one bounded line, and a partial log
+		# names the failure as well as a complete one does.
+		if [ -s "$IDENTITY_HOOK_LOG_FILE" ]; then
+			capture_status=captured
+			return 0
+		fi
+		if [ "$read_log_status" -eq 0 ]; then
+			capture_status=log-empty
+			return 0
+		fi
+		if [ "$(identity_hook_pod_presence "$read_pod_name" "$read_pod_uid")" = gone ]; then
+			capture_status=pod-deleted
+			return 0
+		fi
+		[ "$(date +%s)" -lt "$read_deadline" ] || return 0
+		sleep 1
+		if [ "$capture_interrupted" -eq 1 ]; then
+			capture_status=terminated
+			return 0
+		fi
+	done
+}
+
 identity_hook_capture_worker() (
 	set +e
 	expected_identity_hook_name=$1
@@ -1372,11 +1475,6 @@ identity_hook_capture_worker() (
 					grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' &&
 					[ "${#identity_pod_name}" -le 63 ]; then
 					capture_status=pod-read-failed
-					kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=70s \
-						-n "$E2E_OPERATOR_NAMESPACE" logs --follow "pod/$identity_pod_name" \
-						-c identity-probe --pod-running-timeout=60s \
-						>"$IDENTITY_HOOK_LOG_FILE" 2>>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" &
-					capture_child_pid=$!
 					if kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=15s \
 						-n "$E2E_OPERATOR_NAMESPACE" get pod "$identity_pod_name" \
 						-o json >"$IDENTITY_HOOK_PODS_FILE" 2>>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE"; then
@@ -1387,6 +1485,7 @@ identity_hook_capture_worker() (
       ($job[0]) as $job |
       .metadata.name == $expected_pod_name and
       .metadata.namespace == $job.metadata.namespace and
+      ((.metadata.uid // "") | length > 0) and
       .metadata.labels["batch.kubernetes.io/job-name"] == $expected_name and
       .metadata.labels["app.kubernetes.io/component"] == "hook-identity-probe" and
       (.metadata.ownerReferences | length) == 1 and
@@ -1399,29 +1498,11 @@ identity_hook_capture_worker() (
       (.spec.containers | length) == 1 and
       .spec.containers[0].name == "identity-probe"
 						    ' "$IDENTITY_HOOK_PODS_FILE" >/dev/null; then
-							wait "$capture_child_pid"
-							log_status=$?
-							capture_child_pid=
-							if [ "$capture_interrupted" -eq 1 ]; then
-								capture_status=terminated
-							elif [ -s "$IDENTITY_HOOK_LOG_FILE" ]; then
-								capture_status=captured
-							elif [ "$log_status" -eq 0 ]; then
-								capture_status=log-empty
-							else
-								capture_status=log-read-failed
-							fi
-						else
-							kill "$capture_child_pid" >/dev/null 2>&1 || true
-							wait "$capture_child_pid" >/dev/null 2>&1 || true
-							capture_child_pid=
-							: >"$IDENTITY_HOOK_LOG_FILE"
+							identity_pod_uid=$(jq -r '.metadata.uid' \
+								"$IDENTITY_HOOK_PODS_FILE")
+							read_identity_hook_log "$identity_pod_name" \
+								"$identity_pod_uid"
 						fi
-					else
-						kill "$capture_child_pid" >/dev/null 2>&1 || true
-						wait "$capture_child_pid" >/dev/null 2>&1 || true
-						capture_child_pid=
-						: >"$IDENTITY_HOOK_LOG_FILE"
 					fi
 				else
 					capture_status=pod-identity-invalid
@@ -1440,6 +1521,7 @@ arm_identity_hook_log_capture() {
 		: >"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" && \
 		: >"$IDENTITY_HOOK_WAIT_FILE" && \
 		: >"$IDENTITY_HOOK_PODS_FILE" && \
+		: >"$IDENTITY_HOOK_RECHECK_FILE" && \
 		: >"$IDENTITY_HOOK_JOB_FILE")
 	for identity_capture_file in \
 		"$IDENTITY_HOOK_LOG_FILE" \
@@ -1447,6 +1529,7 @@ arm_identity_hook_log_capture() {
 		"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" \
 		"$IDENTITY_HOOK_WAIT_FILE" \
 		"$IDENTITY_HOOK_PODS_FILE" \
+		"$IDENTITY_HOOK_RECHECK_FILE" \
 		"$IDENTITY_HOOK_JOB_FILE"; do
 		require_mode_0600_regular_file "$identity_capture_file" identity-hook-capture-file
 	done
@@ -1459,7 +1542,7 @@ finish_identity_hook_log_capture() {
 	identity_capture_grace=0
 	while [ ! -s "$IDENTITY_HOOK_CAPTURE_STATUS_FILE" ] && \
 		kill -0 "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 && \
-		[ "$identity_capture_grace" -lt 10 ]; do
+		[ "$identity_capture_grace" -lt "$IDENTITY_HOOK_LOG_READ_DEADLINE_SECONDS" ]; do
 		sleep 1
 		identity_capture_grace=$((identity_capture_grace + 1))
 	done
@@ -1488,8 +1571,11 @@ emit_identity_hook_diagnostic() {
 		fail "identity-hook diagnostic contained a credential-shaped value"
 	fi
 	capture_status=$(sed -n '1p' "$IDENTITY_HOOK_CAPTURE_STATUS_FILE")
+	# Every state identity_hook_capture_worker and read_identity_hook_log can
+	# reach belongs here, and hack/e2e-hook-log-capture-selftest.sh compares
+	# the two sets rather than trusting that they were kept in step.
 	case "$capture_status" in
-	captured | identity-invalid | job-invalid | job-wait-failed | log-empty | log-read-failed | pod-identity-invalid | pod-read-failed | pod-wait-failed | terminated) ;;
+	captured | identity-invalid | job-invalid | job-wait-failed | log-empty | log-read-failed | pod-deleted | pod-identity-invalid | pod-read-failed | pod-wait-failed | terminated) ;;
 	*) capture_status=invalid-status ;;
 	esac
 	raw_sha256=$(file_sha256 "$IDENTITY_HOOK_LOG_FILE")
