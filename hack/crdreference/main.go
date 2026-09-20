@@ -52,14 +52,16 @@ func run(args []string, out *os.File) error {
 	flags := flag.NewFlagSet("crdreference", flag.ContinueOnError)
 	crdDir := flags.String("crds", "", "directory of CRD YAML generated with descriptions")
 	outDir := flags.String("out", "", "directory the reference pages are written to")
+	examplesDir := flags.String("examples", "",
+		"directory of example fragments, one <kind>.md per resource")
 	write := flags.Bool("write", false, "write the pages instead of checking them")
 	requireDescriptions := flags.Bool("require-descriptions", false,
 		"refuse a field whose Go type carries no doc comment")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *crdDir == "" || *outDir == "" {
-		return errors.New("both -crds and -out are required")
+	if *crdDir == "" || *outDir == "" || *examplesDir == "" {
+		return errors.New("-crds, -out and -examples are all required")
 	}
 
 	entries, err := filepath.Glob(filepath.Join(*crdDir, "*.yaml"))
@@ -82,7 +84,11 @@ func run(args []string, out *os.File) error {
 		if err := yaml.UnmarshalStrict(document, &crd); err != nil {
 			return fmt.Errorf("%s: %w", entry, err)
 		}
-		page, rows, err := render(&crd)
+		examples, err := readExamples(*examplesDir, crd.Spec.Names.Kind)
+		if err != nil {
+			return err
+		}
+		page, rows, err := render(&crd, examples)
 		if err != nil {
 			return fmt.Errorf("%s: %w", entry, err)
 		}
@@ -138,8 +144,26 @@ func pageName(kind string) string {
 	return strings.ToLower(kind) + ".md"
 }
 
+// readExamples returns the example fragment written for one kind.
+//
+// The fragment is required rather than optional: a resource with no worked
+// example is the gap this section exists to close, so a new kind fails here
+// instead of publishing a page of field names and nothing to copy.
+func readExamples(dir, kind string) (string, error) {
+	path := filepath.Join(dir, strings.ToLower(kind)+".md")
+	fragment, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s: every resource owes the reference an example: %w", kind, err)
+	}
+	text := strings.TrimSpace(string(fragment))
+	if text == "" {
+		return "", fmt.Errorf("%s is empty", path)
+	}
+	return text, nil
+}
+
 // render turns one CRD into its page and the rows it holds.
-func render(crd *apiextensionsv1.CustomResourceDefinition) (string, []row, error) {
+func render(crd *apiextensionsv1.CustomResourceDefinition, examples string) (string, []row, error) {
 	version, err := servedVersion(crd)
 	if err != nil {
 		return "", nil, err
@@ -169,6 +193,11 @@ func render(crd *apiextensionsv1.CustomResourceDefinition) (string, []row, error
 		kind, scope, crd.Spec.Group, version.Name)
 	fmt.Fprintf(&page, "This page is generated from the API types by `make docs-reference`. "+
 		"The shipped CRDs carry no descriptions, so this is where the field documentation lives.\n\n")
+
+	// The examples come before the field tables: a reader who arrives at a
+	// resource wants the shape of it before the hundred and sixty rows that
+	// spell out every field of it.
+	fmt.Fprintf(&page, "%s\n\n", examples)
 
 	writeSection(&page, "spec", spec)
 	writeSection(&page, "status", status)

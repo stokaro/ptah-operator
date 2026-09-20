@@ -194,6 +194,12 @@ was given. `hack/e2e-timing-selftest.sh` is what keeps that true, and
   path works. One row that sets the field and reaches the state it is for is
   enough, and it has to reach that state — a resource that stops at the gate
   proves the value was carried and says nothing about what it did.
+- Give the reference an example. `docs/reference-examples/<kind>.md` is spliced
+  into the generated page ahead of the field tables, and `make docs-reference`
+  refuses a kind that has none. `hack/reference_examples_test.go` validates
+  every example in them against the CRD the API server enforces, so an example
+  cannot quietly go on naming a field the API dropped or a value it stopped
+  accepting.
 - Prefer no default to a plausible one. An unset field that changes nothing
   keeps every stored object running exactly as it ran, and leaves the choice
   with whoever knows their database. A default is a silent edit to every
