@@ -796,8 +796,39 @@ func migrationRunLatchedByRefusal(migration *operatorv1alpha1.PtahMigration) boo
 		run.Outcome != operatorv1alpha1.MigrationRunOutcomePartial {
 		return false
 	}
+	if migrationRunAlreadySettled(migration) {
+		return false
+	}
 	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
 	return blocked != nil && blocked.Status == metav1.ConditionTrue
+}
+
+// migrationRunAlreadySettled reports that the reading this resource already
+// holds is the proof its last run needed: taken after that run finished, with
+// nothing of the artifact left for it to have half-done.
+//
+// The old settlement path left status.lastRun exactly as the run wrote it, so
+// an outcome of Unknown or Partial outlives the reading that accounted for it.
+// Without this, an upgrade re-latches a resource that was settled long ago --
+// and where a newer artifact has since made work pending, that latch never
+// clears on its own, because the reading that would clear it is the one that
+// now finds work. A resource blocked for an unrelated refusal would go from
+// recovering when that refusal lifted to waiting for a person.
+//
+// It is deliberately the only exemption. Where no such reading exists the
+// adoption still goes ahead, because the alternative is replaying a migration
+// over a database nobody read.
+func migrationRunAlreadySettled(migration *operatorv1alpha1.PtahMigration) bool {
+	run, history := migration.Status.LastRun, migration.Status.History
+	if run == nil || history == nil || run.FinishedAt == nil {
+		return false
+	}
+	// Strictly after: a reading that predates the run says nothing about it,
+	// and one stamped at the same instant cannot be shown to follow it.
+	if !run.FinishedAt.Before(&history.ObservedAt) {
+		return false
+	}
+	return history.PendingCount == 0
 }
 
 // adoptUnresolvedMigrationRun converts the refusal an older manager latched an

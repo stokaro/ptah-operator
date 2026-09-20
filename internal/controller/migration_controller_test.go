@@ -1664,3 +1664,37 @@ func TestAnUnresolvedMigrationRunRecordsTheDatabaseTheRunReported(t *testing.T) 
 			unresolved.TargetIdentityDigest, rotated, planned)
 	}
 }
+
+// The cost of adopting too broadly, and the one case where evidence rules it
+// out. The old settlement path left status.lastRun as the run wrote it, so an
+// outcome of Unknown outlives the reading that accounted for it. Re-latching
+// such a resource on upgrade is not merely redundant: where a newer artifact
+// has since made work pending, the reading that would clear the record is the
+// one that now finds work, so it never clears. A resource blocked for an
+// unrelated refusal would go from recovering when that refusal lifted to
+// waiting for a person who has nothing to find.
+func TestASettledMigrationRunIsNotReLatchedByAnUpgrade(t *testing.T) {
+	t.Parallel()
+
+	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+		operatorv1alpha1.MigrationRunOutcomeUnknown)
+	// The reading that settled it, as the old manager left things: the record
+	// gone, the run's own outcome untouched, and a history taken afterwards
+	// with nothing of the artifact left to apply.
+	migration.Status.UnresolvedRun = nil
+	settledAt := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(time.Minute))
+	migration.Status.History.ObservedAt = settledAt
+	migration.Status.History.PendingCount = 0
+	// Then a newer artifact made work pending again, and something unrelated
+	// stopped the resource before it could run.
+	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	if blocked == nil || blocked.Status != metav1.ConditionTrue {
+		t.Fatalf("the fixture is not blocked, so there is nothing for an upgrade to read: %#v", blocked)
+	}
+	blocked.Reason = string(operatorv1alpha1.ReasonRealmConflict)
+
+	actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
+	if actual.Status.UnresolvedRun != nil {
+		t.Fatalf("the upgrade latched a run a later reading had already settled: %#v", actual.Status.UnresolvedRun)
+	}
+}
