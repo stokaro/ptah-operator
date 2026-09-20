@@ -457,6 +457,7 @@ func findFramePayload(logs []byte, declaredStart int, payloadLength int64, claim
 	if limit > len(logs) {
 		limit = len(logs)
 	}
+	footers := newFooterScan(logs, declaredStart)
 	for candidate := declaredStart; candidate <= limit; {
 		lineEndRelative := bytes.IndexByte(logs[candidate:], '\n')
 		if lineEndRelative < 0 {
@@ -476,8 +477,8 @@ func findFramePayload(logs []byte, declaredStart int, payloadLength int64, claim
 			// carrying the wrong bytes from one whose bytes have not all
 			// arrived. Only a line of the declared length is asked, so this
 			// costs a scan per plausible payload rather than per log line.
-			if !search.closed {
-				_, search.closed = frameFooterEnd(logs, payloadEnd)
+			if !search.closed && footers.closes(payloadEnd) {
+				search.closed = true
 			}
 		}
 		candidate += lineEndRelative + 1
@@ -528,6 +529,52 @@ func frameFooterEnd(logs []byte, payloadEnd int) (int, bool) {
 		lineStart = lineEnd + 1
 	}
 	return 0, false
+}
+
+// footerScan answers, for each payload end the search tries, whether a footer
+// closes it -- without starting the window again for every one.
+//
+// Asking frameFooterEnd per candidate is linear per question and quadratic over
+// a log that offers many of them: a header declaring a one-byte payload
+// followed by 64 KiB of two-byte lines gives 32768 candidates of exactly that
+// length, each walking the rest of the window line by line. Runner logs are
+// unbounded and carry whatever the child wrote, so that shape is reachable
+// rather than theoretical, and it blocks the reconcile worker that is reading
+// the log.
+//
+// Payload ends only ever move forward, so the footer search can move forward
+// with them and read the window once. Each position is a complete line by
+// construction: the payload end of a candidate the search asks about is a
+// newline, and a footer begins at one, so everything between them is
+// newline-delimited -- which is the same thing frameFooterEnd establishes by
+// walking.
+type footerScan struct {
+	logs []byte
+	at   int // the footer's leading newline at or after the last question, or -1
+}
+
+func newFooterScan(logs []byte, from int) *footerScan {
+	scan := &footerScan{logs: logs, at: -1}
+	if found := bytes.Index(logs[from:], []byte(frameFooter)); found >= 0 {
+		scan.at = from + found
+	}
+	return scan
+}
+
+// closes reports whether a footer sits at payloadEnd, or within the interleave
+// bound after it. Questions arrive in increasing order of payloadEnd, and the
+// cursor never goes back.
+func (s *footerScan) closes(payloadEnd int) bool {
+	footer := []byte(frameFooter)
+	for s.at >= 0 && s.at < payloadEnd {
+		found := bytes.Index(s.logs[s.at+1:], footer)
+		if found < 0 {
+			s.at = -1
+			return false
+		}
+		s.at += 1 + found
+	}
+	return s.at >= 0 && s.at-payloadEnd < maxInterleavedFrameBytes
 }
 
 func validateResult(result Result, options ParseOptions) error {

@@ -121,3 +121,36 @@ func TestMarshalledPayloadIsOneWholeLine(t *testing.T) {
 		t.Fatal("the payload is not followed by the newline the footer begins with")
 	}
 }
+
+// The other shape of the same attack, and the one the length filter alone does
+// not stop: a header declaring a payload so short that every filler line is
+// exactly that length. The hashing stays bounded -- 32768 hashes of one byte
+// cost nothing -- but each of those candidates is a plausible payload, so each
+// one used to ask whether a footer closed it, and each question walked the rest
+// of the window line by line. That is quadratic, about half a billion
+// iterations here, on the reconcile worker that is reading the log. Runner logs
+// are unbounded and carry whatever the child wrote, so the shape is reachable.
+func TestFrameFooterSearchIsLinearOverManySameLengthLines(t *testing.T) {
+	t.Parallel()
+
+	const declared = 1
+	sum := sha256.Sum256([]byte("z")) // a digest none of the filler matches
+	var log bytes.Buffer
+	fmt.Fprintf(&log, "PTAH_RUNNER_RESULT_V1 %d %s\n", declared, hex.EncodeToString(sum[:]))
+	// Every one of these is a line of exactly the declared length, and no
+	// footer closes any of them.
+	for i := 0; i < 32768; i++ {
+		log.WriteString("x\n")
+	}
+
+	started := time.Now()
+	_, err := ParseResultFor(log.Bytes(), OperationResolve, "op")
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("a log whose declared payload never matched was accepted")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("the footer search took %s over same-length lines; it is not linear", elapsed)
+	}
+	t.Logf("linear footer search finished in %s", elapsed)
+}
