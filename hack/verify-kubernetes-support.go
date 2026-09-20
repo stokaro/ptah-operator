@@ -2526,6 +2526,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyControllerObjectSchemaAssets(files); err != nil {
 		return err
 	}
+	if err := verifySQLStatementGuards(files); err != nil {
+		return err
+	}
 	if err := verifyAPIServerEndpointInventoryFilter(files.apiServerEndpointFilter); err != nil {
 		return err
 	}
@@ -4691,6 +4694,10 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		// refuses one that is wrong, and those are two behaviors of the same
 		// loop. A loop that stopped refusing would still look like it waited.
 		exactSourceLine("control-plane shape self-test wiring", `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"`),
+		// The split that lets a `|| fail` guard see the exec instead of the
+		// trim is shell, and a guard that stopped reporting a failed statement
+		// leaves the phase blaming the operator for setup it never received.
+		exactSourceLine("SQL statement self-test wiring", `"$ROOT_DIR/hack/e2e-sql-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4710,15 +4717,50 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-control-plane-shape-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the control-plane shape self-test must be wired exactly once", files.staticChecks)
 	}
+	if bytes.Count(staticContents, []byte("e2e-sql-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the SQL statement self-test must be wired exactly once", files.staticChecks)
+	}
 	for _, step := range []sourceContractStep{
 		staticContract[1], staticContract[3], staticContract[4], staticContract[5],
-		staticContract[6],
+		staticContract[6], staticContract[7],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
 		}
 		if err := rejectEarlySuccessfulExit(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// The statements the migrations and reference-data phases run by hand -- an
+// external edit, a column undone, a revision row taken out of the history --
+// are guarded with `|| fail`, and the exit status of a pipeline belongs to its
+// last stage. The value helper ends in the trim, so a guard on one reads tr
+// and never the exec: the statement is skipped in silence and the phase dies
+// at its next wait, accusing the operator of a state the harness never set up.
+// The statement helper differs from the value helper it sits among by one
+// word, with thirty-odd neighboring calls reading the same, which is what this
+// refuses: SQL that changes a database handed to the value helper.
+var mutatingValueQuery = regexp.MustCompile(
+	`(?m)^[^#\r\n]*\b(?:migration_query|reference_query)\b[ \t]*(?:\\\r?\n[ \t]*)?` +
+		`"[ \t]*(?i:ALTER|CREATE|DELETE|DROP|GRANT|INSERT|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE)\b`)
+
+// verifySQLStatementGuards refuses a call site that went back to the helper
+// whose status belongs to tr. It reads the source, so a statement assembled in
+// a variable is beyond it; hack/e2e-sql-selftest.sh drives the helpers
+// themselves for the half a reader cannot see.
+func verifySQLStatementGuards(files e2eWiringFiles) error {
+	for _, path := range []string{files.migrations, files.referenceData} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		if match := mutatingValueQuery.FindIndex(contents); match != nil {
+			line := 1 + bytes.Count(contents[:match[0]], []byte{'\n'})
+			return fmt.Errorf("%s:%d: a statement that changes the database must run through the statement helper, which reports what the exec reported; the value helper ends in the trim, so a guard on it never sees a failed statement",
+				path, line)
 		}
 	}
 	return nil

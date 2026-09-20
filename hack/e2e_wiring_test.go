@@ -4596,6 +4596,115 @@ func TestVerifyControlPlaneShapeSelftestWiringRejectsMutations(t *testing.T) {
 	}
 }
 
+// A guard that reads the trim instead of the exec skips the phase's own setup
+// in silence, and the phase then blames the operator for a state it never
+// received. The split that fixes it is shell, so the gate has to keep running
+// the self-test that measures it.
+func TestVerifySQLStatementSelftestWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # SQL statement self-test removed`,
+			wantError:   "SQL statement self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$ROOT_DIR/hack/e2e-sql-selftest.sh" || true`,
+			wantError:   "SQL statement self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-sql-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+	}
+	const invocation = `"$ROOT_DIR/hack/e2e-sql-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+// The self-test proves the helpers; this proves the call sites still reach
+// them. Both phases surround their two guarded statements with thirty-odd
+// value queries that differ by one word, so the way the defect comes back is a
+// copy of the neighbor.
+func TestVerifySQLStatementGuardsRejectValueHelperCallSites(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	const wantError = "must run through the statement helper"
+	tests := []struct {
+		name        string
+		fixture     string
+		path        string
+		assign      func(*e2eWiringFiles, string)
+		old         string
+		replacement string
+	}{
+		{
+			name:    "undone column restored to the value helper",
+			fixture: "e2e-migrations.sh",
+			path:    files.migrations,
+			assign:  func(mutated *e2eWiringFiles, path string) { mutated.migrations = path },
+			old: `	migration_statement "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
+		fail "could not undo the column the $ENGINE partial migration committed"`,
+			replacement: `	migration_query "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
+		fail "could not undo the column the $ENGINE partial migration committed"`,
+		},
+		{
+			name:    "external edit restored to the value helper",
+			fixture: "e2e-reference-data.sh",
+			path:    files.referenceData,
+			assign:  func(mutated *e2eWiringFiles, path string) { mutated.referenceData = path },
+			old: `	reference_statement "UPDATE countries SET name = 'Edited outside the operator' WHERE code = 'US'" >/dev/null ||
+		fail "the external edit could not be made"`,
+			replacement: `	reference_query "UPDATE countries SET name = 'Edited outside the operator' WHERE code = 'US'" >/dev/null ||
+		fail "the external edit could not be made"`,
+		},
+		{
+			name:    "revision row deleted through a continued value call",
+			fixture: "e2e-migrations.sh",
+			path:    files.migrations,
+			assign:  func(mutated *e2eWiringFiles, path string) { mutated.migrations = path },
+			old: `	migration_statement "DELETE FROM schema_migrations WHERE state <> 'applied'" >/dev/null ||
+		fail "could not take the unfinished $ENGINE revision out of the history"`,
+			replacement: `	migration_query \
+		"DELETE FROM schema_migrations WHERE state <> 'applied'" >/dev/null ||
+		fail "could not take the unfinished $ENGINE revision out of the history"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			source := readE2ESource(t, test.path)
+			mutatedFiles := files
+			test.assign(&mutatedFiles, writeMutatedE2ESource(t, test.fixture, source, test.old, test.replacement))
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, wantError)
+			}
+		})
+	}
+}
+
 func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 	t.Parallel()
 
