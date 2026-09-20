@@ -1724,8 +1724,11 @@ func storedControllerStateClients(dynamicClient dynamic.Interface) crdupgrade.St
 		})
 	}
 	return crdupgrade.StoredControllerStateClients{
-		Schemas:   resource("ptahschemas"),
-		Plans:     resource("ptahschemaplans"),
-		Approvals: resource("ptahschemaapprovals"),
+		Schemas:            resource("ptahschemas"),
+		Plans:              resource("ptahschemaplans"),
+		Approvals:          resource("ptahschemaapprovals"),
+		Migrations:         resource("ptahmigrations"),
+		MigrationPlans:     resource("ptahmigrationplans"),
+		MigrationApprovals: resource("ptahmigrationapprovals"),
 	}
 }

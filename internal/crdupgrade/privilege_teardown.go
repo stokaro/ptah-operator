@@ -802,7 +802,12 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 			rules: func() []rbacv1.PolicyRule {
 				rules := []rbacv1.PolicyRule{
 					privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get", "update"}),
-					privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas", "ptahschemaplans", "ptahschemaapprovals"}, nil, []string{"list"}),
+					privilegePolicyRule(
+						[]string{"operator.ptah.run"},
+						[]string{"ptahschemas", "ptahschemaplans", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"},
+						nil,
+						[]string{"list"},
+					),
 					privilegePolicyRule(
 						[]string{"admissionregistration.k8s.io"},
 						[]string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},
