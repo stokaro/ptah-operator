@@ -46,7 +46,7 @@ purpose.
 ## Building and testing
 
 ```bash
-make build          # the four binaries
+make build          # the five binaries
 make test           # unit contour
 make generate       # deepcopy
 make manifests      # CRDs and RBAC from the markers
@@ -68,11 +68,11 @@ accepts `true` and nothing else.
 
 The run that counts is the one for the newest commit. The tip is what the next
 change builds on and what a release is cut from, and an older run proves a tree
-nobody builds on again. One run spends about ten hours of runner time and
-reaches its verdict in about an hour and a half (measured on `d67d9ee`: twelve
-acceptance jobs between twelve minutes and an hour and a quarter, the race
-detector at fifty-five minutes, and one image build at five), so letting a
-superseded run finish only holds the newer one behind it. This repository used
+nobody builds on again. One run spends about twelve hours of runner time and
+reaches its verdict in about an hour and twenty minutes (measured on run
+35495669973: fifteen acceptance jobs between twelve minutes and an hour and a
+quarter, the race detector at six minutes, and one image build at six), so
+letting a superseded run finish only holds the newer one behind it. This repository used
 to spare a started `master` run, and the queue that built up held the commit
 that fixed a known lifecycle failure for hours while the run ahead of it
 re-proved that failure.
@@ -84,7 +84,7 @@ whose run finished, a bisect cannot assume a commit it lands on was ever built,
 and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
 run finishes. The pull request fans out over the same three minors and the same
-four suites.
+five suites.
 
 ## The acceptance suites
 
