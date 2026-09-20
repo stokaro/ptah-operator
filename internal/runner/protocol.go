@@ -400,11 +400,6 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 // the whole log for every marker-like line in it.
 const maxInterleavedFrameBytes = 64 << 10
 
-// maxInterleavedFrameLines bounds how many line starts the payload search will
-// try. The byte bound limits how far it looks; this limits how much it does,
-// because every candidate hashes the whole declared payload.
-const maxInterleavedFrameLines = 64
-
 // framePayloadSearch is what a scan for a frame's payload settled on.
 type framePayloadSearch struct {
 	// start is where the payload begins, and footerEnd one past the footer
@@ -415,8 +410,9 @@ type framePayloadSearch struct {
 	// declares. Nothing else identifies the payload.
 	found bool
 	// closed reports that a footer closes the payload found -- or, when none
-	// was found, that a footer closed some candidate, which says the frame
-	// finished arriving even though its payload is not the one declared.
+	// was found, that a footer closes the position the header's own length
+	// points at, which says the frame finished arriving even though its payload
+	// is not the one declared.
 	closed bool
 }
 
@@ -440,41 +436,49 @@ type framePayloadSearch struct {
 // merely sits where a payload could is accepted only when it is the payload.
 // Only complete lines may be skipped: a partial one means the log was cut,
 // which is what the footer exists to catch. The bound on interleaving after the
-// payload bounds this scan too.
+// payload bounds how far this scan looks.
+//
+// What bounds the work it does is the payload's own shape. MarshalFrame writes
+// what json.Marshal returned, which escapes every control character, so the
+// payload carries no newline of its own and the newline that ends it is the one
+// the footer begins with: the payload is exactly one line, of exactly the length
+// the header declares. A candidate whose line is any other length is therefore
+// not the payload, and saying so costs the search for that one newline instead
+// of a hash of the declared length. Together those searches read each byte of
+// the window once, and only lines of exactly the declared length are hashed, so
+// at most a window's worth of bytes is -- whatever the declared length is, and
+// however many lines the log interleaved. Bounding the candidates themselves
+// would be the wrong bound: the excluded candidate is as likely to be the
+// payload as any other, and refusing to look at it turns a frame that is all
+// there into a frame reported as still arriving.
 func findFramePayload(logs []byte, declaredStart int, payloadLength int64, claimedDigest []byte) framePayloadSearch {
 	var search framePayloadSearch
 	limit := declaredStart + maxInterleavedFrameBytes
 	if limit > len(logs) {
 		limit = len(logs)
 	}
-	lines := 0
 	for candidate := declaredStart; candidate <= limit; {
-		// Each candidate costs a hash of the whole payload, so the byte bound
-		// alone is not a bound on work: 64 KiB of two-byte lines is 32768
-		// candidates, and a log declaring a multi-megabyte payload then takes
-		// minutes on the reconcile worker that reads it. A real interleaved
-		// diagnostic is a handful of lines, so the line count is bounded too.
-		if lines > maxInterleavedFrameLines {
-			break
-		}
-		lines++
-		payloadEnd := candidate + int(payloadLength)
-		if payloadEnd > len(logs) {
-			break
-		}
-		actualDigest := sha256.Sum256(logs[candidate:payloadEnd])
-		if bytes.Equal(claimedDigest, actualDigest[:]) {
-			search.start = candidate
-			search.found = true
-			search.footerEnd, search.closed = frameFooterEnd(logs, payloadEnd)
-			return search
-		}
-		if !search.closed {
-			_, search.closed = frameFooterEnd(logs, payloadEnd)
-		}
-		lineEndRelative := bytes.IndexByte(logs[candidate:limit], '\n')
+		lineEndRelative := bytes.IndexByte(logs[candidate:], '\n')
 		if lineEndRelative < 0 {
 			break
+		}
+		if int64(lineEndRelative) == payloadLength {
+			payloadEnd := candidate + int(payloadLength)
+			actualDigest := sha256.Sum256(logs[candidate:payloadEnd])
+			if bytes.Equal(claimedDigest, actualDigest[:]) {
+				search.start = candidate
+				search.found = true
+				search.footerEnd, search.closed = frameFooterEnd(logs, payloadEnd)
+				return search
+			}
+			// The digest says this line is not the payload. A footer closing it
+			// still says the writer finished, which is what separates a frame
+			// carrying the wrong bytes from one whose bytes have not all
+			// arrived. Only a line of the declared length is asked, so this
+			// costs a scan per plausible payload rather than per log line.
+			if !search.closed {
+				_, search.closed = frameFooterEnd(logs, payloadEnd)
+			}
 		}
 		candidate += lineEndRelative + 1
 	}
