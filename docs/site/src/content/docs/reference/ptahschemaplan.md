@@ -3,7 +3,7 @@ title: PtahSchemaPlan
 description: Every field of the PtahSchemaPlan resource, generated from the API types.
 ---
 
-`PtahSchemaPlan` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`.
+`PtahSchemaPlan` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`. `kubectl` knows it as `ptahschemaplans`, or `ptahplan` for short.
 
 This page is generated from the API types by `make docs-reference`. The shipped CRDs carry no descriptions, so this is where the field documentation lives.
 

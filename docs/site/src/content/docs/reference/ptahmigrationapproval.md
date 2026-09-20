@@ -3,7 +3,7 @@ title: PtahMigrationApproval
 description: Every field of the PtahMigrationApproval resource, generated from the API types.
 ---
 
-`PtahMigrationApproval` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`.
+`PtahMigrationApproval` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`. `kubectl` knows it as `ptahmigrationapprovals`, or `ptahmapprove` for short.
 
 This page is generated from the API types by `make docs-reference`. The shipped CRDs carry no descriptions, so this is where the field documentation lives.
 

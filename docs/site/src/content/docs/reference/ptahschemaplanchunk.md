@@ -3,7 +3,7 @@ title: PtahSchemaPlanChunk
 description: Every field of the PtahSchemaPlanChunk resource, generated from the API types.
 ---
 
-`PtahSchemaPlanChunk` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`.
+`PtahSchemaPlanChunk` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`. `kubectl` knows it as `ptahschemaplanchunks`, or `ptahchunk` for short.
 
 This page is generated from the API types by `make docs-reference`. The shipped CRDs carry no descriptions, so this is where the field documentation lives.
 

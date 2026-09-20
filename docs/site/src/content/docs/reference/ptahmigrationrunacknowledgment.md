@@ -3,7 +3,7 @@ title: PtahMigrationRunAcknowledgment
 description: Every field of the PtahMigrationRunAcknowledgment resource, generated from the API types.
 ---
 
-`PtahMigrationRunAcknowledgment` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`.
+`PtahMigrationRunAcknowledgment` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`. `kubectl` knows it as `ptahmigrationrunacknowledgments`, or `ptahmack` for short.
 
 This page is generated from the API types by `make docs-reference`. The shipped CRDs carry no descriptions, so this is where the field documentation lives.
 
