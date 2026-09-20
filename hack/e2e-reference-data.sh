@@ -162,6 +162,9 @@ cleanup() {
 # driver named a ledger, so running this phase by hand behaves as it always has.
 # shellcheck source=hack/e2e-timing.sh
 . "$ROOT_DIR/hack/e2e-timing.sh"
+# The two shapes this phase runs SQL in: one for a value, one for a status.
+# shellcheck source=hack/e2e-sql.sh
+. "$ROOT_DIR/hack/e2e-sql.sh"
 
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
@@ -311,20 +314,15 @@ create_reference_database() {
 }
 
 reference_query() {
-	case "$ENGINE" in
-	postgresql)
-		# shellcheck disable=SC2016 # Variables expand inside the database container.
-		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
-			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"' \
-			sh "$REFERENCE_DATABASE" "$1" | tr -d '[:space:]'
-		;;
-	mysql)
-		# shellcheck disable=SC2016 # Variables expand inside the database container.
-		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
-			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"' \
-			sh "$REFERENCE_DATABASE" "$1" | tr -d '[:space:]'
-		;;
-	esac
+	sql_value "$ENGINE" "$TEST_NAMESPACE" "$DATABASE_SERVICE" \
+		"$REFERENCE_DATABASE" "$1"
+}
+
+# The same statement run for its status. A guard on reference_query reads the
+# trim and never the exec, so a statement this phase must see fail runs here.
+reference_statement() {
+	sql_statement "$ENGINE" "$TEST_NAMESPACE" "$DATABASE_SERVICE" \
+		"$REFERENCE_DATABASE" "$1"
 }
 
 # select_engine names everything one engine's lifecycle needs. The two run the
@@ -807,7 +805,7 @@ assert_kubectl_ptah_schema_line() {
 # The row is edited in the database between the plan and the approval, so the
 # approval names a plan whose observed state no longer holds.
 assert_external_edit_refuses_a_stale_approval() {
-	reference_query "UPDATE countries SET name = 'Edited outside the operator' WHERE code = 'US'" >/dev/null ||
+	reference_statement "UPDATE countries SET name = 'Edited outside the operator' WHERE code = 'US'" >/dev/null ||
 		fail "the external edit could not be made"
 	wait_for_reference_phase AwaitingApproval
 	wait_for_reference_plan
@@ -816,7 +814,7 @@ assert_external_edit_refuses_a_stale_approval() {
 	assert_kubectl_ptah_schema_line \
 		"Reference data:   0 to insert, 1 to update, 0 to delete" external-edit
 	stale_plan=$REFERENCE_PLAN
-	reference_query "UPDATE countries SET name = 'Edited again outside the operator' WHERE code = 'US'" >/dev/null ||
+	reference_statement "UPDATE countries SET name = 'Edited again outside the operator' WHERE code = 'US'" >/dev/null ||
 		fail "the second external edit could not be made"
 	# The operator observes the second edit and publishes a plan for it. The
 	# approval below still names the first one, which is the stale decision.
