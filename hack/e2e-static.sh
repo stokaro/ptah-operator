@@ -4313,7 +4313,7 @@ static_require_order "$completed_job_audit_section" 'completed Job full-audit co
 	"scan_file_for_credentials \"\$RESOURCE_FILE\"" ".metadata.uid == \$podUID" \
 	"fail \"exact Pod \$audit_pod_name UID \$audit_pod_uid lacks complete terminal evidence\"" "audit_containers=\$(printf '%s\\n' \"\$audit_pod_object\"" \
 	"scan_file_for_credentials \"\$LOG_FILE\"" \
-	"cp \"\$LOG_FILE\" \"\$audit_evidence_log_file\"" \
+	"read_result_transport \"\$audit_pod_name\" \"\$audit_evidence_log_file\"" \
 	"chmod 600 \"\$audit_evidence_log_file\"" ".metadata.uid == \$podUID" \
 	"fail \"exact Pod \$audit_pod_name changed identity during its log audit\"" ".metadata.uid == \$uid" \
 	"fail \"terminal Job \$audit_name changed identity during its exact Pod audit\"" \
@@ -4321,6 +4321,29 @@ static_require_order "$completed_job_audit_section" 'completed Job full-audit co
 	"publish_completed_job_evidence" '"$audit_evidence_log_file"' "$completed_full_write_marker"
 static_require_count "$dataplane_script" \
 	"$completed_full_write_marker" 1 'data-plane full Job write sites'
+# The fault phase carries its own copy of read_result_transport, and only the
+# phase prefix it prints may differ. Both copies decide whether to read a
+# container log again from the words test/e2e/resultassert refused it in, and
+# that parser's own test measures the filter against every shape a log passes
+# through while a frame arrives -- but it reads the filter out of both files and
+# can only measure one reader. Holding the copies to one text is what makes that
+# measurement cover the fault phase too.
+transport_reader_dataplane=$WORK_DIR/read-result-transport-dataplane.sh
+transport_reader_faults=$WORK_DIR/read-result-transport-faults.sh
+sed -n '/^read_result_transport()/,/^}/p' "$ROOT_DIR/hack/e2e-dataplane.sh" |
+	sed 's/e2e data plane:   /a phase prefix:   /' >"$transport_reader_dataplane"
+sed -n '/^read_result_transport()/,/^}/p' "$ROOT_DIR/hack/e2e-faults.sh" |
+	sed 's/e2e faults:   /a phase prefix:   /' >"$transport_reader_faults"
+for transport_reader in "$transport_reader_dataplane" "$transport_reader_faults"; do
+	[ -s "$transport_reader" ] || {
+		printf '%s\n' 'e2e static: a phase that reads a result transport has no read_result_transport' >&2
+		exit 1
+	}
+done
+cmp -s "$transport_reader_dataplane" "$transport_reader_faults" || {
+	printf '%s\n' 'e2e static: the two result-transport readers differ by more than the phase they print' >&2
+	exit 1
+}
 capture_result_section=$(sed -n '/^capture_one_new_job_result()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 static_reject_marker "$capture_result_section" 'FULLY_AUDITED' \

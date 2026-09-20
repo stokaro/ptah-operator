@@ -3736,13 +3736,32 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 			wantError:   "durable Job evidence exact live Pod owner",
 		},
 		{
-			name: "durable Job archive omits UID-bounded audited log capture",
+			name: "durable Job archive omits settled UID-bounded audited log capture",
 			old: "if [ \"$audit_managed_complete\" -eq 1 ] && [ \"$audit_container\" = ptah ]; then\n" +
-				"\t\t\t\t\tcp \"$LOG_FILE\" \"$audit_evidence_log_file\" ||\n" +
-				"\t\t\t\t\t\tfail \"could not retain UID-bounded ptah logs for exact Pod $audit_pod_name UID $audit_pod_uid\"\n" +
-				"\t\t\t\t\tchmod 600 \"$audit_evidence_log_file\"",
+				"\t\t\t\t\tread_result_transport \"$audit_pod_name\" \"$audit_evidence_log_file\" \\\n" +
+				"\t\t\t\t\t\t\"$audit_operation\" \"$audit_operation_id\" \"$audit_evidence_result_file\"\n" +
+				"\t\t\t\t\tchmod 600 \"$audit_evidence_log_file\" \"$audit_evidence_result_file\"",
 			replacement: `if false; then :`,
-			wantError:   "durable Job archive UID-bounded audited log capture",
+			wantError:   "durable Job archive settled UID-bounded audited log capture",
+		},
+		{
+			name: "durable Job archive retains an unsettled audited log",
+			old: "read_result_transport \"$audit_pod_name\" \"$audit_evidence_log_file\" \\\n" +
+				"\t\t\t\t\t\t\"$audit_operation\" \"$audit_operation_id\" \"$audit_evidence_result_file\"",
+			replacement: `cp "$LOG_FILE" "$audit_evidence_log_file" || true`,
+			wantError:   "durable Job archive settled UID-bounded audited log capture",
+		},
+		{
+			name:        "durable Job archive accepts an unreadable result frame",
+			old:         `fail "the $publish_operation result frame for Job UID $publish_job_uid cannot be archived"`,
+			replacement: `: # an unreadable result frame is archived unreported`,
+			wantError:   "durable Job archive reported result refusal",
+		},
+		{
+			name:        "durable Job archive drops the refused result frame reason",
+			old:         `sed 's/^/e2e data plane:   /' "$PUBLISH_RESULT_ERROR_FILE" >&2`,
+			replacement: `true`,
+			wantError:   "durable Job archive reported result refusal",
 		},
 		{
 			name: "durable Job archive drops post-log exact Pod UID read",

@@ -39,7 +39,7 @@ test_fail() {
 	exit 1
 }
 
-for command_name in jq sed grep mktemp awk stat find cut wc tr ln mv cp chmod; do
+for command_name in jq sed grep mktemp awk stat find cut wc tr ln mv cp chmod dd go; do
 	command -v "$command_name" >/dev/null 2>&1 ||
 		test_fail "required command is not installed: $command_name"
 done
@@ -54,6 +54,7 @@ for function_name in \
 	validate_job_evidence_directory validate_completed_job_evidence \
 	validate_supplied_job_evidence_identity assert_existing_job_evidence_matches_supplied \
 	publish_completed_job_evidence \
+	read_result_transport \
 	assert_live_job_evidence_consistent \
 	k record_observed_jobs assert_observed_jobs_audited new_job_count_since assert_no_new_jobs \
 	assert_schema_job_boundary_unchanged \
@@ -95,6 +96,15 @@ FULLY_AUDITED_JOBS_FILE=$WORK_DIR/fully-audited-jobs.txt
 JOB_EVIDENCE_DIR=$WORK_DIR/job-evidence
 JOB_EVIDENCE_ENTRIES_FILE=$WORK_DIR/job-evidence-entries.txt
 LIVE_JOB_EVIDENCE_ERROR_FILE=$WORK_DIR/live-job-evidence-api-error.txt
+PUBLISH_RESULT_ERROR_FILE=$WORK_DIR/publish-result-parse-error.txt
+TRANSPORT_LOG_FILE=$WORK_DIR/transport.log
+TRANSPORT_RESULT_FILE=$WORK_DIR/transport-result.json
+TRANSPORT_READS_FILE=$WORK_DIR/transport-reads.txt
+TRANSPORT_FRAME_FILE=$WORK_DIR/transport-frame.log
+TRANSPORT_WRONG_FRAME_FILE=$WORK_DIR/transport-wrong-frame.log
+TRANSPORT_ARRIVAL_PREFIXES_FILE=$WORK_DIR/transport-arrival-prefixes.txt
+UNSETTLED_PUBLISH_INPUT=$WORK_DIR/unsettled-publish-input
+UNSETTLED_JOB_UID=uid-unsettled
 CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 ARCHIVED_SCHEMA_JOB_RECORDS_FILE=$WORK_DIR/archived-schema-job-records.jsonl
 ARCHIVED_SCHEMA_JOB_LINES_FILE=$WORK_DIR/archived-schema-job-lines.jsonl
@@ -112,6 +122,8 @@ BOUNDARY_ACTUAL_FILE=$WORK_DIR/boundary-actual.json
 ARCHIVED_JOBS_OUTPUT=$WORK_DIR/archived-jobs.json
 ARCHIVED_UIDS_OUTPUT=$WORK_DIR/archived-uids.json
 TEST_OPERATION_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+TEST_COORDINATION_DIGEST=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+TEST_DIVERGENT_COORDINATION_DIGEST=${TEST_COORDINATION_DIGEST%?}d
 TEST_CREDENTIAL_PATTERN=credential-selftest-pattern-9f3d14c2
 
 mkdir "$JOB_EVIDENCE_DIR"
@@ -128,6 +140,9 @@ reset_fixture() {
 	chmod 700 "$JOB_EVIDENCE_DIR"
 	printf '%s\n' "$TEST_CREDENTIAL_PATTERN" >"$CREDENTIAL_PATTERNS_FILE"
 	: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"
+	: >"$PUBLISH_RESULT_ERROR_FILE"
+	: >"$TRANSPORT_READS_FILE"
+	rm -f -- "$TRANSPORT_LOG_FILE" "$TRANSPORT_RESULT_FILE" "$TRANSPORT_RESULT_FILE.err"
 	: >"$OBSERVED_JOBS_FILE"
 	: >"$FULLY_AUDITED_JOBS_FILE"
 	: >"$AUDITED_FAULT_JOBS_FILE"
@@ -359,6 +374,218 @@ emit_one_job_list() {
 
 emit_empty_job_list() {
 	printf '%s\n' '{"apiVersion":"batch/v1","kind":"JobList","items":[]}'
+}
+
+# The transports a runner container log can hold when it is read, built from
+# the frame test/e2e/resultassert is given below. A log still arriving is a
+# prefix of the complete one: the container runtime copies the runner's last
+# write in, and a read taken while it does ends anywhere inside the frame. A log
+# that is present and wrong is all there and does not hold together, and reading
+# it again would never repair it.
+#
+# The frames are real and the parser is the real one. The shell under test
+# decides whether to read a log again from the words the parser refused it in,
+# so a stand-in parser that words a refusal differently proves the stand-in and
+# says nothing about the system. That is exactly how the bounded re-read below
+# went from #155 until now without ever running: the stand-in answered a
+# footerless log with "never finished arriving", and the binary answered it with
+# a sentence the re-read does not wait for.
+write_result_transport_frames() {
+	transport_payload=$(jq -cn \
+		--arg operationID "$TEST_OPERATION_ID" \
+		--arg coordinationDigest "$TEST_COORDINATION_DIGEST" '
+      {protocolVersion: 5, operation: "plan", operationId: $operationID,
+       childExitCode: 0, stdout: "", coordinationDigest: $coordinationDigest,
+       planOutcome: "NoChanges"}') ||
+		test_fail "could not build the transport result payload"
+	# The divergent payload differs from the declared one in a single byte of a
+	# digest and not in length. A payload of another length would end somewhere
+	# else and be refused as a frame still arriving, which is the opposite of
+	# what the wrong transport is here to measure.
+	transport_divergent_payload=$(jq -cn \
+		--arg operationID "$TEST_OPERATION_ID" \
+		--arg coordinationDigest "$TEST_DIVERGENT_COORDINATION_DIGEST" '
+      {protocolVersion: 5, operation: "plan", operationId: $operationID,
+       childExitCode: 0, stdout: "", coordinationDigest: $coordinationDigest,
+       planOutcome: "NoChanges"}') ||
+		test_fail "could not build the divergent transport result payload"
+	transport_payload_bytes=$(printf '%s' "$transport_payload" | wc -c | tr -d '[:space:]')
+	transport_divergent_bytes=$(printf '%s' "$transport_divergent_payload" | wc -c | tr -d '[:space:]')
+	[ "$transport_payload_bytes" -eq "$transport_divergent_bytes" ] ||
+		test_fail "the divergent transport payload is $transport_divergent_bytes bytes and the declared one is $transport_payload_bytes"
+	transport_payload_digest=$(printf '%s' "$transport_payload" | sha256)
+	printf 'PTAH_RUNNER_RESULT_V1 %s %s\n%s\nPTAH_RUNNER_RESULT_END_V1\n' \
+		"$transport_payload_bytes" "$transport_payload_digest" "$transport_payload" \
+		>"$TRANSPORT_FRAME_FILE"
+	printf 'PTAH_RUNNER_RESULT_V1 %s %s\n%s\nPTAH_RUNNER_RESULT_END_V1\n' \
+		"$transport_payload_bytes" "$transport_payload_digest" "$transport_divergent_payload" \
+		>"$TRANSPORT_WRONG_FRAME_FILE"
+	transport_header_bytes=$(sed -n '1p' "$TRANSPORT_FRAME_FILE" | wc -c | tr -d '[:space:]')
+	transport_frame_bytes=$(wc -c <"$TRANSPORT_FRAME_FILE" | tr -d '[:space:]')
+	# The byte counts a container log passes through while the frame arrives:
+	# nothing, a header cut inside its own line, a header with none of its
+	# payload, a payload short of the length the header declares, a payload with
+	# no footer behind it, a footer half arrived, and the frame. Each is a read
+	# the parser has to answer with a reason the re-read waits for.
+	TRANSPORT_FOOTERLESS_BYTES=$((transport_header_bytes + transport_payload_bytes))
+	printf '%s\n' \
+		0 \
+		"$((transport_header_bytes - 10))" \
+		"$transport_header_bytes" \
+		"$((transport_header_bytes + transport_payload_bytes / 2))" \
+		"$TRANSPORT_FOOTERLESS_BYTES" \
+		"$((TRANSPORT_FOOTERLESS_BYTES + 10))" \
+		"$transport_frame_bytes" \
+		>"$TRANSPORT_ARRIVAL_PREFIXES_FILE"
+	TRANSPORT_ARRIVAL_READS=$(wc -l <"$TRANSPORT_ARRIVAL_PREFIXES_FILE" | tr -d '[:space:]')
+}
+
+emit_transport_prefix() {
+	dd if="$TRANSPORT_FRAME_FILE" bs=1 count="$1" 2>/dev/null
+}
+
+emit_complete_transport() {
+	cat "$TRANSPORT_FRAME_FILE"
+}
+
+emit_incomplete_transport() {
+	emit_transport_prefix "$TRANSPORT_FOOTERLESS_BYTES"
+}
+
+emit_wrong_transport() {
+	cat "$TRANSPORT_WRONG_FRAME_FILE"
+}
+
+emit_two_frame_transport() {
+	cat "$TRANSPORT_FRAME_FILE" "$TRANSPORT_FRAME_FILE"
+}
+
+emit_twice_closed_transport() {
+	cat "$TRANSPORT_FRAME_FILE"
+	printf '%s\n' PTAH_RUNNER_RESULT_END_V1
+}
+
+# The parser the extracted shell calls is the one the phase calls. Building it
+# here costs a compile and removes the only place this self-test could have
+# agreed with itself and not with the system.
+RESULT_ASSERT_BINARY=$WORK_DIR/resultassert
+go -C "$ROOT_DIR" build -o "$RESULT_ASSERT_BINARY" ./test/e2e/resultassert ||
+	test_fail "could not build test/e2e/resultassert"
+write_result_transport_frames
+
+# The transport fixtures drive the bounded re-read on a clock of their own, so
+# a self-test that measures a thirty-second window does not wait one.
+transport_clock_stub() {
+	TRANSPORT_CLOCK=1000
+	# shellcheck disable=SC2317 # Invoked indirectly by the helper under test.
+	date() {
+		case " $* " in
+		*' +%s '*) printf '%s\n' "$TRANSPORT_CLOCK" ;;
+		*) command date "$@" ;;
+		esac
+	}
+	# shellcheck disable=SC2317 # Invoked indirectly by the helper under test.
+	sleep() {
+		TRANSPORT_CLOCK=$((TRANSPORT_CLOCK + $1))
+	}
+}
+
+transport_read_count() {
+	wc -l <"$TRANSPORT_READS_FILE" | tr -d '[:space:]'
+}
+
+# The log arrives one prefix at a time, exactly as the container runtime copies
+# the runner's last write in. Every read before the last is a shape the parser
+# has to answer with a reason the bounded re-read waits for; the last is the
+# frame, and the read settles on it.
+transport_settles_after_an_incomplete_read() (
+	reset_fixture
+	transport_clock_stub
+	# shellcheck disable=SC2317 # Invoked indirectly by the helper under test.
+	kubectl() {
+		printf '%s\n' read >>"$TRANSPORT_READS_FILE"
+		transport_prefix=$(sed -n "$(transport_read_count)p" "$TRANSPORT_ARRIVAL_PREFIXES_FILE")
+		[ -n "$transport_prefix" ] ||
+			test_fail "the arrival sequence ran out after $(transport_read_count) reads"
+		emit_transport_prefix "$transport_prefix"
+	}
+	read_result_transport pod-under-audit "$TRANSPORT_LOG_FILE" plan \
+		"$TEST_OPERATION_ID" "$TRANSPORT_RESULT_FILE"
+	[ "$(transport_read_count)" -eq "$TRANSPORT_ARRIVAL_READS" ] ||
+		test_fail "settled transport read the container log $(transport_read_count) times, want $TRANSPORT_ARRIVAL_READS"
+	grep -Fx PTAH_RUNNER_RESULT_END_V1 "$TRANSPORT_LOG_FILE" >/dev/null ||
+		test_fail "settled transport retained a log whose frame never closed"
+	jq -e '.protocolVersion == 5' "$TRANSPORT_RESULT_FILE" >/dev/null ||
+		test_fail "settled transport did not retain its validated result"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+transport_frame_that_never_arrives() (
+	reset_fixture
+	transport_clock_stub
+	kubectl() {
+		printf '%s\n' read >>"$TRANSPORT_READS_FILE"
+		emit_incomplete_transport
+	}
+	read_result_transport pod-under-audit "$TRANSPORT_LOG_FILE" plan \
+		"$TEST_OPERATION_ID" "$TRANSPORT_RESULT_FILE"
+)
+
+# The three shapes that are present and wrong. Each is refused on its first
+# read, because no later read of the same container log can reduce a digest
+# that does not match or a marker the log carries twice.
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+transport_frame_that_is_present_and_wrong() (
+	transport_wrong_emitter=$1
+	reset_fixture
+	transport_clock_stub
+	kubectl() {
+		printf '%s\n' read >>"$TRANSPORT_READS_FILE"
+		"$transport_wrong_emitter"
+	}
+	read_result_transport pod-under-audit "$TRANSPORT_LOG_FILE" plan \
+		"$TEST_OPERATION_ID" "$TRANSPORT_RESULT_FILE"
+)
+
+prepare_unsettled_publish_input() {
+	reset_fixture
+	unsettled_archive=$(write_valid_job_evidence "$UNSETTLED_JOB_UID" schema-1 plan)
+	rm -rf -- "$UNSETTLED_PUBLISH_INPUT"
+	mv "$unsettled_archive" "$UNSETTLED_PUBLISH_INPUT"
+}
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+publish_transport_whose_frame_never_arrived() (
+	prepare_unsettled_publish_input
+	emit_incomplete_transport >"$UNSETTLED_PUBLISH_INPUT/ptah.log"
+	chmod 600 "$UNSETTLED_PUBLISH_INPUT/ptah.log"
+	kubectl() {
+		test_fail "publication unexpectedly recaptured live transport"
+	}
+	publish_completed_job_evidence \
+		"$UNSETTLED_PUBLISH_INPUT/job.json" "$UNSETTLED_PUBLISH_INPUT/pod.json" \
+		"$UNSETTLED_PUBLISH_INPUT/ptah.log"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+publish_transport_whose_frame_is_wrong() (
+	prepare_unsettled_publish_input
+	emit_wrong_transport >"$UNSETTLED_PUBLISH_INPUT/ptah.log"
+	chmod 600 "$UNSETTLED_PUBLISH_INPUT/ptah.log"
+	kubectl() {
+		test_fail "publication unexpectedly recaptured live transport"
+	}
+	publish_completed_job_evidence \
+		"$UNSETTLED_PUBLISH_INPUT/job.json" "$UNSETTLED_PUBLISH_INPUT/pod.json" \
+		"$UNSETTLED_PUBLISH_INPUT/ptah.log"
+)
+
+assert_no_unsettled_archive_published() {
+	unsettled_description=$1
+	unsettled_key=$(job_evidence_key "$UNSETTLED_JOB_UID")
+	if [ -e "$JOB_EVIDENCE_DIR/$unsettled_key" ]; then
+		test_fail "$unsettled_description published a durable archive"
+	fi
 }
 
 expect_failure() {
@@ -1039,12 +1266,10 @@ archive_publication_uses_uid_bounded_log_during_name_reuse() (
 	fixture_archive=$(write_valid_job_evidence uid-published schema-1 plan)
 	publish_input=$WORK_DIR/publish-input
 	mv "$fixture_archive" "$publish_input"
-	RESULT_ASSERT_BINARY=$WORK_DIR/resultassert
-	{
-		printf '%s\n' '#!/bin/sh'
-		printf '%s\n' "jq -n --arg operationID '$TEST_OPERATION_ID' '{protocolVersion: 5, operation: \"plan\", operationId: \$operationID, truncation: null, error: null, childExitCode: 0, stdout: \"\"}'"
-	} >"$RESULT_ASSERT_BINARY"
-	chmod 700 "$RESULT_ASSERT_BINARY"
+	# The captured log carries the fixture's marker line and behind it the frame
+	# the real parser reads, so publication succeeds on the audited bytes rather
+	# than on a parser told to say yes.
+	emit_complete_transport >>"$publish_input/ptah.log"
 	# shellcheck disable=SC2317 # Fail-fast stub detects an extracted-helper regression in this test path.
 	kubectl() {
 		printf '%s\n' 'replacement Pod raw transport'
@@ -1354,6 +1579,46 @@ expect_failure 'archived lifecycle replay UID' \
 expect_failure 'post-snapshot historical Job replay' \
 	'schema-automatic durable Job boundary changed after result capture' \
 	schema_boundary_with_post_snapshot_historical_uid
+expect_failure 'result frame that never finishes arriving' \
+	'the plan result frame from pod-under-audit could not be read' \
+	transport_frame_that_never_arrives
+grep -F 'never finished arriving' "$ERROR_FILE" >/dev/null ||
+	test_fail 'transport that never arrived was refused without the parser reason'
+[ "$(transport_read_count)" -gt 1 ] ||
+	test_fail 'transport that may still be arriving was refused on its first read'
+expect_failure 'result frame that is present and wrong' \
+	'the plan result frame from pod-under-audit could not be read' \
+	transport_frame_that_is_present_and_wrong emit_wrong_transport
+grep -F 'does not match the digest its header declares' "$ERROR_FILE" >/dev/null ||
+	test_fail 'wrong transport was refused without the parser reason'
+[ "$(transport_read_count)" -eq 1 ] ||
+	test_fail 'transport that is present and wrong was read more than once'
+expect_failure 'result transport carrying two frames' \
+	'the plan result frame from pod-under-audit could not be read' \
+	transport_frame_that_is_present_and_wrong emit_two_frame_transport
+grep -F 'carries 2 result frame headers rather than one' "$ERROR_FILE" >/dev/null ||
+	test_fail 'two-frame transport was refused without the parser reason'
+[ "$(transport_read_count)" -eq 1 ] ||
+	test_fail 'transport carrying two frames was read more than once'
+expect_failure 'result transport whose frame is closed twice' \
+	'the plan result frame from pod-under-audit could not be read' \
+	transport_frame_that_is_present_and_wrong emit_twice_closed_transport
+grep -F 'carries 2 result frame footers rather than one' "$ERROR_FILE" >/dev/null ||
+	test_fail 'twice-closed transport was refused without the parser reason'
+[ "$(transport_read_count)" -eq 1 ] ||
+	test_fail 'transport whose frame is closed twice was read more than once'
+expect_failure 'archived transport whose frame never arrived' \
+	"the plan result frame for Job UID $UNSETTLED_JOB_UID cannot be archived" \
+	publish_transport_whose_frame_never_arrived
+grep -F 'never finished arriving' "$ERROR_FILE" >/dev/null ||
+	test_fail 'unarchivable transport was refused without the parser reason'
+assert_no_unsettled_archive_published 'a transport whose frame never arrived'
+expect_failure 'archived transport whose frame is wrong' \
+	"the plan result frame for Job UID $UNSETTLED_JOB_UID cannot be archived" \
+	publish_transport_whose_frame_is_wrong
+grep -F 'does not match the digest its header declares' "$ERROR_FILE" >/dev/null ||
+	test_fail 'unarchivable wrong transport was refused without the parser reason'
+assert_no_unsettled_archive_published 'a transport whose frame is wrong'
 assert_successful_paths
 live_job_and_pod_exact_successful_path
 live_job_and_pod_exact_gc_absence_successful_path
@@ -1361,6 +1626,7 @@ selected_job_gc_fallback_successful_path
 archived_lifecycle_gc_successful_path
 existing_archive_exact_identity_successful_path
 archive_publication_uses_uid_bounded_log_during_name_reuse
+transport_settles_after_an_incomplete_read
 schema_boundary_successful_path
 plan_storage_immutability_successful_path
 fault_successful_paths
