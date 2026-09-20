@@ -67,7 +67,7 @@ func TestBuildMigrationCredentialAndInputIsolationByOperation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(string(test.operation), func(t *testing.T) {
 			t.Parallel()
-			job, err := builder.BuildMigration(migrationFixture(), migrationOperationFixture(test.operation))
+			job, err := builder.BuildMigration(migrationFixture(), migrationOperationFixture(test.operation), migrationPlanFixture())
 			if err != nil {
 				t.Fatalf("BuildMigration() error = %v", err)
 			}
@@ -102,7 +102,7 @@ func TestBuildMigrationKeepsRegistryCredentialsOutOfTheSQLProcess(t *testing.T) 
 			t.Parallel()
 			migration := migrationFixture()
 			claim := migrationOperationFixture(operation)
-			job, err := builder.BuildMigration(migration, claim)
+			job, err := builder.BuildMigration(migration, claim, migrationPlanFixture())
 			if err != nil {
 				t.Fatalf("BuildMigration() error = %v", err)
 			}
@@ -145,7 +145,7 @@ func TestBuildMigrationHardensEveryContainerAndPod(t *testing.T) {
 	t.Parallel()
 	migration := migrationFixture()
 	builder := builderFixture()
-	job, err := builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory))
+	job, err := builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,9 +227,27 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 	t.Parallel()
 	builder := builderFixture()
 	operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
-	job, err := builder.BuildMigration(migrationFixture(), operation)
+	job, err := builder.BuildMigration(migrationFixture(), operation, migrationPlanFixture())
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	plan := migrationPlanFixture()
+	sequenceDigest, err := MigrationSequenceDigest(plan.Spec.Migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bindings the runner refuses to open the database without. They come
+	// from the approved plan, not from the claim that names it.
+	for name, want := range map[string]string{
+		runner.EnvExpectedTargetIdentityDigest:        plan.Spec.TargetIdentityDigest,
+		runner.EnvExpectedCoordinationDigest:          plan.Spec.CoordinationDigest,
+		runner.EnvExpectedMigrationSequenceDigest:     sequenceDigest,
+		runner.EnvExpectedMigrationHistoryFingerprint: plan.Spec.HistoryFingerprint,
+	} {
+		if got := requireEnv(t, job, name).Value; got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
 	}
 
 	wantNotAfter := operation.StartedAt.Add(300 * time.Second).UTC().Format(time.RFC3339Nano)
@@ -255,75 +273,122 @@ func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		mutate  func(*operatorv1alpha1.PtahMigration, *operatorv1alpha1.MigrationOperationStatus)
+		mutate  func(*operatorv1alpha1.PtahMigration, *operatorv1alpha1.MigrationOperationStatus, *operatorv1alpha1.PtahMigrationPlan)
 		message string
 	}{
 		{
 			name: "unknown operation",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.Type = "Rollback"
 			},
 			message: "unsupported migration operation",
 		},
 		{
 			name: "no execution binding",
-			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				migration.Status.ExecutionBinding = nil
 			},
 			message: "durable execution binding",
 		},
 		{
 			name: "executor rolled out under the claim",
-			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				migration.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + digest('9')
 			},
 			message: "execution binding is stale",
 		},
 		{
 			name: "claim authorized under another epoch",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.ExecutionBindingID = "v1-44444444444444444444444444444444"
 			},
 			message: "execution binding is stale",
 		},
 		{
 			name: "claim names a different Job",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.JobName = "ptah-m-apply-someone-elses-job"
 			},
 			message: "does not match deterministic name",
 		},
 		{
 			name: "apply without a plan",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.PlanRef = nil
 			},
 			message: "carries no plan reference",
 		},
 		{
+			name: "apply without the plan that authorized it",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				*plan = operatorv1alpha1.PtahMigrationPlan{}
+			},
+			message: "is not the one the claim named",
+		},
+		{
+			// The controller reads the plan and admission reads it again, so a
+			// deletion that starts between those two readings reaches the
+			// builder. Nothing else refuses it: admission's own plan read
+			// does not look at the deletion timestamp.
+			name: "apply whose plan started deleting under the claim",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				deleting := metav1.NewTime(time.Now().UTC())
+				plan.DeletionTimestamp = &deleting
+			},
+			message: "cannot apply a deleting migration plan",
+		},
+		{
+			name: "apply carrying another migration's plan",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				plan.Spec.MigrationRef.UID = types.UID("another-migration")
+			},
+			message: "belongs to another migration",
+		},
+		{
+			name: "apply whose plan took another realm's turn",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				plan.Spec.CoordinationDigest = digest('7')
+			},
+			message: "coordination digest does not match the immutable plan",
+		},
+		{
+			name: "apply whose plan names no history",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				plan.Spec.HistoryFingerprint = ""
+			},
+			message: "no valid history fingerprint",
+		},
+		{
+			name: "apply whose plan names no target",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				plan.Spec.TargetIdentityDigest = ""
+			},
+			message: "no valid target identity digest",
+		},
+		{
 			name: "apply without a target",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.Target = nil
 			},
 			message: "carries no target binding",
 		},
 		{
 			name: "apply without a resolved artifact",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.Source = nil
 			},
 			message: "carries no source binding",
 		},
 		{
 			name: "apply whose source is not digest-pinned",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.Source.ResolvedReference = "oci://registry.example/acme/orders:stable"
 			},
 			message: "immutable SHA-256 reference",
 		},
 		{
 			name: "execution window already closed",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				closed := metav1.NewTime(operation.StartedAt.Add(-time.Second))
 				operation.ExecutionNotAfter = &closed
 			},
@@ -331,7 +396,7 @@ func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 		},
 		{
 			name: "attempt is not counted",
-			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus) {
+			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.Attempt = 0
 			},
 			message: "attempt must be positive",
@@ -343,8 +408,9 @@ func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 			t.Parallel()
 			migration := migrationFixture()
 			operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
-			test.mutate(migration, &operation)
-			_, err := builder.BuildMigration(migration, operation)
+			plan := migrationPlanFixture()
+			test.mutate(migration, &operation, plan)
+			_, err := builder.BuildMigration(migration, operation, plan)
 			if err == nil {
 				t.Fatal("BuildMigration() accepted a claim it cannot carry out")
 			}
@@ -491,4 +557,34 @@ func migrationOperationFixture(operation operatorv1alpha1.MigrationOperationType
 		claim.ExecutionNotAfter = &executionNotAfter
 	}
 	return claim
+}
+
+// migrationPlanFixture is the approved plan an Apply claim names. Its bindings
+// are what the Job carries to the runner, which refuses to open the database
+// without them.
+func migrationPlanFixture() *operatorv1alpha1.PtahMigrationPlan {
+	migration := migrationFixture()
+	return &operatorv1alpha1.PtahMigrationPlan{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: migration.Namespace,
+			Name:      "orders-migration-plan-1",
+			UID:       types.UID("migration-plan-uid"),
+		},
+		Spec: operatorv1alpha1.PtahMigrationPlanSpec{
+			ContractVersion: 1,
+			MigrationRef: operatorv1alpha1.ImmutableObjectReference{
+				Name: migration.Name, UID: migration.UID,
+			},
+			Fingerprint:          digest('4'),
+			HistoryFingerprint:   digest('5'),
+			CurrentVersion:       2,
+			ArtifactDigest:       migration.Status.Artifact.Digest,
+			CoordinationDigest:   testCoordinationDigest(),
+			TargetIdentityDigest: digest('6'),
+			Migrations: []operatorv1alpha1.PlannedMigration{{
+				Version:  3,
+				Checksum: "h1:orders-0003",
+			}},
+		},
+	}
 }

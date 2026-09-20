@@ -73,7 +73,11 @@ type JobBuilder interface {
 	NameFor(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus) (string, error)
 	Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus, plan *operatorv1alpha1.PtahSchemaPlan) (*batchv1.Job, error)
 	NameForMigration(migration *operatorv1alpha1.PtahMigration, operation operatorv1alpha1.MigrationOperationStatus) (string, error)
-	BuildMigration(migration *operatorv1alpha1.PtahMigration, operation operatorv1alpha1.MigrationOperationStatus) (*batchv1.Job, error)
+	BuildMigration(
+		migration *operatorv1alpha1.PtahMigration,
+		operation operatorv1alpha1.MigrationOperationStatus,
+		plan *operatorv1alpha1.PtahMigrationPlan,
+	) (*batchv1.Job, error)
 	ExecutionBinding() (
 		controllerImage string,
 		controllerRevision string,

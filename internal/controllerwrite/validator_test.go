@@ -106,6 +106,7 @@ func (b staticJobBuilder) Build(
 func (b staticJobBuilder) BuildMigration(
 	_ *operatorv1alpha1.PtahMigration,
 	_ operatorv1alpha1.MigrationOperationStatus,
+	_ *operatorv1alpha1.PtahMigrationPlan,
 ) (*batchv1.Job, error) {
 	if b.err != nil {
 		return nil, b.err

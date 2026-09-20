@@ -103,6 +103,7 @@ func (fakeJobs) NameForMigration(
 func (fakeJobs) BuildMigration(
 	migration *operatorv1alpha1.PtahMigration,
 	operation operatorv1alpha1.MigrationOperationStatus,
+	_ *operatorv1alpha1.PtahMigrationPlan,
 ) (*batchv1.Job, error) {
 	annotations := map[string]string{workload.AnnotationExecutionBindingID: operation.ExecutionBindingID}
 	if operation.AdmissionSnapshot != nil {

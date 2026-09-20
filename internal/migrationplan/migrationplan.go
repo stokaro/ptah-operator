@@ -209,21 +209,12 @@ func Sequence(report dataplane.MigrationStatusReport) ([]operatorv1alpha1.Planne
 }
 
 // SequenceDigest binds the plan's fingerprint to the exact sequence it carries.
+//
+// The derivation itself lives in internal/workload, because the Apply Job has
+// to carry the same digest and that package is below this one. One rule, two
+// callers.
 func SequenceDigest(planned []operatorv1alpha1.PlannedMigration) (string, error) {
-	if len(planned) == 0 {
-		return "", errors.New("a plan carries at least one migration")
-	}
-	entries := make([]map[string]any, 0, len(planned))
-	for _, migration := range planned {
-		entries = append(entries, map[string]any{
-			"version":          migration.Version,
-			"version_key":      migration.VersionKey,
-			"checksum":         migration.Checksum,
-			"checkpoint":       migration.Checkpoint,
-			"transaction_mode": migration.TransactionMode,
-		})
-	}
-	return fingerprint.DigestCanonicalJSON(entries)
+	return workload.MigrationSequenceDigest(planned)
 }
 
 // Desired builds the object the controller publishes. Its metadata is exactly

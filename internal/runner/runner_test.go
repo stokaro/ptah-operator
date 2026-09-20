@@ -2389,6 +2389,27 @@ func migrationEnvironment(operationID string) []string {
 	return append(databaseEnvironment(operationID), envMigrationsDir+"=/source/migrations")
 }
 
+// testSequenceDigest and testHistoryFingerprint stand for the approved plan's
+// own values. The runner cannot re-derive either -- it holds no artifact and
+// reads no revision table -- so what it checks is that a mutating child was
+// authorized by a plan at all, and these are the shape that authorization takes.
+func testSequenceDigest() string { return "sha256:" + strings.Repeat("c", 64) }
+
+func testHistoryFingerprint() string { return "sha256:" + strings.Repeat("d", 64) }
+
+// migrationApplyEnvironment is what a migration Apply Job actually carries: the
+// bindings of the plan that authorized it, without which the runner refuses to
+// open the database.
+func migrationApplyEnvironment(t *testing.T, operationID string) []string {
+	t.Helper()
+	return append(migrationEnvironment(operationID),
+		envExpectedCoordination+"="+testCoordinationDigest(),
+		envExpectedTargetDigest+"="+databaseTargetDigest(t),
+		envExpectedSequenceDigest+"="+testSequenceDigest(),
+		envExpectedHistory+"="+testHistoryFingerprint(),
+	)
+}
+
 // A migration that stopped is the run whose report matters most: the exit
 // status says only that Ptah stopped, and the document says what the database
 // now holds.
@@ -2401,7 +2422,7 @@ func TestMigrationApplyKeepsItsReportWhenPtahStops(t *testing.T) {
 	}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: migrationEnvironment("migration-apply-stopped"),
+		Environment: migrationApplyEnvironment(t, "migration-apply-stopped"),
 		Executor:    executor,
 	})
 
@@ -2430,7 +2451,7 @@ func TestMigrationApplyClaimsTheMutationWhenTheChildCannotBeRead(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{err: errors.New("context canceled")}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: migrationEnvironment("migration-apply-ambiguous"),
+		Environment: migrationApplyEnvironment(t, "migration-apply-ambiguous"),
 		Executor:    executor,
 	})
 
@@ -2464,6 +2485,17 @@ func TestMigrationOperationsNeverReachTheRegistry(t *testing.T) {
 			environment := append(databaseEnvironment("migration-registry-access"),
 				envResolvedReference+"=oci://user:password@registry.example/team/app-migrations@sha256:"+strings.Repeat("a", 64),
 			)
+			if operation == OperationMigrationApply {
+				// An Apply is refused before the command is built unless the
+				// plan that authorized it is bound, so this case carries that
+				// binding and still reaches the missing directory.
+				environment = append(environment,
+					envExpectedCoordination+"="+testCoordinationDigest(),
+					envExpectedTargetDigest+"="+databaseTargetDigest(t),
+					envExpectedSequenceDigest+"="+testSequenceDigest(),
+					envExpectedHistory+"="+testHistoryFingerprint(),
+				)
+			}
 			result := Run(context.Background(), Config{
 				Operation: operation, Environment: environment, Executor: executor,
 			})
@@ -2474,5 +2506,278 @@ func TestMigrationOperationsNeverReachTheRegistry(t *testing.T) {
 				t.Fatalf("error message = %q, want the missing materialized directory", result.Error.Message)
 			}
 		})
+	}
+}
+
+func TestAcceptanceReviewMigrationRejectsChangedTargetBeforeDispatch(t *testing.T) {
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
+	environment := append(migrationEnvironment("review-changed-target"),
+		envExpectedTargetDigest+"=sha256:"+strings.Repeat("a", 64),
+		envExpectedCoordination+"="+testCoordinationDigest(),
+	)
+	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: environment, Executor: executor})
+	if len(executor.calls) != 0 {
+		t.Fatalf("migration child was invoked despite a mismatched approved target digest; MutationStarted=%t", result.MutationStarted)
+	}
+}
+
+func TestAcceptanceReviewMigrationRejectsExpiredDispatch(t *testing.T) {
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
+	environment := environmentWithout(migrationEnvironment("review-expired-dispatch"), envDispatchNotAfter, envExecutionNotAfter)
+	environment = append(environment, envDispatchNotAfter+"=2000-01-01T00:00:00Z", envExecutionNotAfter+"=2000-01-01T00:00:00Z")
+	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: environment, Executor: executor,
+		Clock: func() time.Time { return time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC) },
+	})
+	if len(executor.calls) != 0 {
+		t.Fatalf("migration child was invoked after both absolute deadlines expired; MutationStarted=%t", result.MutationStarted)
+	}
+}
+
+func TestAcceptanceReviewMigrationRequiresApprovedPlanBeforeDispatch(t *testing.T) {
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
+	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: migrationEnvironment("review-unbound-plan"), Executor: executor})
+	if len(executor.calls) != 0 {
+		t.Fatalf("migration child was invoked without an approved sequence or history fingerprint: args=%v MutationStarted=%t", executor.calls[0].Args, result.MutationStarted)
+	}
+}
+
+// A migration Apply is the last gate before SQL, so every way its authority can
+// be absent, malformed or stale is a refusal before the child exists. Each row
+// is one such way.
+func TestMigrationApplyRefusesEveryUnauthorizedDispatch(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name    string
+		mutate  func(t *testing.T, environment []string) []string
+		wantErr string
+	}{
+		{
+			name: "missing coordination binding",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return environmentWithout(environment, envExpectedCoordination)
+			},
+			wantErr: "missing_coordination_binding",
+		},
+		{
+			name: "changed coordination realm",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExpectedCoordination+"=sha256:"+strings.Repeat("1", 64))
+			},
+			wantErr: "coordination_binding_mismatch",
+		},
+		{
+			name: "missing target binding",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return environmentWithout(environment, envExpectedTargetDigest)
+			},
+			wantErr: "missing_target_binding",
+		},
+		{
+			name: "malformed target binding",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExpectedTargetDigest+"=sha256:NOTADIGEST")
+			},
+			wantErr: "missing_target_binding",
+		},
+		{
+			name: "changed target identity",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExpectedTargetDigest+"=sha256:"+strings.Repeat("a", 64))
+			},
+			wantErr: "target_binding_mismatch",
+		},
+		{
+			name: "missing approved sequence",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return environmentWithout(environment, envExpectedSequenceDigest)
+			},
+			wantErr: "missing_plan_binding",
+		},
+		{
+			name: "malformed approved sequence",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExpectedSequenceDigest+"=3")
+			},
+			wantErr: "missing_plan_binding",
+		},
+		{
+			name: "missing history fingerprint",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return environmentWithout(environment, envExpectedHistory)
+			},
+			wantErr: "missing_plan_binding",
+		},
+		{
+			name: "malformed history fingerprint",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExpectedHistory+"=sha256:"+strings.Repeat("D", 64))
+			},
+			wantErr: "missing_plan_binding",
+		},
+		{
+			name: "missing dispatch deadline",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return environmentWithout(environment, envDispatchNotAfter)
+			},
+			wantErr: "missing_dispatch_deadline",
+		},
+		{
+			name: "expired dispatch deadline",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envDispatchNotAfter+"="+now.Add(-time.Second).Format(time.RFC3339Nano))
+			},
+			wantErr: "dispatch_deadline_expired",
+		},
+		{
+			name: "missing execution deadline",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return environmentWithout(environment, envExecutionNotAfter)
+			},
+			wantErr: "missing_execution_deadline",
+		},
+		{
+			name: "execution deadline before dispatch deadline",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExecutionNotAfter+"="+now.Add(-time.Hour).Format(time.RFC3339Nano))
+			},
+			wantErr: "missing_execution_deadline",
+		},
+		{
+			name: "expired execution deadline",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment,
+					envDispatchNotAfter+"="+now.Add(-2*time.Hour).Format(time.RFC3339Nano),
+					envExecutionNotAfter+"="+now.Add(-time.Hour).Format(time.RFC3339Nano),
+				)
+			},
+			// The dispatch deadline is read first, and an execution deadline
+			// this stale cannot be reached without passing it.
+			wantErr: "dispatch_deadline_expired",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
+			result := Run(context.Background(), Config{
+				Operation:   OperationMigrationApply,
+				Environment: test.mutate(t, migrationApplyEnvironment(t, "unauthorized-migration-apply")),
+				Executor:    executor,
+				Clock:       func() time.Time { return now },
+			})
+			if result.Error == nil || result.Error.Code != test.wantErr {
+				t.Fatalf("error = %#v, want %s", result.Error, test.wantErr)
+			}
+			if len(executor.calls) != 0 || result.MutationStarted || result.Uncertain {
+				t.Fatalf("unauthorized migration Apply reached the database: calls=%d MutationStarted=%t Uncertain=%t",
+					len(executor.calls), result.MutationStarted, result.Uncertain)
+			}
+		})
+	}
+}
+
+// What the plan binds is the route, not the credential that reaches it. A
+// password rotated between planning and dispatch leaves the bound identity
+// unchanged, and a migration Apply that refused it would turn every rotation
+// into a migration that can no longer run. This is the schema family's
+// password-rotation row for the migration family.
+func TestMigrationApplyDispatchesWhenOnlyThePasswordRotated(t *testing.T) {
+	t.Parallel()
+
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
+	// The environment every refusal row starts from, with one change: the
+	// Pod's database URL carries a new password, while the expected target
+	// digest is still the one derived from the URL the plan was computed
+	// against.
+	environment := append(
+		environmentWithout(migrationApplyEnvironment(t, "migration-apply-rotated-password"), envDatabaseURL),
+		envDatabaseURL+"=postgres://app:rotated@db.example/app",
+	)
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: environment,
+		Executor:    executor,
+	})
+
+	if len(executor.calls) != 1 {
+		t.Fatalf("a rotated password stopped an authorized migration Apply: calls=%d error=%#v", len(executor.calls), result.Error)
+	}
+	// The child ran and exited; the only refusal is the one it reported.
+	if result.Error == nil || result.Error.Code != "child_exit" {
+		t.Fatalf("error = %#v, want the scripted child's exit rather than a dispatch refusal", result.Error)
+	}
+	if !result.MutationStarted {
+		t.Fatalf("the child ran and the frame did not claim the mutation: %#v", result)
+	}
+}
+
+// A Pod that was authorized and then sat can expire between the first check and
+// the child, so the check adjacent to dispatch is the one that decides.
+func TestMigrationApplyRechecksDeadlinesImmediatelyBeforeExecution(t *testing.T) {
+	t.Parallel()
+
+	deadline := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	times := []time.Time{deadline.Add(-time.Second), deadline}
+	clockCalls := 0
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
+	environment := append(migrationApplyEnvironment(t, "migration-deadline-race"),
+		envDispatchNotAfter+"="+deadline.Format(time.RFC3339Nano),
+		envExecutionNotAfter+"="+deadline.Format(time.RFC3339Nano),
+	)
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: environment,
+		Executor:    executor,
+		Clock: func() time.Time {
+			if clockCalls >= len(times) {
+				t.Fatalf("clock called more than %d times", len(times))
+			}
+			now := times[clockCalls]
+			clockCalls++
+			return now
+		},
+	})
+	if result.Error == nil || result.Error.Code != "dispatch_deadline_expired" {
+		t.Fatalf("error = %#v, want dispatch_deadline_expired", result.Error)
+	}
+	if len(executor.calls) != 0 || result.MutationStarted || result.Uncertain {
+		t.Fatalf("a migration Apply past its window still ran: calls=%d result=%#v", len(executor.calls), result)
+	}
+	if clockCalls != 2 {
+		t.Fatalf("clock calls = %d, want the check adjacent to dispatch as well", clockCalls)
+	}
+}
+
+// The execution deadline is the child's, not only the dispatch decision's: a
+// migration that started inside its window is cancelled when the window ends.
+func TestMigrationApplyExecutionDeadlineCancelsAStartedChild(t *testing.T) {
+	t.Parallel()
+
+	deadline := time.Now().UTC().Add(250 * time.Millisecond)
+	executor := &contextDeadlineExecutor{}
+	environment := append(migrationApplyEnvironment(t, "migration-execution-deadline"),
+		envDispatchNotAfter+"="+deadline.Format(time.RFC3339Nano),
+		envExecutionNotAfter+"="+deadline.Format(time.RFC3339Nano),
+	)
+	started := time.Now()
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: environment,
+		Executor:    executor,
+	})
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want the child to have started", executor.calls)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("the child ran %s past its execution deadline", elapsed)
+	}
+	if result.Error == nil {
+		t.Fatalf("Run() = %#v, want the cancelled child reported", result)
+	}
+	// A cancelled migration may already have committed statements, and nothing
+	// outside the database can say which.
+	if !result.MutationStarted || !result.Uncertain {
+		t.Fatalf("a cancelled migration child reported MutationStarted=%t Uncertain=%t", result.MutationStarted, result.Uncertain)
 	}
 }

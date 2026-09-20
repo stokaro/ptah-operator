@@ -48,7 +48,11 @@ func (v *Validator) validateMigrationJobCreate(
 	if operation == nil || operation.JobName != job.Name || operation.JobUID != "" {
 		return denyf("Job does not match a not-yet-created migration operation")
 	}
-	expected, err := v.Jobs.BuildMigration(migration.DeepCopy(), *operation.DeepCopy())
+	plan, err := v.migrationPlanForJob(ctx, migration, operation)
+	if err != nil {
+		return err
+	}
+	expected, err := v.Jobs.BuildMigration(migration.DeepCopy(), *operation.DeepCopy(), plan)
 	if err != nil {
 		return denyf("migration operation cannot reconstruct the submitted Job: %v", err)
 	}
@@ -59,6 +63,31 @@ func (v *Validator) validateMigrationJobCreate(
 		return denyf("Job is outside the migration operation intent: %v", err)
 	}
 	return nil
+}
+
+// migrationPlanForJob re-reads the immutable plan a migration Apply claim
+// named, so the reconstructed Job carries the same plan identity the submitted
+// one must. Every other migration operation carries no plan.
+func (v *Validator) migrationPlanForJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) (*operatorv1alpha1.PtahMigrationPlan, error) {
+	if operation.Type != operatorv1alpha1.MigrationOperationApply {
+		return nil, nil
+	}
+	if operation.PlanRef == nil || operation.PlanRef.Name == "" || operation.PlanRef.UID == "" {
+		return nil, denyf("migration Apply operation names no immutable plan")
+	}
+	plan := &operatorv1alpha1.PtahMigrationPlan{}
+	key := client.ObjectKey{Namespace: migration.Namespace, Name: operation.PlanRef.Name}
+	if err := v.Reader.Get(ctx, key, plan); err != nil {
+		return nil, internalf("directly read migration Apply plan %s/%s: %v", key.Namespace, key.Name, err)
+	}
+	if plan.UID != operation.PlanRef.UID {
+		return nil, denyf("migration Apply plan UID does not match the operation claim")
+	}
+	return plan, nil
 }
 
 // validateMigrationJobUpdate authorizes one write on a migration Job: the

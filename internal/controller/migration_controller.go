@@ -54,6 +54,7 @@ type MigrationJobBuilder interface {
 	BuildMigration(
 		migration *operatorv1alpha1.PtahMigration,
 		operation operatorv1alpha1.MigrationOperationStatus,
+		plan *operatorv1alpha1.PtahMigrationPlan,
 	) (*batchv1.Job, error)
 	ExecutionBinding() (
 		controllerImage string,
@@ -523,6 +524,34 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	return r.consumeMigrationResult(ctx, migration, job, result)
 }
 
+// migrationPlanForJob re-reads the immutable plan an Apply claim named. Every
+// other migration operation carries none, and gets nil.
+//
+// The Job the builder assembles carries that plan's identity into the runner,
+// which refuses to open the database without it, so the plan is read here
+// rather than remembered from the pass that claimed the Apply.
+func (r *MigrationReconciler) migrationPlanForJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) (*operatorv1alpha1.PtahMigrationPlan, error) {
+	if operation.Type != operatorv1alpha1.MigrationOperationApply {
+		return nil, nil
+	}
+	if operation.PlanRef == nil || operation.PlanRef.Name == "" || operation.PlanRef.UID == "" {
+		return nil, errors.New("the Apply claim names no immutable plan")
+	}
+	plan := &operatorv1alpha1.PtahMigrationPlan{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.PlanRef.Name}
+	if err := r.directReader().Get(ctx, key, plan); err != nil {
+		return nil, fmt.Errorf("read the Apply plan: %w", err)
+	}
+	if plan.UID != operation.PlanRef.UID || plan.DeletionTimestamp != nil {
+		return nil, errors.New("the Apply plan was replaced or is being deleted")
+	}
+	return plan, nil
+}
+
 // dispatchMigrationJob creates the Job the claim named, once. Every input the
 // claim was decided from is re-read first: a Job is only worth creating while
 // the decision behind it still holds.
@@ -562,7 +591,11 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	if r.Jobs == nil {
 		return ctrl.Result{}, errors.New("Job builder is not configured")
 	}
-	job, err := r.Jobs.BuildMigration(migration, *operation)
+	plan, planErr := r.migrationPlanForJob(ctx, migration, operation)
+	if planErr != nil {
+		return r.discardMigrationOperation(ctx, migration, planErr)
+	}
+	job, err := r.Jobs.BuildMigration(migration, *operation, plan)
 	if err != nil {
 		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("build %s Job: %w", operation.Type, err))
 	}

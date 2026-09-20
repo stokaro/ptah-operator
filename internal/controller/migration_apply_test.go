@@ -946,3 +946,58 @@ func TestDispatchedApplyMayStillWriteReadsTheJobTheCallerDidNotPass(t *testing.T
 		t.Fatal("the gate handed the database back for a dispatched Job it never read")
 	}
 }
+
+// The Apply Job carries the approved plan's identity to the runner, which
+// refuses to open the database without it. So the plan is re-read at dispatch,
+// and a claim whose plan is gone or replaced dispatches nothing.
+func TestMigrationPlanForJobBindsDispatchToTheApprovedPlan(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	reconciler, _ := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+
+	read, err := reconciler.migrationPlanForJob(context.Background(), migration, operation)
+	if err != nil {
+		t.Fatalf("migrationPlanForJob() error = %v", err)
+	}
+	if read == nil || read.UID != plan.UID || read.Spec.Fingerprint != plan.Spec.Fingerprint {
+		t.Fatalf("migrationPlanForJob() = %#v, want the plan the claim named", read)
+	}
+
+	history := &operatorv1alpha1.MigrationOperationStatus{Type: operatorv1alpha1.MigrationOperationHistory}
+	if read, err := reconciler.migrationPlanForJob(context.Background(), migration, history); read != nil || err != nil {
+		t.Fatalf("a history operation carried plan %#v (error %v)", read, err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*operatorv1alpha1.MigrationOperationStatus)
+	}{
+		{
+			name:   "the claim names no plan",
+			mutate: func(operation *operatorv1alpha1.MigrationOperationStatus) { operation.PlanRef = nil },
+		},
+		{
+			name: "the plan was replaced after the claim",
+			mutate: func(operation *operatorv1alpha1.MigrationOperationStatus) {
+				operation.PlanRef.UID = types.UID("a-newer-plan")
+			},
+		},
+		{
+			name: "the plan no longer exists",
+			mutate: func(operation *operatorv1alpha1.MigrationOperationStatus) {
+				operation.PlanRef.Name = "ptah-mplan-gone"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			claim := operation.DeepCopy()
+			test.mutate(claim)
+			read, err := reconciler.migrationPlanForJob(context.Background(), migration, claim)
+			if err == nil || read != nil {
+				t.Fatalf("migrationPlanForJob() = %#v, %v, want a refusal", read, err)
+			}
+		})
+	}
+}

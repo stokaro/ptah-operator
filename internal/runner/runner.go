@@ -69,8 +69,8 @@ func Run(ctx context.Context, config Config) Result {
 		ChildExitCode:   -1,
 		Stdout:          "",
 	}
-	var applyDispatchDeadline time.Time
-	var applyExecutionDeadline time.Time
+	var mutationDispatchDeadline time.Time
+	var mutationExecutionDeadline time.Time
 
 	if !config.Operation.Valid() {
 		setResultError(&result, "invalid_operation", fmt.Errorf("unsupported operation %q", config.Operation), redactor, config.Diagnostics)
@@ -120,7 +120,12 @@ func Run(ctx context.Context, config Config) Result {
 		setResultError(&result, "missing_target", errors.New("PTAH_DB_URL is required"), redactor, config.Diagnostics)
 		return result
 	}
-	if config.Operation == OperationApply {
+	// One authority block for both mutating families. A schema Apply and a
+	// migration Apply reach the same database through the same kind of Pod, so
+	// a boundary that held for one and not the other was never a boundary: the
+	// migration path used to read none of this and dispatched on a changed
+	// target, past both deadlines, with no approved plan named at all.
+	if config.Operation.Mutating() {
 		if !validProtocolDigest(inputs.ExpectedCoordinationDigest) {
 			setResultError(&result, "missing_coordination_binding", errors.New("expected coordination digest is required"), redactor, config.Diagnostics)
 			return result
@@ -137,9 +142,25 @@ func Run(ctx context.Context, config Config) Result {
 			setResultError(&result, "target_binding_mismatch", errors.New("database target identity changed after planning"), redactor, config.Diagnostics)
 			return result
 		}
+		if config.Operation == OperationMigrationApply {
+			// `migrations up` takes no sequence argument, so this process
+			// cannot prove the child will execute exactly the approved
+			// sequence -- that proof needs an executor that accepts one. What
+			// it can refuse is a child no plan authorized: a migration Apply
+			// that names neither an approved sequence nor the history that
+			// sequence was computed against has nothing behind it.
+			if !validProtocolDigest(inputs.ExpectedSequenceDigest) {
+				setResultError(&result, "missing_plan_binding", errors.New("the approved migration sequence digest is required"), redactor, config.Diagnostics)
+				return result
+			}
+			if !validProtocolDigest(inputs.ExpectedHistoryFingerprint) {
+				setResultError(&result, "missing_plan_binding", errors.New("the approved history fingerprint is required"), redactor, config.Diagnostics)
+				return result
+			}
+		}
 		dispatchNotAfter, err := time.Parse(time.RFC3339Nano, inputs.DispatchNotAfter)
 		if err != nil {
-			setResultError(&result, "missing_dispatch_deadline", errors.New("absolute Apply dispatch deadline is required"), redactor, config.Diagnostics)
+			setResultError(&result, "missing_dispatch_deadline", errors.New("an absolute dispatch deadline is required"), redactor, config.Diagnostics)
 			return result
 		}
 		now := time.Now().UTC()
@@ -147,20 +168,20 @@ func Run(ctx context.Context, config Config) Result {
 			now = config.Clock().UTC()
 		}
 		if !now.Before(dispatchNotAfter) {
-			setResultError(&result, "dispatch_deadline_expired", errors.New("Apply dispatch deadline expired before child execution"), redactor, config.Diagnostics)
+			setResultError(&result, "dispatch_deadline_expired", errors.New("the dispatch deadline expired before child execution"), redactor, config.Diagnostics)
 			return result
 		}
-		applyDispatchDeadline = dispatchNotAfter
+		mutationDispatchDeadline = dispatchNotAfter
 		executionNotAfter, err := time.Parse(time.RFC3339Nano, inputs.ExecutionNotAfter)
 		if err != nil || executionNotAfter.Before(dispatchNotAfter) {
-			setResultError(&result, "missing_execution_deadline", errors.New("valid absolute Apply execution deadline is required"), redactor, config.Diagnostics)
+			setResultError(&result, "missing_execution_deadline", errors.New("a valid absolute execution deadline is required"), redactor, config.Diagnostics)
 			return result
 		}
 		if !now.Before(executionNotAfter) {
-			setResultError(&result, "execution_deadline_expired", errors.New("Apply execution deadline expired before child execution"), redactor, config.Diagnostics)
+			setResultError(&result, "execution_deadline_expired", errors.New("the execution deadline expired before child execution"), redactor, config.Diagnostics)
 			return result
 		}
-		applyExecutionDeadline = executionNotAfter
+		mutationExecutionDeadline = executionNotAfter
 	}
 
 	if config.PtahBinary == "" {
@@ -260,7 +281,7 @@ func Run(ctx context.Context, config Config) Result {
 		setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
 		return result
 	}
-	if config.Operation == OperationApply {
+	if config.Operation.Mutating() {
 		// Plan reconstruction and temporary-file I/O may take a meaningful
 		// fraction of a short dispatch window, and a suspended process may resume
 		// after the Lease has moved to another operation. The check immediately
@@ -270,19 +291,19 @@ func Run(ctx context.Context, config Config) Result {
 		if config.Clock != nil {
 			now = config.Clock().UTC()
 		}
-		if !now.Before(applyDispatchDeadline) {
-			setResultError(&result, "dispatch_deadline_expired", errors.New("Apply dispatch deadline expired before child execution"), redactor, config.Diagnostics)
+		if !now.Before(mutationDispatchDeadline) {
+			setResultError(&result, "dispatch_deadline_expired", errors.New("the dispatch deadline expired before child execution"), redactor, config.Diagnostics)
 			return result
 		}
-		if !now.Before(applyExecutionDeadline) {
-			setResultError(&result, "execution_deadline_expired", errors.New("Apply execution deadline expired before child execution"), redactor, config.Diagnostics)
+		if !now.Before(mutationExecutionDeadline) {
+			setResultError(&result, "execution_deadline_expired", errors.New("the execution deadline expired before child execution"), redactor, config.Diagnostics)
 			return result
 		}
 	}
 	executionContext := ctx
 	cancelExecution := func() {}
-	if config.Operation == OperationApply {
-		executionContext, cancelExecution = context.WithDeadline(ctx, applyExecutionDeadline)
+	if config.Operation.Mutating() {
+		executionContext, cancelExecution = context.WithDeadline(ctx, mutationExecutionDeadline)
 	}
 	defer cancelExecution()
 	outcome := executeCommand(executionContext, config, spec)

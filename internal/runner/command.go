@@ -33,6 +33,12 @@ const (
 	// EnvExpectedCoordinationDigest binds Apply to the realm approved in its
 	// immutable plan independently from the operation claim.
 	EnvExpectedCoordinationDigest = "PTAH_EXPECTED_COORDINATION_DIGEST"
+	// EnvExpectedMigrationSequenceDigest binds a migration Apply to the exact
+	// ordered sequence its approved plan carries.
+	EnvExpectedMigrationSequenceDigest = "PTAH_EXPECTED_MIGRATION_SEQUENCE_DIGEST"
+	// EnvExpectedMigrationHistoryFingerprint binds it to the reading of the
+	// revision table that plan was computed against.
+	EnvExpectedMigrationHistoryFingerprint = "PTAH_EXPECTED_MIGRATION_HISTORY_FINGERPRINT"
 	// EnvDispatchNotAfter is the absolute last instant at which an Apply Pod may
 	// dispatch its mutating child, even if an orphaned Pod was scheduled late.
 	EnvDispatchNotAfter = "PTAH_DISPATCH_NOT_AFTER"
@@ -79,6 +85,8 @@ const (
 	envExpectedTargetDigest   = EnvExpectedTargetIdentityDigest
 	envCoordinationDigest     = EnvCoordinationDigest
 	envExpectedCoordination   = EnvExpectedCoordinationDigest
+	envExpectedSequenceDigest = EnvExpectedMigrationSequenceDigest
+	envExpectedHistory        = EnvExpectedMigrationHistoryFingerprint
 	envDispatchNotAfter       = EnvDispatchNotAfter
 	envExecutionNotAfter      = EnvExecutionNotAfter
 	envDatabaseURL            = EnvDatabaseURL
@@ -101,6 +109,8 @@ type Inputs struct {
 	ExpectedTargetDigest       string
 	CoordinationDigest         string
 	ExpectedCoordinationDigest string
+	ExpectedSequenceDigest     string
+	ExpectedHistoryFingerprint string
 	DispatchNotAfter           string
 	ExecutionNotAfter          string
 	ExpectedDatabaseEngine     string
@@ -122,6 +132,8 @@ func InputsFromEnvironment(environment []string) Inputs {
 		ExpectedTargetDigest:       values[envExpectedTargetDigest],
 		CoordinationDigest:         values[envCoordinationDigest],
 		ExpectedCoordinationDigest: values[envExpectedCoordination],
+		ExpectedSequenceDigest:     values[envExpectedSequenceDigest],
+		ExpectedHistoryFingerprint: values[envExpectedHistory],
 		DispatchNotAfter:           values[envDispatchNotAfter],
 		ExecutionNotAfter:          values[envExecutionNotAfter],
 		ExpectedDatabaseEngine:     values[envExpectedDatabaseEngine],
@@ -171,6 +183,8 @@ func childEnvironment(environment []string) []string {
 		EnvExpectedTargetIdentityDigest,
 		EnvCoordinationDigest,
 		EnvExpectedCoordinationDigest,
+		EnvExpectedMigrationSequenceDigest,
+		EnvExpectedMigrationHistoryFingerprint,
 		EnvDispatchNotAfter,
 		EnvExecutionNotAfter,
 		EnvExpectedDatabaseEngine,

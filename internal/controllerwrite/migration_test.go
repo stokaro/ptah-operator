@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -260,7 +261,7 @@ func migrationJobFixture(
 		t.Fatal(err)
 	}
 	operation.JobName = name
-	job, err := builder.BuildMigration(migration, *operation)
+	job, err := builder.BuildMigration(migration, *operation, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,10 +284,141 @@ func migrationJobFixture(
 	}
 	snapshot.Digest = snapshotDigest
 	operation.AdmissionSnapshot = snapshot
-	job, err = builder.BuildMigration(migration, *operation)
+	job, err = builder.BuildMigration(migration, *operation, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	job.TypeMeta = metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"}
 	return migration, job
+}
+
+// An Apply Job carries the approved plan's bindings, so admission has to read
+// the same plan to rebuild it. A Job whose plan is not the one the claim named
+// cannot be reconstructed, and is refused before it reaches the API.
+func TestValidationHandlerBindsMigrationApplyJobsToTheirPlan(t *testing.T) {
+	t.Parallel()
+
+	migration, plan, job := migrationApplyJobFixture(t)
+	handler := migrationHandlerFixture(t, migration, plan)
+	response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, job))
+	if !response.Allowed {
+		t.Fatalf("migration Apply Job create was denied: %s", responseMessage(response))
+	}
+
+	for _, test := range []struct {
+		name    string
+		mutate  func(*operatorv1alpha1.PtahMigration, *operatorv1alpha1.PtahMigrationPlan)
+		message string
+	}{
+		{
+			name: "the claim names no plan",
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
+				migration.Status.ActiveOperation.PlanRef = nil
+			},
+			message: "names no immutable plan",
+		},
+		{
+			name: "the plan was replaced after the claim",
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
+				migration.Status.ActiveOperation.PlanRef.UID = types.UID("a-newer-plan")
+			},
+			message: "plan UID does not match the operation claim",
+		},
+		{
+			name: "the plan approved another realm",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) {
+				plan.Spec.CoordinationDigest = digest('9')
+			},
+			message: "cannot reconstruct the submitted Job",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration, plan, job := migrationApplyJobFixture(t)
+			test.mutate(migration, plan)
+			handler := migrationHandlerFixture(t, migration, plan)
+			response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, job))
+			if response.Allowed {
+				t.Fatal("a migration Apply Job was admitted without the plan that authorized it")
+			}
+			if !strings.Contains(responseMessage(response), test.message) {
+				t.Fatalf("denial = %q, want one mentioning %q", responseMessage(response), test.message)
+			}
+		})
+	}
+}
+
+// migrationApplyJobFixture is an Apply claim, the immutable plan it names, and
+// the Job that claim authorizes.
+func migrationApplyJobFixture(t *testing.T) (
+	*operatorv1alpha1.PtahMigration,
+	*operatorv1alpha1.PtahMigrationPlan,
+	*batchv1.Job,
+) {
+	t.Helper()
+
+	migration, _ := migrationJobFixture(t, operatorv1alpha1.MigrationOperationHistory)
+	plan := &operatorv1alpha1.PtahMigrationPlan{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: migration.Namespace, Name: "ptah-mplan-orders-1", UID: types.UID("migration-plan-uid"),
+		},
+		Spec: operatorv1alpha1.PtahMigrationPlanSpec{
+			ContractVersion:      1,
+			MigrationRef:         operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
+			Fingerprint:          digest('b'),
+			HistoryFingerprint:   digest('5'),
+			CurrentVersion:       2,
+			ArtifactDigest:       digest('4'),
+			CoordinationDigest:   digest('6'),
+			TargetIdentityDigest: digest('7'),
+			Migrations:           []operatorv1alpha1.PlannedMigration{{Version: 3, Checksum: "h1:orders-0003"}},
+		},
+	}
+
+	operation := migration.Status.ActiveOperation
+	operation.Type = operatorv1alpha1.MigrationOperationApply
+	operation.AdmissionSnapshot = nil
+	operation.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID}
+	// Second precision, because that is what the API server stores and what
+	// admission therefore rebuilds the Job from.
+	operation.StartedAt = operation.StartedAt.Rfc3339Copy()
+	dispatchNotAfter := metav1.NewTime(operation.StartedAt.Add(600 * time.Second)).Rfc3339Copy()
+	operation.DispatchNotAfter = &dispatchNotAfter
+	operation.ExecutionNotAfter = dispatchNotAfter.DeepCopy()
+
+	builder := migrationJobBuilder()
+	name, err := workload.NameForMigration(migration, *operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.JobName = name
+	job, err := builder.BuildMigration(migration, *operation, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := &operatorv1alpha1.PodAdmissionSnapshot{
+		Version:        podintent.SnapshotVersion,
+		TemplateDigest: templateDigest,
+		ServiceAccount: operatorv1alpha1.ServiceAccountAdmissionSnapshot{
+			Object: operatorv1alpha1.AdmissionObjectBinding{
+				Name: "ptah-orders", UID: "service-account-uid", ResourceVersion: "1",
+			},
+		},
+	}
+	snapshotDigest, err := fingerprint.DigestCanonicalJSON(*snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Digest = snapshotDigest
+	operation.AdmissionSnapshot = snapshot
+	job, err = builder.BuildMigration(migration, *operation, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.TypeMeta = metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"}
+	return migration, plan, job
 }

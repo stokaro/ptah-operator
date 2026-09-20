@@ -162,11 +162,19 @@ func (r *MigrationReconciler) findMigrationApproval(
 //
 // The run itself is `ptah migrations up`, which applies everything the artifact
 // has and the database does not; there is no target-version flag to bound it to
-// the planned sequence. It cannot exceed the plan even so: the artifact is
-// digest-pinned, so the migrations that could run are exactly the ones the plan
-// enumerated, and a history that moved in the meantime can only have removed
-// some of them. A run may therefore apply a subset of the plan, never a
-// superset, and the history read afterwards is what says which it was.
+// the planned sequence. The artifact is digest-pinned, so the migrations that
+// could run are drawn from exactly the file set the plan enumerated, and a
+// history that only advanced can have removed some of them -- that case applies
+// a subset of the plan and the history read afterwards says which.
+//
+// A history that went backwards is the case this does not cover. Restore the
+// database to an earlier version between the plan and the run and `migrations
+// up` selects the versions that became pending again, which is a superset of
+// what was approved. The claim's bindings travel to the runner and the runner
+// refuses a child that names no approved sequence at all, but bounding the run
+// to that sequence needs an executor that accepts one. Until then the plan's
+// premise is checked against the history this controller last read, not
+// against the history under the lock the mutation takes.
 func (r *MigrationReconciler) claimMigrationApply(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
