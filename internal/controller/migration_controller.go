@@ -119,6 +119,12 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
 	}
+	// Before any refusal below writes its own reason: a resource an older
+	// manager blocked for an unresolved run carries that latch in the reason
+	// alone, and every refusal here overwrites it.
+	if err := r.adoptUnresolvedMigrationRun(ctx, migration); err != nil {
+		return ctrl.Result{}, err
+	}
 	if result, handled, err := r.reconcileMigrationExecutionBinding(ctx, migration); handled || err != nil {
 		return result, err
 	}
@@ -760,19 +766,12 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	return ctrl.Result{Requeue: true}, nil
 }
 
-// migrationRunIsUnresolved reports that the last run ended without an account
-// of what it did, and that nothing has settled it since.
-//
-// The two outcomes are the ones the documentation says are never retried: a
-// Partial committed some of its statements and not the rest, and an Unknown
-// could not be read at all. Both leave a pending migration that may or may not
-// have run.
-//
-// The latch is the refusal itself rather than a second field. While the Blocked
-// condition still carries that reason, nothing has cleared it; the branch that
-// finds nothing pending sets it false, so a database somebody put right
-// releases it without an API of its own.
-func migrationRunIsUnresolved(migration *operatorv1alpha1.PtahMigration) bool {
+// migrationRunLatchedByRefusal reads the pre-record latch: an unresolved
+// outcome under a Blocked condition that still carries its reason. That is what
+// a manager older than status.unresolvedRun left behind, and an upgrade is the
+// only reader: adoptUnresolvedMigrationRun calls it, nothing else does, and no
+// decision about replaying a migration is taken from it.
+func migrationRunLatchedByRefusal(migration *operatorv1alpha1.PtahMigration) bool {
 	run := migration.Status.LastRun
 	if run == nil {
 		return false
@@ -784,6 +783,55 @@ func migrationRunIsUnresolved(migration *operatorv1alpha1.PtahMigration) bool {
 	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
 	return blocked != nil && blocked.Status == metav1.ConditionTrue &&
 		blocked.Reason == string(operatorv1alpha1.ReasonApplyOutcomeUnknown)
+}
+
+// adoptUnresolvedMigrationRun converts the refusal an older manager latched an
+// unresolved run with into the record, and is a no-op for every resource that
+// already has one or never had a run to account for.
+//
+// It writes before anything else in the pass, rather than at each refusal that
+// would overwrite the reason. Three refusals write one today -- a contested
+// realm, the history classifier, and an unsupported engine above the generation
+// check -- and a fourth added later would have to remember as well: a spec
+// edited to an unsupported engine and back is otherwise enough to lose a latch
+// that was standing. Converting first means the record is the only thing any
+// decision below reads, and a reason is never the evidence that a mutation was
+// accounted for, not even for one pass.
+//
+// What it can recover is what the old refusal carried: the outcome, the Job,
+// and the database the last reading named. The claim that ran is long gone, so
+// the record names no attempt and no plan.
+func (r *MigrationReconciler) adoptUnresolvedMigrationRun(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) error {
+	if migration.Status.UnresolvedRun != nil || !migrationRunLatchedByRefusal(migration) {
+		return nil
+	}
+	before := migration.DeepCopy()
+	recordUnresolvedMigrationRun(migration, nil, migration.Status.LastRun, r.now())
+	return r.patchMigrationStatus(ctx, before, migration)
+}
+
+// migrationUnresolvedRunSettledBy reports that this reading is the proof the
+// unresolved run needed: the same database, with nothing of this artifact left
+// to apply.
+//
+// A record that names no database cannot be contradicted by one, so any reading
+// with nothing pending settles it. Requiring a match against an identity nobody
+// recorded would latch the resource with no way out.
+func migrationUnresolvedRunSettledBy(
+	unresolved *operatorv1alpha1.UnresolvedMigrationRunStatus,
+	history *operatorv1alpha1.MigrationHistoryStatus,
+	pending []int64,
+) bool {
+	if len(pending) > 0 {
+		return false
+	}
+	if unresolved == nil || unresolved.TargetIdentityDigest == "" {
+		return true
+	}
+	return history != nil && unresolved.TargetIdentityDigest == history.TargetIdentityDigest
 }
 
 // recordMigrationHistory turns the database's own account into status. The
@@ -803,10 +851,11 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	modified := report.Modified()
 	outOfOrder := report.OutOfOrder()
 	artifactVersion := report.LastVersion()
-	// Read before the conditions below rewrite it: this is the refusal a
-	// previous run left, and it decides whether a pending migration may be
-	// planned at all.
-	unresolvedRun := migrationRunIsUnresolved(migration)
+	// The record of a run nobody accounted for decides whether a pending
+	// migration may be planned at all, and it is the only thing that decides
+	// it. The conditions below rewrite whatever reason the resource carried;
+	// the record is somewhere a reason cannot reach.
+	unresolved := migration.Status.UnresolvedRun
 	history := &operatorv1alpha1.MigrationHistoryStatus{
 		ObservedAt:           metav1.NewTime(r.now()),
 		ContractVersion:      int32(report.ContractVersion),
@@ -882,15 +931,23 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	// workflow exists to refuse: re-running a file that may have committed
 	// would run it twice, and the history cannot say which.
 	//
-	// A history with nothing pending is the read-only proof that settles it,
-	// and it takes the branch below, which clears this refusal. Anything else
-	// waits for a person, exactly as the run's own condition said it would.
-	case len(pending) > 0 && unresolvedRun:
+	// A reading of that same database with nothing pending is the read-only
+	// proof that settles it, and it takes the branch below, which removes the
+	// record. Anything else -- work still pending, or a reading of a database
+	// this run never addressed -- waits for a person, exactly as the run's own
+	// condition said it would.
+	case unresolved != nil && !migrationUnresolvedRunSettledBy(unresolved, history, pending):
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+		refusal := fmt.Sprintf("%d migrations are pending and the last run's outcome was %s, so none may run again",
+			len(pending), unresolved.Outcome)
+		if len(pending) == 0 {
+			refusal = fmt.Sprintf(
+				"Nothing is pending here, but this is a different database from the one the %s run addressed, "+
+					"so it does not say what that run did",
+				unresolved.Outcome)
+		}
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
-			operatorv1alpha1.ReasonApplyOutcomeUnknown,
-			fmt.Sprintf("%d migrations are pending and the last run's outcome was %s, so none may run again",
-				len(pending), migration.Status.LastRun.Outcome))
+			operatorv1alpha1.ReasonApplyOutcomeUnknown, refusal)
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, "What the last run did is unknown until the database is read by a person")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
@@ -908,6 +965,10 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryAhead, "Nothing runs while the database is ahead of the artifact")
 	case len(pending) == 0:
+		// The one transition that settles an unresolved run: this database has
+		// every migration the artifact carries, so nothing is left for that run
+		// to have half-done. It is also the only place the record is removed.
+		migration.Status.UnresolvedRun = nil
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseInSync
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryMatched, "The history continues this artifact")

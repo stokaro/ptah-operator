@@ -392,6 +392,7 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		// Neither may be retried. A partial run committed some of a migration's
 		// statements and not the rest, and an unknown one cannot say whether it
 		// did; running the same file again would run those statements twice.
+		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun, r.now())
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, bounded(message, 1024))
@@ -418,6 +419,42 @@ func (r *MigrationReconciler) consumeMigrationRun(
 	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome, bounded(message, 256))
 	r.releaseMigrationApplyLock(ctx, migration, operation)
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// recordUnresolvedMigrationRun latches the run whose effect on the database
+// nobody established, and names what a person has to go and look at: the
+// attempt, the Job it ran as, the plan it was carrying out, and the database it
+// addressed.
+//
+// It is a record rather than a condition because a condition is about now. Any
+// later refusal rewrites the reason this run left, and a refusal that was
+// rewritten says nothing about whether the mutation was ever accounted for.
+// Only a reading of that same database with nothing pending removes it.
+func recordUnresolvedMigrationRun(
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	run *operatorv1alpha1.MigrationRunStatus,
+	now time.Time,
+) {
+	if run == nil {
+		return
+	}
+	unresolved := &operatorv1alpha1.UnresolvedMigrationRunStatus{
+		Outcome:    run.Outcome,
+		JobName:    run.JobName,
+		JobUID:     run.JobUID,
+		RecordedAt: metav1.NewTime(now),
+	}
+	if operation != nil {
+		unresolved.OperationID = operation.ID
+		unresolved.PlanRef = operation.PlanRef.DeepCopy()
+	}
+	// The database the run addressed is the one the plan was computed against,
+	// which is the last history this resource read.
+	if history := migration.Status.History; history != nil {
+		unresolved.TargetIdentityDigest = history.TargetIdentityDigest
+	}
+	migration.Status.UnresolvedRun = unresolved
 }
 
 // releaseMigrationApplyLock hands the database back. A failure to release is
@@ -554,6 +591,7 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		run.JobUID = job.UID
 	}
 	migration.Status.LastRun = run
+	recordUnresolvedMigrationRun(migration, operation, run, r.now())
 	migration.Status.ActiveOperation = nil
 	migration.Status.Plan = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
