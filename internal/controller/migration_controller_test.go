@@ -671,11 +671,14 @@ func migrationFrame(t *testing.T, result runner.Result) []byte {
 	return frame
 }
 
+// fakeMigrationReconciler builds the reconciler and the fake API server it
+// reads and writes through. The client comes back as a WithWatch so a test can
+// put an interceptor in front of the reconciler's reads.
 func fakeMigrationReconciler(
 	t *testing.T,
 	logs PodLogReader,
 	objects ...client.Object,
-) (*MigrationReconciler, client.Client) {
+) (*MigrationReconciler, client.WithWatch) {
 	t.Helper()
 
 	scheme := runtime.NewScheme()

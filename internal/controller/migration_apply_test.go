@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -688,7 +690,7 @@ func uncertainApplyUnderBindingChange(
 	migration *operatorv1alpha1.PtahMigration,
 	plan *operatorv1alpha1.PtahMigrationPlan,
 	dispatched ...client.Object,
-) (*MigrationReconciler, client.Client) {
+) (*MigrationReconciler, client.WithWatch) {
 	t.Helper()
 
 	migration.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
@@ -762,6 +764,42 @@ func TestUncertainMigrationApplyKeepsTheDatabaseWhileItsPodMayRun(t *testing.T) 
 	}
 }
 
+// A Pod read that failed is not a Pod that stopped. Everything else here says
+// the run is over -- a terminal Job, and the Pod the API server has finished
+// with -- and the one read that would confirm it does not answer. Releasing on
+// that reading costs the database; keeping it costs one lease duration, which
+// migrationApplyLeaseGrace already sizes to outlive the Pod.
+func TestUncertainMigrationApplyKeepsTheDatabaseWhenItsPodsCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	reconciler, api := uncertainApplyUnderBindingChange(t, migration, plan, job, pod)
+	reconciler.APIReader = interceptor.NewClient(api, interceptor.Funcs{
+		List: func(
+			ctx context.Context,
+			reader client.WithWatch,
+			list client.ObjectList,
+			options ...client.ListOption,
+		) error {
+			if _, ok := list.(*corev1.PodList); ok {
+				return errors.New("injected Pod list failure")
+			}
+			return reader.List(ctx, list, options...)
+		},
+	})
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
+	}
+	assertDatabaseStillHeld(t, reconciler, api)
+}
+
 // A create that fails is not proof that nothing was created: a client timeout
 // or a 5xx after the write persisted leaves a Job running under the name the
 // claim reserved, and no UID on the claim to recognize it by. The name is
@@ -790,6 +828,43 @@ func TestUncertainMigrationApplyKeepsTheDatabaseWhenItsCreateMayHaveLanded(t *te
 	assertDatabaseStillHeld(t, reconciler, api)
 }
 
+// The same read, when it cannot be made at all. A NotFound is what says the
+// create never landed; an error says only that nobody knows, and a claim whose
+// reserved name may hold a running Job is the case the gate exists for.
+func TestUncertainMigrationApplyKeepsTheDatabaseWhenItsReservedNameCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	// The create never reported back, so the reserved name is all the claim
+	// carries -- and the read that would say what is under it fails.
+	operation.JobUID = ""
+	reconciler, api := uncertainApplyUnderBindingChange(t, migration, plan)
+	reconciler.APIReader = interceptor.NewClient(api, interceptor.Funcs{
+		Get: func(
+			ctx context.Context,
+			reader client.WithWatch,
+			key client.ObjectKey,
+			object client.Object,
+			options ...client.GetOption,
+		) error {
+			if _, ok := object.(*batchv1.Job); ok {
+				return errors.New("injected dispatched Apply Job read failure")
+			}
+			return reader.Get(ctx, key, object, options...)
+		},
+	})
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
+	}
+	assertDatabaseStillHeld(t, reconciler, api)
+}
+
 // The other direction of the same read, and the reason it is a read rather
 // than a refusal to release: a claim whose reserved name holds nothing
 // dispatched nothing. Keeping the database there would strand it for a whole
@@ -803,6 +878,44 @@ func TestUncertainMigrationApplyHandsTheDatabaseBackWhenNothingWasCreated(t *tes
 	// reserved Job name, no UID, and no object in the namespace.
 	applyClaimFor(t, migration, plan)
 	reconciler, api := uncertainApplyUnderBindingChange(t, migration, plan)
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
+	}
+	assertDatabaseHandedBack(t, reconciler, api)
+}
+
+// A Job under the claim's name is this claim's Job only if its UID says so. The
+// name is derived from the claim, so a later Job holds it too -- and reading
+// that Job's condition would keep the database over a run this claim never
+// dispatched, until a lease duration expired. The identity check is what sends
+// the gate to the Pod read instead, where the UID the claim recorded owns
+// nothing and the database goes back to whoever asks for it next.
+func TestUncertainMigrationApplyHandsTheDatabaseBackWhenAnotherJobHoldsTheName(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	// The object under the reserved name is a Job that replaced this claim's:
+	// the same name, a UID the claim never saw, and a Pod of its own running
+	// now. The claim keeps the UID it dispatched.
+	job.UID = "replacement-job-uid"
+	job.Status.Conditions = nil
+	job.Status.Active = 1
+	pod.OwnerReferences = []metav1.OwnerReference{jobControllerReference(job)}
+	runningExecutorPod(pod)
+	if operation.JobUID == job.UID {
+		t.Fatal("the claim names the Job that replaced it, so this proves nothing about identity")
+	}
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap(),
+	)
+	holdMigrationApplyLease(t, reconciler, api, migration)
 
 	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
