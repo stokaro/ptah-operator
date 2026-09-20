@@ -10,8 +10,24 @@
  * with a white diagram on it is worse than no diagram. Starlight writes the
  * choice to `data-theme` on the root element, so that is what this reads, and
  * what it watches for a later change.
+ *
+ * Mermaid sizes every box by measuring its label, so the font it measures with
+ * has to be the font the browser paints. Two things make them agree: the
+ * config below names a real stack rather than `inherit`, and the draw waits for
+ * the web fonts to load. Either one missing and the measurement is taken with
+ * a narrower face than the one that arrives, leaving labels wider than the
+ * shapes drawn around them.
  */
 ---
+
+<style is:global>
+	/* `pre` is monospace by default, and the labels inherit whatever this
+	 * element says. The stack here is the one passed to mermaid.initialize. */
+	pre.mermaid {
+		font-family: var(--font-sans);
+		overflow-x: auto;
+	}
+</style>
 
 <script>
   import mermaid from 'mermaid';
@@ -26,6 +42,12 @@
     const siteTheme = () =>
       document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';
 
+    // Read from the stylesheet rather than repeated here, so the stack mermaid
+    // measures with cannot drift from the one the site paints.
+    const fontStack =
+      getComputedStyle(document.documentElement).getPropertyValue('--font-sans').trim() ||
+      'system-ui, sans-serif';
+
     let generation = 0;
 
     const draw = async () => {
@@ -34,7 +56,13 @@
         startOnLoad: false,
         theme: siteTheme(),
         securityLevel: 'strict',
-        fontFamily: 'inherit',
+        fontFamily: fontStack,
+        // Two states joined in both directions put their edge labels at the
+        // same height, close enough that the opaque background of one covers
+        // the last letter of the other. The extra room between nodes is what
+        // separates them; the defaults are 50.
+        flowchart: { nodeSpacing: 70, rankSpacing: 60 },
+        state: { nodeSpacing: 70, rankSpacing: 60 },
       });
       for (const [node, source] of sources) {
         const id = `ptah-diagram-${pass}-${sources.size}-${Math.random().toString(36).slice(2)}`;
@@ -54,7 +82,9 @@
       }
     };
 
-    void draw();
+    // A draw that starts before the web fonts arrive measures with the
+    // fallback face and sizes every box for the wrong glyphs.
+    void document.fonts.ready.then(draw);
 
     let theme = siteTheme();
     new MutationObserver(() => {

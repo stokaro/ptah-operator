@@ -150,8 +150,8 @@ stateDiagram-v2
   Pending --> Blocked: realm conflict, unsupported engine
   Applying --> Failed: run failed
   Failed --> Resolving: retry interval
-  Pending --> Suspended: spec.suspend
-  Suspended --> Pending: resumed
+  Pending --> Suspended: suspend
+  Suspended --> Pending: resume
 ```
 
 Five operations run as Jobs: `Resolve`, `Verify`, `Observe`, `Plan`, `Apply`.
@@ -222,8 +222,8 @@ stateDiagram-v2
   InSync --> Resolving: interval
   Blocked --> Resolving: interval
   Failed --> Resolving: retry interval
-  Pending --> Suspended: spec.suspend
-  Suspended --> Pending: resumed
+  Pending --> Suspended: suspend
+  Suspended --> Pending: resume
 ```
 
 Four operations run as Jobs: `Resolve`, `Verify`, `History`, `Apply`. Only
@@ -326,7 +326,7 @@ names, and what the controller recomputes from live inputs before an Apply may
 run: a changed input produces a different plan rather than a changed one.
 
 ```mermaid
-flowchart TD
+flowchart LR
   tag["OCI tag"] -->|resolve| digest["artifact digest"]
   digest -->|verify| policy["verification policy<br/>UID + digest"]
   policy --> plan["plan fingerprint"]
