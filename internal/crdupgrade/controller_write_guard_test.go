@@ -85,7 +85,7 @@ func TestControllerWriteGuardCELContract(t *testing.T) {
 	}
 	if !strings.Contains(variables["oldFinalizers"], "oldObject.metadata.finalizers") ||
 		!strings.Contains(variables["newFinalizers"], "object.metadata.finalizers") ||
-		variables["activeFinalizer"] != `"operator.ptah.run/active-operation"` ||
+		variables["activeFinalizer"] != `request.resource.resource == "ptahmigrations" ? "operator.ptah.run/migration-operation" : "operator.ptah.run/active-operation"` ||
 		!strings.Contains(variables["oldActiveCount"], "filter") ||
 		!strings.Contains(variables["newActiveCount"], "filter") {
 		t.Fatalf("controller finalizer variables are incomplete: %#v", variables)
@@ -268,7 +268,7 @@ func assertExactControllerWriteMatch(t *testing.T, match *admissionregistrationv
 	if !reflect.DeepEqual(rule.Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Update}) ||
 		!reflect.DeepEqual(rule.APIGroups, []string{"operator.ptah.run"}) ||
 		!reflect.DeepEqual(rule.APIVersions, []string{"v1alpha1"}) ||
-		!reflect.DeepEqual(rule.Resources, []string{"ptahschemas"}) ||
+		!reflect.DeepEqual(rule.Resources, []string{"ptahschemas", "ptahmigrations"}) ||
 		len(rule.ResourceNames) != 0 || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
 		t.Fatalf("controller write rule is not exact: %#v", rule)
 	}

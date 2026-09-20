@@ -18,7 +18,11 @@ const (
 	controllerWritePolicyWeight    = "-158"
 	controllerWriteBindingWeight   = "-157"
 
-	activeOperationFinalizer = "operator.ptah.run/active-operation"
+	activeOperationFinalizer    = "operator.ptah.run/active-operation"
+	migrationOperationFinalizer = "operator.ptah.run/migration-operation"
+
+	schemaResource    = "ptahschemas"
+	migrationResource = "ptahmigrations"
 )
 
 // ControllerWriteGuardPolicyName returns the stable, versioned name of the
@@ -33,9 +37,10 @@ func controllerWriteGuardDenialMessage() string {
 	return "Ptah controller write guard rejected a desired-state mutation"
 }
 
-// ControllerWriteGuard confines main-resource PtahSchema patches made by the
-// controller identity to the one finalizer it owns. Status writes use the
-// status subresource and therefore do not match this policy.
+// ControllerWriteGuard confines main-resource PtahSchema and PtahMigration
+// patches made by the controller identity to the one finalizer that identity
+// owns on the kind being written. Status writes use the status subresource and
+// therefore do not match this policy.
 type ControllerWriteGuard struct {
 	Policies                             ValidatingAdmissionPolicyReader
 	Bindings                             ValidatingAdmissionPolicyBindingReader
@@ -141,7 +146,10 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 				{Name: "activeRelease", Expression: decimalCEL("params", activeReleaseDataKey, true)},
 				{Name: "oldFinalizers", Expression: `has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []`},
 				{Name: "newFinalizers", Expression: `has(object.metadata.finalizers) ? object.metadata.finalizers : []`},
-				{Name: "activeFinalizer", Expression: fmt.Sprintf(`%q`, activeOperationFinalizer)},
+				// Each family has its own finalizer, so the one the
+				// controller may add and remove follows the resource being
+				// written rather than the schema path's name.
+				{Name: "activeFinalizer", Expression: controllerWriteFinalizerExpression()},
 				{Name: "oldActiveCount", Expression: `variables.oldFinalizers.filter(value, value == variables.activeFinalizer).size()`},
 				{Name: "newActiveCount", Expression: `variables.newFinalizers.filter(value, value == variables.activeFinalizer).size()`},
 			},
@@ -200,6 +208,17 @@ func (g *ControllerWriteGuard) binding() *admissionregistrationv1.ValidatingAdmi
 	return binding
 }
 
+// controllerWriteFinalizerExpression names the finalizer the controller owns
+// on the resource this request writes. The chart renders the same expression.
+func controllerWriteFinalizerExpression() string {
+	return fmt.Sprintf(
+		`request.resource.resource == %q ? %q : %q`,
+		migrationResource,
+		migrationOperationFinalizer,
+		activeOperationFinalizer,
+	)
+}
+
 func (g *ControllerWriteGuard) activationParameterExpression() string {
 	activation := &ReleaseActivationGuard{ReleaseName: g.ReleaseName, ReleaseNamespace: g.ReleaseNamespace}
 	return activation.activationObjectShapeExpression("params")
@@ -217,7 +236,7 @@ func (g *ControllerWriteGuard) matchResources() *admissionregistrationv1.MatchRe
 				Rule: admissionregistrationv1.Rule{
 					APIGroups:   []string{"operator.ptah.run"},
 					APIVersions: []string{"v1alpha1"},
-					Resources:   []string{"ptahschemas"},
+					Resources:   []string{schemaResource, migrationResource},
 					Scope:       scopePtr(admissionregistrationv1.NamespacedScope),
 				},
 			},
