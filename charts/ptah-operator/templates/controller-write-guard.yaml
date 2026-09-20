@@ -63,7 +63,7 @@ spec:
       - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["UPDATE"]
-        resources: ["ptahschemas"]
+        resources: ["ptahschemas", "ptahmigrations"]
         scope: Namespaced
       - apiGroups: [""]
         apiVersions: ["v1"]
@@ -85,8 +85,10 @@ spec:
       expression: 'has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []'
     - name: newFinalizers
       expression: 'has(object.metadata.finalizers) ? object.metadata.finalizers : []'
+    # Each family has its own finalizer, so the one the controller may add and
+    # remove follows the resource being written.
     - name: activeFinalizer
-      expression: '"operator.ptah.run/active-operation"'
+      expression: 'request.resource.resource == "ptahmigrations" ? "operator.ptah.run/migration-operation" : "operator.ptah.run/active-operation"'
     - name: oldActiveCount
       expression: 'variables.oldFinalizers.filter(value, value == variables.activeFinalizer).size()'
     - name: newActiveCount
@@ -136,7 +138,7 @@ spec:
       - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["UPDATE"]
-        resources: ["ptahschemas"]
+        resources: ["ptahschemas", "ptahmigrations"]
         scope: Namespaced
       - apiGroups: [""]
         apiVersions: ["v1"]

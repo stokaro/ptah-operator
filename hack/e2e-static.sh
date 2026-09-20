@@ -6298,7 +6298,8 @@ for controller_write_marker in \
 	'helm.sh/hook-weight: "-157"' \
 	'dyn(object).spec == dyn(oldObject).spec' \
 	'dyn(object).status == dyn(oldObject).status' \
-	'operator.ptah.run/active-operation' \
+	'resources: ["ptahschemas", "ptahmigrations"]' \
+	'request.resource.resource == "ptahmigrations" ? "operator.ptah.run/migration-operation" : "operator.ptah.run/active-operation"' \
 	'Ptah controller write guard rejected a desired-state mutation'; do
 	grep -F -- "$controller_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
 done
