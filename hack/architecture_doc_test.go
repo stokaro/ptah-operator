@@ -38,34 +38,66 @@ import (
 // phase, a new phase and an invented one all stop being silent.
 const architecturePagePath = "docs/site/src/content/docs/reference/architecture.md"
 
-// The status vocabularies the page is held to. Each is a string type in
-// api/v1alpha1 whose constants are the values a reader meets in `kubectl get`.
-var architectureVocabularies = []string{
-	"ReconciliationPhase",
-	"MigrationPhase",
-	"OperationType",
-	"MigrationOperationType",
+// The status vocabularies the page is held to, each with the section that has
+// to name it. Scoping matters: the two families share most of their spelling,
+// so a page-wide search lets the schema lifecycle answer for the migration one
+// and hides exactly the omission this check exists to catch. The first draft
+// of this page had no `Failed` in its migration diagram, and an unscoped
+// search passed it.
+var architectureVocabularies = []struct {
+	TypeName string
+	Section  string
+}{
+	{TypeName: "ReconciliationPhase", Section: "## The schema lifecycle"},
+	{TypeName: "OperationType", Section: "## The schema lifecycle"},
+	{TypeName: "MigrationPhase", Section: "## The migration lifecycle"},
+	{TypeName: "MigrationOperationType", Section: "## The migration lifecycle"},
+}
+
+// vocabularyTypeNames is the list the API reader is given.
+func vocabularyTypeNames() []string {
+	names := make([]string, 0, len(architectureVocabularies))
+	for _, vocabulary := range architectureVocabularies {
+		names = append(names, vocabulary.TypeName)
+	}
+	return names
+}
+
+// section returns the text under one `##` heading, which is the scope a
+// vocabulary is judged in.
+func section(t *testing.T, page, heading string) string {
+	t.Helper()
+	start := strings.Index(page, heading)
+	if start < 0 {
+		t.Fatalf("%s has no %q section", architecturePagePath, heading)
+	}
+	rest := page[start+len(heading):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }
 
 func TestTheArchitecturePageNamesEveryPhaseAndOperation(t *testing.T) {
 	t.Parallel()
 
 	page := readArchitecturePage(t)
-	values, err := apiVocabularyValues(repositoryFile(t, "api/v1alpha1"), architectureVocabularies)
+	values, err := apiVocabularyValues(repositoryFile(t, "api/v1alpha1"), vocabularyTypeNames())
 	if err != nil {
 		t.Fatalf("read the API vocabularies: %v", err)
 	}
-	for _, vocabulary := range architectureVocabularies {
-		if len(values[vocabulary]) == 0 {
-			t.Fatalf("no %s constants were found; the check is reading the wrong package", vocabulary)
-		}
-	}
 
 	var missing []string
-	for vocabulary, names := range values {
-		for _, name := range names {
-			if !namesValue(page, name) {
-				missing = append(missing, fmt.Sprintf("%s %q", vocabulary, name))
+	for _, vocabulary := range architectureVocabularies {
+		if len(values[vocabulary.TypeName]) == 0 {
+			t.Fatalf("no %s constants were found; the check is reading the wrong package",
+				vocabulary.TypeName)
+		}
+		scope := section(t, page, vocabulary.Section)
+		for _, name := range values[vocabulary.TypeName] {
+			if !namesValue(scope, name) {
+				missing = append(missing, fmt.Sprintf("%s %q in %q",
+					vocabulary.TypeName, name, vocabulary.Section))
 			}
 		}
 	}
@@ -111,7 +143,7 @@ func TestTheArchitecturePageNamesNoValueTheAPIDropped(t *testing.T) {
 	t.Parallel()
 
 	page := readArchitecturePage(t)
-	values, err := apiVocabularyValues(repositoryFile(t, "api/v1alpha1"), architectureVocabularies)
+	values, err := apiVocabularyValues(repositoryFile(t, "api/v1alpha1"), vocabularyTypeNames())
 	if err != nil {
 		t.Fatalf("read the API vocabularies: %v", err)
 	}

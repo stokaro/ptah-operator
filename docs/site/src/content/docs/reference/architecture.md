@@ -146,7 +146,7 @@ stateDiagram-v2
   InSync --> Resolving: interval
   Blocked --> Resolving: interval
   Verifying --> Blocked: artifact refused
-  Planning --> Blocked: fenced table, or destructive disallowed
+  Planning --> Blocked: fenced table, destructive<br/>disallowed, or apply Never
   Pending --> Blocked: realm conflict, unsupported engine
   Applying --> Failed: run failed
   Failed --> Resolving: retry interval
@@ -178,10 +178,12 @@ never proof that the database changed the way the plan said it would.
 ### Blocked is a refusal, not a fault
 
 `Blocked` means the answer will not change until somebody changes an input. It
-is reached from five places: a realm conflict, an unsupported engine, a
+is reached from six places: a realm conflict, an unsupported engine, a
 verification policy that refused the artifact, a plan that would change a
-fenced table, and a destructive plan the policy disallows. `Failed` is
-different — it means something went wrong and a retry is reasonable.
+fenced table, a destructive plan the policy disallows, and `apply: Never`,
+which is not a problem at all — it is the policy that records plans and applies
+none, and a resource can sit there for as long as somebody wants. `Failed` is
+different again: something went wrong and a retry is reasonable.
 
 A blocked resource still refreshes on its interval through the complete
 Resolve → Verify → Observe → Plan pipeline, so a policy edit or a new artifact
@@ -216,8 +218,10 @@ stateDiagram-v2
   Applying --> VerifyingHistory: result read
   VerifyingHistory --> InSync: history matches
   Applying --> Blocked: partial or unknown outcome
+  Resolving --> Failed: dispatch or configuration
   InSync --> Resolving: interval
   Blocked --> Resolving: interval
+  Failed --> Resolving: retry interval
   Pending --> Suspended: spec.suspend
   Suspended --> Pending: resumed
 ```
@@ -233,6 +237,12 @@ already applied; the database is ahead of the artifact; nothing is pending; or
 a sequence is ready to plan. Pending selection is Ptah's own list rather than a
 subtraction of counts, because a checkpoint bootstrap makes those two answers
 differ.
+
+The two ways out of the ordinary path are the same two words the schema path
+uses, and they mean the same thing here. `Blocked` is a verdict about the
+database that will not change on its own; `Failed` is a configuration or
+dispatch failure the controller could not resolve by retrying immediately, and
+it retries on its own interval.
 
 An outcome that is `Partial` or `Unknown` latches. The resource goes to
 `Blocked` and is released only by a history that shows nothing pending —
@@ -362,11 +372,18 @@ controller performs the same checks again before Apply.
 
 ## Declarative reference data
 
-A declaration can name rows as well as tables. The rows travel inside the plan
-bytes as `managed_rows` and a `rows_fingerprint`: names, keys, column names and
-a digest. No row value appears there, which is what lets the operator publish a
-plan, bind it and report on it while no declared value reaches status, an Event
-or the controller's log.
+A declaration can name rows as well as tables. A plan for such a change
+declares the row sets it touched in `managed_rows` and a `rows_fingerprint` --
+schema, table, keys and column names, plus a digest, and no value. That summary
+is what lets the operator bind a row-only change and report on it without
+learning any of the data.
+
+The statements in the same plan are a different matter. A plan carries the SQL
+it would execute, and the SQL for a data change carries literal values, so the
+plan bytes are data. They are stored in immutable ConfigMaps and reconstructed
+by `kubectl ptah plan`: whoever may read a plan may read the rows in it, and
+that is the access decision to make. What never carries a value is everything
+outside the plan — status, Events and the controller's log.
 
 Status carries counts by category — rows inserted, updated, deleted — with no
 key, no column name and no value. A row-only change still retires a waiting
