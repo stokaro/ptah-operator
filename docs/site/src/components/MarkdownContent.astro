@@ -32,10 +32,18 @@ const hasDiagrams = /^```mermaid\s*$/m.test(entry.body ?? '');
 // The questions are `###` under a `##` group, so the count comes from the
 // source rather than from a number kept in step by hand.
 const questionCount = (entry.body?.match(/^### /gm) ?? []).length;
+
+// The generated field pages, recognized by the header `make docs-reference`
+// writes. Their first column holds whole field paths, which are long enough to
+// decide the column width on their own and leave the description a sliver; the
+// class is what the stylesheet needs to divide those columns itself.
+const isFieldReference = /^\| Field \| Type \| What it does \|$/m.test(entry.body ?? '');
 ---
 
 {isFaq && <FaqFilter count={questionCount} />}
 {hasDiagrams && <MermaidRuntime />}
-<div class:list={['sl-markdown-content', isFaq && 'ptah-faq']}>
+<div
+  class:list={['sl-markdown-content', isFaq && 'ptah-faq', isFieldReference && 'ptah-field-reference']}
+>
   <slot />
 </div>

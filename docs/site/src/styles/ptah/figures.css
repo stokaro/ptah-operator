@@ -401,3 +401,39 @@
 		margin: 0;
 	}
 }
+
+/* ---------- Generated field reference ---------- */
+
+/*
+ * The generated field pages put a whole path in the first cell of every row,
+ * and the deepest of them run past a hundred characters. A path carries no
+ * break opportunity a browser will take, so auto table layout sized that
+ * column to the longest one: 1220px inside a 744px column, which pushed the
+ * table into a sideways scroll and left the description 451px that could only
+ * be read by scrolling to it. Measured on /reference/ptahschema/, where 45
+ * cells ran past eight lines and the longest reached nineteen.
+ *
+ * Fixed layout divides the columns here instead, and the cells wrap. They wrap
+ * mid-token, which reads worse than a break at a separator would, but nothing
+ * is inserted into the text: a path stays selectable and pasteable as one
+ * path, which is what a reference column is for.
+ */
+.sl-markdown-content.ptah-field-reference table:not(:where(.not-content *)) {
+	display: table;
+	width: 100%;
+	table-layout: fixed;
+}
+
+.ptah-field-reference :is(th, td):nth-child(1):not(:where(.not-content *)) {
+	width: 28%;
+}
+
+.ptah-field-reference :is(th, td):nth-child(2):not(:where(.not-content *)) {
+	width: 18%;
+}
+
+/* Paths, enum values and the upstream URLs in Kubernetes' own descriptions are
+ * all single tokens wider than the column they land in. */
+.ptah-field-reference td:not(:where(.not-content *)) {
+	overflow-wrap: anywhere;
+}
