@@ -4698,6 +4698,11 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		// trim is shell, and a guard that stopped reporting a failed statement
 		// leaves the phase blaming the operator for setup it never received.
 		exactSourceLine("SQL statement self-test wiring", `"$ROOT_DIR/hack/e2e-sql-selftest.sh"`),
+		// The hook log is the only thing that says why a refused upgrade was
+		// refused, and the shell that captures it races the cluster from both
+		// ends. A capture that lost that race reported nothing and read as a
+		// hook that printed nothing, so its self-test is wired here too.
+		exactSourceLine("hook-log capture self-test wiring", `"$ROOT_DIR/hack/e2e-hook-log-capture-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4720,9 +4725,12 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-sql-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the SQL statement self-test must be wired exactly once", files.staticChecks)
 	}
+	if bytes.Count(staticContents, []byte("e2e-hook-log-capture-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the hook-log capture self-test must be wired exactly once", files.staticChecks)
+	}
 	for _, step := range []sourceContractStep{
 		staticContract[1], staticContract[3], staticContract[4], staticContract[5],
-		staticContract[6], staticContract[7],
+		staticContract[6], staticContract[7], staticContract[8],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
