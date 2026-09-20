@@ -358,7 +358,10 @@ func newTeardownRetirementEndpointProvider(
 				topologyIdentity: snapshot.InventoryIdentity,
 				probe: func(probeCtx context.Context) (bool, error) {
 					for _, probe := range probes {
-						proven, probeErr := guard.Probe(probeCtx, probeClient, probe)
+						// The barrier is waiting for these fences, so it uses the
+						// converging form: an endpoint that has not compiled the
+						// policy yet is unproven, not a failure.
+						proven, probeErr := guard.ProbeConverging(probeCtx, probeClient, probe)
 						if probeErr != nil || !proven {
 							return proven, probeErr
 						}
@@ -804,6 +807,12 @@ func (o *teardownRetirementCredentialObserver) observeEndpoint(
 		return true, nil
 	}
 	if err != nil {
+		// A transport or server failure says nothing about the credential. The
+		// endpoint stays unproven, which resets the stability window, and the
+		// observer asks again inside its own deadline.
+		if retryableDirectAdmissionError(err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("derive post-retirement phase: %w", err)
 	}
 	if everUnauthorized {
@@ -818,6 +827,9 @@ func (o *teardownRetirementCredentialObserver) observeEndpoint(
 			return true, nil
 		}
 		if err != nil {
+			if retryableDirectAdmissionError(err) {
+				return false, nil
+			}
 			return false, fmt.Errorf("probe post-retirement fence %s: %w", probe.PolicyName, err)
 		}
 		if !proven {

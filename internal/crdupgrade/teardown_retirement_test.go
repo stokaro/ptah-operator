@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"slices"
 	"strconv"
@@ -1055,6 +1056,79 @@ func TestTeardownRetirementProbeRequiresExactDenial(t *testing.T) {
 	}
 }
 
+func TestTeardownRetirementConvergingProbeWaitsWhereTheStrictProbeFails(t *testing.T) {
+	t.Parallel()
+
+	guard := NewTeardownRetirementGuard(teardownRetirementTestRollout())
+	_, _, probe, err := guard.OriginalFencePair(TeardownFenceA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := guard.Marker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker.UID = "marker-uid"
+	marker.ResourceVersion = "1"
+	budget := fmt.Errorf("client rate limiter Wait returned an error: %w",
+		errors.New("rate: Wait(n=1) would exceed context deadline"))
+	tests := []struct {
+		name       string
+		getErr     error
+		updateErr  error
+		want       bool
+		wantStrict string
+	}{
+		{name: "exact denial", updateErr: exactPolicyDenialError(probe.PolicyName, probe.BindingName, probe.Message), want: true},
+		{name: "wrong policy", updateErr: exactPolicyDenialError("other", probe.BindingName, probe.Message)},
+		{name: "admitted", wantStrict: "was admitted"},
+		{name: "service unavailable", updateErr: apierrors.NewServiceUnavailable("etcd leader election"), wantStrict: "probe teardown retirement policy"},
+		{
+			name: "server error",
+			updateErr: &apierrors.StatusError{ErrStatus: metav1.Status{
+				Status:  metav1.StatusFailure,
+				Code:    500,
+				Reason:  metav1.StatusReasonInternalError,
+				Message: "internal server error",
+			}},
+			wantStrict: "probe teardown retirement policy",
+		},
+		{name: "network error", updateErr: &net.DNSError{Err: "connection refused", Name: "kubernetes.default.svc"}, wantStrict: "probe teardown retirement policy"},
+		{name: "client rate limit budget", updateErr: budget, wantStrict: "probe teardown retirement policy"},
+		{name: "unavailable marker read", getErr: apierrors.NewServiceUnavailable("etcd leader election"), wantStrict: "get teardown retirement marker"},
+		{name: "missing marker", getErr: apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, "marker"), wantStrict: "get teardown retirement marker"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			strict := &teardownRetirementMarkerClient{marker: marker.DeepCopy(), getErr: test.getErr, updateErr: test.updateErr}
+			got, err := guard.Probe(context.Background(), strict, probe)
+			if test.wantStrict != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantStrict) {
+					t.Fatalf("Probe() error = %v, want containing %q", err, test.wantStrict)
+				}
+			} else if err != nil || got != test.want {
+				t.Fatalf("Probe() = %v, %v, want %v", got, err, test.want)
+			}
+
+			converging := &teardownRetirementMarkerClient{marker: marker.DeepCopy(), getErr: test.getErr, updateErr: test.updateErr}
+			got, err = guard.ProbeConverging(context.Background(), converging, probe)
+			// A missing marker is the one strict failure the converging form
+			// keeps: the fence it probes cannot exist without it.
+			if test.name == "missing marker" {
+				if err == nil || !strings.Contains(err.Error(), test.wantStrict) {
+					t.Fatalf("ProbeConverging() error = %v, want containing %q", err, test.wantStrict)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("ProbeConverging() = %v, %v, want %v and no error", got, err, test.want)
+			}
+		})
+	}
+}
+
 func teardownRetirementTestRollout() *RolloutGuard {
 	rollout, _, _, _ := readyRolloutGuard()
 	return rollout
@@ -1094,6 +1168,7 @@ func admissionPolicyText(policy *admissionregistrationv1.ValidatingAdmissionPoli
 
 type teardownRetirementMarkerClient struct {
 	marker    *corev1.ConfigMap
+	getErr    error
 	updateErr error
 	options   metav1.UpdateOptions
 }
@@ -1114,6 +1189,9 @@ func (r teardownRetirementActivationReader) Get(context.Context, string, metav1.
 }
 
 func (c *teardownRetirementMarkerClient) Get(context.Context, string, metav1.GetOptions) (*corev1.ConfigMap, error) {
+	if c.getErr != nil {
+		return nil, c.getErr
+	}
 	if c.marker == nil {
 		return nil, errors.New("marker missing")
 	}
