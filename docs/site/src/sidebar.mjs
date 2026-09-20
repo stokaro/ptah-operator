@@ -55,12 +55,17 @@ export const sidebar = [
     label: 'Reference',
     items: [
       { label: 'Architecture', link: '/reference/architecture/' },
-      { label: 'PtahSchema', link: '/reference/ptahschema/' },
-      { label: 'PtahSchemaPlan', link: '/reference/ptahschemaplan/' },
-      { label: 'PtahSchemaApproval', link: '/reference/ptahschemaapproval/' },
-      { label: 'PtahMigration', link: '/reference/ptahmigration/' },
-      { label: 'PtahMigrationPlan', link: '/reference/ptahmigrationplan/' },
-      { label: 'PtahMigrationApproval', link: '/reference/ptahmigrationapproval/' },
+      {
+        label: 'Custom resources',
+        items: [
+          { label: 'PtahSchema', link: '/reference/ptahschema/' },
+          { label: 'PtahSchemaPlan', link: '/reference/ptahschemaplan/' },
+          { label: 'PtahSchemaApproval', link: '/reference/ptahschemaapproval/' },
+          { label: 'PtahMigration', link: '/reference/ptahmigration/' },
+          { label: 'PtahMigrationPlan', link: '/reference/ptahmigrationplan/' },
+          { label: 'PtahMigrationApproval', link: '/reference/ptahmigrationapproval/' },
+        ],
+      },
     ],
   },
   {
