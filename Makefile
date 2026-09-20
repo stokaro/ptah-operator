@@ -105,6 +105,7 @@ docs-reference:
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
 		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
 	$(GO) run ./hack/crdreference -crds $$tmp \
+		-examples docs/reference-examples \
 		-out docs/site/src/content/docs/reference -write; \
 	rm -rf $$tmp
 
@@ -113,6 +114,7 @@ docs-reference-check:
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
 		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
 	$(GO) run ./hack/crdreference -crds $$tmp \
+		-examples docs/reference-examples \
 		-out docs/site/src/content/docs/reference -require-descriptions; \
 	status=$$?; rm -rf $$tmp; exit $$status
 
