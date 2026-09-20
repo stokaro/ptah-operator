@@ -11,7 +11,7 @@
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/demo.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/demo.yml?branch=master&label=demonstration&logo=github" alt="master ブランチにおける週次デモンストレーションワークフローの状態。実クラスタに対して全シナリオを録り直す"></a>
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/docs.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/docs.yml?branch=master&label=docs&logo=github" alt="master ブランチにおけるドキュメントワークフローの状態"></a>
   <a href="https://github.com/stokaro/ptah-operator/blob/master/LICENSE"><img src="https://img.shields.io/github/license/stokaro/ptah-operator?label=license&color=blue" alt="MIT と表示されるライセンスバッジ"></a>
-  <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go&logo=go&logoColor=white" alt="go.mod が宣言する Go のバージョン"></a>
+  <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go%20%E2%89%A5&logo=go&logoColor=white" alt="このモジュールがコンパイル可能な最も低い Go のバージョン。go.mod が宣言する"></a>
 </p>
 
 <p align="center"><a href="https://operator.ptah.run/edge/start/install/">インストール</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">最初のスキーマ</a> · <a href="https://operator.ptah.run/demo/">記録された実行</a> · <a href="https://operator.ptah.run/">ドキュメント</a> · <a href="https://docs.ptah.run/compatibility/operator/">Ptah との互換性</a></p>
