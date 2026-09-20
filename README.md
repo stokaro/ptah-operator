@@ -4,6 +4,8 @@
 
 <p align="center">A Kubernetes control plane that converges PostgreSQL and MySQL schemas from immutable OCI artifacts.</p>
 
+<p align="center"><strong>English</strong> · <a href="README.ja.md">日本語</a></p>
+
 <p align="center">
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/ci.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/ci.yml?branch=master&label=ci&logo=github" alt="Status of the CI workflow on the master branch, which verifies the source, runs the race detector and drives the full Kubernetes lifecycle"></a>
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/demo.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/demo.yml?branch=master&label=demonstration&logo=github" alt="Status of the weekly demonstration workflow on the master branch, which re-records every scenario against a real cluster"></a>
