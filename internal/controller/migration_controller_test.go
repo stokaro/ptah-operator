@@ -1567,3 +1567,100 @@ func blockedMessage(blocked *metav1.Condition) string {
 	}
 	return blocked.Message
 }
+
+// The state an upgrade actually finds. A manager older than status.unresolvedRun
+// held the latch in the Blocked condition's reason, and the defect that record
+// exists to fix is that every later refusal overwrote it -- so by the time the
+// new manager first reads the object, the reason it left is usually gone. An
+// adoption that required its own reason to have survived would adopt the
+// objects the defect missed and skip the ones it reached, and those are the
+// ones that go on to publish a plan and replay a run nobody accounted for.
+func TestAnUnresolvedMigrationRunIsAdoptedUnderARefusalThatOverwroteItBeforeTheUpgrade(t *testing.T) {
+	t.Parallel()
+
+	for _, reason := range []operatorv1alpha1.ConditionReason{
+		operatorv1alpha1.ReasonRealmConflict,
+		operatorv1alpha1.ReasonHistoryDirty,
+		operatorv1alpha1.ReasonHistoryModified,
+		operatorv1alpha1.ReasonHistoryOutOfOrder,
+		operatorv1alpha1.ReasonUnsupportedEngine,
+	} {
+		t.Run(string(reason), func(t *testing.T) {
+			t.Parallel()
+
+			migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+				operatorv1alpha1.MigrationRunOutcomeUnknown)
+			// The status as the older manager left it: the run's outcome, a
+			// Blocked condition, and some other refusal's reason on it. No
+			// record, because that manager had none to write.
+			migration.Status.UnresolvedRun = nil
+			blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+			if blocked == nil || blocked.Status != metav1.ConditionTrue {
+				t.Fatalf("the fixture is not blocked, so there is no latch to overwrite: %#v", blocked)
+			}
+			blocked.Reason = string(reason)
+
+			actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
+			if actual.Status.UnresolvedRun == nil {
+				t.Fatal("the upgrade adopted nothing for a run latched under another refusal's reason")
+			}
+			if actual.Status.Plan != nil {
+				t.Fatalf("a plan was published for a migration the unknown run may already have executed: %#v",
+					actual.Status.Plan)
+			}
+			assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+		})
+	}
+}
+
+// Which database the record names decides what can settle it, so it has to be
+// the one the run actually opened. The executor reports that in its result
+// frame, and it is not always the database the plan was computed against: the
+// Secret behind the target can be rewritten between the history reading and the
+// Apply. Naming the planned database instead would let a clean reading of it
+// settle a run that never touched it, while a reading of the database that was
+// touched could never match what was stored.
+func TestAnUnresolvedMigrationRunRecordsTheDatabaseTheRunReported(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	repolicyPlan(t, migration, plan)
+	operation := applyClaimFor(t, migration, plan)
+	planned := migration.Status.History.TargetIdentityDigest
+	rotated := "sha256:" + strings.Repeat("d", 64)
+	if planned == rotated {
+		t.Fatal("the fixture already plans against the rotated database, so this proves nothing")
+	}
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	logs := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+		OperationID: operation.ID, ChildExitCode: 0,
+		CoordinationDigest: operation.CoordinationDigest,
+		// The credential moved: this run opened a database the plan was never
+		// computed against.
+		TargetIdentityDigest: rotated,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract,
+			Direction:       "up",
+			Outcome:         dataplane.MigrationOutcomePartial,
+			Planned:         []int64{3},
+		},
+	})
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{content: logs}, migration, plan, job, pod, verificationPolicyConfigMap(),
+	)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	unresolved := actual.Status.UnresolvedRun
+	if unresolved == nil {
+		t.Fatal("a partial run against a rotated database recorded nothing to account for")
+	}
+	if unresolved.TargetIdentityDigest != rotated {
+		t.Fatalf("recorded database = %q, want the one the run reported %q (the plan was computed against %q)",
+			unresolved.TargetIdentityDigest, rotated, planned)
+	}
+}

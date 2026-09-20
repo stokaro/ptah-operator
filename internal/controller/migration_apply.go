@@ -392,7 +392,7 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		// Neither may be retried. A partial run committed some of a migration's
 		// statements and not the rest, and an unknown one cannot say whether it
 		// did; running the same file again would run those statements twice.
-		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun, r.now())
+		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun, result.TargetIdentityDigest, r.now())
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, bounded(message, 1024))
@@ -434,6 +434,7 @@ func recordUnresolvedMigrationRun(
 	migration *operatorv1alpha1.PtahMigration,
 	operation *operatorv1alpha1.MigrationOperationStatus,
 	run *operatorv1alpha1.MigrationRunStatus,
+	reportedTarget string,
 	now time.Time,
 ) {
 	if run == nil {
@@ -449,10 +450,21 @@ func recordUnresolvedMigrationRun(
 		unresolved.OperationID = operation.ID
 		unresolved.PlanRef = operation.PlanRef.DeepCopy()
 	}
-	// The database the run addressed is the one the plan was computed against,
-	// which is the last history this resource read.
-	if history := migration.Status.History; history != nil {
-		unresolved.TargetIdentityDigest = history.TargetIdentityDigest
+	// Which database to name is the whole point of the record, so the run's own
+	// account of it wins. A result frame reports the target the executor opened,
+	// and that is not always the one the plan was computed against: Secret
+	// content can rotate between the history reading and the Apply. Recording
+	// the planned database instead would let a clean reading of it settle a run
+	// that never touched it, while a reading of the database that was touched
+	// could not match what was stored.
+	unresolved.TargetIdentityDigest = reportedTarget
+	if unresolved.TargetIdentityDigest == "" {
+		// No frame, or one that named no target: the best that is known is the
+		// database the plan was computed against, which is the last history
+		// this resource read.
+		if history := migration.Status.History; history != nil {
+			unresolved.TargetIdentityDigest = history.TargetIdentityDigest
+		}
 	}
 	migration.Status.UnresolvedRun = unresolved
 }
@@ -571,11 +583,19 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 // cannot read what it did. The claim is retired and the resource is blocked:
 // the database is the only thing that can settle it, and nothing dispatches
 // again until a person has looked.
+//
+// reportedTarget is the database the run said it opened, and is empty wherever
+// no result frame was read -- which is most of the ways in. A run that reached
+// a database the plan was never computed against arrives here through exactly
+// one of them, and that is the case where naming the planned database instead
+// would be wrong: a clean reading of it would settle a run that never touched
+// it, and a reading of the database that was touched could never match.
 func (r *MigrationReconciler) finishUncertainMigrationApply(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	failure error,
+	reportedTarget string,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	before := migration.DeepCopy()
@@ -591,7 +611,7 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		run.JobUID = job.UID
 	}
 	migration.Status.LastRun = run
-	recordUnresolvedMigrationRun(migration, operation, run, r.now())
+	recordUnresolvedMigrationRun(migration, operation, run, reportedTarget, r.now())
 	migration.Status.ActiveOperation = nil
 	migration.Status.Plan = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked

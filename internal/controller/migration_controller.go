@@ -295,7 +295,7 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 		}
 	}
 	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
-		errors.New("an execution component changed while the Apply was dispatched"))
+		errors.New("an execution component changed while the Apply was dispatched"), "")
 	return result, true, err
 }
 
@@ -396,7 +396,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	operation := migration.Status.ActiveOperation
 	if operation.LeaseContinuityLost {
 		return r.finishUncertainMigrationApply(ctx, migration, nil,
-			errors.New("the database lock epoch changed under the dispatched run"))
+			errors.New("the database lock epoch changed under the dispatched run"), "")
 	}
 	applying := operation.Type == operatorv1alpha1.MigrationOperationApply
 	if applying {
@@ -417,7 +417,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			// A dispatched Apply is never recreated. Whether it ran is a question
 			// for the database, not for a retry.
 			return r.finishUncertainMigrationApply(ctx, migration, nil,
-				errors.New("the dispatched Apply Job is missing and will not be recreated"))
+				errors.New("the dispatched Apply Job is missing and will not be recreated"), "")
 		}
 		return r.dispatchMigrationJob(ctx, migration, key)
 	}
@@ -429,13 +429,13 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	}
 	if operation.JobUID != "" && operation.JobUID != job.UID {
 		if applying {
-			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job was replaced"))
+			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job was replaced"), "")
 		}
 		return r.retryMigrationOperation(ctx, migration, job, errors.New("the active Job was replaced"))
 	}
 	if !exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID) {
 		if applying {
-			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job lost its owner"))
+			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job lost its owner"), "")
 		}
 		return r.retryMigrationOperation(ctx, migration, job, errors.New("the active Job is not owned by this migration"))
 	}
@@ -461,7 +461,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if applying {
 			// An Apply Job that exists may already have changed the database,
 			// whatever its formerly exact inputs now say.
-			return r.finishUncertainMigrationApply(ctx, migration, job, currentErr)
+			return r.finishUncertainMigrationApply(ctx, migration, job, currentErr, "")
 		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
@@ -475,7 +475,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 		if errors.Is(err, errTerminalPodMultiplicity) || errors.Is(err, errTerminalPodIntent) {
 			if applying {
-				return r.finishUncertainMigrationApply(ctx, migration, job, err)
+				return r.finishUncertainMigrationApply(ctx, migration, job, err, "")
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
@@ -491,7 +491,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		// has to be told what the database now holds.
 		if parseErr != nil {
 			return r.finishUncertainMigrationApply(ctx, migration, job,
-				fmt.Errorf("read the Apply result: %w", parseErr))
+				fmt.Errorf("read the Apply result: %w", parseErr), "")
 		}
 		if result.MigrationRun == nil || result.Uncertain {
 			failure := errors.New("the Apply produced no readable account of what the database now holds")
@@ -501,12 +501,13 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			if result.MigrationRun != nil {
 				return r.consumeMigrationRun(ctx, migration, job, result)
 			}
-			return r.finishUncertainMigrationApply(ctx, migration, job, failure)
+			return r.finishUncertainMigrationApply(ctx, migration, job, failure, result.TargetIdentityDigest)
 		}
 		if result.CoordinationDigest != operation.CoordinationDigest ||
 			operation.Target != nil && result.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
 			return r.finishUncertainMigrationApply(ctx, migration, job,
-				errors.New("the Apply ran against a database other than the one it was planned for"))
+				errors.New("the Apply ran against a database other than the one it was planned for"),
+				result.TargetIdentityDigest)
 		}
 		return r.consumeMigrationRun(ctx, migration, job, result)
 	}
@@ -657,7 +658,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	if err := r.Client.Create(ctx, job); err != nil {
 		if operation.Type == operatorv1alpha1.MigrationOperationApply && !apierrors.IsAlreadyExists(err) {
 			return r.finishUncertainMigrationApply(ctx, migration, nil,
-				fmt.Errorf("the Apply Job create result is uncertain: %w", err))
+				fmt.Errorf("the Apply Job create result is uncertain: %w", err), "")
 		}
 		if apierrors.IsAlreadyExists(err) {
 			return r.retryMigrationOperation(ctx, migration, nil, errors.New("the claimed Job name was occupied during dispatch"))
@@ -767,10 +768,25 @@ func (r *MigrationReconciler) consumeMigrationResult(
 }
 
 // migrationRunLatchedByRefusal reads the pre-record latch: an unresolved
-// outcome under a Blocked condition that still carries its reason. That is what
-// a manager older than status.unresolvedRun left behind, and an upgrade is the
-// only reader: adoptUnresolvedMigrationRun calls it, nothing else does, and no
-// decision about replaying a migration is taken from it.
+// outcome on a resource a refusal has stopped. That is what a manager older
+// than status.unresolvedRun left behind, and an upgrade is the only reader:
+// adoptUnresolvedMigrationRun calls it, nothing else does, and no decision
+// about replaying a migration is taken from it.
+//
+// It asks that the resource is blocked and never which refusal blocked it. The
+// reason is what this change exists to stop trusting: an older manager wrote
+// ApplyOutcomeUnknown and any later refusal rewrote it, so demanding that the
+// original reason survived until the upgrade would adopt the objects the defect
+// missed and skip the ones it reached. An object blocked as RealmConflict,
+// HistoryDirty, HistoryModified, HistoryOutOfOrder or UnsupportedEngine over a
+// run nobody accounted for is the state this path is for.
+//
+// Blocked is still required, and it is what keeps the widening safe: a resource
+// carrying that condition has already stopped, so adopting changes why it is
+// stopped and never stops one that was running. A resource whose refusal had
+// been lifted is a different case and not this one -- the old manager was
+// already free to publish a plan and replay, so a record written now prevents
+// nothing, while latching it could block work a person had already approved.
 func migrationRunLatchedByRefusal(migration *operatorv1alpha1.PtahMigration) bool {
 	run := migration.Status.LastRun
 	if run == nil {
@@ -781,8 +797,7 @@ func migrationRunLatchedByRefusal(migration *operatorv1alpha1.PtahMigration) boo
 		return false
 	}
 	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
-	return blocked != nil && blocked.Status == metav1.ConditionTrue &&
-		blocked.Reason == string(operatorv1alpha1.ReasonApplyOutcomeUnknown)
+	return blocked != nil && blocked.Status == metav1.ConditionTrue
 }
 
 // adoptUnresolvedMigrationRun converts the refusal an older manager latched an
@@ -809,7 +824,7 @@ func (r *MigrationReconciler) adoptUnresolvedMigrationRun(
 		return nil
 	}
 	before := migration.DeepCopy()
-	recordUnresolvedMigrationRun(migration, nil, migration.Status.LastRun, r.now())
+	recordUnresolvedMigrationRun(migration, nil, migration.Status.LastRun, "", r.now())
 	return r.patchMigrationStatus(ctx, before, migration)
 }
 

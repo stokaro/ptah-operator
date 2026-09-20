@@ -400,13 +400,14 @@ type UnresolvedMigrationRunStatus struct {
 	// may have reached the database.
 	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
 
-	// TargetIdentityDigest is the credential-free identity of the database the
-	// run was dispatched against, taken from the claim rather than from the
-	// run: an unresolved run is one whose own account was never read, so what
-	// it reached is exactly what is unknown. The reading that settles this
-	// record has to be of that
-	// database: a history read somewhere else says nothing about what this run
-	// did.
+	// TargetIdentityDigest is the credential-free identity of the database this
+	// run reached, as the run itself reported it. Where no result frame was
+	// read at all -- which is most of the ways a run becomes unresolved -- it
+	// is the database the run was dispatched against instead, because that is
+	// then the only thing known about where it went.
+	//
+	// The reading that settles this record has to be of that database: a
+	// history read somewhere else says nothing about what this run did.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
 
