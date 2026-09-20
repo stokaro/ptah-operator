@@ -71,9 +71,17 @@ jobs:
           npm run check:values:selftest
           npm run check:demo:selftest
           npm run check:demo-page:selftest
+          npm run check:translations:selftest
       - name: The values table matches the chart
         working-directory: docs/site
         run: npm run check:values
+      # The README is not a site page, so nothing in the build sees it. This is
+      # the step that holds the Japanese README to the English one: the prose is
+      # a translation, the commands are the same bytes, and a flag that differs
+      # between the two files is a defect rather than a choice.
+      - name: The translated README matches the English one
+        working-directory: docs/site
+        run: npm run check:translations
       # The field reference is generated from the API types, so a field added
       # to a Go type without regenerating leaves a page the API has moved past.
       # This is the step that says so, and it runs on every pull request

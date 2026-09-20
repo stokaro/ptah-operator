@@ -21,6 +21,8 @@
     "check:build-info:selftest": "node scripts/check-build-info.mjs --selftest",
     "check:navigation": "node scripts/check-navigation.mjs",
     "check:navigation:selftest": "node scripts/check-navigation.mjs --selftest",
+    "check:translations": "node scripts/check-translations.mjs",
+    "check:translations:selftest": "node scripts/check-translations.mjs --selftest",
     "values:write": "node scripts/build-values-reference.mjs --write",
     "check:values": "node scripts/build-values-reference.mjs",
     "check:values:selftest": "node scripts/build-values-reference.mjs --selftest",
