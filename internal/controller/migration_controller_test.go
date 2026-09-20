@@ -671,11 +671,14 @@ func migrationFrame(t *testing.T, result runner.Result) []byte {
 	return frame
 }
 
+// fakeMigrationReconciler builds the reconciler and the fake API server it
+// reads and writes through. The client comes back as a WithWatch so a test can
+// put an interceptor in front of the reconciler's reads.
 func fakeMigrationReconciler(
 	t *testing.T,
 	logs PodLogReader,
 	objects ...client.Object,
-) (*MigrationReconciler, client.Client) {
+) (*MigrationReconciler, client.WithWatch) {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
@@ -894,6 +897,14 @@ func terminalMigrationWorkload(
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: conditionType, Status: corev1.ConditionTrue}}},
 	}
 	operation.JobUID = job.UID
+	// A Pod the API server has finished with reports a terminal phase, and the
+	// controller reads that phase to tell a run that is over from one that may
+	// still be writing. A fixture without it is a workload only its name calls
+	// terminal.
+	podPhase := corev1.PodSucceeded
+	if conditionType == batchv1.JobFailed {
+		podPhase = corev1.PodFailed
+	}
 	priority := int32(0)
 	preemption := corev1.PreemptLowerPriority
 	seconds := int64(300)
@@ -908,7 +919,7 @@ func terminalMigrationWorkload(
 			{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
 			{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
 		},
-	}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+	}, Status: corev1.PodStatus{Phase: podPhase, ContainerStatuses: []corev1.ContainerStatus{{
 		Name: executorContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
 	}}}}
 	return job, pod
