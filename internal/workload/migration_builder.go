@@ -16,6 +16,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -81,6 +82,7 @@ func NameForMigration(
 func (b Builder) BuildMigration(
 	migration *operatorv1alpha1.PtahMigration,
 	operation operatorv1alpha1.MigrationOperationStatus,
+	plan *operatorv1alpha1.PtahMigrationPlan,
 ) (*batchv1.Job, error) {
 	if err := b.validate(); err != nil {
 		return nil, err
@@ -110,7 +112,7 @@ func (b Builder) BuildMigration(
 		)
 	}
 
-	environment, volumes, mounts, annotations, err := migrationDataPlane(migration, operation)
+	environment, volumes, mounts, annotations, err := migrationDataPlane(migration, operation, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -280,6 +282,7 @@ func migrationRunnerOperation(operation operatorv1alpha1.MigrationOperationType)
 func migrationDataPlane(
 	migration *operatorv1alpha1.PtahMigration,
 	operation operatorv1alpha1.MigrationOperationStatus,
+	plan *operatorv1alpha1.PtahMigrationPlan,
 ) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, map[string]string, error) {
 	environment := []corev1.EnvVar{
 		literalEnv("HOME", workPath),
@@ -356,7 +359,24 @@ func migrationDataPlane(
 			if operation.DispatchNotAfter == nil || operation.ExecutionNotAfter == nil {
 				return nil, nil, nil, nil, errors.New("migration apply carries no dispatch and execution bounds")
 			}
+			// The runner refuses a mutating child that names none of this, so
+			// the Job that carries it is where the approved plan reaches the
+			// data plane. The schema Apply mounts its plan bytes; a migration
+			// has no bytes to mount -- `migrations up` reads the artifact
+			// directory -- so what travels is the plan's identity: the
+			// sequence it approved and the history it approved it against.
+			if err := validateMigrationApplyPlan(migration, operation, plan); err != nil {
+				return nil, nil, nil, nil, err
+			}
+			sequenceDigest, err := MigrationSequenceDigest(plan.Spec.Migrations)
+			if err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("digest the approved migration sequence: %w", err)
+			}
 			environment = append(environment,
+				literalEnv(runner.EnvExpectedTargetIdentityDigest, plan.Spec.TargetIdentityDigest),
+				literalEnv(runner.EnvExpectedCoordinationDigest, plan.Spec.CoordinationDigest),
+				literalEnv(runner.EnvExpectedMigrationSequenceDigest, sequenceDigest),
+				literalEnv(runner.EnvExpectedMigrationHistoryFingerprint, plan.Spec.HistoryFingerprint),
 				literalEnv(runner.EnvDispatchNotAfter, operation.DispatchNotAfter.UTC().Format(time.RFC3339Nano)),
 				literalEnv(runner.EnvExecutionNotAfter, operation.ExecutionNotAfter.UTC().Format(time.RFC3339Nano)),
 			)
@@ -365,6 +385,70 @@ func migrationDataPlane(
 
 	sort.Slice(environment, func(left, right int) bool { return environment[left].Name < environment[right].Name })
 	return environment, volumes, mounts, annotations, nil
+}
+
+// MigrationSequenceDigest binds a plan to the exact sequence it carries, in the
+// order it carries it: a plan that applies the same migrations in another order
+// is a different plan.
+//
+// It lives here rather than beside the rest of the plan derivation because the
+// Job that executes a plan has to carry this digest, and internal/migrationplan
+// is built on top of this package. That package's SequenceDigest calls this, so
+// there is one rule rather than two copies that can drift.
+func MigrationSequenceDigest(planned []operatorv1alpha1.PlannedMigration) (string, error) {
+	if len(planned) == 0 {
+		return "", errors.New("a plan carries at least one migration")
+	}
+	entries := make([]map[string]any, 0, len(planned))
+	for _, migration := range planned {
+		entries = append(entries, map[string]any{
+			"version":          migration.Version,
+			"version_key":      migration.VersionKey,
+			"checksum":         migration.Checksum,
+			"checkpoint":       migration.Checkpoint,
+			"transaction_mode": migration.TransactionMode,
+		})
+	}
+	return fingerprint.DigestCanonicalJSON(entries)
+}
+
+// validateMigrationApplyPlan refuses to build an Apply Job whose plan is not
+// the immutable one the claim named.
+//
+// A Job is the only thing that reaches the database, so the plan it carries is
+// checked here rather than trusted from whoever called: a claim pointing at one
+// plan and a Job carrying another would put an unapproved sequence's identity
+// in front of the runner.
+func validateMigrationApplyPlan(
+	migration *operatorv1alpha1.PtahMigration,
+	operation operatorv1alpha1.MigrationOperationStatus,
+	plan *operatorv1alpha1.PtahMigrationPlan,
+) error {
+	if plan == nil {
+		return errors.New("migration apply requires the plan that authorized it")
+	}
+	if plan.DeletionTimestamp != nil {
+		return errors.New("cannot apply a deleting migration plan")
+	}
+	if plan.Namespace != migration.Namespace ||
+		plan.Name != operation.PlanRef.Name ||
+		plan.UID != operation.PlanRef.UID {
+		return errors.New("migration apply plan is not the one the claim named")
+	}
+	if plan.Spec.MigrationRef.Name != migration.Name || plan.Spec.MigrationRef.UID != migration.UID {
+		return errors.New("migration apply plan belongs to another migration")
+	}
+	if !sha256Pattern.MatchString(plan.Spec.TargetIdentityDigest) {
+		return errors.New("migration apply plan carries no valid target identity digest")
+	}
+	if !sha256Pattern.MatchString(plan.Spec.CoordinationDigest) ||
+		plan.Spec.CoordinationDigest != operation.CoordinationDigest {
+		return errors.New("migration apply coordination digest does not match the immutable plan")
+	}
+	if !sha256Pattern.MatchString(plan.Spec.HistoryFingerprint) {
+		return errors.New("migration apply plan carries no valid history fingerprint")
+	}
+	return nil
 }
 
 func validateMigration(migration *operatorv1alpha1.PtahMigration) error {

@@ -502,6 +502,22 @@ spellings of one address are normalized; DNS absolute-name markers, address
 families and MySQL database-name casing are preserved; ambiguous repeated scope
 parameters and multi-endpoint targets are rejected.
 
+Both families are held to it in the same place, and by the same code: the
+runner refuses to start a mutating child unless the Pod's own database URL
+still hashes to the realm and the route identity its approved plan named, and
+unless the claim's absolute dispatch and execution deadlines are both present,
+ordered and unexpired. The deadline check is repeated immediately before the
+child is executed, because a Pod scheduled late or resumed after an
+interruption can cross its window while the plan is being prepared, and the
+execution deadline is imposed on the child's own context so a run cannot
+outlive it. A migration Apply carries two more bindings, since its child
+selects its own work: the digest of the approved ordered sequence and the
+fingerprint of the history that sequence was computed against. The runner
+cannot re-derive either — it holds no artifact and reads no revision table — so
+what it enforces is that a migration child no plan authorized never starts.
+Proving the executed sequence is exactly the approved one needs an executor
+that accepts a sequence, which the pinned `migrations up` does not.
+
 All resources use one configurable coordination namespace, so resources in
 different namespaces still contend for the same database. The manager's
 leader-election Lease lives there too. Replicas of the one supported Helm

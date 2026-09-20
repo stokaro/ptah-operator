@@ -46,7 +46,7 @@ func TestControllerJobWriteGuardAdmitsTheJobsTheBuilderProduces(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			migration, operation := contractMigrationFixture(t, builder, test.operation)
-			job, err := builder.BuildMigration(migration, operation)
+			job, err := builder.BuildMigration(migration, operation, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +72,18 @@ func TestControllerJobWriteGuardAdmitsTheJobsTheBuilderProduces(t *testing.T) {
 			t.Fatal(err)
 		}
 		operation.JobName = name
-		job, err := builder.BuildMigration(migration, operation)
+		plan := &operatorv1alpha1.PtahMigrationPlan{
+			ObjectMeta: metav1.ObjectMeta{Namespace: migration.Namespace, Name: "orders-plan-1", UID: "plan-uid"},
+			Spec: operatorv1alpha1.PtahMigrationPlanSpec{
+				ContractVersion:      1,
+				MigrationRef:         operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
+				HistoryFingerprint:   "sha256:" + strings.Repeat("5", 64),
+				CoordinationDigest:   operation.CoordinationDigest,
+				TargetIdentityDigest: "sha256:" + strings.Repeat("7", 64),
+				Migrations:           []operatorv1alpha1.PlannedMigration{{Version: 3, Checksum: "h1:orders-0003"}},
+			},
+		}
+		job, err := builder.BuildMigration(migration, operation, plan)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +113,7 @@ func TestControllerJobWriteGuardAdmitsTheJobsTheBuilderProduces(t *testing.T) {
 	t.Run("a migration Job wearing the schema subject label is refused", func(t *testing.T) {
 		t.Parallel()
 		migration, operation := contractMigrationFixture(t, builder, operatorv1alpha1.MigrationOperationHistory)
-		job, err := builder.BuildMigration(migration, operation)
+		job, err := builder.BuildMigration(migration, operation, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

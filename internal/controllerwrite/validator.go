@@ -72,6 +72,7 @@ type JobBuilder interface {
 	BuildMigration(
 		migration *operatorv1alpha1.PtahMigration,
 		operation operatorv1alpha1.MigrationOperationStatus,
+		plan *operatorv1alpha1.PtahMigrationPlan,
 	) (*batchv1.Job, error)
 }
 
