@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,9 +26,13 @@ import (
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	structuralcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
+	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	structuralpruning "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	apiservervalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	celconfig "k8s.io/apiserver/pkg/apis/cel"
 	"sigs.k8s.io/yaml"
 )
 
@@ -80,7 +85,7 @@ func TestEveryReferenceExampleValidatesAgainstTheAPI(t *testing.T) {
 				t.Fatalf("%s carries %d example(s), want at least 2", fragment, len(documents))
 			}
 
-			schema, props := referenceSpecSchema(t, resource.CRD)
+			schema, props, whole := referenceSpecSchema(t, resource.CRD)
 			for index, document := range documents {
 				assertExampleKind(t, fragment, index, document, resource.Kind)
 				spec, ok := document["spec"].(map[string]any)
@@ -93,6 +98,9 @@ func TestEveryReferenceExampleValidatesAgainstTheAPI(t *testing.T) {
 						fragment, index+1, unknown)
 				}
 				for _, failure := range schemaFailures(t, props, spec, resource.AuthoredInFull) {
+					t.Errorf("%s example %d: %s", fragment, index+1, failure)
+				}
+				for _, failure := range celFailures(t, whole, document) {
 					t.Errorf("%s example %d: %s", fragment, index+1, failure)
 				}
 			}
@@ -140,6 +148,33 @@ func schemaFailures(
 	return failures
 }
 
+// celFailures runs the CRD's own x-kubernetes-validations over an example.
+//
+// The OpenAPI pass above reads types, enums and patterns, and a CEL rule is
+// none of those: a minimum expressed as a rule -- an interval of at least ten
+// seconds, say -- is invisible to it. An example that the API server would
+// refuse is worse than no example, because a reader copies it.
+//
+// Defaults are applied first. The API server evaluates the rules against the
+// defaulted object, and a rule that reads a field the manifest omits would
+// otherwise see nothing where a cluster sees the default.
+func celFailures(t *testing.T, whole *structuralschema.Structural, document map[string]any) []string {
+	t.Helper()
+	validator := structuralcel.NewValidator(whole, true, celconfig.PerCallLimit)
+	if validator == nil {
+		return nil // this CRD declares no rules.
+	}
+	object := deepCopyJSON(document)
+	structuraldefaulting.Default(object, whole)
+	errs, _ := validator.Validate(
+		context.Background(), field.NewPath(""), whole, object, nil, celconfig.RuntimeCELCostBudget)
+	failures := make([]string, 0, len(errs))
+	for _, failure := range errs {
+		failures = append(failures, failure.Error())
+	}
+	return failures
+}
+
 func assertExampleKind(t *testing.T, fragment string, index int, document map[string]any, kind string) {
 	t.Helper()
 	if got, _ := document["kind"].(string); got != kind {
@@ -153,7 +188,7 @@ func assertExampleKind(t *testing.T, fragment string, index int, document map[st
 
 // referenceSpecSchema builds the structural schema for one kind's spec, out of
 // the CRDs the chart ships -- the same documents a cluster installs.
-func referenceSpecSchema(t *testing.T, name string) (*structuralschema.Structural, *apiextensions.JSONSchemaProps) {
+func referenceSpecSchema(t *testing.T, name string) (*structuralschema.Structural, *apiextensions.JSONSchemaProps, *structuralschema.Structural) {
 	t.Helper()
 	document, err := os.ReadFile(repositoryFile(t, filepath.Join("config", "crd", "bases", name)))
 	if err != nil {
@@ -189,10 +224,18 @@ func referenceSpecSchema(t *testing.T, name string) (*structuralschema.Structura
 		if err != nil {
 			t.Fatalf("build the structural schema for %s: %v", name, err)
 		}
-		return structural, &spec
+		// The CEL rules are written against the whole object -- a rule on spec
+		// can read status, and the API server compiles them from the root -- so
+		// the root schema is returned beside the spec one rather than derived
+		// from it.
+		whole, err := structuralschema.NewStructural(root.OpenAPIV3Schema)
+		if err != nil {
+			t.Fatalf("build the root structural schema for %s: %v", name, err)
+		}
+		return structural, &spec, whole
 	}
 	t.Fatalf("%s names no storage version", name)
-	return nil, nil
+	return nil, nil, nil
 }
 
 // referenceExampleDocuments returns the YAML documents fenced in one fragment.
@@ -214,8 +257,16 @@ func referenceExampleDocuments(path string) ([]map[string]any, error) {
 				continue
 			}
 			inYAML = false
+			// Through JSON and the API machinery's decoder rather than
+			// straight into a map: a plain YAML decode makes every number a
+			// float64, and the CEL runtime reads an integer field as int64 and
+			// refuses the object before any rule runs.
+			encoded, err := yaml.YAMLToJSONStrict([]byte(block.String()))
+			if err != nil {
+				return nil, fmt.Errorf("example %d: %w", len(documents)+1, err)
+			}
 			document := map[string]any{}
-			if err := yaml.UnmarshalStrict([]byte(block.String()), &document); err != nil {
+			if err := utiljson.Unmarshal(encoded, &document); err != nil {
 				return nil, fmt.Errorf("example %d: %w", len(documents)+1, err)
 			}
 			documents = append(documents, document)
@@ -281,7 +332,7 @@ func deepCopyJSON(source map[string]any) map[string]any {
 func TestTheReferenceExampleGateRefusesABrokenExample(t *testing.T) {
 	t.Parallel()
 
-	schema, props := referenceSpecSchema(t, "operator.ptah.run_ptahschemas.yaml")
+	schema, props, _ := referenceSpecSchema(t, "operator.ptah.run_ptahschemas.yaml")
 
 	sound := func() map[string]any {
 		return map[string]any{
@@ -356,4 +407,22 @@ func TestTheReferenceExampleGateRefusesABrokenExample(t *testing.T) {
 			t.Fatalf("the gate refused a partial example for an omission: %v", failures)
 		}
 	})
+}
+func TestExamplesReviewGateRejectsCELViolation(t *testing.T) {
+	documents, err := referenceExampleDocuments(
+		repositoryFile(t, filepath.Join(referenceExamplesDir, "ptahmigration.md")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Adapted from the issue: it asserted against schemaFailures, which is the
+	// OpenAPI pass. A CEL minimum is not an OpenAPI constraint and never
+	// reaches that pass, which is the defect -- so the assertion moves to the
+	// pass that now runs the rules, and the claim is unchanged.
+	document := documents[0]
+	document["spec"].(map[string]any)["interval"] = "1s"
+	_, _, whole := referenceSpecSchema(t, "operator.ptah.run_ptahmigrations.yaml")
+	if failures := celFailures(t, whole, document); len(failures) == 0 {
+		t.Fatal("example gate accepted interval=1s despite the shipped CRD's 10s CEL minimum")
+	}
 }
