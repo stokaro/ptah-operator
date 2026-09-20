@@ -178,6 +178,9 @@ cleanup() {
 # driver named a ledger, so running this phase by hand behaves as it always has.
 # shellcheck source=hack/e2e-timing.sh
 . "$ROOT_DIR/hack/e2e-timing.sh"
+# The two shapes this phase runs SQL in: one for a value, one for a status.
+# shellcheck source=hack/e2e-sql.sh
+. "$ROOT_DIR/hack/e2e-sql.sh"
 
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
@@ -496,21 +499,15 @@ create_migration_database() {
 }
 
 migration_query() {
-	query_database=${2:-$MIGRATION_DATABASE}
-	case "$ENGINE" in
-	postgresql)
-		# shellcheck disable=SC2016 # Variables expand inside the database container.
-		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
-			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"' \
-			sh "$query_database" "$1" | tr -d '[:space:]'
-		;;
-	mysql)
-		# shellcheck disable=SC2016 # Variables expand inside the database container.
-		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
-			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"' \
-			sh "$query_database" "$1" | tr -d '[:space:]'
-		;;
-	esac
+	sql_value "$ENGINE" "$TEST_NAMESPACE" "$DATABASE_SERVICE" \
+		"${2:-$MIGRATION_DATABASE}" "$1"
+}
+
+# The same statement run for its status. A guard on migration_query reads the
+# trim and never the exec, so a statement this phase must see fail runs here.
+migration_statement() {
+	sql_statement "$ENGINE" "$TEST_NAMESPACE" "$DATABASE_SERVICE" \
+		"${2:-$MIGRATION_DATABASE}" "$1"
 }
 
 # Whether the table a migration would change carries a column, asked of the
@@ -1238,9 +1235,9 @@ assert_partial_run_blocks_and_recovers() {
 	# and the sequence loses the migration that should not have run.
 	printf 'e2e migrations: undoing the %s partial migration by hand and putting the sequence back\n' \
 		"$ENGINE_KIND" >&2
-	migration_query "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
+	migration_statement "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
 		fail "could not undo the column the $ENGINE partial migration committed"
-	migration_query "DELETE FROM schema_migrations WHERE state <> 'applied'" >/dev/null ||
+	migration_statement "DELETE FROM schema_migrations WHERE state <> 'applied'" >/dev/null ||
 		fail "could not take the unfinished $ENGINE revision out of the history"
 	publish_migrations v4 "$MIGRATION_FIXTURE_DIR"
 
