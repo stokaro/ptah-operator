@@ -4,7 +4,7 @@
 
 <p align="center">Ptah（プタハ）Operator は、PostgreSQL と MySQL のスキーマを不変の OCI アーティファクトから収束させる Kubernetes コントロールプレーンです。</p>
 
-<p align="center"><a href="README.md">English</a> · <strong>日本語</strong></p>
+<p align="center"><a href="README.md">English</a> · <strong>日本語</strong> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a></p>
 
 <p align="center">
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/ci.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/ci.yml?branch=master&label=ci&logo=github" alt="master ブランチにおける CI ワークフローの状態。ソースを検証し、レース検出器を実行し、Kubernetes のライフサイクル全体を動かす"></a>

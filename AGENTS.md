@@ -258,15 +258,15 @@ American English in code, comments, documentation, issue and PR text, and
 program output. Plain international English: short sentences, concrete nouns,
 active voice. Say what changed and why, once.
 
-`README.ja.md` is the Japanese translation of `README.md`, and
-`docs/site/scripts/check-translations.mjs` holds the two together: the fenced
-blocks match in order, so do the link, image and badge addresses, each file
-links to the other, and the product name carries its reading once --
-`Ptah（プタハ）` at the first mention, `Ptah` after it. Translate the prose and
-leave the commands and the addresses byte for byte; a flag or a badge URL that
-differs between the two files is a defect. The prose itself is review's, because
-no gate can read it. stokaro/ptah carries the same gate over its own README as a
-second copy, so a rule changed in one is changed in the other by hand.
+`README.ja.md`, `README.de.md` and `README.fr.md` translate `README.md`.
+`docs/site/scripts/check-translations.mjs` compares fenced blocks and link,
+image and badge addresses in order. Every file links to all other languages
+near the top. Japanese gives the reading `Ptah（プタハ）` once, then uses
+`Ptah`; German and French use `Ptah` throughout. Translate prose and
+accessibility text; keep commands and addresses byte for byte. Mark links to
+English documentation as English. Review meaning against the English source;
+the gate checks structure and preserved bytes. stokaro/ptah carries the same
+gate, so change a shared rule in both copies.
 
 No AI attribution anywhere in git or on the forge — no co-author trailer, no
 generated-with footer, no session or transcript reference.
