@@ -1145,9 +1145,17 @@ Clear whatever else is refusing the resource first. A manager older than this
 record held the same state in the `Blocked` condition, and the upgrade path
 reads that condition before anything else in a pass, so anything that keeps
 writing `Blocked` -- a realm another resource still claims, an engine this
-operator does not support, a history the artifact cannot continue -- rebuilds
-the record on the pass after this one. The command below clears the refusal
-that is standing; it cannot clear one that keeps coming back.
+operator does not support, a dirty revision row, an applied migration that no
+longer matches its file, a migration waiting below the current version --
+rebuilds the record on the pass after this one. The command below clears the
+refusal that is standing; it cannot clear one that keeps coming back.
+
+One standing refusal does not rebuild it: a database ahead of the artifact this
+resource resolves. That reading found every migration the artifact carries
+applied, with nothing dirty and nothing modified, and a reading like that is
+what settles the record on its own -- so the clear holds while the refusal goes
+on standing. The refusal itself is repaired by publishing an artifact that
+carries the versions the database already applied.
 
 Then the refusal and the record go in one write. Removing the record alone is
 not enough even with nothing else refusing: the condition outlives it by a

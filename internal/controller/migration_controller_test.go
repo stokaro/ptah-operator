@@ -1826,6 +1826,54 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			passes:     2,
 			wantRecord: true,
 		},
+		{
+			// The same refusal with nothing pending, which is how an
+			// interrupted run usually leaves a database: the row it was
+			// writing is dirty and the artifact has nothing else to apply.
+			// An empty pending list alone used to read as the settlement the
+			// run was waiting for, so the record a person cleared by hand
+			// stayed gone while the database went on refusing.
+			name: "a dirty row with nothing pending rebuilds it",
+			clear: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.UnresolvedRun = nil
+				blocked := meta.FindStatusCondition(migration.Status.Conditions,
+					operatorv1alpha1.ConditionMigrationBlocked)
+				blocked.Status = metav1.ConditionFalse
+			},
+			report:     settledDirtyMigrationHistory,
+			passes:     2,
+			wantRecord: true,
+		},
+		{
+			// And the other refusal the database's own record can carry with
+			// nothing pending.
+			name: "an applied migration that no longer matches its file rebuilds it",
+			clear: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.UnresolvedRun = nil
+				blocked := meta.FindStatusCondition(migration.Status.Conditions,
+					operatorv1alpha1.ConditionMigrationBlocked)
+				blocked.Status = metav1.ConditionFalse
+			},
+			report:     modifiedMigrationHistory,
+			passes:     2,
+			wantRecord: true,
+		},
+		{
+			// The boundary the runbook names. This refusal keeps coming back
+			// like the two above, and the clear still holds: the reading found
+			// every migration the artifact carries applied and nothing dirty
+			// or modified, which is the settlement, and the version the
+			// artifact ends at is not kept in status for this path to weigh.
+			name: "a database ahead of its artifact does not rebuild it",
+			clear: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.UnresolvedRun = nil
+				blocked := meta.FindStatusCondition(migration.Status.Conditions,
+					operatorv1alpha1.ConditionMigrationBlocked)
+				blocked.Status = metav1.ConditionFalse
+			},
+			report: historyAheadOfItsArtifact,
+			passes: 2,
+		},
 	} {
 		row := row
 		t.Run(row.name, func(t *testing.T) {
@@ -1836,6 +1884,14 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			if migration.Status.UnresolvedRun == nil {
 				t.Fatal("the fixture recorded no unresolved run")
 			}
+			// The upgrade path exempts a run a later reading already accounted
+			// for, and it compares the two instants strictly. This test clock
+			// stamps the run and every reading at the same one, which no
+			// cluster does and which would make each row below pass without
+			// ever reaching that exemption. Backdating the run is what puts
+			// the readings after it, as they are in a cluster.
+			finished := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(-time.Minute))
+			migration.Status.LastRun.FinishedAt = &finished
 			row.clear(migration)
 
 			// A reading that still has work pending, because the case this is
@@ -1871,4 +1927,49 @@ func dirtyMigrationHistory() dataplane.MigrationStatusReport {
 	report := pendingMigrationHistory()
 	report.DirtyRevision = &dataplane.MigrationDirty{Version: 3, Applied: 1, Total: 2}
 	return report
+}
+
+// settledDirtyMigrationHistory is the same refusal with nothing pending, which
+// is the shape an interrupted run leaves behind: the revision it was writing
+// is dirty, and the artifact carries nothing the database has not seen. Ptah
+// reports that revision as dirty rather than pending, so the pending list is
+// empty while the database still refuses.
+func settledDirtyMigrationHistory() dataplane.MigrationStatusReport {
+	return dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:  2, TotalMigrations: 3,
+		DirtyRevision: &dataplane.MigrationDirty{Version: 3, Applied: 1, Total: 2},
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateDirty},
+		},
+	}
+}
+
+// modifiedMigrationHistory is the other refusal the revision table can carry
+// with nothing pending: every migration the artifact names is applied, and one
+// of them no longer matches the file that accounts for it.
+func modifiedMigrationHistory() dataplane.MigrationStatusReport {
+	return dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:  3, TotalMigrations: 2,
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateModified},
+		},
+	}
+}
+
+// historyAheadOfItsArtifact is a reading with nothing to refuse in it except
+// that the database has gone past the sequence this artifact ends at. The
+// refusal stands on every pass, and the reading is still a settlement.
+func historyAheadOfItsArtifact() dataplane.MigrationStatusReport {
+	return dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:  9, TotalMigrations: 2,
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
+		},
+	}
 }
