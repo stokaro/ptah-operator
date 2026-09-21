@@ -76,7 +76,7 @@ const (
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
 	ciWorkflowSHA256                = "d45eeb9027b7b57f4920a105d10c47cce443afccad57e46d49d83756a600b7e6"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
+	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
 	controllerSchemaSHA256          = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
@@ -1457,6 +1457,13 @@ func verifyReleaseWorkflow(path string) error {
 		"actions/runs/$run_id/jobs",
 		".name == \"Kubernetes support gate\"",
 		"actions/runs/$evidence_run/artifacts",
+		// The inventory is read as a subset and as a whole: each chart this
+		// release needs exactly once, and a page that ended early refused
+		// rather than taken for the rest. Requiring the run to hold nothing
+		// else is what refused every successful matrix.
+		"--paginate",
+		"so it is a partial page",
+		"select(.name == $name)",
 		"installed-release-chart-%s\\n",
 		`(.minor_slug == (.minor | gsub("\\."; "-")))`,
 		"gh run download \"$evidence_run\"",
