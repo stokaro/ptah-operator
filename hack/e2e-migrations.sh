@@ -2880,9 +2880,18 @@ open_late_dispatch_gate() {
 	LATE_DISPATCH_GATE_OPEN=1
 }
 
+# Closing is what the rest of the proof rests on, so a masked failure here
+# would leave the gate open and every step after it measuring nothing. The
+# scheduler reads the node labels rather than this command's exit status, so
+# the check is that no node carries the label any more.
 close_late_dispatch_gate() {
-	k label nodes --all "${LATE_DISPATCH_GATE_LABEL}-" >/dev/null 2>&1 || true
+	k label nodes --all "${LATE_DISPATCH_GATE_LABEL}-" >/dev/null ||
+		fail "the late-dispatch gate could not be closed"
 	LATE_DISPATCH_GATE_OPEN=0
+	still_open=$(k get nodes -l "$LATE_DISPATCH_GATE_LABEL" -o name) ||
+		fail "the nodes carrying the late-dispatch gate could not be listed"
+	[ -z "$still_open" ] ||
+		fail "the late-dispatch gate is still open on: $(printf '%s' "$still_open" | tr '\n' ' ')"
 }
 
 late_dispatch_status() {
@@ -3104,12 +3113,18 @@ run_late_dispatch_proof() {
 		-o jsonpath='{.metadata.uid}' 2>/dev/null || true)
 	[ "$late_live_uid" = "$LATE_APPLY_JOB_UID" ] ||
 		fail "the $ENGINE Apply Job under that name is not the one the resource dispatched"
-	# Nothing has run: the Pod cannot be scheduled while the gate label is on no
-	# node, so this suspends a Job whose work is still entirely ahead of it.
-	if k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" \
-		-o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' |
-		grep -vx 'Pending' | grep -q .; then
-		fail "the $ENGINE Apply Pod was not held off a node, so the window was not what delayed it"
+	# Nothing has run, and the phase alone does not say so: a Pod stays Pending
+	# while it is bound to a node and pulling, and the kubelet can start the
+	# runner from there before the suspend removes it. Unbound is the property
+	# that means the gate held, so that is what is read.
+	k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o json \
+		>"$WORK_DIR/late-pods.json" ||
+		fail "the $ENGINE Apply Pods could not be read before suspending their Job"
+	if jq -e '
+      any(.items[]?;
+        .status.phase != "Pending" or ((.spec.nodeName // "") | length) > 0)
+    ' "$WORK_DIR/late-pods.json" >/dev/null; then
+		fail "the $ENGINE Apply Pod reached a node before its Job was suspended, so the window was not what delayed it"
 	fi
 	k -n "$TEST_NAMESPACE" patch job "$LATE_APPLY_JOB" --type merge \
 		-p '{"spec":{"suspend":true}}' >/dev/null ||
