@@ -97,9 +97,12 @@ type SchemaReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
 	Logs      PodLogReader
-	Jobs      JobBuilder
-	Plans     planstore.Store
-	Locks     *targetlock.Locker
+	// ResultReadTimeout bounds the pod/log read of one terminal operation.
+	// Zero means defaultResultReadTimeout, which is what the manager runs.
+	ResultReadTimeout time.Duration
+	Jobs              JobBuilder
+	Plans             planstore.Store
+	Locks             *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// PtahSchema, including schemas that live in different namespaces.
 	LockNamespace string
@@ -1349,6 +1352,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
 			}
 			return r.retryOperation(ctx, schema, job, failure)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			r.event(schema, corev1.EventTypeWarning, "ResultReadTimedOut",
+				"reading the %s result took longer than its bound: %v", operation.Type, err)
+			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 		}
 		return ctrl.Result{}, err
 	}
@@ -3856,12 +3864,32 @@ func (r *SchemaReconciler) terminalLogs(
 	if r.Logs == nil {
 		return evidence, fmt.Errorf("pod log reader is not configured")
 	}
-	logs, err := r.Logs.Read(ctx, schema.Namespace, selected.Name, executorContainerName)
+	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout,
+		schemaResultReadBudget(schema),
+		schema.Namespace, selected.Name, executorContainerName)
 	if err != nil {
 		return evidence, err
 	}
 	evidence.Logs = logs
 	return evidence, nil
+}
+
+// schemaResultReadBudget is the Lease this read has to stay inside.
+//
+// A post-Apply Observe renews the Lease at the duration the Apply recorded in
+// status.pendingObservation, not at whatever the spec says now, so that is the
+// one to read when it is there. Otherwise the claim's own duration applies, and
+// a read-only operation holding no Lease has no budget to derive.
+func schemaResultReadBudget(schema *operatorv1alpha1.PtahSchema) time.Duration {
+	if pending := schema.Status.PendingObservation; pending != nil {
+		if budget := leaseReadBudget(pending.LeaseDurationSeconds); budget > 0 {
+			return budget
+		}
+	}
+	if operation := schema.Status.ActiveOperation; operation != nil {
+		return leaseReadBudget(operation.LeaseDurationSeconds)
+	}
+	return 0
 }
 
 func (r *SchemaReconciler) markJobHarvested(ctx context.Context, job *batchv1.Job) error {

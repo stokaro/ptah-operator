@@ -310,7 +310,7 @@ refuse a Job no claim asked for.
 Between the claim and the create sit two more durable boundaries. The
 **admission snapshot** binds the exact ServiceAccount, LimitRange defaults,
 RuntimeClass scheduling and overhead, PriorityClass values and configured
-built-in admission behaviour, by UID and resourceVersion; its digest travels in
+built-in admission behavior, by UID and resourceVersion; its digest travels in
 the Job and Pod annotations, and a fail-closed webhook compares the final
 post-mutation Pod against it before scheduling. The **dispatch boundary** is
 persisted immediately before the one permitted create attempt: after it, an
@@ -339,6 +339,56 @@ its result and scheduled its bounded cleanup TTL, so a transient API or RBAC
 failure retries the transition instead of orphaning the Job. That TTL is the
 one field the manager may add to a Job it already created, and no result is
 read before the Job carries its terminal condition.
+
+Reading that result is the one blocking call a reconciliation makes against
+something other than the API server's own store: a pod/log request the API
+server proxies to a kubelet, streaming a body whose size the executor decides.
+Each family runs one reconcile worker and leader election admits one manager,
+so a response that stops arriving would hold every other resource of that
+family behind it, including the passes that renew the Lease of an Apply that is
+still executing SQL. The read carries a deadline of its own: sixty seconds, two
+thirds of the shortest Apply Lease the API can produce, or the Lease the
+operation itself holds where that is shorter. The worker blocked on a read is
+the worker that owes every other resource of the family its Lease renewals, so
+a read may hold it for no longer, and has to give it back with time to spend --
+a bound equal to the whole Lease would let a read beginning just after a
+renewal run until the moment that Lease expired. The Lease is counted whole
+rather than less its grace, because the grace is what makes a Lease outlive its
+Job and not time withheld from reading the result afterwards.
+
+Sixty seconds still clears what a legitimate result needs, which is about fifty
+for the largest frame the protocol admits at a floor of a mebibyte a second.
+The two constraints meet close together, and where they conflict the Lease
+wins: a maximum-size frame on a slower link times out and is retried, while a
+renewal that arrives too late lets another family take a realm whose SQL may
+still be running.
+
+Bounding the read shortens the window in which one resource's reconcile holds
+up another's and does not close it. Closing it means taking the read off the
+reconcile path or giving the family more than one worker. The second bound is the one that matters
+at the low end -- the API accepts a deadline of thirty seconds, and spending
+two minutes reading the result of thirty seconds of work holds the worker for
+longer than the operation it is reporting on.
+
+This bound is not what keeps the realm safe. A read is read-only, and a read
+that outlives its Lease authorizes nothing: the epoch is checked before the
+result is used, and a Lease that changed hands retires the operation and
+discards the result. The deadline makes the read proportionate; the epoch makes
+it safe.
+
+That duration is taken from the claim, never from the spec. A Lease is renewed
+at the duration the claim recorded -- for the proof after an Apply, the one
+`status.pendingObservation` copied from it -- and `activeDeadlineSeconds` can
+be raised afterwards without lengthening a Lease already held.
+
+A read that ends at its deadline decides nothing: the claim, the Lease and any
+record of an unresolved run are left exactly as they were, because a log this
+manager could not read says nothing about what the database now holds. It is
+requeued at a fixed short interval rather than raised as a reconcile error,
+because the queue's own backoff climbs past the headroom the deadline was
+chosen to leave, and a terminal Job produces no further event to bring the
+resource back with. The timeout is reported as an Event, so it stays visible
+as the failure it is.
 
 One case adds the field to a Job that is still running, and both admission
 layers name it: losing database lock continuity during an Apply retires the

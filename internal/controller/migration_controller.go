@@ -80,8 +80,11 @@ type MigrationReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
 	Logs      PodLogReader
-	Jobs      MigrationJobBuilder
-	Locks     *targetlock.Locker
+	// ResultReadTimeout bounds the pod/log read of one terminal operation.
+	// Zero means defaultResultReadTimeout, which is what the manager runs.
+	ResultReadTimeout time.Duration
+	Jobs              MigrationJobBuilder
+	Locks             *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// resource, including resources that live in different namespaces: two
 	// namespaces that address the same database must not run at the same time.
@@ -630,6 +633,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 				return r.finishUncertainMigrationApply(ctx, migration, job, err, "")
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			r.event(migration, corev1.EventTypeWarning, "ResultReadTimedOut",
+				"reading the %s result took longer than its bound: %v", operation.Type, err)
+			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 		}
 		return ctrl.Result{}, err
 	}
@@ -1709,7 +1717,9 @@ func (r *MigrationReconciler) migrationTerminalLogs(
 	if r.Logs == nil {
 		return evidence, errors.New("pod log reader is not configured")
 	}
-	logs, err := r.Logs.Read(ctx, migration.Namespace, selected.Name, executorContainerName)
+	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout,
+		leaseReadBudget(operation.LeaseDurationSeconds),
+		migration.Namespace, selected.Name, executorContainerName)
 	if err != nil {
 		return evidence, err
 	}
