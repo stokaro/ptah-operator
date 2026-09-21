@@ -27,8 +27,13 @@ Apply     the approved sequence
 Verify    the history again, to confirm what the run did
 ```
 
-Each step is a Job that holds either the registry credentials or the database
-URL, and never both. The migration files reach the container that runs SQL
+Four of those steps are Jobs: `Resolve`, `Verify`, the two readings of the
+revision table, and `Apply`. Planning is arithmetic the manager does on the
+reading it already has, and approving is a person writing an object -- neither
+reaches a database or a registry, so neither needs a Pod.
+
+Each Job holds either the registry credentials or the database URL, and never
+both. The migration files reach the container that runs SQL
 through an init container that fetched them; the process holding your database
 URL never talks to your registry.
 
