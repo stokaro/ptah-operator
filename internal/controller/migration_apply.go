@@ -392,6 +392,8 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		// Neither may be retried. A partial run committed some of a migration's
 		// statements and not the rest, and an unknown one cannot say whether it
 		// did; running the same file again would run those statements twice.
+		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun,
+			result.TargetIdentityDigest, r.now())
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, bounded(message, 1024))
@@ -418,6 +420,54 @@ func (r *MigrationReconciler) consumeMigrationRun(
 	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome, bounded(message, 256))
 	r.releaseMigrationApplyLock(ctx, migration, operation)
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// recordUnresolvedMigrationRun latches the run whose effect on the database
+// nobody established, and names what a person has to go and look at: the
+// attempt, the Job it ran as, the plan it was carrying out, and the database it
+// addressed.
+//
+// It is a record rather than a condition because a condition is about now. Any
+// later refusal rewrites the reason this run left, and a refusal that was
+// rewritten says nothing about whether the mutation was ever accounted for.
+// Only a reading of that same database with nothing pending removes it.
+func recordUnresolvedMigrationRun(
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	run *operatorv1alpha1.MigrationRunStatus,
+	reportedTarget string,
+	now time.Time,
+) {
+	if run == nil {
+		return
+	}
+	unresolved := &operatorv1alpha1.UnresolvedMigrationRunStatus{
+		Outcome:    run.Outcome,
+		JobName:    run.JobName,
+		JobUID:     run.JobUID,
+		RecordedAt: metav1.NewTime(now),
+	}
+	if operation != nil {
+		unresolved.OperationID = operation.ID
+		unresolved.PlanRef = operation.PlanRef.DeepCopy()
+	}
+	// Which database to name is the whole point of the record, so the run's own
+	// account of it wins. A result frame reports the target the executor opened,
+	// and that is not always the one the plan was computed against: Secret
+	// content can rotate between the history reading and the Apply. Recording
+	// the planned database instead would let a clean reading of it settle a run
+	// that never touched it, while a reading of the database that was touched
+	// could not match what was stored.
+	unresolved.TargetIdentityDigest = reportedTarget
+	if unresolved.TargetIdentityDigest == "" {
+		// No frame, or one that named no target: the best that is known is the
+		// database the plan was computed against, which is the last history
+		// this resource read.
+		if history := migration.Status.History; history != nil {
+			unresolved.TargetIdentityDigest = history.TargetIdentityDigest
+		}
+	}
+	migration.Status.UnresolvedRun = unresolved
 }
 
 // releaseMigrationApplyLock hands the database back. A failure to release is
@@ -534,11 +584,19 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 // cannot read what it did. The claim is retired and the resource is blocked:
 // the database is the only thing that can settle it, and nothing dispatches
 // again until a person has looked.
+//
+// reportedTarget is the database the run said it opened, and is empty wherever
+// no result frame was read -- which is most of the ways in. A run that reached
+// a database the plan was never computed against arrives here through exactly
+// one of them, and that is the case where naming the planned database instead
+// would be wrong: a clean reading of it would settle a run that never touched
+// it, and a reading of the database that was touched could never match.
 func (r *MigrationReconciler) finishUncertainMigrationApply(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	failure error,
+	reportedTarget string,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	before := migration.DeepCopy()
@@ -549,11 +607,32 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		FinishedAt: &finishedAt,
 		Message:    bounded(failure.Error(), 1024),
 	}
-	if job != nil {
+	switch {
+	case job != nil && (operation.JobUID == "" || job.UID == operation.JobUID):
 		run.JobName = job.Name
 		run.JobUID = job.UID
+	case operation.JobUID != "":
+		// Either no Job was handed in, or the one that was is not this claim's.
+		// A Job that took the reserved name after this claim's was gone is a
+		// later attempt, and naming it would point whoever has to account for
+		// the run at an execution that did not perform it.
+		//
+		// The Job is gone -- collected, or removed by hand -- and the claim is
+		// the only thing left that knows what ran. That is exactly when naming
+		// it matters: status.lastRun exists so a person can see what happened
+		// without the Job, and the commonest way into this branch is the Job
+		// being missing. The UID is taken from the claim rather than the name
+		// alone, because it is what separates this attempt from a later one
+		// that reused the name.
+		//
+		// A recorded UID is also the proof a Job existed. A claim that started
+		// a dispatch and never recorded one names nothing here, because the
+		// name it reserved is not evidence that anything was created under it.
+		run.JobName = operation.JobName
+		run.JobUID = operation.JobUID
 	}
 	migration.Status.LastRun = run
+	recordUnresolvedMigrationRun(migration, operation, run, reportedTarget, r.now())
 	migration.Status.ActiveOperation = nil
 	migration.Status.Plan = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked

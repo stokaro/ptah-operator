@@ -361,6 +361,60 @@ type MigrationRunStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// UnresolvedMigrationRunStatus is the execution whose effect on the database
+// nobody has established, and the evidence a person needs to go and establish
+// it.
+//
+// It exists because a condition cannot hold this. A condition says why the
+// resource is refused right now, and every later refusal -- a realm a second
+// resource claimed, a dirty revision, an applied migration whose file moved --
+// legitimately writes its own reason over it. Whether a mutation that may have
+// run was ever accounted for is a different question, and no refusal answers
+// it, so it is recorded rather than inferred.
+type UnresolvedMigrationRunStatus struct {
+	// An Enum marker here would not narrow anything: the one on
+	// MigrationRunOutcome wins, and the generated schema keeps all five
+	// values. The two this field carries are enforced by the controller that
+	// writes it.
+
+	// Outcome is what the run's own evidence said, and is always Partial or
+	// Unknown: Partial committed some of a migration's statements and not the
+	// rest, and Unknown could not be read at all. No other outcome leaves the
+	// database in a state nobody can name, so no other outcome is recorded
+	// here.
+	Outcome MigrationRunOutcome `json:"outcome"`
+
+	// OperationID is the Apply claim that ran, so this record names one attempt
+	// rather than the resource in general.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	OperationID string `json:"operationID,omitempty"`
+
+	// JobName and JobUID identify the execution. The UID is what makes a
+	// replacement Job with the same name a different run.
+	// +kubebuilder:validation:MaxLength=253
+	JobName string `json:"jobName,omitempty"`
+	// JobUID is that Job's UID.
+	JobUID types.UID `json:"jobUID,omitempty"`
+
+	// PlanRef names the plan the run was carrying out, which is the work that
+	// may have reached the database.
+	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
+
+	// TargetIdentityDigest is the credential-free identity of the database this
+	// run reached, as the run itself reported it. Where no result frame was
+	// read at all -- which is most of the ways a run becomes unresolved -- it
+	// is the database the run was dispatched against instead, because that is
+	// then the only thing known about where it went.
+	//
+	// The reading that settles this record has to be of that database: a
+	// history read somewhere else says nothing about what this run did.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
+
+	// RecordedAt is when the controller wrote this record.
+	RecordedAt metav1.Time `json:"recordedAt"`
+}
+
 // PtahMigrationStatus is the controller's account of one migration resource.
 type PtahMigrationStatus struct {
 	// ObservedGeneration is the spec generation this status describes.
@@ -404,6 +458,13 @@ type PtahMigrationStatus struct {
 	// LastRun is the evidence of the most recent execution, kept across later
 	// reconciliations so an operator can see what happened without the Job.
 	LastRun *MigrationRunStatus `json:"lastRun,omitempty"`
+
+	// UnresolvedRun is the execution nobody could account for, and is absent
+	// while there is none. It is written when a run ends Partial or Unknown,
+	// and removed only when a read-only reading of the same database finds
+	// nothing of this artifact left to apply. While it is here nothing is
+	// planned and nothing runs, whatever the conditions happen to say.
+	UnresolvedRun *UnresolvedMigrationRunStatus `json:"unresolvedRun,omitempty"`
 
 	// NextReconciliationTime is when the controller intends to look again.
 	NextReconciliationTime *metav1.Time `json:"nextReconciliationTime,omitempty"`

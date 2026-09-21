@@ -1067,6 +1067,467 @@ func TestAPendingMigrationIsNotReplayedAfterAnUnreadableRun(t *testing.T) {
 	}
 }
 
+// The refusal above is not the latch. A resource is blocked for whatever reason
+// is true right now, and every other refusal -- a realm another resource
+// claims, a dirty revision, an applied migration whose file moved, one that
+// sorts below the current version -- writes its own reason over it. Reading the
+// unresolved run off that reason made a competitor going away, or a history
+// fault somebody fixed, look like a database somebody had repaired: the next
+// reading planned the pending migration and Always dispatched it, with nothing
+// having established what the first run did.
+func TestAnUnresolvedMigrationRunOutlivesEveryOtherRefusal(t *testing.T) {
+	t.Parallel()
+
+	pending := pendingMigrationHistory()
+	interleaved := []struct {
+		name string
+		// refuse drives the resource through one other refusal and returns the
+		// status it persisted. Each one ends with the competitor gone or the
+		// history fault repaired, so nothing but the unresolved run is left to
+		// refuse the migration that is still pending.
+		refuse func(*testing.T, *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration
+	}{
+		{
+			name: "a realm another resource claimed for a while",
+			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+				t.Helper()
+
+				competitor := realmSchemaFixture("orders", migration.Spec.Target.CoordinationKey, false)
+				reconciler, api := fakeMigrationReconciler(
+					t, staticLogs{}, migration.DeepCopy(), competitor, verificationPolicyConfigMap(),
+				)
+				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+					t.Fatalf("Reconcile() error = %v", err)
+				}
+				contested := readMigration(t, api, migration)
+				assertMigrationBlockedFor(t, contested, operatorv1alpha1.ReasonRealmConflict)
+				return contested
+			},
+		},
+		{
+			name: "a revision row a run left dirty",
+			refuse: refuseMigrationHistory(
+				operatorv1alpha1.ReasonHistoryDirty,
+				func(report *dataplane.MigrationStatusReport) {
+					report.DirtyRevision = &dataplane.MigrationDirty{Version: 3, Applied: 1, Total: 2}
+				},
+			),
+		},
+		{
+			name: "an applied migration whose file moved",
+			refuse: refuseMigrationHistory(
+				operatorv1alpha1.ReasonHistoryModified,
+				func(report *dataplane.MigrationStatusReport) {
+					report.Migrations[0].State = dataplane.MigrationStateModified
+				},
+			),
+		},
+		{
+			name: "a migration that arrived below the applied version",
+			refuse: refuseMigrationHistory(
+				operatorv1alpha1.ReasonHistoryOutOfOrder,
+				func(report *dataplane.MigrationStatusReport) {
+					report.Migrations[1] = dataplane.MigrationRecord{
+						Version: 1, Checksum: "checksum-1", State: dataplane.MigrationStateOutOfOrder,
+					}
+					report.PendingMigrations = []int64{1}
+				},
+			),
+		},
+		{
+			name: "a suspension somebody lifted again",
+			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+				t.Helper()
+
+				suspended := migration.DeepCopy()
+				suspended.Spec.Suspend = true
+				suspended.Generation++
+				reconciler, api := fakeMigrationReconciler(t, staticLogs{}, suspended, verificationPolicyConfigMap())
+				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(suspended)); err != nil {
+					t.Fatalf("Reconcile() error = %v", err)
+				}
+				resumed := readMigration(t, api, suspended)
+				if resumed.Status.Phase != operatorv1alpha1.MigrationPhaseSuspended {
+					t.Fatalf("phase = %q, want Suspended", resumed.Status.Phase)
+				}
+				resumed.Spec.Suspend = false
+				return resumed
+			},
+		},
+		{
+			// Nothing at all between the run and the next reading, which is the
+			// restart on its own: a manager that came back reads the resource
+			// and nothing else.
+			name: "nothing but a restarted manager",
+			refuse: func(_ *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+				return migration
+			},
+		},
+	}
+
+	for _, outcome := range []operatorv1alpha1.MigrationRunOutcome{
+		operatorv1alpha1.MigrationRunOutcomeUnknown,
+		operatorv1alpha1.MigrationRunOutcomePartial,
+	} {
+		for _, policy := range []operatorv1alpha1.ApplyPolicy{
+			operatorv1alpha1.ApplyPolicyAlways,
+			operatorv1alpha1.ApplyPolicyOnApproval,
+		} {
+			for _, test := range interleaved {
+				t.Run(string(outcome)+"/"+string(policy)+"/"+test.name, func(t *testing.T) {
+					t.Parallel()
+
+					migration := unresolvedMigrationRun(t, policy, outcome)
+					migration = test.refuse(t, migration)
+					// An approval is a decision about what should run next, and
+					// says nothing about what the last run did. It is in the
+					// namespace for the whole of the reading below.
+					var namespace []client.Object
+					if policy == operatorv1alpha1.ApplyPolicyOnApproval {
+						namespace = append(namespace, migrationApprovalFor(migration, publishedPlanFor(t, migration)))
+					}
+					actual, api := readMigrationHistory(t, migration, pending, namespace...)
+
+					assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+					if actual.Status.Plan != nil {
+						t.Fatalf("a plan was published for a migration the %s run may already have executed", outcome)
+					}
+					plans := &operatorv1alpha1.PtahMigrationPlanList{}
+					if err := api.List(context.Background(), plans); err != nil {
+						t.Fatal(err)
+					}
+					if len(plans.Items) != 0 {
+						t.Fatalf("%d plans were published after an unresolved %s run", len(plans.Items), outcome)
+					}
+					// The published-plan count above is what carries this
+					// claim. A second pass used to follow it, asserting no
+					// Apply was authorized, and it could not fail: it read the
+					// API server of the previous pass rather than its own, and
+					// with no plan published there was nothing to dispatch
+					// either way. An assertion that cannot fail is worse than
+					// none, because it reads as coverage.
+				})
+			}
+		}
+	}
+}
+
+// A resource a manager blocked before the record existed carries its latch in
+// the refusal alone. That is the shape an upgrade finds, and letting the first
+// refusal that overwrites the reason release the latch would replay exactly the
+// run this refuses. The reconcile converts that refusal into the record before
+// it takes any refusal of its own, so which refusal comes next -- including one
+// added after this was written -- decides nothing.
+func TestAPreRecordUnresolvedMigrationRunIsAdoptedBeforeItIsOverwritten(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		refuse func(*testing.T, *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration
+	}{
+		{
+			name: "a realm another resource claimed for a while",
+			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+				t.Helper()
+
+				competitor := realmSchemaFixture("orders", migration.Spec.Target.CoordinationKey, false)
+				reconciler, api := fakeMigrationReconciler(
+					t, staticLogs{}, migration.DeepCopy(), competitor, verificationPolicyConfigMap(),
+				)
+				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+					t.Fatalf("Reconcile() error = %v", err)
+				}
+				contested := readMigration(t, api, migration)
+				assertMigrationBlockedFor(t, contested, operatorv1alpha1.ReasonRealmConflict)
+				return contested
+			},
+		},
+		{
+			name: "a revision row a run left dirty",
+			refuse: refuseMigrationHistory(
+				operatorv1alpha1.ReasonHistoryDirty,
+				func(report *dataplane.MigrationStatusReport) {
+					report.DirtyRevision = &dataplane.MigrationDirty{Version: 3, Applied: 1, Total: 2}
+				},
+			),
+		},
+		{
+			// This refusal is taken above the generation check and before any
+			// reading, so an edited spec reaches it on the pass that follows the
+			// edit. It says nothing about the database, and putting the engine
+			// back leaves the resource exactly where the run left it.
+			name: "an engine this operator does not support",
+			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+				t.Helper()
+
+				engine := migration.Spec.Target.Engine
+				flipped := migration.DeepCopy()
+				flipped.Spec.Target.Engine = operatorv1alpha1.DatabaseEngine("CockroachDB")
+				flipped.Generation++
+				reconciler, api := fakeMigrationReconciler(t, staticLogs{}, flipped, verificationPolicyConfigMap())
+				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(flipped)); err != nil {
+					t.Fatalf("Reconcile() error = %v", err)
+				}
+				refused := readMigration(t, api, flipped)
+				assertMigrationBlockedFor(t, refused, operatorv1alpha1.ReasonUnsupportedEngine)
+				refused.Spec.Target.Engine = engine
+				refused.Generation++
+				return refused
+			},
+		},
+	}
+
+	for _, outcome := range []operatorv1alpha1.MigrationRunOutcome{
+		operatorv1alpha1.MigrationRunOutcomeUnknown,
+		operatorv1alpha1.MigrationRunOutcomePartial,
+	} {
+		for _, test := range tests {
+			t.Run(string(outcome)+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+
+				migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways, outcome)
+				// The status an older manager wrote: the outcome and the
+				// refusal, and nothing else.
+				migration.Status.UnresolvedRun = nil
+				migration = test.refuse(t, migration)
+				if migration.Status.UnresolvedRun == nil {
+					// Not fatal: the reading below is what the missing record
+					// costs, and it is the claim this test is about.
+					t.Errorf("the refusal that overwrote the %s latch adopted nothing", outcome)
+				}
+				actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
+				assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+				if actual.Status.Plan != nil {
+					t.Fatalf("a plan was published for a migration the %s run may already have executed", outcome)
+				}
+			})
+		}
+	}
+}
+
+// A person is the one who settles this, so the record has to say what to go and
+// look at: which attempt ran, the Job it ran as, the plan it was carrying out,
+// and the database it addressed. None of that is recoverable once the Job is
+// collected.
+func TestAnUnresolvedMigrationRunRecordsWhatMayHaveRun(t *testing.T) {
+	t.Parallel()
+
+	for _, outcome := range []operatorv1alpha1.MigrationRunOutcome{
+		operatorv1alpha1.MigrationRunOutcomeUnknown,
+		operatorv1alpha1.MigrationRunOutcomePartial,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			t.Parallel()
+
+			migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways, outcome)
+			unresolved := migration.Status.UnresolvedRun
+			if unresolved == nil {
+				t.Fatalf("a run that ended %s recorded nothing to account for", outcome)
+			}
+			if unresolved.Outcome != outcome {
+				t.Fatalf("recorded outcome = %q, want %q", unresolved.Outcome, outcome)
+			}
+			if unresolved.OperationID != testDigest {
+				t.Fatalf("recorded operation = %q, want the Apply claim %q", unresolved.OperationID, testDigest)
+			}
+			run := migration.Status.LastRun
+			if unresolved.JobName != run.JobName || unresolved.JobUID != run.JobUID {
+				t.Fatalf("recorded Job = %q/%q, want %q/%q",
+					unresolved.JobName, unresolved.JobUID, run.JobName, run.JobUID)
+			}
+			if unresolved.PlanRef == nil || unresolved.PlanRef.UID != types.UID("migration-plan-uid") {
+				t.Fatalf("recorded plan = %#v, want the plan the run was carrying out", unresolved.PlanRef)
+			}
+			if unresolved.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
+				t.Fatalf("recorded database = %q, want %q",
+					unresolved.TargetIdentityDigest, migration.Status.History.TargetIdentityDigest)
+			}
+			if unresolved.RecordedAt.IsZero() {
+				t.Fatal("the record carries no time")
+			}
+		})
+	}
+}
+
+// One thing settles an unresolved run: a reading of the database it names that
+// finds nothing of this artifact left to apply. A reading of some other
+// database has the same shape and answers a different question, so it settles
+// nothing -- and the resource goes on refusing rather than planning.
+func TestAnUnresolvedMigrationRunIsSettledOnlyByItsOwnDatabase(t *testing.T) {
+	t.Parallel()
+
+	inSync := dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:  3, TotalMigrations: 2, PendingMigrations: []int64{},
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
+		},
+	}
+
+	t.Run("a database somebody put right", func(t *testing.T) {
+		t.Parallel()
+
+		migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+			operatorv1alpha1.MigrationRunOutcomeUnknown)
+		settled, _ := readMigrationHistory(t, migration, inSync)
+		if settled.Status.Phase != operatorv1alpha1.MigrationPhaseInSync {
+			t.Fatalf("phase = %q, want InSync", settled.Status.Phase)
+		}
+		if settled.Status.UnresolvedRun != nil {
+			t.Fatalf("the proof left the run unresolved: %#v", settled.Status.UnresolvedRun)
+		}
+		// And the resource is an ordinary one again: the next migration the
+		// artifact adds is planned rather than inheriting a refusal nothing
+		// renewed.
+		planning, _ := readMigrationHistory(t, settled, pendingMigrationHistory())
+		if planning.Status.Plan == nil {
+			t.Fatalf("a settled resource did not plan its next pending migration: phase=%q", planning.Status.Phase)
+		}
+	})
+
+	t.Run("a reading of another database", func(t *testing.T) {
+		t.Parallel()
+
+		migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+			operatorv1alpha1.MigrationRunOutcomeUnknown)
+		// The resource was repointed after the run: the reading below is of a
+		// database that never saw it.
+		migration.Status.UnresolvedRun.TargetIdentityDigest = "sha256:" + strings.Repeat("7", 64)
+		refused, _ := readMigrationHistory(t, migration, inSync)
+		assertMigrationBlockedFor(t, refused, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+		if refused.Status.UnresolvedRun == nil {
+			t.Fatal("a reading of another database settled the run")
+		}
+	})
+}
+
+// unresolvedMigrationRun dispatches one Apply and lets it end the way nobody
+// can act on: Partial reports statements it committed and statements it did
+// not, and Unknown leaves no frame at all. Both go through the controller
+// rather than being written into status, because what the controller records
+// there is the thing under test.
+func unresolvedMigrationRun(
+	t *testing.T,
+	policy operatorv1alpha1.ApplyPolicy,
+	outcome operatorv1alpha1.MigrationRunOutcome,
+) *operatorv1alpha1.PtahMigration {
+	t.Helper()
+
+	migration, plan := awaitingApprovalFixture(t)
+	if policy != migration.Spec.Policy.Apply {
+		migration.Spec.Policy.Apply = policy
+		repolicyPlan(t, migration, plan)
+	}
+	operation := applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	var logs []byte
+	if outcome == operatorv1alpha1.MigrationRunOutcomePartial {
+		logs = migrationFrame(t, runner.Result{
+			ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+			OperationID: operation.ID, ChildExitCode: 0,
+			CoordinationDigest:   operation.CoordinationDigest,
+			TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
+			MigrationRun: &dataplane.MigrationRunReport{
+				ContractVersion: dataplane.SupportedMigrationRunContract,
+				Direction:       "up",
+				Outcome:         dataplane.MigrationOutcomePartial,
+				Planned:         []int64{3},
+			},
+		})
+	}
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{content: logs}, migration, plan, job, pod, verificationPolicyConfigMap(),
+	)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.LastRun == nil || actual.Status.LastRun.Outcome != outcome {
+		t.Fatalf("last run = %#v, want outcome %q", actual.Status.LastRun, outcome)
+	}
+	assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+	return actual
+}
+
+// refuseMigrationHistory reads one history the database itself refuses, and
+// then repairs it: the reading that follows is the ordinary one, and the only
+// thing left to refuse it is the run nobody accounted for.
+func refuseMigrationHistory(
+	reason operatorv1alpha1.ConditionReason,
+	fault func(*dataplane.MigrationStatusReport),
+) func(*testing.T, *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+	return func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
+		t.Helper()
+
+		report := pendingMigrationHistory()
+		fault(&report)
+		refused, _ := readMigrationHistory(t, migration, report)
+		assertMigrationBlockedFor(t, refused, reason)
+		return refused
+	}
+}
+
+// readMigrationHistory runs one read-only history cycle from persisted status.
+// The reconciler and its API server are built fresh, so every cycle is also a
+// manager that restarted between the two.
+func readMigrationHistory(
+	t *testing.T,
+	migration *operatorv1alpha1.PtahMigration,
+	report dataplane.MigrationStatusReport,
+	namespace ...client.Object,
+) (*operatorv1alpha1.PtahMigration, client.WithWatch) {
+	t.Helper()
+
+	reading := migration.DeepCopy()
+	reading.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	reading.Status.ActiveOperation = nil
+	reading.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, reading, operatorv1alpha1.MigrationOperationHistory)
+	job, pod := terminalMigrationWorkload(reading, batchv1.JobComplete)
+	frame := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+		OperationID: operation.ID, ChildExitCode: 0,
+		CoordinationDigest:   operation.CoordinationDigest,
+		TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
+		MigrationHistory:     &report,
+	})
+	objects := append([]client.Object{reading, job, pod, verificationPolicyConfigMap()}, namespace...)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, objects...)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(reading)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	return readMigration(t, api, reading), api
+}
+
+// pendingMigrationHistory is the ordinary next reading: one migration applied,
+// one pending, and nothing the database itself refuses.
+func pendingMigrationHistory() dataplane.MigrationStatusReport {
+	return dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:  2, TotalMigrations: 2, HasPendingChanges: true,
+		PendingMigrations: []int64{3},
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStatePending},
+		},
+	}
+}
+
+func assertMigrationBlockedFor(
+	t *testing.T,
+	migration *operatorv1alpha1.PtahMigration,
+	reason operatorv1alpha1.ConditionReason,
+) {
+	t.Helper()
+
+	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	if blocked == nil || blocked.Status != metav1.ConditionTrue || blocked.Reason != string(reason) {
+		t.Fatalf("Blocked condition = %#v, want True/%s", blocked, reason)
+	}
+}
+
 func ensureMigrationAdmissionSnapshot(migration *operatorv1alpha1.PtahMigration) {
 	operation := migration.Status.ActiveOperation
 	if operation.AdmissionSnapshot != nil {
@@ -1105,4 +1566,207 @@ func blockedMessage(blocked *metav1.Condition) string {
 		return "<no Blocked condition>"
 	}
 	return blocked.Message
+}
+
+// The state an upgrade actually finds. A manager older than status.unresolvedRun
+// held the latch in the Blocked condition's reason, and the defect that record
+// exists to fix is that every later refusal overwrote it -- so by the time the
+// new manager first reads the object, the reason it left is usually gone. An
+// adoption that required its own reason to have survived would adopt the
+// objects the defect missed and skip the ones it reached, and those are the
+// ones that go on to publish a plan and replay a run nobody accounted for.
+func TestAnUnresolvedMigrationRunIsAdoptedUnderARefusalThatOverwroteItBeforeTheUpgrade(t *testing.T) {
+	t.Parallel()
+
+	for _, reason := range []operatorv1alpha1.ConditionReason{
+		operatorv1alpha1.ReasonRealmConflict,
+		operatorv1alpha1.ReasonHistoryDirty,
+		operatorv1alpha1.ReasonHistoryModified,
+		operatorv1alpha1.ReasonHistoryOutOfOrder,
+		operatorv1alpha1.ReasonUnsupportedEngine,
+	} {
+		t.Run(string(reason), func(t *testing.T) {
+			t.Parallel()
+
+			migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+				operatorv1alpha1.MigrationRunOutcomeUnknown)
+			// The status as the older manager left it: the run's outcome, a
+			// Blocked condition, and some other refusal's reason on it. No
+			// record, because that manager had none to write.
+			migration.Status.UnresolvedRun = nil
+			blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+			if blocked == nil || blocked.Status != metav1.ConditionTrue {
+				t.Fatalf("the fixture is not blocked, so there is no latch to overwrite: %#v", blocked)
+			}
+			blocked.Reason = string(reason)
+
+			actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
+			if actual.Status.UnresolvedRun == nil {
+				t.Fatal("the upgrade adopted nothing for a run latched under another refusal's reason")
+			}
+			if actual.Status.Plan != nil {
+				t.Fatalf("a plan was published for a migration the unknown run may already have executed: %#v",
+					actual.Status.Plan)
+			}
+			assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
+		})
+	}
+}
+
+// Which database the record names decides what can settle it, so it has to be
+// the one the run actually opened. The executor reports that in its result
+// frame, and it is not always the database the plan was computed against: the
+// Secret behind the target can be rewritten between the history reading and the
+// Apply. Naming the planned database instead would let a clean reading of it
+// settle a run that never touched it, while a reading of the database that was
+// touched could never match what was stored.
+func TestAnUnresolvedMigrationRunRecordsTheDatabaseTheRunReported(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	repolicyPlan(t, migration, plan)
+	operation := applyClaimFor(t, migration, plan)
+	planned := migration.Status.History.TargetIdentityDigest
+	rotated := "sha256:" + strings.Repeat("d", 64)
+	if planned == rotated {
+		t.Fatal("the fixture already plans against the rotated database, so this proves nothing")
+	}
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	logs := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+		OperationID: operation.ID, ChildExitCode: 0,
+		CoordinationDigest: operation.CoordinationDigest,
+		// The credential moved: this run opened a database the plan was never
+		// computed against.
+		TargetIdentityDigest: rotated,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract,
+			Direction:       "up",
+			Outcome:         dataplane.MigrationOutcomePartial,
+			Planned:         []int64{3},
+		},
+	})
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{content: logs}, migration, plan, job, pod, verificationPolicyConfigMap(),
+	)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	unresolved := actual.Status.UnresolvedRun
+	if unresolved == nil {
+		t.Fatal("a partial run against a rotated database recorded nothing to account for")
+	}
+	if unresolved.TargetIdentityDigest != rotated {
+		t.Fatalf("recorded database = %q, want the one the run reported %q (the plan was computed against %q)",
+			unresolved.TargetIdentityDigest, rotated, planned)
+	}
+}
+
+// The cost of adopting too broadly, and the one case where evidence rules it
+// out. The old settlement path left status.lastRun as the run wrote it, so an
+// outcome of Unknown outlives the reading that accounted for it. Re-latching
+// such a resource on upgrade is not merely redundant: where a newer artifact
+// has since made work pending, the reading that would clear the record is the
+// one that now finds work, so it never clears. A resource blocked for an
+// unrelated refusal would go from recovering when that refusal lifted to
+// waiting for a person who has nothing to find.
+func TestASettledMigrationRunIsNotReLatchedByAnUpgrade(t *testing.T) {
+	t.Parallel()
+
+	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+		operatorv1alpha1.MigrationRunOutcomeUnknown)
+	// The reading that settled it, as the old manager left things: the record
+	// gone, the run's own outcome untouched, and a history taken afterwards
+	// with nothing of the artifact left to apply.
+	migration.Status.UnresolvedRun = nil
+	settledAt := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(time.Minute))
+	migration.Status.History.ObservedAt = settledAt
+	migration.Status.History.PendingCount = 0
+	// Then a newer artifact made work pending again, and something unrelated
+	// stopped the resource before it could run.
+	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	if blocked == nil || blocked.Status != metav1.ConditionTrue {
+		t.Fatalf("the fixture is not blocked, so there is nothing for an upgrade to read: %#v", blocked)
+	}
+	blocked.Reason = string(operatorv1alpha1.ReasonRealmConflict)
+
+	actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
+	if actual.Status.UnresolvedRun != nil {
+		t.Fatalf("the upgrade latched a run a later reading had already settled: %#v", actual.Status.UnresolvedRun)
+	}
+}
+
+// Settlement is about the database this run addressed, and "nothing pending"
+// is a statement about the artifact resolved today.
+//
+// An artifact that ends before the database does says nothing about a run that
+// went past it, and it is what a tag moved back looks like. Settling on it
+// would remove the record, and moving the tag forward again would then
+// authorize the very migration the record was protecting.
+//
+// What this cannot refuse is a sequence the migration was taken out of. That
+// is the documented recovery for a run that half-applied one -- the person
+// undoes what it committed, drops the unfinished revision, and publishes the
+// sequence without it -- and a tag moved to a sequence that omits the
+// migration is the same gesture without the repair. The revision table does
+// not record the half that was committed, so nothing in status separates them.
+func TestAnUnresolvedMigrationRunIsNotSettledByAShorterSequence(t *testing.T) {
+	t.Parallel()
+
+	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+		operatorv1alpha1.MigrationRunOutcomeUnknown)
+	if migration.Status.UnresolvedRun == nil {
+		t.Fatal("the fixture recorded no unresolved run")
+	}
+
+	// The database is at 3. The artifact ends at 2, so it has nothing pending
+	// -- which is exactly the reading that used to settle any record.
+	report := pendingMigrationHistory()
+	report.CurrentVersion = 3
+	report.TotalMigrations = 2
+	report.HasPendingChanges = false
+	report.PendingMigrations = nil
+	report.Migrations = []dataplane.MigrationRecord{
+		{Version: 1, Checksum: "checksum-1", State: dataplane.MigrationStateApplied},
+		{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+	}
+
+	actual, _ := readMigrationHistory(t, migration, report)
+	if actual.Status.UnresolvedRun == nil {
+		t.Fatal("an artifact shorter than the database settled a run that went past it")
+	}
+	if actual.Status.Plan != nil {
+		t.Fatalf("a plan was published while the run stood unaccounted for: %#v", actual.Status.Plan)
+	}
+}
+
+// The recovery this workflow documents for a run that half-applied a
+// migration: the person undoes what it committed, drops the unfinished
+// revision, and publishes the sequence without it. The operator has to settle
+// on its own reading of the database somebody fixed, with no spec edit.
+func TestAnUnresolvedMigrationRunIsSettledWhenItsMigrationLeavesTheSequence(t *testing.T) {
+	t.Parallel()
+
+	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+		operatorv1alpha1.MigrationRunOutcomePartial)
+
+	// The sequence now ends at 3, and the database holds exactly that.
+	report := pendingMigrationHistory()
+	report.CurrentVersion = 3
+	report.TotalMigrations = 3
+	report.HasPendingChanges = false
+	report.PendingMigrations = nil
+	report.Migrations = []dataplane.MigrationRecord{
+		{Version: 1, Checksum: "checksum-1", State: dataplane.MigrationStateApplied},
+		{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+		{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
+	}
+
+	actual, _ := readMigrationHistory(t, migration, report)
+	if actual.Status.UnresolvedRun != nil {
+		t.Fatalf("the documented recovery left the resource latched: %#v", actual.Status.UnresolvedRun)
+	}
 }

@@ -434,4 +434,14 @@ spec:
 | `status.plan` | `object` | Plan names the immutable plan object the controller published for the current pending sequence, and is cleared once that sequence is gone. |
 | `status.plan.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.plan.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
+| `status.unresolvedRun` | `object` | UnresolvedRun is the execution nobody could account for, and is absent while there is none. It is written when a run ends Partial or Unknown, and removed only when a read-only reading of the same database finds nothing of this artifact left to apply. While it is here nothing is planned and nothing runs, whatever the conditions happen to say. |
+| `status.unresolvedRun.jobName` | `string` | JobName and JobUID identify the execution. The UID is what makes a replacement Job with the same name a different run. |
+| `status.unresolvedRun.jobUID` | `string` | JobUID is that Job's UID. |
+| `status.unresolvedRun.operationID` | `string` | OperationID is the Apply claim that ran, so this record names one attempt rather than the resource in general. |
+| `status.unresolvedRun.outcome` | `string`, required, one of `UpToDate`, `Applied`, `Failed`, `Partial`, `Unknown` | Outcome is what the run's own evidence said, and is always Partial or Unknown: Partial committed some of a migration's statements and not the rest, and Unknown could not be read at all. No other outcome leaves the database in a state nobody can name, so no other outcome is recorded here. |
+| `status.unresolvedRun.planRef` | `object` | PlanRef names the plan the run was carrying out, which is the work that may have reached the database. |
+| `status.unresolvedRun.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.unresolvedRun.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
+| `status.unresolvedRun.recordedAt` | `string`, required | RecordedAt is when the controller wrote this record. |
+| `status.unresolvedRun.targetIdentityDigest` | `string` | TargetIdentityDigest is the credential-free identity of the database this run reached, as the run itself reported it. Where no result frame was read at all -- which is most of the ways a run becomes unresolved -- it is the database the run was dispatched against instead, because that is then the only thing known about where it went. The reading that settles this record has to be of that database: a history read somewhere else says nothing about what this run did. |
 

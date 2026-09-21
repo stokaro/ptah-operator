@@ -300,6 +300,7 @@ select_engine() {
 	UNCERTAIN_DB_SECRET="e2e-${ENGINE}-uncertain-db"
 	UNCERTAIN_MIGRATION="e2e-uncertain-${ENGINE}"
 	UNCERTAIN_COORDINATION_KEY="e2e/uncertain/${ENGINE}"
+	UNCERTAIN_RIVAL_SCHEMA="e2e-uncertain-${ENGINE}-rival"
 	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-uncertain:stable"
 	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
 	UNKNOWN_LAYER_DATABASE=ptah_e2e_unknown_layer
@@ -2596,6 +2597,120 @@ assert_uncertain_apply_blocks_without_replaying() {
 		fail "the $ENGINE rows were doubled, so a run was replayed over what it had already committed"
 }
 
+# The row status.unresolvedRun exists for, and the one issue #220 describes.
+#
+# A run nobody could read used to be latched in the Blocked condition's reason
+# alone. Any later refusal rewrites that reason, and when the later refusal
+# goes away the resource reads as resolved: it publishes a plan and replays a
+# migration that may already have committed. Here the later refusal is a second
+# claimant on the same database -- an ordinary, recoverable condition, not an
+# arranged one -- and what has to survive it is the refusal to run again.
+#
+# The record is what survives it, so this is also the live caller the new field
+# owes: it is written by a real uncertain Apply against a real database, and it
+# is what refuses the replay after the reason it used to live in is gone.
+assert_unresolved_run_survives_another_refusal() {
+	uncertain_status
+	# The record names what a person has to go and look at. Asserting the Job by
+	# UID is what separates a record of this run from a record of some run.
+	jq -e --arg job "$UNCERTAIN_APPLY_JOB" --arg uid "$UNCERTAIN_APPLY_JOB_UID" '
+      .status.unresolvedRun as $run |
+      $run != null and
+      $run.outcome == "Unknown" and
+      $run.jobName == $job and
+      $run.jobUID == $uid and
+      (($run.targetIdentityDigest // "") | test("^sha256:[0-9a-f]{64}$")) and
+      (($run.recordedAt // "") | length) > 0 
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$UNCERTAIN_MIGRATION did not record the run whose effect nobody established"
+	scan_for_credentials "$STATUS_FILE" "the unresolved-run record"
+
+	migration_apply_job_uids "$UNCERTAIN_MIGRATION" >"$WORK_DIR/uncertain-applies-before-rival.txt"
+	printf 'e2e migrations: overwriting the %s unresolved-run refusal with a realm conflict\n' \
+		"$ENGINE_KIND" >&2
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$UNCERTAIN_RIVAL_SCHEMA" \
+		--arg engine "$ENGINE_KIND" \
+		--arg secret "$UNCERTAIN_DB_SECRET" \
+		--arg coordinationKey "$UNCERTAIN_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        desired: {
+          ociRef: "oci://example.invalid/schema:v1",
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        interval: "1h",
+        execution: {activeDeadlineSeconds: 300}
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+
+	# Wait for the reason to be the conflict's rather than the run's. That is
+	# the state the defect needed, and reaching it is what makes the recovery
+	# below a proof instead of a formality.
+	overwrite_deadline=$(deadline_from_now)
+	overwritten=no
+	while [ "$(date +%s)" -lt "$overwrite_deadline" ]; do
+		uncertain_status
+		if jq -e '
+          any(.status.conditions[]?;
+            .type == "Blocked" and .status == "True" and .reason == "RealmConflict")
+        ' "$STATUS_FILE" >/dev/null; then
+			overwritten=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$overwritten" = yes ] ||
+		fail "$UNCERTAIN_MIGRATION never took the realm refusal, so nothing overwrote the run's reason"
+	# The record is somewhere a reason cannot reach, so it is still here.
+	jq -e '(.status.unresolvedRun // null) != null' "$STATUS_FILE" >/dev/null ||
+		fail "the realm refusal erased the record of the run nobody accounted for"
+
+	printf 'e2e migrations: removing the %s rival so only the unresolved run is left\n' \
+		"$ENGINE_KIND" >&2
+	k -n "$TEST_NAMESPACE" delete ptahschema "$UNCERTAIN_RIVAL_SCHEMA" --wait=true >/dev/null ||
+		fail "$UNCERTAIN_RIVAL_SCHEMA could not be removed"
+
+	# The conflict is over and nothing else refuses this resource, so a manager
+	# that had lost the latch would plan and dispatch here. The window outlasts
+	# the resource's thirty-second interval several times over: a shorter one
+	# passes while the resource has not yet had the chance to replay.
+	recovery_deadline=$(($(date +%s) + 120))
+	while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
+		uncertain_status
+		jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-refusal.jq" \
+			"$STATUS_FILE" >/dev/null ||
+			fail "$UNCERTAIN_MIGRATION stopped refusing once the realm conflict that had overwritten its reason was gone"
+		jq -e '(.status.unresolvedRun // null) != null' "$STATUS_FILE" >/dev/null ||
+			fail "$UNCERTAIN_MIGRATION dropped the record of the run nobody accounted for"
+		assert_no_new_apply_job "$WORK_DIR/uncertain-applies-before-rival.txt" \
+			"after a refusal that had overwritten its unresolved run" "$UNCERTAIN_MIGRATION"
+		sleep 10
+	done
+	# The database is the claim. A replay would re-run the first migration,
+	# whose insert is not idempotent.
+	[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$UNCERTAIN_DATABASE")" = 3 ] ||
+		fail "the $ENGINE rows were doubled, so the run was replayed once its refusal had been overwritten"
+	printf 'e2e migrations: PASS %s kept refusing a run nobody accounted for across another refusal\n' \
+		"$ENGINE_KIND" >&2
+}
+
 wait_for_uncertain_phase() {
 	uncertain_phase=$1
 	uncertain_deadline=$(deadline_from_now)
@@ -2625,6 +2740,7 @@ run_uncertain_apply_proof() {
 	k -n "$TEST_NAMESPACE" delete job "$UNCERTAIN_APPLY_JOB" --wait=true >/dev/null ||
 		fail "the $ENGINE Apply Job could not be removed"
 	assert_uncertain_apply_blocks_without_replaying
+	assert_unresolved_run_survives_another_refusal
 	printf 'e2e migrations: PASS %s stopped on a run it could not read, and replayed nothing\n' \
 		"$ENGINE_KIND" >&2
 }
