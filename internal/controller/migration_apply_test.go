@@ -2175,3 +2175,88 @@ func TestAnUnreadableMigrationInputStillWaitsOutTheRetry(t *testing.T) {
 		t.Fatal("an unreadable input discarded a claim that was waiting out its retry")
 	}
 }
+
+// A correction whose new inputs cannot be read yet is still a correction.
+//
+// The claim's fingerprint is what usually says the inputs moved, and it cannot
+// be computed at all for some edits: an artifact reference that does not parse
+// is refused before anything is read. Waiting for the interval there would hold
+// the claim exactly where the edit was meant to end it, and the edit is visible
+// without the fingerprint -- the API server bumps the generation, and the claim
+// recorded the one it was made from.
+func TestCorrectingAMigrationToAnUnreadableInputRetiresItsClaim(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: time.Hour}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	notBefore := metav1.NewTime(time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC))
+	operation.RetryNotBefore = &notBefore
+	operation.Attempt = 2
+	migration.Status.ObservedGeneration = migration.Generation
+
+	// The edit, and an artifact reference the fingerprint refuses before it
+	// reads anything: a typed correction that has not been finished.
+	migration.Spec.Artifact.OCIRef = "oci://registry.example/team/migrations:stable?pull=now"
+	migration.Generation++
+
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, verificationPolicyConfigMap())
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("an edited resource kept a claim waiting out its retry: %#v", actual.Status.ActiveOperation)
+	}
+	if jobs := jobNamesFor(t, api, migration); len(jobs) != 0 {
+		t.Fatalf("the stale claim dispatched a Job: %v", jobs)
+	}
+}
+
+// And an input that moved without the spec moving with it.
+//
+// The generation answers an edit, and it is not the only way a claim goes
+// stale: a verification policy replaced under the same name carries a new
+// identity, and the resource that names it has not changed at all. The
+// fingerprint is what sees that, so both halves of the test are load-bearing.
+func TestAReplacedPolicyRetiresAMigrationClaimWaitingOutItsRetry(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: time.Hour}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseVerifying
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationVerify)
+	notBefore := metav1.NewTime(time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC))
+	operation.RetryNotBefore = &notBefore
+	operation.Attempt = 2
+	migration.Status.ObservedGeneration = migration.Generation
+
+	// The same name, a different object: the claim was fingerprinted against
+	// the identity of the one it read, not against the reference to it.
+	replaced := verificationPolicyConfigMap()
+	replaced.UID = "verification-policy-replaced-uid"
+	replaced.Data = map[string]string{"policy.yaml": "requireDigestPin: false"}
+
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, replaced)
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("a claim held to a policy that was replaced kept waiting: %#v", actual.Status.ActiveOperation)
+	}
+	if jobs := jobNamesFor(t, api, migration); len(jobs) != 0 {
+		t.Fatalf("the stale claim dispatched a Job: %v", jobs)
+	}
+}

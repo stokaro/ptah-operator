@@ -737,13 +737,21 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	// hold that correction behind an interval of up to an hour, waiting out a
 	// claim nothing is going to dispatch.
 	//
-	// A fingerprint that cannot be read is not a correction, and it waits like
-	// any other retry. Discarding on every pass that fails to read an input
-	// would turn an unreadable Secret into a claim-and-discard loop driven by
-	// whatever else the resource watches, which is the tight loop the delay
-	// exists to stop.
+	// A fingerprint that cannot be read is not a correction by itself, and it
+	// waits like any other retry. Discarding on every pass that fails to read
+	// an input would turn an unreadable Secret into a claim-and-discard loop
+	// driven by whatever else the resource watches, which is the tight loop the
+	// delay exists to stop.
+	//
+	// An edit is visible without reading the inputs at all, and that is what
+	// separates the two: the API server bumps the generation, and the claim
+	// recorded the generation it was made from. So a correction whose new
+	// inputs cannot be read yet -- a reference that does not parse, a
+	// verification policy nobody has created -- retires the claim now rather
+	// than waiting out the interval it was meant to end.
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
-	inputsChanged := currentErr == nil && current != operation.InputFingerprint
+	inputsChanged := migration.Generation != migration.Status.ObservedGeneration ||
+		(currentErr == nil && current != operation.InputFingerprint)
 	// A retried attempt waits out the delay the resource asked for. The check
 	// is here rather than only in the requeue that scheduled it, because a
 	// restart and an early Job or watch event both re-enter reconciliation

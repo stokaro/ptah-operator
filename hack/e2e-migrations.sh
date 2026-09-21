@@ -3193,13 +3193,22 @@ run_retry_interval_proof() {
 		fail "$RETRY_MIGRATION never scheduled a retry carrying its own deadline within ${TIMEOUT_SECONDS}s"
 	scan_for_credentials "$STATUS_FILE" "$RETRY_MIGRATION status"
 
-	# Nothing dispatches while the deadline stands. Sixty seconds of a
-	# hundred-and-twenty-second interval: long enough that a manager ignoring
-	# the deadline would have dispatched several times over, and short enough
-	# to leave the rest of the interval for the dispatch below.
+	# Nothing dispatches while the deadline stands, and the hold runs against
+	# the deadline the claim persisted rather than a fixed share of the
+	# interval. Holding for sixty seconds of a hundred and twenty would pass a
+	# manager that honored half the interval and dispatched at second
+	# sixty-one, which is the whole thing this row is about.
 	migration_job_uids "$RETRY_MIGRATION" >"$WORK_DIR/retry-jobs.txt"
-	retry_hold_deadline=$(($(date +%s) + 60))
-	while [ "$(date +%s)" -lt "$retry_hold_deadline" ]; do
+	retry_not_before=$(jq -er '
+      .status.activeOperation.retryNotBefore | fromdateiso8601' "$STATUS_FILE") ||
+		fail "$RETRY_MIGRATION carries no readable retry deadline"
+	[ "$retry_not_before" -gt "$(date +%s)" ] ||
+		fail "$RETRY_MIGRATION scheduled its retry in the past, so this row would hold nothing"
+	# The last poll starts before the deadline and reads the Jobs a moment
+	# after it, so a dispatch the operator is entitled to make is not read as
+	# an early one. The dispatch check below closes that moment against the
+	# same timestamp.
+	while [ "$(date +%s)" -lt "$((retry_not_before - 5))" ]; do
 		retry_status
 		jq -e '(.status.activeOperation.retryNotBefore // "") | length > 0' "$STATUS_FILE" >/dev/null ||
 			fail "$RETRY_MIGRATION dropped its retry deadline while it was still standing"
@@ -3207,20 +3216,24 @@ run_retry_interval_proof() {
 		if grep -vxF -f "$WORK_DIR/retry-jobs.txt" "$WORK_DIR/retry-jobs-now.txt" | grep -q .; then
 			fail "$RETRY_MIGRATION dispatched a replacement Job before its retry interval expired"
 		fi
-		sleep 10
+		sleep 5
 	done
 
 	# And it does run once the deadline passes, so the delay is a wait rather
-	# than a stop.
+	# than a stop. When the Job appears is timed against the deadline the claim
+	# named, not against the start of the wait.
 	retry_dispatch_deadline=$(($(date +%s) + 180))
 	retry_dispatched=no
 	while [ "$(date +%s)" -lt "$retry_dispatch_deadline" ]; do
 		migration_job_uids "$RETRY_MIGRATION" >"$WORK_DIR/retry-jobs-now.txt"
 		if grep -vxF -f "$WORK_DIR/retry-jobs.txt" "$WORK_DIR/retry-jobs-now.txt" | grep -q .; then
+			retry_seen_at=$(date +%s)
+			[ "$retry_seen_at" -ge "$retry_not_before" ] ||
+				fail "$RETRY_MIGRATION dispatched $((retry_not_before - retry_seen_at))s before the deadline it persisted"
 			retry_dispatched=yes
 			break
 		fi
-		sleep 10
+		sleep 5
 	done
 	[ "$retry_dispatched" = yes ] ||
 		fail "$RETRY_MIGRATION never dispatched after its retry interval expired"
