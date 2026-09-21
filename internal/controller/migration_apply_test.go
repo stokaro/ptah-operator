@@ -1466,3 +1466,40 @@ func TestAnUncertainRunNamesNoJobWhenTheClaimRecordedNone(t *testing.T) {
 		t.Fatalf("the record names Job %q/%q for a claim that never recorded one", run.JobName, run.JobUID)
 	}
 }
+
+// A Job that took the reserved name after this claim's was gone is a later
+// attempt, and it did not perform the run this record is about. Naming it
+// would point whoever has to account for that run at the wrong execution.
+func TestAnUncertainRunNamesItsOwnJobNotTheOneThatTookTheName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	// terminalMigrationWorkload records its Job on the claim, so the claim is
+	// left naming the Job that ran. Then a different object is put under that
+	// name, still running, so nothing about it settles this claim.
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	job.UID = "a-later-attempt"
+	if operation.JobUID == job.UID || operation.JobUID == "" {
+		t.Fatalf("the claim and the Job under its name are not distinguishable: claim %q, job %q",
+			operation.JobUID, job.UID)
+	}
+	job.Status.Conditions = nil
+	pod.OwnerReferences = []metav1.OwnerReference{jobControllerReference(job)}
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job, pod)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	run := readMigration(t, api, migration).Status.LastRun
+	if run == nil {
+		t.Fatal("the uncertain run recorded nothing")
+	}
+	if run.JobUID != operation.JobUID {
+		t.Fatalf("the record names Job %q, want the one this claim dispatched %q",
+			run.JobUID, operation.JobUID)
+	}
+}

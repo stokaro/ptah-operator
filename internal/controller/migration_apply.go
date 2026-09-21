@@ -614,10 +614,15 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		Message:    bounded(failure.Error(), 1024),
 	}
 	switch {
-	case job != nil:
+	case job != nil && (operation.JobUID == "" || job.UID == operation.JobUID):
 		run.JobName = job.Name
 		run.JobUID = job.UID
 	case operation.JobUID != "":
+		// Either no Job was handed in, or the one that was is not this claim's.
+		// A Job that took the reserved name after this claim's was gone is a
+		// later attempt, and naming it would point whoever has to account for
+		// the run at an execution that did not perform it.
+		//
 		// The Job is gone -- collected, or removed by hand -- and the claim is
 		// the only thing left that knows what ran. That is exactly when naming
 		// it matters: status.lastRun exists so a person can see what happened
