@@ -2260,3 +2260,60 @@ func TestARecordCannotClearWhileSomethingStopsTheReading(t *testing.T) {
 		})
 	}
 }
+
+// Which database the record names, and why the page will not call it the one
+// the run reached.
+//
+// A readable result frame reports the database the executor opened. Without
+// one the record falls back to the database the plan was computed against,
+// which is the last reading this resource took -- and a Secret behind that
+// reference can rotate between the reading and the run. The record cannot tell
+// the two apart, so the page says to establish it rather than assume it.
+func TestAnUnresolvedRecordNamesTheReportedTargetOrTheLastOneRead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reported := "sha256:" + strings.Repeat("b", 64)
+	for _, row := range []struct {
+		name        string
+		reported    string
+		wantPlanned bool
+	}{
+		{name: "no frame, so the database the plan was computed against", wantPlanned: true},
+		{name: "a frame naming the database the executor opened", reported: reported},
+	} {
+		row := row
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration, plan := awaitingApprovalFixture(t)
+			applyClaimFor(t, migration, plan)
+			planned := migration.Status.History.TargetIdentityDigest
+			if planned == "" {
+				t.Fatal("the fixture read no database, so neither row measures anything")
+			}
+			reconciler, api := fakeMigrationReconciler(
+				t, staticLogs{}, migration, plan, verificationPolicyConfigMap(),
+			)
+			if _, err := reconciler.finishUncertainMigrationApply(ctx, migration, nil,
+				errors.New("the Apply Job create result is uncertain"), row.reported); err != nil {
+				t.Fatalf("finishUncertainMigrationApply() error = %v", err)
+			}
+
+			record := readMigration(t, api, migration).Status.UnresolvedRun
+			if record == nil {
+				t.Fatal("the uncertain Apply recorded no unresolved run")
+			}
+			want := row.reported
+			if row.wantPlanned {
+				want = planned
+			}
+			if record.TargetIdentityDigest != want {
+				t.Fatalf("the record names database %q, want %q", record.TargetIdentityDigest, want)
+			}
+			if !row.wantPlanned && record.TargetIdentityDigest == planned {
+				t.Fatal("the run's own account of the database it opened was discarded for the planned one")
+			}
+		})
+	}
+}

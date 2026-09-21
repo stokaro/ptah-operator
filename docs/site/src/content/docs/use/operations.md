@@ -1135,10 +1135,21 @@ kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
 ```
 
 A record this manager wrote names the attempt (`operationID`), the plan it was
-carrying out, and the credential-free identity of the database it reached. It
-names the Job by name and UID wherever the manager established that one
-existed, and the Job and its logs may be gone by then, which is why the record
-carries their identity rather than pointing at them.
+carrying out, and the credential-free identity of a database. It names the Job
+by name and UID wherever the manager established that one existed, and the Job
+and its logs may be gone by then, which is why the record carries their
+identity rather than pointing at them.
+
+Which database `targetIdentityDigest` names depends on what the run managed to
+say. A readable result frame reports the database the executor opened, and that
+is the one the run reached. Without one -- an Apply whose create was never
+confirmed, a Pod that wrote nothing a reader could use -- the record falls back
+to the database the plan was computed against, which is the last one this
+resource read. The record does not say which of the two it is, and the Secret
+behind a reference can rotate between a reading and a run, so treat the digest
+as where to start looking rather than as a statement of where the run went.
+Establish that before repairing anything: a reader who inspects the wrong
+database finds nothing wrong and clears a record that was telling the truth.
 
 `jobName` and `jobUID` are empty on one of those records as well: a create
 whose outcome the API server never confirmed. The name that claim reserved is
