@@ -54,6 +54,7 @@ usage: demo/bin/lab <command>
   tools                print a directory holding ptah and kubectl-ptah, building them once
   registry             print the address a publishing client uses
   namespace            print the namespace the lab runs in
+  kubeconfig           print the kubeconfig file of the lab's own cluster
   versions             print what the lab is made of
 USAGE
 	exit 2
@@ -94,6 +95,15 @@ registry)
 namespace)
 	read_environment
 	printf '%s\n' "$E2E_TEST_NAMESPACE"
+	;;
+kubeconfig)
+	# The lab's cluster is reachable only through the file kind wrote for it,
+	# and a command run in a reader's own shell inherits that shell's context
+	# rather than the lab's. A child process cannot export a variable into its
+	# parent, so printing the path is the most a lab command can do; the page
+	# that documents it is what selects it.
+	read_environment
+	printf '%s\n' "$E2E_KUBECONFIG"
 	;;
 versions)
 	read_environment
