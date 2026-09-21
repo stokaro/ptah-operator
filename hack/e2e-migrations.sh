@@ -3226,10 +3226,18 @@ run_retry_interval_proof() {
 	retry_dispatched=no
 	while [ "$(date +%s)" -lt "$retry_dispatch_deadline" ]; do
 		migration_job_uids "$RETRY_MIGRATION" >"$WORK_DIR/retry-jobs-now.txt"
-		if grep -vxF -f "$WORK_DIR/retry-jobs.txt" "$WORK_DIR/retry-jobs-now.txt" | grep -q .; then
-			retry_seen_at=$(date +%s)
-			[ "$retry_seen_at" -ge "$retry_not_before" ] ||
-				fail "$RETRY_MIGRATION dispatched $((retry_not_before - retry_seen_at))s before the deadline it persisted"
+		retry_new_uid=$(grep -vxF -f "$WORK_DIR/retry-jobs.txt" "$WORK_DIR/retry-jobs-now.txt" | head -1)
+		if [ -n "$retry_new_uid" ]; then
+			# When the Job was created, not when this loop noticed it. A poll
+			# every five seconds can first see a Job that was created inside
+			# the hold, and observation time would call that on time.
+			retry_created_at=$(k -n "$TEST_NAMESPACE" get job \
+				-o jsonpath="{.items[?(@.metadata.uid=='$retry_new_uid')].metadata.creationTimestamp}")
+			[ -n "$retry_created_at" ] ||
+				fail "$RETRY_MIGRATION dispatched a Job this proof cannot date"
+			retry_created_epoch=$(jq -rn --arg stamp "$retry_created_at" '$stamp | fromdateiso8601')
+			[ "$retry_created_epoch" -ge "$retry_not_before" ] ||
+				fail "$RETRY_MIGRATION created its replacement Job $((retry_not_before - retry_created_epoch))s before the deadline it persisted"
 			retry_dispatched=yes
 			break
 		fi
