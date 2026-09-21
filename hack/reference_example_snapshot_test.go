@@ -30,7 +30,7 @@ import (
 
 // The reference shows a plan and then the approval admitted against it. Those
 // two documents describe one execution, and admission refuses an approval
-// whose bindings disagree with the plan it names -- so an example labelled
+// whose bindings disagree with the plan it names -- so an example labeled
 // "after admission" that carries a different artifact digest is not a
 // substituted identifier, it is a state the cluster would have refused.
 //
@@ -226,10 +226,14 @@ func verifiedPtahRelease(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A tagged row names the release; an edge row advanced to an untagged
+	// commit carries a null there and identifies the build by what git
+	// describe reported, which is the same string the lifecycle binds.
 	var catalog struct {
 		Releases []struct {
 			Verified []struct {
-				PtahRelease string `json:"ptahRelease"`
+				PtahRelease  string `json:"ptahRelease"`
+				PtahDescribe string `json:"ptahDescribe"`
 			} `json:"verified"`
 		} `json:"releases"`
 	}
@@ -239,7 +243,14 @@ func verifiedPtahRelease(t *testing.T) string {
 	var verified []string
 	for _, release := range catalog.Releases {
 		for _, row := range release.Verified {
-			verified = append(verified, row.PtahRelease)
+			identity := row.PtahRelease
+			if identity == "" {
+				identity = row.PtahDescribe
+			}
+			if identity == "" {
+				t.Fatalf("%s verifies a build that names neither a release nor a describe", ptahCatalogPath)
+			}
+			verified = append(verified, identity)
 		}
 	}
 	if len(verified) != 1 {
