@@ -27,6 +27,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
+	"github.com/stokaro/ptah-operator/internal/managercache"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -134,6 +135,8 @@ func main() {
 
 	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
+		Cache:                   managercache.Options(),
+		Client:                  managercache.ClientOptions(),
 		Metrics:                 metricsserver.Options{BindAddress: metricsAddress},
 		HealthProbeBindAddress:  probeAddress,
 		LeaderElection:          leaderElection,
