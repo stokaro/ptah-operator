@@ -3859,7 +3859,9 @@ func (r *SchemaReconciler) terminalLogs(
 	if r.Logs == nil {
 		return evidence, fmt.Errorf("pod log reader is not configured")
 	}
-	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout, schema.Namespace, selected.Name, executorContainerName)
+	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout,
+		leaseDuration(schema)-time.Minute,
+		schema.Namespace, selected.Name, executorContainerName)
 	if err != nil {
 		return evidence, err
 	}

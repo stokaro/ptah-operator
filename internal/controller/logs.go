@@ -49,6 +49,30 @@ type PodLogReader interface {
 // Apply stays exactly as uncertain as it was.
 const defaultResultReadTimeout = 2 * time.Minute
 
+// boundedResultReadTimeout is the bound this read actually gets: the ceiling
+// above, or the resource's own execution deadline where that is shorter.
+//
+// The ceiling alone is not safe at every setting. A resource may ask for
+// activeDeadlineSeconds as low as 30, and an Apply's Lease is that plus a
+// minute -- ninety seconds, against a read that could run for a hundred and
+// twenty. A reconcile inside this call is a reconcile that is not renewing
+// that Lease, so a read allowed to outlast it hands the database to whatever
+// claims the realm next while this manager is still waiting to hear what its
+// own run did. The read may not outlast the work it is reading about.
+//
+// Zero or less means the resource named no deadline, which is the generated
+// default rather than a choice, and the ceiling applies.
+func boundedResultReadTimeout(configured, activeDeadline time.Duration) time.Duration {
+	bound := configured
+	if bound <= 0 {
+		bound = defaultResultReadTimeout
+	}
+	if activeDeadline > 0 && activeDeadline < bound {
+		return activeDeadline
+	}
+	return bound
+}
+
 // readOperationResult reads a terminal Pod's executor log under a deadline of
 // its own. The deadline is applied here rather than inside a reader, so it
 // bounds every implementation of the seam and not just the one that talks to
@@ -56,13 +80,10 @@ const defaultResultReadTimeout = 2 * time.Minute
 func readOperationResult(
 	ctx context.Context,
 	reader PodLogReader,
-	timeout time.Duration,
+	timeout, activeDeadline time.Duration,
 	namespace, podName, containerName string,
 ) ([]byte, error) {
-	if timeout <= 0 {
-		timeout = defaultResultReadTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, boundedResultReadTimeout(timeout, activeDeadline))
 	defer cancel()
 	return reader.Read(ctx, namespace, podName, containerName)
 }

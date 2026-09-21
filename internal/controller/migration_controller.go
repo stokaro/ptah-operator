@@ -1662,7 +1662,9 @@ func (r *MigrationReconciler) migrationTerminalLogs(
 	if r.Logs == nil {
 		return evidence, errors.New("pod log reader is not configured")
 	}
-	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout, migration.Namespace, selected.Name, executorContainerName)
+	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout,
+		time.Duration(migrationActiveDeadline(migration))*time.Second,
+		migration.Namespace, selected.Name, executorContainerName)
 	if err != nil {
 		return evidence, err
 	}

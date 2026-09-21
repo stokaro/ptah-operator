@@ -300,3 +300,89 @@ func TestAStalledResultReadHoldsNothingAnotherResourceNeeds(t *testing.T) {
 		t.Fatal("the stalled reconcile never ended, so its result read has no bound")
 	}
 }
+
+// The read may not outlast the Lease the operation it is reading about holds.
+//
+// An Apply's Lease is spec.execution.activeDeadlineSeconds plus a minute, and
+// the API accepts a deadline as low as 30 seconds. A reconcile inside the read
+// is a reconcile that is not renewing that Lease, so a ceiling of two minutes
+// would let the read run past the point where the realm is handed to whatever
+// claims it next.
+func TestTheResultReadNeverOutlastsTheOperationsLease(t *testing.T) {
+	t.Parallel()
+
+	const minute = time.Minute
+	for _, row := range []struct {
+		name           string
+		configured     time.Duration
+		activeDeadline time.Duration
+		want           time.Duration
+	}{
+		{
+			name:           "the shortest deadline the API accepts",
+			activeDeadline: 30 * time.Second,
+			want:           30 * time.Second,
+		},
+		{
+			name:           "the generated default, where the ceiling is what binds",
+			activeDeadline: 900 * time.Second,
+			want:           defaultResultReadTimeout,
+		},
+		{
+			name:           "a deadline exactly at the ceiling",
+			activeDeadline: defaultResultReadTimeout,
+			want:           defaultResultReadTimeout,
+		},
+		{
+			name:           "no deadline recorded at all",
+			activeDeadline: 0,
+			want:           defaultResultReadTimeout,
+		},
+		{
+			name:           "a shorter bound a caller asked for",
+			configured:     5 * time.Second,
+			activeDeadline: 900 * time.Second,
+			want:           5 * time.Second,
+		},
+		{
+			name:           "a caller's bound the execution deadline undercuts",
+			configured:     minute,
+			activeDeadline: 30 * time.Second,
+			want:           30 * time.Second,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			if actual := boundedResultReadTimeout(row.configured, row.activeDeadline); actual != row.want {
+				t.Fatalf("boundedResultReadTimeout(%s, %s) = %s, want %s",
+					row.configured, row.activeDeadline, actual, row.want)
+			}
+		})
+	}
+}
+
+// And the reconcile hands it that bound rather than the ceiling.
+func TestAResourceWithTheShortestDeadlineGetsTheShortestRead(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	migration.Spec.Execution.ActiveDeadlineSeconds = 30
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseResolving
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	migrationClaim(t, migration, operatorv1alpha1.MigrationOperationResolve)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	probe := &deadlineProbe{}
+	reconciler, _ := fakeMigrationReconciler(t, probe, migration, job, pod, verificationPolicyConfigMap())
+
+	_, _ = reconciler.Reconcile(context.Background(), migrationRequest(migration))
+
+	called, hasDeadline, budget := probe.observed()
+	if !called || !hasDeadline {
+		t.Fatalf("the reconcile gave the reader no deadline: called=%t hasDeadline=%t", called, hasDeadline)
+	}
+	if budget > 30*time.Second {
+		t.Fatalf("the read was given %s against a Lease of 90s, so it may outlast the realm claim", budget)
+	}
+}
