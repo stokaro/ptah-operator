@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -157,6 +158,13 @@ func main() {
 		os.Exit(1)
 	}
 	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
+	// Both families are indexed by coordination realm before either controller
+	// is registered. The realm census reads both kinds whichever controller
+	// asks for it, so neither can own the registration on its own.
+	if err := controller.RegisterRealmIndexes(context.Background(), manager.GetFieldIndexer()); err != nil {
+		log.Error(err, "index resources by coordination realm")
+		os.Exit(1)
+	}
 	reconciler := &controller.SchemaReconciler{
 		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
 		Recorder:         manager.GetEventRecorderFor("ptah-schema-controller"),

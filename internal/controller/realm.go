@@ -49,6 +49,64 @@ func (c realmCensus) message() string {
 	)
 }
 
+// RealmDigestIndex names both families by the coordination realm their spec
+// claims, so a census reads the members of one realm rather than every resource
+// in the cluster.
+//
+// Without it each pass allocated and scanned both complete lists, and an idle
+// sweep over N resources examined about N squared entries. Sharing one informer
+// cache makes that cheap per entry and does not make it constant.
+const RealmDigestIndex = "spec.target.realmDigest"
+
+// RegisterRealmIndexes indexes both kinds for the realm census.
+//
+// Both are registered together, and from the manager rather than from either
+// controller's own setup, because the census reads both kinds whichever
+// controller asks for it. Registering each from its own controller would make
+// a manager that runs one of them return "no index with name ..." for the
+// other, and controller-runtime refuses a second registration of the same
+// field, so they cannot each register both.
+func RegisterRealmIndexes(ctx context.Context, indexer client.FieldIndexer) error {
+	if err := indexer.IndexField(ctx, &operatorv1alpha1.PtahSchema{}, RealmDigestIndex,
+		func(object client.Object) []string {
+			schema, ok := object.(*operatorv1alpha1.PtahSchema)
+			if !ok {
+				return nil
+			}
+			return realmDigestIndexValue(schema.Spec.Target)
+		}); err != nil {
+		return fmt.Errorf("index schemas by coordination realm: %w", err)
+	}
+	if err := indexer.IndexField(ctx, &operatorv1alpha1.PtahMigration{}, RealmDigestIndex,
+		func(object client.Object) []string {
+			migration, ok := object.(*operatorv1alpha1.PtahMigration)
+			if !ok {
+				return nil
+			}
+			return realmDigestIndexValue(migration.Spec.Target)
+		}); err != nil {
+		return fmt.Errorf("index migrations by coordination realm: %w", err)
+	}
+	return nil
+}
+
+// realmDigestIndexValue is the realm one spec names, and nothing for a target
+// whose digest cannot be derived -- the same answer claimsRealm gives such a
+// target, so an unindexable resource is absent rather than counted everywhere.
+//
+// Dormancy is deliberately not part of this. Suspending or deleting a resource
+// takes it out of the census, but it is the census that decides that: an index
+// that dropped dormant resources would have to be rebuilt on a field the
+// membership does not depend on, and the reading would then be spread across
+// two places.
+func realmDigestIndexValue(target operatorv1alpha1.DatabaseTargetSpec) []string {
+	digest, err := fingerprint.DatabaseCoordinationDigest(string(target.Engine), target.CoordinationKey)
+	if err != nil {
+		return nil
+	}
+	return []string{digest}
+}
+
 // takeRealmCensus counts every PtahSchema and PtahMigration whose spec names
 // the realm the given engine and coordination key name, the caller included.
 //
@@ -81,8 +139,9 @@ func takeRealmCensus(
 	}
 
 	var census realmCensus
+	members := client.MatchingFields{RealmDigestIndex: digest}
 	schemas := &operatorv1alpha1.PtahSchemaList{}
-	if err := reader.List(ctx, schemas); err != nil {
+	if err := reader.List(ctx, schemas, members); err != nil {
 		return realmCensus{}, fmt.Errorf("list schemas claiming the coordination realm: %w", err)
 	}
 	for index := range schemas.Items {
@@ -97,7 +156,7 @@ func takeRealmCensus(
 	}
 
 	migrations := &operatorv1alpha1.PtahMigrationList{}
-	if err := reader.List(ctx, migrations); err != nil {
+	if err := reader.List(ctx, migrations, members); err != nil {
 		return realmCensus{}, fmt.Errorf("list migrations claiming the coordination realm: %w", err)
 	}
 	for index := range migrations.Items {

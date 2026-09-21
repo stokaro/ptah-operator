@@ -2684,7 +2684,7 @@ func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (
 			Namespace: "team-a", Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
 		}})
 	}
-	api := fake.NewClientBuilder().WithScheme(scheme).
+	api := withRealmIndexes(fake.NewClientBuilder().WithScheme(scheme)).
 		WithStatusSubresource(&operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahSchemaPlan{}, &operatorv1alpha1.PtahSchemaApproval{}, &batchv1.Job{}).
 		WithIndex(&operatorv1alpha1.PtahSchemaApproval{}, approvalSchemaIndex, func(object client.Object) []string {
 			approval := object.(*operatorv1alpha1.PtahSchemaApproval)

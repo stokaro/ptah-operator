@@ -709,7 +709,7 @@ func fakeMigrationReconciler(
 	objects = append(objects, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
 		Namespace: "team-a", Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
 	}})
-	api := fake.NewClientBuilder().WithScheme(scheme).
+	api := withRealmIndexes(fake.NewClientBuilder().WithScheme(scheme)).
 		// A real API server stamps a UID on every object it accepts, and the
 		// controller refuses a Job without one. The fake client does not, so a
 		// Job it created would be refused by its own creator.
