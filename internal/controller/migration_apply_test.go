@@ -10,6 +10,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1502,4 +1503,476 @@ func TestAnUncertainRunNamesItsOwnJobNotTheOneThatTookTheName(t *testing.T) {
 		t.Fatalf("the record names Job %q, want the one this claim dispatched %q",
 			run.JobUID, operation.JobUID)
 	}
+}
+
+// The review's own row: a dispatched Apply whose Job is unfinished and whose
+// Pod is executing, deleted. The resource has to survive the reconcile that
+// follows, because the Job it owns does not survive the resource.
+func TestAcceptanceReviewDeletionRetainsRunningMigration(t *testing.T) {
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	job.Status = batchv1.JobStatus{Active: 1}
+	pod.Status = corev1.PodStatus{Phase: corev1.PodRunning}
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap())
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatal(err)
+	}
+	actual := &operatorv1alpha1.PtahMigration{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(migration), actual); apierrors.IsNotFound(err) {
+		t.Fatal("migration disappeared after its finalizer was removed while the dispatched Apply Job and Pod were still running")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.ActiveOperation == nil {
+		t.Fatal("running Apply claim was discarded during deletion")
+	}
+}
+
+// Deleting a PtahMigration while an Apply is in flight is not a cancel. The
+// Job is owned by the resource, so a finalizer let go hands a running executor
+// to cascading deletion, and the claim let go with it is the only record that
+// the run may have changed the database.
+//
+// A terminal Job does not end that. It reports Complete once its successes are
+// counted, and the API server has not finished with the Pod that earned them,
+// so the Pod's phase is the fact this rests on.
+func TestDeletingAMigrationWaitsForAPodItsTerminalJobStillOwns(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	runningExecutorPod(pod)
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap(),
+	)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter == 0 {
+		t.Fatal("deletion stopped watching an Apply Pod that has not stopped")
+	}
+	actual := readMigration(t, api, migration)
+	if !contains(actual.Finalizers, migrationOperationFinalizer) || actual.Status.ActiveOperation == nil {
+		t.Fatalf("deletion released the resource under a running Apply Pod: %#v", actual)
+	}
+	assertDatabaseStillHeld(t, reconciler, api)
+}
+
+// Once nothing the claim dispatched can write, the resource goes -- but what
+// the run did is still unread, and the claim is the last thing that knows a run
+// happened at all. The unknown outcome and the database go back first, and the
+// finalizer only after that.
+//
+// Each row is a different way of learning that nothing can write any more, and
+// the third is the one a UID decides: a Job under the reserved name that this
+// claim never dispatched owns a Pod of its own, and waiting for it would hold
+// the resource for a run it cannot account for.
+func TestDeletingAMigrationSettlesAnApplyItCannotAccountFor(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name string
+		// wantJobUID is the Job the record attributes the run to. It is the
+		// one this claim dispatched wherever the claim recorded a UID, whether
+		// or not that object still stands -- the claim is the remaining
+		// evidence once the Job is collected. It is empty only where the claim
+		// recorded none, because a reserved name is not evidence that anything
+		// was created under it.
+		wantJobUID types.UID
+		workload   func(
+			operation *operatorv1alpha1.MigrationOperationStatus,
+			job *batchv1.Job,
+			pod *corev1.Pod,
+		) []client.Object
+	}{
+		{
+			name:       "the Job and its Pod are terminal",
+			wantJobUID: "job-uid",
+			workload: func(_ *operatorv1alpha1.MigrationOperationStatus, job *batchv1.Job, pod *corev1.Pod) []client.Object {
+				return []client.Object{job, pod}
+			},
+		},
+		{
+			name:       "the dispatched Job is gone",
+			wantJobUID: "job-uid",
+			workload: func(_ *operatorv1alpha1.MigrationOperationStatus, _ *batchv1.Job, _ *corev1.Pod) []client.Object {
+				return nil
+			},
+		},
+		{
+			// The impostor is not named: the record says which Job this claim
+			// dispatched, and a later attempt under the same name did not
+			// perform this run.
+			name:       "another Job holds the name the claim reserved",
+			wantJobUID: "job-uid",
+			workload: func(_ *operatorv1alpha1.MigrationOperationStatus, job *batchv1.Job, pod *corev1.Pod) []client.Object {
+				job.UID = "replacement-job-uid"
+				job.Status.Conditions = nil
+				job.Status.Active = 1
+				pod.OwnerReferences = []metav1.OwnerReference{jobControllerReference(job)}
+				runningExecutorPod(pod)
+				return []client.Object{job, pod}
+			},
+		},
+		{
+			// The create landed and its answer did not: a timeout or a 5xx
+			// after the write persisted leaves a Job running under the name the
+			// claim reserved, and a claim that recorded no dispatch at all.
+			name:       "the claim recorded no dispatch and a Job stands under its name",
+			wantJobUID: "job-uid",
+			workload: func(operation *operatorv1alpha1.MigrationOperationStatus, job *batchv1.Job, pod *corev1.Pod) []client.Object {
+				operation.DispatchStarted = false
+				operation.JobUID = ""
+				return []client.Object{job, pod}
+			},
+		},
+		{
+			// The mirror of the row above: the create was attempted and its
+			// answer never came back, and nothing stands under the reserved
+			// name. DispatchStarted is persisted before the create, JobUID only
+			// after it, so this is the state a lost answer leaves -- and the
+			// claim's own record of the attempt is the only thing that says a
+			// run may have happened.
+			name: "the claim started a dispatch and recorded no Job",
+			workload: func(operation *operatorv1alpha1.MigrationOperationStatus, _ *batchv1.Job, _ *corev1.Pod) []client.Object {
+				operation.DispatchStarted = true
+				operation.JobUID = ""
+				return nil
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			migration, plan := awaitingApprovalFixture(t)
+			operation := applyClaimFor(t, migration, plan)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			objects := append(
+				[]client.Object{migration, plan, verificationPolicyConfigMap()},
+				row.workload(operation, job, pod)...,
+			)
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
+			holdMigrationApplyLease(t, reconciler, api, migration)
+			if err := api.Delete(ctx, migration); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			settled := readMigration(t, api, migration)
+			if settled.Status.ActiveOperation != nil {
+				t.Fatalf("the claim outlived the run it accounts for: %#v", settled.Status.ActiveOperation)
+			}
+			if settled.Status.LastRun == nil ||
+				settled.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
+				t.Fatalf("last run = %#v, want the unknown outcome recorded", settled.Status.LastRun)
+			}
+			if settled.Status.LastRun.JobUID != row.wantJobUID {
+				t.Fatalf("the record names Job %q, want %q", settled.Status.LastRun.JobUID, row.wantJobUID)
+			}
+			if !contains(settled.Finalizers, migrationOperationFinalizer) {
+				t.Fatal("the finalizer went in the same pass that recorded the outcome")
+			}
+			assertDatabaseHandedBack(t, reconciler, api)
+
+			// The pass below is the one that removes the finalizer, and the
+			// settling pass has to ask for it. The controller's primary watch
+			// takes a generation, a label or an annotation, so the status just
+			// written wakes nothing, and a deleting resource whose Job has
+			// stopped changing gets no other event. Driving the next pass by
+			// hand and calling that the path would hide exactly that.
+			if result.RequeueAfter <= 0 {
+				t.Fatalf("the settling pass asked for nothing to follow it: result = %#v", result)
+			}
+			if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() after the outcome was recorded error = %v", err)
+			}
+			gone := &operatorv1alpha1.PtahMigration{}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(migration), gone); !apierrors.IsNotFound(err) {
+				t.Fatalf("a settled Apply kept the resource: error %v, finalizers %#v", err, gone.Finalizers)
+			}
+		})
+	}
+}
+
+// A read-only claim is discarded rather than waited on. Its Job reads and
+// reports, a result nobody is waiting for costs nothing, and holding a deletion
+// for one would make every `kubectl delete` wait out a reading.
+func TestDeletingAMigrationDiscardsAReadOnlyClaim(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	job.Status.Conditions = nil
+	job.Status.Active = 1
+	runningExecutorPod(pod)
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{}, migration, job, pod, verificationPolicyConfigMap(),
+	)
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	gone := &operatorv1alpha1.PtahMigration{}
+	err := api.Get(ctx, client.ObjectKeyFromObject(migration), gone)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("a running read-only Job held the resource: error %v, status %#v", err, gone.Status)
+	}
+}
+
+// An Apply that took the Lease and never created its Job is the third case.
+// Nothing can be writing, so nothing is waited for -- but the database is
+// marked busy until the Lease expires, and the claim is the only thing holding
+// the epoch that releases it.
+func TestDeletingAMigrationHandsBackTheDatabaseAnUndispatchedApplyHolds(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = false
+	if operation.JobUID != "" {
+		t.Fatal("the claim recorded a Job UID, so this proves nothing about an undispatched Apply")
+	}
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	gone := &operatorv1alpha1.PtahMigration{}
+	err := api.Get(ctx, client.ObjectKeyFromObject(migration), gone)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("an undispatched Apply held the resource: error %v, status %#v", err, gone.Status)
+	}
+	assertDatabaseHandedBack(t, reconciler, api)
+}
+
+// The outcome record is what pays for the finalizer, so a write that did not
+// land cannot be treated as one that did. The failed pass keeps the claim, the
+// finalizer and the database, and the retry is what completes the deletion.
+func TestAFailedDeletionRecordKeepsTheMigrationAndItsDatabase(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap(),
+	)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+	reconciler.Client = &failFirstMigrationStatusPatchClient{Client: api}
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err == nil {
+		t.Fatal("Reconcile() succeeded despite an injected status patch failure")
+	}
+	held := readMigration(t, api, migration)
+	if !contains(held.Finalizers, migrationOperationFinalizer) || held.Status.ActiveOperation == nil {
+		t.Fatalf("an outcome record that failed released the resource: %#v", held)
+	}
+	assertDatabaseStillHeld(t, reconciler, api)
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("retry Reconcile() error = %v", err)
+	}
+	recorded := readMigration(t, api, migration)
+	if recorded.Status.LastRun == nil ||
+		recorded.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
+		t.Fatalf("last run = %#v, want the retry to record the unknown outcome", recorded.Status.LastRun)
+	}
+	assertDatabaseHandedBack(t, reconciler, api)
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() after the outcome was recorded error = %v", err)
+	}
+	gone := &operatorv1alpha1.PtahMigration{}
+	err := api.Get(ctx, client.ObjectKeyFromObject(migration), gone)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("the retried deletion kept the resource: error %v, finalizers %#v", err, gone.Finalizers)
+	}
+}
+
+// failFirstMigrationStatusPatchClient fails the first PtahMigration status
+// patch it is asked for and passes every later write through.
+type failFirstMigrationStatusPatchClient struct {
+	client.Client
+	failed bool
+}
+
+func (c *failFirstMigrationStatusPatchClient) Status() client.SubResourceWriter {
+	return &failFirstMigrationStatusPatchWriter{SubResourceWriter: c.Client.Status(), client: c}
+}
+
+type failFirstMigrationStatusPatchWriter struct {
+	client.SubResourceWriter
+	client *failFirstMigrationStatusPatchClient
+}
+
+func (w *failFirstMigrationStatusPatchWriter) Patch(
+	ctx context.Context,
+	object client.Object,
+	patch client.Patch,
+	options ...client.SubResourcePatchOption,
+) error {
+	if _, ok := object.(*operatorv1alpha1.PtahMigration); ok && !w.client.failed {
+		w.client.failed = true
+		return errors.New("injected PtahMigration status patch failure")
+	}
+	return w.SubResourceWriter.Patch(ctx, object, patch, options...)
+}
+
+// The Lease has to keep being renewed for as long as the deletion waits.
+//
+// It is sized to outlive the Job's own deadline and no further, and every
+// ordinary pass over a live Apply renews it. This wait can outlast that
+// deadline: a Pod on a node the API server cannot reach stays Running with no
+// bound at all. A Lease that lapses under that Pod hands the realm to the next
+// claimant, which then runs DDL beside an executor that never stopped, which is
+// the one thing the Lease exists to prevent.
+func TestDeletingAMigrationKeepsRenewingTheDatabaseLease(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	// Dispatched, and the executor has not stopped.
+	job.Status.Conditions = nil
+	job.Status.Active = 1
+	runningExecutorPod(pod)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job, pod)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	clock := movableMigrationClock(reconciler, api)
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+
+	renewedAt := func() time.Time {
+		t.Helper()
+		leases := &coordinationv1.LeaseList{}
+		if err := api.List(ctx, leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
+			t.Fatal(err)
+		}
+		for _, lease := range leases.Items {
+			if lease.Spec.HolderIdentity != nil && *lease.Spec.HolderIdentity != "" {
+				if lease.Spec.RenewTime == nil {
+					t.Fatalf("Lease %s is held and carries no renewal time", lease.Name)
+				}
+				return lease.Spec.RenewTime.Time
+			}
+		}
+		t.Fatal("no database Lease is held, so there is no renewal to measure")
+		return time.Time{}
+	}
+
+	before := renewedAt()
+	// Past the whole lease, which is the Job's deadline plus the grace. Without
+	// a renewal here the realm is free while the Pod is still running.
+	clock.now = clock.now.Add(migrationLeaseDuration(migration) + time.Minute)
+	result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("the deletion stopped watching a Pod that has not stopped: result = %#v", result)
+	}
+	after := renewedAt()
+	if !after.After(before) {
+		t.Fatalf("the Lease was not renewed while the deletion waited: renewed at %s, was %s", after, before)
+	}
+
+	// And the claim is still here, holding the resource, which is what the
+	// renewal is for.
+	waiting := readMigration(t, api, migration)
+	if waiting.Status.ActiveOperation == nil || waiting.Status.ActiveOperation.ID != operation.ID {
+		t.Fatalf("the claim went while its Pod was still running: %#v", waiting.Status.ActiveOperation)
+	}
+}
+
+// flakySecondPodListReader answers the first Pod listing and fails every one
+// after it. That is the shape of a transient API error arriving between two
+// reads of the same question.
+type flakySecondPodListReader struct {
+	client.Reader
+	listed int
+}
+
+func (r *flakySecondPodListReader) List(
+	ctx context.Context, list client.ObjectList, options ...client.ListOption,
+) error {
+	if _, isPods := list.(*corev1.PodList); isPods {
+		r.listed++
+		if r.listed > 1 {
+			return errors.New("injected transient Pod list failure")
+		}
+	}
+	return r.Reader.List(ctx, list, options...)
+}
+
+// A deletion that has already watched the executor stop must hand the database
+// back, even if asking again fails.
+//
+// The uncertain finish asks the same question a second time before releasing,
+// and a read error there answers "may still be writing" -- the right answer to
+// a question it could not settle. But by then the claim is gone, so the next
+// pass removes the finalizer with no epoch left to release the Lease with, and
+// every other resource on that database waits out the full lease for a run
+// this pass watched stop.
+func TestDeletingAMigrationHandsBackTheDatabaseDespiteAFlakySecondRead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	// The Job and its Pod are both terminal: this pass can prove nothing is
+	// writing, and does, before anything fails.
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	pod.Status = corev1.PodStatus{Phase: corev1.PodSucceeded}
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job, pod)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	reconciler.APIReader = &flakySecondPodListReader{Reader: api}
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	assertDatabaseHandedBack(t, reconciler, api)
 }
