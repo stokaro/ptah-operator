@@ -481,11 +481,13 @@ The runtime verifier closes the remaining concurrent-install race in which two
 clients could both render while the singleton was absent. New manager and
 certificate-rotation Pods wait for both fixed admission configurations and
 require their complete annotation tuple to match the Pod's release. They also
-require exactly one mutating approval webhook and three validating webhooks for
-approval, operation-Pod intent, and controller writes, with fail-closed
-policies, nonempty CA bundles, the exact Service, paths, port, rules, selectors,
+require exactly two mutating approval webhooks and four validating webhooks --
+one approval pair for each resource family, plus operation-Pod intent and
+controller writes -- with fail-closed policies, nonempty CA bundles, the exact Service, paths, port, rules, selectors,
 match conditions, review version, side-effect and match policies, reinvocation
-policy, and their bounded timeouts.
+policy, and their bounded timeouts. Where certificate rotation is enabled, the
+two candidate canary webhooks are required beside them; where it is not, they
+must be absent. Nothing else in either configuration is accepted.
 The verifier reads this complete contract again after its wait and rechecks the
 CRDs immediately before allowing the process to start. A losing release or a
 Pod launched while Helm is repairing a drifted singleton can neither reconcile
@@ -519,20 +521,26 @@ created for.
 Do not change singleton annotations merely to make an online upgrade pass. An
 installation whose `ptah-operator-admission` configurations carry no release
 identity predates the first published release, and the chart does not adopt
-it. Suspend every `PtahSchema`, wait for every operation Job to finish, place
-the databases in a maintenance window, and scale the manager and
-certificate-rotation Deployments to zero. Back up all Ptah custom resources,
-uninstall the release, verify that the three CRDs and their objects remain,
-then install one release of the first published version or newer, verify its
-CRDs and Pods, and resume the schemas.
+it. Suspend every `PtahSchema` *and* every `PtahMigration` -- a migration left
+running is a writer this procedure does not stop -- wait for every operation
+Job of both families to finish, place the databases in a maintenance window,
+and scale the manager and certificate-rotation Deployments to zero. Back up all
+Ptah custom resources, uninstall the release, verify that the six CRDs and
+their objects remain, then install one release of the first published version
+or newer, verify its CRDs and Pods, and resume both kinds.
+
+A migration suspended mid-sequence keeps `status.history` and, if one was left,
+`status.unresolvedRun`. Both have to survive the uninstall: the first is what
+says how far the sequence got, and the second is the record that stops a
+replacement Apply from running a migration that may already have executed.
 
 Changing an established coordination namespace or leader-election mode is a
 full offline migration, not an upgrade. After the same suspension, job drain,
 database maintenance, and scale-to-zero sequence, record the old coordination
 Leases and back up all Ptah custom resources. Uninstall the release; verify that
-the three CRDs and their objects remain. Install exactly one release with the
+the six CRDs and their objects remain. Install exactly one release with the
 new invariant values, verify its admission annotations and manager readiness,
-then end maintenance and resume the schemas. Retain the old Leases as audit
+then end maintenance and resume both kinds. Retain the old Leases as audit
 evidence until no interrupted operation can refer to them.
 
 `coordination.namespace` contains the fixed manager leader-election Lease and

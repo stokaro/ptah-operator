@@ -4,8 +4,17 @@ metadata:
   name: ptah-diagnostic-reader
   namespace: application
 rules:
+  # Every kind this operator serves. Diagnosis that stops at one family reads
+  # half a database's history: the two can share a coordination realm, and the
+  # one that refused is not always the one being looked at.
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
+    resources:
+      - "ptahschemas"
+      - "ptahschemaplans"
+      - "ptahschemaapprovals"
+      - "ptahmigrations"
+      - "ptahmigrationplans"
+      - "ptahmigrationapprovals"
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]

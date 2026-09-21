@@ -4,8 +4,15 @@ metadata:
   name: ptah-desired-state-author
   namespace: application
 rules:
+  # Both desired-state kinds. This operator serves two families, and a team
+  # that owns one usually owns the other; drop the resource you do not use
+  # rather than discovering later that the starting point covered half of it.
+  #
+  # These verbs let the holder choose spec.policy.apply. RBAC cannot stop that,
+  # because turning the approval requirement off is not an approval -- see
+  # approval-policy-guard.yaml where the separation has to be enforced.
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemas"]
+    resources: ["ptahschemas", "ptahmigrations"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

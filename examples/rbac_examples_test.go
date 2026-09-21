@@ -21,7 +21,7 @@ func TestDesiredStateAuthorRoleIsSeparateAndNamespaceScoped(t *testing.T) {
 	}
 	wantRules := []rbacv1.PolicyRule{{
 		APIGroups: []string{"operator.ptah.run"},
-		Resources: []string{"ptahschemas"},
+		Resources: []string{"ptahschemas", "ptahmigrations"},
 		Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 	}}
 	if !reflect.DeepEqual(role.Rules, wantRules) {
@@ -36,7 +36,10 @@ func TestDiagnosticReaderRoleCannotChangeStateOrReadCredentials(t *testing.T) {
 		t.Fatalf("diagnostic reader namespace = %q/%q, want application", role.Namespace, binding.Namespace)
 	}
 	wantRules := []rbacv1.PolicyRule{
-		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas", "ptahschemaplans", "ptahschemaapprovals"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{
+			"ptahschemas", "ptahschemaplans", "ptahschemaapprovals",
+			"ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals",
+		}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
