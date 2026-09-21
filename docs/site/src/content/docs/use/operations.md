@@ -1103,10 +1103,17 @@ nothing about whether the mutation was ever accounted for.
 kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
 ```
 
-It names the attempt (`operationID`), the Job it ran as by name and UID, the
-plan it was carrying out, and the credential-free identity of the database it
-reached. The Job and its logs may be gone by then, which is why the record
-carries their identity rather than pointing at them.
+A record this manager wrote names the attempt (`operationID`), the Job it ran
+as by name and UID, the plan it was carrying out, and the credential-free
+identity of the database it reached. The Job and its logs may be gone by then,
+which is why the record carries their identity rather than pointing at them.
+
+A record **adopted** on upgrade names less, because less was kept. A manager
+older than this record held the state in a condition, and the claim that ran
+was gone long before the upgrade read it -- so `operationID` and `planRef` are
+empty, and what survives is the outcome, the Job the last run recorded, and the
+database the last reading named. Those are what to search for in that case;
+there is no attempt or plan to look up, and looking is wasted time.
 
 While the record stands this resource publishes no plan and dispatches no
 Apply, including the migration that run was applying. It keeps reading: resolve,
@@ -1134,11 +1141,17 @@ Only once you have established what the run did. The record is the operator
 saying it cannot tell, so removing it without answering that question hands the
 next Apply a database in a state nobody checked.
 
-Removing the record alone does not clear it. A manager older than this record
-held the same state in the `Blocked` condition, and the upgrade path reads that
-condition before anything else in a pass -- so a resource whose record is
-removed while it is still blocked has the record rebuilt on the next
-reconciliation. The refusal and the record go in one write:
+Clear whatever else is refusing the resource first. A manager older than this
+record held the same state in the `Blocked` condition, and the upgrade path
+reads that condition before anything else in a pass, so anything that keeps
+writing `Blocked` -- a realm another resource still claims, an engine this
+operator does not support, a history the artifact cannot continue -- rebuilds
+the record on the pass after this one. The command below clears the refusal
+that is standing; it cannot clear one that keeps coming back.
+
+Then the refusal and the record go in one write. Removing the record alone is
+not enough even with nothing else refusing: the condition outlives it by a
+pass, and the upgrade path reads the condition.
 
 ```sh
 kubectl get ptahmigration orders -o json \

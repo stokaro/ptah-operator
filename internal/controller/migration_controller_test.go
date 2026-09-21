@@ -1782,8 +1782,15 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
-		name       string
-		clear      func(*operatorv1alpha1.PtahMigration)
+		name  string
+		clear func(*operatorv1alpha1.PtahMigration)
+		// report is the reading each pass gets; the default has work pending
+		// and nothing else refusing.
+		report func() dataplane.MigrationStatusReport
+		// passes is how many readings to run. One is enough to show a clear
+		// holding or not; a refusal that keeps coming back needs the pass that
+		// rewrites Blocked and the pass that then reads it.
+		passes     int
 		wantRecord bool
 	}{
 		{
@@ -1802,6 +1809,23 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			},
 			wantRecord: true,
 		},
+		{
+			// The case the procedure is written for, and the one it cannot
+			// answer on its own: something else is still refusing the
+			// resource, so the pass after this one writes Blocked again and
+			// the upgrade path rebuilds the record. The runbook says to clear
+			// that refusal first, and this is why.
+			name: "a refusal that keeps coming back rebuilds it",
+			clear: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.UnresolvedRun = nil
+				blocked := meta.FindStatusCondition(migration.Status.Conditions,
+					operatorv1alpha1.ConditionMigrationBlocked)
+				blocked.Status = metav1.ConditionFalse
+			},
+			report:     func() dataplane.MigrationStatusReport { return dirtyMigrationHistory() },
+			passes:     2,
+			wantRecord: true,
+		},
 	} {
 		row := row
 		t.Run(row.name, func(t *testing.T) {
@@ -1817,7 +1841,18 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			// A reading that still has work pending, because the case this is
 			// for is a person who established that the run changed nothing
 			// while its migration is still waiting.
-			actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
+			report := pendingMigrationHistory
+			if row.report != nil {
+				report = row.report
+			}
+			passes := row.passes
+			if passes < 1 {
+				passes = 1
+			}
+			actual := migration
+			for pass := 0; pass < passes; pass++ {
+				actual, _ = readMigrationHistory(t, actual, report())
+			}
 			if row.wantRecord && actual.Status.UnresolvedRun == nil {
 				t.Fatal("removing the record alone was enough, so the runbook's warning is wrong")
 			}
@@ -1826,4 +1861,14 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			}
 		})
 	}
+}
+
+// dirtyMigrationHistory is a reading the database itself refuses: a revision
+// row left dirty, which blocks the resource every time it is read. It stands
+// for anything that keeps writing Blocked -- a contested realm, an unsupported
+// engine -- without needing a second resource to arrange one.
+func dirtyMigrationHistory() dataplane.MigrationStatusReport {
+	report := pendingMigrationHistory()
+	report.DirtyRevision = &dataplane.MigrationDirty{Version: 3, Applied: 1, Total: 2}
+	return report
 }
