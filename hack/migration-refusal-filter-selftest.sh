@@ -247,5 +247,30 @@ refuses migration-untouched-database.jq 'something was applied' <<'JSON'
 {"status":{"phase":"Reading","history":{"appliedCount":1}}}
 JSON
 
+# The Apply Pod a closed scheduling gate is holding. Both refusals below are
+# mistakes this filter actually made: it read the phase alone, and it was
+# written with any(), which is false for an empty list and so accepted a Job
+# whose Pod did not exist yet. Either one lets the proof suspend a Job nothing
+# was holding, and pass with the node selector no longer reaching the Pod.
+accepts late-dispatch-gated-pod.jq 'one Pod that never reached a node' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},"spec":{},"status":{"phase":"Pending"}}]}
+JSON
+refuses late-dispatch-gated-pod.jq 'the Job has not created a Pod yet' <<'JSON'
+{"items":[]}
+JSON
+refuses late-dispatch-gated-pod.jq 'Pending, and already bound to a node' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},"spec":{"nodeName":"kind-worker"},
+ "status":{"phase":"Pending"}}]}
+JSON
+refuses late-dispatch-gated-pod.jq 'the runner is already going' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},"spec":{"nodeName":"kind-worker"},
+ "status":{"phase":"Running"}}]}
+JSON
+refuses late-dispatch-gated-pod.jq 'one held and one placed' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},"spec":{},"status":{"phase":"Pending"}},
+ {"metadata":{"name":"apply-def"},"spec":{"nodeName":"kind-worker"},
+ "status":{"phase":"Pending"}}]}
+JSON
+
 printf 'migration refusal filter self-test: PASS\n'
 PHASE_COMPLETED=1

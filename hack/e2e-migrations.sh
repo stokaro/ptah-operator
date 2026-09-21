@@ -2950,6 +2950,34 @@ approve_late_dispatch_plan() {
 		fail "the $ENGINE late-dispatch approval could not be created"
 }
 
+# The gate has to be seen holding a Pod before the Job is suspended. A Job whose
+# Pod has not been created yet reads exactly like one whose Pod cannot be
+# placed, and suspending on that reading would carry the claim past its deadline
+# by suspension alone -- the row would pass with the selector no longer reaching
+# the Pod at all. testdata/e2e/late-dispatch-gated-pod.jq is the reading, and
+# hack/migration-refusal-filter-selftest.sh is where it is shown to refuse both
+# an empty list and a Pod that reached a node.
+wait_for_the_late_dispatch_pod_to_be_gated() {
+	gated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$gated_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o json \
+			>"$WORK_DIR/late-pods.json" ||
+			fail "the $ENGINE Apply Pods could not be read while the gate was closed"
+		if jq -e -f "$ROOT_DIR/testdata/e2e/late-dispatch-gated-pod.jq" \
+			"$WORK_DIR/late-pods.json" >/dev/null; then
+			return 0
+		fi
+		# A Pod that reached a node is not something waiting longer fixes.
+		if jq -e '
+          any(.items[]?; ((.spec.nodeName // "") | length) > 0)
+        ' "$WORK_DIR/late-pods.json" >/dev/null; then
+			fail "the $ENGINE Apply Pod reached a node while the gate was closed, so the gate is not what held it"
+		fi
+		sleep 2
+	done
+	fail "the $ENGINE Apply never produced a Pod held off every node, so nothing here shows the gate is what delayed it"
+}
+
 # Patching spec.suspend only records the intent. The Job controller clears the
 # start time and removes the Pod afterwards, and until it has, a resume patch
 # coalesces with the suspend: the controller never sees a suspended Job, the
@@ -3113,19 +3141,7 @@ run_late_dispatch_proof() {
 		-o jsonpath='{.metadata.uid}' 2>/dev/null || true)
 	[ "$late_live_uid" = "$LATE_APPLY_JOB_UID" ] ||
 		fail "the $ENGINE Apply Job under that name is not the one the resource dispatched"
-	# Nothing has run, and the phase alone does not say so: a Pod stays Pending
-	# while it is bound to a node and pulling, and the kubelet can start the
-	# runner from there before the suspend removes it. Unbound is the property
-	# that means the gate held, so that is what is read.
-	k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o json \
-		>"$WORK_DIR/late-pods.json" ||
-		fail "the $ENGINE Apply Pods could not be read before suspending their Job"
-	if jq -e '
-      any(.items[]?;
-        .status.phase != "Pending" or ((.spec.nodeName // "") | length) > 0)
-    ' "$WORK_DIR/late-pods.json" >/dev/null; then
-		fail "the $ENGINE Apply Pod reached a node before its Job was suspended, so the window was not what delayed it"
-	fi
+	wait_for_the_late_dispatch_pod_to_be_gated
 	k -n "$TEST_NAMESPACE" patch job "$LATE_APPLY_JOB" --type merge \
 		-p '{"spec":{"suspend":true}}' >/dev/null ||
 		fail "the $ENGINE Apply Job could not be suspended"
