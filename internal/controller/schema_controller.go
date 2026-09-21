@@ -3860,13 +3860,31 @@ func (r *SchemaReconciler) terminalLogs(
 		return evidence, fmt.Errorf("pod log reader is not configured")
 	}
 	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout,
-		leaseDuration(schema)-time.Minute,
+		schemaResultReadBudget(schema),
 		schema.Namespace, selected.Name, executorContainerName)
 	if err != nil {
 		return evidence, err
 	}
 	evidence.Logs = logs
 	return evidence, nil
+}
+
+// schemaResultReadBudget is the Lease this read has to stay inside.
+//
+// A post-Apply Observe renews the Lease at the duration the Apply recorded in
+// status.pendingObservation, not at whatever the spec says now, so that is the
+// one to read when it is there. Otherwise the claim's own duration applies, and
+// a read-only operation holding no Lease has no budget to derive.
+func schemaResultReadBudget(schema *operatorv1alpha1.PtahSchema) time.Duration {
+	if pending := schema.Status.PendingObservation; pending != nil {
+		if budget := leaseReadBudget(pending.LeaseDurationSeconds, time.Minute); budget > 0 {
+			return budget
+		}
+	}
+	if operation := schema.Status.ActiveOperation; operation != nil {
+		return leaseReadBudget(operation.LeaseDurationSeconds, time.Minute)
+	}
+	return 0
 }
 
 func (r *SchemaReconciler) markJobHarvested(ctx context.Context, job *batchv1.Job) error {

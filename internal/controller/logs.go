@@ -60,17 +60,32 @@ const defaultResultReadTimeout = 2 * time.Minute
 // claims the realm next while this manager is still waiting to hear what its
 // own run did. The read may not outlast the work it is reading about.
 //
-// Zero or less means the resource named no deadline, which is the generated
-// default rather than a choice, and the ceiling applies.
-func boundedResultReadTimeout(configured, activeDeadline time.Duration) time.Duration {
+// Zero or less means no Lease bounds this read -- a read-only operation holds
+// none -- and the ceiling applies.
+func boundedResultReadTimeout(configured, leaseBudget time.Duration) time.Duration {
 	bound := configured
 	if bound <= 0 {
 		bound = defaultResultReadTimeout
 	}
-	if activeDeadline > 0 && activeDeadline < bound {
-		return activeDeadline
+	if leaseBudget > 0 && leaseBudget < bound {
+		return leaseBudget
 	}
 	return bound
+}
+
+// leaseReadBudget turns a Lease this operation actually holds into the time a
+// read may spend inside it.
+//
+// The duration has to come from the claim rather than from the spec. A Lease
+// is taken for the duration the claim recorded and renewed at that duration
+// afterwards, and spec.execution.activeDeadlineSeconds is mutable: raising it
+// after an Apply started grows nothing about the Lease already held, so a
+// bound derived from the spec would quietly exceed it. Zero means no Lease.
+func leaseReadBudget(leaseDurationSeconds int32, grace time.Duration) time.Duration {
+	if leaseDurationSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(leaseDurationSeconds)*time.Second - grace
 }
 
 // readOperationResult reads a terminal Pod's executor log under a deadline of

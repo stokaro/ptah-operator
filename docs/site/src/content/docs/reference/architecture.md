@@ -348,12 +348,18 @@ so a response that stops arriving would hold every other resource of that
 family behind it, including the passes that renew the Lease of an Apply that is
 still executing SQL. The read carries a deadline of its own: two minutes, which
 is the largest result frame the protocol admits at a floor of a mebibyte a
-second with room for the stream to open, or the resource's own
-`activeDeadlineSeconds` where that is shorter. The second bound is the one that
-matters at the low end -- an Apply's Lease is that deadline plus a minute, and
-a read allowed to outlast it would hand the realm to whatever claims it next
-while this manager was still waiting to hear what its own run did. A read may
-not outlast the work it is reading about.
+second with room for the stream to open, or what is left of the Lease the
+operation holds where that is shorter. The second bound is the one that matters
+at the low end -- an Apply's Lease is `activeDeadlineSeconds` plus a minute,
+and the API accepts a deadline of thirty seconds, so a read allowed to run for
+two minutes would hand the realm to whatever claims it next while this manager
+was still waiting to hear what its own run did. A read may not outlast the work
+it is reading about.
+
+That duration is taken from the claim, never from the spec. A Lease is renewed
+at the duration the claim recorded -- for the proof after an Apply, the one
+`status.pendingObservation` copied from it -- and `activeDeadlineSeconds` can
+be raised afterwards without lengthening a Lease already held.
 
 A read that ends at its deadline decides nothing: the claim, the Lease and any
 record of an unresolved run are left exactly as they were, because a log this

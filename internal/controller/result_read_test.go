@@ -313,65 +313,113 @@ func TestTheResultReadNeverOutlastsTheOperationsLease(t *testing.T) {
 
 	const minute = time.Minute
 	for _, row := range []struct {
-		name           string
-		configured     time.Duration
-		activeDeadline time.Duration
-		want           time.Duration
+		name        string
+		configured  time.Duration
+		leaseBudget time.Duration
+		want        time.Duration
 	}{
 		{
-			name:           "the shortest deadline the API accepts",
-			activeDeadline: 30 * time.Second,
-			want:           30 * time.Second,
+			// The shortest Lease the API can produce: activeDeadlineSeconds 30
+			// plus a minute of grace, less that grace again.
+			name:        "the shortest Lease the API can produce",
+			leaseBudget: leaseReadBudget(90, minute),
+			want:        30 * time.Second,
 		},
 		{
-			name:           "the generated default, where the ceiling is what binds",
-			activeDeadline: 900 * time.Second,
-			want:           defaultResultReadTimeout,
+			name:        "the generated default, where the ceiling is what binds",
+			leaseBudget: leaseReadBudget(960, minute),
+			want:        defaultResultReadTimeout,
 		},
 		{
-			name:           "a deadline exactly at the ceiling",
-			activeDeadline: defaultResultReadTimeout,
-			want:           defaultResultReadTimeout,
+			name:        "a budget exactly at the ceiling",
+			leaseBudget: defaultResultReadTimeout,
+			want:        defaultResultReadTimeout,
 		},
 		{
-			name:           "no deadline recorded at all",
-			activeDeadline: 0,
-			want:           defaultResultReadTimeout,
+			name:        "an operation holding no Lease at all",
+			leaseBudget: 0,
+			want:        defaultResultReadTimeout,
 		},
 		{
-			name:           "a shorter bound a caller asked for",
-			configured:     5 * time.Second,
-			activeDeadline: 900 * time.Second,
-			want:           5 * time.Second,
+			name:        "a shorter bound a caller asked for",
+			configured:  5 * time.Second,
+			leaseBudget: leaseReadBudget(960, minute),
+			want:        5 * time.Second,
 		},
 		{
-			name:           "a caller's bound the execution deadline undercuts",
-			configured:     minute,
-			activeDeadline: 30 * time.Second,
-			want:           30 * time.Second,
+			name:        "a caller's bound the Lease undercuts",
+			configured:  minute,
+			leaseBudget: leaseReadBudget(90, minute),
+			want:        30 * time.Second,
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			if actual := boundedResultReadTimeout(row.configured, row.activeDeadline); actual != row.want {
+			if actual := boundedResultReadTimeout(row.configured, row.leaseBudget); actual != row.want {
 				t.Fatalf("boundedResultReadTimeout(%s, %s) = %s, want %s",
-					row.configured, row.activeDeadline, actual, row.want)
+					row.configured, row.leaseBudget, actual, row.want)
 			}
 		})
 	}
 }
 
-// And the reconcile hands it that bound rather than the ceiling.
-func TestAResourceWithTheShortestDeadlineGetsTheShortestRead(t *testing.T) {
+// The budget comes from the Lease the claim recorded, not from the spec that
+// can be edited after it was taken.
+//
+// A post-Apply Observe renews at status.pendingObservation.leaseDurationSeconds,
+// copied from the Apply. Raising spec.execution.activeDeadlineSeconds after
+// that Apply started grows nothing about the Lease it holds, so a bound read
+// off the spec would exceed it.
+func TestTheReadBudgetComesFromTheLeaseTheClaimRecorded(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	// Raised long after the Apply took its Lease.
+	schema.Spec.Execution.ActiveDeadlineSeconds = 900
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationObserve, LeaseDurationSeconds: 960,
+	}
+	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+		LeaseDurationSeconds: 90,
+	}
+
+	if actual := schemaResultReadBudget(schema); actual != 30*time.Second {
+		t.Fatalf("the read budget is %s, want the 30s left by the Apply's own 90s Lease", actual)
+	}
+
+	// With no pending observation the claim's own Lease is what binds.
+	schema.Status.PendingObservation = nil
+	if actual := schemaResultReadBudget(schema); actual != 15*time.Minute {
+		t.Fatalf("the read budget is %s, want the claim's own Lease", actual)
+	}
+
+	// A read-only operation holds no Lease, so there is no budget to derive
+	// and the ceiling is what applies.
+	schema.Status.ActiveOperation.LeaseDurationSeconds = 0
+	if actual := schemaResultReadBudget(schema); actual != 0 {
+		t.Fatalf("an operation holding no Lease produced a budget of %s", actual)
+	}
+}
+
+// And the reconcile hands the reader the claim's own Lease rather than the
+// ceiling.
+//
+// Which operations hold a Lease is settled elsewhere -- a read-only one does
+// not, and gets the ceiling -- so this sets the duration on the claim it
+// reconciles and checks the number that reaches the reader.
+func TestTheReconcileHandsTheReaderTheClaimsLease(t *testing.T) {
 	t.Parallel()
 
 	migration := migrationFixture()
-	migration.Spec.Execution.ActiveDeadlineSeconds = 30
+	migration.Spec.Execution.ActiveDeadlineSeconds = 900
 	migration.Status.ExecutionBinding = migrationExecutionBinding()
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseResolving
 	migration.Finalizers = []string{migrationOperationFinalizer}
-	migrationClaim(t, migration, operatorv1alpha1.MigrationOperationResolve)
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationResolve)
+	// The shortest Lease the API can produce, and a spec that was raised long
+	// after it was taken.
+	operation.LeaseDurationSeconds = 90
 	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
 	probe := &deadlineProbe{}
 	reconciler, _ := fakeMigrationReconciler(t, probe, migration, job, pod, verificationPolicyConfigMap())
@@ -383,6 +431,6 @@ func TestAResourceWithTheShortestDeadlineGetsTheShortestRead(t *testing.T) {
 		t.Fatalf("the reconcile gave the reader no deadline: called=%t hasDeadline=%t", called, hasDeadline)
 	}
 	if budget > 30*time.Second {
-		t.Fatalf("the read was given %s against a Lease of 90s, so it may outlast the realm claim", budget)
+		t.Fatalf("the read was given %s against a 90s Lease, so it may outlast the claim on the realm", budget)
 	}
 }
