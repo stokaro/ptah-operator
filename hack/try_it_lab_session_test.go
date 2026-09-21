@@ -63,6 +63,7 @@ func TestTheTryItPageRunsAgainstTheLabCluster(t *testing.T) {
 		}
 	}
 	observed := filepath.Join(root, "kubeconfig-per-call")
+	leftWithPath := filepath.Join(root, "kubeconfig-left-with")
 	writeExecutable(t, filepath.Join(root, "demo", "bin", "lab"), `#!/bin/sh
 case "$1" in
 kubeconfig) printf '%s\n' "$LAB_KUBECONFIG" ;;
@@ -75,6 +76,9 @@ esac
 printf '%s\n' "${KUBECONFIG-<unset>}" >>"$OBSERVED_KUBECONFIG"
 `)
 
+	// The page's last block puts the reader's own context back, so the session
+	// ends by recording what they were left with.
+	session += "\nprintf '%s\\n' \"${KUBECONFIG-<unset>}\" >\"$OBSERVED_LEFT_WITH\"\n"
 	command := exec.Command("sh", "-eu", "-c", session)
 	command.Dir = root
 	command.Env = append(os.Environ(),
@@ -83,6 +87,7 @@ printf '%s\n' "${KUBECONFIG-<unset>}" >>"$OBSERVED_KUBECONFIG"
 		"LAB_KUBECONFIG="+labKubeconfig,
 		"LAB_TOOLS="+filepath.Join(root, "stubs"),
 		"OBSERVED_KUBECONFIG="+observed,
+		"OBSERVED_LEFT_WITH="+leftWithPath,
 	)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("the documented session failed: %v\n%s\nsession:\n%s", err, output, session)
@@ -102,6 +107,16 @@ printf '%s\n' "${KUBECONFIG-<unset>}" >>"$OBSERVED_KUBECONFIG"
 				kubeconfig, labKubeconfig)
 		}
 	}
+	// And the reader is handed back the context they arrived with, rather than
+	// the default file, which is a different cluster again.
+	left, err := os.ReadFile(leftWithPath)
+	if err != nil {
+		t.Fatalf("the session never said what it left the reader with: %v", err)
+	}
+	if leftWith := strings.TrimSpace(string(left)); leftWith != readerKubeconfig {
+		t.Fatalf("the session left the reader with %q, want the %q they had before it",
+			leftWith, readerKubeconfig)
+	}
 }
 
 // An exported variable outlives the commands it was exported for, so the page
@@ -113,8 +128,10 @@ func TestTheTryItPageSaysHowToLeaveTheLabContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", tryItPagePath, err)
 	}
-	if !strings.Contains(string(page), "unset KUBECONFIG") {
-		t.Fatal("the page exports KUBECONFIG and never says how to stop using it")
+	for _, needed := range []string{"LAB_PREVIOUS_KUBECONFIG=${KUBECONFIG-}", "unset KUBECONFIG"} {
+		if !strings.Contains(string(page), needed) {
+			t.Fatalf("the page exports KUBECONFIG and never %q, so it cannot put back what the reader had", needed)
+		}
 	}
 }
 

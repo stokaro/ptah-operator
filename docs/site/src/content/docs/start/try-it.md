@@ -61,13 +61,16 @@ scenario passes it to the processes it starts; nothing can export it into your
 shell, so select it once:
 
 ```sh
+LAB_PREVIOUS_KUBECONFIG=${KUBECONFIG-}
 export KUBECONFIG="$(demo/bin/lab kubeconfig)"
 NAMESPACE=$(demo/bin/lab namespace)
 ```
 
-`unset KUBECONFIG` puts your own context back, and a new shell never had the
-lab's. Run these in a shell of their own if you would rather not think about
-it.
+The first line is what puts your own context back at the end. Unsetting
+`KUBECONFIG` is not the same thing: if you already had one set, unsetting it
+returns you to the default file, which may be a different cluster again. A
+shell of its own needs none of this, and is the simpler answer if you would
+rather not think about it.
 
 The database went from empty to holding the table:
 
@@ -134,6 +137,16 @@ a real cluster, and each is published only because every condition its scenario
 claims held.
 
 ## When you are ready to use it for real
+
+Put your own context back first -- whichever you had, including none:
+
+```sh
+if [ -n "$LAB_PREVIOUS_KUBECONFIG" ]; then
+  export KUBECONFIG="$LAB_PREVIOUS_KUBECONFIG"
+else
+  unset KUBECONFIG
+fi
+```
 
 ```sh
 make demo-down
