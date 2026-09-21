@@ -346,12 +346,20 @@ server proxies to a kubelet, streaming a body whose size the executor decides.
 Each family runs one reconcile worker and leader election admits one manager,
 so a response that stops arriving would hold every other resource of that
 family behind it, including the passes that renew the Lease of an Apply that is
-still executing SQL. The read carries a deadline of its own: two minutes, which
-is the largest result frame the protocol admits at a floor of a mebibyte a
-second with room for the stream to open, or the Lease the operation holds where
-that is shorter. The whole Lease, not the Lease less its grace: the grace is
-what makes a Lease outlive its Job, and withholding it from the read left the
-shortest configuration unable to fetch a maximum-size frame at all. The second bound is the one that matters
+still executing SQL. The read carries a deadline of its own: ninety seconds,
+which is the shortest Apply Lease the API can produce, or the Lease the
+operation itself holds where that is shorter. The worker blocked on a read is
+the worker that owes every other resource of the family its Lease renewals, so
+a read may hold it for no longer than the shortest Lease it might owe one to.
+That clears what a legitimate result needs -- about fifty seconds for the
+largest frame the protocol admits, at a floor of a mebibyte a second -- and it
+is the whole Lease rather than the Lease less its grace, because the grace is
+what makes a Lease outlive its Job and not time withheld from reading the
+result afterwards.
+
+Bounding the read shortens the window in which one resource's reconcile holds
+up another's and does not close it. Closing it means taking the read off the
+reconcile path or giving the family more than one worker. The second bound is the one that matters
 at the low end -- the API accepts a deadline of thirty seconds, and spending
 two minutes reading the result of thirty seconds of work holds the worker for
 longer than the operation it is reporting on.

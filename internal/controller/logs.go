@@ -30,24 +30,35 @@ type PodLogReader interface {
 // has -- including the passes that would renew the Lease of an Apply that is
 // executing SQL somewhere else.
 //
-// The bound is not a round number. runner.MaxResultLogBytes is a little over
-// 48 MiB, which is the shortest tail of a log that can still hold a frame; at
-// a floor of a mebibyte a second that tail takes about fifty seconds to
-// arrive. Two minutes leaves the API server room to open the stream to the
-// kubelet and the read room to pass over whatever the executor wrote ahead of
-// that tail, and is still short enough that a stalled read costs one operation
-// a reconcile rather than costing the family its worker.
+// The number is the shortest Apply Lease the API can produce:
+// activeDeadlineSeconds at its minimum of 30, plus the minute of grace. The
+// worker that is blocked here is the worker that renews Leases for every other
+// resource of this family, so a read is allowed to hold it for no longer than
+// the shortest Lease it might owe a renewal to.
+//
+// It has to clear what a legitimate result needs, and it does.
+// runner.MaxResultLogBytes is a little over 48 MiB, which is the shortest tail
+// of a log that can still hold a frame; at a floor of a mebibyte a second that
+// takes about fifty seconds, leaving room for the stream to open and for the
+// read to pass over whatever the executor wrote ahead of the tail.
 //
 // The tail is what the read keeps; this is how long it may spend arriving. A
-// log too long for two minutes ends here, and that is the same answer as a log
-// that stopped arriving, which is correct for both: nothing was read, so
-// nothing is decided.
+// log too long for that ends here, and that is the same answer as a log that
+// stopped arriving, which is correct for both: nothing was read, so nothing is
+// decided.
+//
+// What this does not remove is that one worker serves the whole family. A read
+// holding it for its full budget is a read during which no other resource of
+// that family is reconciled, including one whose Apply Lease wants renewing.
+// Bounding the read shortens that window and does not close it; closing it
+// means taking the read off the reconcile path or giving the family more than
+// one worker, and neither belongs in a change about the bound.
 //
 // A read that times out returns an error, which requeues with backoff. The
 // claim, the Lease and status.unresolvedRun are untouched by it: nothing about
 // a log this manager could not read says what the database now holds, so an
 // Apply stays exactly as uncertain as it was.
-const defaultResultReadTimeout = 2 * time.Minute
+const defaultResultReadTimeout = 90 * time.Second
 
 // boundedResultReadTimeout is the bound this read actually gets: the ceiling
 // above, or the resource's own execution deadline where that is shorter.

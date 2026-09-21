@@ -461,3 +461,26 @@ func TestTheShortestLeaseStillClearsAMaximumResult(t *testing.T) {
 			shortest, needed)
 	}
 }
+
+// The ceiling is the shortest Apply Lease the API can produce, because the
+// worker blocked on a read is the worker that owes every other resource of
+// this family its Lease renewals. A read-only operation holds no Lease of its
+// own, and this is what bounds it.
+func TestTheCeilingIsTheShortestLeaseTheFamilyCanOwe(t *testing.T) {
+	t.Parallel()
+
+	// activeDeadlineSeconds at its API minimum of 30, plus the grace.
+	shortestLeaseOwed := leaseReadBudget(30 + 60)
+	if defaultResultReadTimeout > shortestLeaseOwed {
+		t.Fatalf("a read may hold the worker for %s while another resource's Lease runs out in %s",
+			defaultResultReadTimeout, shortestLeaseOwed)
+	}
+	// An unleased operation gets exactly that, and still clears a maximum result.
+	unleased := boundedResultReadTimeout(0, 0)
+	if unleased != defaultResultReadTimeout {
+		t.Fatalf("an unleased read was given %s, want the ceiling %s", unleased, defaultResultReadTimeout)
+	}
+	if needed := time.Duration(runner.MaxResultLogBytes/(1<<20)) * time.Second; unleased < needed {
+		t.Fatalf("an unleased read gets %s for a result that needs %s", unleased, needed)
+	}
+}
