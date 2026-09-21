@@ -44,12 +44,20 @@ without anyone else noticing.
 
 Where independent approval is an operational requirement, install
 [`examples/approval-policy-guard.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/approval-policy-guard.yaml).
-It is a `ValidatingAdmissionPolicy` that refuses `apply: Always` on `CREATE`
-and `UPDATE`, for both kinds, from every identity outside the group that owns
-apply policy. It is cluster-scoped and administrator-owned, so an author with
-complete rights over resources in their own namespace cannot edit, rebind or
-delete it. Both operations are covered on purpose: a guard that watched only
-updates is bypassed by creating the resource with `Always` already set.
+It is a `ValidatingAdmissionPolicy`, cluster-scoped and administrator-owned, so
+an author with complete rights over resources in their own namespace cannot
+edit, rebind or delete it. It covers both kinds and both `CREATE` and `UPDATE`:
+a guard that watched only updates is bypassed by creating the resource with
+`Always` already set.
+
+What it refuses is the transition into `Always`, not the value itself. That
+distinction is load-bearing. The operator patches these resources to add and
+remove its operation finalizer, and its service account is not exempt, so a
+guard that refused every write leaving `Always` in place would stop operations
+from starting and stop a finished one from releasing its finalizer -- an
+administrator who chose `Always` would have wedged every resource they chose it
+for. Leaving the field where an administrator put it is permitted, and so is
+moving back to `OnApproval`; arriving at `Always` from anywhere else is not.
 
 Two things to check after installing it. A policy with no binding is inert and
 reads exactly like one in force, so confirm the binding exists and that its

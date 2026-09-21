@@ -50,33 +50,53 @@ func readApplyPolicyGuard(t *testing.T) (
 func admits(
 	t *testing.T,
 	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
-	object map[string]any,
+	object, oldObject map[string]any,
 	groups []string,
 ) (matched bool, allowed bool) {
 	t.Helper()
 
-	request := map[string]any{
-		"userInfo": map[string]any{"username": "someone", "groups": groups},
+	// A CREATE carries no oldObject, and the API server presents that as null.
+	// A nil map is not null to cel-go -- it converts to an empty map, and the
+	// policy's has() then errors on a key that is merely absent -- so the
+	// absence is put in as an untyped nil.
+	var previous any
+	if oldObject != nil {
+		previous = oldObject
+	}
+	values := map[string]any{
+		"object":    object,
+		"oldObject": previous,
+		"request": map[string]any{
+			"userInfo": map[string]any{"username": "someone", "groups": groups},
+		},
+		"variables": map[string]any{},
 	}
 	for _, condition := range policy.Spec.MatchConditions {
-		if !evaluateGuardCEL(t, condition.Expression, object, request) {
+		if !evaluateGuardCEL(t, condition.Expression, values) {
 			return false, true
 		}
 	}
+	variables := map[string]any{}
+	for _, variable := range policy.Spec.Variables {
+		variables[variable.Name] = evaluateGuardCEL(t, variable.Expression, values)
+		values["variables"] = variables
+	}
 	for _, validation := range policy.Spec.Validations {
-		if !evaluateGuardCEL(t, validation.Expression, object, request) {
+		if !evaluateGuardCEL(t, validation.Expression, values) {
 			return true, false
 		}
 	}
 	return true, true
 }
 
-func evaluateGuardCEL(t *testing.T, expression string, object, request map[string]any) bool {
+func evaluateGuardCEL(t *testing.T, expression string, values map[string]any) bool {
 	t.Helper()
 
 	environment, err := celgo.NewEnv(
 		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
 		celgo.Variable("request", celgo.DynType),
+		celgo.Variable("variables", celgo.DynType),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +109,7 @@ func evaluateGuardCEL(t *testing.T, expression string, object, request map[strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, _, err := program.Eval(map[string]any{"object": object, "request": request})
+	value, _, err := program.Eval(values)
 	if err != nil {
 		t.Fatalf("evaluate %q: %v", expression, err)
 	}
@@ -115,17 +135,37 @@ func TestTheApplyPolicyGuardRefusesOnlyTheBypass(t *testing.T) {
 	policy, _ := readApplyPolicyGuard(t)
 
 	tests := []struct {
-		name        string
+		name string
+		// object is the write; oldObject is what was there before it, and nil
+		// for a CREATE, which is how the policy tells the two apart.
 		object      map[string]any
+		oldObject   map[string]any
 		groups      []string
 		wantMatched bool
 		wantAllowed bool
 	}{
 		{
-			// The bypass. An author with full rights over the resource still
-			// cannot make approvals unnecessary.
-			name:        "an author selecting Always",
+			// The bypass, created outright.
+			name:        "an author creating a resource with Always",
 			object:      schemaWithApplyPolicy("Always"),
+			groups:      []string{authorGroup},
+			wantMatched: true, wantAllowed: false,
+		},
+		{
+			// And the bypass reached by editing, which is the same decision
+			// arrived at a step later.
+			name:        "an author switching an existing resource to Always",
+			object:      schemaWithApplyPolicy("Always"),
+			oldObject:   schemaWithApplyPolicy("OnApproval"),
+			groups:      []string{authorGroup},
+			wantMatched: true, wantAllowed: false,
+		},
+		{
+			// A resource with no policy field defaults to OnApproval, so this
+			// is the same transition written differently.
+			name:        "an author adding Always where the field was absent",
+			object:      schemaWithApplyPolicy("Always"),
+			oldObject:   schemaWithApplyPolicy(""),
 			groups:      []string{authorGroup},
 			wantMatched: true, wantAllowed: false,
 		},
@@ -136,9 +176,7 @@ func TestTheApplyPolicyGuardRefusesOnlyTheBypass(t *testing.T) {
 			wantMatched: true, wantAllowed: true,
 		},
 		{
-			// The ordinary edit the separation is supposed to leave alone. An
-			// author who never mentions policy is not affected by this guard,
-			// and the API defaults the field to OnApproval.
+			// The ordinary edit the separation is supposed to leave alone.
 			name:        "an author editing desired state and no policy",
 			object:      schemaWithApplyPolicy(""),
 			groups:      []string{authorGroup},
@@ -160,18 +198,41 @@ func TestTheApplyPolicyGuardRefusesOnlyTheBypass(t *testing.T) {
 			wantMatched: false, wantAllowed: true,
 		},
 		{
-			// A service account is nobody's administrator unless it is put in
-			// the group, which is what keeps a controller or a CI identity
-			// from being an accidental exemption.
-			name:        "a service account selecting Always",
+			// The operator's own writes. It patches these resources to add and
+			// remove its operation finalizer, its service account is not in the
+			// administrator group, and Always is exactly the mode where those
+			// writes happen without a person. A guard that refused them would
+			// stop operations from starting and stop a finished one from
+			// releasing its finalizer -- the administrator's choice would wedge
+			// every resource they made it for.
+			name:        "the controller patching a resource an administrator set to Always",
 			object:      schemaWithApplyPolicy("Always"),
+			oldObject:   schemaWithApplyPolicy("Always"),
+			groups:      []string{"system:serviceaccounts", "system:authenticated"},
+			wantMatched: true, wantAllowed: true,
+		},
+		{
+			// But a service account is still nobody's administrator: it cannot
+			// make the transition itself.
+			name:        "a service account switching a resource to Always",
+			object:      schemaWithApplyPolicy("Always"),
+			oldObject:   schemaWithApplyPolicy("OnApproval"),
 			groups:      []string{"system:serviceaccounts", "system:authenticated"},
 			wantMatched: true, wantAllowed: false,
+		},
+		{
+			// Going back is not the bypass, so nobody needs an administrator to
+			// make the resource safer.
+			name:        "an author returning a resource to OnApproval",
+			object:      schemaWithApplyPolicy("OnApproval"),
+			oldObject:   schemaWithApplyPolicy("Always"),
+			groups:      []string{authorGroup},
+			wantMatched: true, wantAllowed: true,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			matched, allowed := admits(t, policy, test.object, test.groups)
+			matched, allowed := admits(t, policy, test.object, test.oldObject, test.groups)
 			if matched != test.wantMatched {
 				t.Fatalf("matched = %t, want %t", matched, test.wantMatched)
 			}
