@@ -318,6 +318,20 @@ failure retries the transition instead of orphaning the Job. That TTL is the
 one field the manager may add to a Job it already created, and no result is
 read before the Job carries its terminal condition.
 
+Reading that result is the one blocking call a reconciliation makes against
+something other than the API server's own store: a pod/log request the API
+server proxies to a kubelet, streaming a body whose size the executor decides.
+Each family runs one reconcile worker and leader election admits one manager,
+so a response that stops arriving would hold every other resource of that
+family behind it, including the passes that renew the Lease of an Apply that is
+still executing SQL. The read carries a deadline of its own -- two minutes,
+which is the largest result frame the protocol admits at a floor of a mebibyte
+a second, with room for the stream to open and for the executor's own output
+ahead of the frame. A read that ends at that deadline decides nothing: the
+claim, the Lease and any record of an unresolved run are left exactly as they
+were, because a log this manager could not read says nothing about what the
+database now holds.
+
 One case adds the field to a Job that is still running, and both admission
 layers name it: losing database lock continuity during an Apply retires the
 operation at once, and the Job left behind would otherwise hold its whole

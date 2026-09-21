@@ -97,9 +97,12 @@ type SchemaReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
 	Logs      PodLogReader
-	Jobs      JobBuilder
-	Plans     planstore.Store
-	Locks     *targetlock.Locker
+	// ResultReadTimeout bounds the pod/log read of one terminal operation.
+	// Zero means defaultResultReadTimeout, which is what the manager runs.
+	ResultReadTimeout time.Duration
+	Jobs              JobBuilder
+	Plans             planstore.Store
+	Locks             *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// PtahSchema, including schemas that live in different namespaces.
 	LockNamespace string
@@ -3856,7 +3859,7 @@ func (r *SchemaReconciler) terminalLogs(
 	if r.Logs == nil {
 		return evidence, fmt.Errorf("pod log reader is not configured")
 	}
-	logs, err := r.Logs.Read(ctx, schema.Namespace, selected.Name, executorContainerName)
+	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout, schema.Namespace, selected.Name, executorContainerName)
 	if err != nil {
 		return evidence, err
 	}
