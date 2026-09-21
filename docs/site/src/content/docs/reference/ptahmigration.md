@@ -342,6 +342,7 @@ spec:
 | `status.activeOperation.planRef` | `object` | PlanRef is the immutable plan an Apply carries out. |
 | `status.activeOperation.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.activeOperation.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
+| `status.activeOperation.retryNotBefore` | `string` | RetryNotBefore is when a retried attempt may be dispatched. A retry carries the delay the resource asked for, and carrying it here rather than in a requeue is what makes it survive a restart and an early Job or watch event: those re-enter reconciliation at once, and a delay that lived only in a requeue would be lost with the queue. Absent on a first attempt, which waits for nothing. |
 | `status.activeOperation.source` | `object` | Source is the credential-free artifact binding this operation uses: the resolved digest and the selectors needed to fetch it. Every operation after Resolve carries one, so a newer generation cannot send newly selected credentials to the old artifact's registry. |
 | `status.activeOperation.source.digest` | `string`, required | Digest is that digest on its own. |
 | `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |

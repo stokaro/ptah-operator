@@ -569,6 +569,14 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	key types.NamespacedName,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
+	// A retried attempt waits out the delay the resource asked for. The check
+	// is here rather than only in the requeue that scheduled it, because a
+	// restart and an early Job or watch event both re-enter reconciliation
+	// immediately and would otherwise dispatch at once -- which is how a
+	// failing operation becomes a tight loop against whatever it is failing on.
+	if !due(operation.RetryNotBefore, r.now()) {
+		return requeueAtDeadline(operation.RetryNotBefore, r.now()), nil
+	}
 	if migration.Spec.Suspend {
 		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
 	}
@@ -656,7 +664,11 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	}
 	expected := job.DeepCopy()
 	if err := r.Client.Create(ctx, job); err != nil {
-		if operation.Type == operatorv1alpha1.MigrationOperationApply && !apierrors.IsAlreadyExists(err) {
+		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+			// Including AlreadyExists. A Job standing under the name this claim
+			// reserved is one this claim may have created on a pass whose
+			// answer was lost, and retrying would rename the claim and dispatch
+			// beside it. What that Job did is a question for the database.
 			return r.finishUncertainMigrationApply(ctx, migration, nil,
 				fmt.Errorf("the Apply Job create result is uncertain: %w", err), "")
 		}
@@ -669,6 +681,13 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return ctrl.Result{}, fmt.Errorf("read created %s Job: %w", operation.Type, err)
 	}
 	if err := validateMigrationJobIntent(job, expected, migration); err != nil {
+		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+			// The Job exists by now and its executor may already be opening
+			// the database, so this claim is not free to walk away from it and
+			// dispatch under another name.
+			return r.finishUncertainMigrationApply(ctx, migration, job,
+				fmt.Errorf("the created Apply Job failed immutable intent validation: %w", err), "")
+		}
 		return r.retryMigrationOperation(ctx, migration, nil, fmt.Errorf("the created Job failed immutable intent validation: %w", err))
 	}
 	before := migration.DeepCopy()
@@ -1318,6 +1337,10 @@ func (r *MigrationReconciler) retryMigrationOperation(
 	next.JobUID = ""
 	next.AdmissionSnapshot = nil
 	next.StartedAt = metav1.NewTime(r.now())
+	// The delay the resource asked for, carried on the claim so a restart or
+	// an early watch event cannot skip it.
+	notBefore := metav1.NewTime(r.now().Add(migrationFailureRetry(migration)))
+	next.RetryNotBefore = &notBefore
 	name, err := r.Jobs.NameForMigration(migration, *next)
 	if err != nil {
 		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("name the retried %s Job: %w", operation.Type, err))
@@ -1330,7 +1353,7 @@ func (r *MigrationReconciler) retryMigrationOperation(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeWarning, "OperationRetried", "%s attempt %d: %v", operation.Type, operation.Attempt, failure)
-	return ctrl.Result{Requeue: true}, nil
+	return requeueAtDeadline(next.RetryNotBefore, r.now()), nil
 }
 
 // discardMigrationOperation drops a claim whose inputs no longer hold. Nothing

@@ -1503,3 +1503,93 @@ func TestAnUncertainRunNamesItsOwnJobNotTheOneThatTookTheName(t *testing.T) {
 			run.JobUID, operation.JobUID)
 	}
 }
+
+// A retried read-only attempt waits out spec.execution.failureRetryInterval.
+//
+// The delay is carried on the claim rather than only in the requeue that
+// scheduled it. A manager that restarted, and a Job or watch event that arrives
+// early, both re-enter reconciliation at once, and a delay that lived only in
+// the queue would be lost with it -- which is how a failing operation becomes a
+// tight loop against whatever it is failing on.
+func TestARetriedMigrationOperationWaitsOutTheFailureInterval(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: 90 * time.Second}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	// A Job that failed, which is what sends a read-only operation to a retry.
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobFailed)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, job, pod, verificationPolicyConfigMap())
+
+	result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter < 80*time.Second {
+		t.Fatalf("the retry was scheduled in %s, want about the 90s the resource asked for", result.RequeueAfter)
+	}
+	retried := readMigration(t, api, migration)
+	claim := retried.Status.ActiveOperation
+	if claim == nil || claim.RetryNotBefore == nil {
+		t.Fatalf("the retried claim carries no not-before time: %#v", claim)
+	}
+
+	// The restart: a fresh reconciler and a fresh API server reading exactly
+	// what was persisted, reconciling immediately as a watch event would.
+	restarted, restartedAPI := fakeMigrationReconciler(t, staticLogs{}, retried, verificationPolicyConfigMap())
+	// As many passes as the dispatch below needs, so "no Job" is a statement
+	// about the deadline rather than about the Pod admission snapshot being
+	// its own durable boundary. One pass would not dispatch either way.
+	for pass := 0; pass < 3; pass++ {
+		result, err := restarted.Reconcile(ctx, migrationRequest(migration))
+		if err != nil {
+			t.Fatalf("Reconcile() after restart error = %v", err)
+		}
+		if result.RequeueAfter < 80*time.Second {
+			t.Fatalf("a restarted manager scheduled the retry in %s, want the remaining delay", result.RequeueAfter)
+		}
+		if after := jobNamesFor(t, restartedAPI, migration); len(after) != 0 {
+			t.Fatalf("a Job was dispatched before the retry deadline: %v", after)
+		}
+	}
+
+	// And after the deadline it goes.
+	past := retried.DeepCopy()
+	notBefore := metav1.NewTime(restarted.now().Add(-time.Second))
+	past.Status.ActiveOperation.RetryNotBefore = &notBefore
+	dispatching, dispatchingAPI := fakeMigrationReconciler(t, staticLogs{}, past, verificationPolicyConfigMap())
+	// Two passes, because the Pod admission snapshot is its own durable
+	// boundary: it is persisted before the Job that carries its digest exists.
+	dispatched := false
+	for pass := 0; pass < 3 && !dispatched; pass++ {
+		if _, err := dispatching.Reconcile(ctx, migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() past the deadline error = %v", err)
+		}
+		dispatched = len(jobNamesFor(t, dispatchingAPI, migration)) > 0
+	}
+	if !dispatched {
+		probe := readMigration(t, dispatchingAPI, migration)
+		t.Fatalf("no Job after the retry deadline passed: phase=%s claim=%#v",
+			probe.Status.Phase, probe.Status.ActiveOperation)
+	}
+}
+
+// jobNamesFor lists the Jobs standing in the resource's namespace.
+func jobNamesFor(t *testing.T, api client.Client, migration *operatorv1alpha1.PtahMigration) []string {
+	t.Helper()
+
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs, client.InNamespace(migration.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(jobs.Items))
+	for _, job := range jobs.Items {
+		names = append(names, job.Name)
+	}
+	return names
+}
