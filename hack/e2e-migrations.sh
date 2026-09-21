@@ -3787,7 +3787,8 @@ reset_after_an_earlier_run() {
 		fail "$MIGRATION_RIVAL_SCHEMA was not removed"
 	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
 		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
-		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" >/dev/null ||
+		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" \
+		"$LATE_DB_SECRET" >/dev/null ||
 		fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
 	# The publisher objects carry the version they published in their names,
 	# and the versions are spread through the proofs, so they are found by the
@@ -3803,9 +3804,13 @@ reset_after_an_earlier_run() {
 	done <"$RESOURCE_FILE"
 	for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
 		"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
-		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE"; do
+		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE" "$LATE_DATABASE"; do
 		drop_database "$reset_database"
 	done
+	# A run that died while the late-dispatch gate was open leaves the label on
+	# the nodes, and a gated Pod that schedules at once is never held off one --
+	# the proof would pass without having measured anything.
+	k label nodes --all "${LATE_DISPATCH_GATE_LABEL}-" >/dev/null 2>&1 || true
 }
 
 reset_after_an_earlier_run
