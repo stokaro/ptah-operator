@@ -154,3 +154,39 @@ func TestFrameFooterSearchIsLinearOverManySameLengthLines(t *testing.T) {
 	}
 	t.Logf("linear footer search finished in %s", elapsed)
 }
+
+// The third shape, and the one no per-frame bound reaches: many headers rather
+// than many lines under one.
+//
+// Each header starts its own search over its own window, and the windows of
+// successive headers overlap almost completely, so a log full of syntactically
+// valid headers pays a whole window for each. Runner logs carry whatever the
+// child wrote, so a child can write them.
+func TestFrameSearchIsBoundedAcrossManyHeaders(t *testing.T) {
+	t.Parallel()
+
+	sum := sha256.Sum256(bytes.Repeat([]byte("z"), 4096)) // a digest nothing here matches
+	var log bytes.Buffer
+	// Ten megabytes of headers, each syntactically valid and each declaring a
+	// payload that is never there.
+	for log.Len() < 10<<20 {
+		fmt.Fprintf(&log, "PTAH_RUNNER_RESULT_V1 %d %s\n", 4096, hex.EncodeToString(sum[:]))
+	}
+
+	started := time.Now()
+	_, err := ParseResultFor(log.Bytes(), OperationResolve, "op")
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("a log of headers that declare payloads nothing carries was accepted")
+	}
+	// The refusal has to be terminal. Reporting this as a frame still arriving
+	// would send the controller back to re-read a log that cannot change, and
+	// then mark an Apply uncertain when the window ran out.
+	if MayStillArrive(err) {
+		t.Fatalf("a log the parser refused to finish searching was reported as still arriving: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("the search took %s over many headers; it is not bounded across them", elapsed)
+	}
+	t.Logf("bounded across headers in %s", elapsed)
+}

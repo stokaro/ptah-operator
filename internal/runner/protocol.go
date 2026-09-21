@@ -273,6 +273,7 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	sawOversized := false
 	var last *Result
 	var rejection error
+	searchBudget := maxFrameSearchBytes
 	reject := func(reason string) { rejection = fmt.Errorf("%w: %s", ErrMalformedFrame, reason) }
 	rejectIncomplete := func(reason string) { rejection = incompleteFrameError{reason: reason} }
 	// A missing footer has two causes with different answers, and the absence
@@ -340,6 +341,13 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 			searchAt = start + len(marker)
 			continue
 		}
+		if searchBudget < maxInterleavedFrameBytes {
+			// Whatever follows gets no search at all rather than half of one,
+			// and the reader is told that is what happened.
+			reject("the log presents more frame headers than one read will search")
+			break
+		}
+		searchBudget -= maxInterleavedFrameBytes
 		search := findFramePayload(logs, declaredStart, payloadLength, claimedDigest)
 		if !search.found {
 			// Nothing within reach hashes to what the header declares. A footer
@@ -393,6 +401,25 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	}
 	return Result{}, ErrFrameNotFound
 }
+
+// maxFrameSearchBytes bounds the payload searching one parse will do across
+// every frame header in a log, as a multiple of what a single frame may cost.
+//
+// The per-frame bounds are not a bound on the parse. Each header starts its own
+// search over its own window, and the windows of successive headers overlap
+// almost completely, so a log that presents many syntactically valid headers
+// pays a window for each: 10 MiB of ninety-byte header lines is over a hundred
+// thousand searches, gigabytes of walking on the reconcile worker that is
+// reading the log. Runner logs carry whatever the child wrote, so a child can
+// write those headers.
+//
+// Sixty-four windows is far past any real log. A runner writes one frame, and
+// the diagnostics around it are lines rather than headers, so reaching this
+// means the log is not one this parser can account for -- which is a verdict,
+// not a wait. The budget is checked before a frame's search rather than during
+// it, so each header gets a whole search or none: a partial search is how a
+// bound turns a frame that is present into one reported missing.
+const maxFrameSearchBytes = 64 * maxInterleavedFrameBytes
 
 // maxInterleavedFrameBytes bounds how far a payload may sit from the header
 // line that declares it, and how far past that payload the footer may sit.
@@ -457,7 +484,7 @@ func findFramePayload(logs []byte, declaredStart int, payloadLength int64, claim
 	if limit > len(logs) {
 		limit = len(logs)
 	}
-	footers := newFooterScan(logs, declaredStart)
+	footers := newFooterScan(logs, declaredStart, payloadLength)
 	for candidate := declaredStart; candidate <= limit; {
 		lineEndRelative := bytes.IndexByte(logs[candidate:], '\n')
 		if lineEndRelative < 0 {
@@ -549,13 +576,23 @@ func frameFooterEnd(logs []byte, payloadEnd int) (int, bool) {
 // newline-delimited -- which is the same thing frameFooterEnd establishes by
 // walking.
 type footerScan struct {
-	logs []byte
-	at   int // the footer's leading newline at or after the last question, or -1
+	logs  []byte
+	limit int // one past the furthest byte a footer of this frame could occupy
+	at    int // the footer's leading newline at or after the last question, or -1
 }
 
-func newFooterScan(logs []byte, from int) *footerScan {
+// newFooterScan looks only where a footer of this frame could sit: a payload
+// begins within the interleave bound of the header, runs the declared length,
+// and its footer sits within that bound again. Searching to the end of the log
+// instead would make one abusive header cost the whole log.
+func newFooterScan(logs []byte, from int, payloadLength int64) *footerScan {
 	scan := &footerScan{logs: logs, at: -1}
-	if found := bytes.Index(logs[from:], []byte(frameFooter)); found >= 0 {
+	limit := from + 2*maxInterleavedFrameBytes + int(payloadLength) + len(frameFooter)
+	if limit > len(logs) {
+		limit = len(logs)
+	}
+	scan.limit = limit
+	if found := bytes.Index(logs[from:limit], []byte(frameFooter)); found >= 0 {
 		scan.at = from + found
 	}
 	return scan
@@ -567,7 +604,7 @@ func newFooterScan(logs []byte, from int) *footerScan {
 func (s *footerScan) closes(payloadEnd int) bool {
 	footer := []byte(frameFooter)
 	for s.at >= 0 && s.at < payloadEnd {
-		found := bytes.Index(s.logs[s.at+1:], footer)
+		found := bytes.Index(s.logs[s.at+1:s.limit], footer)
 		if found < 0 {
 			s.at = -1
 			return false
