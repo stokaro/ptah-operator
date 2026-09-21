@@ -24,7 +24,7 @@ The operator separates four authorities:
 4. A Job receives only the credentials needed for its fixed operation through
    same-namespace Secret selectors resolved by the kubelet.
 
-### Who may turn the approval requirement off
+### Who may turn the approval requirement off {#who-may-turn-the-approval-requirement-off}
 
 The separation above is about who may write an approval. It says nothing about
 who may decide one is not needed, and those are different questions with

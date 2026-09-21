@@ -22,7 +22,7 @@ on the desired-state resource, so whoever may edit a `PtahSchema` or a
 without any approval. If this guide's gate is meant to be one a person cannot
 step around, install the administrator-owned policy in
 [`examples/approval-policy-guard.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/approval-policy-guard.yaml)
-as well; the [security model](/use/security/#who-may-turn-the-approval-requirement-off)
+as well; the [security model](../security/#who-may-turn-the-approval-requirement-off)
 says why RBAC alone does not do it.
 
 Start from the minimal approval example in `examples/approval.yaml`. Obtain the
