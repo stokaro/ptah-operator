@@ -69,11 +69,14 @@ type MigrationJobBuilder interface {
 }
 
 // MigrationReconciler carries one PtahMigration through Resolve -> Verify ->
-// History and reports what the database's own revision table said.
+// History -> Apply, and reads the history back afterwards to confirm what the
+// run did.
 //
-// Nothing here mutates a database. Selecting and running the pending sequence
-// is separate work with its own plan and approval, because the evidence this
-// controller collects is what that decision is made from.
+// Only the Apply mutates a database, and only what an approved plan named. The
+// three readings before it are what that plan is computed from, so the
+// evidence and the decision stay separable: a plan is published from a reading
+// the resource persisted, and an Apply executes a plan somebody or some policy
+// authorized.
 type MigrationReconciler struct {
 	client.Client
 	APIReader client.Reader

@@ -116,13 +116,10 @@ func TestOperationMutating(t *testing.T) {
 	}
 }
 
-// TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked measures both
-// directions, because the one that matters is the empty one.
-//
-// A mode nobody asked for has to leave the command exactly as it was: every
+// A mode nobody asked for has to leave the command exactly as it was. Every
 // PtahMigration stored before the field existed runs through this code, and a
 // flag appearing for them would change how they execute without anyone editing
-// them. The set case is the easy half.
+// them.
 func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 	t.Parallel()
 

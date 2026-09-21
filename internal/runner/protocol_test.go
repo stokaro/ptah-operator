@@ -786,11 +786,10 @@ func TestFrameCarriesManagedRowDriftFindings(t *testing.T) {
 	}
 }
 
-// A frame that does not survive the scan is several different failures, and the
-// one sentence they all used to produce sent a reader looking in the wrong
-// place. A log read before the frame finished arriving and a build that wrote a
-// frame this one refuses are not the same problem and do not have the same
-// answer.
+// A frame that does not survive the scan is several different failures, and one
+// sentence for all of them sends a reader looking in the wrong place. A log read
+// before the frame finished arriving and a build that wrote a frame this one
+// refuses are not the same problem and do not have the same answer.
 //
 // The reasons are asserted as text because text is what reaches a person: the
 // end-to-end phases print this error and nothing else about the frame.

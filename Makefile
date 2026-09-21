@@ -21,9 +21,8 @@ REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 all: verify build
 
 build:
-	@# ./... rather than a list of commands: a command left out of the list
-	@# is a binary nothing builds, and the list was already complete only by
-	@# coincidence. Non-main packages type-check and write nothing.
+	@# ./... rather than a list of commands: a command left out of the list is
+	@# a binary nothing builds. Non-main packages type-check and write nothing.
 	$(GO) build ./...
 
 test:
