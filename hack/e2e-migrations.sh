@@ -2827,10 +2827,21 @@ create_late_dispatch_database() {
 # first and the resource never reaches an Apply at all. The read-only chain runs
 # with the gate open, and the gate closes between the plan and the approval.
 #
-# Sixty seconds because the window is the active deadline: long enough to
-# suspend the Job inside it, and short enough that waiting it out leaves most of
-# the grace minute to run the Pod in. An hour of interval because nothing here
-# wants a refresh landing between the gate closing and the Apply being claimed.
+# The active deadline is three hundred seconds because it is not the Apply's
+# alone: internal/workload/migration_builder.go builds one deadline and puts it
+# on every operation Job, so the Resolve, Verify and History that come first are
+# bounded by it too. Every other migration fixture in this phase uses three
+# hundred, and a shorter one kills the read-only chain before it can publish a
+# plan -- which is the same mistake as assuming the nodeSelector reached only
+# the Apply Pod.
+#
+# The window this proof waits out is that same number, so the hold is five
+# minutes. The margin afterwards does not depend on it: the Lease outlives the
+# window by migrationApplyLeaseGrace whatever the deadline is, so a longer
+# deadline buys nothing and a shorter one only shortens the hold.
+#
+# An hour of interval because nothing here wants a refresh landing between the
+# gate closing and the Apply being claimed.
 create_late_dispatch_migration_resource() {
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
@@ -2863,7 +2874,7 @@ create_late_dispatch_migration_resource() {
         policy: {apply: "OnApproval", lockTimeout: "30s"},
         interval: "1h",
         execution: {
-          activeDeadlineSeconds: 60, failureRetryInterval: "10s", connectTimeout: "30s",
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s",
           nodeSelector: ($gate | {(.): "open"})
         }
       }
@@ -2894,6 +2905,41 @@ close_late_dispatch_gate() {
 		fail "the late-dispatch gate is still open on: $(printf '%s' "$still_open" | tr '\n' ' ')"
 }
 
+# What the resource and its Jobs were doing when a wait ran out. A row in this
+# phase that times out prints only its own message, and the run's log is not
+# readable until every job in it finishes, so a failure here otherwise costs a
+# full matrix before anyone learns which state it was stuck in.
+report_late_dispatch_state() {
+	printf 'e2e migrations: %s state when the wait ended:\n' "$LATE_MIGRATION" >&2
+	if k -n "$TEST_NAMESPACE" get ptahmigration "$LATE_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null; then
+		jq -r '
+          .status as $s |
+          "  phase=\($s.phase // "<none>") observedGeneration=\($s.observedGeneration // "<none>")",
+          "  activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.jobName // "<none>") attempt=\(.attempt // "<none>") dispatchNotAfter=\(.dispatchNotAfter // "<none>")")",
+          "  plan=\(($s.plan // {}).name // "<none>") unresolvedRun=\(($s.unresolvedRun // null) != null)",
+          (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason) message=\(.message[0:160])")
+        ' "$STATUS_FILE" >&2 2>/dev/null || true
+	else
+		printf '  the resource could not be read\n' >&2
+	fi
+	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/migration=${LATE_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  job \(.metadata.name) operation=\(.metadata.labels["operator.ptah.run/operation"] // "<none>") " +
+      "suspend=\(.spec.suspend) active=\(.status.active // 0) failed=\(.status.failed // 0) " +
+      "succeeded=\(.status.succeeded // 0) startTime=\(.status.startTime // "<none>") " +
+      "conditions=\([(.status.conditions // [])[] | "\(.type)=\(.status)(\(.reason // ""))"] | join(","))"
+    ' >&2 2>/dev/null || true
+	k -n "$TEST_NAMESPACE" get pods -l "operator.ptah.run/migration=${LATE_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  pod \(.metadata.name) phase=\(.status.phase) node=\(.spec.nodeName // "<unscheduled>") " +
+      "reasons=\([(.status.conditions // [])[] | select(.status != "True") | "\(.type):\(.reason // "")"] | join(","))"
+    ' >&2 2>/dev/null || true
+	k get nodes -l "$LATE_DISPATCH_GATE_LABEL" -o name 2>/dev/null |
+		sed 's/^/  gate open on /' >&2 || true
+}
+
 late_dispatch_status() {
 	k -n "$TEST_NAMESPACE" get ptahmigration "$LATE_MIGRATION" -o json >"$STATUS_FILE" ||
 		fail "$LATE_MIGRATION could not be read"
@@ -2915,6 +2961,7 @@ wait_for_late_dispatch_plan() {
 		fi
 		sleep 5
 	done
+	report_late_dispatch_state
 	fail "$LATE_MIGRATION did not publish a plan to approve within ${TIMEOUT_SECONDS}s"
 }
 
@@ -2976,6 +3023,7 @@ wait_for_the_late_dispatch_pod_to_be_gated() {
 		fi
 		sleep 2
 	done
+	report_late_dispatch_state
 	fail "the $ENGINE Apply never produced a Pod held off every node, so nothing here shows the gate is what delayed it"
 }
 
@@ -3000,6 +3048,7 @@ wait_for_the_late_dispatch_job_to_be_suspended() {
 		fi
 		sleep 2
 	done
+	report_late_dispatch_state
 	fail "the $ENGINE Apply Job did not become suspended within ${TIMEOUT_SECONDS}s"
 }
 
@@ -3021,6 +3070,7 @@ assert_the_late_dispatch_job_restarted_its_own_deadline() {
 		fi
 		sleep 2
 	done
+	report_late_dispatch_state
 	fail "the resumed $ENGINE Apply Job kept a start time at or before its absolute window, so its own deadline is what would end it"
 }
 
@@ -3047,6 +3097,7 @@ wait_for_late_dispatch_apply() {
 		fi
 		sleep 1
 	done
+	report_late_dispatch_state
 	fail "$LATE_MIGRATION did not claim an Apply with an absolute window within ${TIMEOUT_SECONDS}s"
 }
 
@@ -3087,8 +3138,10 @@ assert_late_dispatch_never_reaches_the_database() {
 		fi
 		sleep 5
 	done
-	[ "$late_refused" = yes ] ||
+	if [ "$late_refused" != yes ]; then
+		report_late_dispatch_state
 		fail "$LATE_MIGRATION never reported that its Apply was refused for an expired dispatch window"
+	fi
 
 	# What the refusal is for. The runner stopped before it opened the
 	# database, so the sequence this artifact carries is still entirely
