@@ -1245,33 +1245,160 @@ func TestMigrationApplyKeepsADispatchedRunWhenTheTransactionModeChanges(t *testi
 // Clearing the claim without handing it back leaves every claimant on that
 // database -- this one included, under the new operation ID its next Apply
 // carries -- waiting out the full lease duration for a run that never started.
+// Every refusal at the dispatch boundary hands the database back.
+//
+// The Lease is taken on the pass that reaches dispatch, before any Job exists,
+// so a claim refused there holds a realm nothing is using. One row per refusal
+// rather than one row for the mechanism: a release reached on one path says
+// nothing about the other four, and it is the path a claim takes that decides
+// whether it ever gets there.
 func TestMigrationApplyRefusedAtDispatchHandsBackTheDatabase(t *testing.T) {
 	t.Parallel()
 
-	migration, plan := awaitingApprovalFixture(t)
-	operation := undispatchedApplyClaim(t, migration, plan)
-	replaced := verificationPolicyConfigMap()
-	replaced.UID = "replacement-policy-uid"
-	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, replaced)
+	for _, row := range []struct {
+		name string
+		// jobs replaces the Job builder, for the refusals that are about
+		// building rather than about the claim.
+		jobs MigrationJobBuilder
+		// refuse arranges the state that makes this pass refuse, and returns
+		// the objects the API server holds besides the migration itself.
+		refuse func(
+			t *testing.T,
+			migration *operatorv1alpha1.PtahMigration,
+			plan *operatorv1alpha1.PtahMigrationPlan,
+		) []client.Object
+	}{
+		{
+			// Suspension is not a refusal for a running Apply -- that claim is
+			// left to finish -- but a claim that has not dispatched yet is
+			// retired here.
+			name: "the resource was suspended before dispatch",
+			refuse: func(_ *testing.T, migration *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
+				migration.Spec.Suspend = true
+				return []client.Object{plan, verificationPolicyConfigMap()}
+			},
+		},
+		{
+			// connectTimeout is in the operation's input fingerprint and not in
+			// the policy fingerprint, so this reaches the input check rather
+			// than invalidating the plan on the way.
+			name: "the operation inputs changed after the claim",
+			refuse: func(_ *testing.T, migration *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
+				migration.Spec.Execution.ConnectTimeout = metav1.Duration{Duration: 47 * time.Second}
+				return []client.Object{plan, verificationPolicyConfigMap()}
+			},
+		},
+		{
+			name: "the verification policy was replaced after the approval",
+			refuse: func(_ *testing.T, _ *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
+				replaced := verificationPolicyConfigMap()
+				replaced.UID = "replacement-policy-uid"
+				return []client.Object{plan, replaced}
+			},
+		},
+		{
+			// The plan is still there and still binds its policy, so this gets
+			// past the checks above and refuses on the plan being on its way
+			// out. A finalizer is what leaves a deletion timestamp to see.
+			name: "the plan the claim named is being deleted",
+			refuse: func(t *testing.T, _ *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
+				t.Helper()
+				plan.Finalizers = append(plan.Finalizers, "e2e.test/hold")
+				plan.DeletionTimestamp = &metav1.Time{Time: time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC)}
+				return []client.Object{plan, verificationPolicyConfigMap()}
+			},
+		},
+		{
+			// Nothing about the claim is wrong here; the Job it needs cannot
+			// be built. The claim is retired all the same, and so is the
+			// database it had taken.
+			name: "the Job the claim needs cannot be built",
+			jobs: failingMigrationBuildJobs{},
+			refuse: func(_ *testing.T, _ *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
+				return []client.Object{plan, verificationPolicyConfigMap()}
+			},
+		},
+		{
+			// A snapshot whose stored digest no longer matches its own
+			// contents. This one is a failure rather than a discard -- the
+			// claim is retired either way, and so is the database.
+			name: "the persisted admission snapshot does not match its own contents",
+			refuse: func(_ *testing.T, migration *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
+				ensureMigrationAdmissionSnapshot(migration)
+				migration.Status.ActiveOperation.AdmissionSnapshot.TemplateDigest =
+					"sha256:" + strings.Repeat("e", 64)
+				return []client.Object{plan, verificationPolicyConfigMap()}
+			},
+		},
+		{
+			// The snapshot is persisted before the Job that carries its digest
+			// exists, and the Job is rebuilt from the spec on the pass that
+			// dispatches it. A snapshot that is internally consistent and
+			// names another template means the two disagree about what would
+			// be admitted.
+			name: "the rebuilt Pod template differs from the admission snapshot",
+			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
+				t.Helper()
+				ensureMigrationAdmissionSnapshot(migration)
+				snapshot := migration.Status.ActiveOperation.AdmissionSnapshot
+				snapshot.TemplateDigest = "sha256:" + strings.Repeat("e", 64)
+				// Re-stamped, or the snapshot is refused for disagreeing with
+				// itself and never reaches the comparison this row is about.
+				snapshot.Digest = ""
+				digest, err := fingerprint.DigestCanonicalJSON(*snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				snapshot.Digest = digest
+				return []client.Object{plan, verificationPolicyConfigMap()}
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
 
-	actual := reconcileUntilTheApplyClaimIsGone(t, reconciler, api, migration)
-	if actual.Status.ActiveOperation != nil {
-		t.Fatalf("the Apply claim survived a replaced verification policy: %#v", actual.Status.ActiveOperation)
-	}
-	assertNoMigrationJobDispatched(t, api)
+			migration, plan := awaitingApprovalFixture(t)
+			operation := undispatchedApplyClaim(t, migration, plan)
+			objects := append([]client.Object{migration}, row.refuse(t, migration, plan)...)
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
+			if row.jobs != nil {
+				reconciler.Jobs = row.jobs
+			}
 
-	// Another resource addressing the same database must be able to take it
-	// immediately. Nothing ran, so nothing is left to serialize against.
-	other, err := reconciler.Locks.Acquire(context.Background(), targetlock.Request{
-		CoordinationNamespace: reconciler.LockNamespace,
-		CoordinationDigest:    operation.CoordinationDigest,
-		Holder:                targetlock.Holder{SchemaUID: "other-resource", OperationID: "other-apply"},
-		Duration:              time.Duration(operation.LeaseDurationSeconds) * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
+			actual := reconcileUntilTheApplyClaimIsGone(t, reconciler, api, migration)
+			if actual.Status.ActiveOperation != nil {
+				t.Fatalf("the Apply claim survived its refusal: %#v", actual.Status.ActiveOperation)
+			}
+			assertNoMigrationJobDispatched(t, api)
+
+			// Another resource addressing the same database must be able to
+			// take it immediately. Nothing ran, so nothing is left to
+			// serialize against.
+			other, err := reconciler.Locks.Acquire(context.Background(), targetlock.Request{
+				CoordinationNamespace: reconciler.LockNamespace,
+				CoordinationDigest:    operation.CoordinationDigest,
+				Holder:                targetlock.Holder{SchemaUID: "other-resource", OperationID: "other-apply"},
+				Duration:              time.Duration(operation.LeaseDurationSeconds) * time.Second,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !other.Acquired {
+				t.Fatalf("the database stayed held by a claim refused before it dispatched anything (phase %s)",
+					actual.Status.Phase)
+			}
+		})
 	}
-	if !other.Acquired {
-		t.Fatal("the database stayed held by a claim that was refused before it dispatched anything")
-	}
+}
+
+// failingMigrationBuildJobs refuses to build a migration Job, which is how a
+// dispatch fails for a reason that has nothing to do with the claim.
+type failingMigrationBuildJobs struct{ fakeJobs }
+
+func (failingMigrationBuildJobs) BuildMigration(
+	*operatorv1alpha1.PtahMigration,
+	operatorv1alpha1.MigrationOperationStatus,
+	*operatorv1alpha1.PtahMigrationPlan,
+) (*batchv1.Job, error) {
+	return nil, errors.New("injected migration Job build failure")
 }

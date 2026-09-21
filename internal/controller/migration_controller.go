@@ -606,7 +606,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	}
 	job, err := r.Jobs.BuildMigration(migration, *operation, plan)
 	if err != nil {
-		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("build %s Job: %w", operation.Type, err))
+		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("build %s Job: %w", operation.Type, err))
 	}
 	if job.Namespace != migration.Namespace || job.Name != operation.JobName {
 		return ctrl.Result{}, errors.New("the Job builder returned an object outside the operation claim")
@@ -614,7 +614,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	if operation.AdmissionSnapshot == nil {
 		snapshot, snapshotErr := podintent.Resolve(ctx, r.directReader(), migration.Namespace, &job.Spec.Template, r.AdmissionOptions)
 		if snapshotErr != nil {
-			return r.migrationOperationFailure(ctx, migration, fmt.Errorf("resolve Pod admission snapshot: %w", snapshotErr))
+			return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("resolve Pod admission snapshot: %w", snapshotErr))
 		}
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation.AdmissionSnapshot = snapshot
@@ -626,11 +626,11 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return ctrl.Result{Requeue: true}, nil
 	}
 	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("validate persisted Pod admission snapshot: %w", err))
+		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("validate persisted Pod admission snapshot: %w", err))
 	}
 	templateDigest, digestErr := podintent.DigestTemplate(&job.Spec.Template)
 	if digestErr != nil {
-		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
+		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
 	}
 	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
 		return r.discardUndispatchedMigrationOperation(ctx, migration,
@@ -1257,6 +1257,32 @@ func (r *MigrationReconciler) discardUndispatchedMigrationOperation(
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	result, err := r.discardMigrationOperation(ctx, migration, failure)
+	if err != nil {
+		return result, err
+	}
+	if operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
+		r.releaseMigrationApplyLock(ctx, migration, operation)
+	}
+	return result, nil
+}
+
+// failUndispatchedMigrationOperation records a dispatch-time failure and hands
+// back the database the claim had already taken.
+//
+// It exists for the same reason discardUndispatchedMigrationOperation does, and
+// covers the other way a claim can leave this function: a Job that cannot be
+// built, an admission snapshot that cannot be resolved, one that no longer
+// matches its own contents, and a rebuilt template that cannot be digested.
+// Each of those retires the claim, and each is pre-dispatch, so the Lease has
+// no run to protect -- and leaving it held makes a configuration error cost
+// every claimant of that database the full lease duration.
+func (r *MigrationReconciler) failUndispatchedMigrationOperation(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	failure error,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	result, err := r.migrationOperationFailure(ctx, migration, failure)
 	if err != nil {
 		return result, err
 	}
