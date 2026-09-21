@@ -2260,3 +2260,55 @@ func TestAReplacedPolicyRetiresAMigrationClaimWaitingOutItsRetry(t *testing.T) {
 		t.Fatalf("the stale claim dispatched a Job: %v", jobs)
 	}
 }
+
+// A cleanup the guard refuses must not take the record with it.
+//
+// An Apply Job that fails immutable intent validation before its create was
+// confirmed has no UID on the claim, and the controller-write guard refuses a
+// cleanup patch whose claim does not name the Job by UID. Returning that error
+// left the claim active over the very Job the branch meant to disown, which a
+// later pass could bind and process -- the replay this path exists to refuse.
+func TestAnUncertainApplyRecordsItsRunEvenWhenCleanupIsRefused(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	operation.JobUID = ""
+	// A Job that is not terminal and that the claim does not name by UID: the
+	// two things the guard refuses a cleanup patch for.
+	job, _ := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	job.Status.Conditions = nil
+	job.Status.Active = 1
+	job.UID = "a-job-this-claim-never-bound"
+
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, verificationPolicyConfigMap())
+	reconciler.Client = refusingJobPatches{Client: reconciler.Client}
+
+	if _, err := reconciler.finishUncertainMigrationApply(ctx, migration, job,
+		errors.New("the created Apply Job failed immutable intent validation"), ""); err != nil {
+		t.Fatalf("finishUncertainMigrationApply() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	if actual.Status.UnresolvedRun == nil {
+		t.Fatal("a refused cleanup patch took the record with it, leaving the run unaccounted for")
+	}
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("the claim stayed active over the Job this path disowns: %#v", actual.Status.ActiveOperation)
+	}
+}
+
+// refusingJobPatches is the controller-write guard's answer to a cleanup patch
+// it will not admit.
+type refusingJobPatches struct{ client.Client }
+
+func (c refusingJobPatches) Patch(
+	ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption,
+) error {
+	if _, ok := object.(*batchv1.Job); ok {
+		return errors.New("admission refused the Job cleanup patch")
+	}
+	return c.Client.Patch(ctx, object, patch, options...)
+}
