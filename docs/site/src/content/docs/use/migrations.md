@@ -79,6 +79,19 @@ A policy that also listed `application/vnd.stokaro.ptah.schema.v1` would let a
 schema artifact stand in for a migration directory at the same reference, so
 give a migration its own policy rather than reusing the schema one.
 
+`examples/migration-verification-policy.yaml` is that policy, and the migration
+example is pointed at the name it is created under:
+
+```sh
+kubectl -n application create configmap ptah-migration-verification-policy \
+  --from-file=policy.yaml=examples/migration-verification-policy.yaml
+kubectl -n application patch configmap ptah-migration-verification-policy \
+  --type=merge -p '{"immutable":true}'
+```
+
+A schema and a migration against the same database each keep their own, beside
+the `sharedRealm` both of them set.
+
 ## Choosing a transaction mode
 
 By default the operator names no transaction mode and Ptah picks one. That is

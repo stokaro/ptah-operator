@@ -35,7 +35,7 @@ spec:
   artifact:
     ociRef: oci://ghcr.io/example/orders-migrations:1.4.0
     verificationPolicyFrom:
-      name: ptah-verification-policy
+      name: ptah-migration-verification-policy
       key: policy.yaml
 ```
 
@@ -63,7 +63,7 @@ spec:
   artifact:
     ociRef: oci://ghcr.io/example/orders-migrations@sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
     verificationPolicyFrom:
-      name: ptah-verification-policy
+      name: ptah-migration-verification-policy
       key: policy.yaml
   policy:
     # A migration artifact carries arbitrary SQL, and no analyzer calls
@@ -108,7 +108,7 @@ spec:
   artifact:
     ociRef: oci://ghcr.io/example/orders-migrations:1.4.0
     verificationPolicyFrom:
-      name: ptah-verification-policy
+      name: ptah-migration-verification-policy
       key: policy.yaml
   policy:
     apply: OnApproval

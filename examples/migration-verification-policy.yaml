@@ -1,0 +1,9 @@
+version: 1
+# A migration directory is not a schema, and this is the only artifact type
+# this policy admits. A policy that also listed the schema type would let a
+# schema artifact stand in for a migration directory at the same reference.
+artifact_types:
+  - application/vnd.stokaro.ptah.migrations.v1
+require_annotations:
+  - org.opencontainers.image.source
+  - org.opencontainers.image.revision
