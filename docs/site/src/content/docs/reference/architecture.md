@@ -346,16 +346,22 @@ server proxies to a kubelet, streaming a body whose size the executor decides.
 Each family runs one reconcile worker and leader election admits one manager,
 so a response that stops arriving would hold every other resource of that
 family behind it, including the passes that renew the Lease of an Apply that is
-still executing SQL. The read carries a deadline of its own: ninety seconds,
-which is the shortest Apply Lease the API can produce, or the Lease the
+still executing SQL. The read carries a deadline of its own: sixty seconds, two
+thirds of the shortest Apply Lease the API can produce, or the Lease the
 operation itself holds where that is shorter. The worker blocked on a read is
 the worker that owes every other resource of the family its Lease renewals, so
-a read may hold it for no longer than the shortest Lease it might owe one to.
-That clears what a legitimate result needs -- about fifty seconds for the
-largest frame the protocol admits, at a floor of a mebibyte a second -- and it
-is the whole Lease rather than the Lease less its grace, because the grace is
-what makes a Lease outlive its Job and not time withheld from reading the
-result afterwards.
+a read may hold it for no longer, and has to give it back with time to spend --
+a bound equal to the whole Lease would let a read beginning just after a
+renewal run until the moment that Lease expired. The Lease is counted whole
+rather than less its grace, because the grace is what makes a Lease outlive its
+Job and not time withheld from reading the result afterwards.
+
+Sixty seconds still clears what a legitimate result needs, which is about fifty
+for the largest frame the protocol admits at a floor of a mebibyte a second.
+The two constraints meet close together, and where they conflict the Lease
+wins: a maximum-size frame on a slower link times out and is retried, while a
+renewal that arrives too late lets another family take a realm whose SQL may
+still be running.
 
 Bounding the read shortens the window in which one resource's reconcile holds
 up another's and does not close it. Closing it means taking the read off the

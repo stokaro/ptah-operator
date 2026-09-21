@@ -321,12 +321,12 @@ func TestTheResultReadNeverOutlastsTheOperationsLease(t *testing.T) {
 	}{
 		{
 			// The shortest Lease the API can produce: activeDeadlineSeconds
-			// 30 plus a minute of grace. It has to clear the fifty seconds a
-			// maximum-size frame needs at the rate the ceiling is derived
-			// from, or no attempt at that setting could ever read one.
+			// 30 plus a minute of grace. The ceiling sits below it on purpose,
+			// so that a read beginning just after a renewal gives the worker
+			// time to make the next one.
 			name:        "the shortest Lease the API can produce",
 			leaseBudget: leaseReadBudget(90),
-			want:        90 * time.Second,
+			want:        defaultResultReadTimeout,
 		},
 		{
 			name:        "the generated default, where the ceiling is what binds",
@@ -388,7 +388,7 @@ func TestTheReadBudgetComesFromTheLeaseTheClaimRecorded(t *testing.T) {
 	}
 
 	if actual := schemaResultReadBudget(schema); actual != 90*time.Second {
-		t.Fatalf("the read budget is %s, want the Apply's own 90s Lease", actual)
+		t.Fatalf("the budget derived from the Apply's own Lease is %s, want its 90s", actual)
 	}
 
 	// With no pending observation the claim's own Lease is what binds.
@@ -433,12 +433,12 @@ func TestTheReconcileHandsTheReaderTheClaimsLease(t *testing.T) {
 	if !called || !hasDeadline {
 		t.Fatalf("the reconcile gave the reader no deadline: called=%t hasDeadline=%t", called, hasDeadline)
 	}
-	if budget > 90*time.Second {
-		t.Fatalf("the read was given %s against a 90s Lease, which is more than the operation's own claim", budget)
+	if budget > defaultResultReadTimeout {
+		t.Fatalf("the read was given %s, past the ceiling %s", budget, defaultResultReadTimeout)
 	}
 	// And enough to fetch a frame the protocol allows to be 48 MiB.
-	if budget < 60*time.Second {
-		t.Fatalf("the read was given %s, too little for a maximum-size result at the rate the ceiling assumes", budget)
+	if needed := time.Duration(runner.MaxResultLogBytes/(1<<20)) * time.Second; budget < needed {
+		t.Fatalf("the read was given %s for a result that needs %s at the rate the ceiling assumes", budget, needed)
 	}
 }
 
@@ -471,9 +471,11 @@ func TestTheCeilingIsTheShortestLeaseTheFamilyCanOwe(t *testing.T) {
 
 	// activeDeadlineSeconds at its API minimum of 30, plus the grace.
 	shortestLeaseOwed := leaseReadBudget(30 + 60)
-	if defaultResultReadTimeout > shortestLeaseOwed {
-		t.Fatalf("a read may hold the worker for %s while another resource's Lease runs out in %s",
-			defaultResultReadTimeout, shortestLeaseOwed)
+	// Not merely inside it: a read beginning just after a renewal must still
+	// give the worker time to make the next one.
+	if headroom := shortestLeaseOwed - defaultResultReadTimeout; headroom < shortestLeaseOwed/3 {
+		t.Fatalf("a read may hold the worker for %s of a %s Lease, leaving %s to renew it",
+			defaultResultReadTimeout, shortestLeaseOwed, headroom)
 	}
 	// An unleased operation gets exactly that, and still clears a maximum result.
 	unleased := boundedResultReadTimeout(0, 0)

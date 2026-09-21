@@ -30,17 +30,23 @@ type PodLogReader interface {
 // has -- including the passes that would renew the Lease of an Apply that is
 // executing SQL somewhere else.
 //
-// The number is the shortest Apply Lease the API can produce:
-// activeDeadlineSeconds at its minimum of 30, plus the minute of grace. The
-// worker that is blocked here is the worker that renews Leases for every other
-// resource of this family, so a read is allowed to hold it for no longer than
-// the shortest Lease it might owe a renewal to.
+// The number is two thirds of the shortest Apply Lease the API can produce --
+// sixty seconds of the ninety that activeDeadlineSeconds at its minimum of 30
+// plus the grace produces. The worker blocked here is the worker that renews
+// Leases for every other resource of this family, so the read may hold it for
+// no longer, and has to give it back with time to spend: a bound equal to the
+// whole Lease would let a read that began just after a renewal run until the
+// moment that Lease expired, leaving nothing in which to renew it.
 //
-// It has to clear what a legitimate result needs, and it does.
-// runner.MaxResultLogBytes is a little over 48 MiB, which is the shortest tail
-// of a log that can still hold a frame; at a floor of a mebibyte a second that
-// takes about fifty seconds, leaving room for the stream to open and for the
-// read to pass over whatever the executor wrote ahead of the tail.
+// It still clears what a legitimate result needs. runner.MaxResultLogBytes is
+// a little over 48 MiB, which is the shortest tail of a log that can still
+// hold a frame, and at a floor of a mebibyte a second that takes about fifty
+// seconds.
+//
+// The two constraints meet close together, and where they conflict the Lease
+// wins. A maximum-size frame on a link slower than that floor times out and is
+// retried; a renewal that arrives too late lets another family take a realm
+// whose SQL may still be running.
 //
 // The tail is what the read keeps; this is how long it may spend arriving. A
 // log too long for that ends here, and that is the same answer as a log that
@@ -58,7 +64,7 @@ type PodLogReader interface {
 // claim, the Lease and status.unresolvedRun are untouched by it: nothing about
 // a log this manager could not read says what the database now holds, so an
 // Apply stays exactly as uncertain as it was.
-const defaultResultReadTimeout = 90 * time.Second
+const defaultResultReadTimeout = 60 * time.Second
 
 // boundedResultReadTimeout is the bound this read actually gets: the ceiling
 // above, or the resource's own execution deadline where that is shorter.
