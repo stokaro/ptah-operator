@@ -55,10 +55,23 @@ It prints each step as it runs and each check as it holds. Nothing is
 published: the output goes to the lab directory, and the recording this
 repository ships is left alone.
 
+The commands below are yours to run, so they need the lab's cluster rather
+than whatever your shell is pointed at. The lab keeps its own kubeconfig, and a
+scenario passes it to the processes it starts; nothing can export it into your
+shell, so select it once:
+
+```sh
+export KUBECONFIG="$(demo/bin/lab kubeconfig)"
+NAMESPACE=$(demo/bin/lab namespace)
+```
+
+`unset KUBECONFIG` puts your own context back, and a new shell never had the
+lab's. Run these in a shell of their own if you would rather not think about
+it.
+
 The database went from empty to holding the table:
 
 ```sh
-NAMESPACE=$(demo/bin/lab namespace)
 kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c '\dt'
 ```
 
