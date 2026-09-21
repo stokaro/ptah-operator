@@ -2699,6 +2699,15 @@ assert_unresolved_run_survives_another_refusal() {
 	# that had lost the latch would plan and dispatch here. The window outlasts
 	# the resource's thirty-second interval several times over: a shorter one
 	# passes while the resource has not yet had the chance to replay.
+	# A refusal that holds because nothing is running is not the refusal this
+	# measures, and every assertion below would pass against a manager that had
+	# stopped reconciling this resource entirely. The record clears from a
+	# reading, so the resource has to still be taking them: its history
+	# observation has to move at least once inside the window.
+	uncertain_status
+	uncertain_observed_before=$(jq -er '.status.history.observedAt' "$STATUS_FILE") ||
+		fail "$UNCERTAIN_MIGRATION carries no history reading to watch for movement"
+	uncertain_reread=no
 	recovery_deadline=$(($(date +%s) + 120))
 	while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
 		uncertain_status
@@ -2709,8 +2718,13 @@ assert_unresolved_run_survives_another_refusal() {
 			fail "$UNCERTAIN_MIGRATION dropped the record of the run nobody accounted for"
 		assert_no_new_apply_job "$WORK_DIR/uncertain-applies-before-rival.txt" \
 			"after a refusal that had overwritten its unresolved run" "$UNCERTAIN_MIGRATION"
+		if [ "$(jq -er '.status.history.observedAt' "$STATUS_FILE")" != "$uncertain_observed_before" ]; then
+			uncertain_reread=yes
+		fi
 		sleep 10
 	done
+	[ "$uncertain_reread" = yes ] ||
+		fail "$UNCERTAIN_MIGRATION never read its history again inside the window, so its refusal says nothing about a resource that is running"
 	# The database is the claim. A replay would re-run the first migration,
 	# whose insert is not idempotent.
 	[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$UNCERTAIN_DATABASE")" = 3 ] ||

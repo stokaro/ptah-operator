@@ -667,7 +667,17 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 	if !r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
 		r.releaseMigrationApplyLock(ctx, migration, operation)
 	}
-	return ctrl.Result{}, nil
+	// The reading that clears this record is the one this return schedules.
+	//
+	// Nothing else would. A status patch bumps no generation, the primary
+	// watch filters on generation, annotations and labels, and the cache
+	// resync re-delivers an unchanged object into the same filter. Where a Job
+	// survives, marking it for cleanup above is an update to an owned object,
+	// and that is what woke the resource -- so the shape that needed the
+	// requeue most was the one shape that never got it: an Apply whose create
+	// was never confirmed, or whose Job is already gone, leaves no owned
+	// object behind to produce an event at all.
+	return requeueAtDeadline(migration.Status.NextReconciliationTime, r.now()), nil
 }
 
 // discardMigrationPlan drops a plan the current evidence no longer supports.

@@ -2312,3 +2312,44 @@ func (c refusingJobPatches) Patch(
 	}
 	return c.Client.Patch(ctx, object, patch, options...)
 }
+
+// The record clears from a reading, and this is where that reading is asked
+// for.
+//
+// A status patch bumps no generation, the primary watch filters on generation,
+// annotations and labels, and the cache resync re-delivers an unchanged object
+// into the same filter. Where a Job survives, marking it for cleanup is an
+// update to an owned object and that is what woke the resource. An Apply whose
+// create was never confirmed leaves no owned object at all, so without the
+// requeue it waits for a spec edit that nobody knows to make.
+func TestAnUncertainApplyWithNoJobAsksForTheReadingThatClearsIt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	migration.Spec.Interval = metav1.Duration{Duration: 10 * time.Minute}
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	operation.JobUID = ""
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+
+	result, err := reconciler.finishUncertainMigrationApply(ctx, migration, nil,
+		errors.New("the Apply Job create result is uncertain"), "")
+	if err != nil {
+		t.Fatalf("finishUncertainMigrationApply() error = %v", err)
+	}
+	if result.RequeueAfter <= 0 && !result.Requeue {
+		t.Fatal("nothing asked for another pass, so the record waits for an edit nobody knows to make")
+	}
+
+	actual := readMigration(t, api, migration)
+	next := actual.Status.NextReconciliationTime
+	if next == nil {
+		t.Fatal("the resource recorded no next reading")
+	}
+	// The requeue is the one the status promised, not an arbitrary one.
+	if result.RequeueAfter > migration.Spec.Interval.Duration {
+		t.Fatalf("the next pass is in %s, past the %s interval the resource asked for",
+			result.RequeueAfter, migration.Spec.Interval.Duration)
+	}
+}

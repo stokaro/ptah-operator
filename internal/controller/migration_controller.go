@@ -1024,6 +1024,16 @@ func migrationRunLatchedByRefusal(migration *operatorv1alpha1.PtahMigration) boo
 // It is deliberately the only exemption. Where no such reading exists the
 // adoption still goes ahead, because the alternative is replaying a migration
 // over a database nobody read.
+//
+// "Nothing left to have half-done" is more than an empty pending list, and the
+// reason is that recordMigrationHistory already answers this question once per
+// pass: a reading it refuses never reaches the branch that removes the record,
+// so a resource holding one keeps it. Reading only PendingCount here made the
+// two paths disagree on the same reading -- a dirty revision row with nothing
+// pending kept the record of a resource that had one, and denied it to a
+// resource whose record a person had just cleared by hand. The database
+// recording an interrupted run is the case this record exists for, so the
+// answer that stands is the classifier's.
 func migrationRunAlreadySettled(migration *operatorv1alpha1.PtahMigration) bool {
 	run, history := migration.Status.LastRun, migration.Status.History
 	if run == nil || history == nil || run.FinishedAt == nil {
@@ -1034,7 +1044,24 @@ func migrationRunAlreadySettled(migration *operatorv1alpha1.PtahMigration) bool 
 	if !run.FinishedAt.Before(&history.ObservedAt) {
 		return false
 	}
-	return history.PendingCount == 0
+	return migrationHistoryReadingSettles(history)
+}
+
+// migrationHistoryReadingSettles reports a stored reading the history
+// classifier found nothing to refuse in: every migration the artifact carries
+// is applied, no revision row is dirty, and every applied migration still
+// matches the file that accounts for it.
+//
+// Out-of-order migrations need no test of their own. Ptah selects them as
+// pending, so PendingCount already carries them, and a second test for a state
+// that cannot be reached would read as a decision this makes and does not.
+//
+// A database ahead of its artifact is the one refusal this cannot see, because
+// the version the artifact ends at is not kept in status. Such a reading still
+// settles, and that is why the runbook says the record survives every standing
+// refusal but that one.
+func migrationHistoryReadingSettles(history *operatorv1alpha1.MigrationHistoryStatus) bool {
+	return history.PendingCount == 0 && !history.Dirty && len(history.ModifiedVersions) == 0
 }
 
 // adoptUnresolvedMigrationRun converts the refusal an older manager latched an

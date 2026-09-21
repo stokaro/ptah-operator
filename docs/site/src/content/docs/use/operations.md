@@ -1122,6 +1122,161 @@ and it is a statement that nothing is executing against that database any more.
 The operator does not perform automatic rollback. Repair the desired artifact
 or database deliberately, then let observation produce a new plan.
 
+## A migration run nobody accounted for
+
+A `PtahMigration` whose Apply ended `Partial` or `Unknown` records the run in
+`status.unresolvedRun` and stops. The record is what a person needs in order to
+go and look, and it is deliberately somewhere a condition cannot reach: any
+later refusal rewrites the reason on `Blocked`, and a rewritten reason says
+nothing about whether the mutation was ever accounted for.
+
+```sh
+kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
+```
+
+A record this manager wrote names the attempt (`operationID`), the plan it was
+carrying out, and the credential-free identity of a database. It names the Job
+by name and UID wherever the manager established that one existed, and the Job
+and its logs may be gone by then, which is why the record carries their
+identity rather than pointing at them.
+
+Which database `targetIdentityDigest` names depends on what the run managed to
+say. A readable result frame reports the database the executor opened, and that
+is the one the run reached. Without one -- an Apply whose create was never
+confirmed, a Pod that wrote nothing a reader could use -- the record falls back
+to the database the plan was computed against, which is the last one this
+resource read. The record does not say which of the two it is, and the Secret
+behind a reference can rotate between a reading and a run, so treat the digest
+as where to start looking rather than as a statement of where the run went.
+Establish that before repairing anything: a reader who inspects the wrong
+database finds nothing wrong and clears a record that was telling the truth.
+
+`jobName` and `jobUID` are empty on one of those records as well: a create
+whose outcome the API server never confirmed. The name that claim reserved is
+not evidence that anything ran under it, so the record says nothing rather than
+sending a reader after a Job that may never have existed. The attempt and the
+plan are still there. The deadline that claim carried is not: it lived on
+`status.activeOperation`, which is cleared with the claim, and neither the
+record nor the plan copies it. What is observable instead is the Lease, which
+this resource keeps for as long as a dispatched Apply could still be writing.
+
+A record **adopted** on upgrade names less, because less was kept. A manager
+older than this record held the state in a condition, and the claim that ran
+was gone long before the upgrade read it -- so `operationID` and `planRef` are
+empty, and what survives is the outcome, the Job the last run recorded, and the
+database the last reading named. Those are what to search for in that case;
+there is no attempt or plan to look up, and looking is wasted time.
+
+While the record stands this resource publishes no plan and dispatches no
+Apply, including the migration that run was applying. It goes on reading unless
+something else has stopped it first: resolve, verify and the history read
+continue at the resource's interval, and that history read is how the record
+clears. Four gates are answered before any operation is claimed, and a resource
+held at one of them never reaches the reading that would clear its record:
+suspension, an engine this operator does not support, a database realm another
+resource claims, and stored state written by a newer manager than the one
+running.
+
+Passing those gates is not the same as getting the reading. Resolve, verify and
+the history read are retried for as long as they keep failing, with no attempt
+at which the operator gives up, so a resource failing one of them never reaches
+the history read either. If the record is not clearing after the database was
+repaired, read `status.activeOperation` first: the operation it names and the
+attempt it is on say whether the chain is stuck rather than the record, and an
+attempt climbing quickly is a Job failing as fast as it can be recreated.
+
+Other resources may also be working against the same database if every claimant
+declares a shared realm. So the record stops this resource from changing the
+database; it is not a promise that the database is idle, and a repair should
+not assume one.
+
+The run that caused the record is part of that. Retiring the claim does not
+stop a Pod: where the Apply may still be executing, this resource keeps the
+realm Lease until its dispatch and execution deadlines have passed, so the
+Lease in the coordination namespace is what says whether the run that is being
+accounted for could still be writing while it is accounted for.
+
+### How it clears
+
+On its own, from a read-only reading of that same database with nothing of the
+artifact left to apply. That happens after a person repairs whatever the run
+left half-done -- the recovery for a partial migration is to undo what it
+committed, drop the unfinished revision, and publish the sequence without it --
+and the operator settles on its next reading with no spec edit.
+
+A reading of a different database does not clear a record that names one, and a
+record this manager wrote always names one: the plan that run was carrying out
+was computed from a reading, and a reading that named no database is refused
+before it is stored. Neither does an artifact that ends before the database
+does: an artifact pointed at a shorter sequence says nothing about a run that
+went past it.
+
+### Clearing it by hand
+
+Only once you have established what the run did. The record is the operator
+saying it cannot tell, so removing it without answering that question hands the
+next Apply a database in a state nobody checked.
+
+Clear whatever else is refusing the resource first. A manager older than this
+record held the same state in the `Blocked` condition, and the upgrade path
+reads that condition before anything else in a pass, so anything that keeps
+writing `Blocked` -- a realm another resource still claims, an engine this
+operator does not support, a dirty revision row, an applied migration that no
+longer matches its file, a migration waiting below the current version --
+rebuilds the record on the pass after this one. The command below clears the
+refusal that is standing; it cannot clear one that keeps coming back.
+
+One standing refusal does not rebuild it: a database ahead of the artifact this
+resource resolves. That reading has nothing of the artifact left to apply,
+nothing dirty and nothing modified, so the upgrade path counts it as the
+account the run was owed and does not write the record again.
+
+That is not the same as the reading clearing it, and the section above says
+why: a record still standing survives such a reading, because the refusal is
+answered before the branch that removes a record is reached. So the refusal has
+to be repaired either way, by publishing an artifact that carries the versions
+the database already applied.
+
+Then the refusal and the record go in one write. Removing the record alone is
+not enough even with nothing else refusing: the condition outlives it by a
+pass, and the upgrade path reads the condition.
+
+```sh
+kubectl get ptahmigration orders -o json \
+  | jq 'del(.status.unresolvedRun)
+        | .status.conditions = [
+            .status.conditions[] | select(.type != "Blocked")
+          ]' \
+  | kubectl replace --subresource=status -f -
+```
+
+The condition is removed rather than set to `False`, because setting it leaves
+`lastTransitionTime` describing the moment it became `True`: the operator's
+next reading sees a condition already at the value it wants and keeps that
+timestamp, so `Blocked=False` would go on claiming it became false at the
+instant it became true. Removing it lets the next reading write the condition
+whole.
+
+The operator rewrites the conditions on its next reading, so this is one write
+rather than two: a resource left blocked between them is a resource whose
+record comes back.
+
+One upgrade case needs this. A manager older than this record held the same
+state in the `Blocked` condition's reason, and an upgrade adopts those runs so
+the defect that rewrote the reason cannot lose them.
+
+It leaves alone a run the stored reading still accounts for. A reading taken
+after that run finished, with nothing of the artifact left to apply, no dirty
+revision and nothing modified, is the evidence the record would have been, and
+a resource carrying one is not latched however it is blocked now.
+
+So the runs that arrive this way are the ones no surviving reading settles: a
+resource that has read again and found work pending, or a dirty row, or one
+that has not read since. If such a resource is blocked for an unrelated reason
+at the moment of the upgrade, its old run is adopted with it. Establish what
+the run did, or that a later reading already accounted for it, and clear the
+record.
+
 ## Observability
 
 The chart exposes the controller-runtime Prometheus endpoint through the
