@@ -37,7 +37,12 @@ import (
 // Each check below reads an authority rather than restating one: the plan the
 // approval names, the exported name derivation, the runner's own protocol
 // constant, the manager's own state version, and the release catalog.
-const ptahCatalogPath = "support/ptah.json"
+const (
+	ptahCatalogPath = "support/ptah.json"
+	// edgeOperatorVersion names the catalog row for the development state,
+	// which is the operator this tree builds and the one its guide describes.
+	edgeOperatorVersion = "edge"
+)
 
 // bindingsAnApprovalRepeats are the fields an approval carries from its plan.
 // A field either side omits is not compared; a field both carry must agree.
@@ -83,6 +88,22 @@ func TestEveryApprovalExampleAgreesWithThePlanItNames(t *testing.T) {
 				t.Fatalf("%s example %d approves plan %q, which no plan example describes",
 					kind.Kind, index+1, named)
 			}
+			// The two documents spell this one differently -- an approval
+			// approves a planFingerprint, a plan publishes its fingerprint --
+			// so the loop below, which pairs fields by name, never reaches it.
+			// It is the binding admission checks first: the name alone says
+			// which object, and the fingerprint says which decision.
+			approvedPlan, _ := spec["planFingerprint"].(string)
+			publishedPlan, _ := plan["fingerprint"].(string)
+			if approvedPlan == "" || publishedPlan == "" {
+				t.Fatalf("%s example %d and plan %s do not both name a plan fingerprint, so the approval is bound to nothing",
+					kind.Kind, index+1, named)
+			}
+			if approvedPlan != publishedPlan {
+				t.Fatalf("%s example %d approves plan fingerprint %s while plan %s publishes %s, which admission refuses",
+					kind.Kind, index+1, approvedPlan, named, publishedPlan)
+			}
+			compared++
 			for _, binding := range bindingsAnApprovalRepeats {
 				approved, carried := spec[binding]
 				planned, published := plan[binding]
@@ -156,24 +177,36 @@ func TestEveryPlanExampleIsNamedAndChunkedLikeThePublisher(t *testing.T) {
 			fingerprint, _ := spec["fingerprint"].(string)
 			metadata, _ := document["metadata"].(map[string]any)
 			name, _ := metadata["name"].(string)
-			if fingerprint == "" || name == "" || document["kind"] == "PtahSchema" {
+			declared, _ := document["kind"].(string)
+			if declared != "PtahSchemaPlan" && declared != "PtahMigrationPlan" {
 				continue
 			}
-			if document["kind"] == "PtahMigrationPlan" {
-				want, nameErr := migrationplan.Name(fingerprint)
-				if nameErr != nil {
-					t.Fatalf("%s example %d: %v", kind.Kind, index+1, nameErr)
-				}
-				if name != want {
-					t.Fatalf("%s example %d is named %q; the publisher derives %q from its fingerprint",
-						kind.Kind, index+1, name, want)
-				}
-				checked++
+			if fingerprint == "" || name == "" {
+				t.Fatalf("%s example %d is a plan with no fingerprint or no name, so nothing here can be derived",
+					kind.Kind, index+1)
 			}
+			// Both publishers derive the object name from the plan's own
+			// fingerprint, so a renamed example is a plan nothing would
+			// publish. Deriving it here rather than trusting the metadata is
+			// what makes the chunk check mean something: a consistently
+			// renamed plan and chunk set agrees with itself.
+			derive := planstore.Name
+			if declared == "PtahMigrationPlan" {
+				derive = migrationplan.Name
+			}
+			want, nameErr := derive(fingerprint)
+			if nameErr != nil {
+				t.Fatalf("%s example %d: %v", kind.Kind, index+1, nameErr)
+			}
+			if name != want {
+				t.Fatalf("%s example %d is named %q; the publisher derives %q from its fingerprint",
+					kind.Kind, index+1, name, want)
+			}
+			checked++
 			chunks, _ := spec["chunks"].([]any)
 			for chunkIndex, entry := range chunks {
 				chunk, _ := entry.(map[string]any)
-				wantName := fmt.Sprintf("%s-%03d", name, chunkIndex)
+				wantName := fmt.Sprintf("%s-%03d", want, chunkIndex)
 				if got, _ := chunk["name"].(string); got != wantName {
 					t.Fatalf("%s example %d chunk %d is named %q, and the publisher writes %q",
 						kind.Kind, index+1, chunkIndex, got, wantName)
@@ -231,6 +264,7 @@ func verifiedPtahRelease(t *testing.T) string {
 	// describe reported, which is the same string the lifecycle binds.
 	var catalog struct {
 		Releases []struct {
+			Operator string `json:"operator"`
 			Verified []struct {
 				PtahRelease  string `json:"ptahRelease"`
 				PtahDescribe string `json:"ptahDescribe"`
@@ -240,8 +274,16 @@ func verifiedPtahRelease(t *testing.T) string {
 	if err := json.Unmarshal(contents, &catalog); err != nil {
 		t.Fatalf("parse %s: %v", ptahCatalogPath, err)
 	}
+	// The examples describe the guide this tree publishes, which is the
+	// development state. Reading every release row instead would break on the
+	// first tagged one: its own verified build joins the edge build in the
+	// same list, and a catalog that gained a row nobody wrote these examples
+	// against would fail a check about the examples.
 	var verified []string
 	for _, release := range catalog.Releases {
+		if release.Operator != edgeOperatorVersion {
+			continue
+		}
 		for _, row := range release.Verified {
 			identity := row.PtahRelease
 			if identity == "" {
@@ -254,8 +296,8 @@ func verifiedPtahRelease(t *testing.T) string {
 		}
 	}
 	if len(verified) != 1 {
-		t.Fatalf("%s verifies %d Ptah releases; this check needs the one the examples show: %v",
-			ptahCatalogPath, len(verified), verified)
+		t.Fatalf("%s verifies %d Ptah builds for %s; this check needs the one the examples show: %v",
+			ptahCatalogPath, len(verified), edgeOperatorVersion, verified)
 	}
 	return verified[0]
 }
