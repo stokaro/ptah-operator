@@ -33,6 +33,9 @@ const (
 	ChunkDataKey = "chunk"
 	LabelPlan    = "operator.ptah.run/plan"
 	LabelSchema  = "operator.ptah.run/schema"
+
+	// namePrefix opens the name every schema plan is published under.
+	namePrefix = "ptah-plan-"
 )
 
 var (
@@ -40,6 +43,16 @@ var (
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
 	imageDigestPattern        = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 )
+
+// Name is the plan's deterministic object name. Two publications of the same
+// plan are the same object, so a controller that restarted mid-publication
+// cannot leave a second copy of one decision.
+func Name(planFingerprint string) (string, error) {
+	if !sha256Pattern.MatchString(planFingerprint) {
+		return "", fmt.Errorf("plan fingerprint must be a lowercase SHA-256 digest")
+	}
+	return namePrefix + planFingerprint[len("sha256:"):len("sha256:")+24], nil
+}
 
 // Store uses direct API reads through Reader and mutating calls through Client.
 // The distinction lets controllers bypass a stale cache before apply.
@@ -80,7 +93,10 @@ func Prepare(
 		return nil, nil, fmt.Errorf("plan schema reference does not match the owner")
 	}
 
-	name := "ptah-plan-" + spec.Fingerprint[len("sha256:"):len("sha256:")+24]
+	name, err := Name(spec.Fingerprint)
+	if err != nil {
+		return nil, nil, err
+	}
 	chunks := split(content, ChunkBytes)
 	if len(chunks) > MaxChunks {
 		return nil, nil, fmt.Errorf("plan requires %d chunks; maximum is %d", len(chunks), MaxChunks)
