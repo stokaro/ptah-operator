@@ -51,9 +51,76 @@ spec:
       description: backfill order status
       checksum: sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
       transactionMode: file
-      # Where the author chose to make a long sequence recoverable: a failure
-      # after this version resumes from it rather than from the beginning.
+  contractVersion: 1
+  artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
+  verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
+  coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
+  targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
+  policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
+  ptahVersion: v0.42.0
+  executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
+  runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
+  runnerProtocolVersion: 1
+  controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
+  controllerStateVersion: 3
+```
+
+### A fresh database, bootstrapped from a checkpoint
+
+A migration file marked `checkpoint: true` carries the whole schema up to its
+version. A database created after it starts there instead of replaying
+everything before it, so the plan for an empty database names the checkpoint
+and the versions after it, and nothing below it. `status.history` on the
+resource reports those lower versions as applied and names the checkpoint that
+covers them.
+
+A checkpoint changes where a new database starts and nothing else. A database
+already past version 10 when this checkpoint arrived ignores it and goes on
+from whatever it has run. It does not undo statements a failed migration
+committed, clear a dirty revision, or make a backfill safe to run twice; those
+are answered by the revision table and by the recovery a person performs
+against it, which [Operations](../../use/operations/) describes.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigrationPlan
+metadata:
+  name: orders-9c56cc51
+  namespace: application
+  ownerReferences:
+    - apiVersion: operator.ptah.run/v1alpha1
+      kind: PtahMigration
+      name: orders
+      uid: 8d3f6c2b-1a4e-4f90-b7c5-2e6a8d0b3f41
+      controller: true
+spec:
+  migrationRef:
+    name: orders
+    uid: 8d3f6c2b-1a4e-4f90-b7c5-2e6a8d0b3f41
+  fingerprint: sha256:ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d
+  createdAt: "2026-09-20T08:40:12Z"
+  # Nothing has run here yet.
+  currentVersion: 0
+  historyFingerprint: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
+  migrations:
+    # The cumulative schema through version 10. Versions 1 to 10 are not in
+    # this plan, because this file is what puts them in place.
+    - version: 10
+      versionKey: "0010"
+      description: cumulative schema through version 10
+      checksum: sha256:7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451
+      transactionMode: file
       checkpoint: true
+    - version: 13
+      versionKey: "0013"
+      description: add order status index
+      checksum: sha256:3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea
+      transactionMode: file
+    - version: 14
+      versionKey: "0014"
+      description: backfill order status
+      checksum: sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+      transactionMode: file
   contractVersion: 1
   artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5

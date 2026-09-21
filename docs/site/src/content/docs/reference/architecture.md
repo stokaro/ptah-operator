@@ -65,6 +65,27 @@ Five programs ship from `cmd/`:
 | `ptah-crd-manager` | The Helm hooks: install preflight, CRD reconcile, upgrade retirement, uninstall teardown |
 | `kubectl-ptah` | A read-only plugin that reconstructs a published plan for a person to read |
 
+### What the manager keeps in memory
+
+A watch is a cache, and a cache holds whole objects. The manager watches both
+resource families, their plans and approvals, the Jobs it owns, and -- across
+every namespace -- ConfigMaps, because a changed verification policy has to
+wake the resources bound to it.
+
+That last watch is the one whose size nobody chooses. It would otherwise hold
+every application ConfigMap in the cluster and this operator's own plan chunks,
+which carry up to 8 MiB of SQL each; forty published plans is 320 MiB of cached
+payload against a manager whose default limit is 256 MiB. So the cache empties
+a ConfigMap as it stores it, keeping the metadata that names it and dropping
+its data, its binary data and the managed fields that describe them.
+
+Nothing reads those emptied objects. Every ConfigMap this operator acts on --
+a verification policy, a plan chunk -- is read straight from the API server,
+because each is a decision a cache may not be current enough to make, and the
+manager's client routes ConfigMap reads there as well so that a read added
+later cannot quietly start seeing an emptied object or build a second cache
+holding what the first one dropped.
+
 ## Where the code lives
 
 | Concept | Package |
@@ -88,6 +109,7 @@ Five programs ship from `cmd/`:
 | CRD, RBAC and release lifecycle | `internal/crdupgrade` |
 | Read-only views behind `kubectl ptah` | `internal/planview`, `internal/schemaview`, `internal/migrationview` |
 | Bounded-cardinality metrics | `internal/telemetry` |
+| What the manager caches from a watch | `internal/managercache` |
 
 ## The two resource families
 
