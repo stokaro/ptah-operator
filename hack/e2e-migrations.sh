@@ -3048,14 +3048,19 @@ wait_for_the_late_dispatch_job_to_be_suspended() {
 			report_late_dispatch_state
 			fail "the $ENGINE Apply Job ended before it could be suspended, so the window is not what this would have measured"
 		fi
-		# The suspension is recorded on the object and the Pod it had is gone.
-		# Neither the Suspended condition nor status.active is required: a Job
-		# whose Pod never ran does not always carry the first, and what this
-		# row actually depends on -- that the resume restarts the Job's own
-		# deadline -- is asserted afterwards against .status.startTime, where
-		# it can be seen rather than inferred.
-		if jq -e '.spec.suspend == true' "$WORK_DIR/late-job.json" >/dev/null &&
-			[ -z "$(k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o name)" ]; then
+		# A cleared start time is the suspension this row needs, and it is the
+		# whole of it: the relative deadline has stopped, and the resume will
+		# stamp a new one.
+		#
+		# Not the Pod being gone, and not status.active reaching zero. A Pod
+		# that was never scheduled is not deleted when its Job is suspended --
+		# the Job reports suspend=true, Suspended=True and no start time while
+		# that Pod is still Pending and unschedulable, with active at one -- so
+		# a wait for either of those never returns. The Pod is wanted anyway:
+		# opening the gate is what lets it run, late.
+		if jq -e '
+          .spec.suspend == true and (.status.startTime // null) == null
+        ' "$WORK_DIR/late-job.json" >/dev/null; then
 			return 0
 		fi
 		sleep 2
@@ -3214,14 +3219,18 @@ run_late_dispatch_proof() {
 	LATE_APPLY_SUSPENDED=1
 	wait_for_the_late_dispatch_job_to_be_suspended
 	hold_past_the_late_dispatch_window
-	printf 'e2e migrations: opening the gate and resuming the %s Apply Job past its window\n' \
+	printf 'e2e migrations: resuming the %s Apply Job past its window, then opening the gate\n' \
 		"$ENGINE_KIND" >&2
-	open_late_dispatch_gate
+	# Resume first. The Pod a suspended Job keeps is still a Pod, and the
+	# scheduler places it as soon as a node carries the label -- so opening the
+	# gate first would let the run start before the Job had stamped the start
+	# time this row goes on to read.
 	k -n "$TEST_NAMESPACE" patch job "$LATE_APPLY_JOB" --type merge \
 		-p '{"spec":{"suspend":false}}' >/dev/null ||
 		fail "the $ENGINE Apply Job could not be resumed"
 	LATE_APPLY_SUSPENDED=0
 	assert_the_late_dispatch_job_restarted_its_own_deadline
+	open_late_dispatch_gate
 	assert_late_dispatch_never_reaches_the_database
 	close_late_dispatch_gate
 	printf 'e2e migrations: PASS %s refused an Apply Pod that started after its window closed\n' \
