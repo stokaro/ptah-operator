@@ -251,6 +251,22 @@ learned by paying that:
   hold the ones that earn a file, and `hack/migration-refusal-filter-selftest.sh`
   runs each against one reading it must accept and several it must refuse, which
   are the mistakes that were actually made.
+- **A fixed clock makes a comparison between two instants vacuous.** The unit
+  suites run on one, so a value stamped by the code under test and a value the
+  fixture stamped are the same instant, and a check that one is strictly after
+  the other is false whatever the code does -- or true whatever it does, if the
+  sense is reversed. Both have shipped here. Date the fixture's side of the
+  comparison distinctly before asserting on it: backdate the run before
+  asserting a reading followed it, backdate the transition before asserting a
+  condition was rewritten. A row that passes without that is a row that would
+  pass against the defect.
+- **A bound has to be measured against the thing it bounds.** An acceptance row
+  that holds for a fixed share of an interval, or that dates an event by the
+  poll that noticed it, proves a fraction of what it claims: a controller
+  honouring half the interval, or dispatching between two polls, passes it.
+  Derive the hold from the deadline the resource persisted, and date what
+  happened from the object's own timestamp rather than from when the loop
+  looked.
 
 ## Language
 
