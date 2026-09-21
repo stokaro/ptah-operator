@@ -83,8 +83,14 @@ spec:
 
 MySQL commits implicitly on DDL, so a file that fails halfway leaves what ran
 in place. `transactionMode: none` says that plainly instead of promising a
-rollback the engine will not perform, and a `checkpoint` in the sequence is
-where the author chose to make that recoverable.
+rollback the engine will not perform.
+
+There is no setting that makes such a failure recover on its own. The operator
+records what it cannot account for in `status.unresolvedRun` and stops, and a
+person decides what the interrupted file did before anything runs against that
+database again; [Operations](../../use/operations/) has the procedure. A checkpoint
+is not that answer either -- it decides where a new database starts, not what
+an interrupted one has run.
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
