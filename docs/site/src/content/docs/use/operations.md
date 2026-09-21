@@ -1245,11 +1245,17 @@ pass, and the upgrade path reads the condition.
 kubectl get ptahmigration orders -o json \
   | jq 'del(.status.unresolvedRun)
         | .status.conditions = [
-            .status.conditions[]
-            | if .type == "Blocked" then .status = "False" else . end
+            .status.conditions[] | select(.type != "Blocked")
           ]' \
   | kubectl replace --subresource=status -f -
 ```
+
+The condition is removed rather than set to `False`, because setting it leaves
+`lastTransitionTime` describing the moment it became `True`: the operator's
+next reading sees a condition already at the value it wants and keeps that
+timestamp, so `Blocked=False` would go on claiming it became false at the
+instant it became true. Removing it lets the next reading write the condition
+whole.
 
 The operator rewrites the conditions on its next reading, so this is one write
 rather than two: a resource left blocked between them is a resource whose

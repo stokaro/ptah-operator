@@ -1931,13 +1931,8 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 		wantRecord bool
 	}{
 		{
-			name: "the record and the refusal go together",
-			clear: func(migration *operatorv1alpha1.PtahMigration) {
-				migration.Status.UnresolvedRun = nil
-				blocked := meta.FindStatusCondition(migration.Status.Conditions,
-					operatorv1alpha1.ConditionMigrationBlocked)
-				blocked.Status = metav1.ConditionFalse
-			},
+			name:  "the record and the refusal go together",
+			clear: clearTheDocumentedWay,
 		},
 		{
 			name: "the record alone comes back",
@@ -1952,13 +1947,8 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			// resource, so the pass after this one writes Blocked again and
 			// the upgrade path rebuilds the record. The runbook says to clear
 			// that refusal first, and this is why.
-			name: "a refusal that keeps coming back rebuilds it",
-			clear: func(migration *operatorv1alpha1.PtahMigration) {
-				migration.Status.UnresolvedRun = nil
-				blocked := meta.FindStatusCondition(migration.Status.Conditions,
-					operatorv1alpha1.ConditionMigrationBlocked)
-				blocked.Status = metav1.ConditionFalse
-			},
+			name:       "a refusal that keeps coming back rebuilds it",
+			clear:      clearTheDocumentedWay,
 			report:     func() dataplane.MigrationStatusReport { return dirtyMigrationHistory() },
 			passes:     2,
 			wantRecord: true,
@@ -1970,13 +1960,8 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			// An empty pending list alone used to read as the settlement the
 			// run was waiting for, so the record a person cleared by hand
 			// stayed gone while the database went on refusing.
-			name: "a dirty row with nothing pending rebuilds it",
-			clear: func(migration *operatorv1alpha1.PtahMigration) {
-				migration.Status.UnresolvedRun = nil
-				blocked := meta.FindStatusCondition(migration.Status.Conditions,
-					operatorv1alpha1.ConditionMigrationBlocked)
-				blocked.Status = metav1.ConditionFalse
-			},
+			name:       "a dirty row with nothing pending rebuilds it",
+			clear:      clearTheDocumentedWay,
 			report:     settledDirtyMigrationHistory,
 			passes:     2,
 			wantRecord: true,
@@ -1984,13 +1969,8 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 		{
 			// And the other refusal the database's own record can carry with
 			// nothing pending.
-			name: "an applied migration that no longer matches its file rebuilds it",
-			clear: func(migration *operatorv1alpha1.PtahMigration) {
-				migration.Status.UnresolvedRun = nil
-				blocked := meta.FindStatusCondition(migration.Status.Conditions,
-					operatorv1alpha1.ConditionMigrationBlocked)
-				blocked.Status = metav1.ConditionFalse
-			},
+			name:       "an applied migration that no longer matches its file rebuilds it",
+			clear:      clearTheDocumentedWay,
 			report:     modifiedMigrationHistory,
 			passes:     2,
 			wantRecord: true,
@@ -2001,13 +1981,8 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			// every migration the artifact carries applied and nothing dirty
 			// or modified, which is the settlement, and the version the
 			// artifact ends at is not kept in status for this path to weigh.
-			name: "a database ahead of its artifact does not rebuild it",
-			clear: func(migration *operatorv1alpha1.PtahMigration) {
-				migration.Status.UnresolvedRun = nil
-				blocked := meta.FindStatusCondition(migration.Status.Conditions,
-					operatorv1alpha1.ConditionMigrationBlocked)
-				blocked.Status = metav1.ConditionFalse
-			},
+			name:   "a database ahead of its artifact does not rebuild it",
+			clear:  clearTheDocumentedWay,
 			report: historyAheadOfItsArtifact,
 			passes: 2,
 		},
@@ -2054,6 +2029,18 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			}
 		})
 	}
+}
+
+// clearTheDocumentedWay is the jq the runbook prints: the record deleted and
+// the Blocked condition removed rather than set to False, because a condition
+// set to the value it already holds keeps the lastTransitionTime of the
+// transition it is meant to end.
+func clearTheDocumentedWay(migration *operatorv1alpha1.PtahMigration) {
+	migration.Status.UnresolvedRun = nil
+	migration.Status.Conditions = slices.DeleteFunc(migration.Status.Conditions,
+		func(condition metav1.Condition) bool {
+			return condition.Type == string(operatorv1alpha1.ConditionMigrationBlocked)
+		})
 }
 
 // dirtyMigrationHistory is a reading the database itself refuses: a revision
@@ -2420,5 +2407,55 @@ func TestAFailingReadIsRetriedWithNoAttemptLimit(t *testing.T) {
 	}
 	if actual.Status.History != nil && actual.Status.History.PendingCount == 0 {
 		t.Fatal("a failing verify produced a history reading, which is what it cannot do")
+	}
+}
+
+// Why the runbook removes the condition rather than setting it to False.
+//
+// meta.SetStatusCondition only moves lastTransitionTime when the status
+// changes. A condition left at False keeps the timestamp of the moment it
+// became True, so the next reading writes Blocked=False still claiming it
+// became false at the instant it became true. Removing it lets that reading
+// write the condition whole.
+func TestTheDocumentedClearLetsTheNextReadingDateTheCondition(t *testing.T) {
+	t.Parallel()
+
+	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+		operatorv1alpha1.MigrationRunOutcomeUnknown)
+	// This package's clock is fixed, so a condition rewritten now and one kept
+	// from the original transition carry the same instant. Dating the original
+	// distinctly is what lets the assertion tell them apart.
+	blocked := meta.FindStatusCondition(migration.Status.Conditions,
+		operatorv1alpha1.ConditionMigrationBlocked)
+	blocked.LastTransitionTime = metav1.NewTime(blocked.LastTransitionTime.Add(-time.Hour))
+	blockedAt := blocked.LastTransitionTime
+	finished := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(-time.Minute))
+	migration.Status.LastRun.FinishedAt = &finished
+	clearTheDocumentedWay(migration)
+	migration.Status.NextReconciliationTime = nil
+
+	actual, _ := readMigrationHistory(t, migration, settledMigrationHistory())
+	cleared := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	if cleared == nil {
+		t.Fatal("the reading wrote no Blocked condition at all")
+	}
+	if cleared.Status != metav1.ConditionFalse {
+		t.Fatalf("Blocked = %s after a settling reading", cleared.Status)
+	}
+	if cleared.LastTransitionTime.Equal(&blockedAt) {
+		t.Fatal("the condition kept the timestamp of the transition it was meant to end")
+	}
+}
+
+// settledMigrationHistory is the reading that clears a record: every migration
+// the artifact carries applied, nothing dirty, nothing modified.
+func settledMigrationHistory() dataplane.MigrationStatusReport {
+	return dataplane.MigrationStatusReport{
+		ContractVersion: dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:  3, TotalMigrations: 2,
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
+		},
 	}
 }
