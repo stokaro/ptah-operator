@@ -2186,7 +2186,10 @@ func TestARecordCannotClearWhileSomethingStopsTheReading(t *testing.T) {
 		// carrying a record claims the read-only chain that clears it, which is
 		// what makes the three refusals below a statement about them.
 		wantClaim bool
-		phase     operatorv1alpha1.MigrationPhase
+		// refuses marks a state the reconcile answers with an error, because
+		// it will not interpret or rewrite what it cannot read.
+		refuses bool
+		phase   operatorv1alpha1.MigrationPhase
 	}{
 		{
 			name:      "nothing stops it",
@@ -2209,6 +2212,17 @@ func TestARecordCannotClearWhileSomethingStopsTheReading(t *testing.T) {
 				return nil
 			},
 			phase: operatorv1alpha1.MigrationPhaseBlocked,
+		},
+		{
+			// The fence refuses before anything is claimed, and it refuses by
+			// returning an error rather than by writing a phase: state it
+			// cannot interpret is state it will not rewrite either.
+			name: "stored state a newer manager wrote",
+			stop: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				migration.Status.ExecutionBinding.ControllerStateVersion = 9999
+				return nil
+			},
+			refuses: true,
 		},
 		{
 			name: "a realm another resource claims",
@@ -2239,7 +2253,11 @@ func TestARecordCannotClearWhileSomethingStopsTheReading(t *testing.T) {
 
 			objects := append([]client.Object{migration, verificationPolicyConfigMap()}, extra...)
 			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
-			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			_, err := reconciler.Reconcile(context.Background(), migrationRequest(migration))
+			switch {
+			case row.refuses && err == nil:
+				t.Fatal("the reconcile interpreted state it cannot read")
+			case !row.refuses && err != nil:
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 
@@ -2254,7 +2272,7 @@ func TestARecordCannotClearWhileSomethingStopsTheReading(t *testing.T) {
 			if actual.Status.UnresolvedRun == nil {
 				t.Fatal("the record was cleared without any reading of the database")
 			}
-			if actual.Status.Phase != row.phase {
+			if !row.refuses && actual.Status.Phase != row.phase {
 				t.Fatalf("phase = %q, want %q", actual.Status.Phase, row.phase)
 			}
 		})

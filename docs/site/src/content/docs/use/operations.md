@@ -1155,8 +1155,10 @@ database finds nothing wrong and clears a record that was telling the truth.
 whose outcome the API server never confirmed. The name that claim reserved is
 not evidence that anything ran under it, so the record says nothing rather than
 sending a reader after a Job that may never have existed. The attempt and the
-plan are still there, and the deadline the claim carried is how long that
-possible mutation had.
+plan are still there. The deadline that claim carried is not: it lived on
+`status.activeOperation`, which is cleared with the claim, and neither the
+record nor the plan copies it. What is observable instead is the Lease, which
+this resource keeps for as long as a dispatched Apply could still be writing.
 
 A record **adopted** on upgrade names less, because less was kept. A manager
 older than this record held the state in a condition, and the claim that ran
@@ -1169,15 +1171,22 @@ While the record stands this resource publishes no plan and dispatches no
 Apply, including the migration that run was applying. It goes on reading unless
 something else has stopped it first: resolve, verify and the history read
 continue at the resource's interval, and that history read is how the record
-clears. Three states stop them, and a resource in one of them never reaches the
+clears. Four states stop them, and a resource in one of them never reaches the
 reading that would clear its record -- suspension, an engine this operator does
-not support, and a database realm another resource claims -- because each is
-answered before any operation is claimed.
+not support, a database realm another resource claims, and stored state written
+by a newer manager than the one running -- because each is answered before any
+operation is claimed.
 
 Other resources may also be working against the same database if every claimant
 declares a shared realm. So the record stops this resource from changing the
 database; it is not a promise that the database is idle, and a repair should
 not assume one.
+
+The run that caused the record is part of that. Retiring the claim does not
+stop a Pod: where the Apply may still be executing, this resource keeps the
+realm Lease until its dispatch and execution deadlines have passed, so the
+Lease in the coordination namespace is what says whether the run that is being
+accounted for could still be writing while it is accounted for.
 
 ### How it clears
 
