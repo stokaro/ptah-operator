@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -2107,5 +2108,155 @@ func historyAheadOfItsArtifact() dataplane.MigrationStatusReport {
 			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
 			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 		},
+	}
+}
+
+// A record this manager wrote does not always name a Job, and the page says so.
+//
+// A create whose outcome the API server never confirmed leaves the claim with
+// the name it reserved and no UID. The name alone is not evidence that anything
+// ran under it, so the record names no Job rather than sending a reader after
+// one that may never have existed. What it does name is the attempt and the
+// plan, which is what separates it from a record adopted on upgrade.
+func TestAnUnconfirmedApplyCreateRecordsNoJob(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	// The state the failed create leaves: the dispatch boundary is crossed and
+	// no UID was ever recorded.
+	operation.DispatchStarted = true
+	operation.JobUID = ""
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+
+	if _, err := reconciler.finishUncertainMigrationApply(ctx, migration, nil,
+		errors.New("the Apply Job create result is uncertain: etcdserver: request timed out"), ""); err != nil {
+		t.Fatalf("finishUncertainMigrationApply() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	record := actual.Status.UnresolvedRun
+	if record == nil {
+		t.Fatal("an unconfirmed Apply create recorded no unresolved run")
+	}
+	if record.JobName != "" || record.JobUID != "" {
+		t.Fatalf("the record names a Job nothing established existed: %q %q", record.JobName, record.JobUID)
+	}
+	if record.OperationID != operation.ID || record.PlanRef == nil || record.PlanRef.Name != plan.Name {
+		t.Fatalf("the record lost the attempt or the plan it was carrying out: %#v", record)
+	}
+}
+
+// A database ahead of its artifact does not clear a record that is standing.
+//
+// The runbook distinguishes the two, because the upgrade path does not write
+// such a record again once a person has cleared it by hand. The refusal is
+// answered before the branch that removes a record is reached, so a resource
+// left alone waits rather than settling.
+func TestADatabaseAheadOfItsArtifactDoesNotClearAStandingRecord(t *testing.T) {
+	t.Parallel()
+
+	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+		operatorv1alpha1.MigrationRunOutcomeUnknown)
+	if migration.Status.UnresolvedRun == nil {
+		t.Fatal("the fixture recorded no unresolved run")
+	}
+
+	actual, _ := readMigrationHistory(t, migration, historyAheadOfItsArtifact())
+	if actual.Status.UnresolvedRun == nil {
+		t.Fatal("a database ahead of its artifact cleared the record, so the runbook is wrong")
+	}
+	assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonHistoryAhead)
+}
+
+// And the states where the reading that clears a record never happens at all.
+//
+// Suspension, an unsupported engine and a contested realm are each answered
+// before any operation is claimed, so a resource in one of them keeps its
+// record however long it is left. The page names all three rather than
+// promising a reading that cannot arrive.
+func TestARecordCannotClearWhileSomethingStopsTheReading(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name string
+		stop func(*operatorv1alpha1.PtahMigration) []client.Object
+		// wantClaim is the control: with nothing stopping it, a resource
+		// carrying a record claims the read-only chain that clears it, which is
+		// what makes the three refusals below a statement about them.
+		wantClaim bool
+		phase     operatorv1alpha1.MigrationPhase
+	}{
+		{
+			name:      "nothing stops it",
+			stop:      func(*operatorv1alpha1.PtahMigration) []client.Object { return nil },
+			wantClaim: true,
+			phase:     operatorv1alpha1.MigrationPhaseResolving,
+		},
+		{
+			name: "suspended",
+			stop: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				migration.Spec.Suspend = true
+				return nil
+			},
+			phase: operatorv1alpha1.MigrationPhaseSuspended,
+		},
+		{
+			name: "an engine this operator does not support",
+			stop: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				migration.Spec.Target.Engine = "cassandra"
+				return nil
+			},
+			phase: operatorv1alpha1.MigrationPhaseBlocked,
+		},
+		{
+			name: "a realm another resource claims",
+			stop: func(migration *operatorv1alpha1.PtahMigration) []client.Object {
+				rival := migrationFixture()
+				rival.Name = "orders-rival"
+				rival.UID = "orders-rival-uid"
+				return []client.Object{rival}
+			},
+			phase: operatorv1alpha1.MigrationPhaseBlocked,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+				operatorv1alpha1.MigrationRunOutcomeUnknown)
+			record := migration.Status.UnresolvedRun
+			if record == nil {
+				t.Fatal("the fixture recorded no unresolved run")
+			}
+			extra := row.stop(migration)
+			migration.Status.ActiveOperation = nil
+			// The interval the page names has elapsed, which is when a blocked
+			// resource starts the read-only chain again. Without this every row
+			// would pass by waiting, which says nothing about what stops it.
+			migration.Status.NextReconciliationTime = nil
+
+			objects := append([]client.Object{migration, verificationPolicyConfigMap()}, extra...)
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+
+			actual := readMigration(t, api, migration)
+			if row.wantClaim && actual.Status.ActiveOperation == nil {
+				t.Fatal("nothing stopped this resource and it still claimed no operation, so the rows below measure nothing")
+			}
+			if !row.wantClaim && actual.Status.ActiveOperation != nil {
+				t.Fatalf("an operation was claimed, so this state does not stop the reading: %#v",
+					actual.Status.ActiveOperation)
+			}
+			if actual.Status.UnresolvedRun == nil {
+				t.Fatal("the record was cleared without any reading of the database")
+			}
+			if actual.Status.Phase != row.phase {
+				t.Fatalf("phase = %q, want %q", actual.Status.Phase, row.phase)
+			}
+		})
 	}
 }

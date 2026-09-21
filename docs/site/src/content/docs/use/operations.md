@@ -1134,10 +1134,18 @@ nothing about whether the mutation was ever accounted for.
 kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
 ```
 
-A record this manager wrote names the attempt (`operationID`), the Job it ran
-as by name and UID, the plan it was carrying out, and the credential-free
-identity of the database it reached. The Job and its logs may be gone by then,
-which is why the record carries their identity rather than pointing at them.
+A record this manager wrote names the attempt (`operationID`), the plan it was
+carrying out, and the credential-free identity of the database it reached. It
+names the Job by name and UID wherever the manager established that one
+existed, and the Job and its logs may be gone by then, which is why the record
+carries their identity rather than pointing at them.
+
+`jobName` and `jobUID` are empty on one of those records as well: a create
+whose outcome the API server never confirmed. The name that claim reserved is
+not evidence that anything ran under it, so the record says nothing rather than
+sending a reader after a Job that may never have existed. The attempt and the
+plan are still there, and the deadline the claim carried is how long that
+possible mutation had.
 
 A record **adopted** on upgrade names less, because less was kept. A manager
 older than this record held the state in a condition, and the claim that ran
@@ -1147,12 +1155,18 @@ database the last reading named. Those are what to search for in that case;
 there is no attempt or plan to look up, and looking is wasted time.
 
 While the record stands this resource publishes no plan and dispatches no
-Apply, including the migration that run was applying. It keeps reading: resolve,
-verify and the history read continue at the resource's interval, and that
-history read is how the record clears. Other resources may also be working
-against the same database if every claimant declares a shared realm. So the
-record stops this resource from changing the database; it is not a promise that
-the database is idle, and a repair should not assume one.
+Apply, including the migration that run was applying. It goes on reading unless
+something else has stopped it first: resolve, verify and the history read
+continue at the resource's interval, and that history read is how the record
+clears. Three states stop them, and a resource in one of them never reaches the
+reading that would clear its record -- suspension, an engine this operator does
+not support, and a database realm another resource claims -- because each is
+answered before any operation is claimed.
+
+Other resources may also be working against the same database if every claimant
+declares a shared realm. So the record stops this resource from changing the
+database; it is not a promise that the database is idle, and a repair should
+not assume one.
 
 ### How it clears
 
@@ -1182,11 +1196,15 @@ rebuilds the record on the pass after this one. The command below clears the
 refusal that is standing; it cannot clear one that keeps coming back.
 
 One standing refusal does not rebuild it: a database ahead of the artifact this
-resource resolves. That reading found every migration the artifact carries
-applied, with nothing dirty and nothing modified, and a reading like that is
-what settles the record on its own -- so the clear holds while the refusal goes
-on standing. The refusal itself is repaired by publishing an artifact that
-carries the versions the database already applied.
+resource resolves. That reading has nothing of the artifact left to apply,
+nothing dirty and nothing modified, so the upgrade path counts it as the
+account the run was owed and does not write the record again.
+
+That is not the same as the reading clearing it, and the section above says
+why: a record still standing survives such a reading, because the refusal is
+answered before the branch that removes a record is reached. So the refusal has
+to be repaired either way, by publishing an artifact that carries the versions
+the database already applied.
 
 Then the refusal and the record go in one write. Removing the record alone is
 not enough even with nothing else refusing: the condition outlives it by a
