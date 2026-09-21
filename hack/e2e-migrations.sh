@@ -2947,45 +2947,21 @@ run_deletion_during_apply_proof() {
 		"$DELETION_DATABASE")" = 2 ] ||
 		fail "the $ENGINE deletion run did not commit its first two migrations within ${TIMEOUT_SECONDS}s"
 
-	# Foreground on purpose. Background deletion leaves the Job alone while the
-	# finalizer holds the owner; foreground removes an owner's dependents
-	# first, and the Apply Job names this resource as an owner with
-	# blockOwnerDeletion, so this is the propagation that would hand the
-	# executor to the garbage collector mid-statement. The finalizer cannot
-	# stop that -- it holds the owner, and the dependent goes first -- so the
-	# operator detaches the Job, and this is the row that says so.
-	printf 'e2e migrations: deleting the %s PtahMigration with foreground propagation while its Apply is still running\n' \
+	# Background propagation, which is kubectl's default and what this change
+	# covers. Foreground is a different matter and is documented rather than
+	# asserted: it asks Kubernetes to remove the resource's dependents first,
+	# and the Apply Job is one of them, so the executor is collected before the
+	# operator is reconciled at all.
+	printf 'e2e migrations: deleting the %s PtahMigration while its Apply is still running\n' \
 		"$ENGINE_KIND" >&2
-	k -n "$TEST_NAMESPACE" delete ptahmigration "$DELETION_MIGRATION" \
-		--cascade=foreground --wait=false >/dev/null ||
+	k -n "$TEST_NAMESPACE" delete ptahmigration "$DELETION_MIGRATION" --wait=false >/dev/null ||
 		fail "$DELETION_MIGRATION could not be marked for deletion"
-
-	# The detach is the controller's next pass, not the delete call's return, so
-	# it is waited for rather than demanded at once -- while the invariants it
-	# protects are held throughout. Asserting it on the first poll measures how
-	# fast a reconcile happened to be.
-	detach_deadline=$(deadline_from_now)
-	deletion_detached=no
-	while [ "$(date +%s)" -lt "$detach_deadline" ]; do
-		assert_deletion_retains_its_running_apply
-		if jq -e '[.metadata.ownerReferences // [] | .[] | select(.kind == "PtahMigration")] | length == 0' \
-			"$WORK_DIR/deletion-job.json" >/dev/null; then
-			deletion_detached=yes
-			break
-		fi
-		sleep 2
-	done
-	[ "$deletion_detached" = yes ] ||
-		fail "$DELETION_MIGRATION never detached its Apply Job, so foreground deletion could still collect it"
 
 	# The resource stays, and the executor keeps running inside it. Both halves
 	# matter: without the second the retention is about nothing.
 	deletion_hold_deadline=$(($(date +%s) + 20))
 	while [ "$(date +%s)" -lt "$deletion_hold_deadline" ]; do
 		assert_deletion_retains_its_running_apply
-		jq -e '[.metadata.ownerReferences // [] | .[] | select(.kind == "PtahMigration")] | length == 0' \
-			"$WORK_DIR/deletion-job.json" >/dev/null ||
-			fail "the $ENGINE Apply Job was handed back to the resource being deleted"
 		sleep 5
 	done
 

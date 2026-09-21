@@ -1078,6 +1078,14 @@ ran. Both hand the database Lease back and then release the resource. A
 read-only operation is not waited on: its Job reads and reports, and deletion
 discards the claim and goes.
 
+Use the default propagation. `kubectl delete --cascade=foreground` asks
+Kubernetes to remove the resource's dependents before the resource, and the
+Apply Job is one of them, so the garbage collector takes the Job and its Pod
+before the operator is reconciled at all. The wait above cannot prevent that:
+the finalizer holds the owner, and the dependent goes first. Deleting a
+`PtahMigration` with a running Apply that way stops the executor between
+statements and leaves the database in a state only a person can account for.
+
 How long that block lasts is bounded for the Job and not for the Pod.
 `spec.execution.activeDeadlineSeconds` is what turns an executor that hangs
 into a terminal Job, so a run that is merely slow ends on its own deadline. A

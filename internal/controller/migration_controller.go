@@ -230,24 +230,6 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			// Keeping this resource does not keep its Job. Foreground cascading
-			// deletion removes an owner's dependents before the owner, and the
-			// Job carries this resource as an owner with blockOwnerDeletion, so
-			// `kubectl delete --cascade=foreground` hands the executor to the
-			// garbage collector while the wait below is still polling it --
-			// stopping SQL between statements, which is the thing this wait
-			// exists to prevent. The finalizer cannot help: it holds the owner,
-			// and the dependent goes first.
-			//
-			// So the Job is detached instead. It is cleaned up either way: its
-			// own activeDeadlineSeconds ends a run that hangs, and the TTL set
-			// when it is harvested removes it afterwards. An owner reference
-			// that outlives the decision to stop waiting on it would only
-			// decide when the executor dies, which is not this controller's to
-			// give away.
-			if err := r.detachMigrationApplyJob(ctx, migration, job); err != nil {
-				return ctrl.Result{}, err
-			}
 			if r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
 				// Renew while waiting, the way every other pass over a live
 				// Apply does. The Lease is sized to outlive the Job's own
@@ -304,39 +286,6 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
-}
-
-// detachMigrationApplyJob removes this resource from the Job's owner
-// references, so the garbage collector cannot take the Job while the deletion
-// is still waiting on what it may be writing.
-//
-// Only this resource's own reference is dropped, and only when it is there: a
-// Job that was already detached, or one this resource never owned, is left
-// exactly as it is.
-func (r *MigrationReconciler) detachMigrationApplyJob(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	job *batchv1.Job,
-) error {
-	if job == nil {
-		return nil
-	}
-	kept := make([]metav1.OwnerReference, 0, len(job.OwnerReferences))
-	for _, owner := range job.OwnerReferences {
-		if owner.UID == migration.UID && owner.Kind == "PtahMigration" {
-			continue
-		}
-		kept = append(kept, owner)
-	}
-	if len(kept) == len(job.OwnerReferences) {
-		return nil
-	}
-	before := job.DeepCopy()
-	job.OwnerReferences = kept
-	if err := r.Patch(ctx, job, client.MergeFrom(before)); err != nil {
-		return fmt.Errorf("detach the Apply Job from the resource being deleted: %w", err)
-	}
-	return nil
 }
 
 // dispatchedMigrationApplyJob returns the Job this Apply claim dispatched, and
