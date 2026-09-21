@@ -300,6 +300,9 @@ select_engine() {
 	UNCERTAIN_DB_SECRET="e2e-${ENGINE}-uncertain-db"
 	UNCERTAIN_MIGRATION="e2e-uncertain-${ENGINE}"
 	UNCERTAIN_COORDINATION_KEY="e2e/uncertain/${ENGINE}"
+	RETRY_DB_SECRET="e2e-${ENGINE}-retry-db"
+	RETRY_MIGRATION="e2e-retry-${ENGINE}"
+	RETRY_COORDINATION_KEY="e2e/retry/${ENGINE}"
 	UNCERTAIN_RIVAL_SCHEMA="e2e-uncertain-${ENGINE}-rival"
 	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-uncertain:stable"
 	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
@@ -2912,6 +2915,151 @@ assert_unknown_layer_never_reaches_the_database() {
 		fail "the $ENGINE database was opened for an artifact whose layers were refused"
 }
 
+# The retry interval, against a real API server, real watches and real Jobs.
+#
+# spec.execution.failureRetryInterval is the delay a resource asks for between
+# attempts at an operation that failed. The claim carries the deadline, so a
+# restarted manager and an early watch event both meet it; what only a cluster
+# shows is that nothing else -- a Job event, a resync, the queue's own backoff
+# -- dispatches the replacement early.
+#
+# The failure is a database that does not exist. Resolve and verify succeed
+# against the registry, and the history read is the one that cannot connect,
+# which is exactly the read-only failure this path is for.
+run_retry_interval_proof() {
+	printf 'e2e migrations: pointing a %s migration at a database that does not exist\n' \
+		"$ENGINE_KIND" >&2
+	retry_url_file="$WORK_DIR/${ENGINE}-retry-db.url"
+	database_url "ptah_e2e_absent" >"$retry_url_file"
+	chmod 600 "$retry_url_file"
+	{
+		cat "$retry_url_file"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RETRY_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--rawfile url "$retry_url_file" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true, type: "Opaque",
+      stringData: {username: $username, password: $password, database: "ptah_e2e_absent", url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RETRY_MIGRATION" \
+		--arg secret "$RETRY_DB_SECRET" \
+		--arg reference "$MIGRATION_REFERENCE" \
+		--arg coordinationKey "$RETRY_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine, coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Never", lockTimeout: "30s"},
+        interval: "1h",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "120s", connectTimeout: "15s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+
+	# Wait for a retry to be scheduled: a second attempt carrying the deadline
+	# the resource asked for. Asserting on the attempt rather than on a phase,
+	# because the resource passes through several while it fails.
+	retry_deadline=$(deadline_from_now)
+	retry_scheduled=no
+	while [ "$(date +%s)" -lt "$retry_deadline" ]; do
+		retry_status
+		if jq -e '
+          .status.activeOperation as $claim |
+          $claim != null and $claim.attempt >= 2 and
+          (($claim.retryNotBefore // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			retry_scheduled=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$retry_scheduled" = yes ] ||
+		fail "$RETRY_MIGRATION never scheduled a retry carrying its own deadline within ${TIMEOUT_SECONDS}s"
+	scan_for_credentials "$STATUS_FILE" "$RETRY_MIGRATION status"
+
+	# Nothing dispatches while the deadline stands. Sixty seconds of a
+	# hundred-and-twenty-second interval: long enough that a manager ignoring
+	# the deadline would have dispatched several times over, and short enough
+	# to leave the rest of the interval for the dispatch below.
+	migration_job_uids "$RETRY_MIGRATION" >"$WORK_DIR/retry-jobs.txt"
+	retry_hold_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$retry_hold_deadline" ]; do
+		retry_status
+		jq -e '(.status.activeOperation.retryNotBefore // "") | length > 0' "$STATUS_FILE" >/dev/null ||
+			fail "$RETRY_MIGRATION dropped its retry deadline while it was still standing"
+		migration_job_uids "$RETRY_MIGRATION" >"$WORK_DIR/retry-jobs-now.txt"
+		if grep -vxF -f "$WORK_DIR/retry-jobs.txt" "$WORK_DIR/retry-jobs-now.txt" | grep -q .; then
+			fail "$RETRY_MIGRATION dispatched a replacement Job before its retry interval expired"
+		fi
+		sleep 10
+	done
+
+	# And it does run once the deadline passes, so the delay is a wait rather
+	# than a stop.
+	retry_dispatch_deadline=$(($(date +%s) + 180))
+	retry_dispatched=no
+	while [ "$(date +%s)" -lt "$retry_dispatch_deadline" ]; do
+		migration_job_uids "$RETRY_MIGRATION" >"$WORK_DIR/retry-jobs-now.txt"
+		if grep -vxF -f "$WORK_DIR/retry-jobs.txt" "$WORK_DIR/retry-jobs-now.txt" | grep -q .; then
+			retry_dispatched=yes
+			break
+		fi
+		sleep 10
+	done
+	[ "$retry_dispatched" = yes ] ||
+		fail "$RETRY_MIGRATION never dispatched after its retry interval expired"
+
+	k -n "$TEST_NAMESPACE" delete ptahmigration "$RETRY_MIGRATION" --wait=true >/dev/null ||
+		fail "$RETRY_MIGRATION could not be removed"
+	printf 'e2e migrations: PASS %s waited out its retry interval and then ran\n' "$ENGINE_KIND" >&2
+}
+
+retry_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$RETRY_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$RETRY_MIGRATION could not be read"
+}
+
+# migration_job_uids lists every Job a resource has dispatched, whatever the
+# operation: the retry this proves is a read-only one, so the Apply-only list
+# would never change.
+migration_job_uids() {
+	job_resource=$1
+	k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${job_resource}" \
+		-o json | jq -r '.items[]?.metadata.uid' | LC_ALL=C sort
+}
+
 run_unknown_layer_proof() {
 	create_unknown_layer_database
 	publish_unknown_layer_artifact
@@ -2962,6 +3110,7 @@ run_engine_migrations() {
 	run_existing_schema_adoption_proof
 	run_checkpoint_bootstrap_proof
 	run_uncertain_apply_proof
+	run_retry_interval_proof
 	run_unknown_layer_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2

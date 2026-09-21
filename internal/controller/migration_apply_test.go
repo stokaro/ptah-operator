@@ -1593,3 +1593,36 @@ func jobNamesFor(t *testing.T, api client.Client, migration *operatorv1alpha1.Pt
 	}
 	return names
 }
+
+// Suspension is not made to wait out a retry.
+//
+// A person who suspends a resource is asking it to stop now, and a claim
+// waiting out a retry has dispatched nothing. Retiring it only after the
+// interval -- up to an hour -- answers a different question than the one they
+// asked.
+func TestSuspendingAMigrationRetiresAClaimWaitingOutItsRetry(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: time.Hour}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	notBefore := metav1.NewTime(time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC))
+	operation.RetryNotBefore = &notBefore
+	operation.Attempt = 2
+	migration.Spec.Suspend = true
+
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, verificationPolicyConfigMap())
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("a suspended resource kept a claim waiting out its retry: %#v", actual.Status.ActiveOperation)
+	}
+}

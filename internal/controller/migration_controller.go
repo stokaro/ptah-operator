@@ -569,6 +569,14 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	key types.NamespacedName,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
+	// Suspension first, and before the retry deadline. A person who suspends a
+	// resource is asking it to stop now, and a claim waiting out a retry has
+	// dispatched nothing -- so making them wait out an interval of up to an
+	// hour to have it retired would answer a different question than the one
+	// they asked.
+	if migration.Spec.Suspend {
+		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
+	}
 	// A retried attempt waits out the delay the resource asked for. The check
 	// is here rather than only in the requeue that scheduled it, because a
 	// restart and an early Job or watch event both re-enter reconciliation
@@ -576,9 +584,6 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	// failing operation becomes a tight loop against whatever it is failing on.
 	if !due(operation.RetryNotBefore, r.now()) {
 		return requeueAtDeadline(operation.RetryNotBefore, r.now()), nil
-	}
-	if migration.Spec.Suspend {
-		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
 	}
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
 	if currentErr != nil || current != operation.InputFingerprint {
