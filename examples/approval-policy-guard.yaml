@@ -1,0 +1,90 @@
+# Who may turn the approval requirement off.
+#
+# RBAC on approval objects decides who may write an approval. It does not
+# decide who may make one unnecessary: spec.policy.apply is a field of the
+# desired-state resource, so anyone who may edit that resource may select
+# Always and have plans applied with no approval at all. Separating the
+# approval Role from the author Role does not close that, because the bypass is
+# not an approval.
+#
+# This policy is the part that does. It belongs to whoever administers the
+# cluster rather than to the namespace: a ValidatingAdmissionPolicy is
+# cluster-scoped and its binding names the namespaces it covers, so an author
+# with full rights over PtahSchemas in their own namespace cannot edit, rebind
+# or delete it.
+#
+# Install it where the separation is an operational requirement. An
+# installation that wants unattended apply does not need it, and Always is not
+# wrong -- it is a different decision, and this makes the decision an
+# administrator's.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ptah-apply-policy-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahschemas", "ptahmigrations"]
+  matchConditions:
+    # The administrators this policy exists to exempt. Replace the group with
+    # the one that owns apply policy in this cluster; every other identity,
+    # including every service account, is judged by the validations below.
+    #
+    # Naming the exempt group here rather than in the validations keeps the
+    # refusal message about what was asked for rather than about who asked.
+    - name: not-an-apply-policy-administrator
+      expression: >-
+        !('<apply-policy-administrator-group>' in request.userInfo.groups)
+  variables:
+    # What the write is asking for, and what was already there. An unset policy
+    # is not Always: the API defaults the field to OnApproval, so absence is
+    # the safe value rather than a missing one.
+    - name: selectsAlways
+      expression: >-
+        has(object.spec.policy) && has(object.spec.policy.apply) &&
+        object.spec.policy.apply == 'Always'
+    - name: alreadyAlways
+      expression: >-
+        oldObject != null && has(oldObject.spec.policy) &&
+        has(oldObject.spec.policy.apply) && oldObject.spec.policy.apply == 'Always'
+  validations:
+    # The rule is about the transition, not the value.
+    #
+    # Refusing every write that leaves Always in place would refuse far more
+    # than the bypass: the operator patches these resources to add and remove
+    # its operation finalizer, and its service account is not exempt here, so a
+    # guard written that way stops operations from starting and -- worse --
+    # stops a finished one from releasing its finalizer. An administrator who
+    # chose Always would have wedged every resource they chose it for.
+    #
+    # So what is refused is arriving at Always from somewhere else, which is the
+    # only write that changes the answer. Leaving it where an administrator put
+    # it is permitted, and so is moving back to OnApproval.
+    - expression: '!variables.selectsAlways || variables.alreadyAlways'
+      message: >-
+        spec.policy.apply: Always applies plans without an approval, and this
+        cluster reserves that choice for the group that owns apply policy. Use
+        OnApproval, or ask an apply-policy administrator to make the change.
+      reason: Forbidden
+---
+# The binding is what puts the policy in force, and where it is scoped. Without
+# one the policy above is inert, which is the usual way a guard like this is
+# installed and then quietly does nothing.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ptah-apply-policy-guard
+spec:
+  policyName: ptah-apply-policy-guard
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      # Every namespace this operator serves. Narrow it with a label selector
+      # where only some of them require independent approval; an empty selector
+      # here means the guard covers all of them, which is the safer default to
+      # start from.
+      matchLabels: {}

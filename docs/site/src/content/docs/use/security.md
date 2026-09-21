@@ -8,7 +8,11 @@ description: Trust boundaries, artifact integrity, and what a deployment still o
 The operator separates four authorities:
 
 1. A desired-state author may change `PtahSchema` but cannot approve a plan
-   merely by editing that resource.
+   merely by editing that resource. They can, however, make approvals
+   unnecessary: `spec.policy.apply` is a field of the resource they own, and
+   selecting `Always` applies non-destructive plans with no approval at all.
+   RBAC cannot close that, because the bypass is not an approval. See
+   [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off).
 2. An approver may read schemas and plans and create immutable approvals. The
    chart creates an optional ClusterRole but never binds it automatically.
 3. The controller may manage plans, Jobs, ConfigMaps, Leases, status, and
@@ -19,6 +23,47 @@ The operator separates four authorities:
    reads.
 4. A Job receives only the credentials needed for its fixed operation through
    same-namespace Secret selectors resolved by the kubelet.
+
+### Who may turn the approval requirement off {#who-may-turn-the-approval-requirement-off}
+
+The separation above is about who may write an approval. It says nothing about
+who may decide one is not needed, and those are different questions with
+different answers.
+
+`spec.policy.apply` lives on the desired-state resource. An author with the
+rights the example Role grants may set it to `Always`, after which
+non-destructive schema plans apply without an approval; `PtahMigration`
+exposes the same field. Separating the approver Role from the author Role does
+not prevent this, and no amount of RBAC on approval objects will, because
+nothing is approving anything.
+
+`Always` is not wrong. It is the deliberate unattended mode, and an
+installation that wants it should have it. What matters is that choosing it is
+a decision someone made on purpose, rather than a default an author can reach
+without anyone else noticing.
+
+Where independent approval is an operational requirement, install
+[`examples/approval-policy-guard.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/approval-policy-guard.yaml).
+It is a `ValidatingAdmissionPolicy`, cluster-scoped and administrator-owned, so
+an author with complete rights over resources in their own namespace cannot
+edit, rebind or delete it. It covers both kinds and both `CREATE` and `UPDATE`:
+a guard that watched only updates is bypassed by creating the resource with
+`Always` already set.
+
+What it refuses is the transition into `Always`, not the value itself. That
+distinction is load-bearing. The operator patches these resources to add and
+remove its operation finalizer, and its service account is not exempt, so a
+guard that refused every write leaving `Always` in place would stop operations
+from starting and stop a finished one from releasing its finalizer -- an
+administrator who chose `Always` would have wedged every resource they chose it
+for. Leaving the field where an administrator put it is permitted, and so is
+moving back to `OnApproval`; arriving at `Always` from anywhere else is not.
+
+Two things to check after installing it. A policy with no binding is inert and
+reads exactly like one in force, so confirm the binding exists and that its
+`validationActions` is `Deny` -- `Warn` and `Audit` record the bypass rather
+than refusing it. And the binding's namespace selector decides which namespaces
+are covered; the example covers all of them.
 
 Start namespace-scoped bindings from the
 desired-state author (`examples/desired-state-author-role.yaml`) and

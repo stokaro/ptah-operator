@@ -4,6 +4,14 @@ tagline: With apply set to OnApproval, nothing runs until a person approves that
 learn: What an approval is bound to, and how much of that binding you never type.
 tags: [Safety]
 
+# Scope, because this scenario is easy to read as more than it is: the lab
+# creates the resource and its approval under one identity, so what it shows is
+# the approval object, its bindings and the admission stamp -- not that an
+# author and an approver were two different people. Separation of those two is
+# an RBAC question, and keeping an author from making the approval unnecessary
+# is an admission question: examples/approval-policy-guard.yaml, and the
+# security model's "Who may turn the approval requirement off".
+
 reset:
   - demo/bin/lab reset
   # The lab generates the registry's credentials and address, and says what
