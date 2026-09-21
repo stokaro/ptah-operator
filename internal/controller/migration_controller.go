@@ -577,16 +577,30 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	if migration.Spec.Suspend {
 		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
 	}
+	// The inputs are re-read before the deadline is applied, not after it. A
+	// person correcting them -- a target Secret named wrong, an artifact
+	// reference that does not resolve -- is the usual reason a read-only
+	// operation failed at all, and the generation watch re-enters
+	// reconciliation the moment they do. Weighing the deadline first would
+	// hold that correction behind an interval of up to an hour, waiting out a
+	// claim nothing is going to dispatch.
+	//
+	// A fingerprint that cannot be read is not a correction, and it waits like
+	// any other retry. Discarding on every pass that fails to read an input
+	// would turn an unreadable Secret into a claim-and-discard loop driven by
+	// whatever else the resource watches, which is the tight loop the delay
+	// exists to stop.
+	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
+	inputsChanged := currentErr == nil && current != operation.InputFingerprint
 	// A retried attempt waits out the delay the resource asked for. The check
 	// is here rather than only in the requeue that scheduled it, because a
 	// restart and an early Job or watch event both re-enter reconciliation
 	// immediately and would otherwise dispatch at once -- which is how a
 	// failing operation becomes a tight loop against whatever it is failing on.
-	if !due(operation.RetryNotBefore, r.now()) {
+	if !inputsChanged && !due(operation.RetryNotBefore, r.now()) {
 		return requeueAtDeadline(operation.RetryNotBefore, r.now()), nil
 	}
-	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
-	if currentErr != nil || current != operation.InputFingerprint {
+	if inputsChanged || currentErr != nil {
 		if currentErr == nil {
 			currentErr = errors.New("the operation inputs changed after the claim")
 		}

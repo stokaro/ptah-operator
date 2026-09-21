@@ -1626,3 +1626,79 @@ func TestSuspendingAMigrationRetiresAClaimWaitingOutItsRetry(t *testing.T) {
 		t.Fatalf("a suspended resource kept a claim waiting out its retry: %#v", actual.Status.ActiveOperation)
 	}
 }
+
+// A correction is not made to wait out a retry either.
+//
+// The inputs a claim was decided from are why a read-only operation usually
+// failed: a target Secret named wrong, an artifact reference that does not
+// resolve. Editing the spec bumps the generation and the generation watch
+// reconciles at once, so a claim held to the old inputs until its deadline
+// would answer a correction up to an hour after it was made.
+func TestCorrectingAMigrationRetiresAClaimWaitingOutItsRetry(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: time.Hour}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	notBefore := metav1.NewTime(time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC))
+	operation.RetryNotBefore = &notBefore
+	operation.Attempt = 2
+	// The correction, as the API server records one: the spec names a
+	// different Secret and the generation moves with it.
+	migration.Spec.Target.URLFrom.Name = "orders-database-url-corrected"
+	migration.Generation++
+
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, verificationPolicyConfigMap())
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("a corrected resource kept a claim waiting out its retry: %#v", actual.Status.ActiveOperation)
+	}
+	if jobs := jobNamesFor(t, api, migration); len(jobs) != 0 {
+		t.Fatalf("the stale claim dispatched a Job: %v", jobs)
+	}
+}
+
+// An input the manager cannot read is not a correction, so the claim keeps
+// waiting. Discarding on every pass that fails to read one would turn an
+// unreadable Secret into a claim-and-discard loop driven by whatever else the
+// resource watches, which is what the delay exists to stop.
+func TestAnUnreadableMigrationInputStillWaitsOutTheRetry(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: time.Hour}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationVerify)
+	notBefore := metav1.NewTime(time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC))
+	operation.RetryNotBefore = &notBefore
+	operation.Attempt = 2
+
+	// A Verify claim reads the verification policy ConfigMap to fingerprint
+	// its inputs, and this cluster does not have it.
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration)
+	result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("the claim was not held to its deadline: requeue after %s", result.RequeueAfter)
+	}
+
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation == nil {
+		t.Fatal("an unreadable input discarded a claim that was waiting out its retry")
+	}
+}
