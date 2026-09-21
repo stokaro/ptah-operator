@@ -2947,9 +2947,17 @@ run_deletion_during_apply_proof() {
 		"$DELETION_DATABASE")" = 2 ] ||
 		fail "the $ENGINE deletion run did not commit its first two migrations within ${TIMEOUT_SECONDS}s"
 
-	printf 'e2e migrations: deleting the %s PtahMigration while its Apply is still running\n' \
+	# Foreground on purpose. Background deletion leaves the Job alone while the
+	# finalizer holds the owner; foreground removes an owner's dependents
+	# first, and the Apply Job names this resource as an owner with
+	# blockOwnerDeletion, so this is the propagation that would hand the
+	# executor to the garbage collector mid-statement. The finalizer cannot
+	# stop that -- it holds the owner, and the dependent goes first -- so the
+	# operator detaches the Job, and this is the row that says so.
+	printf 'e2e migrations: deleting the %s PtahMigration with foreground propagation while its Apply is still running\n' \
 		"$ENGINE_KIND" >&2
-	k -n "$TEST_NAMESPACE" delete ptahmigration "$DELETION_MIGRATION" --wait=false >/dev/null ||
+	k -n "$TEST_NAMESPACE" delete ptahmigration "$DELETION_MIGRATION" \
+		--cascade=foreground --wait=false >/dev/null ||
 		fail "$DELETION_MIGRATION could not be marked for deletion"
 
 	# The resource stays, and the executor keeps running inside it. Both halves
@@ -2967,6 +2975,13 @@ run_deletion_during_apply_proof() {
 		[ "$(k -n "$TEST_NAMESPACE" get pod -l "job-name=${DELETION_APPLY_JOB}" \
 			-o jsonpath='{.items[*].status.phase}' 2>/dev/null)" = Running ] ||
 			fail "the $ENGINE Apply Pod stopped, so the retention above proved nothing"
+		# And the Job is out of reach of the collector that foreground
+		# propagation just set loose on this resource's dependents.
+		k -n "$TEST_NAMESPACE" get job "$DELETION_APPLY_JOB" -o json >"$WORK_DIR/deletion-job.json" 2>/dev/null ||
+			fail "the $ENGINE Apply Job was collected while the deletion was still waiting on it"
+		jq -e '[.metadata.ownerReferences // [] | .[] | select(.kind == "PtahMigration")] | length == 0' \
+			"$WORK_DIR/deletion-job.json" >/dev/null ||
+			fail "the $ENGINE Apply Job still names the resource being deleted as an owner"
 		sleep 5
 	done
 
