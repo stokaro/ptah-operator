@@ -1263,12 +1263,19 @@ record comes back.
 
 One upgrade case needs this. A manager older than this record held the same
 state in the `Blocked` condition's reason, and an upgrade adopts those runs so
-the defect that rewrote the reason cannot lose them. A resource whose run was
-already settled under the old manager carries no durable evidence that it was --
-that evidence is what this record adds -- so if such a resource is blocked for
-an unrelated reason at the moment of the upgrade, its old run is adopted too.
-Establish what the run did, or that a later reading already accounted for it,
-and clear the record.
+the defect that rewrote the reason cannot lose them.
+
+It leaves alone a run the stored reading still accounts for. A reading taken
+after that run finished, with nothing of the artifact left to apply, no dirty
+revision and nothing modified, is the evidence the record would have been, and
+a resource carrying one is not latched however it is blocked now.
+
+So the runs that arrive this way are the ones no surviving reading settles: a
+resource that has read again and found work pending, or a dirty row, or one
+that has not read since. If such a resource is blocked for an unrelated reason
+at the moment of the upgrade, its old run is adopted with it. Establish what
+the run did, or that a later reading already accounted for it, and clear the
+record.
 
 ## Observability
 

@@ -2459,3 +2459,41 @@ func settledMigrationHistory() dataplane.MigrationStatusReport {
 		},
 	}
 }
+
+// The upgrade leaves alone a run the stored reading still accounts for.
+//
+// A reading taken after the run finished, with nothing of the artifact left to
+// apply and nothing the classifier refuses, is the evidence the record would
+// have been. Adopting anyway would latch a resource that was settled long ago
+// because something unrelated is refusing it now, and the page says it does
+// not.
+func TestAnUpgradeLeavesARunItsOwnReadingAccountsFor(t *testing.T) {
+	t.Parallel()
+
+	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+		operatorv1alpha1.MigrationRunOutcomeUnknown)
+	clearTheDocumentedWay(migration)
+	// The state an older manager leaves: the run in status.lastRun, blocked
+	// for something that has nothing to do with it, and a reading since that
+	// found nothing to do.
+	finished := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(-time.Hour))
+	migration.Status.LastRun.FinishedAt = &finished
+	migration.Status.History = &operatorv1alpha1.MigrationHistoryStatus{
+		ObservedAt:           metav1.NewTime(finished.Add(time.Minute)),
+		ContractVersion:      dataplane.SupportedMigrationStatusContract,
+		Fingerprint:          testDigest,
+		TargetIdentityDigest: testDigest,
+		PendingCount:         0,
+	}
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+		operatorv1alpha1.ReasonUnsupportedEngine, "something that is not about the run")
+
+	if migrationRunLatchedByRefusal(migration) {
+		t.Fatal("the upgrade would latch a run its own stored reading already accounts for")
+	}
+	// And it does latch once that reading no longer settles it.
+	migration.Status.History.PendingCount = 1
+	if !migrationRunLatchedByRefusal(migration) {
+		t.Fatal("the upgrade left a run no surviving reading accounts for")
+	}
+}
