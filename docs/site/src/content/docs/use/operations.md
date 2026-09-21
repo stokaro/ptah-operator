@@ -1091,6 +1091,58 @@ normal garbage collection; database objects remain untouched.
 The operator does not perform automatic rollback. Repair the desired artifact
 or database deliberately, then let observation produce a new plan.
 
+## A migration run nobody accounted for
+
+A `PtahMigration` whose Apply ended `Partial` or `Unknown` records the run in
+`status.unresolvedRun` and stops. The record is what a person needs in order to
+go and look, and it is deliberately somewhere a condition cannot reach: any
+later refusal rewrites the reason on `Blocked`, and a rewritten reason says
+nothing about whether the mutation was ever accounted for.
+
+```sh
+kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
+```
+
+It names the attempt (`operationID`), the Job it ran as by name and UID, the
+plan it was carrying out, and the credential-free identity of the database it
+reached. The Job and its logs may be gone by then, which is why the record
+carries their identity rather than pointing at them.
+
+Nothing runs against that database while the record stands, including the
+migration that run was applying.
+
+### How it clears
+
+On its own, from a read-only reading of that same database with nothing of the
+artifact left to apply. That happens after a person repairs whatever the run
+left half-done -- the recovery for a partial migration is to undo what it
+committed, drop the unfinished revision, and publish the sequence without it --
+and the operator settles on its next reading with no spec edit.
+
+A reading of a different database does not clear it, and neither does an
+artifact that ends before the database does: an artifact pointed at a shorter
+sequence says nothing about a run that went past it.
+
+### Clearing it by hand
+
+Only once you have established what the run did. The record is the operator
+saying it cannot tell, so removing it without answering that question hands the
+next Apply a database in a state nobody checked.
+
+```sh
+kubectl patch ptahmigration orders --subresource=status --type=json \
+  -p='[{"op":"remove","path":"/status/unresolvedRun"}]'
+```
+
+One upgrade case needs this. A manager older than this record held the same
+state in the `Blocked` condition's reason, and an upgrade adopts those runs so
+the defect that rewrote the reason cannot lose them. A resource whose run was
+already settled under the old manager carries no durable evidence that it was --
+that evidence is what this record adds -- so if such a resource is blocked for
+an unrelated reason at the moment of the upgrade, its old run is adopted too.
+Establish what the run did, or that a later reading already accounted for it,
+and clear the record.
+
 ## Observability
 
 The chart exposes the controller-runtime Prometheus endpoint through the
