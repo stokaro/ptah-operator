@@ -2963,7 +2963,8 @@ wait_for_the_late_dispatch_pod_to_be_gated() {
 		k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o json \
 			>"$WORK_DIR/late-pods.json" ||
 			fail "the $ENGINE Apply Pods could not be read while the gate was closed"
-		if jq -e -f "$ROOT_DIR/testdata/e2e/late-dispatch-gated-pod.jq" \
+		if jq -e --arg gate "$LATE_DISPATCH_GATE_LABEL" \
+			-f "$ROOT_DIR/testdata/e2e/late-dispatch-gated-pod.jq" \
 			"$WORK_DIR/late-pods.json" >/dev/null; then
 			return 0
 		fi

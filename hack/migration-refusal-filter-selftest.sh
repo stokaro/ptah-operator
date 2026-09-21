@@ -45,6 +45,7 @@ accepts() {
 	cat >"$WORK_DIR/document.json"
 	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
+		--arg gate operator.ptah.run/late-dispatch-proof \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null ||
 		fail "$filter refused a reading it has to accept: $description"
@@ -56,6 +57,7 @@ refuses() {
 	cat >"$WORK_DIR/document.json"
 	if jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
+		--arg gate operator.ptah.run/late-dispatch-proof \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null 2>&1; then
 		fail "$filter accepted a reading it has to refuse: $description"
@@ -252,23 +254,38 @@ JSON
 # written with any(), which is false for an empty list and so accepted a Job
 # whose Pod did not exist yet. Either one lets the proof suspend a Job nothing
 # was holding, and pass with the node selector no longer reaching the Pod.
-accepts late-dispatch-gated-pod.jq 'one Pod that never reached a node' <<'JSON'
+accepts late-dispatch-gated-pod.jq 'one Pod the gate is holding' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeSelector":{"operator.ptah.run/late-dispatch-proof":"open"}},
+ "status":{"phase":"Pending"}}]}
+JSON
+refuses late-dispatch-gated-pod.jq 'a Pod carrying no selector, between creation and scheduling' <<'JSON'
 {"items":[{"metadata":{"name":"apply-abc"},"spec":{},"status":{"phase":"Pending"}}]}
+JSON
+refuses late-dispatch-gated-pod.jq 'a selector for some other gate' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeSelector":{"kubernetes.io/os":"linux"}},
+ "status":{"phase":"Pending"}}]}
 JSON
 refuses late-dispatch-gated-pod.jq 'the Job has not created a Pod yet' <<'JSON'
 {"items":[]}
 JSON
 refuses late-dispatch-gated-pod.jq 'Pending, and already bound to a node' <<'JSON'
-{"items":[{"metadata":{"name":"apply-abc"},"spec":{"nodeName":"kind-worker"},
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeName":"kind-worker","nodeSelector":{"operator.ptah.run/late-dispatch-proof":"open"}},
  "status":{"phase":"Pending"}}]}
 JSON
 refuses late-dispatch-gated-pod.jq 'the runner is already going' <<'JSON'
-{"items":[{"metadata":{"name":"apply-abc"},"spec":{"nodeName":"kind-worker"},
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeName":"kind-worker","nodeSelector":{"operator.ptah.run/late-dispatch-proof":"open"}},
  "status":{"phase":"Running"}}]}
 JSON
 refuses late-dispatch-gated-pod.jq 'one held and one placed' <<'JSON'
-{"items":[{"metadata":{"name":"apply-abc"},"spec":{},"status":{"phase":"Pending"}},
- {"metadata":{"name":"apply-def"},"spec":{"nodeName":"kind-worker"},
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeSelector":{"operator.ptah.run/late-dispatch-proof":"open"}},
+ "status":{"phase":"Pending"}},
+ {"metadata":{"name":"apply-def"},
+ "spec":{"nodeName":"kind-worker","nodeSelector":{"operator.ptah.run/late-dispatch-proof":"open"}},
  "status":{"phase":"Pending"}}]}
 JSON
 

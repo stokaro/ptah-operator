@@ -10,7 +10,13 @@
 # Pending is not enough either. A Pod stays Pending while it is bound to a node
 # and pulling its image, and the kubelet starts the runner from there. What says
 # the gate held is that no Pod has been given a node.
+# And the selector has to be on the Pod. A Pod carrying no selector at all is
+# also briefly Pending and unbound, in the moment between its creation and the
+# scheduler placing it, so without this clause the reading accepts the one state
+# it exists to rule out: a builder that stopped propagating the selector, whose
+# Pod would have run the moment the scheduler looked at it.
 (.items | length) > 0
 and all(.items[];
   .status.phase == "Pending"
-  and ((.spec.nodeName // "") | length) == 0)
+  and ((.spec.nodeName // "") | length) == 0
+  and ((.spec.nodeSelector // {})[$gate] == "open"))
