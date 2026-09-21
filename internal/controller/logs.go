@@ -66,6 +66,21 @@ type PodLogReader interface {
 // Apply stays exactly as uncertain as it was.
 const defaultResultReadTimeout = 60 * time.Second
 
+// resultReadRetryInterval is how soon a read that ran out of time is tried
+// again.
+//
+// A timed-out read is a transient, and returning it as a reconcile error hands
+// it to the queue's exponential limiter, which climbs well past the headroom
+// the deadline was chosen to leave. A terminal Job produces no further event,
+// so nothing else would bring the resource back before its Lease expired and
+// another family took the realm -- which is safe, because the epoch retires
+// the operation, and expensive, because that migration then waits for a
+// person.
+//
+// So a timeout is requeued at a fixed short interval instead, and reported as
+// an Event so it is still visible as the failure it is.
+const resultReadRetryInterval = 5 * time.Second
+
 // boundedResultReadTimeout is the bound this read actually gets: the ceiling
 // above, or the resource's own execution deadline where that is shorter.
 //

@@ -634,6 +634,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			r.event(migration, corev1.EventTypeWarning, "ResultReadTimedOut",
+				"reading the %s result took longer than its bound: %v", operation.Type, err)
+			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
+		}
 		return ctrl.Result{}, err
 	}
 	result, parseErr := runner.ParseResultFor(evidence.Logs, migrationRunnerOperation(operation.Type), operation.ID)

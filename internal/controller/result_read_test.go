@@ -139,12 +139,9 @@ func TestAStalledResultReadEndsAtItsDeadline(t *testing.T) {
 	reconciler.ResultReadTimeout = 250 * time.Millisecond
 
 	started := time.Now()
-	err := reconcileWithin(t, reconciler, migration, 30*time.Second)
+	reconcileWithin(t, reconciler, migration, 30*time.Second)
 	elapsed := time.Since(started)
 
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Reconcile() error = %v, want the read's own deadline", err)
-	}
 	if elapsed < 250*time.Millisecond {
 		t.Fatalf("the read ended after %s, before the bound it was given", elapsed)
 	}
@@ -163,20 +160,31 @@ func reconcileWithin(
 	reconciler *MigrationReconciler,
 	migration *operatorv1alpha1.PtahMigration,
 	limit time.Duration,
-) error {
+) ctrl.Result {
 	t.Helper()
 
-	done := make(chan error, 1)
+	type outcome struct {
+		result ctrl.Result
+		err    error
+	}
+	done := make(chan outcome, 1)
 	go func() {
-		_, err := reconciler.Reconcile(context.Background(), migrationRequest(migration))
-		done <- err
+		result, err := reconciler.Reconcile(context.Background(), migrationRequest(migration))
+		done <- outcome{result: result, err: err}
 	}()
 	select {
-	case err := <-done:
-		return err
+	case finished := <-done:
+		if finished.err != nil {
+			t.Fatalf("Reconcile() error = %v, want a timed-out read requeued rather than raised", finished.err)
+		}
+		if finished.result.RequeueAfter != resultReadRetryInterval {
+			t.Fatalf("the timed-out read asked to come back in %s, want %s -- the queue's own backoff climbs past the Lease",
+				finished.result.RequeueAfter, resultReadRetryInterval)
+		}
+		return finished.result
 	case <-time.After(limit):
 		t.Fatalf("the reconcile was still inside its result read after %s, so that read has no bound", limit)
-		return nil
+		return ctrl.Result{}
 	}
 }
 
@@ -209,9 +217,7 @@ func TestAStalledResultReadKeepsTheApplyClaimAndItsLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := reconcileWithin(t, reconciler, migration, 30*time.Second); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Reconcile() error = %v, want the read's own deadline", err)
-	}
+	reconcileWithin(t, reconciler, migration, 30*time.Second)
 
 	actual := readMigration(t, api, migration)
 	claim := actual.Status.ActiveOperation
@@ -268,15 +274,18 @@ func TestAStalledResultReadHoldsNothingAnotherResourceNeeds(t *testing.T) {
 	)
 	reconciler.ResultReadTimeout = 5 * time.Second
 
-	stalled := make(chan error, 1)
+	stalled := make(chan ctrl.Result, 1)
 	go func() {
-		_, err := reconciler.Reconcile(ctx, migrationRequest(stalling))
-		stalled <- err
+		result, err := reconciler.Reconcile(ctx, migrationRequest(stalling))
+		if err != nil {
+			t.Errorf("Reconcile() error = %v, want a timed-out read requeued rather than raised", err)
+		}
+		stalled <- result
 	}()
 	select {
 	case <-logs.entered:
-	case err := <-stalled:
-		t.Fatalf("the reconcile finished without reaching the result read: %v", err)
+	case <-stalled:
+		t.Fatal("the reconcile finished without reaching the result read")
 	case <-time.After(30 * time.Second):
 		t.Fatal("the reconcile never reached the result read")
 	}
@@ -293,9 +302,10 @@ func TestAStalledResultReadHoldsNothingAnotherResourceNeeds(t *testing.T) {
 	}
 
 	select {
-	case err := <-stalled:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("the stalled reconcile ended with %v, want the read's own deadline", err)
+	case result := <-stalled:
+		if result.RequeueAfter != resultReadRetryInterval {
+			t.Fatalf("the stalled reconcile asked to come back in %s, want %s",
+				result.RequeueAfter, resultReadRetryInterval)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("the stalled reconcile never ended, so its result read has no bound")

@@ -383,7 +383,12 @@ be raised afterwards without lengthening a Lease already held.
 
 A read that ends at its deadline decides nothing: the claim, the Lease and any
 record of an unresolved run are left exactly as they were, because a log this
-manager could not read says nothing about what the database now holds.
+manager could not read says nothing about what the database now holds. It is
+requeued at a fixed short interval rather than raised as a reconcile error,
+because the queue's own backoff climbs past the headroom the deadline was
+chosen to leave, and a terminal Job produces no further event to bring the
+resource back with. The timeout is reported as an Event, so it stays visible
+as the failure it is.
 
 One case adds the field to a Job that is still running, and both admission
 layers name it: losing database lock continuity during an Apply retires the

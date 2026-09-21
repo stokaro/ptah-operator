@@ -1353,6 +1353,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.retryOperation(ctx, schema, job, failure)
 		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			r.event(schema, corev1.EventTypeWarning, "ResultReadTimedOut",
+				"reading the %s result took longer than its bound: %v", operation.Type, err)
+			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
+		}
 		return ctrl.Result{}, err
 	}
 	result, parseErr := runner.ParseResultFor(evidence.Logs, runnerOperation(operation.Type), operation.ID)
