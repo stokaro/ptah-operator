@@ -2806,10 +2806,17 @@ create_late_dispatch_database() {
 	rm -f "$SECRET_FILE"
 }
 
-# Always, because the gate this proves is the window and not the approval, and
-# sixty seconds because the window is the active deadline: long enough to suspend
-# the Job inside it, and short enough that waiting it out leaves most of the
-# grace minute to run the Pod in.
+# OnApproval, because the approval is what lets this proof choose the moment the
+# Apply is claimed. The nodeSelector reaches every operation Job, not only the
+# Apply -- internal/workload/migration_builder.go copies it into each Pod
+# template -- so a gate closed from the start strands the Resolve that comes
+# first and the resource never reaches an Apply at all. The read-only chain runs
+# with the gate open, and the gate closes between the plan and the approval.
+#
+# Sixty seconds because the window is the active deadline: long enough to
+# suspend the Job inside it, and short enough that waiting it out leaves most of
+# the grace minute to run the Pod in. An hour of interval because nothing here
+# wants a refresh landing between the gate closing and the Apply being claimed.
 create_late_dispatch_migration_resource() {
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
@@ -2839,8 +2846,8 @@ create_late_dispatch_migration_resource() {
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
         },
-        policy: {apply: "Always", lockTimeout: "30s"},
-        interval: "30s",
+        policy: {apply: "OnApproval", lockTimeout: "30s"},
+        interval: "1h",
         execution: {
           activeDeadlineSeconds: 60, failureRetryInterval: "10s", connectTimeout: "30s",
           nodeSelector: ($gate | {(.): "open"})
@@ -2850,10 +2857,74 @@ create_late_dispatch_migration_resource() {
 	k create -f "$RESOURCE_FILE" >/dev/null
 }
 
+# The gate is a node label the Apply Pod's nodeSelector needs. Open means every
+# node carries it and a Pod schedules at once; closed means no node does and a
+# Pod stays Pending however long it is left.
+open_late_dispatch_gate() {
+	k label nodes --all "${LATE_DISPATCH_GATE_LABEL}=open" --overwrite >/dev/null ||
+		fail "the late-dispatch gate could not be opened"
+	LATE_DISPATCH_GATE_OPEN=1
+}
+
+close_late_dispatch_gate() {
+	k label nodes --all "${LATE_DISPATCH_GATE_LABEL}-" >/dev/null 2>&1 || true
+	LATE_DISPATCH_GATE_OPEN=0
+}
+
 late_dispatch_status() {
 	k -n "$TEST_NAMESPACE" get ptahmigration "$LATE_MIGRATION" -o json >"$STATUS_FILE" ||
 		fail "$LATE_MIGRATION could not be read"
 	scan_for_credentials "$STATUS_FILE" "$LATE_MIGRATION status"
+}
+
+# The read-only chain has to finish before there is an Apply to delay, so this
+# waits for the plan with the gate still open.
+wait_for_late_dispatch_plan() {
+	plan_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$plan_deadline" ]; do
+		late_dispatch_status
+		if jq -e '
+          .status.phase == "AwaitingApproval" and
+          ((.status.plan.name // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			LATE_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 5
+	done
+	fail "$LATE_MIGRATION did not publish a plan to approve within ${TIMEOUT_SECONDS}s"
+}
+
+# Approving is what claims the Apply, and the gate is already closed when it
+# happens, so the Job this creates is the one whose Pod cannot start.
+approve_late_dispatch_plan() {
+	late_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$LATE_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	late_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$LATE_PLAN" \
+		-o jsonpath='{.metadata.uid}')
+	late_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$LATE_PLAN" \
+		-o jsonpath='{.spec.fingerprint}')
+	[ -n "$late_migration_uid" ] && [ -n "$late_plan_uid" ] && [ -n "$late_plan_fingerprint" ] ||
+		fail "$LATE_MIGRATION or its plan $LATE_PLAN carries no identity to approve"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "${LATE_MIGRATION}-approval" \
+		--arg migration "$LATE_MIGRATION" \
+		--arg migrationUID "$late_migration_uid" \
+		--arg plan "$LATE_PLAN" \
+		--arg planUID "$late_plan_uid" \
+		--arg fingerprint "$late_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the $ENGINE late-dispatch approval could not be created"
 }
 
 # The Job to suspend is the one the resource says it dispatched, by name and by
@@ -2957,7 +3028,16 @@ assert_late_dispatch_never_reaches_the_database() {
 
 run_late_dispatch_proof() {
 	create_late_dispatch_database
+	# Open first. The selector reaches the Resolve, Verify and History Jobs as
+	# well, so a gate that is closed here strands the first of them and no Apply
+	# is ever claimed to delay.
+	open_late_dispatch_gate
 	create_late_dispatch_migration_resource
+	wait_for_late_dispatch_plan
+	printf 'e2e migrations: closing the gate before approving the %s plan\n' \
+		"$ENGINE_KIND" >&2
+	close_late_dispatch_gate
+	approve_late_dispatch_plan
 	wait_for_late_dispatch_apply
 	printf 'e2e migrations: suspending the %s Apply Job so its own deadline restarts\n' \
 		"$ENGINE_KIND" >&2
@@ -2978,15 +3058,12 @@ run_late_dispatch_proof() {
 	hold_past_the_late_dispatch_window
 	printf 'e2e migrations: opening the gate and resuming the %s Apply Job past its window\n' \
 		"$ENGINE_KIND" >&2
-	LATE_DISPATCH_GATE_OPEN=1
-	k label nodes --all "${LATE_DISPATCH_GATE_LABEL}=open" --overwrite >/dev/null ||
-		fail "the late-dispatch gate label could not be applied"
+	open_late_dispatch_gate
 	k -n "$TEST_NAMESPACE" patch job "$LATE_APPLY_JOB" --type merge \
 		-p '{"spec":{"suspend":false}}' >/dev/null ||
 		fail "the $ENGINE Apply Job could not be resumed"
 	assert_late_dispatch_never_reaches_the_database
-	k label nodes --all "${LATE_DISPATCH_GATE_LABEL}-" >/dev/null 2>&1 || true
-	LATE_DISPATCH_GATE_OPEN=0
+	close_late_dispatch_gate
 	printf 'e2e migrations: PASS %s refused an Apply Pod that started after its window closed\n' \
 		"$ENGINE_KIND" >&2
 }
