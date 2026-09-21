@@ -411,6 +411,24 @@ type UnresolvedMigrationRunStatus struct {
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
 
+	// PlannedVersions are the migrations this run was carrying out, recorded
+	// here because they are what has to be accounted for and because the plan
+	// that named them does not outlive its retention.
+	//
+	// It is what binds settlement to this run rather than to whatever the
+	// resource points at now. A reading with nothing pending says only that
+	// the artifact resolved today has no work left; switching to an older or
+	// different artifact produces exactly that reading while saying nothing
+	// about the migrations this run may have half-applied.
+	//
+	// Empty where nothing recorded them -- a record adopted from a manager
+	// that predates this field, or a run whose plan could not be read. A
+	// reading with nothing pending is then the best proof available, which is
+	// the rule this field narrows rather than replaces.
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=256
+	PlannedVersions []int64 `json:"plannedVersions,omitempty"`
+
 	// RecordedAt is when the controller wrote this record.
 	RecordedAt metav1.Time `json:"recordedAt"`
 }

@@ -392,7 +392,12 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		// Neither may be retried. A partial run committed some of a migration's
 		// statements and not the rest, and an unknown one cannot say whether it
 		// did; running the same file again would run those statements twice.
-		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun, result.TargetIdentityDigest, r.now())
+		var planned []int64
+		if report != nil {
+			planned = report.Planned
+		}
+		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun,
+			result.TargetIdentityDigest, planned, r.now())
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, bounded(message, 1024))
@@ -435,6 +440,7 @@ func recordUnresolvedMigrationRun(
 	operation *operatorv1alpha1.MigrationOperationStatus,
 	run *operatorv1alpha1.MigrationRunStatus,
 	reportedTarget string,
+	plannedVersions []int64,
 	now time.Time,
 ) {
 	if run == nil {
@@ -450,6 +456,7 @@ func recordUnresolvedMigrationRun(
 		unresolved.OperationID = operation.ID
 		unresolved.PlanRef = operation.PlanRef.DeepCopy()
 	}
+	unresolved.PlannedVersions = boundedVersions(plannedVersions, 256)
 	// Which database to name is the whole point of the record, so the run's own
 	// account of it wins. A result frame reports the target the executor opened,
 	// and that is not always the one the plan was computed against: Secret
@@ -626,7 +633,8 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		run.JobUID = operation.JobUID
 	}
 	migration.Status.LastRun = run
-	recordUnresolvedMigrationRun(migration, operation, run, reportedTarget, r.now())
+	recordUnresolvedMigrationRun(migration, operation, run, reportedTarget,
+		r.plannedVersionsForClaim(ctx, migration, operation), r.now())
 	migration.Status.ActiveOperation = nil
 	migration.Status.Plan = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
@@ -770,4 +778,35 @@ func migrationActiveDeadline(migration *operatorv1alpha1.PtahMigration) int64 {
 	}
 	// The builder's own default, in the same unit the CRD uses.
 	return 900
+}
+
+// plannedVersionsForClaim reads the migrations the claim's plan was carrying
+// out, for the paths that reach an unresolved outcome with no result frame to
+// ask.
+//
+// A plan that cannot be read returns nothing rather than an error: the record
+// is worth writing without this, and the settlement rule says what an empty
+// list means.
+func (r *MigrationReconciler) plannedVersionsForClaim(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) []int64 {
+	if operation == nil || operation.PlanRef == nil || operation.PlanRef.Name == "" {
+		return nil
+	}
+	plan := &operatorv1alpha1.PtahMigrationPlan{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.PlanRef.Name}
+	if err := r.directReader().Get(ctx, key, plan); err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not read the plan an unresolved run was carrying out", "error", err.Error())
+		return nil
+	}
+	if plan.UID != operation.PlanRef.UID {
+		return nil
+	}
+	versions := make([]int64, 0, len(plan.Spec.Migrations))
+	for _, planned := range plan.Spec.Migrations {
+		versions = append(versions, planned.Version)
+	}
+	return versions
 }

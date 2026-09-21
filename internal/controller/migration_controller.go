@@ -855,29 +855,53 @@ func (r *MigrationReconciler) adoptUnresolvedMigrationRun(
 		return nil
 	}
 	before := migration.DeepCopy()
-	recordUnresolvedMigrationRun(migration, nil, migration.Status.LastRun, "", r.now())
+	recordUnresolvedMigrationRun(migration, nil, migration.Status.LastRun, "", nil, r.now())
 	return r.patchMigrationStatus(ctx, before, migration)
 }
 
 // migrationUnresolvedRunSettledBy reports that this reading is the proof the
-// unresolved run needed: the same database, with nothing of this artifact left
-// to apply.
+// unresolved run needed: the same database, with the migrations that run was
+// carrying out accounted for.
 //
-// A record that names no database cannot be contradicted by one, so any reading
-// with nothing pending settles it. Requiring a match against an identity nobody
+// The migrations are the run's own, not the ones the resource points at now.
+// "Nothing pending" says only that the artifact resolved today has no work
+// left, and an older or different artifact produces exactly that reading while
+// saying nothing about what this run may have half-applied -- so a tag moved
+// away and back would settle the record and then authorize the very migration
+// it was protecting, including one that committed statements without a
+// revision to show for them.
+//
+// Accounted for means the database records it applied, or a checkpoint covers
+// it. A version the reading does not mention at all is not accounted for: an
+// artifact that no longer carries it cannot say what happened to it.
+//
+// Where the record names no versions -- adopted from a manager that predates
+// them, or a plan that could not be read -- a reading with nothing pending is
+// the best proof available and still settles it. The same goes for a record
+// that names no database: requiring a match against an identity nobody
 // recorded would latch the resource with no way out.
 func migrationUnresolvedRunSettledBy(
 	unresolved *operatorv1alpha1.UnresolvedMigrationRunStatus,
 	history *operatorv1alpha1.MigrationHistoryStatus,
 	pending []int64,
+	accountedFor map[int64]bool,
 ) bool {
-	if len(pending) > 0 {
-		return false
-	}
-	if unresolved == nil || unresolved.TargetIdentityDigest == "" {
+	if unresolved == nil {
 		return true
 	}
-	return history != nil && unresolved.TargetIdentityDigest == history.TargetIdentityDigest
+	if unresolved.TargetIdentityDigest != "" &&
+		(history == nil || unresolved.TargetIdentityDigest != history.TargetIdentityDigest) {
+		return false
+	}
+	if len(unresolved.PlannedVersions) > 0 {
+		for _, version := range unresolved.PlannedVersions {
+			if !accountedFor[version] {
+				return false
+			}
+		}
+		return true
+	}
+	return len(pending) == 0
 }
 
 // recordMigrationHistory turns the database's own account into status. The
@@ -912,9 +936,13 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		PendingCount:         int32(len(pending)),
 		Dirty:                report.DirtyRevision != nil,
 	}
+	// The same test the applied count uses, kept as a set so an unresolved
+	// run can ask about its own versions rather than about a total.
+	accountedFor := make(map[int64]bool, len(report.Migrations))
 	for _, record := range report.Migrations {
 		if record.State == dataplane.MigrationStateApplied || record.State == dataplane.MigrationStateCheckpointCovered {
 			history.AppliedCount++
+			accountedFor[record.Version] = true
 		}
 	}
 	if len(modified) > 0 {
@@ -924,6 +952,16 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		history.OutOfOrderVersions = boundedVersions(outOfOrder, 64)
 	}
 	migration.Status.History = history
+
+	// The record goes as soon as this reading is its proof, wherever the
+	// switch below then lands. Tying the removal to one branch tied it to that
+	// branch's condition as well -- nothing pending -- so a reading that
+	// accounted for the run while the artifact had moved on left the record
+	// standing with nothing able to clear it.
+	if unresolved != nil && migrationUnresolvedRunSettledBy(unresolved, history, pending, accountedFor) {
+		migration.Status.UnresolvedRun = nil
+		unresolved = nil
+	}
 
 	switch {
 	case history.Dirty:
@@ -982,7 +1020,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	// record. Anything else -- work still pending, or a reading of a database
 	// this run never addressed -- waits for a person, exactly as the run's own
 	// condition said it would.
-	case unresolved != nil && !migrationUnresolvedRunSettledBy(unresolved, history, pending):
+	case unresolved != nil:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		refusal := fmt.Sprintf("%d migrations are pending and the last run's outcome was %s, so none may run again",
 			len(pending), unresolved.Outcome)
@@ -1011,10 +1049,6 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryAhead, "Nothing runs while the database is ahead of the artifact")
 	case len(pending) == 0:
-		// The one transition that settles an unresolved run: this database has
-		// every migration the artifact carries, so nothing is left for that run
-		// to have half-done. It is also the only place the record is removed.
-		migration.Status.UnresolvedRun = nil
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseInSync
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryMatched, "The history continues this artifact")
