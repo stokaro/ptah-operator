@@ -68,14 +68,11 @@ accepts `true` and nothing else.
 
 The run that counts is the one for the newest commit. The tip is what the next
 change builds on and what a release is cut from, and an older run proves a tree
-nobody builds on again. One run spends about twelve hours of runner time and
-reaches its verdict in about an hour and twenty minutes (measured on run
-35495669973: fifteen acceptance jobs between twelve minutes and an hour and a
-quarter, the race detector at six minutes, and one image build at six), so
-letting a superseded run finish only holds the newer one behind it. This repository used
-to spare a started `master` run, and the queue that built up held the commit
-that fixed a known lifecycle failure for hours while the run ahead of it
-re-proved that failure.
+nobody builds on again. A run costs hours of runner time and over an hour of
+wall clock, so letting a superseded one finish only holds the newer one behind
+it -- and a queue of superseded runs holds the commit that fixes a failure
+behind runs that re-prove it. `hack/e2etiming` reports what any given run
+actually spent, which is where to look rather than at a number written here.
 
 The cost is taken on purpose. A commit followed by another merge before its run
 finishes carries no verdict of its own, and a commit with no check reads exactly
@@ -106,11 +103,9 @@ follows it, the data plane and the fault injection inside it, the migration rows
 and the reference data that runs in the same namespace.
 
 Where the clock decides is between engines, which share nothing but the
-namespace a suite stands up for itself. PostgreSQL and MySQL in one job made
-that suite the longest stage of the matrix -- fifty-five minutes of the
-migration path and twenty-two of the reference data, measured on run
-35299742747 -- so each engine's phases are a suite of their own and the two run
-at once. The engine is a phase input rather than a default: the driver names it,
+namespace a suite stands up for itself. Both engines in one job made that suite
+the longest stage of the matrix by a wide margin, so each engine's phases are a
+suite of their own and the two run at once. The engine is a phase input rather than a default: the driver names it,
 and a phase asked to run with none refuses instead of covering one engine and
 reporting two.
 
@@ -225,8 +220,8 @@ worth stating here because no gate catches them:
 
 A lifecycle costs about ninety minutes on each of three Kubernetes minors, and
 the migration phase stops at its first failure, so a proof that measures the
-wrong thing hides every proof behind it and costs a day to find out. Three rules,
-learned by paying that:
+wrong thing hides every proof behind it and costs a day to find out. Each rule
+below was paid for that way:
 
 - **Assert the condition, never the phase it passes through.** A resource that
   has stopped still resolves, verifies and reads at its interval, so it is
