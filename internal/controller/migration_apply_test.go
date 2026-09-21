@@ -1173,7 +1173,7 @@ func TestVerificationPolicyWakesOnlyTheMigrationsThatReadIt(t *testing.T) {
 	other.Name = "invoices"
 	other.UID = "other-migration-uid"
 	other.Spec.Artifact.VerificationPolicyFrom.Name = "other-verification"
-	api := fake.NewClientBuilder().WithScheme(scheme).
+	api := withRealmIndexes(fake.NewClientBuilder().WithScheme(scheme)).
 		WithIndex(&operatorv1alpha1.PtahMigration{}, migrationPolicyIndex, func(object client.Object) []string {
 			migration := object.(*operatorv1alpha1.PtahMigration)
 			if migration.Spec.Artifact.VerificationPolicyFrom.Name == "" {

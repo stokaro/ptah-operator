@@ -9,9 +9,11 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -360,5 +362,132 @@ func TestSuspendingAClaimantEndsTheConflict(t *testing.T) {
 	}
 	if census.total() != 1 || census.conflict() {
 		t.Fatalf("a suspended claimant still contested the realm: %+v", census)
+	}
+}
+
+// withRealmIndexes gives a fake client the indexes RegisterRealmIndexes gives
+// a manager, derived through the same function. A fake client without them
+// fails the census with "no index with name", which is a fixture complaining
+// about itself rather than anything the controller did.
+func withRealmIndexes(builder *fake.ClientBuilder) *fake.ClientBuilder {
+	return builder.
+		WithIndex(&operatorv1alpha1.PtahSchema{}, RealmDigestIndex, func(object client.Object) []string {
+			schema, ok := object.(*operatorv1alpha1.PtahSchema)
+			if !ok {
+				return nil
+			}
+			return realmDigestIndexValue(schema.Spec.Target)
+		}).
+		WithIndex(&operatorv1alpha1.PtahMigration{}, RealmDigestIndex, func(object client.Object) []string {
+			migration, ok := object.(*operatorv1alpha1.PtahMigration)
+			if !ok {
+				return nil
+			}
+			return realmDigestIndexValue(migration.Spec.Target)
+		})
+}
+
+// The index is what membership is now read through, so what it derives is what
+// the census can see. These are the three ways a resource lands in the wrong
+// realm, or in none, without any of the counting above noticing.
+func TestTheRealmIndexNamesTheSameRealmTheCensusAsksFor(t *testing.T) {
+	t.Parallel()
+
+	postgres := operatorv1alpha1.DatabaseTargetSpec{
+		Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "team-a/orders",
+	}
+	// The digest canonicalizes the engine, so a spelling the API accepts is
+	// the same realm rather than a neighbouring one. Two resources that reach
+	// one database have to meet in the census whichever way each spelled it.
+	lowercase := operatorv1alpha1.DatabaseTargetSpec{
+		Engine: operatorv1alpha1.DatabaseEngine("postgresql"), CoordinationKey: "team-a/orders",
+	}
+	if got, want := realmDigestIndexValue(lowercase), realmDigestIndexValue(postgres); len(want) != 1 ||
+		len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("engine spellings indexed to %v and %v, so one database is two realms", got, want)
+	}
+
+	// A different engine on the same key is a different database.
+	mysql := operatorv1alpha1.DatabaseTargetSpec{
+		Engine: operatorv1alpha1.DatabaseEngineMySQL, CoordinationKey: "team-a/orders",
+	}
+	if realmDigestIndexValue(mysql)[0] == realmDigestIndexValue(postgres)[0] {
+		t.Fatal("two engines on one coordination key indexed to one realm")
+	}
+
+	// And a target the API would refuse indexes nothing rather than everything.
+	// Indexing it under the empty string would put every unindexable resource
+	// in one realm together, which is a conflict nobody declared.
+	for _, refused := range []operatorv1alpha1.DatabaseTargetSpec{
+		{Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "Team-A/Orders"},
+		{Engine: operatorv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: ""},
+		{Engine: operatorv1alpha1.DatabaseEngine("cassandra"), CoordinationKey: "team-a/orders"},
+	} {
+		if values := realmDigestIndexValue(refused); len(values) != 0 {
+			t.Fatalf("a target the API refuses indexed to %v", values)
+		}
+	}
+}
+
+// A resource that moves to another realm leaves the one it was in. The index
+// is recomputed on update, so this is really a check that the census reads the
+// index rather than a remembered answer.
+func TestAClaimantThatChangesItsRealmLeavesTheOldOne(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	rival := realmSchemaFixture("orders", migration.Spec.Target.CoordinationKey, false)
+	_, api := fakeMigrationReconciler(t, nil, migration, rival)
+
+	contested, err := takeRealmCensus(context.Background(), api,
+		migration.Spec.Target.Engine, migration.Spec.Target.CoordinationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contested.conflict() {
+		t.Fatalf("census = %+v, want the rival claiming the same realm", contested)
+	}
+
+	moved := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(),
+		types.NamespacedName{Namespace: rival.Namespace, Name: rival.Name}, moved); err != nil {
+		t.Fatal(err)
+	}
+	moved.Spec.Target.CoordinationKey = "team-b/somewhere-else"
+	if err := api.Update(context.Background(), moved); err != nil {
+		t.Fatal(err)
+	}
+
+	alone, err := takeRealmCensus(context.Background(), api,
+		migration.Spec.Target.Engine, migration.Spec.Target.CoordinationKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alone.Schemas != 0 || alone.total() != 1 || alone.conflict() {
+		t.Fatalf("census = %+v, want the migration alone after the rival moved", alone)
+	}
+}
+
+// Dropping the index from the census changes no answer -- listing everything
+// and filtering it gives the same counts, more slowly -- so nothing above
+// fails if it goes. This is what fails: a reader with no realm index cannot
+// serve the census at all, which is only true while the census asks for one.
+func TestTheCensusReadsThroughTheIndex(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	migration := migrationFixture()
+	unindexed := fake.NewClientBuilder().WithScheme(scheme).WithObjects(migration).Build()
+
+	_, err := takeRealmCensus(context.Background(), unindexed,
+		migration.Spec.Target.Engine, migration.Spec.Target.CoordinationKey)
+	if err == nil {
+		t.Fatal("the census answered without the realm index, so it is scanning again")
+	}
+	if !strings.Contains(err.Error(), RealmDigestIndex) {
+		t.Fatalf("error = %v, want it to name the missing %s index", err, RealmDigestIndex)
 	}
 }
