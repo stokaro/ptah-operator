@@ -1923,3 +1923,56 @@ func TestDeletingAMigrationKeepsRenewingTheDatabaseLease(t *testing.T) {
 		t.Fatalf("the claim went while its Pod was still running: %#v", waiting.Status.ActiveOperation)
 	}
 }
+
+// flakySecondPodListReader answers the first Pod listing and fails every one
+// after it. That is the shape of a transient API error arriving between two
+// reads of the same question.
+type flakySecondPodListReader struct {
+	client.Reader
+	listed int
+}
+
+func (r *flakySecondPodListReader) List(
+	ctx context.Context, list client.ObjectList, options ...client.ListOption,
+) error {
+	if _, isPods := list.(*corev1.PodList); isPods {
+		r.listed++
+		if r.listed > 1 {
+			return errors.New("injected transient Pod list failure")
+		}
+	}
+	return r.Reader.List(ctx, list, options...)
+}
+
+// A deletion that has already watched the executor stop must hand the database
+// back, even if asking again fails.
+//
+// The uncertain finish asks the same question a second time before releasing,
+// and a read error there answers "may still be writing" -- the right answer to
+// a question it could not settle. But by then the claim is gone, so the next
+// pass removes the finalizer with no epoch left to release the Lease with, and
+// every other resource on that database waits out the full lease for a run
+// this pass watched stop.
+func TestDeletingAMigrationHandsBackTheDatabaseDespiteAFlakySecondRead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	// The Job and its Pod are both terminal: this pass can prove nothing is
+	// writing, and does, before anything fails.
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	pod.Status = corev1.PodStatus{Phase: corev1.PodSucceeded}
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job, pod)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	reconciler.APIReader = &flakySecondPodListReader{Reader: api}
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	assertDatabaseHandedBack(t, reconciler, api)
+}

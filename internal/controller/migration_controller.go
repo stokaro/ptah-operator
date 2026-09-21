@@ -270,6 +270,15 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 					errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"), ""); err != nil {
 					return ctrl.Result{}, err
 				}
+				// Released on the proof this pass already has. The uncertain
+				// finish asks the same question again before releasing, and a
+				// transient read error there answers "may still be writing" --
+				// the right answer to a question it could not settle, and the
+				// wrong outcome here, because the claim is gone by then and the
+				// next pass removes the finalizer with no epoch left to release
+				// the Lease with. Every other resource on that database would
+				// wait out the full lease for a run this pass watched stop.
+				r.releaseMigrationApplyLock(ctx, migration, operation)
 				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			// Nothing stands under the name the claim reserved, so nothing can
