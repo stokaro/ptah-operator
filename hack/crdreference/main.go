@@ -253,10 +253,17 @@ func describe(entry row) string {
 // which is what a reader needs in order to find the rule; what the rule
 // computes is its message's business.
 //
-// A rule an optional parent guards is reported as the condition it is. The
+// A rule an optional field guards is reported as the condition it is. The
 // schema accepts a PtahSchema with no spec.dev at all, and its rule says so by
 // opening with !has(self.dev), so a note that read "this resource requires
 // dev.urlFrom" would contradict the type column beside it.
+//
+// One guard excuses the whole rule, so every path the rule names carries every
+// guard -- including a path above a guarded one. The row for the required
+// spec.artifact is where that matters: the rule under it requires a CA bundle
+// selector, and the bundle is reached through an optional transport, so the
+// row has to say the condition even though nothing guards spec.artifact
+// itself.
 func narrowings(schema *apiextensionsv1.JSONSchemaProps) map[string][]string {
 	notes := map[string][]string{}
 	for _, validation := range schema.XValidations {
@@ -267,8 +274,8 @@ func narrowings(schema *apiextensionsv1.JSONSchemaProps) map[string][]string {
 		guards := absenceGuards(validation.Rule)
 		for _, path := range selfReferences(validation.Rule) {
 			note := message
-			if governing := guardsOf(path, guards); len(governing) > 0 {
-				note = fmt.Sprintf("%s, %s", whereSet(governing), message)
+			if len(guards) > 0 {
+				note = fmt.Sprintf("%s, %s", whereSet(guards), message)
 			}
 			if !contains(notes[path], note) {
 				notes[path] = append(notes[path], note)
@@ -278,11 +285,22 @@ func narrowings(schema *apiextensionsv1.JSONSchemaProps) map[string][]string {
 	return notes
 }
 
-// absenceGuards are the paths a rule excuses itself for: a rule opening with
-// !has(self.dev) does not apply to an object with no dev.
+// absenceGuards are the paths a rule excuses itself for: a rule written
+// !has(self.dev) || c computes nothing about an object with no dev.
+//
+// Only a whole branch of the rule's outermost disjunction is a guard. A
+// !has() deeper in the expression is part of what the rule computes -- the
+// selector rules all carry !has(self.x.optional) || !self.x.optional inside
+// the branch that does the requiring -- and reading one as a guard would say
+// the rule only applies to selectors that set the flag, which is the opposite
+// of what it does.
 func absenceGuards(rule string) []string {
 	var guards []string
-	for _, match := range absenceGuard.FindAllStringSubmatch(rule, -1) {
+	for _, branch := range disjuncts(rule) {
+		match := absenceGuard.FindStringSubmatch(branch)
+		if match == nil {
+			continue
+		}
 		if !contains(guards, match[1]) {
 			guards = append(guards, match[1])
 		}
@@ -290,20 +308,26 @@ func absenceGuards(rule string) []string {
 	return guards
 }
 
-// guardsOf are the guards that excuse this path, all of them. A rule written
-// !has(a) || !has(a.b) || c applies only where a and b are both set, and
-// naming one of the two would state a weaker condition than the rule keeps.
-// A guard on an optional field governs that field and everything under it; a
-// guard on something else -- the optional flag of a selector, say -- governs
-// neither.
-func guardsOf(path string, guards []string) []string {
-	var governing []string
-	for _, guard := range guards {
-		if path == guard || strings.HasPrefix(path, guard+".") {
-			governing = append(governing, guard)
+// disjuncts splits a rule at the || operators of its outermost expression,
+// leaving the ones inside parentheses to the branch that holds them.
+func disjuncts(rule string) []string {
+	var branches []string
+	depth, start := 0, 0
+	for index := 0; index < len(rule); index++ {
+		switch rule[index] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case '|':
+			if depth == 0 && index+1 < len(rule) && rule[index+1] == '|' {
+				branches = append(branches, rule[start:index])
+				index++
+				start = index + 1
+			}
 		}
 	}
-	return governing
+	return append(branches, rule[start:])
 }
 
 // whereSet renders the guards as the clause that opens the note, with a verb
@@ -320,7 +344,7 @@ func whereSet(paths []string) string {
 		quoted[len(quoted)-1] + " are set"
 }
 
-var absenceGuard = regexp.MustCompile(`!has\(self\.([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*)\)`)
+var absenceGuard = regexp.MustCompile(`^\s*!has\(self\.([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*)\)\s*$`)
 
 // selfReferences are the dotted field paths a rule names, and every prefix of
 // each: a rule about target.urlFrom.name is a rule a reader of target.urlFrom

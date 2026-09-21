@@ -122,6 +122,13 @@ func TestGuardedRulesReadAsConditions(t *testing.T) {
 		{path: "spec.dev.urlFrom.name", condition: "where `dev` is set"},
 		// And an optional transport under a required parent.
 		{path: "spec.desired.transport.caFrom.name", condition: "where `desired.transport` and `desired.transport.caFrom` are set"},
+		// The guarded field is below this one, which is required and
+		// guarded by nothing. The condition still belongs here: it is the
+		// rule's condition, not this row's.
+		{path: "spec.desired", condition: "where `desired.transport` and `desired.transport.caFrom` are set"},
+		// Both halves of a comparison guard it, so the row for either one
+		// says the whole condition rather than its own half of it.
+		{path: "spec.policy.lockTimeout", condition: "where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set"},
 	} {
 		line := tableRow(t, string(contents), "reference/ptahschema.md", row.path)
 		if !strings.Contains(line, row.condition) {
@@ -135,5 +142,18 @@ func TestGuardedRulesReadAsConditions(t *testing.T) {
 	line := tableRow(t, string(contents), "reference/ptahschema.md", "spec.target.urlFrom.name")
 	if strings.Contains(line, "where `target") {
 		t.Fatalf("an unguarded rule was qualified as conditional:\n%s", line)
+	}
+
+	// Every selector rule ends with !has(self.x.optional) || !self.x.optional
+	// inside the branch that does the requiring. That is the rule refusing a
+	// selector marked optional, not a rule that applies only to one: read as
+	// a guard it would say the API requires nothing of a selector that leaves
+	// the flag unset, which is every selector in the examples.
+	line = tableRow(t, string(contents), "reference/ptahschema.md", "spec.target.urlFrom.optional")
+	if strings.Contains(line, "where `target.urlFrom.optional` is set") {
+		t.Fatalf("a condition inside the rule's own predicate was read as a guard on it:\n%s", line)
+	}
+	if !strings.Contains(line, requirementLead) {
+		t.Fatalf("the flag the rule refuses carries no requirement at all:\n%s", line)
 	}
 }
