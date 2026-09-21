@@ -1178,12 +1178,12 @@ resource claims, and stored state written by a newer manager than the one
 running.
 
 Passing those gates is not the same as getting the reading. Resolve, verify and
-the history read are retried at `spec.execution.failureRetryInterval` for as
-long as they keep failing, with no attempt at which the operator gives up, so a
-resource failing one of them never reaches the history read either. If the
-record is not clearing after the database was repaired, read
-`status.activeOperation` first: the operation it names and the attempt it is on
-say whether the chain is stuck rather than the record.
+the history read are retried for as long as they keep failing, with no attempt
+at which the operator gives up, so a resource failing one of them never reaches
+the history read either. If the record is not clearing after the database was
+repaired, read `status.activeOperation` first: the operation it names and the
+attempt it is on say whether the chain is stuck rather than the record, and an
+attempt climbing quickly is a Job failing as fast as it can be recreated.
 
 Other resources may also be working against the same database if every claimant
 declares a shared realm. So the record stops this resource from changing the
