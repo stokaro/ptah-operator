@@ -101,3 +101,39 @@ func tableRow(t *testing.T, page, name, path string) string {
 	t.Fatalf("%s has no row for %s, so this check reads nothing", name, path)
 	return ""
 }
+
+// A rule an optional parent guards has to read as the condition it is. The
+// schema accepts a PtahSchema with no spec.dev at all, so a row claiming the
+// resource requires dev.urlFrom would contradict the type column beside it.
+func TestGuardedRulesReadAsConditions(t *testing.T) {
+	t.Parallel()
+
+	contents, err := os.ReadFile(filepath.Join("..", "..", "docs", "site", "src", "content", "docs",
+		"reference", "ptahschema.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		path      string
+		condition string
+	}{
+		// spec.dev is absent from most resources; its rule opens with
+		// !has(self.dev).
+		{path: "spec.dev.urlFrom.name", condition: "where `dev` is set"},
+		// And an optional transport under a required parent.
+		{path: "spec.desired.transport.caFrom.name", condition: "where `desired.transport` and `desired.transport.caFrom` are set"},
+	} {
+		line := tableRow(t, string(contents), "reference/ptahschema.md", row.path)
+		if !strings.Contains(line, row.condition) {
+			t.Fatalf("%s states a requirement without the condition its rule carries, want %q:\n%s",
+				row.path, row.condition, line)
+		}
+	}
+
+	// And a rule nothing guards still reads as a requirement, so the
+	// qualification means something where it appears.
+	line := tableRow(t, string(contents), "reference/ptahschema.md", "spec.target.urlFrom.name")
+	if strings.Contains(line, "where `target") {
+		t.Fatalf("an unguarded rule was qualified as conditional:\n%s", line)
+	}
+}
