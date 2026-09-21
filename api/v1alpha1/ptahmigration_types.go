@@ -122,6 +122,15 @@ type MigrationOperationStatus struct {
 	// StartedAt is when the claim was written, which is before the Job exists.
 	StartedAt metav1.Time `json:"startedAt"`
 
+	// RetryNotBefore is when a retried attempt may be dispatched. A retry
+	// carries the delay the resource asked for, and carrying it here rather
+	// than in a requeue is what makes it survive a restart and an early Job or
+	// watch event: those re-enter reconciliation at once, and a delay that
+	// lived only in a requeue would be lost with the queue.
+	//
+	// Absent on a first attempt, which waits for nothing.
+	RetryNotBefore *metav1.Time `json:"retryNotBefore,omitempty"`
+
 	// Attempt counts this claim among the retries of the same operation.
 	// +kubebuilder:validation:Minimum=1
 	Attempt int32 `json:"attempt"`

@@ -75,8 +75,8 @@ resource reports those lower versions as applied and names the checkpoint that
 covers them.
 
 A checkpoint changes where a new database starts and nothing else. A database
-already past version 10 when this checkpoint arrived ignores it and goes on
-from whatever it has run. It does not undo statements a failed migration
+already at version 10 or beyond when this checkpoint arrived ignores it and
+goes on from whatever it has run. It does not undo statements a failed migration
 committed, clear a dirty revision, or make a backfill safe to run twice; those
 are answered by the revision table and by the recovery a person performs
 against it, which [Operations](../../use/operations/) describes.
@@ -103,8 +103,9 @@ spec:
   currentVersion: 0
   historyFingerprint: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   migrations:
-    # The cumulative schema through version 10. Versions 1 to 10 are not in
-    # this plan, because this file is what puts them in place.
+    # The cumulative schema through version 10, and the plan runs it: a
+    # checkpoint covers the versions below itself, not itself. Versions 1 to 9
+    # are absent, because this file is what puts them in place.
     - version: 10
       versionKey: "0010"
       description: cumulative schema through version 10
