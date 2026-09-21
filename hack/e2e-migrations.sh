@@ -2960,28 +2960,32 @@ run_deletion_during_apply_proof() {
 		--cascade=foreground --wait=false >/dev/null ||
 		fail "$DELETION_MIGRATION could not be marked for deletion"
 
+	# The detach is the controller's next pass, not the delete call's return, so
+	# it is waited for rather than demanded at once -- while the invariants it
+	# protects are held throughout. Asserting it on the first poll measures how
+	# fast a reconcile happened to be.
+	detach_deadline=$(deadline_from_now)
+	deletion_detached=no
+	while [ "$(date +%s)" -lt "$detach_deadline" ]; do
+		assert_deletion_retains_its_running_apply
+		if jq -e '[.metadata.ownerReferences // [] | .[] | select(.kind == "PtahMigration")] | length == 0' \
+			"$WORK_DIR/deletion-job.json" >/dev/null; then
+			deletion_detached=yes
+			break
+		fi
+		sleep 2
+	done
+	[ "$deletion_detached" = yes ] ||
+		fail "$DELETION_MIGRATION never detached its Apply Job, so foreground deletion could still collect it"
+
 	# The resource stays, and the executor keeps running inside it. Both halves
 	# matter: without the second the retention is about nothing.
 	deletion_hold_deadline=$(($(date +%s) + 20))
 	while [ "$(date +%s)" -lt "$deletion_hold_deadline" ]; do
-		k -n "$TEST_NAMESPACE" get ptahmigration "$DELETION_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null ||
-			fail "$DELETION_MIGRATION was released while its Apply Pod was still running"
-		jq -e --arg finalizer "operator.ptah.run/migration-operation" '
-          ((.metadata.deletionTimestamp // "") | length) > 0 and
-          (any(.metadata.finalizers[]?; . == $finalizer)) and
-          .status.activeOperation.type == "Apply"
-        ' "$STATUS_FILE" >/dev/null ||
-			fail "$DELETION_MIGRATION dropped the claim that accounts for its running Apply"
-		[ "$(k -n "$TEST_NAMESPACE" get pod -l "job-name=${DELETION_APPLY_JOB}" \
-			-o jsonpath='{.items[*].status.phase}' 2>/dev/null)" = Running ] ||
-			fail "the $ENGINE Apply Pod stopped, so the retention above proved nothing"
-		# And the Job is out of reach of the collector that foreground
-		# propagation just set loose on this resource's dependents.
-		k -n "$TEST_NAMESPACE" get job "$DELETION_APPLY_JOB" -o json >"$WORK_DIR/deletion-job.json" 2>/dev/null ||
-			fail "the $ENGINE Apply Job was collected while the deletion was still waiting on it"
+		assert_deletion_retains_its_running_apply
 		jq -e '[.metadata.ownerReferences // [] | .[] | select(.kind == "PtahMigration")] | length == 0' \
 			"$WORK_DIR/deletion-job.json" >/dev/null ||
-			fail "the $ENGINE Apply Job still names the resource being deleted as an owner"
+			fail "the $ENGINE Apply Job was handed back to the resource being deleted"
 		sleep 5
 	done
 
@@ -3009,6 +3013,25 @@ run_deletion_during_apply_proof() {
 	done
 	k -n "$TEST_NAMESPACE" get ptahmigration "$DELETION_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null || true
 	fail "$DELETION_MIGRATION kept its finalizer after nothing it dispatched could write: $(jq -c '{finalizers: .metadata.finalizers, phase: .status.phase, activeOperation: .status.activeOperation}' "$STATUS_FILE" 2>/dev/null)"
+}
+
+# assert_deletion_retains_its_running_apply holds everything the wait is for:
+# the resource, its claim, the Pod that may still be writing, and the Job that
+# Pod belongs to. It leaves the Job document behind for the caller to read.
+assert_deletion_retains_its_running_apply() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$DELETION_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null ||
+		fail "$DELETION_MIGRATION was released while its Apply Pod was still running"
+	jq -e --arg finalizer "operator.ptah.run/migration-operation" '
+      ((.metadata.deletionTimestamp // "") | length) > 0 and
+      (any(.metadata.finalizers[]?; . == $finalizer)) and
+      .status.activeOperation.type == "Apply"
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$DELETION_MIGRATION dropped the claim that accounts for its running Apply"
+	[ "$(k -n "$TEST_NAMESPACE" get pod -l "job-name=${DELETION_APPLY_JOB}" \
+		-o jsonpath='{.items[*].status.phase}' 2>/dev/null)" = Running ] ||
+		fail "the $ENGINE Apply Pod stopped, so the retention above proved nothing"
+	k -n "$TEST_NAMESPACE" get job "$DELETION_APPLY_JOB" -o json >"$WORK_DIR/deletion-job.json" 2>/dev/null ||
+		fail "the $ENGINE Apply Job was collected while the deletion was still waiting on it"
 }
 
 create_deletion_database() {
