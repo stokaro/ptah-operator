@@ -1770,3 +1770,60 @@ func TestAnUnresolvedMigrationRunIsSettledWhenItsMigrationLeavesTheSequence(t *t
 		t.Fatalf("the documented recovery left the resource latched: %#v", actual.Status.UnresolvedRun)
 	}
 }
+
+// The manual clear operations.md documents, exactly as it is written there.
+//
+// The record is removed and the refusal lifted in one write. Removing the
+// record alone is not enough: the upgrade path reads the Blocked condition
+// before anything else in a pass, so a resource left blocked has its record
+// rebuilt on the next reconciliation -- which is a runbook that returns the
+// reader to where they started.
+func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name       string
+		clear      func(*operatorv1alpha1.PtahMigration)
+		wantRecord bool
+	}{
+		{
+			name: "the record and the refusal go together",
+			clear: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.UnresolvedRun = nil
+				blocked := meta.FindStatusCondition(migration.Status.Conditions,
+					operatorv1alpha1.ConditionMigrationBlocked)
+				blocked.Status = metav1.ConditionFalse
+			},
+		},
+		{
+			name: "the record alone comes back",
+			clear: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.UnresolvedRun = nil
+			},
+			wantRecord: true,
+		},
+	} {
+		row := row
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
+				operatorv1alpha1.MigrationRunOutcomeUnknown)
+			if migration.Status.UnresolvedRun == nil {
+				t.Fatal("the fixture recorded no unresolved run")
+			}
+			row.clear(migration)
+
+			// A reading that still has work pending, because the case this is
+			// for is a person who established that the run changed nothing
+			// while its migration is still waiting.
+			actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
+			if row.wantRecord && actual.Status.UnresolvedRun == nil {
+				t.Fatal("removing the record alone was enough, so the runbook's warning is wrong")
+			}
+			if !row.wantRecord && actual.Status.UnresolvedRun != nil {
+				t.Fatalf("the documented clear was undone by the next pass: %#v", actual.Status.UnresolvedRun)
+			}
+		})
+	}
+}

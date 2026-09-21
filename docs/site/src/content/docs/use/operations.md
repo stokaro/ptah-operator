@@ -1108,8 +1108,13 @@ plan it was carrying out, and the credential-free identity of the database it
 reached. The Job and its logs may be gone by then, which is why the record
 carries their identity rather than pointing at them.
 
-Nothing runs against that database while the record stands, including the
-migration that run was applying.
+While the record stands this resource publishes no plan and dispatches no
+Apply, including the migration that run was applying. It keeps reading: resolve,
+verify and the history read continue at the resource's interval, and that
+history read is how the record clears. Other resources may also be working
+against the same database if every claimant declares a shared realm. So the
+record stops this resource from changing the database; it is not a promise that
+the database is idle, and a repair should not assume one.
 
 ### How it clears
 
@@ -1129,10 +1134,25 @@ Only once you have established what the run did. The record is the operator
 saying it cannot tell, so removing it without answering that question hands the
 next Apply a database in a state nobody checked.
 
+Removing the record alone does not clear it. A manager older than this record
+held the same state in the `Blocked` condition, and the upgrade path reads that
+condition before anything else in a pass -- so a resource whose record is
+removed while it is still blocked has the record rebuilt on the next
+reconciliation. The refusal and the record go in one write:
+
 ```sh
-kubectl patch ptahmigration orders --subresource=status --type=json \
-  -p='[{"op":"remove","path":"/status/unresolvedRun"}]'
+kubectl get ptahmigration orders -o json \
+  | jq 'del(.status.unresolvedRun)
+        | .status.conditions = [
+            .status.conditions[]
+            | if .type == "Blocked" then .status = "False" else . end
+          ]' \
+  | kubectl replace --subresource=status -f -
 ```
+
+The operator rewrites the conditions on its next reading, so this is one write
+rather than two: a resource left blocked between them is a resource whose
+record comes back.
 
 One upgrade case needs this. A manager older than this record held the same
 state in the `Blocked` condition's reason, and an upgrade adopts those runs so
