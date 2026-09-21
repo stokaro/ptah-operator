@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -233,4 +234,53 @@ func TestFrameSearchChargesTheSpanItActuallyScans(t *testing.T) {
 		t.Fatalf("a log the parser refused to finish searching was reported as still arriving: %v", err)
 	}
 	t.Logf("span-charged search finished in %s", elapsed)
+}
+
+// MaxResultLogBytes has to clear what a reader of the whole log would accept,
+// and the envelope it has to clear is measured from a real frame rather than
+// restated from the constants that build it. A header that grows -- another
+// field, a longer digest -- moves that envelope, and this is what notices.
+func TestTheResultLogBoundClearsTheLargestAcceptedFrame(t *testing.T) {
+	t.Parallel()
+
+	result := Result{
+		ProtocolVersion:   ProtocolVersion,
+		Operation:         OperationResolve,
+		OperationID:       "sha256:" + strings.Repeat("c", 64),
+		ChildExitCode:     0,
+		ResolvedDigest:    "sha256:" + strings.Repeat("d", 64),
+		ResolvedReference: "oci://registry.example/team/schema@sha256:" + strings.Repeat("d", 64),
+		ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json",
+		ResolvedSize:      321,
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marshalled, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := int64(len(frame) - len(marshalled))
+	if envelope <= 0 {
+		t.Fatalf("a frame of %d bytes carries a payload of %d, so its envelope measures %d",
+			len(frame), len(marshalled), envelope)
+	}
+	// The header declares its payload's length in decimal, so the largest
+	// frame's envelope is this one's plus the digits it gains. Measuring the
+	// envelope on a small frame and stopping there would understate it.
+	digits := int64(len(strconv.FormatInt(DefaultMaxFrameBytes, 10)) -
+		len(strconv.FormatInt(int64(len(marshalled)), 10)))
+	if digits < 0 {
+		t.Fatalf("the measured frame carries %d bytes, more than the %d the parser accepts",
+			len(marshalled), DefaultMaxFrameBytes)
+	}
+
+	// The largest frame the parser accepts, sitting as far from the end of the
+	// log as it tolerates on either side.
+	widest := DefaultMaxFrameBytes + envelope + digits + 2*maxInterleavedFrameBytes
+	if MaxResultLogBytes < widest {
+		t.Fatalf("MaxResultLogBytes is %d, which cannot hold the widest accepted frame at %d bytes",
+			MaxResultLogBytes, widest)
+	}
 }
