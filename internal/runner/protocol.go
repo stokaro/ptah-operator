@@ -273,8 +273,22 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	sawOversized := false
 	var last *Result
 	var rejection error
+	searchBudget := maxFrameSearchBytes
 	reject := func(reason string) { rejection = fmt.Errorf("%w: %s", ErrMalformedFrame, reason) }
 	rejectIncomplete := func(reason string) { rejection = incompleteFrameError{reason: reason} }
+	// A missing footer has two causes with different answers, and the absence
+	// alone does not separate them. A log that simply ends was read before the
+	// frame finished arriving. A log that runs on past the bound pushed the
+	// footer out of reach of the scan. How much log follows the payload says
+	// which, and it is structure, so it says so without quoting a byte of the
+	// log.
+	rejectUnclosed := func(payloadEnd int) {
+		if len(logs)-payloadEnd <= maxInterleavedFrameBytes {
+			rejectIncomplete("the log ends after the payload without the footer that closes it, so the frame never finished arriving")
+		} else {
+			reject("no footer closes the payload within the bound on log lines interleaved after it")
+		}
+	}
 
 	for searchAt < len(logs) {
 		relative := bytes.Index(logs[searchAt:], marker)
@@ -321,36 +335,45 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 			continue
 		}
 
-		payloadStart := headerEnd + 1
-		if payloadLength > int64(len(logs)-payloadStart) {
+		declaredStart := headerEnd + 1
+		if payloadLength > int64(len(logs)-declaredStart) {
 			rejectIncomplete("the log ends before the length the frame header declares, so the frame never finished arriving")
 			searchAt = start + len(marker)
 			continue
 		}
-		payloadEnd := payloadStart + int(payloadLength)
-		footerEnd, ok := frameFooterEnd(logs, payloadEnd)
-		if !ok {
-			// A missing footer has two causes with different answers, and the
-			// absence alone does not separate them. A log that simply ends was
-			// read before the frame finished arriving. A log that runs on past
-			// the bound pushed the footer out of reach of the scan. How much
-			// log follows the payload says which, and it is structure, so it
-			// says so without quoting a byte of the log.
-			if len(logs)-payloadEnd <= maxInterleavedFrameBytes {
-				rejectIncomplete("the log ends after the payload without the footer that closes it, so the frame never finished arriving")
+		if searchBudget <= 0 {
+			// Whatever follows gets no search at all rather than half of one,
+			// and the reader is told that is what happened.
+			reject("the log presents more frame headers than one read will search")
+			break
+		}
+		search := findFramePayload(logs, declaredStart, payloadLength, claimedDigest)
+		// Charged after the fact, because what a search costs depends on the
+		// length its header declared and on how far the next newline is. The
+		// budget is therefore a bound on what is spent before the last search
+		// rather than including it, and one search is bounded by the log.
+		searchBudget -= search.examined
+		if !search.found {
+			// Nothing within reach hashes to what the header declares. A footer
+			// closing any of it says the frame is all here and its payload is
+			// wrong; no footer at all says the log was cut, or the footer sits
+			// past the bound, which the payload the header points at reports.
+			if search.closed {
+				reject("the frame payload does not match the digest its header declares")
 			} else {
-				reject("no footer closes the payload within the bound on log lines interleaved after it")
+				rejectUnclosed(declaredStart + int(payloadLength))
 			}
 			searchAt = start + len(marker)
 			continue
 		}
-		payload := logs[payloadStart:payloadEnd]
-		actualDigest := sha256.Sum256(payload)
-		if !bytes.Equal(claimedDigest, actualDigest[:]) {
-			reject("the frame payload does not match the digest its header declares")
+		payloadStart := search.start
+		payloadEnd := payloadStart + int(payloadLength)
+		if !search.closed {
+			rejectUnclosed(payloadEnd)
 			searchAt = start + len(marker)
 			continue
 		}
+		payload := logs[payloadStart:payloadEnd]
 
 		var result Result
 		if err := json.Unmarshal(payload, &result); err != nil {
@@ -365,7 +388,7 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		}
 		copyOfResult := result
 		last = &copyOfResult
-		searchAt = footerEnd
+		searchAt = search.footerEnd
 	}
 
 	if last != nil {
@@ -383,10 +406,136 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	return Result{}, ErrFrameNotFound
 }
 
-// maxInterleavedFrameBytes bounds how far past a payload the footer may sit.
+// maxFrameSearchBytes bounds the payload searching one parse will do across
+// every frame header in a log, as a multiple of what a single frame may cost.
+//
+// The per-frame bounds are not a bound on the parse. Each header starts its own
+// search over its own window, and the windows of successive headers overlap
+// almost completely, so a log that presents many syntactically valid headers
+// pays a window for each: 10 MiB of ninety-byte header lines is over a hundred
+// thousand searches, gigabytes of walking on the reconcile worker that is
+// reading the log. Runner logs carry whatever the child wrote, so a child can
+// write those headers.
+//
+// Sixty-four windows is far past any real log. A runner writes one frame, and
+// the diagnostics around it are lines rather than headers, so reaching this
+// means the log is not one this parser can account for -- which is a verdict,
+// not a wait. The budget is checked before a frame's search rather than during
+// it, so each header gets a whole search or none: a partial search is how a
+// bound turns a frame that is present into one reported missing.
+const maxFrameSearchBytes = 64 * maxInterleavedFrameBytes
+
+// maxInterleavedFrameBytes bounds how far a payload may sit from the header
+// line that declares it, and how far past that payload the footer may sit.
 // Something has to bound it, or a frame whose footer never arrives would scan
 // the whole log for every marker-like line in it.
 const maxInterleavedFrameBytes = 64 << 10
+
+// framePayloadSearch is what a scan for a frame's payload settled on.
+type framePayloadSearch struct {
+	// start is where the payload begins, and footerEnd one past the footer
+	// that closes it. Both are set only when found and closed are both true.
+	start     int
+	footerEnd int
+	// found reports that a candidate's bytes hash to the digest the header
+	// declares. Nothing else identifies the payload.
+	found bool
+	// examined is how far past declaredStart this search read, which is what
+	// it cost. It is set whatever the outcome.
+	examined int
+	// closed reports that a footer closes the payload found -- or, when none
+	// was found, that a footer closes the position the header's own length
+	// points at, which says the frame finished arriving even though its payload
+	// is not the one declared.
+	closed bool
+}
+
+// findFramePayload locates the payload of a frame whose header declares
+// payloadLength bytes hashing to claimedDigest.
+//
+// The payload is not required to sit against the header line, for the reason
+// the footer is not required to sit against the payload: a container log is
+// line-oriented, and the kubelet has merged standard error into standard output
+// by the time a line is read, so a diagnostic the runner wrote microseconds
+// earlier lands inside the frame it was explaining. After the payload that was
+// already tolerated. Ahead of it, it stayed fatal -- the parser took the payload
+// by position, hashed a diagnostic, found no footer where the declared length
+// happened to land, and reported a frame still arriving for a log where nothing
+// was still arriving (seen three times in acceptance, on the custom-CA
+// rejection both fixes were found on).
+//
+// The digest the header declares is what identifies the payload, and it is the
+// only thing that does. Each complete line that could begin the payload is
+// tried and the one whose bytes hash to that digest is it, so a candidate that
+// merely sits where a payload could is accepted only when it is the payload.
+// Only complete lines may be skipped: a partial one means the log was cut,
+// which is what the footer exists to catch. The bound on interleaving after the
+// payload bounds how far this scan looks.
+//
+// What bounds the work it does is the payload's own shape. MarshalFrame writes
+// what json.Marshal returned, which escapes every control character, so the
+// payload carries no newline of its own and the newline that ends it is the one
+// the footer begins with: the payload is exactly one line, of exactly the length
+// the header declares. A candidate whose line is any other length is therefore
+// not the payload, and saying so costs the search for that one newline instead
+// of a hash of the declared length. Together those searches read each byte of
+// the window once, and only lines of exactly the declared length are hashed, so
+// at most a window's worth of bytes is -- whatever the declared length is, and
+// however many lines the log interleaved. Bounding the candidates themselves
+// would be the wrong bound: the excluded candidate is as likely to be the
+// payload as any other, and refusing to look at it turns a frame that is all
+// there into a frame reported as still arriving.
+func findFramePayload(
+	logs []byte, declaredStart int, payloadLength int64, claimedDigest []byte,
+) (search framePayloadSearch) {
+	// Named, because the cost below is recorded on the way out and a deferred
+	// write to a local would land after the value was already copied.
+	// Everything below reads forward from declaredStart, so the furthest byte
+	// any of it reached is what the search cost. The caller charges that to the
+	// budget it keeps across headers: charging a fixed window instead would
+	// undercount by the declared length and by a newline-free tail, which are
+	// exactly what a log can be made of.
+	furthest := declaredStart
+	defer func() { search.examined = furthest - declaredStart }()
+	limit := declaredStart + maxInterleavedFrameBytes
+	if limit > len(logs) {
+		limit = len(logs)
+	}
+	footers := newFooterScan(logs, declaredStart, payloadLength)
+	if footers.limit > furthest {
+		furthest = footers.limit
+	}
+	for candidate := declaredStart; candidate <= limit; {
+		lineEndRelative := bytes.IndexByte(logs[candidate:], '\n')
+		if lineEndRelative < 0 {
+			furthest = len(logs)
+			break
+		}
+		if candidate+lineEndRelative > furthest {
+			furthest = candidate + lineEndRelative
+		}
+		if int64(lineEndRelative) == payloadLength {
+			payloadEnd := candidate + int(payloadLength)
+			actualDigest := sha256.Sum256(logs[candidate:payloadEnd])
+			if bytes.Equal(claimedDigest, actualDigest[:]) {
+				search.start = candidate
+				search.found = true
+				search.footerEnd, search.closed = frameFooterEnd(logs, payloadEnd)
+				return search
+			}
+			// The digest says this line is not the payload. A footer closing it
+			// still says the writer finished, which is what separates a frame
+			// carrying the wrong bytes from one whose bytes have not all
+			// arrived. Only a line of the declared length is asked, so this
+			// costs a scan per plausible payload rather than per log line.
+			if !search.closed && footers.closes(payloadEnd) {
+				search.closed = true
+			}
+		}
+		candidate += lineEndRelative + 1
+	}
+	return search
+}
 
 // frameFooterEnd finds the end of the footer that closes a payload, and reports
 // whether the frame is closed at all.
@@ -431,6 +580,62 @@ func frameFooterEnd(logs []byte, payloadEnd int) (int, bool) {
 		lineStart = lineEnd + 1
 	}
 	return 0, false
+}
+
+// footerScan answers, for each payload end the search tries, whether a footer
+// closes it -- without starting the window again for every one.
+//
+// Asking frameFooterEnd per candidate is linear per question and quadratic over
+// a log that offers many of them: a header declaring a one-byte payload
+// followed by 64 KiB of two-byte lines gives 32768 candidates of exactly that
+// length, each walking the rest of the window line by line. Runner logs are
+// unbounded and carry whatever the child wrote, so that shape is reachable
+// rather than theoretical, and it blocks the reconcile worker that is reading
+// the log.
+//
+// Payload ends only ever move forward, so the footer search can move forward
+// with them and read the window once. Each position is a complete line by
+// construction: the payload end of a candidate the search asks about is a
+// newline, and a footer begins at one, so everything between them is
+// newline-delimited -- which is the same thing frameFooterEnd establishes by
+// walking.
+type footerScan struct {
+	logs  []byte
+	limit int // one past the furthest byte a footer of this frame could occupy
+	at    int // the footer's leading newline at or after the last question, or -1
+}
+
+// newFooterScan looks only where a footer of this frame could sit: a payload
+// begins within the interleave bound of the header, runs the declared length,
+// and its footer sits within that bound again. Searching to the end of the log
+// instead would make one abusive header cost the whole log.
+func newFooterScan(logs []byte, from int, payloadLength int64) *footerScan {
+	scan := &footerScan{logs: logs, at: -1}
+	limit := from + 2*maxInterleavedFrameBytes + int(payloadLength) + len(frameFooter)
+	if limit > len(logs) {
+		limit = len(logs)
+	}
+	scan.limit = limit
+	if found := bytes.Index(logs[from:limit], []byte(frameFooter)); found >= 0 {
+		scan.at = from + found
+	}
+	return scan
+}
+
+// closes reports whether a footer sits at payloadEnd, or within the interleave
+// bound after it. Questions arrive in increasing order of payloadEnd, and the
+// cursor never goes back.
+func (s *footerScan) closes(payloadEnd int) bool {
+	footer := []byte(frameFooter)
+	for s.at >= 0 && s.at < payloadEnd {
+		found := bytes.Index(s.logs[s.at+1:s.limit], footer)
+		if found < 0 {
+			s.at = -1
+			return false
+		}
+		s.at += 1 + found
+	}
+	return s.at >= 0 && s.at-payloadEnd < maxInterleavedFrameBytes
 }
 
 func validateResult(result Result, options ParseOptions) error {

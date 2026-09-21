@@ -98,6 +98,55 @@ func TestFrameToleratesStderrInterleavedBeforeItsFooter(t *testing.T) {
 	}
 }
 
+// TestFrameToleratesStderrInterleavedBeforeItsPayload is the same shape one
+// line earlier, and the one acceptance kept failing on after the footer side
+// was fixed: the custom-CA rejection e2e-https-ca-bad-ca put the runner's
+// refusal text between the header line and the payload. The parser took the
+// payload by position, so it hashed the diagnostic, looked for the footer
+// wherever the declared length happened to land, found none, and reported a
+// frame that had not finished arriving for a log that was complete. The harness
+// then spent its whole bounded window re-reading a log that could not change.
+func TestFrameToleratesStderrInterleavedBeforeItsPayload(t *testing.T) {
+	t.Parallel()
+
+	wanted := Result{
+		ProtocolVersion: ProtocolVersion,
+		Operation:       OperationResolve,
+		OperationID:     "sha256:" + strings.Repeat("a", 64),
+		ChildExitCode:   -1,
+		Error: &ResultError{
+			Code:    "invalid_oci_access",
+			Message: "registry certificate authority bytes do not match the credential-owner grant",
+		},
+	}
+	frame, err := MarshalFrame(wanted)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	diagnostic := []byte("ptah-runner: registry certificate authority bytes do not match the credential-owner grant\n")
+	interleaved := interleavedAfterTheHeaderLine(t, frame, diagnostic)
+
+	got, err := ParseResultFor(interleaved, OperationResolve, wanted.OperationID)
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, wanted) {
+		t.Fatalf("ParseResultFor() = %#v, want %#v", got, wanted)
+	}
+}
+
+// interleavedAfterTheHeaderLine splices lines between a frame's header line and
+// its payload, which is where a container log puts a diagnostic the runner
+// wrote as it finished the frame.
+func interleavedAfterTheHeaderLine(t *testing.T, frame, lines []byte) []byte {
+	t.Helper()
+	headerEnd := bytes.IndexByte(frame, '\n') + 1
+	if headerEnd <= 0 {
+		t.Fatal("marshalled frame carries no header line")
+	}
+	return append(append(append([]byte(nil), frame[:headerEnd]...), lines...), frame[headerEnd:]...)
+}
+
 // TestFrameRejectsAnUnclosedPayloadAndAPartialInterleavedLine keeps what the
 // footer is for. A payload the writer never closed, and one whose trailing text
 // stops mid-line, are both logs that were cut, which is the case the footer
@@ -817,6 +866,55 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 				return bytes.Replace(frame, []byte(`"operationId":"why"`), []byte(`"operationId":"whz"`), 1)
 			},
 			want: "does not match the digest",
+		},
+		{
+			// Tolerating a line ahead of the payload gives the parser more than
+			// one place the payload could begin, and the digest is what picks
+			// between them. When none of them hashes to what the header
+			// declares, the payload is wrong -- and the refusal has to go on
+			// saying so, rather than blaming the line it now skips.
+			name: "a payload edited after its digest was written, behind an interleaved line",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				edited := bytes.Replace(frame, []byte(`"operationId":"why"`), []byte(`"operationId":"whz"`), 1)
+				return interleavedAfterTheHeaderLine(t, edited, []byte("ptah-runner: refused before the child\n"))
+			},
+			want: "does not match the digest",
+		},
+		{
+			// The bound is the same on both sides of the payload. One line long
+			// enough to break it leaves no line start in reach for a payload to
+			// begin at, whichever length this result marshals to.
+			name: "a payload pushed past the bound on interleaved lines",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				noise := append(bytes.Repeat([]byte("x"), maxInterleavedFrameBytes+16), '\n')
+				return interleavedAfterTheHeaderLine(t, frame, noise)
+			},
+			want: "bound on log lines interleaved after it",
+		},
+		{
+			// A log that was cut has to keep reading as one, interleaved line
+			// or not: this is the read the bounded wait exists for, and the
+			// wait runs only while the refusal says so.
+			name: "a log that stops where the payload ends, behind an interleaved line",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				return interleavedAfterTheHeaderLine(t, frame[:len(frame)-len(frameFooter)],
+					[]byte("ptah-runner: refused before the child\n"))
+			},
+			want:          "never finished arriving",
+			stillArriving: true,
+		},
+		{
+			name: "a log that stops inside the payload, behind an interleaved line",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				return interleavedAfterTheHeaderLine(t, frame[:len(frame)-len(frameFooter)-4],
+					[]byte("ptah-runner: refused before the child\n"))
+			},
+			want:          "never finished arriving",
+			stillArriving: true,
 		},
 	}
 	for _, test := range tests {
