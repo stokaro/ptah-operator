@@ -1551,11 +1551,6 @@ func (in *UnresolvedMigrationRunStatus) DeepCopyInto(out *UnresolvedMigrationRun
 		*out = new(ImmutableObjectReference)
 		**out = **in
 	}
-	if in.PlannedVersions != nil {
-		in, out := &in.PlannedVersions, &out.PlannedVersions
-		*out = make([]int64, len(*in))
-		copy(*out, *in)
-	}
 	in.RecordedAt.DeepCopyInto(&out.RecordedAt)
 }
 

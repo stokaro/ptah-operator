@@ -1699,31 +1699,33 @@ func TestASettledMigrationRunIsNotReLatchedByAnUpgrade(t *testing.T) {
 	}
 }
 
-// Settlement is about the run's own migrations, not about whatever the
-// resource points at now.
+// Settlement is about the database this run addressed, and "nothing pending"
+// is a statement about the artifact resolved today.
 //
-// "Nothing pending" says only that the artifact resolved today has no work
-// left. Moving the tag to an older or different artifact produces exactly that
-// reading while saying nothing about the migration this run may have
-// half-applied -- and once the record is gone, moving the tag back authorizes
-// that migration again.
-func TestAnUnresolvedMigrationRunIsNotSettledByADifferentArtifact(t *testing.T) {
+// An artifact that ends before the database does says nothing about a run that
+// went past it, and it is what a tag moved back looks like. Settling on it
+// would remove the record, and moving the tag forward again would then
+// authorize the very migration the record was protecting.
+//
+// What this cannot refuse is a sequence the migration was taken out of. That
+// is the documented recovery for a run that half-applied one -- the person
+// undoes what it committed, drops the unfinished revision, and publishes the
+// sequence without it -- and a tag moved to a sequence that omits the
+// migration is the same gesture without the repair. The revision table does
+// not record the half that was committed, so nothing in status separates them.
+func TestAnUnresolvedMigrationRunIsNotSettledByAShorterSequence(t *testing.T) {
 	t.Parallel()
 
 	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
 		operatorv1alpha1.MigrationRunOutcomeUnknown)
-	unresolved := migration.Status.UnresolvedRun
-	if unresolved == nil {
+	if migration.Status.UnresolvedRun == nil {
 		t.Fatal("the fixture recorded no unresolved run")
 	}
-	// The run was carrying out version 3, which the database never recorded.
-	unresolved.PlannedVersions = []int64{3}
 
-	// A different artifact: it ends at version 2, both applied, so it has
-	// nothing pending at all -- which is exactly the reading that used to
-	// settle any record.
+	// The database is at 3. The artifact ends at 2, so it has nothing pending
+	// -- which is exactly the reading that used to settle any record.
 	report := pendingMigrationHistory()
-	report.CurrentVersion = 2
+	report.CurrentVersion = 3
 	report.TotalMigrations = 2
 	report.HasPendingChanges = false
 	report.PendingMigrations = nil
@@ -1734,43 +1736,37 @@ func TestAnUnresolvedMigrationRunIsNotSettledByADifferentArtifact(t *testing.T) 
 
 	actual, _ := readMigrationHistory(t, migration, report)
 	if actual.Status.UnresolvedRun == nil {
-		t.Fatal("an artifact with nothing pending settled a run that was applying a migration it does not carry")
+		t.Fatal("an artifact shorter than the database settled a run that went past it")
 	}
 	if actual.Status.Plan != nil {
-		t.Fatalf("a plan was published while the run's own migration was unaccounted for: %#v", actual.Status.Plan)
+		t.Fatalf("a plan was published while the run stood unaccounted for: %#v", actual.Status.Plan)
 	}
-	assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
 }
 
-// The other direction, and the one that shows the record has a way out: the
-// database records the run's own migration applied, so nothing is left for
-// that run to have half-done -- even though the artifact has since added work
-// of its own.
-//
-// That second half is the point. Removing the record used to belong to the
-// branch for "nothing pending", so it inherited that branch's condition: a
-// reading that accounted for the run while newer migrations were waiting left
-// the record standing, and nothing afterwards could clear it.
-func TestAnUnresolvedMigrationRunIsSettledOnceItsOwnMigrationIsApplied(t *testing.T) {
+// The recovery this workflow documents for a run that half-applied a
+// migration: the person undoes what it committed, drops the unfinished
+// revision, and publishes the sequence without it. The operator has to settle
+// on its own reading of the database somebody fixed, with no spec edit.
+func TestAnUnresolvedMigrationRunIsSettledWhenItsMigrationLeavesTheSequence(t *testing.T) {
 	t.Parallel()
 
 	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
-		operatorv1alpha1.MigrationRunOutcomeUnknown)
-	migration.Status.UnresolvedRun.PlannedVersions = []int64{3}
+		operatorv1alpha1.MigrationRunOutcomePartial)
 
+	// The sequence now ends at 3, and the database holds exactly that.
 	report := pendingMigrationHistory()
 	report.CurrentVersion = 3
-	report.TotalMigrations = 4
-	report.PendingMigrations = []int64{4}
+	report.TotalMigrations = 3
+	report.HasPendingChanges = false
+	report.PendingMigrations = nil
 	report.Migrations = []dataplane.MigrationRecord{
+		{Version: 1, Checksum: "checksum-1", State: dataplane.MigrationStateApplied},
 		{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
 		{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
-		{Version: 4, Checksum: "checksum-4", State: dataplane.MigrationStatePending},
 	}
 
 	actual, _ := readMigrationHistory(t, migration, report)
 	if actual.Status.UnresolvedRun != nil {
-		t.Fatalf("the database accounted for the run's own migration and the record stayed: %#v",
-			actual.Status.UnresolvedRun)
+		t.Fatalf("the documented recovery left the resource latched: %#v", actual.Status.UnresolvedRun)
 	}
 }

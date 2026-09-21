@@ -2620,11 +2620,7 @@ assert_unresolved_run_survives_another_refusal() {
       $run.jobName == $job and
       $run.jobUID == $uid and
       (($run.targetIdentityDigest // "") | test("^sha256:[0-9a-f]{64}$")) and
-      (($run.recordedAt // "") | length) > 0 and
-      # The migration this run was carrying out. It is what settlement has to
-      # account for, and naming it is how the record survives the artifact
-      # moving underneath it.
-      (($run.plannedVersions // []) | index(3)) != null
+      (($run.recordedAt // "") | length) > 0 
     ' "$STATUS_FILE" >/dev/null ||
 		fail "$UNCERTAIN_MIGRATION did not record the run whose effect nobody established"
 	scan_for_credentials "$STATUS_FILE" "the unresolved-run record"
