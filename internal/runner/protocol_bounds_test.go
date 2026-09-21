@@ -190,3 +190,47 @@ func TestFrameSearchIsBoundedAcrossManyHeaders(t *testing.T) {
 	}
 	t.Logf("bounded across headers in %s", elapsed)
 }
+
+// The shape a fixed per-header charge misses: few headers, each with an
+// enormous reach.
+//
+// Sixty-four headers is nothing against a budget counted in windows, but each
+// declares the largest payload the protocol allows and is followed by a suffix
+// with no newline in it, so the footer search and the search for the end of a
+// candidate line each read most of the log. Charging a window apiece counts a
+// few megabytes while the parse walks gigabytes, on the reconcile worker that
+// is reading the log.
+func TestFrameSearchChargesTheSpanItActuallyScans(t *testing.T) {
+	t.Parallel()
+
+	sum := sha256.Sum256([]byte("z")) // a digest nothing here matches
+	var log bytes.Buffer
+	for i := 0; i < 64; i++ {
+		fmt.Fprintf(&log, "PTAH_RUNNER_RESULT_V1 %d %s\n", DefaultMaxFrameBytes, hex.EncodeToString(sum[:]))
+	}
+	// Longer than the declared length, or every header is refused for not
+	// fitting and nothing is searched at all. No newline anywhere in it, so
+	// every search for the end of a line runs to the end of the log.
+	log.Write(bytes.Repeat([]byte("x"), int(DefaultMaxFrameBytes)+(8<<20)))
+
+	started := time.Now()
+	_, err := ParseResultFor(log.Bytes(), OperationResolve, "op")
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("a log of headers declaring payloads nothing carries was accepted")
+	}
+	// The wall clock is the wrong assertion here: these scans are IndexByte
+	// over memory, so charging a fixed window instead of the span costs
+	// milliseconds at this size and seconds only at a log size a test cannot
+	// allocate. What separates them exactly is which refusal comes out. One
+	// header of this reach spends the whole budget, so the next is refused for
+	// it; a fixed charge of one window apiece leaves room for all sixty-four,
+	// and the refusal is then whatever the last header happened to be.
+	if !strings.Contains(err.Error(), "more frame headers than one read will search") {
+		t.Fatalf("refusal = %v, want the budget refusing to search further", err)
+	}
+	if MayStillArrive(err) {
+		t.Fatalf("a log the parser refused to finish searching was reported as still arriving: %v", err)
+	}
+	t.Logf("span-charged search finished in %s", elapsed)
+}

@@ -341,14 +341,18 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 			searchAt = start + len(marker)
 			continue
 		}
-		if searchBudget < maxInterleavedFrameBytes {
+		if searchBudget <= 0 {
 			// Whatever follows gets no search at all rather than half of one,
 			// and the reader is told that is what happened.
 			reject("the log presents more frame headers than one read will search")
 			break
 		}
-		searchBudget -= maxInterleavedFrameBytes
 		search := findFramePayload(logs, declaredStart, payloadLength, claimedDigest)
+		// Charged after the fact, because what a search costs depends on the
+		// length its header declared and on how far the next newline is. The
+		// budget is therefore a bound on what is spent before the last search
+		// rather than including it, and one search is bounded by the log.
+		searchBudget -= search.examined
 		if !search.found {
 			// Nothing within reach hashes to what the header declares. A footer
 			// closing any of it says the frame is all here and its payload is
@@ -436,6 +440,9 @@ type framePayloadSearch struct {
 	// found reports that a candidate's bytes hash to the digest the header
 	// declares. Nothing else identifies the payload.
 	found bool
+	// examined is how far past declaredStart this search read, which is what
+	// it cost. It is set whatever the outcome.
+	examined int
 	// closed reports that a footer closes the payload found -- or, when none
 	// was found, that a footer closes the position the header's own length
 	// points at, which says the frame finished arriving even though its payload
@@ -478,17 +485,34 @@ type framePayloadSearch struct {
 // would be the wrong bound: the excluded candidate is as likely to be the
 // payload as any other, and refusing to look at it turns a frame that is all
 // there into a frame reported as still arriving.
-func findFramePayload(logs []byte, declaredStart int, payloadLength int64, claimedDigest []byte) framePayloadSearch {
-	var search framePayloadSearch
+func findFramePayload(
+	logs []byte, declaredStart int, payloadLength int64, claimedDigest []byte,
+) (search framePayloadSearch) {
+	// Named, because the cost below is recorded on the way out and a deferred
+	// write to a local would land after the value was already copied.
+	// Everything below reads forward from declaredStart, so the furthest byte
+	// any of it reached is what the search cost. The caller charges that to the
+	// budget it keeps across headers: charging a fixed window instead would
+	// undercount by the declared length and by a newline-free tail, which are
+	// exactly what a log can be made of.
+	furthest := declaredStart
+	defer func() { search.examined = furthest - declaredStart }()
 	limit := declaredStart + maxInterleavedFrameBytes
 	if limit > len(logs) {
 		limit = len(logs)
 	}
 	footers := newFooterScan(logs, declaredStart, payloadLength)
+	if footers.limit > furthest {
+		furthest = footers.limit
+	}
 	for candidate := declaredStart; candidate <= limit; {
 		lineEndRelative := bytes.IndexByte(logs[candidate:], '\n')
 		if lineEndRelative < 0 {
+			furthest = len(logs)
 			break
+		}
+		if candidate+lineEndRelative > furthest {
+			furthest = candidate + lineEndRelative
 		}
 		if int64(lineEndRelative) == payloadLength {
 			payloadEnd := candidate + int(payloadLength)
