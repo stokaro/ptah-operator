@@ -2317,3 +2317,47 @@ func TestAnUnresolvedRecordNamesTheReportedTargetOrTheLastOneRead(t *testing.T) 
 		})
 	}
 }
+
+// The reading that names no database is refused before it is stored, which is
+// what lets the page say a record this manager wrote always names one: a plan
+// is published only from a stored history, and an Apply runs only from a plan.
+func TestAHistoryReadingWithoutATargetIdentityIsRefused(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.History = &operatorv1alpha1.MigrationHistoryStatus{
+		ObservedAt:           metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC)),
+		ContractVersion:      dataplane.SupportedMigrationStatusContract,
+		Fingerprint:          testDigest,
+		TargetIdentityDigest: testDigest,
+	}
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	// A result the executor could not identify a database from.
+	frame := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+		OperationID: operation.ID, ChildExitCode: 0,
+		CoordinationDigest:   operation.CoordinationDigest,
+		TargetIdentityDigest: "",
+		MigrationHistory:     ptr(pendingMigrationHistory()),
+	})
+	reconciler, api := fakeMigrationReconciler(
+		t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap(),
+	)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	if actual.Status.History.TargetIdentityDigest != testDigest {
+		t.Fatalf("a reading that named no database replaced the stored one: %q",
+			actual.Status.History.TargetIdentityDigest)
+	}
+	if actual.Status.Plan != nil {
+		t.Fatalf("a reading that named no database published a plan: %#v", actual.Status.Plan)
+	}
+}

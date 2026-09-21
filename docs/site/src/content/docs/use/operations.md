@@ -1187,9 +1187,12 @@ left half-done -- the recovery for a partial migration is to undo what it
 committed, drop the unfinished revision, and publish the sequence without it --
 and the operator settles on its next reading with no spec edit.
 
-A reading of a different database does not clear it, and neither does an
-artifact that ends before the database does: an artifact pointed at a shorter
-sequence says nothing about a run that went past it.
+A reading of a different database does not clear a record that names one, and a
+record this manager wrote always names one: the plan that run was carrying out
+was computed from a reading, and a reading that named no database is refused
+before it is stored. Neither does an artifact that ends before the database
+does: an artifact pointed at a shorter sequence says nothing about a run that
+went past it.
 
 ### Clearing it by hand
 
