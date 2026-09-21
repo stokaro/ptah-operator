@@ -11,6 +11,10 @@
  * gets Starlight's cards under the design's pages. What this copy leaves out is
  * what this site has no source for -- the evidence date and the page's source
  * commit -- rather than a different arrangement of the same facts.
+ *
+ * The copyright is a fact of the site rather than of the page, so the meta row
+ * renders unconditionally: a page with no last-updated date and no edit link --
+ * the recorded runs under src/pages/demo have neither -- carries it too.
  */
 const { editUrl, lang, lastUpdated, pagination } = Astro.locals.starlightRoute;
 const { prev, next } = pagination;
@@ -21,26 +25,25 @@ const updated = lastUpdated ? lastUpdated.toLocaleDateString(lang, { dateStyle: 
 ---
 
 <footer class="ptah-footer">
-	{(lastUpdated || editUrl) && (
-		<div class="ptah-footer-meta">
-			<div class="ptah-footer-facts">
-				{lastUpdated && (
-					<span class="ptah-footer-fact">
-						{Astro.locals.t('page.lastUpdated')}{' '}
-						<time datetime={lastUpdated.toISOString()}>{updated}</time>
-					</span>
-				)}
-			</div>
-
-			{editUrl && (
-				<div class="ptah-footer-links">
-					<a class="ptah-footer-link" href={editUrl.href} target="_blank" rel="noreferrer" data-footer-action="edit">
-						{Astro.locals.t('page.editLink')} <span aria-hidden="true">↗</span>
-					</a>
-				</div>
+	<div class="ptah-footer-meta">
+		<div class="ptah-footer-facts">
+			{lastUpdated && (
+				<span class="ptah-footer-fact">
+					{Astro.locals.t('page.lastUpdated')}{' '}
+					<time datetime={lastUpdated.toISOString()}>{updated}</time>
+				</span>
 			)}
+			<span class="ptah-footer-fact">© 2026 Stokaro</span>
 		</div>
-	)}
+
+		{editUrl && (
+			<div class="ptah-footer-links">
+				<a class="ptah-footer-link" href={editUrl.href} target="_blank" rel="noreferrer" data-footer-action="edit">
+					{Astro.locals.t('page.editLink')} <span aria-hidden="true">↗</span>
+				</a>
+			</div>
+		)}
+	</div>
 
 	{(prev || next) && (
 		<nav class="ptah-pagination" aria-label="Previous and next pages">

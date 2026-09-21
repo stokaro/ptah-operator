@@ -116,6 +116,9 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	if err := r.directReader().Get(ctx, request.NamespacedName, migration); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := r.rejectUnsupportedStoredControllerState(migration); err != nil {
+		return ctrl.Result{}, err
+	}
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
 	}
@@ -139,6 +142,12 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		// write below so an optimistic conflict is seen here rather than later.
 		if err := r.directReader().Get(ctx, request.NamespacedName, migration); err != nil {
 			return ctrl.Result{}, client.IgnoreNotFound(err)
+		}
+		// The reload can bring state a newer manager wrote between the two
+		// reads, so the fence is applied to what was read rather than once per
+		// pass.
+		if err := r.rejectUnsupportedStoredControllerState(migration); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 	if !databaseEngineSupported(migration.Spec.Target.Engine) {
@@ -297,6 +306,50 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
 		errors.New("an execution component changed while the Apply was dispatched"), "")
 	return result, true, err
+}
+
+// rejectUnsupportedStoredControllerState is the first check after the direct
+// API read, and the migration family's half of the contract PtahSchema has
+// held since it gained one.
+//
+// A manager that meets state a newer controller wrote cannot know what that
+// state means, so it must not act on it: no binding rotated, no finalizer
+// added or removed, no Lease renewed or released, and no operation claim
+// interpreted. The startup and Helm preflight scans cover the kinds that exist
+// when a manager starts; this is the runtime boundary, for state restored or
+// otherwise introduced afterwards.
+//
+// Refusing is safe because containment is already paid for elsewhere: a
+// dispatched Job carries its own absolute deadlines, and a Lease expires on
+// its own. Both outlive this refusal and neither needs this manager to act.
+func (r *MigrationReconciler) rejectUnsupportedStoredControllerState(
+	migration *operatorv1alpha1.PtahMigration,
+) error {
+	if migration == nil {
+		return errors.New("migration is unavailable")
+	}
+	binding := migration.Status.ExecutionBinding
+	if binding == nil {
+		return nil
+	}
+	configured, err := r.configuredMigrationBinding()
+	if err != nil {
+		return err
+	}
+	if binding.ControllerStateVersion < 0 {
+		return fmt.Errorf(
+			"stored status.executionBinding controller state version %d is invalid; refusing to interpret or write PtahMigration state",
+			binding.ControllerStateVersion,
+		)
+	}
+	if binding.ControllerStateVersion > configured.ControllerStateVersion {
+		return fmt.Errorf(
+			"stored status.executionBinding controller state version %d exceeds supported version %d; refusing to interpret or write PtahMigration state",
+			binding.ControllerStateVersion,
+			configured.ControllerStateVersion,
+		)
+	}
+	return nil
 }
 
 func (r *MigrationReconciler) configuredMigrationBinding() (*operatorv1alpha1.ExecutionBindingStatus, error) {

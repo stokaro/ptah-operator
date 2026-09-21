@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -1769,6 +1770,127 @@ func TestAnUnresolvedMigrationRunIsSettledWhenItsMigrationLeavesTheSequence(t *t
 	if actual.Status.UnresolvedRun != nil {
 		t.Fatalf("the documented recovery left the resource latched: %#v", actual.Status.UnresolvedRun)
 	}
+}
+
+// State a newer manager wrote is not interpreted, and not written over.
+//
+// PtahSchema has held this contract since it gained one; this is the migration
+// family's half. A manager that meets such state cannot know what it means, so
+// it rotates no binding, touches no finalizer, creates no Job, and neither
+// renews nor releases a Lease. Refusing is safe because containment is already
+// paid for elsewhere: a dispatched Job carries its own absolute deadlines and a
+// Lease expires on its own, and both outlive the refusal.
+func TestAMigrationRefusesStoredStateFromANewerManager(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name  string
+		build func(*testing.T) (*operatorv1alpha1.PtahMigration, []client.Object)
+	}{
+		{
+			name: "idle",
+			build: func(t *testing.T) (*operatorv1alpha1.PtahMigration, []client.Object) {
+				t.Helper()
+				migration := migrationFixture()
+				migration.Status.ExecutionBinding = migrationExecutionBinding()
+				return migration, nil
+			},
+		},
+		{
+			name: "suspended",
+			build: func(t *testing.T) (*operatorv1alpha1.PtahMigration, []client.Object) {
+				t.Helper()
+				migration := migrationFixture()
+				migration.Spec.Suspend = true
+				migration.Status.ExecutionBinding = migrationExecutionBinding()
+				return migration, nil
+			},
+		},
+		{
+			name: "deleting",
+			build: func(t *testing.T) (*operatorv1alpha1.PtahMigration, []client.Object) {
+				t.Helper()
+				migration := migrationFixture()
+				migration.Status.ExecutionBinding = migrationExecutionBinding()
+				migration.Finalizers = []string{migrationOperationFinalizer}
+				deletedAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+				migration.DeletionTimestamp = &deletedAt
+				return migration, nil
+			},
+		},
+		{
+			name: "a dispatched Apply",
+			build: func(t *testing.T) (*operatorv1alpha1.PtahMigration, []client.Object) {
+				t.Helper()
+				migration, plan := awaitingApprovalFixture(t)
+				operation := applyClaimFor(t, migration, plan)
+				operation.DispatchStarted = true
+				job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+				job.Status.Conditions = nil
+				job.Status.Active = 1
+				return migration, []client.Object{plan, job, pod, verificationPolicyConfigMap()}
+			},
+		},
+	} {
+		row := row
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			migration, extra := row.build(t)
+			// One past what this manager writes: the smallest state it cannot
+			// account for.
+			migration.Status.ExecutionBinding.ControllerStateVersion = testControllerStateVersion + 1
+			objects := append([]client.Object{migration}, extra...)
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
+
+			before := readMigration(t, api, migration)
+			_, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+			if err == nil {
+				t.Fatal("state from a newer manager was reconciled rather than refused")
+			}
+			if !strings.Contains(err.Error(), "refusing to interpret or write PtahMigration state") {
+				t.Fatalf("refusal = %v, want one naming the stored state it will not interpret", err)
+			}
+
+			// And nothing moved. The refusal is only worth having if it
+			// precedes every write, so the object is compared whole.
+			after := readMigration(t, api, migration)
+			if !reflect.DeepEqual(before.Status, after.Status) {
+				t.Fatalf("status was written under unsupported state:\nbefore %#v\nafter  %#v",
+					before.Status, after.Status)
+			}
+			if !reflect.DeepEqual(before.Finalizers, after.Finalizers) {
+				t.Fatalf("finalizers = %#v, want %#v", after.Finalizers, before.Finalizers)
+			}
+			jobs := &batchv1.JobList{}
+			if err := api.List(ctx, jobs, client.InNamespace(migration.Namespace)); err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs.Items) != len(extraJobs(extra)) {
+				t.Fatalf("Job count = %d, want the %d it started with", len(jobs.Items), len(extraJobs(extra)))
+			}
+			leases := &coordinationv1.LeaseList{}
+			if err := api.List(ctx, leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
+				t.Fatal(err)
+			}
+			if len(leases.Items) != 0 {
+				t.Fatalf("a Lease was taken under unsupported state: %#v", leases.Items)
+			}
+		})
+	}
+}
+
+// extraJobs counts the Jobs a row seeded, so the assertion is about what this
+// pass created rather than about what the fixture happened to contain.
+func extraJobs(objects []client.Object) []client.Object {
+	jobs := make([]client.Object, 0, len(objects))
+	for _, object := range objects {
+		if _, isJob := object.(*batchv1.Job); isJob {
+			jobs = append(jobs, object)
+		}
+	}
+	return jobs
 }
 
 // The manual clear operations.md documents, exactly as it is written there.

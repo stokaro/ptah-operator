@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "13"
-    operator.ptah.run/crd-schema-digest: "sha256:288495c9168e73c305c8865a20c64d6726096736fde5533af9e9f77b85216798"
+    operator.ptah.run/crd-schema-version: "14"
+    operator.ptah.run/crd-schema-digest: "sha256:220ac51ac35ad1a356e1fe4a5bddf3d2fc4e275b044c317867d97da1dc43336d"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -2178,6 +2178,11 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: metadata.name must be at most 63 bytes, because it is carried whole
+            in the labels of the Jobs this resource dispatches
+          optionalOldSelf: true
+          rule: oldSelf.hasValue() || self.metadata.name.size() <= 63
     served: true
     storage: true
     subresources:
