@@ -3038,11 +3038,23 @@ wait_for_the_late_dispatch_job_to_be_suspended() {
 	while [ "$(date +%s)" -lt "$suspend_deadline" ]; do
 		k -n "$TEST_NAMESPACE" get job "$LATE_APPLY_JOB" -o json >"$WORK_DIR/late-job.json" ||
 			fail "the $ENGINE Apply Job could not be read while it was being suspended"
+		# A Job that already reached a terminal condition is not going to
+		# become suspended, and waiting out the deadline for it reports a
+		# timeout where the reason is in the object.
 		if jq -e '
-          .spec.suspend == true and
-          (.status.active // 0) == 0 and
-          any(.status.conditions[]?; .type == "Suspended" and .status == "True")
-        ' "$WORK_DIR/late-job.json" >/dev/null &&
+          any(.status.conditions[]?;
+            .status == "True" and (.type == "Complete" or .type == "Failed"))
+        ' "$WORK_DIR/late-job.json" >/dev/null; then
+			report_late_dispatch_state
+			fail "the $ENGINE Apply Job ended before it could be suspended, so the window is not what this would have measured"
+		fi
+		# The suspension is recorded on the object and the Pod it had is gone.
+		# Neither the Suspended condition nor status.active is required: a Job
+		# whose Pod never ran does not always carry the first, and what this
+		# row actually depends on -- that the resume restarts the Job's own
+		# deadline -- is asserted afterwards against .status.startTime, where
+		# it can be seen rather than inferred.
+		if jq -e '.spec.suspend == true' "$WORK_DIR/late-job.json" >/dev/null &&
 			[ -z "$(k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o name)" ]; then
 			return 0
 		fi
