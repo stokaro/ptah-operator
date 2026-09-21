@@ -721,11 +721,46 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	key types.NamespacedName,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
+	// Suspension first, and before the retry deadline. A person who suspends a
+	// resource is asking it to stop now, and a claim waiting out a retry has
+	// dispatched nothing -- so making them wait out an interval of up to an
+	// hour to have it retired would answer a different question than the one
+	// they asked.
 	if migration.Spec.Suspend {
 		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
 	}
+	// The inputs are re-read before the deadline is applied, not after it. A
+	// person correcting them -- a target Secret named wrong, an artifact
+	// reference that does not resolve -- is the usual reason a read-only
+	// operation failed at all, and the generation watch re-enters
+	// reconciliation the moment they do. Weighing the deadline first would
+	// hold that correction behind an interval of up to an hour, waiting out a
+	// claim nothing is going to dispatch.
+	//
+	// A fingerprint that cannot be read is not a correction by itself, and it
+	// waits like any other retry. Discarding on every pass that fails to read
+	// an input would turn an unreadable Secret into a claim-and-discard loop
+	// driven by whatever else the resource watches, which is the tight loop the
+	// delay exists to stop.
+	//
+	// An edit is visible without reading the inputs at all, and that is what
+	// separates the two: the API server bumps the generation, and the claim
+	// recorded the generation it was made from. So a correction whose new
+	// inputs cannot be read yet -- a reference that does not parse, a
+	// verification policy nobody has created -- retires the claim now rather
+	// than waiting out the interval it was meant to end.
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
-	if currentErr != nil || current != operation.InputFingerprint {
+	inputsChanged := migration.Generation != migration.Status.ObservedGeneration ||
+		(currentErr == nil && current != operation.InputFingerprint)
+	// A retried attempt waits out the delay the resource asked for. The check
+	// is here rather than only in the requeue that scheduled it, because a
+	// restart and an early Job or watch event both re-enter reconciliation
+	// immediately and would otherwise dispatch at once -- which is how a
+	// failing operation becomes a tight loop against whatever it is failing on.
+	if !inputsChanged && !due(operation.RetryNotBefore, r.now()) {
+		return requeueAtDeadline(operation.RetryNotBefore, r.now()), nil
+	}
+	if inputsChanged || currentErr != nil {
 		if currentErr == nil {
 			currentErr = errors.New("the operation inputs changed after the claim")
 		}
@@ -808,7 +843,11 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	}
 	expected := job.DeepCopy()
 	if err := r.Client.Create(ctx, job); err != nil {
-		if operation.Type == operatorv1alpha1.MigrationOperationApply && !apierrors.IsAlreadyExists(err) {
+		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+			// Including AlreadyExists. A Job standing under the name this claim
+			// reserved is one this claim may have created on a pass whose
+			// answer was lost, and retrying would rename the claim and dispatch
+			// beside it. What that Job did is a question for the database.
 			return r.finishUncertainMigrationApply(ctx, migration, nil,
 				fmt.Errorf("the Apply Job create result is uncertain: %w", err), "")
 		}
@@ -821,6 +860,13 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return ctrl.Result{}, fmt.Errorf("read created %s Job: %w", operation.Type, err)
 	}
 	if err := validateMigrationJobIntent(job, expected, migration); err != nil {
+		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+			// The Job exists by now and its executor may already be opening
+			// the database, so this claim is not free to walk away from it and
+			// dispatch under another name.
+			return r.finishUncertainMigrationApply(ctx, migration, job,
+				fmt.Errorf("the created Apply Job failed immutable intent validation: %w", err), "")
+		}
 		return r.retryMigrationOperation(ctx, migration, nil, fmt.Errorf("the created Job failed immutable intent validation: %w", err))
 	}
 	before := migration.DeepCopy()
@@ -1470,6 +1516,10 @@ func (r *MigrationReconciler) retryMigrationOperation(
 	next.JobUID = ""
 	next.AdmissionSnapshot = nil
 	next.StartedAt = metav1.NewTime(r.now())
+	// The delay the resource asked for, carried on the claim so a restart or
+	// an early watch event cannot skip it.
+	notBefore := metav1.NewTime(r.now().Add(migrationFailureRetry(migration)))
+	next.RetryNotBefore = &notBefore
 	name, err := r.Jobs.NameForMigration(migration, *next)
 	if err != nil {
 		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("name the retried %s Job: %w", operation.Type, err))
@@ -1482,7 +1532,7 @@ func (r *MigrationReconciler) retryMigrationOperation(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeWarning, "OperationRetried", "%s attempt %d: %v", operation.Type, operation.Attempt, failure)
-	return ctrl.Result{Requeue: true}, nil
+	return requeueAtDeadline(next.RetryNotBefore, r.now()), nil
 }
 
 // discardMigrationOperation drops a claim whose inputs no longer hold. Nothing

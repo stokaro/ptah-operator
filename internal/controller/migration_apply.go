@@ -645,8 +645,19 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 	next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 	migration.Status.NextReconciliationTime = &next
 	if job != nil {
+		// Scheduling the Job's cleanup is tidiness; recording a run nobody
+		// accounted for is the point. A TTL this manager cannot set leaves a
+		// Job to live out its own deadline, which Kubernetes already bounds. A
+		// record it cannot write leaves a claim active over a Job a later pass
+		// can bind and process -- the exact replay this path exists to refuse.
+		//
+		// The guard refuses the cleanup patch whenever the claim does not name
+		// this Job by UID, which is every Apply that failed before its create
+		// was confirmed. So the failure is reported and the record is written.
 		if err := r.markJobHarvested(ctx, job); err != nil {
-			return ctrl.Result{}, err
+			r.event(migration, corev1.EventTypeWarning, "MigrationJobCleanupDeferred",
+				"%s Job %q keeps its own deadline because its cleanup could not be scheduled: %v",
+				operation.Type, job.Name, err)
 		}
 	}
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {

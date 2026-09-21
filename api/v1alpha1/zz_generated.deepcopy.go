@@ -365,6 +365,10 @@ func (in *MigrationHistoryStatus) DeepCopy() *MigrationHistoryStatus {
 func (in *MigrationOperationStatus) DeepCopyInto(out *MigrationOperationStatus) {
 	*out = *in
 	in.StartedAt.DeepCopyInto(&out.StartedAt)
+	if in.RetryNotBefore != nil {
+		in, out := &in.RetryNotBefore, &out.RetryNotBefore
+		*out = (*in).DeepCopy()
+	}
 	if in.Source != nil {
 		in, out := &in.Source, &out.Source
 		*out = new(OCIArtifactAccessBinding)

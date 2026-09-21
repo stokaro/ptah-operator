@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "14"
-    operator.ptah.run/crd-schema-digest: "sha256:520c38e68e5e7926eaf891c409b9ae5119ed18952a4d9860fc486f8c011e9688"
+    operator.ptah.run/crd-schema-version: "15"
+    operator.ptah.run/crd-schema-digest: "sha256:925f86946972932a068853f9949278f3c44b9be48363c51bafa7bb6d5e3b295d"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -1048,6 +1048,9 @@ spec:
                     - name
                     - uid
                     type: object
+                  retryNotBefore:
+                    format: date-time
+                    type: string
                   source:
                     properties:
                       digest:
