@@ -24,7 +24,10 @@ spec:
     # later operation carries. A digest here pins it for good.
     ociRef: oci://ghcr.io/example/orders-migrations:stable
     verificationPolicyFrom:
-      name: ptah-verification-policy
+      # Its own policy, not the schema's: a migration directory is a
+      # different artifact type. examples/migration-verification-policy.yaml
+      # is the one this name is created from.
+      name: ptah-migration-verification-policy
       key: policy.yaml
   policy:
     # A migration artifact carries arbitrary SQL, and no analyzer classifies
