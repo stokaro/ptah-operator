@@ -254,13 +254,22 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 	if oldJob.Namespace != req.Namespace || oldJob.Name != req.Name || oldJob.UID == "" || oldJob.UID != job.UID {
 		return denyf("Job update does not preserve the request namespace, name, and UID")
 	}
-	if oldJob.Spec.TTLSecondsAfterFinished != nil || job.Spec.TTLSecondsAfterFinished == nil ||
-		*job.Spec.TTLSecondsAfterFinished != cleanupTTLSeconds {
-		return denyf("Job update is not the exact nil-to-300 cleanup TTL transition")
-	}
 	owner, ownerKind, err := subjectOwner(oldJob.OwnerReferences)
 	if err != nil {
 		return denyf("old Job does not have one exact operator controller owner: %v", err)
+	}
+	// The second write this webhook authorizes, and the only one that is not
+	// the cleanup TTL: an Apply Job detached from a PtahMigration that is being
+	// deleted. Foreground cascading deletion removes an owner's dependents
+	// before the owner, so a Job left owned is collected while the controller
+	// is still waiting on what it may be writing -- and the finalizer cannot
+	// stop that, because it holds the owner and the dependent goes first.
+	if ownerKind == "PtahMigration" && len(job.OwnerReferences) < len(oldJob.OwnerReferences) {
+		return v.validateMigrationJobDetach(ctx, oldJob, job, owner)
+	}
+	if oldJob.Spec.TTLSecondsAfterFinished != nil || job.Spec.TTLSecondsAfterFinished == nil ||
+		*job.Spec.TTLSecondsAfterFinished != cleanupTTLSeconds {
+		return denyf("Job update is not the exact nil-to-300 cleanup TTL transition")
 	}
 	if ownerKind == "PtahMigration" {
 		return v.validateMigrationJobUpdate(ctx, oldJob, job, owner)
@@ -1065,6 +1074,20 @@ func normalizeServiceAccountAlias(spec *corev1.PodSpec) {
 	if spec.DeprecatedServiceAccount == name {
 		spec.DeprecatedServiceAccount = ""
 	}
+}
+
+// validateOnlyOwnerReferencesChanged reports that nothing but the owner
+// references differs between the two objects.
+func validateOnlyOwnerReferencesChanged(oldJob, job *batchv1.Job) error {
+	oldCopy := oldJob.DeepCopy()
+	newCopy := job.DeepCopy()
+	oldCopy.OwnerReferences = newCopy.OwnerReferences
+	scrubUpdateServerMetadata(&oldCopy.ObjectMeta)
+	scrubUpdateServerMetadata(&newCopy.ObjectMeta)
+	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(oldCopy, newCopy) {
+		return errors.New("candidate object is not otherwise identical to the old object")
+	}
+	return nil
 }
 
 func validateOnlyCleanupTTLChanged(oldJob, job *batchv1.Job) error {

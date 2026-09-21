@@ -422,3 +422,89 @@ func migrationApplyJobFixture(t *testing.T) (
 	job.TypeMeta = metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"}
 	return migration, plan, job
 }
+
+// The second write this boundary authorizes on a migration Job, and every way
+// it must still refuse one.
+//
+// Foreground cascading deletion removes an owner's dependents before the
+// owner, so an Apply Job left owned is collected while the controller is still
+// waiting on what it may be writing. Detaching it is the only thing that keeps
+// it, and the boundary has to permit exactly that and nothing near it.
+func TestValidationHandlerAllowsOnlyTheMigrationJobDetach(t *testing.T) {
+	t.Parallel()
+
+	fixture := func(t *testing.T, deleting bool) (
+		*operatorv1alpha1.PtahMigration, *operatorv1alpha1.PtahMigrationPlan, *batchv1.Job,
+	) {
+		t.Helper()
+		migration, plan, job := migrationApplyJobFixture(t)
+		running := withGeneratedJobIdentity(job)
+		migration.Status.ActiveOperation.JobUID = running.UID
+		if deleting {
+			deletedAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+			migration.DeletionTimestamp = &deletedAt
+			migration.Finalizers = []string{"operator.ptah.run/migration-operation"}
+		}
+		return migration, plan, running
+	}
+	detached := func(job *batchv1.Job) *batchv1.Job {
+		out := job.DeepCopy()
+		out.OwnerReferences = nil
+		return out
+	}
+
+	t.Run("a deleting resource detaches its Apply Job", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, job := fixture(t, true)
+		handler := migrationHandlerFixture(t, migration, plan, job)
+		response := handler.Handle(context.Background(), migrationUpdateRequest(t, job, detached(job)))
+		if !response.Allowed {
+			t.Fatalf("the detach a deletion depends on was denied: %s", responseMessage(response))
+		}
+	})
+
+	t.Run("a resource that is not being deleted may not detach", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, job := fixture(t, false)
+		handler := migrationHandlerFixture(t, migration, plan, job)
+		response := handler.Handle(context.Background(), migrationUpdateRequest(t, job, detached(job)))
+		if response.Allowed {
+			t.Fatal("a live resource orphaned its own Apply Job")
+		}
+	})
+
+	t.Run("nothing else rides along with the detach", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, job := fixture(t, true)
+		handler := migrationHandlerFixture(t, migration, plan, job)
+		rewritten := detached(job)
+		rewritten.Spec.Template.Spec.Containers[0].Image = "example.test/other@" + digest('9')
+		response := handler.Handle(context.Background(), migrationUpdateRequest(t, job, rewritten))
+		if response.Allowed {
+			t.Fatal("a Pod template rewrite rode along with the detach")
+		}
+	})
+
+	t.Run("a Job the claim did not dispatch may not detach", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, job := fixture(t, true)
+		migration.Status.ActiveOperation.JobUID = "a-different-job"
+		handler := migrationHandlerFixture(t, migration, plan, job)
+		response := handler.Handle(context.Background(), migrationUpdateRequest(t, job, detached(job)))
+		if response.Allowed {
+			t.Fatal("a Job outside the claim was detached")
+		}
+	})
+
+	t.Run("the owner may not be swapped for another", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, job := fixture(t, true)
+		handler := migrationHandlerFixture(t, migration, plan, job)
+		swapped := job.DeepCopy()
+		swapped.OwnerReferences[0].UID = "somebody-elses-migration"
+		response := handler.Handle(context.Background(), migrationUpdateRequest(t, job, swapped))
+		if response.Allowed {
+			t.Fatal("the Apply Job was handed to another owner")
+		}
+	})
+}

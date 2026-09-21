@@ -248,3 +248,55 @@ func (v *Validator) readMigration(
 	}
 	return migration, nil
 }
+
+// validateMigrationJobDetach authorizes the one write that removes a
+// PtahMigration from its Apply Job's owner references.
+//
+// It exists for foreground cascading deletion, which removes an owner's
+// dependents before the owner. An Apply Job left owned is handed to the
+// garbage collector while the controller is still waiting to find out whether
+// its executor can still write, which stops SQL between statements; the
+// resource's finalizer cannot prevent it, because the finalizer holds the
+// owner and the dependent goes first.
+//
+// Everything about it is narrow. The resource has to be one that is going
+// away, the Job has to be the exact instance its claim dispatched, exactly
+// that owner reference may go, and nothing else about the Job may change. A
+// Job detached while its resource is alive would be a Job nothing owns and
+// nothing collects, which is why the deletion timestamp is required rather
+// than assumed.
+func (v *Validator) validateMigrationJobDetach(
+	ctx context.Context,
+	oldJob, job *batchv1.Job,
+	owner metav1.OwnerReference,
+) error {
+	if _, _, err := subjectOwner(job.OwnerReferences); err == nil {
+		return denyf("migration Job detach left an operator controller owner in place")
+	}
+	for _, kept := range job.OwnerReferences {
+		if kept.UID == owner.UID {
+			return denyf("migration Job detach did not remove the PtahMigration owner")
+		}
+	}
+	if len(oldJob.OwnerReferences)-len(job.OwnerReferences) != 1 {
+		return denyf("migration Job detach removed more than the PtahMigration owner")
+	}
+	migration, err := v.readMigration(ctx, oldJob.Namespace, owner, true)
+	if err != nil {
+		return err
+	}
+	if migration.DeletionTimestamp == nil {
+		return denyf("migration Job detach is only for a PtahMigration that is being deleted")
+	}
+	operation := migration.Status.ActiveOperation
+	if operation == nil || operation.Type != operatorv1alpha1.MigrationOperationApply {
+		return denyf("migration Job detach has no Apply claim to account for")
+	}
+	if operation.JobName != oldJob.Name || operation.JobUID != oldJob.UID {
+		return denyf("Job is not the exact active migration operation instance")
+	}
+	if err := validateOnlyOwnerReferencesChanged(oldJob, job); err != nil {
+		return denyf("migration Job detach changes fields outside the owner references: %v", err)
+	}
+	return nil
+}
