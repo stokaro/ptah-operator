@@ -191,6 +191,12 @@ A transcript is committed and published. The recorder reads the lab's own
 credential files and refuses to publish any text containing one of the values
 in them.
 
+That scan covers the values the lab generated and nothing else, and it reads
+what a command printed rather than what the command was looking at. A scenario
+that plants a credential of its own -- `failure-recovery` points a resource at
+a database URL that names one -- checks for that value itself, over the whole
+document rather than the part it goes on to display.
+
 It is a refusal and not a redaction. A transcript that reached a password
 reached it through a command the scenario asked for, and the repair is the
 scenario. The operator exists to keep a database password out of the places a
