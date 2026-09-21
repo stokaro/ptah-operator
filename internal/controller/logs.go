@@ -52,13 +52,19 @@ const defaultResultReadTimeout = 2 * time.Minute
 // boundedResultReadTimeout is the bound this read actually gets: the ceiling
 // above, or the resource's own execution deadline where that is shorter.
 //
-// The ceiling alone is not safe at every setting. A resource may ask for
-// activeDeadlineSeconds as low as 30, and an Apply's Lease is that plus a
-// minute -- ninety seconds, against a read that could run for a hundred and
-// twenty. A reconcile inside this call is a reconcile that is not renewing
-// that Lease, so a read allowed to outlast it hands the database to whatever
-// claims the realm next while this manager is still waiting to hear what its
-// own run did. The read may not outlast the work it is reading about.
+// The ceiling alone is out of proportion at the low end. A resource may ask
+// for activeDeadlineSeconds as low as 30, and an Apply's Lease is that plus a
+// minute; spending two minutes reading the result of thirty seconds of work is
+// the worker held for longer than the operation it is reporting on. So the
+// read is also held to the Lease the operation took, which is the only other
+// number the operation itself supplies.
+//
+// What this is not is the guard on the realm. A read is read-only, and a read
+// that outlives its Lease cannot authorize anything: the epoch is checked
+// before the result is used, and a Lease that changed hands retires the
+// operation and discards the result rather than acting on it. This bound is
+// there so one unanswered request does not hold the family's single worker --
+// it makes that read proportionate, and the epoch makes it safe.
 //
 // Zero or less means no Lease bounds this read -- a read-only operation holds
 // none -- and the ceiling applies.
