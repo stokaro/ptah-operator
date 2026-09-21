@@ -126,6 +126,7 @@ CHECKPOINT_DB_URL_FILE=$WORK_DIR/checkpoint-database.url
 CHECKPOINT_PLAN_FILE=$WORK_DIR/checkpoint-plan.json
 UNKNOWN_LAYER_DB_URL_FILE=$WORK_DIR/unknown-layer-database.url
 UNCERTAIN_DB_URL_FILE=$WORK_DIR/uncertain-database.url
+DELETION_DB_URL_FILE=$WORK_DIR/deletion-database.url
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 STATUS_FILE=$WORK_DIR/migration-status.json
 : >"$JOB_RECORDS_FILE"
@@ -301,6 +302,10 @@ select_engine() {
 	UNCERTAIN_MIGRATION="e2e-uncertain-${ENGINE}"
 	UNCERTAIN_COORDINATION_KEY="e2e/uncertain/${ENGINE}"
 	UNCERTAIN_RIVAL_SCHEMA="e2e-uncertain-${ENGINE}-rival"
+	DELETION_DATABASE=ptah_e2e_deletion
+	DELETION_DB_SECRET="e2e-${ENGINE}-deletion-db"
+	DELETION_MIGRATION="e2e-deletion-${ENGINE}"
+	DELETION_COORDINATION_KEY="e2e/deletion/${ENGINE}"
 	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-uncertain:stable"
 	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
 	UNKNOWN_LAYER_DATABASE=ptah_e2e_unknown_layer
@@ -2912,6 +2917,186 @@ assert_unknown_layer_never_reaches_the_database() {
 		fail "the $ENGINE database was opened for an artifact whose layers were refused"
 }
 
+# Deleting a PtahMigration while its Apply is executing SQL.
+#
+# The Job is owned by the resource, so releasing the finalizer under a running
+# Apply hands a live executor to cascading deletion and stops it between
+# statements -- and the claim that goes with it is the only record that the run
+# may have changed the database. The operator waits instead, and this is the
+# row that shows the wait is real rather than a unit test's idea of one.
+#
+# It also covers the case that has no wake-up of its own. Once the Job is gone,
+# nothing the controller watches changes again: the primary watch takes a
+# generation, a label or an annotation, so the status the settling pass writes
+# re-enqueues nothing. A settling pass that asked for no follow-up would leave
+# the resource here with its finalizer until the manager restarted, and
+# `kubectl delete` would hang. Only a cluster shows that.
+run_deletion_during_apply_proof() {
+	create_deletion_database
+	create_deletion_migration_resource
+	wait_for_deletion_apply_dispatch
+	# Migrations 1 and 2 committed, so the executor is inside the third and the
+	# database holds work a vanished resource would have stopped accounting for.
+	deletion_commit_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$deletion_commit_deadline" ]; do
+		[ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE version <= 2 AND state = 'applied'" \
+			"$DELETION_DATABASE")" = 2 ] && break
+		sleep 2
+	done
+	[ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE version <= 2 AND state = 'applied'" \
+		"$DELETION_DATABASE")" = 2 ] ||
+		fail "the $ENGINE deletion run did not commit its first two migrations within ${TIMEOUT_SECONDS}s"
+
+	# Background propagation, which is kubectl's default and what this change
+	# covers. Foreground is a different matter and is documented rather than
+	# asserted: it asks Kubernetes to remove the resource's dependents first,
+	# and the Apply Job is one of them, so the executor is collected before the
+	# operator is reconciled at all.
+	printf 'e2e migrations: deleting the %s PtahMigration while its Apply is still running\n' \
+		"$ENGINE_KIND" >&2
+	k -n "$TEST_NAMESPACE" delete ptahmigration "$DELETION_MIGRATION" --wait=false >/dev/null ||
+		fail "$DELETION_MIGRATION could not be marked for deletion"
+
+	# The resource stays, and the executor keeps running inside it. Both halves
+	# matter: without the second the retention is about nothing.
+	deletion_hold_deadline=$(($(date +%s) + 20))
+	while [ "$(date +%s)" -lt "$deletion_hold_deadline" ]; do
+		assert_deletion_retains_its_running_apply
+		sleep 5
+	done
+
+	# Now take the Job away, which is the case nothing wakes the controller for:
+	# no Job left to change, and a status write the primary watch discards.
+	printf 'e2e migrations: removing the %s Apply Job so only the settling pass is left\n' \
+		"$ENGINE_KIND" >&2
+	k -n "$TEST_NAMESPACE" delete job "$DELETION_APPLY_JOB" --wait=true >/dev/null ||
+		fail "the $ENGINE Apply Job could not be removed"
+
+	# The resource has to go on its own. A manager whose settling pass asked for
+	# nothing to follow it would sit here holding the finalizer.
+	release_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$release_deadline" ]; do
+		if ! k -n "$TEST_NAMESPACE" get ptahmigration "$DELETION_MIGRATION" >/dev/null 2>&1; then
+			printf 'e2e migrations: PASS %s held a deleted migration until its Apply could not write\n' \
+				"$ENGINE_KIND" >&2
+			# The rows the run committed are still the database's own business:
+			# deletion accounts for the run, it does not undo it.
+			[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$DELETION_DATABASE")" = 3 ] ||
+				fail "the $ENGINE deletion changed the rows the run had already committed"
+			return 0
+		fi
+		sleep 5
+	done
+	k -n "$TEST_NAMESPACE" get ptahmigration "$DELETION_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null || true
+	fail "$DELETION_MIGRATION kept its finalizer after nothing it dispatched could write: $(jq -c '{finalizers: .metadata.finalizers, phase: .status.phase, activeOperation: .status.activeOperation}' "$STATUS_FILE" 2>/dev/null)"
+}
+
+# assert_deletion_retains_its_running_apply holds everything the wait is for:
+# the resource, its claim, the Pod that may still be writing, and the Job that
+# Pod belongs to. It leaves the Job document behind for the caller to read.
+assert_deletion_retains_its_running_apply() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$DELETION_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null ||
+		fail "$DELETION_MIGRATION was released while its Apply Pod was still running"
+	jq -e --arg finalizer "operator.ptah.run/migration-operation" '
+      ((.metadata.deletionTimestamp // "") | length) > 0 and
+      (any(.metadata.finalizers[]?; . == $finalizer)) and
+      .status.activeOperation.type == "Apply"
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$DELETION_MIGRATION dropped the claim that accounts for its running Apply"
+	[ "$(k -n "$TEST_NAMESPACE" get pod -l "job-name=${DELETION_APPLY_JOB}" \
+		-o jsonpath='{.items[*].status.phase}' 2>/dev/null)" = Running ] ||
+		fail "the $ENGINE Apply Pod stopped, so the retention above proved nothing"
+	k -n "$TEST_NAMESPACE" get job "$DELETION_APPLY_JOB" -o json >"$WORK_DIR/deletion-job.json" 2>/dev/null ||
+		fail "the $ENGINE Apply Job was collected while the deletion was still waiting on it"
+}
+
+create_deletion_database() {
+	create_database "$DELETION_DATABASE"
+	database_url "$DELETION_DATABASE" >"$DELETION_DB_URL_FILE"
+	chmod 600 "$DELETION_DB_URL_FILE"
+	{
+		cat "$DELETION_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$DELETION_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$DELETION_DATABASE" \
+		--rawfile url "$DELETION_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# The same artifact the uncertain row published, against a database of its own.
+# Its third migration sleeps, which is the window this proof needs; publishing a
+# second copy of it would only add a build to the longest phase in the matrix.
+create_deletion_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$DELETION_MIGRATION" \
+		--arg secret "$DELETION_DB_SECRET" \
+		--arg reference "$UNCERTAIN_REFERENCE" \
+		--arg coordinationKey "$DELETION_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "30s",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+# The Job to wait on is the one the resource says it dispatched, by name and by
+# UID: a Job found by label could be a later attempt under the same name.
+wait_for_deletion_apply_dispatch() {
+	deletion_dispatch_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$deletion_dispatch_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$DELETION_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null || true
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null 2>&1; then
+			DELETION_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 2
+	done
+	fail "$DELETION_MIGRATION did not dispatch an Apply bound to its own Job within ${TIMEOUT_SECONDS}s"
+}
+
 run_unknown_layer_proof() {
 	create_unknown_layer_database
 	publish_unknown_layer_artifact
@@ -2962,6 +3147,7 @@ run_engine_migrations() {
 	run_existing_schema_adoption_proof
 	run_checkpoint_bootstrap_proof
 	run_uncertain_apply_proof
+	run_deletion_during_apply_proof
 	run_unknown_layer_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
