@@ -562,3 +562,148 @@ func readFile(t *testing.T, path string) []byte {
 	}
 	return contents
 }
+
+// A name longer than a label value is accepted by Kubernetes and then cannot
+// dispatch anything: both Job builders carry the resource name whole into a
+// label, and a label value stops at 63 bytes. The resource would be created,
+// validated, and stuck before its first Resolve.
+//
+// It is refused at admission rather than shortened. Shortening two long names
+// that share a prefix produces one label, and the labels are what select a
+// resource's Jobs, attribute its results and clean them up -- so a truncation
+// that collided would hand one resource another's run. Refusing says no once,
+// at the only moment a person can still choose the name.
+//
+// The boundary is bytes, and CEL counts characters. Kubernetes names are
+// lowercase alphanumerics, '-' and '.', so the two agree here; the rule would
+// need rewriting if that alphabet ever widened.
+func TestGeneratedCRDsRefuseNamesThatCannotBecomeJobLabels(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []struct {
+		name     string
+		file     string
+		resource string
+		// spec builds a fresh document per subtest. The subtests run in
+		// parallel and structuraldefaulting.Default writes into the object it
+		// is given, so one shared map is a data race rather than a fixture.
+		spec func() map[string]interface{}
+	}{
+		{
+			name: "PtahSchema", file: "operator.ptah.run_ptahschemas.yaml", resource: "ptahschema",
+			spec: func() map[string]interface{} {
+				return map[string]interface{}{
+					"target": map[string]interface{}{
+						"engine": "PostgreSQL", "coordinationKey": "tenant-a/orders",
+						"urlFrom": map[string]interface{}{"name": "database", "key": "url"},
+					},
+					"desired": map[string]interface{}{
+						"ociRef":                 "oci://registry.example/schema:current",
+						"verificationPolicyFrom": map[string]interface{}{"name": "verification", "key": "policy.yaml"},
+					},
+				}
+			},
+		},
+		{
+			name: "PtahMigration", file: "operator.ptah.run_ptahmigrations.yaml", resource: "ptahmigration",
+			spec: func() map[string]interface{} {
+				return map[string]interface{}{
+					"target": map[string]interface{}{
+						"engine": "PostgreSQL", "coordinationKey": "tenant-a/orders",
+						"urlFrom": map[string]interface{}{"name": "database", "key": "url"},
+					},
+					"artifact": map[string]interface{}{
+						"ociRef":                 "oci://registry.example/migrations:current",
+						"verificationPolicyFrom": map[string]interface{}{"name": "verification", "key": "policy.yaml"},
+					},
+				}
+			},
+		},
+	} {
+		kind := kind
+		t.Run(kind.name, func(t *testing.T) {
+			t.Parallel()
+
+			crd := loadGeneratedCRD(t, filepath.Join(
+				repositoryRoot(t), "config", "crd", "bases", kind.file,
+			))
+			structural, err := structuralschema.NewStructural(storageVersionSchema(t, crd))
+			if err != nil {
+				t.Fatalf("build structural %s schema: %v", kind.name, err)
+			}
+			validator := structuralcel.NewValidator(structural, true, celconfig.PerCallLimit)
+			if validator == nil {
+				t.Fatalf("generated %s schema did not compile a CEL validator", kind.name)
+			}
+
+			for _, boundary := range []struct {
+				name     string
+				resource string
+				accepted bool
+			}{
+				{name: "63 bytes", resource: strings.Repeat("a", 63), accepted: true},
+				{name: "64 bytes", resource: strings.Repeat("a", 64), accepted: false},
+				// The longest name a DNS subdomain allows, and the shape the
+				// reproduction used: dots do not change the arithmetic.
+				{name: "253 bytes, dotted", resource: strings.Repeat("a", 40) + "." + strings.Repeat("b", 212), accepted: false},
+			} {
+				boundary := boundary
+				t.Run(boundary.name, func(t *testing.T) {
+					t.Parallel()
+
+					object := map[string]interface{}{
+						"apiVersion": "operator.ptah.run/v1alpha1",
+						"kind":       kind.name,
+						"metadata":   map[string]interface{}{"name": boundary.resource, "namespace": "tenant-a"},
+						"spec":       kind.spec(),
+					}
+					structuraldefaulting.Default(object, structural)
+					errs, _ := validator.Validate(
+						context.Background(), field.NewPath(kind.resource), structural, object, nil,
+						celconfig.RuntimeCELCostBudget,
+					)
+					if boundary.accepted && len(errs) != 0 {
+						t.Fatalf("a %d-byte name that fits a label was refused on create: %v",
+							len(boundary.resource), errs.ToAggregate())
+					}
+					if !boundary.accepted && len(errs) == 0 {
+						t.Fatalf("a %d-byte name was accepted on create, and it cannot become a Job label",
+							len(boundary.resource))
+					}
+
+					// The same name on an update, which is what a cluster that
+					// already holds one gets. Refusing here would leave such a
+					// resource unpatchable: the controller could not record why
+					// it is stuck, could not clear its claim, and could not
+					// remove the finalizer it is holding -- so an object that
+					// merely never worked would become one that never goes.
+					stored := map[string]interface{}{
+						"apiVersion": "operator.ptah.run/v1alpha1",
+						"kind":       kind.name,
+						"metadata":   map[string]interface{}{"name": boundary.resource, "namespace": "tenant-a"},
+						"spec":       kind.spec(),
+					}
+					structuraldefaulting.Default(stored, structural)
+					updated := map[string]interface{}{
+						"apiVersion": "operator.ptah.run/v1alpha1",
+						"kind":       kind.name,
+						"metadata": map[string]interface{}{
+							"name": boundary.resource, "namespace": "tenant-a",
+							"finalizers": []interface{}{"operator.ptah.run/migration-operation"},
+						},
+						"spec": kind.spec(),
+					}
+					structuraldefaulting.Default(updated, structural)
+					updateErrs, _ := validator.Validate(
+						context.Background(), field.NewPath(kind.resource), structural, updated, stored,
+						celconfig.RuntimeCELCostBudget,
+					)
+					if len(updateErrs) != 0 {
+						t.Fatalf("a stored %d-byte name could not be patched: %v",
+							len(boundary.resource), updateErrs.ToAggregate())
+					}
+				})
+			}
+		})
+	}
+}

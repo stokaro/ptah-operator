@@ -485,6 +485,7 @@ const (
 	ConditionMigrationApprovalRequired = "ApprovalRequired"
 )
 
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || self.metadata.name.size() <= 63",message="metadata.name must be at most 63 bytes, because it is carried whole in the labels of the Jobs this resource dispatches",optionalOldSelf=true
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=ptahm
