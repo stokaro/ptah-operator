@@ -348,8 +348,10 @@ so a response that stops arriving would hold every other resource of that
 family behind it, including the passes that renew the Lease of an Apply that is
 still executing SQL. The read carries a deadline of its own: two minutes, which
 is the largest result frame the protocol admits at a floor of a mebibyte a
-second with room for the stream to open, or what is left of the Lease the
-operation holds where that is shorter. The second bound is the one that matters
+second with room for the stream to open, or the Lease the operation holds where
+that is shorter. The whole Lease, not the Lease less its grace: the grace is
+what makes a Lease outlive its Job, and withholding it from the read left the
+shortest configuration unable to fetch a maximum-size frame at all. The second bound is the one that matters
 at the low end -- the API accepts a deadline of thirty seconds, and spending
 two minutes reading the result of thirty seconds of work holds the worker for
 longer than the operation it is reporting on.

@@ -80,18 +80,29 @@ func boundedResultReadTimeout(configured, leaseBudget time.Duration) time.Durati
 }
 
 // leaseReadBudget turns a Lease this operation actually holds into the time a
-// read may spend inside it.
+// read may spend reading its result.
 //
 // The duration has to come from the claim rather than from the spec. A Lease
 // is taken for the duration the claim recorded and renewed at that duration
 // afterwards, and spec.execution.activeDeadlineSeconds is mutable: raising it
 // after an Apply started grows nothing about the Lease already held, so a
-// bound derived from the spec would quietly exceed it. Zero means no Lease.
-func leaseReadBudget(leaseDurationSeconds int32, grace time.Duration) time.Duration {
+// bound derived from the spec would say more time is available than is.
+//
+// It is the whole duration and not the duration less its grace. The grace is
+// what makes the Lease outlive the Job; it is not time withheld from reading
+// the result afterwards, and subtracting it left the shortest configuration
+// with thirty seconds to fetch a frame this protocol allows to be 48 MiB --
+// about fifty at the floor rate the ceiling is derived from. Every attempt
+// would have timed out, and every retry would have been given the same
+// thirty seconds. The shortest Lease the API can produce is ninety seconds,
+// which clears that with room.
+//
+// Zero means no Lease.
+func leaseReadBudget(leaseDurationSeconds int32) time.Duration {
 	if leaseDurationSeconds <= 0 {
 		return 0
 	}
-	return time.Duration(leaseDurationSeconds)*time.Second - grace
+	return time.Duration(leaseDurationSeconds) * time.Second
 }
 
 // readOperationResult reads a terminal Pod's executor log under a deadline of

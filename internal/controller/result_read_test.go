@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
 
@@ -319,15 +320,17 @@ func TestTheResultReadNeverOutlastsTheOperationsLease(t *testing.T) {
 		want        time.Duration
 	}{
 		{
-			// The shortest Lease the API can produce: activeDeadlineSeconds 30
-			// plus a minute of grace, less that grace again.
+			// The shortest Lease the API can produce: activeDeadlineSeconds
+			// 30 plus a minute of grace. It has to clear the fifty seconds a
+			// maximum-size frame needs at the rate the ceiling is derived
+			// from, or no attempt at that setting could ever read one.
 			name:        "the shortest Lease the API can produce",
-			leaseBudget: leaseReadBudget(90, minute),
-			want:        30 * time.Second,
+			leaseBudget: leaseReadBudget(90),
+			want:        90 * time.Second,
 		},
 		{
 			name:        "the generated default, where the ceiling is what binds",
-			leaseBudget: leaseReadBudget(960, minute),
+			leaseBudget: leaseReadBudget(960),
 			want:        defaultResultReadTimeout,
 		},
 		{
@@ -343,13 +346,13 @@ func TestTheResultReadNeverOutlastsTheOperationsLease(t *testing.T) {
 		{
 			name:        "a shorter bound a caller asked for",
 			configured:  5 * time.Second,
-			leaseBudget: leaseReadBudget(960, minute),
+			leaseBudget: leaseReadBudget(960),
 			want:        5 * time.Second,
 		},
 		{
 			name:        "a caller's bound the Lease undercuts",
 			configured:  minute,
-			leaseBudget: leaseReadBudget(90, minute),
+			leaseBudget: leaseReadBudget(30),
 			want:        30 * time.Second,
 		},
 	} {
@@ -384,13 +387,13 @@ func TestTheReadBudgetComesFromTheLeaseTheClaimRecorded(t *testing.T) {
 		LeaseDurationSeconds: 90,
 	}
 
-	if actual := schemaResultReadBudget(schema); actual != 30*time.Second {
-		t.Fatalf("the read budget is %s, want the 30s left by the Apply's own 90s Lease", actual)
+	if actual := schemaResultReadBudget(schema); actual != 90*time.Second {
+		t.Fatalf("the read budget is %s, want the Apply's own 90s Lease", actual)
 	}
 
 	// With no pending observation the claim's own Lease is what binds.
 	schema.Status.PendingObservation = nil
-	if actual := schemaResultReadBudget(schema); actual != 15*time.Minute {
+	if actual := schemaResultReadBudget(schema); actual != 16*time.Minute {
 		t.Fatalf("the read budget is %s, want the claim's own Lease", actual)
 	}
 
@@ -430,7 +433,31 @@ func TestTheReconcileHandsTheReaderTheClaimsLease(t *testing.T) {
 	if !called || !hasDeadline {
 		t.Fatalf("the reconcile gave the reader no deadline: called=%t hasDeadline=%t", called, hasDeadline)
 	}
-	if budget > 30*time.Second {
-		t.Fatalf("the read was given %s against a 90s Lease, so it may outlast the claim on the realm", budget)
+	if budget > 90*time.Second {
+		t.Fatalf("the read was given %s against a 90s Lease, which is more than the operation's own claim", budget)
+	}
+	// And enough to fetch a frame the protocol allows to be 48 MiB.
+	if budget < 60*time.Second {
+		t.Fatalf("the read was given %s, too little for a maximum-size result at the rate the ceiling assumes", budget)
+	}
+}
+
+// The shortest configuration the API accepts must still be able to read the
+// largest result the protocol allows.
+//
+// The ceiling is derived from runner.MaxResultLogBytes at a floor of a
+// mebibyte a second. A Lease-derived bound below that would mean a Plan that
+// completed inside its execution deadline and wrote a valid maximum-size frame
+// could never be read at that setting -- and since every retry is given the
+// same budget over the same terminal log, never is exactly what it means.
+func TestTheShortestLeaseStillClearsAMaximumResult(t *testing.T) {
+	t.Parallel()
+
+	needed := time.Duration(runner.MaxResultLogBytes/(1<<20)) * time.Second
+	// activeDeadlineSeconds 30, the API minimum, plus the minute of grace.
+	shortest := boundedResultReadTimeout(0, leaseReadBudget(90))
+	if shortest < needed {
+		t.Fatalf("the shortest configuration gets %s to read a result that needs %s, so no attempt at that setting could read one",
+			shortest, needed)
 	}
 }

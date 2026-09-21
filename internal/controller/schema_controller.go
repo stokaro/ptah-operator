@@ -3877,12 +3877,12 @@ func (r *SchemaReconciler) terminalLogs(
 // a read-only operation holding no Lease has no budget to derive.
 func schemaResultReadBudget(schema *operatorv1alpha1.PtahSchema) time.Duration {
 	if pending := schema.Status.PendingObservation; pending != nil {
-		if budget := leaseReadBudget(pending.LeaseDurationSeconds, time.Minute); budget > 0 {
+		if budget := leaseReadBudget(pending.LeaseDurationSeconds); budget > 0 {
 			return budget
 		}
 	}
 	if operation := schema.Status.ActiveOperation; operation != nil {
-		return leaseReadBudget(operation.LeaseDurationSeconds, time.Minute)
+		return leaseReadBudget(operation.LeaseDurationSeconds)
 	}
 	return 0
 }
