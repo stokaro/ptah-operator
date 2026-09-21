@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -138,6 +139,14 @@ type row struct {
 	Path        string
 	Type        string
 	Description string
+	// Narrows are the messages of the validations the enclosing object
+	// declares that name this field. A field's own description comes from the
+	// type it is declared as, and for an embedded Kubernetes selector that
+	// description describes the generic type rather than what this API
+	// accepts -- corev1.SecretKeySelector says its name may be empty for
+	// backward compatibility, and every selector here is narrowed to refuse
+	// exactly that.
+	Narrows []string
 }
 
 func pageName(kind string) string {
@@ -177,9 +186,11 @@ func render(crd *apiextensionsv1.CustomResourceDefinition, examples string) (str
 	var spec, status []row
 	if property, ok := root.Properties["spec"]; ok {
 		spec = walk("", &property)
+		annotate(spec, narrowings(&property))
 	}
 	if property, ok := root.Properties["status"]; ok {
 		status = walk("", &property)
+		annotate(status, narrowings(&property))
 	}
 
 	var page bytes.Buffer
@@ -215,9 +226,150 @@ func writeSection(page *bytes.Buffer, name string, rows []row) {
 	fmt.Fprintf(page, "| Field | Type | What it does |\n| --- | --- | --- |\n")
 	for _, entry := range rows {
 		fmt.Fprintf(page, "| `%s.%s` | %s | %s |\n",
-			name, entry.Path, entry.Type, cell(entry.Description))
+			name, entry.Path, entry.Type, cell(describe(entry)))
 	}
 	fmt.Fprintf(page, "\n")
+}
+
+// describe is the field's own description followed by what the enclosing
+// object refuses. The second half is the rule's own message rather than a
+// reading of its expression: this generator finds which rules name a field and
+// does not interpret what they compute.
+func describe(entry row) string {
+	if len(entry.Narrows) == 0 {
+		return entry.Description
+	}
+	// The requirement comes first. A field's own description is the one its
+	// declared type carries, and for an embedded Kubernetes selector that text
+	// says the name may be empty for backward compatibility -- which this API
+	// refuses. A reader who meets the refusal first cannot read the sentence
+	// after it as the contract.
+	return "This resource requires: " + strings.Join(entry.Narrows, "; ") + ". " +
+		strings.TrimSpace(entry.Description)
+}
+
+// narrowings maps a field path to the messages of the validations that name
+// it. A rule is attributed to every path it mentions as self.<dotted.path>,
+// which is what a reader needs in order to find the rule; what the rule
+// computes is its message's business.
+//
+// A rule an optional field guards is reported as the condition it is. The
+// schema accepts a PtahSchema with no spec.dev at all, and its rule says so by
+// opening with !has(self.dev), so a note that read "this resource requires
+// dev.urlFrom" would contradict the type column beside it.
+//
+// One guard excuses the whole rule, so every path the rule names carries every
+// guard -- including a path above a guarded one. The row for the required
+// spec.artifact is where that matters: the rule under it requires a CA bundle
+// selector, and the bundle is reached through an optional transport, so the
+// row has to say the condition even though nothing guards spec.artifact
+// itself.
+func narrowings(schema *apiextensionsv1.JSONSchemaProps) map[string][]string {
+	notes := map[string][]string{}
+	for _, validation := range schema.XValidations {
+		message := strings.TrimSpace(validation.Message)
+		if message == "" {
+			continue
+		}
+		guards := absenceGuards(validation.Rule)
+		for _, path := range selfReferences(validation.Rule) {
+			note := message
+			if len(guards) > 0 {
+				note = fmt.Sprintf("%s, %s", whereSet(guards), message)
+			}
+			if !contains(notes[path], note) {
+				notes[path] = append(notes[path], note)
+			}
+		}
+	}
+	return notes
+}
+
+// absenceGuards are the paths a rule excuses itself for: a rule written
+// !has(self.dev) || c computes nothing about an object with no dev.
+//
+// Only a whole branch of the rule's outermost disjunction is a guard. A
+// !has() deeper in the expression is part of what the rule computes -- the
+// selector rules all carry !has(self.x.optional) || !self.x.optional inside
+// the branch that does the requiring -- and reading one as a guard would say
+// the rule only applies to selectors that set the flag, which is the opposite
+// of what it does.
+func absenceGuards(rule string) []string {
+	var guards []string
+	for _, branch := range disjuncts(rule) {
+		match := absenceGuard.FindStringSubmatch(branch)
+		if match == nil {
+			continue
+		}
+		if !contains(guards, match[1]) {
+			guards = append(guards, match[1])
+		}
+	}
+	return guards
+}
+
+// disjuncts splits a rule at the || operators of its outermost expression,
+// leaving the ones inside parentheses to the branch that holds them.
+func disjuncts(rule string) []string {
+	var branches []string
+	depth, start := 0, 0
+	for index := 0; index < len(rule); index++ {
+		switch rule[index] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case '|':
+			if depth == 0 && index+1 < len(rule) && rule[index+1] == '|' {
+				branches = append(branches, rule[start:index])
+				index++
+				start = index + 1
+			}
+		}
+	}
+	return append(branches, rule[start:])
+}
+
+// whereSet renders the guards as the clause that opens the note, with a verb
+// that agrees with how many there are.
+func whereSet(paths []string) string {
+	quoted := make([]string, 0, len(paths))
+	for _, path := range paths {
+		quoted = append(quoted, "`"+path+"`")
+	}
+	if len(quoted) == 1 {
+		return "where " + quoted[0] + " is set"
+	}
+	return "where " + strings.Join(quoted[:len(quoted)-1], ", ") + " and " +
+		quoted[len(quoted)-1] + " are set"
+}
+
+var absenceGuard = regexp.MustCompile(`^\s*!has\(self\.([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*)\)\s*$`)
+
+// selfReferences are the dotted field paths a rule names, and every prefix of
+// each: a rule about target.urlFrom.name is a rule a reader of target.urlFrom
+// needs to know about.
+func selfReferences(rule string) []string {
+	var paths []string
+	for _, match := range selfReference.FindAllStringSubmatch(rule, -1) {
+		segments := strings.Split(match[1], ".")
+		for index := range segments {
+			path := strings.Join(segments[:index+1], ".")
+			if !contains(paths, path) {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return paths
+}
+
+var selfReference = regexp.MustCompile(`\bself\.([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*)`)
+
+// annotate attaches each row the notes recorded for its path.
+func annotate(rows []row, notes map[string][]string) {
+	for index := range rows {
+		rows[index].Narrows = notes[rows[index].Path]
+	}
 }
 
 // cell renders a description into one table cell: Markdown tables have no rows
