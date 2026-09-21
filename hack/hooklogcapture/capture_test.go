@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -265,65 +266,67 @@ func (client *fakeResourceClient) streamPodLogs(
 func TestCaptureUsesSnapshotResourceVersionsAndCapturesPodFirst(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv-10"}},
-		podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv-20"}},
-		jobWatcher:  jobWatcher,
-		podWatcher:  podWatcher,
-		logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("late activation rejected\n"))}},
-		logStarted:  make(chan struct{}, 1),
-	}
-	output := newTestOutputs(t)
-	logPath := output.logPath
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result := make(chan error, 1)
-	go func() {
-		result <- capture(ctx, client, testCaptureConfig(), output)
-	}()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	client.mu.Lock()
-	if client.jobWatchOptions.ResourceVersion != "job-rv-10" {
-		t.Fatalf("Job watch resourceVersion = %q", client.jobWatchOptions.ResourceVersion)
-	}
-	if client.podWatchOptions.ResourceVersion != "pod-rv-20" {
-		t.Fatalf("Pod watch resourceVersion = %q", client.podWatchOptions.ResourceVersion)
-	}
-	if client.jobWatchOptions.FieldSelector != client.jobListOptions.FieldSelector || client.jobWatchOptions.FieldSelector == "" {
-		t.Fatalf("Job selectors differ: list=%q watch=%q", client.jobListOptions.FieldSelector, client.jobWatchOptions.FieldSelector)
-	}
-	if client.podWatchOptions.LabelSelector != client.podListOptions.LabelSelector || client.podWatchOptions.LabelSelector == "" {
-		t.Fatalf("Pod selectors differ: list=%q watch=%q", client.podListOptions.LabelSelector, client.podWatchOptions.LabelSelector)
-	}
-	client.mu.Unlock()
-
-	job := validJob()
-	pod := validPod(job.UID)
-	podWatcher.Add(pod)
-	select {
-	case <-client.logStarted:
-	case <-time.After(time.Second):
-		t.Fatal("log stream did not start from the Pod ADDED event")
-	}
-	jobWatcher.Add(job)
-
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("capture returned an error: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv-10"}},
+			podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv-20"}},
+			jobWatcher:  jobWatcher,
+			podWatcher:  podWatcher,
+			logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("late activation rejected\n"))}},
+			logStarted:  make(chan struct{}, 1),
 		}
-	case <-ctx.Done():
-		t.Fatalf("capture did not complete: %v", ctx.Err())
-	}
-	if err := output.close(); err != nil {
-		t.Fatalf("close outputs: %v", err)
-	}
-	assertFileContents(t, logPath, "late activation rejected\n")
-	assertFileContents(t, output.status.path, "captured\n")
+		output := newTestOutputs(t)
+		logPath := output.logPath
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() {
+			result <- capture(ctx, client, testCaptureConfig(), output)
+		}()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		client.mu.Lock()
+		if client.jobWatchOptions.ResourceVersion != "job-rv-10" {
+			t.Fatalf("Job watch resourceVersion = %q", client.jobWatchOptions.ResourceVersion)
+		}
+		if client.podWatchOptions.ResourceVersion != "pod-rv-20" {
+			t.Fatalf("Pod watch resourceVersion = %q", client.podWatchOptions.ResourceVersion)
+		}
+		if client.jobWatchOptions.FieldSelector != client.jobListOptions.FieldSelector || client.jobWatchOptions.FieldSelector == "" {
+			t.Fatalf("Job selectors differ: list=%q watch=%q", client.jobListOptions.FieldSelector, client.jobWatchOptions.FieldSelector)
+		}
+		if client.podWatchOptions.LabelSelector != client.podListOptions.LabelSelector || client.podWatchOptions.LabelSelector == "" {
+			t.Fatalf("Pod selectors differ: list=%q watch=%q", client.podListOptions.LabelSelector, client.podWatchOptions.LabelSelector)
+		}
+		client.mu.Unlock()
+
+		job := validJob()
+		pod := validPod(job.UID)
+		podWatcher.Add(pod)
+		select {
+		case <-client.logStarted:
+		case <-time.After(time.Second):
+			t.Fatal("log stream did not start from the Pod ADDED event")
+		}
+		jobWatcher.Add(job)
+
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("capture returned an error: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("capture did not complete: %v", ctx.Err())
+		}
+		if err := output.close(); err != nil {
+			t.Fatalf("close outputs: %v", err)
+		}
+		assertFileContents(t, logPath, "late activation rejected\n")
+		assertFileContents(t, output.status.path, "captured\n")
+	})
 }
 
 func TestCaptureUsesExactModeProfile(t *testing.T) {
@@ -340,46 +343,47 @@ func TestCaptureUsesExactModeProfile(t *testing.T) {
 		test := test
 		t.Run(string(test.mode), func(t *testing.T) {
 			t.Parallel()
-
-			jobWatcher := watch.NewRaceFreeFake()
-			podWatcher := watch.NewRaceFreeFake()
-			client := &fakeResourceClient{
-				jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
-				podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
-				jobWatcher:  jobWatcher,
-				podWatcher:  podWatcher,
-				logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader(test.log))}},
-			}
-			output := newTestOutputs(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			result := make(chan error, 1)
-			config := testCaptureConfigForMode(test.mode)
-			go func() { result <- capture(ctx, client, config, output) }()
-
-			waitForFileContents(t, output.ready.path, "ready\n")
-			job := validJobForMode(test.mode)
-			jobWatcher.Add(job)
-			podWatcher.Add(validPodForMode(test.mode, job.UID))
-			select {
-			case err := <-result:
-				if err != nil {
-					t.Fatalf("capture returned an error: %v", err)
+			synctest.Test(t, func(t *testing.T) {
+				jobWatcher := watch.NewRaceFreeFake()
+				podWatcher := watch.NewRaceFreeFake()
+				client := &fakeResourceClient{
+					jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+					podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+					jobWatcher:  jobWatcher,
+					podWatcher:  podWatcher,
+					logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader(test.log))}},
 				}
-			case <-ctx.Done():
-				t.Fatalf("capture did not complete: %v", ctx.Err())
-			}
-			if err := output.close(); err != nil {
-				t.Fatalf("close outputs: %v", err)
-			}
-			assertFileContents(t, output.logPath, test.log)
-			assertFileContents(t, output.status.path, "captured\n")
-			contract := mustTestHookContract(test.mode)
-			client.mu.Lock()
-			defer client.mu.Unlock()
-			if len(client.logContainers) != 1 || client.logContainers[0] != contract.containerName {
-				t.Fatalf("log containers = %v, want [%s]", client.logContainers, contract.containerName)
-			}
+				output := newTestOutputs(t)
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				result := make(chan error, 1)
+				config := testCaptureConfigForMode(test.mode)
+				go func() { result <- capture(ctx, client, config, output) }()
+
+				waitForFileContents(t, output.ready.path, "ready\n")
+				job := validJobForMode(test.mode)
+				jobWatcher.Add(job)
+				podWatcher.Add(validPodForMode(test.mode, job.UID))
+				select {
+				case err := <-result:
+					if err != nil {
+						t.Fatalf("capture returned an error: %v", err)
+					}
+				case <-ctx.Done():
+					t.Fatalf("capture did not complete: %v", ctx.Err())
+				}
+				if err := output.close(); err != nil {
+					t.Fatalf("close outputs: %v", err)
+				}
+				assertFileContents(t, output.logPath, test.log)
+				assertFileContents(t, output.status.path, "captured\n")
+				contract := mustTestHookContract(test.mode)
+				client.mu.Lock()
+				defer client.mu.Unlock()
+				if len(client.logContainers) != 1 || client.logContainers[0] != contract.containerName {
+					t.Fatalf("log containers = %v, want [%s]", client.logContainers, contract.containerName)
+				}
+			})
 		})
 	}
 }
@@ -387,111 +391,115 @@ func TestCaptureUsesExactModeProfile(t *testing.T) {
 func TestPreflightCaptureBindsLiveGlobalDefaultPriorityClass(t *testing.T) {
 	t.Parallel()
 
-	preemptNever := corev1.PreemptNever
-	priorityClass := testPriorityClass("batch-default", -10, true, &preemptNever)
-	priorityClassWatcher := watch.NewRaceFreeFake()
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		priorityClassList: &schedulingv1.PriorityClassList{
-			ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv-10"},
-			Items:    []schedulingv1.PriorityClass{priorityClass},
-		},
-		priorityClassWatcher: priorityClassWatcher,
-		jobList:              &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
-		podList:              &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
-		jobWatcher:           jobWatcher,
-		podWatcher:           podWatcher,
-		logAttempts: []logAttempt{{
-			stream: io.NopCloser(strings.NewReader("candidate release preflight verified without persistent mutation\n")),
-		}},
-	}
-	output := newTestOutputs(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfigForMode(hookModePreflight), output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	job := validJobForMode(hookModePreflight)
-	pod := validPodForMode(hookModePreflight, job.UID)
-	pod.Spec.PriorityClassName = priorityClass.Name
-	pod.Spec.Priority = testInt32Pointer(priorityClass.Value)
-	pod.Spec.PreemptionPolicy = &preemptNever
-	jobWatcher.Add(job)
-	podWatcher.Add(pod)
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("capture returned an error: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		preemptNever := corev1.PreemptNever
+		priorityClass := testPriorityClass("batch-default", -10, true, &preemptNever)
+		priorityClassWatcher := watch.NewRaceFreeFake()
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			priorityClassList: &schedulingv1.PriorityClassList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv-10"},
+				Items:    []schedulingv1.PriorityClass{priorityClass},
+			},
+			priorityClassWatcher: priorityClassWatcher,
+			jobList:              &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+			podList:              &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+			jobWatcher:           jobWatcher,
+			podWatcher:           podWatcher,
+			logAttempts: []logAttempt{{
+				stream: io.NopCloser(strings.NewReader("candidate release preflight verified without persistent mutation\n")),
+			}},
 		}
-	case <-ctx.Done():
-		t.Fatalf("capture did not accept the live global default contract: %v", ctx.Err())
-	}
-	if err := output.close(); err != nil {
-		t.Fatalf("close outputs: %v", err)
-	}
-	assertFileContents(t, output.status.path, "captured\n")
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.priorityClassListOptions.Limit != priorityClassListLimit ||
-		client.priorityClassListOptions.Continue != "" ||
-		client.priorityClassListOptions.ResourceVersion != "" ||
-		client.priorityClassListOptions.ResourceVersionMatch != "" {
-		t.Fatalf("PriorityClass List options = %#v, want one bounded current snapshot", client.priorityClassListOptions)
-	}
-	if client.priorityClassWatchOptions.ResourceVersion != "priority-rv-10" ||
-		!client.priorityClassWatchOptions.AllowWatchBookmarks ||
-		client.priorityClassWatchOptions.Limit != 0 ||
-		client.priorityClassWatchOptions.Continue != "" {
-		t.Fatalf("PriorityClass Watch options = %#v, want exact snapshot continuation", client.priorityClassWatchOptions)
-	}
+		output := newTestOutputs(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfigForMode(hookModePreflight), output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		job := validJobForMode(hookModePreflight)
+		pod := validPodForMode(hookModePreflight, job.UID)
+		pod.Spec.PriorityClassName = priorityClass.Name
+		pod.Spec.Priority = testInt32Pointer(priorityClass.Value)
+		pod.Spec.PreemptionPolicy = &preemptNever
+		jobWatcher.Add(job)
+		podWatcher.Add(pod)
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("capture returned an error: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("capture did not accept the live global default contract: %v", ctx.Err())
+		}
+		if err := output.close(); err != nil {
+			t.Fatalf("close outputs: %v", err)
+		}
+		assertFileContents(t, output.status.path, "captured\n")
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if client.priorityClassListOptions.Limit != priorityClassListLimit ||
+			client.priorityClassListOptions.Continue != "" ||
+			client.priorityClassListOptions.ResourceVersion != "" ||
+			client.priorityClassListOptions.ResourceVersionMatch != "" {
+			t.Fatalf("PriorityClass List options = %#v, want one bounded current snapshot", client.priorityClassListOptions)
+		}
+		if client.priorityClassWatchOptions.ResourceVersion != "priority-rv-10" ||
+			!client.priorityClassWatchOptions.AllowWatchBookmarks ||
+			client.priorityClassWatchOptions.Limit != 0 ||
+			client.priorityClassWatchOptions.Continue != "" {
+			t.Fatalf("PriorityClass Watch options = %#v, want exact snapshot continuation", client.priorityClassWatchOptions)
+		}
+	})
 }
 
 func TestPreflightCaptureWaitsForPriorityClassSnapshotBeforeReady(t *testing.T) {
 	t.Parallel()
 
-	gate := make(chan struct{})
-	entered := make(chan struct{}, 1)
-	priorityClassWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		priorityClassList: &schedulingv1.PriorityClassList{
-			ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
-		},
-		priorityClassWatcher:     priorityClassWatcher,
-		priorityClassListGate:    gate,
-		priorityClassListEntered: entered,
-		jobList:                  &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
-		podList:                  &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
-		jobWatcher:               watch.NewRaceFreeFake(),
-		podWatcher:               watch.NewRaceFreeFake(),
-	}
-	output := newTestOutputs(t)
-	defer func() { _ = output.close() }()
-	ctx, cancel := context.WithCancel(context.Background())
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfigForMode(hookModePreflight), output) }()
-
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("PriorityClass List was not attempted")
-	}
-	assertFileContents(t, output.ready.path, "")
-	close(gate)
-	waitForFileContents(t, output.ready.path, "ready\n")
-	cancel()
-	select {
-	case err := <-result:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("capture error = %v, want context cancellation", err)
+	synctest.Test(t, func(t *testing.T) {
+		gate := make(chan struct{})
+		entered := make(chan struct{}, 1)
+		priorityClassWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			priorityClassList: &schedulingv1.PriorityClassList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+			},
+			priorityClassWatcher:     priorityClassWatcher,
+			priorityClassListGate:    gate,
+			priorityClassListEntered: entered,
+			jobList:                  &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+			podList:                  &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+			jobWatcher:               watch.NewRaceFreeFake(),
+			podWatcher:               watch.NewRaceFreeFake(),
 		}
-	case <-time.After(time.Second):
-		t.Fatal("capture did not stop after cancellation")
-	}
-	if !priorityClassWatcher.IsStopped() {
-		t.Fatal("capture did not stop the PriorityClass watch")
-	}
+		output := newTestOutputs(t)
+		defer func() { _ = output.close() }()
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfigForMode(hookModePreflight), output) }()
+
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("PriorityClass List was not attempted")
+		}
+		assertFileContents(t, output.ready.path, "")
+		close(gate)
+		waitForFileContents(t, output.ready.path, "ready\n")
+		cancel()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("capture error = %v, want context cancellation", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("capture did not stop after cancellation")
+		}
+		if !priorityClassWatcher.IsStopped() {
+			t.Fatal("capture did not stop the PriorityClass watch")
+		}
+	})
 }
 
 func TestPreflightCaptureRejectsImmediatePriorityWatchErrorBeforeReady(t *testing.T) {
@@ -879,124 +887,130 @@ func TestPriorityClassWatchFailsClosedOnErrorAndClosure(t *testing.T) {
 func TestPreflightCaptureQuarantinesPodFirstUntilExactJobBinding(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
-		podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
-		jobWatcher:  jobWatcher,
-		podWatcher:  podWatcher,
-		logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("candidate release preflight verified without persistent mutation\n"))}},
-		logStarted:  make(chan struct{}, 1),
-	}
-	output := newTestOutputs(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result := make(chan error, 1)
-	config := testCaptureConfigForMode(hookModePreflight)
-	go func() { result <- capture(ctx, client, config, output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	job := validJobForMode(hookModePreflight)
-	podWatcher.Add(validPodForMode(hookModePreflight, job.UID))
-	select {
-	case <-client.logStarted:
-	case <-time.After(time.Second):
-		t.Fatal("preflight log stream did not start from the Pod ADDED event")
-	}
-	waitForFileContents(t, output.quarantinePath, "candidate release preflight verified without persistent mutation\n")
-	assertFileContents(t, output.logPath, "")
-
-	jobWatcher.Add(job)
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("capture returned an error: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+			podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+			jobWatcher:  jobWatcher,
+			podWatcher:  podWatcher,
+			logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("candidate release preflight verified without persistent mutation\n"))}},
+			logStarted:  make(chan struct{}, 1),
 		}
-	case <-ctx.Done():
-		t.Fatalf("capture did not bind the preflight Pod to its Job: %v", ctx.Err())
-	}
-	if err := output.close(); err != nil {
-		t.Fatalf("close outputs: %v", err)
-	}
-	assertFileContents(t, output.logPath, "candidate release preflight verified without persistent mutation\n")
-	assertFileContents(t, output.status.path, "captured\n")
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if len(client.logContainers) != 1 || client.logContainers[0] != "crd-manager-preflight" {
-		t.Fatalf("log containers = %v, want [crd-manager-preflight]", client.logContainers)
-	}
+		output := newTestOutputs(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		config := testCaptureConfigForMode(hookModePreflight)
+		go func() { result <- capture(ctx, client, config, output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		job := validJobForMode(hookModePreflight)
+		podWatcher.Add(validPodForMode(hookModePreflight, job.UID))
+		select {
+		case <-client.logStarted:
+		case <-time.After(time.Second):
+			t.Fatal("preflight log stream did not start from the Pod ADDED event")
+		}
+		waitForFileContents(t, output.quarantinePath, "candidate release preflight verified without persistent mutation\n")
+		assertFileContents(t, output.logPath, "")
+
+		jobWatcher.Add(job)
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("capture returned an error: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("capture did not bind the preflight Pod to its Job: %v", ctx.Err())
+		}
+		if err := output.close(); err != nil {
+			t.Fatalf("close outputs: %v", err)
+		}
+		assertFileContents(t, output.logPath, "candidate release preflight verified without persistent mutation\n")
+		assertFileContents(t, output.status.path, "captured\n")
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if len(client.logContainers) != 1 || client.logContainers[0] != "crd-manager-preflight" {
+			t.Fatalf("log containers = %v, want [crd-manager-preflight]", client.logContainers)
+		}
+	})
 }
 
 func TestCaptureMarksReadyOnlyAfterBothWatchesAreEstablished(t *testing.T) {
 	t.Parallel()
 
-	gate := make(chan struct{})
-	entered := make(chan struct{}, 1)
-	client := &fakeResourceClient{
-		jobList:         &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
-		podList:         &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
-		jobWatcher:      watch.NewRaceFreeFake(),
-		podWatcher:      watch.NewRaceFreeFake(),
-		podWatchGate:    gate,
-		podWatchEntered: entered,
-	}
-	output := newTestOutputs(t)
-	defer func() { _ = output.close() }()
-	ctx, cancel := context.WithCancel(context.Background())
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
-
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("Pod Watch was not attempted")
-	}
-	assertFileContents(t, output.ready.path, "")
-	close(gate)
-	waitForFileContents(t, output.ready.path, "ready\n")
-	cancel()
-	select {
-	case err := <-result:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("capture error = %v, want context cancellation", err)
+	synctest.Test(t, func(t *testing.T) {
+		gate := make(chan struct{})
+		entered := make(chan struct{}, 1)
+		client := &fakeResourceClient{
+			jobList:         &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
+			podList:         &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
+			jobWatcher:      watch.NewRaceFreeFake(),
+			podWatcher:      watch.NewRaceFreeFake(),
+			podWatchGate:    gate,
+			podWatchEntered: entered,
 		}
-	case <-time.After(time.Second):
-		t.Fatal("capture did not stop after cancellation")
-	}
+		output := newTestOutputs(t)
+		defer func() { _ = output.close() }()
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
+
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("Pod Watch was not attempted")
+		}
+		assertFileContents(t, output.ready.path, "")
+		close(gate)
+		waitForFileContents(t, output.ready.path, "ready\n")
+		cancel()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("capture error = %v, want context cancellation", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("capture did not stop after cancellation")
+		}
+	})
 }
 
 func TestCaptureRetainsEventBetweenListAndWatch(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	job := validJob()
-	client := &fakeResourceClient{
-		jobList:      &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
-		podList:      &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
-		jobWatcher:   jobWatcher,
-		podWatcher:   podWatcher,
-		jobWatchHook: func() { jobWatcher.Add(job) },
-		logAttempts:  []logAttempt{{stream: io.NopCloser(strings.NewReader("captured\n"))}},
-	}
-	output := newTestOutputs(t)
-	defer func() { _ = output.close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	podWatcher.Add(validPod(job.UID))
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("capture returned an error: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		job := validJob()
+		client := &fakeResourceClient{
+			jobList:      &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
+			podList:      &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
+			jobWatcher:   jobWatcher,
+			podWatcher:   podWatcher,
+			jobWatchHook: func() { jobWatcher.Add(job) },
+			logAttempts:  []logAttempt{{stream: io.NopCloser(strings.NewReader("captured\n"))}},
 		}
-	case <-ctx.Done():
-		t.Fatalf("capture did not retain the between-List-and-Watch event: %v", ctx.Err())
-	}
+		output := newTestOutputs(t)
+		defer func() { _ = output.close() }()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		podWatcher.Add(validPod(job.UID))
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("capture returned an error: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("capture did not retain the between-List-and-Watch event: %v", ctx.Err())
+		}
+	})
 }
 
 func TestCaptureRejectsPreexistingObjectsBeforeWatching(t *testing.T) {
@@ -1024,87 +1038,91 @@ func TestCaptureRejectsPreexistingObjectsBeforeWatching(t *testing.T) {
 func TestCaptureDoesNotPublishPodLogBeforeBindingItsWatchedJob(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
-		podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
-		jobWatcher:  jobWatcher,
-		podWatcher:  podWatcher,
-		logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("must not be read"))}},
-		logStarted:  make(chan struct{}, 1),
-	}
-	output := newTestOutputs(t)
-	defer func() { _ = output.close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	podWatcher.Add(validPod(types.UID("claimed-job-uid")))
-	select {
-	case <-client.logStarted:
-	case <-time.After(time.Second):
-		t.Fatal("capture did not start the quarantined Pod log stream promptly")
-	}
-	job := validJob()
-	jobWatcher.Add(job)
-	select {
-	case err := <-result:
-		if err == nil || !strings.Contains(err.Error(), "controlling owner does not match") {
-			t.Fatalf("capture error = %v, want watched Job binding failure", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
+			podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
+			jobWatcher:  jobWatcher,
+			podWatcher:  podWatcher,
+			logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("must not be read"))}},
+			logStarted:  make(chan struct{}, 1),
 		}
-		assertFailureClass(t, err, failureClassPodOwner)
-	case <-ctx.Done():
-		t.Fatalf("capture did not reject unbound Pod: %v", ctx.Err())
-	}
-	assertFileContents(t, output.logPath, "")
+		output := newTestOutputs(t)
+		defer func() { _ = output.close() }()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		podWatcher.Add(validPod(types.UID("claimed-job-uid")))
+		select {
+		case <-client.logStarted:
+		case <-time.After(time.Second):
+			t.Fatal("capture did not start the quarantined Pod log stream promptly")
+		}
+		job := validJob()
+		jobWatcher.Add(job)
+		select {
+		case err := <-result:
+			if err == nil || !strings.Contains(err.Error(), "controlling owner does not match") {
+				t.Fatalf("capture error = %v, want watched Job binding failure", err)
+			}
+			assertFailureClass(t, err, failureClassPodOwner)
+		case <-ctx.Done():
+			t.Fatalf("capture did not reject unbound Pod: %v", ctx.Err())
+		}
+		assertFileContents(t, output.logPath, "")
+	})
 }
 
 func TestCaptureDoesNotPublishQuarantinedLogForCandidateRenderMismatch(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
-		podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
-		jobWatcher:  jobWatcher,
-		podWatcher:  podWatcher,
-		logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("untrusted hook output\n"))}},
-		logStarted:  make(chan struct{}, 1),
-	}
-	output := newTestOutputs(t)
-	defer func() { _ = output.close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	job := validJob()
-	podWatcher.Add(validPod(job.UID))
-	select {
-	case <-client.logStarted:
-	case <-time.After(time.Second):
-		t.Fatal("capture did not start the quarantined Pod log stream promptly")
-	}
-	waitForFileContents(t, output.quarantinePath, "untrusted hook output\n")
-	job.Spec.Template.Spec.Containers[0].Args[20] = "--controller-replicas=3"
-	jobWatcher.Add(job)
-
-	select {
-	case err := <-result:
-		if err == nil || !strings.Contains(err.Error(), "candidate render") {
-			t.Fatalf("capture error = %v, want candidate render mismatch", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
+			podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
+			jobWatcher:  jobWatcher,
+			podWatcher:  podWatcher,
+			logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("untrusted hook output\n"))}},
+			logStarted:  make(chan struct{}, 1),
 		}
-		output.reportFailure(err)
-	case <-ctx.Done():
-		t.Fatalf("capture did not reject the drifted Job: %v", ctx.Err())
-	}
-	assertFileContents(t, output.logPath, "")
-	assertFileContents(t, output.status.path, "failed\nstreaming\n")
+		output := newTestOutputs(t)
+		defer func() { _ = output.close() }()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		job := validJob()
+		podWatcher.Add(validPod(job.UID))
+		select {
+		case <-client.logStarted:
+		case <-time.After(time.Second):
+			t.Fatal("capture did not start the quarantined Pod log stream promptly")
+		}
+		waitForFileContents(t, output.quarantinePath, "untrusted hook output\n")
+		job.Spec.Template.Spec.Containers[0].Args[20] = "--controller-replicas=3"
+		jobWatcher.Add(job)
+
+		select {
+		case err := <-result:
+			if err == nil || !strings.Contains(err.Error(), "candidate render") {
+				t.Fatalf("capture error = %v, want candidate render mismatch", err)
+			}
+			output.reportFailure(err)
+		case <-ctx.Done():
+			t.Fatalf("capture did not reject the drifted Job: %v", ctx.Err())
+		}
+		assertFileContents(t, output.logPath, "")
+		assertFileContents(t, output.status.path, "failed\nstreaming\n")
+	})
 }
 
 func TestValidateJobAgainstRenderRejectsExecutionAndMetadataDrift(t *testing.T) {
@@ -1942,45 +1960,47 @@ func TestCaptureStopsBothWatchesAtDeadline(t *testing.T) {
 func TestCaptureJoinsActiveLogStreamOnSignalCancellation(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	logReader, logWriter := io.Pipe()
-	defer func() { _ = logWriter.Close() }()
-	job := validJob()
-	client := &fakeResourceClient{
-		jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
-		podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
-		jobWatcher:  jobWatcher,
-		podWatcher:  podWatcher,
-		logAttempts: []logAttempt{{stream: logReader}},
-		logStarted:  make(chan struct{}, 1),
-	}
-	output := newTestOutputs(t)
-	defer func() { _ = output.close() }()
-	ctx, cancel := context.WithCancel(context.Background())
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	jobWatcher.Add(job)
-	podWatcher.Add(validPod(job.UID))
-	select {
-	case <-client.logStarted:
-	case <-time.After(time.Second):
-		t.Fatal("log stream did not start")
-	}
-	cancel()
-	select {
-	case err := <-result:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("capture error = %v, want signal-style cancellation", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		logReader, logWriter := io.Pipe()
+		defer func() { _ = logWriter.Close() }()
+		job := validJob()
+		client := &fakeResourceClient{
+			jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}},
+			podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "20"}},
+			jobWatcher:  jobWatcher,
+			podWatcher:  podWatcher,
+			logAttempts: []logAttempt{{stream: logReader}},
+			logStarted:  make(chan struct{}, 1),
 		}
-	case <-time.After(time.Second):
-		t.Fatal("capture did not join the active log stream promptly")
-	}
-	if !jobWatcher.IsStopped() || !podWatcher.IsStopped() {
-		t.Fatal("capture did not stop both watches after cancellation")
-	}
+		output := newTestOutputs(t)
+		defer func() { _ = output.close() }()
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		jobWatcher.Add(job)
+		podWatcher.Add(validPod(job.UID))
+		select {
+		case <-client.logStarted:
+		case <-time.After(time.Second):
+			t.Fatal("log stream did not start")
+		}
+		cancel()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("capture error = %v, want signal-style cancellation", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("capture did not join the active log stream promptly")
+		}
+		if !jobWatcher.IsStopped() || !podWatcher.IsStopped() {
+			t.Fatal("capture did not stop both watches after cancellation")
+		}
+	})
 }
 
 func TestCapturePodLogRetriesOnlyPermittedStartupErrors(t *testing.T) {
@@ -2582,16 +2602,14 @@ func newTestOutputs(t *testing.T) *captureOutputs {
 	return output
 }
 
+// waitForFileContents waits for the capture to have nothing left to do rather
+// than for a second to pass. synctest.Wait returns once every other goroutine
+// in the bubble is durably blocked, which is exactly the moment the write
+// either happened or is never going to, so the assertion below reports the
+// file's contents instead of a deadline.
 func waitForFileContents(t *testing.T, path, expected string) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		contents, err := os.ReadFile(path)
-		if err == nil && string(contents) == expected {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	synctest.Wait()
 	assertFileContents(t, path, expected)
 }
 
@@ -2616,48 +2634,64 @@ func assertFailureClass(t *testing.T, err error, expected failureClass) {
 func TestCaptureRetriesAnEmptyLogStreamUntilTheHookWrites(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		jobList:    &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
-		podList:    &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
-		jobWatcher: jobWatcher,
-		podWatcher: podWatcher,
-		logAttempts: []logAttempt{
-			{stream: io.NopCloser(strings.NewReader(""))},
-			{stream: io.NopCloser(strings.NewReader(""))},
-			{stream: io.NopCloser(strings.NewReader("late activation rejected\n"))},
-		},
-		logStarted: make(chan struct{}, 1),
-	}
-	output := newTestOutputs(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	job := validJobForMode(hookModeReconcile)
-	jobWatcher.Add(job)
-	podWatcher.Add(validPodForMode(hookModeReconcile, job.UID))
-
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("capture returned an error after two empty streams: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			jobList:    &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+			podList:    &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+			jobWatcher: jobWatcher,
+			podWatcher: podWatcher,
+			logAttempts: []logAttempt{
+				{stream: io.NopCloser(strings.NewReader(""))},
+				{stream: io.NopCloser(strings.NewReader(""))},
+				{stream: io.NopCloser(strings.NewReader("late activation rejected\n"))},
+			},
+			logStarted: make(chan struct{}, 1),
 		}
-	case <-ctx.Done():
-		t.Fatalf("capture did not retry the empty log stream: %v", ctx.Err())
-	}
-	if err := output.close(); err != nil {
-		t.Fatalf("close outputs: %v", err)
-	}
-	assertFileContents(t, output.logPath, "late activation rejected\n")
-	assertFileContents(t, output.status.path, "captured\n")
+		output := newTestOutputs(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		job := validJobForMode(hookModeReconcile)
+		jobWatcher.Add(job)
+		podWatcher.Add(validPodForMode(hookModeReconcile, job.UID))
+
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("capture returned an error after two empty streams: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("capture did not retry the empty log stream: %v", ctx.Err())
+		}
+		if err := output.close(); err != nil {
+			t.Fatalf("close outputs: %v", err)
+		}
+		assertFileContents(t, output.logPath, "late activation rejected\n")
+		assertFileContents(t, output.status.path, "captured\n")
+	})
 }
 
+// The start deadline stops applying once a byte arrives, and what proves it is
+// time passing without the capture ending. Passing that time for real cost the
+// suite three timeouts on every run and proved the same thing, so this runs in
+// a bubble: the clock there advances only when every goroutine is blocked, so
+// the deadline is reached at once and only after the capture has nothing left
+// to do but wait for the rest of the stream.
 func TestCapturePodLogStartDeadlineStopsAfterFirstByte(t *testing.T) {
 	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		captureStartDeadlineStopsAfterFirstByte(t)
+	})
+}
+
+func captureStartDeadlineStopsAfterFirstByte(t *testing.T) {
+	t.Helper()
 
 	reader, writer := io.Pipe()
 	firstWriteCompleted := make(chan struct{})
@@ -2727,42 +2761,44 @@ func TestCapturePodLogStartDeadlineStopsAfterFirstByte(t *testing.T) {
 func TestCaptureFailsWhenTheHookNeverWrites(t *testing.T) {
 	t.Parallel()
 
-	jobWatcher := watch.NewRaceFreeFake()
-	podWatcher := watch.NewRaceFreeFake()
-	client := &fakeResourceClient{
-		jobList:    &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
-		podList:    &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
-		jobWatcher: jobWatcher,
-		podWatcher: podWatcher,
-		repeatLogStream: func() io.ReadCloser {
-			return io.NopCloser(strings.NewReader(""))
-		},
-		logStarted: make(chan struct{}, 1),
-	}
-	output := newTestOutputs(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	config := testCaptureConfig()
-	config.logStartTimeout = 300 * time.Millisecond
-	config.logRetryInterval = 20 * time.Millisecond
-	result := make(chan error, 1)
-	go func() { result <- capture(ctx, client, config, output) }()
-
-	waitForFileContents(t, output.ready.path, "ready\n")
-	job := validJobForMode(hookModeReconcile)
-	jobWatcher.Add(job)
-	podWatcher.Add(validPodForMode(hookModeReconcile, job.UID))
-
-	select {
-	case err := <-result:
-		if !errors.Is(err, errLogStartTimeout) {
-			t.Fatalf("capture error = %v, want the start deadline", err)
+	synctest.Test(t, func(t *testing.T) {
+		jobWatcher := watch.NewRaceFreeFake()
+		podWatcher := watch.NewRaceFreeFake()
+		client := &fakeResourceClient{
+			jobList:    &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+			podList:    &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+			jobWatcher: jobWatcher,
+			podWatcher: podWatcher,
+			repeatLogStream: func() io.ReadCloser {
+				return io.NopCloser(strings.NewReader(""))
+			},
+			logStarted: make(chan struct{}, 1),
 		}
-		assertFailureClass(t, err, failureClassLogStartTimeout)
-	case <-ctx.Done():
-		t.Fatalf("capture did not stop at the start deadline: %v", ctx.Err())
-	}
-	if err := output.close(); err != nil {
-		t.Fatalf("close outputs: %v", err)
-	}
+		output := newTestOutputs(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		config := testCaptureConfig()
+		config.logStartTimeout = 300 * time.Millisecond
+		config.logRetryInterval = 20 * time.Millisecond
+		result := make(chan error, 1)
+		go func() { result <- capture(ctx, client, config, output) }()
+
+		waitForFileContents(t, output.ready.path, "ready\n")
+		job := validJobForMode(hookModeReconcile)
+		jobWatcher.Add(job)
+		podWatcher.Add(validPodForMode(hookModeReconcile, job.UID))
+
+		select {
+		case err := <-result:
+			if !errors.Is(err, errLogStartTimeout) {
+				t.Fatalf("capture error = %v, want the start deadline", err)
+			}
+			assertFailureClass(t, err, failureClassLogStartTimeout)
+		case <-ctx.Done():
+			t.Fatalf("capture did not stop at the start deadline: %v", ctx.Err())
+		}
+		if err := output.close(); err != nil {
+			t.Fatalf("close outputs: %v", err)
+		}
+	})
 }
