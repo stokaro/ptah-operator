@@ -263,7 +263,7 @@ learned by paying that:
 - **A bound has to be measured against the thing it bounds.** An acceptance row
   that holds for a fixed share of an interval, or that dates an event by the
   poll that noticed it, proves a fraction of what it claims: a controller
-  honouring half the interval, or dispatching between two polls, passes it.
+  honoring half the interval, or dispatching between two polls, passes it.
   Derive the hold from the deadline the resource persisted, and date what
   happened from the object's own timestamp rather than from when the loop
   looked.
