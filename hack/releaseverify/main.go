@@ -42,7 +42,7 @@ var (
 	releaseRunSHA256       = map[string]string{
 		"smoke/verify-release":               "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
 		"smoke/chart-reproducibility":        "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
-		"support-preflight/support-evidence": "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf",
+		"support-preflight/support-evidence": "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7",
 		"publish/release":                    "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
 		"publish/transaction":                "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
 		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
@@ -1867,7 +1867,8 @@ func verifyWorkflowSemantics(document []byte) error {
 		"kubernetes_support_window=\"$(jq -er '[.[].minor] | join(\",\")' <<<\"$support_matrix\")\"",
 		"(.minor_slug == (.minor | gsub(\"\\\\.\"; \"-\")))",
 		"repos/$GITHUB_REPOSITORY/actions/runs/$evidence_run/artifacts",
-		".total_count == $expected_count", ".expired == false", ".size_in_bytes > 0",
+		"so it is a partial page", "select(.name == $name)",
+		".expired != false", ".size_in_bytes <= 0",
 		"gh run download \"$evidence_run\"", "--name \"installed-release-chart-$minor_slug\"",
 		"[[ -f \"$chart_path\" && ! -L \"$chart_path\" ]]",
 		"cmp \"$canonical_chart\" \"$chart_path\"",

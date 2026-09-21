@@ -216,22 +216,37 @@ jobs:
           for minor_slug in "${minor_slugs[@]}"; do
             printf 'installed-release-chart-%s\n' "$minor_slug"
           done | LC_ALL=C sort > "$expected_artifact_names_file"
+          # The run carries more than the charts: one shared image bundle and a
+          # timing bundle per matrix entry. What has to hold is that each chart
+          # this release needs is there exactly once and usable, not that the
+          # run produced nothing else.
           artifact_inventory="$(gh api \
             --method GET \
+            --paginate \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$evidence_run/artifacts" \
-            -f per_page=100)"
-          jq -e \
-            --argjson expected_count "${#minor_slugs[@]}" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$evidence_run/artifacts?per_page=100" \
+            --jq '{total_count, artifacts}' \
+            | jq -s '{total_count: (.[0].total_count // 0), artifacts: (map(.artifacts // []) | add // [])}')"
+          jq -er \
             --rawfile expected_names "$expected_artifact_names_file" '
               ($expected_names | split("\n") | map(select(length > 0))) as $expected |
-              .total_count == $expected_count and
-              (.artifacts | length) == $expected_count and
-              ([.artifacts[].name] | sort) == $expected and
-              all(.artifacts[];
-                .expired == false and
-                (.size_in_bytes | type) == "number" and .size_in_bytes > 0
-              )
+              (.artifacts // []) as $artifacts |
+              if ($artifacts | length) != .total_count then
+                error("the inventory holds \($artifacts | length) of \(.total_count) artifacts, so it is a partial page")
+              else
+                [$expected[] | . as $name | {name: $name, found: [$artifacts[] | select(.name == $name)]}] as $required |
+                ($required | map(select((.found | length) != 1) | .name)) as $absent |
+                if ($absent | length) > 0 then
+                  error("the support evidence run carries no single installed chart named: \($absent | join(", "))")
+                else
+                  ($required | map(.found[0])
+                    | map(select(.expired != false or (.size_in_bytes | type) != "number" or .size_in_bytes <= 0))
+                    | map(.name)) as $unusable |
+                  if ($unusable | length) > 0 then
+                    error("these installed chart artifacts are expired or empty: \($unusable | join(", "))")
+                  else true end
+                end
+              end
             ' <<<"$artifact_inventory" >/dev/null
 
           installed_charts_dir="$RUNNER_TEMP/installed-release-charts"
