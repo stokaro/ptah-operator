@@ -644,9 +644,23 @@ func TestMigrationDispatchPersistsTheSnapshotBeforeTheJob(t *testing.T) {
 
 // fixedClock is the test clock the reconciler and its Lease share, so a Lease
 // acquired in one reconciliation is still held in the next.
+// fixedClock stands still unless a test moves it. Most tests want one instant;
+// the ones that measure a renewal need two, and a clock they can advance is the
+// only way to tell a Lease that was rewritten from one that was merely read.
 type fixedClock struct{ now time.Time }
 
-func (c fixedClock) Now() time.Time { return c.now }
+func (c *fixedClock) Now() time.Time { return c.now }
+
+// movableMigrationClock replaces a reconciler's clock, and the one its locker
+// stamps Leases from, with a clock the caller can move. Both have to change
+// together: a renewal is recognized by the time it wrote, so a locker left on
+// the original clock would report no renewal however far the test advanced.
+func movableMigrationClock(reconciler *MigrationReconciler, api client.Client) *fixedClock {
+	clock := &fixedClock{now: reconciler.now()}
+	reconciler.Clock = clock.Now
+	reconciler.Locks = targetlock.New(api, api, clock)
+	return clock
+}
 
 func migrationRequest(migration *operatorv1alpha1.PtahMigration) ctrl.Request {
 	return ctrl.Request{NamespacedName: client.ObjectKeyFromObject(migration)}
@@ -736,7 +750,7 @@ func fakeMigrationReconciler(
 		).
 		WithObjects(objects...).Build()
 	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	testClock := fixedClock{now: clock}
+	testClock := &fixedClock{now: clock}
 	reconciler := &MigrationReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
 		LockNamespace:    "ptah-system",
