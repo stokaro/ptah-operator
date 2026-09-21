@@ -21,6 +21,11 @@ export const PtahOrigin = 'https://docs.ptah.run';
 // the way ptah.run's header does.
 export const PtahSiteOrigin = 'https://ptah.run';
 
+// PtahBlogOrigin is where the project writes at length: worked migrations, and
+// the reasoning behind a decision a reference page states without arguing for.
+// Another site of its own, and the address of a link.
+export const PtahBlogOrigin = 'https://blog.ptah.run';
+
 // BasePath is the site-root-relative prefix every page of one version lives
 // under, with leading and trailing slashes.
 //

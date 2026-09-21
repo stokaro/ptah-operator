@@ -4,13 +4,13 @@
  * ptah.run's own header reads them. Replaces Starlight's SocialIcons, so it
  * also renders inside the mobile menu footer.
  *
- * Three of the four leave this site, and that is the point: the operator's
- * guide and Ptah's are two sites, and a reader who arrived at one of them by
- * search has to be able to reach the other without knowing it exists. The
- * addresses come from the one module that declares them.
+ * Four of the five leave this site, and that is the point: the operator's
+ * guide, Ptah's and the blog are separate sites, and a reader who arrived at
+ * one of them by search has to be able to reach the others without knowing
+ * they exist. The addresses come from the one module that declares them.
  */
 import config from 'virtual:starlight/user-config';
-import { PtahDocsURL, PtahSiteOrigin, CompatibilityURL } from '../lib/docs-origin.mjs';
+import { PtahBlogOrigin, PtahDocsURL, PtahSiteOrigin, CompatibilityURL } from '../lib/docs-origin.mjs';
 
 const { siteTitleHref } = Astro.locals.starlightRoute;
 const social = config.social ?? [];
@@ -28,6 +28,10 @@ const ptahHost = new URL(PtahSiteOrigin).host;
 {/* Install is the first page after the Overview of the "Start" group in
     src/sidebar.mjs; the header names it by its route so it stays a plain link. */}
 <a class="ptah-nav-link" href={`${siteTitleHref}start/install/`}>Install</a>
+{/* The blog carries what a reference page has no room to argue: a migration
+    worked through against a real workload, and why a default is the way it is.
+    Its own header links back here, so the pair reads the same from both ends. */}
+<a class="ptah-nav-link" href={`${PtahBlogOrigin}/`}>Blog</a>
 {
   social.map(({ href, label }) => (
     <a class="ptah-nav-link" href={href} rel="me">
