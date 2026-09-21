@@ -310,7 +310,7 @@ refuse a Job no claim asked for.
 Between the claim and the create sit two more durable boundaries. The
 **admission snapshot** binds the exact ServiceAccount, LimitRange defaults,
 RuntimeClass scheduling and overhead, PriorityClass values and configured
-built-in admission behaviour, by UID and resourceVersion; its digest travels in
+built-in admission behavior, by UID and resourceVersion; its digest travels in
 the Job and Pod annotations, and a fail-closed webhook compares the final
 post-mutation Pod against it before scheduling. The **dispatch boundary** is
 persisted immediately before the one permitted create attempt: after it, an
