@@ -24,7 +24,7 @@ desired state, the policy, the target identity and every executing image.
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchemaPlan
 metadata:
-  name: application-3f79bb7b
+  name: ptah-plan-71c480df93d6ae2f14efe3c4
   namespace: application
   # The plan belongs to the schema and is collected with it.
   ownerReferences:
@@ -47,8 +47,8 @@ spec:
   # 16 chunks of 512 KiB, and 8 MiB in total.
   chunks:
     - index: 0
-      name: application-3f79bb7b-0
-      key: plan.sql
+      name: ptah-plan-71c480df93d6ae2f14efe3c4-000
+      key: chunk
       size: 1832
       digest: sha256:3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea
   contractVersion: 1
@@ -60,12 +60,12 @@ spec:
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
-  ptahVersion: v0.42.0
+  ptahVersion: v0.7.0
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
-  runnerProtocolVersion: 1
+  runnerProtocolVersion: 5
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 3
+  controllerStateVersion: 1
 ```
 
 ### A plan that would destroy something
@@ -79,7 +79,7 @@ find out what the artifact would have dropped.
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchemaPlan
 metadata:
-  name: application-9c56cc51
+  name: ptah-plan-9c56cc51b374c3ba189210d5
   namespace: application
 spec:
   schemaRef:
@@ -93,8 +93,8 @@ spec:
   contentDigest: sha256:6b51d431df5d7f141cbececcf79edf3dd861c3b4069f0b11661a3eefacbba918
   chunks:
     - index: 0
-      name: application-9c56cc51-0
-      key: plan.sql
+      name: ptah-plan-9c56cc51b374c3ba189210d5-000
+      key: chunk
       size: 96
       digest: sha256:6b51d431df5d7f141cbececcf79edf3dd861c3b4069f0b11661a3eefacbba918
   contractVersion: 1
@@ -106,10 +106,10 @@ spec:
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
-  ptahVersion: v0.42.0
+  ptahVersion: v0.7.0
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
-  runnerProtocolVersion: 1
+  runnerProtocolVersion: 5
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 3
+  controllerStateVersion: 1
 ```
