@@ -431,6 +431,29 @@ const maxFrameSearchBytes = 64 * maxInterleavedFrameBytes
 // the whole log for every marker-like line in it.
 const maxInterleavedFrameBytes = 64 << 10
 
+// MaxResultLogBytes is the shortest tail of an executor log that still holds
+// every frame a reader of the whole log could have found in it.
+//
+// A frame is a header line, one payload line and a footer. The parser tolerates
+// maxInterleavedFrameBytes of other output between the header and the payload,
+// and the same again between the payload and the end of the log -- past that it
+// stops looking and says so. So a findable frame begins no further from the end
+// of the log than its own largest size plus twice that tolerance, and a reader
+// that keeps this much of the tail refuses exactly what a reader of the whole
+// log refuses.
+//
+// It is a floor as much as a bound: keeping less would turn a result the
+// executor really wrote into one nobody can read, which is worse than the cost
+// of keeping it.
+const MaxResultLogBytes = DefaultMaxFrameBytes +
+	2*maxInterleavedFrameBytes +
+	int64(len(frameHeader)+len(frameFooter)) + maxFrameHeaderFieldBytes
+
+// maxFrameHeaderFieldBytes covers the two fields the header line carries after
+// its marker: a decimal payload length and a hex digest, with the space and the
+// newline around them.
+const maxFrameHeaderFieldBytes = 20 + 1 + 64 + 1
+
 // framePayloadSearch is what a scan for a frame's payload settled on.
 type framePayloadSearch struct {
 	// start is where the payload begins, and footerEnd one past the footer
