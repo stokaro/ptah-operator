@@ -2941,6 +2941,51 @@ approve_late_dispatch_plan() {
 		fail "the $ENGINE late-dispatch approval could not be created"
 }
 
+# Patching spec.suspend only records the intent. The Job controller clears the
+# start time and removes the Pod afterwards, and until it has, a resume patch
+# coalesces with the suspend: the controller never sees a suspended Job, the
+# start time is never restamped, and the original active deadline kills the Job
+# before the runner starts. The product would be right and this row would fail,
+# so the hold does not begin until the suspension has been observed.
+wait_for_the_late_dispatch_job_to_be_suspended() {
+	suspend_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$suspend_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get job "$LATE_APPLY_JOB" -o json >"$WORK_DIR/late-job.json" ||
+			fail "the $ENGINE Apply Job could not be read while it was being suspended"
+		if jq -e '
+          .spec.suspend == true and
+          (.status.active // 0) == 0 and
+          any(.status.conditions[]?; .type == "Suspended" and .status == "True")
+        ' "$WORK_DIR/late-job.json" >/dev/null &&
+			[ -z "$(k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o name)" ]; then
+			return 0
+		fi
+		sleep 2
+	done
+	fail "the $ENGINE Apply Job did not become suspended within ${TIMEOUT_SECONDS}s"
+}
+
+# Resuming restamps .status.startTime, which is what restarts the Job's own
+# deadline and leaves the absolute window the only thing still expired. If that
+# did not happen, the row is measuring the Job's deadline again, so it says so
+# here rather than timing out in the assertion that follows.
+assert_the_late_dispatch_job_restarted_its_own_deadline() {
+	restart_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$restart_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get job "$LATE_APPLY_JOB" -o json >"$WORK_DIR/late-job.json" ||
+			fail "the $ENGINE Apply Job could not be read after it was resumed"
+		late_started_at=$(jq -r '.status.startTime // empty' "$WORK_DIR/late-job.json")
+		if [ -n "$late_started_at" ]; then
+			late_started_epoch=$(jq -rn --arg stamp "$late_started_at" '$stamp | fromdateiso8601')
+			if [ "$late_started_epoch" -gt "$LATE_WINDOW_END" ]; then
+				return 0
+			fi
+		fi
+		sleep 2
+	done
+	fail "the resumed $ENGINE Apply Job kept a start time at or before its absolute window, so its own deadline is what would end it"
+}
+
 # The Job to suspend is the one the resource says it dispatched, by name and by
 # UID, and the window to wait out is the one the resource persisted beside it.
 # Both are read from the same document, so neither can belong to another claim.
@@ -3070,6 +3115,7 @@ run_late_dispatch_proof() {
 		-p '{"spec":{"suspend":true}}' >/dev/null ||
 		fail "the $ENGINE Apply Job could not be suspended"
 	LATE_APPLY_SUSPENDED=1
+	wait_for_the_late_dispatch_job_to_be_suspended
 	hold_past_the_late_dispatch_window
 	printf 'e2e migrations: opening the gate and resuming the %s Apply Job past its window\n' \
 		"$ENGINE_KIND" >&2
@@ -3078,6 +3124,7 @@ run_late_dispatch_proof() {
 		-p '{"spec":{"suspend":false}}' >/dev/null ||
 		fail "the $ENGINE Apply Job could not be resumed"
 	LATE_APPLY_SUSPENDED=0
+	assert_the_late_dispatch_job_restarted_its_own_deadline
 	assert_late_dispatch_never_reaches_the_database
 	close_late_dispatch_gate
 	printf 'e2e migrations: PASS %s refused an Apply Pod that started after its window closed\n' \
