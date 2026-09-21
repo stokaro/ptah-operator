@@ -137,12 +137,26 @@ STATUS_FILE=$WORK_DIR/migration-status.json
 # immediately, and that proof would pass without ever having been held.
 LATE_DISPATCH_GATE_LABEL=operator.ptah.run/late-dispatch-proof
 LATE_DISPATCH_GATE_OPEN=0
+# Set while that proof holds an Apply Job suspended. A suspended Job is not
+# terminal and has no Pod to read, so dispatchedApplyMayStillWrite keeps the
+# resource and its finalizer, and a rerun's "delete ptahmigration --wait" waits
+# for a run that can never end. Cleanup has to let it end.
+LATE_APPLY_SUSPENDED=0
 
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
-	if [ "${LATE_DISPATCH_GATE_OPEN:-0}" -eq 1 ]; then
+	if [ "${LATE_APPLY_SUSPENDED:-0}" -eq 1 ] && [ -n "${LATE_APPLY_JOB:-}" ]; then
+		# Open the gate before resuming: a Pod that cannot be scheduled leaves
+		# the Job exactly as nonterminal as suspending it did. The label stays
+		# behind here, and reset_after_an_earlier_run removes it.
+		k label nodes --all "${LATE_DISPATCH_GATE_LABEL}=open" --overwrite >/dev/null 2>&1 || true
+		k -n "$TEST_NAMESPACE" patch job "$LATE_APPLY_JOB" --type merge \
+			-p '{"spec":{"suspend":false}}' >/dev/null 2>&1 || true
+		LATE_APPLY_SUSPENDED=0
+		LATE_DISPATCH_GATE_OPEN=1
+	elif [ "${LATE_DISPATCH_GATE_OPEN:-0}" -eq 1 ]; then
 		k label nodes --all "${LATE_DISPATCH_GATE_LABEL}-" >/dev/null 2>&1 || true
 		LATE_DISPATCH_GATE_OPEN=0
 	fi
@@ -3055,6 +3069,7 @@ run_late_dispatch_proof() {
 	k -n "$TEST_NAMESPACE" patch job "$LATE_APPLY_JOB" --type merge \
 		-p '{"spec":{"suspend":true}}' >/dev/null ||
 		fail "the $ENGINE Apply Job could not be suspended"
+	LATE_APPLY_SUSPENDED=1
 	hold_past_the_late_dispatch_window
 	printf 'e2e migrations: opening the gate and resuming the %s Apply Job past its window\n' \
 		"$ENGINE_KIND" >&2
@@ -3062,6 +3077,7 @@ run_late_dispatch_proof() {
 	k -n "$TEST_NAMESPACE" patch job "$LATE_APPLY_JOB" --type merge \
 		-p '{"spec":{"suspend":false}}' >/dev/null ||
 		fail "the $ENGINE Apply Job could not be resumed"
+	LATE_APPLY_SUSPENDED=0
 	assert_late_dispatch_never_reaches_the_database
 	close_late_dispatch_gate
 	printf 'e2e migrations: PASS %s refused an Apply Pod that started after its window closed\n' \
