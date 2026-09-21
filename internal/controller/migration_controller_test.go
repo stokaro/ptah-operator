@@ -2379,3 +2379,46 @@ func TestAHistoryReadingWithoutATargetIdentityIsRefused(t *testing.T) {
 		t.Fatalf("a reading that named no database published a plan: %#v", actual.Status.Plan)
 	}
 }
+
+// A read that keeps failing keeps being retried, and the page says so because
+// the alternative reading -- that passing the four gates means the reading
+// arrives -- sends an operator who has repaired the database to wait for
+// something that is not coming.
+//
+// There is no attempt at which the operator gives up, so the claim the reader
+// is told to look at is always there, naming the operation and the attempt.
+func TestAFailingReadIsRetriedWithNoAttemptLimit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration := migrationFixture()
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseVerifying
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationVerify)
+	// Deep into a run of failures, well past any number a reader would expect
+	// to be a limit.
+	operation.Attempt = 500
+
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, verificationPolicyConfigMap())
+	if _, err := reconciler.retryMigrationOperation(ctx, migration, nil,
+		errors.New("the verified artifact is not a migration artifact")); err != nil {
+		t.Fatalf("retryMigrationOperation() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	claim := actual.Status.ActiveOperation
+	if claim == nil {
+		t.Fatal("the operator gave up on a failing read, so a stuck chain would not be visible in the claim")
+	}
+	if claim.Attempt != 501 {
+		t.Fatalf("attempt = %d, want the next one", claim.Attempt)
+	}
+	if claim.Type != operatorv1alpha1.MigrationOperationVerify {
+		t.Fatalf("the claim names %q, so it does not say which operation is stuck", claim.Type)
+	}
+	if actual.Status.History != nil && actual.Status.History.PendingCount == 0 {
+		t.Fatal("a failing verify produced a history reading, which is what it cannot do")
+	}
+}

@@ -1171,11 +1171,19 @@ While the record stands this resource publishes no plan and dispatches no
 Apply, including the migration that run was applying. It goes on reading unless
 something else has stopped it first: resolve, verify and the history read
 continue at the resource's interval, and that history read is how the record
-clears. Four states stop them, and a resource in one of them never reaches the
-reading that would clear its record -- suspension, an engine this operator does
-not support, a database realm another resource claims, and stored state written
-by a newer manager than the one running -- because each is answered before any
-operation is claimed.
+clears. Four gates are answered before any operation is claimed, and a resource
+held at one of them never reaches the reading that would clear its record:
+suspension, an engine this operator does not support, a database realm another
+resource claims, and stored state written by a newer manager than the one
+running.
+
+Passing those gates is not the same as getting the reading. Resolve, verify and
+the history read are retried at `spec.execution.failureRetryInterval` for as
+long as they keep failing, with no attempt at which the operator gives up, so a
+resource failing one of them never reaches the history read either. If the
+record is not clearing after the database was repaired, read
+`status.activeOperation` first: the operation it names and the attempt it is on
+say whether the chain is stuck rather than the record.
 
 Other resources may also be working against the same database if every claimant
 declares a shared realm. So the record stops this resource from changing the
