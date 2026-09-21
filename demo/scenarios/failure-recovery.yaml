@@ -53,10 +53,28 @@ steps:
       exit: 0
       stdout_contains: [storefront]
 
-  - note: No credential in any of it. This is the whole status the operator wrote.
-    run: kubectl -n "$NAMESPACE" get ptahschema storefront -o json | jq -r '.status | tostring' | head -c 400
+  # The check reads the whole status rather than a prefix of it, and it looks
+  # for the credential this scenario planted rather than only for the ones the
+  # lab generated and the recorder scans for. What it prints afterwards is two
+  # fields, so the transcript stays short; the fields are not the check, and a
+  # reader is told so.
+  - note: No credential in any of it, and the check reads all of it.
+    run: |
+      status=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o json | jq -c '.status')
+      for planted in 'nobody:nobody' 'no-such-database.demo.svc.cluster.local'; do
+        if printf '%s' "$status" | grep -qF "$planted"; then
+          printf 'the status carries the credential this scenario planted\n' >&2
+          exit 1
+        fi
+      done
+      printf 'checked the whole status, %s bytes, no credential in it\n' \
+        "$(printf '%s' "$status" | wc -c | tr -d ' ')"
+      printf '%s' "$status" | jq -r '
+        "phase   " + .phase,
+        "reason  " + (.conditions[] | select(.type == "ReconciliationFailed") | .reason)'
     expect:
       exit: 0
+      stdout_contains: ["checked the whole status", "no credential in it", OperationFailed]
       stdout_absent: ["nobody:nobody"]
 
   - note: Now fix the one thing that was wrong.
