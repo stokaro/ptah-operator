@@ -1487,7 +1487,8 @@ intend to keep: nothing reconstructs those bytes once the chunks are gone.
 one. Neither is the plan you are about to prune -- those two are pinned -- so
 a historical plan is exported from its own objects.
 
-Three things make an exported plan interpretable later. The plan document
+What makes an exported plan interpretable later travels with it. The plan
+document
 carries every binding it was computed under: the fingerprint an approval
 names, the artifact and target identity digests, the policy, the execution
 binding, and the manager, runner and executor identities that would have run

@@ -16,9 +16,9 @@ week ran.
 
 ## What the operator keeps
 
-Six kinds carry durable state, and the version of the contract that wrote it is
-stored with it. A manager that predates that contract refuses the state rather
-than interpreting it, at startup and on every reconciliation.
+Every kind carries durable state, and the version of the contract that wrote it
+is stored with it. A manager that predates that contract refuses the state
+rather than interpreting it, at startup and on every reconciliation.
 
 | Kind | Where its controller-state version is stored |
 | --- | --- |
@@ -29,7 +29,7 @@ than interpreting it, at startup and on every reconciliation.
 | `PtahMigrationPlan` | `spec` |
 | `PtahMigrationApproval` | `spec` |
 
-Three more things live outside those objects:
+Some of what a recovery needs lives outside those objects:
 
 - A `PtahSchemaPlan` stores its SQL in ConfigMaps and records each one by name
   **and UID** in `status.publishedChunks`. A `PtahMigrationPlan` stores no SQL:
