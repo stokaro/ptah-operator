@@ -121,6 +121,15 @@ phases it claims, that it runs no other suite's phase, and that the preparation
 boundary sits before the data plane's own acceptance — and `make e2e-static`
 runs it.
 
+What that partition covers is a table rather than a paragraph, and
+`make acceptance-coverage` prints it: every supported minor against every
+suite, the phases each cell runs, the engine the driver hands them, the
+scenarios they mark, and the CI job whose success is that cell's evidence. It
+reads the two support catalogs and the driver, so the only thing written down
+beside them is which resource family each phase proves — and `go test
+./hack/...` fails on a phase the driver runs that nothing declares, and on a
+declaration for a phase the driver stopped running.
+
 ## Where the task images come from
 
 The four images a run needs — the operator under test, the synthetic next
