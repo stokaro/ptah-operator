@@ -3,9 +3,9 @@ title: Architecture
 description: How the operator is put together, and which invariant every part of it exists to hold.
 ---
 
-This page is for somebody changing this code. It says what the pieces are,
-where they live, and which invariant each one exists to hold. The task pages
-say how to use the operator; this one says why it is shaped the way it is.
+This page describes the operator's components, where they live, and the
+constraints a change has to preserve. For using the operator rather than
+changing it, start from [Operations](../../use/operations/).
 
 One rule generates most of the rest: **the controller never touches a
 database, and the process that touches a database never holds a Kubernetes
@@ -90,7 +90,7 @@ Five programs ship from `cmd/`:
 | --- | --- |
 | `manager` | The reconcilers for both resource families, plus the admission webhook server |
 | `ptah-runner` | Runs inside every operation Pod: validates inputs, bounds output, redacts credentials, frames the result |
-| `ptah-cert-rotator` | Issues and replaces the webhook serving certificates without anybody holding a key |
+| `ptah-cert-rotator` | Issues and replaces the webhook serving certificates |
 | `ptah-crd-manager` | The Helm hooks: install preflight, CRD reconcile, upgrade retirement, uninstall teardown |
 | `kubectl-ptah` | A read-only plugin that reconstructs a published plan for a person to read |
 
@@ -662,8 +662,8 @@ while every other Apply failure after dispatch stays outcome-unknown.
 
 ## The release lifecycle
 
-`ptah-crd-manager` runs as Helm hooks, and every mode is a refusal waiting to
-happen rather than a step that assumes it may proceed:
+`ptah-crd-manager` runs as Helm hooks. Each mode validates its preconditions
+before proceeding:
 
 | Mode | What it decides |
 | --- | --- |

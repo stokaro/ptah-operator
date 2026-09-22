@@ -8,8 +8,8 @@ document the operator publishes into immutable ConfigMaps, bound to a
 `PtahSchemaPlan` by index, key, size and digest, and read back only after every
 one of those bindings has held.
 
-`kubectl ptah` is how you read it. It is a read-only client: it creates
-nothing, changes nothing, starts no Job, and never connects to your database.
+`kubectl ptah` is how you read it. It reads Kubernetes objects and never
+creates or changes a resource, starts a Job, or connects to your database.
 
 ```sh
 kubectl ptah plan storefront -n application
