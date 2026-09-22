@@ -190,9 +190,6 @@ restricted to the current plan chunk names, as described in
 [Exact-plan approvals](../approvals/). What that access is used with is
 `kubectl ptah`, a read-only client that needs `get` on the schema, the plan and
 those ConfigMaps and nothing else; [Read a plan](../read-a-plan/) carries the
-Role and the [install](../read-a-plan/#install). What that access is used with is
-`kubectl ptah`, a read-only client that needs `get` on the schema, the plan and
-those ConfigMaps and nothing else; [Read a plan](../read-a-plan/) carries the
 Role and the [install](../read-a-plan/#install).
 
 Approval admission fails closed. It binds names to UIDs, rejects a plan whose
