@@ -3,10 +3,30 @@ title: First schema
 description: One worked example, from Secret and policy to a converged PtahSchema.
 ---
 
-Create the database URL as a namespaced Secret and the non-secret verification
-policy as a ConfigMap, then apply the example resource:
+## Before you start
+
+- The operator installed and its CRDs established: [Install](../install/), and
+  its readiness check.
+- A namespace for your own resources. This page uses `application`; the chart
+  does not create it, and it is not the release namespace.
+- A database the operator can reach, and a URL for it. The privileges it needs
+  are [Databases and privileges](../../support/databases/).
+- Your schema published as an OCI artifact, by `ptah schema push`, in a
+  registry the cluster can read. Which Ptah build to use is
+  [Ptah compatibility](../../support/ptah/); the digest that artifact prints is
+  what the example points at.
+- The `examples/` files named below, from the version you chose on
+  [Install](../install/#choose-a-version-once). They are in the repository at
+  that commit or tag, beside the chart, and an example from a different version
+  can name a field this one does not have.
+
+## Create what the schema reads
+
+The database URL is a namespaced Secret and the verification policy a
+ConfigMap, both in the namespace the resource lives in:
 
 ```sh
+kubectl create namespace application
 kubectl -n application create secret generic application-database \
   --from-literal=url='<database-url>'
 kubectl -n application create configmap ptah-verification-policy \
@@ -16,8 +36,6 @@ kubectl -n application patch configmap ptah-verification-policy \
 kubectl apply -f examples/ptahschema.yaml
 kubectl -n application get ptahschema application -w
 ```
-
-The `examples/` directory named here is the one in the repository.
 
 Replace every placeholder in the example first. For private registries, add a
 same-namespace `registryAuthFrom` reference; the API supports environment-key
@@ -45,7 +63,11 @@ what each reason means is
 The example sets `apply: OnApproval`, which is also the default. The operator
 resolves the artifact, observes the database and publishes a plan, and then
 stops: `ApprovalRequired` becomes `True` and the phase is `AwaitingApproval`.
-Nothing has run against the database yet.
+
+The operator has already connected to the database by this point — observing it
+is where the plan came from, and that read is what the plan is the difference
+against. What has not happened is the plan: not one statement it names has run,
+and none will until the decision below is recorded.
 
 Read the plan before approving it. The SQL is in controller-owned ConfigMaps
 rather than in the status, and [`kubectl ptah`](../../use/read-a-plan/) reads it
