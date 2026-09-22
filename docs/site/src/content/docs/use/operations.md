@@ -1456,9 +1456,52 @@ kubectl get ptahschemaapprovals,ptahmigrationapprovals -A \
 
 Delete a plan only if its name is absent from `pinned.txt`, and delete its
 chunk ConfigMaps with it -- they are selected by
-`operator.ptah.run/plan=<plan-name>`. Read the plan first if it is evidence you
-intend to keep: `kubectl ptah plan <resource>` and `--applied` render stored
-bytes back, and nothing reconstructs them once the chunks are gone.
+`operator.ptah.run/plan=<plan-name>`. Export it first if it is evidence you
+intend to keep: nothing reconstructs those bytes once the chunks are gone.
+
+### Export a plan before deleting it
+
+`kubectl ptah plan` reads the current plan and `--applied` the last confirmed
+one. Neither is the plan you are about to prune -- those two are pinned -- so
+a historical plan is exported from its own objects.
+
+Three things make an exported plan interpretable later. The plan document
+carries every binding it was computed under: the fingerprint an approval
+names, the artifact and target identity digests, the policy, the execution
+binding, and the manager, runner and executor identities that would have run
+it. The chunks carry the SQL. The approval, where one exists, carries who
+decided and when.
+
+```sh
+NS=<namespace>
+PLAN=<plan-name>
+kubectl -n "$NS" get ptahschemaplan "$PLAN" -o json > "$PLAN.plan.json"
+jq -r '.spec.chunks | sort_by(.index)[] | "\(.name) \(.key)"' "$PLAN.plan.json" |
+  while read -r chunk key; do
+    kubectl -n "$NS" get configmap "$chunk" -o json |
+      jq -r --arg key "$key" '.binaryData[$key]' | base64 -d
+  done > "$PLAN.sql"
+kubectl -n "$NS" get ptahschemaapprovals -o json |
+  jq --arg plan "$PLAN" '[.items[] | select(.spec.planRef.name == $plan)]' \
+  > "$PLAN.approvals.json"
+```
+
+Check what you exported against what the plan says it is. The chunks are
+ordered and digested individually, and the plan records the digest of the
+bytes they reconstruct:
+
+```sh
+printf 'exported sha256:%s\n' "$(shasum -a 256 "$PLAN.sql" | cut -d' ' -f1)"
+jq -r '"recorded  " + .spec.contentDigest' "$PLAN.plan.json"
+```
+
+The two must match. A mismatch means a chunk is already missing or was
+tampered with, and the export is not the plan -- find out why before deleting
+anything.
+
+A `PtahMigrationPlan` needs no chunk step: it stores no SQL, only the ordered
+versions and their checksums, and the statements stay in the artifact its
+`spec.artifactDigest` pins. Export the plan document and keep the artifact.
 
 Do this while no operation is in flight for the resources involved. A plan that
 is not pinned when you list it can become pinned a moment later, which is the
