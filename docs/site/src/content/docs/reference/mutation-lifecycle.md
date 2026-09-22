@@ -226,18 +226,37 @@ Release is withheld while the executor may still be running. A Job that is not
 terminal, a Pod that has not stopped, and a read that could not say are all
 treated as "may still be writing", and the Lease is left to expire instead.
 
+## Durable safety state
+
+Which family keeps which record. The prose around this table describes what
+each one is for; the table says who has it, and `hack` reads the API types to
+check that it still does.
+
+| Field | `PtahSchema` | `PtahMigration` |
+| --- | --- | --- |
+| `status.activeOperation` | yes | yes |
+| `status.pendingLockRelease` | yes | yes |
+| `status.pendingObservation` | yes | no |
+| `status.unresolvedRun` | no | yes |
+
+A field one family keeps and the other does not is not automatically a gap. It
+is a gap where the obligation is the same and only the machinery differs, which
+is what the section below separates out.
+
 ## Where the families differ
 
 Every difference below is a place the same obligation is met by different
 machinery, which is what [#225](https://github.com/stokaro/ptah-operator/issues/225)
 exists to remove.
 
-A failed release is recoverable for a schema and not for a migration.
-`status.pendingLockRelease` holds the complete credential-free release request
-until an idempotent release succeeds, and the top of every schema reconcile
-retries it before anything else. A migration logs the failure and returns, so
-the realm stays claimed until the Lease expires -- which the claim's own
-duration can put as far out as the execution deadline plus a minute.
+A failed release used to be recoverable for a schema and not for a migration.
+Both families now keep the complete credential-free release request in
+`status.pendingLockRelease` until an idempotent release succeeds, and the top
+of every pass retries it before anything else. What remains different is the
+window: a schema stages the obligation inside the status patch that clears the
+claim, so a crash between the two is covered by the record, while a migration
+records a release that failed and leaves a crash at that instant to lease
+expiry.
 
 The proof is a prioritized operation for a schema and an ordinary reading for a
 migration. `reconcilePendingObservation` runs before suspension, before the
@@ -257,11 +276,13 @@ than one Pod forces an unknown outcome even after the Job is collected. A
 migration re-reads the Job and its Pods on every pass, which answers the same
 question while the Job exists and answers nothing after its cleanup TTL.
 
-The block on replay is one guard for a schema and two cooperating sites for a
-migration. A schema owing proof reaches only read-only claims, enforced in one
-place. A migration is blocked because the History reading forces `Blocked` and
-clears `status.plan`, and a claim then fails for want of a plan. Both hold, but
-only one of them is a guard.
+The block on replay is a guard in both families now. A schema owing proof
+reaches only read-only claims. A migration reads its record where the claim is
+taken and refuses there, rather than relying on the History reading forcing
+`Blocked` and clearing `status.plan` so a claim fails for want of one. Those
+two sites still hold, and each of them is about something else -- one publishes
+a phase, the other publishes a plan -- so the invariant no longer depends on
+neither being given a branch that leaves a plan standing.
 
 Two condition reasons still gate schema behavior:
 `predecessorApplyRetirementPending` and `executionBindingCleanupPending` decide
