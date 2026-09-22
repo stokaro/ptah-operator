@@ -76,9 +76,9 @@ when the controller stops watching it.
 
 | | `PtahSchema` | `PtahMigration` |
 | --- | --- | --- |
-| Enforced in | `acquireApplyLock`, with the release owed by `status.pendingLockRelease` | `acquireMigrationApplyLock`, with `dispatchedApplyMayStillWrite` deciding the release |
-| Held until | the release marker is durable; a crash between the two leaves the Lease to expire rather than a database handed back under a live claim | the dispatched Pod is gone or its absolute execution deadline has passed |
-| Failure behavior | the persisted release completes after a restart | the run is recorded uncertain and the Lease is kept until the Pod cannot write |
+| Enforced in | `acquireApplyLock`, with the release owed durably once it is owed at all | `acquireMigrationApplyLock`, with `dispatchedApplyMayStillWrite` deciding whether it is owed yet |
+| Held until | the release record is durable; a crash between the two leaves the Lease to expire rather than a database handed back under a live claim | the dispatched Pod is gone or its absolute execution deadline has passed, and a run that may still be writing is never recorded as owed |
+| Failure behavior | the persisted release completes on a later pass | the same, for a release that failed; a crash at that instant still leaves the Lease to expire |
 | Proved by | `TestPersistedTargetLockReleaseRecoversAfterManagerCrash` | `TestUncertainMigrationApplyKeepsTheDatabaseWhileItsPodMayRun` |
 
 A missing Job and an expired Lease are each insufficient proof that the old
@@ -125,8 +125,15 @@ Which of the asymmetries above are deliberate, and which is not:
 - **By design:** what an approval is bound to. A migration approval also names
   the history fingerprint, because a database that moved between planning and
   approval changes which versions are pending.
-- **By history:** the release of coordination. The schema family owes it
-  through a durable `status.pendingLockRelease`; the migration family decides
-  it from the Pod each pass. Both hold the database until the run cannot write,
-  and making them one implementation is tracked in
-  [issue #225](https://github.com/stokaro/ptah-operator/issues/225).
+- **Closed:** the release of coordination. Both families owe it through the
+  same durable record and retry it before anything else in a pass, and one
+  implementation decides it for both. What still differs is the width of the
+  crash window: a schema records the obligation inside the write that clears
+  the claim, a migration records a release that failed. The rest of
+  [issue #225](https://github.com/stokaro/ptah-operator/issues/225) is what
+  remains.
+
+Which family keeps which record is stated once, on
+[Mutation lifecycle](../mutation-lifecycle/#durable-safety-state), where it is
+checked against the API types. Restating it here is how the sentence above came
+to be wrong for a day.
