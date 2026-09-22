@@ -3,8 +3,8 @@ title: Execution guarantees
 description: What the operator promises about database work, where each promise is enforced for each family, and the test that proves it.
 ---
 
-Two resource families run database work: `PtahSchema` converges a declared
-schema, and `PtahMigration` runs a versioned sequence. They share Job
+`PtahSchema` converges a declared schema and `PtahMigration` runs a versioned
+sequence. Both run their database work the same way: they share Job
 construction, framing, fingerprints and Leases, and using the same components
 is not the same as keeping the same promises. This page maps each promise to
 the place it is enforced in each family, the durable state that carries it, and
@@ -87,8 +87,8 @@ claim may take the database.
 
 ## One database has one writer
 
-Two resources addressing the same database are refused unless every claimant
-declares the sharing.
+More than one resource addressing the same database is refused unless every
+claimant declares the sharing.
 
 | | `PtahSchema` | `PtahMigration` |
 | --- | --- | --- |
@@ -117,8 +117,7 @@ refuses, is on [Releases and provenance](../../support/releases/).
 
 ## Where the families still differ
 
-Two of the rows above are asymmetric by design, and one is asymmetric by
-history:
+Which of the asymmetries above are deliberate, and which is not:
 
 - **By design:** who clears an uncertain Apply. A schema resolves its own
   uncertainty by reading the database; a migration cannot, and waits for a

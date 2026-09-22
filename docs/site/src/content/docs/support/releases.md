@@ -102,7 +102,7 @@ state version 2 at status.executionBinding.controllerStateVersion, but this
 manager supports 1
 ```
 
-Two neighboring refusals come from the same fence and mean different things.
+Neighboring refusals come from the same fence and mean different things.
 A chart and a manager image from different releases are caught before any
 resource is read:
 
