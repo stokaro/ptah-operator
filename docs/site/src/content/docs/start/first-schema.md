@@ -99,9 +99,9 @@ kubectl -n application get ptahschema application \
   -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\n"}{end}'
 ```
 
-`InSync=True` with reason `ScopedConverged` is the end of it. `Applying=False`
-with reason `JobCompleted` beside it is the distinction worth reading twice: the
-Job finished, and that is not the same claim.
+`InSync=True` with reason `ScopedConverged` confirms convergence.
+`Applying=False` with reason `JobCompleted` says only that the Apply Job
+finished, which is a different claim.
 
 Watch the whole sequence, including this one, in
 [the recorded runs](../../demo/).

@@ -295,7 +295,7 @@ and exist for one reason. The API server keeps a single informer per admission
 parameter kind, and when the last bound policy naming a built-in kind goes away
 it cancels that informer and cannot start it again: the replacement comes from
 the typed shared informer factory, which refuses to restart an informer it has
-already started. The cancelled informer still reports itself as synced, so
+already started. The canceled informer still reports itself as synced, so
 every later policy that reads a ConfigMap parameter resolves against a cache
 frozen at the moment it stopped. Parameters written afterwards are invisible,
 and a binding that denies on a missing parameter refuses every request it

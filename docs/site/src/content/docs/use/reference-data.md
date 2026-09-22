@@ -92,12 +92,10 @@ Removing the `//ptah:schema:data` line stops the operator reconciling that
 table. It does not remove what is there. The rows stay exactly as they were,
 and the table keeps them until something else removes them.
 
-This is the distinction worth being deliberate about: a declaration that
-disappears from your source is almost always a refactor, not a request to
-empty a table in production. Deleting managed rows is a change you declare and
-approve, the same as any other.
+Deleting managed rows is a change you declare and approve, the same as any
+other.
 
-## Fencing a table off
+## Protecting a table
 
 Some tables should not change from the declarative path at all: a rate card a
 finance team owns, a lookup someone maintains by hand, a table whose rows are
@@ -113,18 +111,15 @@ spec:
 
 An entry is a table, or a schema and a table, as the declaration names it, and
 matching is case-insensitive. An entry on a table the artifact already agrees
-with refuses nothing, which is what lets a fence sit in a policy permanently.
+with refuses nothing, so an entry can sit in a policy permanently.
 
-The refusal has no override, and that is the point of it rather than an
-omission. Every other mechanism here rates a change and can answer yes: an
-approval, `allowDestructive`, a permissive `driftSeverity`. A fenced table is
-the statement that no such yes exists for it from this path. The resource
-reports `Ready=False` with reason `ProtectedTable`, publishes no plan, and
-leaves the rows as they are. It reads as blocked rather than failed: nothing
-went wrong, and the answer does not change until the policy or the artifact
-does.
+An approval, `allowDestructive` and a permissive `driftSeverity` cannot
+override the refusal. The resource reports `Ready=False` with reason
+`ProtectedTable`, publishes no plan, and leaves the rows as they are; it is
+blocked rather than failed, and stays blocked until the policy or the artifact
+changes.
 
-Where the change is wanted, the fence is what changes: remove the entry, or
+Where the change is wanted, the policy is what changes: remove the entry, or
 write the rows as a migration, which is the path that asks a person for
 `--allow-prod`. Editing the list also invalidates any plan already waiting for
 approval, because a plan carries the policy it was computed under.
