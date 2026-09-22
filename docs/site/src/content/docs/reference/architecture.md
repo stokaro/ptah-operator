@@ -12,6 +12,35 @@ database, and the process that touches a database never holds a Kubernetes
 credential.** Almost every boundary below is that rule being enforced
 somewhere.
 
+## Words this page uses {#words-this-page-uses}
+
+Five of them are this project's rather than Kubernetes's, and the diagram below
+uses all five. Each links to the section that goes into it.
+
+| Term | What it is | Where it lives |
+| --- | --- | --- |
+| Operation claim | One unit of work a controller has decided to do -- its type, a deterministic id, the inputs it was computed from, and the Job it will dispatch. Persisted before the Job exists, so a restart finds the claim rather than a Job nobody expected. | `status.activeOperation`; [One operation, end to end](#one-operation-end-to-end) |
+| Result frame | The structured envelope a runner writes to stdout: the protocol version, the operation it answers, its id, the child's exit code, and whatever that operation produced. The controller reads the frame, never the child's own output. | `internal/runner`, `runner.ProtocolVersion`; [One operation, end to end](#one-operation-end-to-end) |
+| Realm | The set of resources that can mutate one physical database, whatever URL each of them uses to reach it. | [Concurrency and coordination](#concurrency-and-coordination) |
+| Post-Apply verification | Reading the database back after a mutation to confirm what it did, as distinct from what the run claimed. | [The schema lifecycle](#the-schema-lifecycle), [The migration lifecycle](#the-migration-lifecycle) |
+| Protected table | A table a verification policy refuses to let a plan change, by name. Refusal happens where the plan is computed, so no SQL is produced for it. | `protectedTables`; [Declarative reference data](#declarative-reference-data) |
+
+### Four identities, and what invalidates each {#four-identities}
+
+They are easy to read as interchangeable evidence and they are not. Each
+answers a different question, and each is invalidated by a different event.
+
+| Identity | Answers | Invalidated by |
+| --- | --- | --- |
+| Coordination identity | Which realm a resource claims -- derived from `spec.target.engine` and `spec.target.coordinationKey`, and from nothing a credential carries | Editing either field, which moves the resource to another realm |
+| Target identity | Which database a run actually reached, derived by the Pod from the URL it resolved | The URL resolving somewhere else: another host, port or database |
+| Lease epoch | Which uninterrupted interval of realm ownership a claim holds | The Lease lapsing and being acquired again, which loses continuity and discards any result produced across the change |
+| Execution binding epoch | Which set of execution components a plan was computed under -- manager image and revision, controller-state version, Ptah version, executor and runner images, runner protocol | Any one of those components changing, which retires the plans computed under the old set |
+
+The first two are about *where*: one is configured, the other is observed, and
+a plan binds both so a redirect between planning and applying is refused. The
+last two are about *when*: one bounds a lock, the other bounds a build.
+
 ## The shape of the system
 
 ```mermaid
@@ -168,7 +197,7 @@ stateDiagram-v2
   InSync --> Resolving: interval
   Blocked --> Resolving: interval
   Verifying --> Blocked: artifact refused
-  Planning --> Blocked: fenced table, destructive<br/>disallowed, or apply Never
+  Planning --> Blocked: protected table, destructive<br/>disallowed, or apply Never
   Pending --> Blocked: realm conflict, unsupported engine
   Applying --> Failed: run failed
   Failed --> Resolving: retry interval
@@ -189,20 +218,21 @@ Approval is not an operation — it is a phase in which nothing runs.
 - **Plan** performs two independent native scoped plans while holding the
   database-realm Lease, accepts only byte-identical results, and then makes the
   native Apply path parse and dry-run those exact bytes. A no-change result is
-  the authoritative convergence proof; changed bytes are published.
+  the authoritative statement that the database converged; changed bytes are
+  published.
 - **Apply** reconstructs and hashes the published bytes immediately before
   executing them.
 
 After an Apply, `Observe` and `Plan` run again under the original Apply Lease.
-Only a new, coherent no-change plan establishes convergence: a process exit is
-never proof that the database changed the way the plan said it would.
+Only a new, coherent no-change plan establishes convergence: a process exit
+never establishes that the database changed the way the plan said it would.
 
 ### Blocked is a refusal, not a fault
 
 `Blocked` means the answer will not change until somebody changes an input. It
 is reached from six places: a realm conflict, an unsupported engine, a
 verification policy that refused the artifact, a plan that would change a
-fenced table, a destructive plan the policy disallows, and `apply: Never`,
+a protected table, a destructive plan the policy disallows, and `apply: Never`,
 which is not a problem at all — it is the policy that records plans and applies
 none, and a resource can sit there for as long as somebody wants. `Failed` is
 different again: something went wrong and a retry is reasonable.
@@ -266,11 +296,12 @@ database that will not change on its own; `Failed` is a configuration or
 dispatch failure the controller could not resolve by retrying immediately, and
 it retries on its own interval.
 
-An outcome that is `Partial` or `Unknown` latches. The resource goes to
-`Blocked` and is released only by a history that shows nothing pending —
-never by a retry, because replaying a non-idempotent statement is exactly the
-damage the latch exists to prevent. Every other outcome is confirmed by reading
-the history back in `VerifyingHistory`.
+An outcome that is `Partial` or `Unknown` refuses every later Apply until the
+database itself settles it. The resource goes to `Blocked`, and only a history
+reading that shows nothing pending releases it — never a retry, because
+replaying a non-idempotent statement is exactly the damage the refusal exists to
+prevent. Every other outcome is confirmed by reading the history back in
+`VerifyingHistory`.
 
 Adoption of an existing schema is deliberately not an operator feature: an
 empty revision table reads as everything pending, and the answer is Ptah's own
@@ -321,15 +352,17 @@ Three durable claims live in status, and they are independent on purpose:
 
 - `status.activeOperation` — the operation in flight, and the serialization
   point for one resource.
-- `status.pendingObservation` — proof work owed after an Apply may have
-  mutated the database. It outranks phase changes, ordinary retries and newer
-  desired generations, and it snapshots what the proof needs: the applied plan,
+- `status.pendingObservation` — the post-Apply verification owed after an Apply
+  may have mutated the database. It outranks phase changes, ordinary retries and
+  newer desired generations, and it snapshots what that verification needs: the
+  applied plan,
   the key-free target selector, the coordination digest, the observation policy
-  including the fence, the Apply holder, the Lease epoch and duration, and the
+  including the protected-table refusal, the Apply holder, the Lease epoch and
+  duration, and the
   admission snapshot. A namespace-wide exact-owner Pod scan binds attempts by
   Job name and UID rather than by mutable labels; at most eight Pod UIDs and
   the Pod count are retained as bounded evidence, and a late or duplicate Apply
-  Pod invalidates proof already in flight.
+  Pod invalidates a verification already in flight.
 - `status.pendingLockRelease` — the exact Lease owner and epoch, kept until an
   idempotent release succeeds. It closes the window between a terminal status
   transition and clearing an owner-neutral Lease.
@@ -377,8 +410,8 @@ discards the result. The deadline makes the read proportionate; the epoch makes
 it safe.
 
 That duration is taken from the claim, never from the spec. A Lease is renewed
-at the duration the claim recorded -- for the proof after an Apply, the one
-`status.pendingObservation` copied from it -- and `activeDeadlineSeconds` can
+at the duration the claim recorded -- for the verification after an Apply, the
+one `status.pendingObservation` copied from it -- and `activeDeadlineSeconds` can
 be raised afterwards without lengthening a Lease already held.
 
 A read that ends at its deadline decides nothing: the claim, the Lease and any
@@ -474,11 +507,11 @@ key, no column name and no value. A row-only change still retires a waiting
 plan, because the row fingerprint is inside the bytes the content digest
 covers.
 
-`spec.policy.protectedTables` fences a declared row set off the declarative
-path. A plan that would change a listed table is refused rather than rated, and
-the refusal has no override: an approval, `allowDestructive` and a permissive
-severity are all answers to "how risky is this", and a fence is the statement
-that no such answer exists for these rows. The resource goes to `Blocked` with
+`spec.policy.protectedTables` names tables the declarative path may not change.
+A plan that would change a listed table is refused rather than rated, and the
+refusal has no override: an approval, `allowDestructive` and a permissive
+severity are all answers to "how risky is this", and naming a table here says
+that no such answer exists for it. The resource goes to `Blocked` with
 reason `ProtectedTable` on `PlanReady`, `InSync` and `Ready`, no failure is
 recorded, no plan is published, and the operation ends rather than re-planning
 within the second. Where the change is wanted, the entry goes, or the rows are
@@ -607,9 +640,9 @@ availability comes from replicas within it.
 
 The Lease complements the database's own advisory lock. Its immutable duration
 covers the maximum Job deadline plus grace; the same holder is renewed through
-post-Apply proof, including retry delays. If Job creation or identity is
-uncertain, read-only proof waits for a complete Lease duration so a possibly
-unobserved mutating Pod cannot overlap it.
+post-Apply verification, including retry delays. If Job creation or identity is
+uncertain, the read-only operations wait a complete Lease duration so a possibly
+unobserved mutating Pod cannot overlap them.
 
 The executor's advisory lock, its authoritative inspection and the target DDL
 share one physical database session. Losing that session aborts the operation
