@@ -1350,6 +1350,69 @@ digest -- and `--applied` reads the one the last confirmed apply ran. See
 [Read a plan](../read-a-plan/), which carries the
 [install](../read-a-plan/#install).
 
+## Pruning stored plans
+
+A plan is never overwritten. A new fingerprint publishes a new
+`PtahSchemaPlan` or `PtahMigrationPlan` and its chunks, and the old ones stay
+until their owner is deleted. Storage therefore grows with every distinct plan:
+at the 8 MiB ceiling, a hundred retained plans hold 800 MiB of SQL before
+metadata. That is arithmetic about the ceiling, not a measurement of any
+installation.
+
+The operator prunes nothing on its own. How much history to keep is a decision
+about your audit requirements and your etcd budget, and neither is something
+this project can choose for you. What it can say exactly is which plans are not
+safe to delete.
+
+### Which plans are pinned
+
+A plan is pinned while any of these names it. Each is a field on a live object,
+so the set is checkable with `kubectl` rather than inferred:
+
+| Field | Why the plan must stay |
+| --- | --- |
+| `ptahschema.status.plan` | published and awaiting approval, or being applied |
+| `ptahschema.status.pendingObservation.plan` | the post-Apply verification owed for it has not finished |
+| `ptahschema.status.applied.planRef` | the evidence of what the last confirmed apply ran |
+| `ptahschemaapproval.spec.planRef` | a person authorized these exact bytes |
+| `ptahmigrationapproval.spec.planRef` | the same, for a migration sequence |
+| `ptahmigration.status.plan` | published and awaiting approval, or being applied |
+| `ptahmigration.status.activeOperation.planRef` | an Apply is in flight against it |
+| `ptahmigration.status.unresolvedRun.planRef` | a run nobody accounted for may have executed it |
+
+The last row is the one that matters most and is easiest to miss. An
+unresolved run is a migration that may already have changed the database, and
+its plan is what a person reads to find out what it would have done. Deleting
+it destroys the only record of the work in question.
+
+### A safe procedure
+
+Collect the pinned names first, then delete plans outside that set:
+
+```sh
+kubectl get ptahschemas,ptahmigrations -A -o json |
+  jq -r '.items[] | .status as $s |
+    ($s.plan.name // empty),
+    ($s.pendingObservation.plan.name // empty),
+    ($s.applied.planRef.name // empty),
+    ($s.activeOperation.planRef.name // empty),
+    ($s.unresolvedRun.planRef.name // empty)' |
+  sort -u > pinned.txt
+kubectl get ptahschemaapprovals,ptahmigrationapprovals -A \
+  -o jsonpath='{range .items[*]}{.spec.planRef.name}{"\n"}{end}' |
+  sort -u >> pinned.txt
+```
+
+Delete a plan only if its name is absent from `pinned.txt`, and delete its
+chunk ConfigMaps with it -- they are selected by
+`operator.ptah.run/plan=<plan-name>`. Read the plan first if it is evidence you
+intend to keep: `kubectl ptah plan <resource>` and `--applied` render stored
+bytes back, and nothing reconstructs them once the chunks are gone.
+
+Do this while no operation is in flight for the resources involved. A plan that
+is not pinned when you list it can become pinned a moment later, which is the
+same race any external pruner has and the reason the window matters.
+
 ## Kubernetes versions
 
 The supported minor window and update procedure are defined in
