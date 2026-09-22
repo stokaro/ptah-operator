@@ -7,8 +7,10 @@ import (
 )
 
 // Second and third level alike: the routing table sends a reader to whichever
-// one answers, and the site builds an anchor for both.
-var operationsSectionHeading = regexp.MustCompile(`(?m)^#{2,3} (.+?)(?: \{#.+\})?$`)
+// one answers, and the site builds an anchor for both. A heading that declares
+// its own anchor answers to that and not to its slug, which is the point of
+// declaring one.
+var operationsSectionHeading = regexp.MustCompile(`(?m)^#{2,3} (.+?)(?: \{#([a-z0-9-]+)\})?$`)
 
 // The operations guide answers an on-call reader, and it is long enough that
 // the answer has to be findable before the reading.
@@ -44,6 +46,10 @@ func TestTheOperationsRoutingTableNamesSectionsThatExist(t *testing.T) {
 	guide := string(readOperationsGuide(t))
 	anchors := map[string]bool{}
 	for _, match := range operationsSectionHeading.FindAllStringSubmatch(guide, -1) {
+		if match[2] != "" {
+			anchors[match[2]] = true
+			continue
+		}
 		anchors[slugify(match[1])] = true
 	}
 	for _, match := range regexp.MustCompile(`\]\(#([a-z0-9-]+)\)`).FindAllStringSubmatch(routingTable(t, guide), -1) {
