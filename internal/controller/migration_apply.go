@@ -241,6 +241,26 @@ func (r *MigrationReconciler) claimMigrationApply(
 	if migration.Status.ActiveOperation != nil {
 		return ctrl.Result{Requeue: true}, nil
 	}
+	// A run nobody accounted for refuses the next one here, where the claim is
+	// taken, rather than only through the state the History reading leaves
+	// behind.
+	//
+	// The record already blocks an Apply: a reading that refuses to settle it
+	// puts the resource in Blocked and clears the plan, and a claim with no
+	// plan cannot be built. But that is two cooperating sites holding one
+	// invariant, and each of them is about something else -- one publishes a
+	// phase, the other publishes a plan. Either could be given a branch that
+	// leaves a plan standing, and the invariant would go with it silently. The
+	// record is the authority on whether the database may be written again, so
+	// it is read where that question is answered.
+	if unresolved := migration.Status.UnresolvedRun; unresolved != nil {
+		// Blocked rather than an error: this is where the resource belongs
+		// while the record stands, and a pass that refuses without saying so
+		// leaves a resource that reads as ready and never moves.
+		return r.migrationBlocked(ctx, migration, operatorv1alpha1.ReasonApplyOutcomeUnknown,
+			fmt.Sprintf("A %s run nobody accounted for is recorded against this database; "+
+				"establish what it did before another Apply", unresolved.Outcome))
+	}
 	inputFingerprint, err := r.migrationInputFingerprint(ctx, migration, operatorv1alpha1.MigrationOperationApply)
 	if err != nil {
 		return r.migrationOperationFailure(ctx, migration, err)
