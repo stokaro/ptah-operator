@@ -348,3 +348,80 @@ func TestTheRunbookShapeNoticesWhatItIsFor(t *testing.T) {
 		})
 	}
 }
+
+// runbookAccess is what each runbook needs to be allowed to do, keyed by the
+// runbook's anchor.
+//
+// "Do I have the rights to do this" is the first question somebody acting on a
+// runbook asks, and answering it two paragraphs in -- or not at all -- costs
+// the reader the walk to find out. It is also the element the shape was
+// missing: prerequisites, commands, evidence, stopping conditions and a
+// recovery path were all there, and none of them says who you have to be.
+var runbookAccess = map[string]string{
+	"install":                     "`cluster-admin`",
+	"upgrade":                     "`cluster-admin`",
+	"retry-upgrade":               "`cluster-admin`",
+	"repair-runtime":              "`cluster-admin`",
+	"uninstall":                   "`cluster-admin`",
+	"offline-singleton-migration": "maintenance window",
+	"clear-unresolved-run":        "`status` subresource",
+	"prune-plans":                 "delete access",
+}
+
+// Every runbook says what access it needs, before it says anything else.
+func TestEveryRunbookNamesTheAccessItNeeds(t *testing.T) {
+	t.Parallel()
+	guide := string(readOperationsGuide(t))
+	sections := map[string]*docSection{}
+	for _, section := range parseSections(guide) {
+		sections[section.title] = section
+	}
+	checked := 0
+	for _, group := range runbookGroups {
+		found, ok := sections[group.heading]
+		if !ok {
+			t.Errorf("the guide has no %q section", group.heading)
+			continue
+		}
+		for _, runbook := range group.runbooks {
+			required, declared := runbookAccess[runbook.anchor]
+			if !declared {
+				t.Errorf("runbook %s declares no required access in this table", runbook.anchor)
+				continue
+			}
+			before := elementBody(found, runbook.anchor, runbook.prefix+"-before")
+			if before == "" {
+				t.Errorf("runbook %s has no prerequisites to read", runbook.anchor)
+				continue
+			}
+			checked++
+			if !strings.Contains(collapsed(before), required) {
+				t.Errorf("runbook %s does not say it needs %s before anything else", runbook.anchor, required)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no runbook was read, so this check would pass over nothing")
+	}
+}
+
+// elementBody returns the lines under one runbook element, joined.
+func elementBody(group *docSection, runbookAnchor, elementAnchor string) string {
+	for _, runbook := range group.children {
+		if runbook.anchor != runbookAnchor {
+			continue
+		}
+		for _, element := range runbook.children {
+			if element.anchor == elementAnchor {
+				return strings.Join(element.body, "\n")
+			}
+		}
+	}
+	return ""
+}
+
+// collapsed folds the wrapping so a phrase split across two lines still reads
+// as the phrase. Checking prose without this passes for the wrong reason.
+func collapsed(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}

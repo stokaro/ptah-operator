@@ -49,6 +49,10 @@ ones a first install never has to think about.
 
 #### Before you start {#install-before}
 
+You need `cluster-admin`: the CRDs, the admission policies and their
+bindings are all cluster-scoped, and the install hook proves them against
+every API server.
+
 Install exactly one Helm release of the operator in a cluster. The manager
 watches cluster-wide resources, and admission uses the singleton
 `ptah-operator-admission` webhook configurations, so a second release would
@@ -162,6 +166,9 @@ Upgrades are supported from the first published release onward.
 
 #### Before you start {#upgrade-before}
 
+You need `cluster-admin`, and enough visibility to find a RoleBinding in any
+namespace -- one naming a retired epoch blocks the upgrade wherever it lives.
+
 Every release since the first stamps the CRDs with the schema version, schema
 digest and controller-state version, and the admission singletons and
 parent-origin policies with their release identity. An installation that
@@ -261,6 +268,8 @@ concurrent administrator change can still interrupt the real update sequence.
 
 #### Before you start {#retry-before}
 
+You need `cluster-admin`, as for the upgrade this is resuming.
+
 Resolve the API or policy failure that interrupted the sequence. No step of
 this runbook makes progress while it stands.
 
@@ -322,6 +331,9 @@ objects can leave a release with neither runtime Deployment.
 
 #### Before you start {#repair-before}
 
+You need `cluster-admin`, as for any upgrade: the hooks prove the retained
+cluster-scoped guards before Helm applies anything.
+
 Find the chart version that is installed, and use that one. A newer chart pins
 a contract the retained guards were not created for, so an upgrade is the
 second step rather than the repair.
@@ -361,6 +373,10 @@ Uninstall is a fail-closed, ordered retirement protocol rather than a delete,
 and it has three bounded credential windows to sit through.
 
 #### Before you start {#uninstall-before}
+
+You need `cluster-admin`. The retirement protocol replaces and then removes
+cluster-scoped admission policies, and proves each removal against every API
+server.
 
 Back up the CRDs and their custom resources. Helm retains both, and an
 uninstall removes the controller and admission resources rather than the
@@ -420,6 +436,9 @@ This is the way past an installation the chart will not adopt, and the way to
 change a value the admission singletons pin.
 
 #### Before you start {#offline-before}
+
+You need `cluster-admin`, write access to the release namespace, and a
+maintenance window on every database the suspended resources address.
 
 Do not change singleton annotations merely to make an online upgrade pass. An
 installation whose `ptah-operator-admission` configurations carry no release
@@ -1151,6 +1170,9 @@ went past it.
 
 #### Before you start {#clear-before}
 
+You need write access to the `PtahMigration` and its `status` subresource in
+its namespace. Nothing cluster-scoped is touched.
+
 Establish what the run did. The record is the operator saying it cannot tell,
 so removing it without answering that question hands the next Apply a database
 in a state nobody checked.
@@ -1413,6 +1435,10 @@ it destroys the only record of the work in question.
 ### Prune plans that nothing pins {#prune-plans}
 
 #### Before you start {#prune-before}
+
+You need read access to both families and their approvals across the
+namespaces you are pruning, and delete access to plan objects and ConfigMaps
+in them. Nothing cluster-scoped is touched.
 
 Read [Which plans are pinned](#which-plans-are-pinned) first. Every pin is a
 field on a live object, so the set is checkable rather than inferred, and the
