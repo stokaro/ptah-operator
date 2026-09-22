@@ -36,7 +36,18 @@ import (
 // that does not exist. It says nothing about whether the sentences around
 // those names are still true -- that is what review is for -- but a renamed
 // phase, a new phase and an invented one all stop being silent.
-const architecturePagePath = "docs/site/src/content/docs/reference/architecture.md"
+// The architecture group, which one page became when the contracts were given
+// homes of their own. The check reads all of them: a section it scopes a
+// vocabulary to answers wherever it now lives, and the scoping is what stops
+// one family's lifecycle answering for the other.
+var architecturePagePaths = []string{
+	"docs/site/src/content/docs/reference/architecture.md",
+	"docs/site/src/content/docs/reference/reconciliation.md",
+	"docs/site/src/content/docs/reference/execution.md",
+	"docs/site/src/content/docs/reference/plans-and-approvals.md",
+	"docs/site/src/content/docs/reference/credentials-and-admission.md",
+	"docs/site/src/content/docs/reference/release-lifecycle.md",
+}
 
 // The status vocabularies the page is held to, each with the section that has
 // to name it. Scoping matters: the two families share most of their spelling,
@@ -69,7 +80,7 @@ func section(t *testing.T, page, heading string) string {
 	t.Helper()
 	start := strings.Index(page, heading)
 	if start < 0 {
-		t.Fatalf("%s has no %q section", architecturePagePath, heading)
+		t.Fatalf("the architecture group has no %q section", heading)
 	}
 	rest := page[start+len(heading):]
 	if end := strings.Index(rest, "\n## "); end >= 0 {
@@ -104,7 +115,7 @@ func TestTheArchitecturePageNamesEveryPhaseAndOperation(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Fatalf("%s does not name %d value(s) the API serves: %s",
-			architecturePagePath, len(missing), strings.Join(missing, ", "))
+			"the architecture group", len(missing), strings.Join(missing, ", "))
 	}
 }
 
@@ -132,7 +143,7 @@ func TestTheArchitecturePageNamesEveryServedKind(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Fatalf("%s does not name %d served kind(s): %s",
-			architecturePagePath, len(missing), strings.Join(missing, ", "))
+			"the architecture group", len(missing), strings.Join(missing, ", "))
 	}
 }
 
@@ -168,17 +179,22 @@ func TestTheArchitecturePageNamesNoValueTheAPIDropped(t *testing.T) {
 	sort.Strings(invented)
 	if len(invented) > 0 {
 		t.Fatalf("%s names %d value(s) the API does not serve: %s",
-			architecturePagePath, len(invented), strings.Join(invented, ", "))
+			"the architecture group", len(invented), strings.Join(invented, ", "))
 	}
 }
 
 func readArchitecturePage(t *testing.T) string {
 	t.Helper()
-	page, err := os.ReadFile(repositoryFile(t, architecturePagePath))
-	if err != nil {
-		t.Fatalf("read the architecture page: %v", err)
+	var group strings.Builder
+	for _, path := range architecturePagePaths {
+		page, err := os.ReadFile(repositoryFile(t, path)) //nolint:gosec // A path listed above.
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		group.Write(page)
+		group.WriteString("\n")
 	}
-	return string(page)
+	return group.String()
 }
 
 // namesValue accepts the two ways the page introduces a status value: inside
