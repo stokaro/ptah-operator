@@ -316,6 +316,17 @@ fail() {
 	exit 1
 }
 
+# The controller-state version the candidate chart stamps, read out of the
+# Makefile that stamps it. This phase proves both sides of the release fence,
+# so it needs the number the candidate writes and the number one past it; a
+# literal here agrees with the chart until the contract moves and then proves
+# the opposite of what it says -- a rollback marker that is no longer newer is
+# admitted, and the proof that a rollback is refused passes an upgrade.
+CONTROLLER_STATE_VERSION=$(sed -n 's/^CONTROLLER_STATE_VERSION := //p' "$ROOT_DIR/Makefile")
+printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "the Makefile must declare CONTROLLER_STATE_VERSION as a positive integer"
+NEWER_CONTROLLER_STATE_VERSION=$((CONTROLLER_STATE_VERSION + 1))
+
 printf '%s\n' "$PROOF_NAMESPACE" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
 	fail "E2E_PROOF_NAMESPACE must be a DNS-1123 label"
 [ "${#PROOF_NAMESPACE}" -le 63 ] ||
@@ -3333,7 +3344,8 @@ prove_controller_object_supported_window_guard() {
 		grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
 		fail "controller-object proof lacks an exact candidate controller image"
 	jq \
-		--arg controller_image "$PROOF_CONTROLLER_IMAGE" '
+		--arg controller_image "$PROOF_CONTROLLER_IMAGE" \
+		--arg controller_state_version "$CONTROLLER_STATE_VERSION" '
       del(
         .metadata.creationTimestamp,
         .metadata.generation,
@@ -3355,7 +3367,7 @@ prove_controller_object_supported_window_guard() {
       .metadata.name = "ptah-" + .metadata.labels["operator.ptah.run/operation"] + "-vap-probe-0123456789abcdef" |
       .metadata.annotations["operator.ptah.run/controller-image"] = $controller_image |
       .metadata.annotations["operator.ptah.run/controller-revision"] = "e2e-controller-object-guard" |
-      .metadata.annotations["operator.ptah.run/controller-state-version"] = "1" |
+      .metadata.annotations["operator.ptah.run/controller-state-version"] = $controller_state_version |
       del(
         .spec.template.metadata.labels["batch.kubernetes.io/controller-uid"],
         .spec.template.metadata.labels["batch.kubernetes.io/job-name"],
@@ -4389,10 +4401,10 @@ prove_controller_downgrade_guard() {
 	stop_controller_deployment
 	stored_version=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" \
 		-o jsonpath='{.status.executionBinding.controllerStateVersion}')
-	[ "$stored_version" = 1 ] ||
-		fail "proof PtahSchema controller state version is $stored_version, expected 1"
+	[ "$stored_version" = "$CONTROLLER_STATE_VERSION" ] ||
+		fail "proof PtahSchema controller state version is $stored_version, expected $CONTROLLER_STATE_VERSION"
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$NEWER_CONTROLLER_STATE_VERSION}]" >/dev/null
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
 		jq -S '.status' >"$WORK_DIR/future-controller-state.json"
 	start_controller_deployment
@@ -4402,7 +4414,7 @@ prove_controller_downgrade_guard() {
 	cmp "$WORK_DIR/future-controller-state.json" "$WORK_DIR/future-controller-state-after.json" ||
 		fail "blocked candidate manager rewrote future PtahSchema state"
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":1}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]" >/dev/null
 	kube -n "$E2E_OPERATOR_NAMESPACE" delete pod \
 		-l 'app.kubernetes.io/component=controller' --wait=false >/dev/null
 	wait_runtime_ready
@@ -4575,7 +4587,7 @@ run_upgrade_proof() {
 
 	printf '%s\n' 'e2e crd: proving a newer durable controller-state marker blocks rollback'
 	kube annotate crd ptahschemaplans.operator.ptah.run \
-		operator.ptah.run/controller-state-version=2 --overwrite >/dev/null
+		"operator.ptah.run/controller-state-version=$NEWER_CONTROLLER_STATE_VERSION" --overwrite >/dev/null
 	for crd_name in \
 		ptahschemas.operator.ptah.run \
 		ptahschemaplans.operator.ptah.run \
@@ -4590,7 +4602,7 @@ run_upgrade_proof() {
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-state-rollback.json"
 	done
 	kube annotate crd ptahschemaplans.operator.ptah.run \
-		operator.ptah.run/controller-state-version=1 --overwrite >/dev/null
+		"operator.ptah.run/controller-state-version=$CONTROLLER_STATE_VERSION" --overwrite >/dev/null
 
 	printf '%s\n' 'e2e crd: proving an incomplete schema identity and a digest collision are refused'
 	digest_crd=ptahschemaplans.operator.ptah.run
@@ -4665,7 +4677,7 @@ run_upgrade_proof() {
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-future-state.json"
 	done
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$NEWER_CONTROLLER_STATE_VERSION}]" >/dev/null
 	expect_upgrade_failure_without_deployment_change "upgrade against future controller state"
 	for crd_name in \
 		ptahschemas.operator.ptah.run \
@@ -4675,9 +4687,10 @@ run_upgrade_proof() {
 	done
 	stored_version=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" \
 		-o jsonpath='{.status.executionBinding.controllerStateVersion}')
-	[ "$stored_version" = 2 ] || fail "failed CRD preflight rewrote future controller state"
+	[ "$stored_version" = "$NEWER_CONTROLLER_STATE_VERSION" ] ||
+		fail "failed CRD preflight rewrote future controller state"
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":1}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]" >/dev/null
 
 	printf '%s\n' 'e2e crd: upgrading drifted CRDs before the manager rollout'
 	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \

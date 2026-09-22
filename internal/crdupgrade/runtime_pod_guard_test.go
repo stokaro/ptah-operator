@@ -294,22 +294,22 @@ func TestRuntimePodActivationTruthTable(t *testing.T) {
 		wantAllow   bool
 	}{
 		{name: "bootstrap unannotated create is unaffected", operation: "CREATE", actor: "unrelated"},
-		{name: "bootstrap candidate create is denied", marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
-		{name: "active predecessor create is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "CREATE", actor: "unrelated"},
-		{name: "active predecessor update is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test"},
-		{name: "active predecessor connect is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "CONNECT", subresource: "exec", actor: "developer"},
-		{name: "candidate create before activation is denied", active: 1, activeState: 1, marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
-		{name: "future create before activation is denied", active: 1, activeState: 1, marker: 3, markerState: 3, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
-		{name: "forged predecessor state is denied", active: 1, activeState: 1, marker: 1, markerState: 9, operation: "UPDATE", actor: "system:node:test", wantMatch: true},
-		{name: "activated candidate reaches exact contract", active: 2, activeState: 2, marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true, wantAllow: true},
-		{name: "activated predecessor is denied", active: 2, activeState: 2, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test", wantMatch: true},
-		{name: "activated connect is denied", active: 2, activeState: 2, marker: 2, markerState: 2, operation: "CONNECT", subresource: "exec", actor: "developer", wantMatch: true},
-		{name: "future active release passes retained gate", active: 3, activeState: 3, marker: 3, markerState: 3, operation: "UPDATE", actor: "system:node:test", wantMatch: true, wantAllow: true},
-		{name: "malformed activation fails closed", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test", params: func(params map[string]any) any {
+		{name: "bootstrap candidate create is denied", marker: 2, markerState: int64(newerStateVersion), operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
+		{name: "active predecessor create is unaffected", active: 1, activeState: int64(ourStateVersion), marker: 1, markerState: int64(ourStateVersion), operation: "CREATE", actor: "unrelated"},
+		{name: "active predecessor update is unaffected", active: 1, activeState: int64(ourStateVersion), marker: 1, markerState: int64(ourStateVersion), operation: "UPDATE", actor: "system:node:test"},
+		{name: "active predecessor connect is unaffected", active: 1, activeState: int64(ourStateVersion), marker: 1, markerState: int64(ourStateVersion), operation: "CONNECT", subresource: "exec", actor: "developer"},
+		{name: "candidate create before activation is denied", active: 1, activeState: int64(ourStateVersion), marker: 2, markerState: int64(newerStateVersion), operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
+		{name: "future create before activation is denied", active: 1, activeState: int64(ourStateVersion), marker: 3, markerState: int64(newerStateVersion + 1), operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
+		{name: "forged predecessor state is denied", active: 1, activeState: int64(ourStateVersion), marker: 1, markerState: 9, operation: "UPDATE", actor: "system:node:test", wantMatch: true},
+		{name: "activated candidate reaches exact contract", active: 2, activeState: int64(newerStateVersion), marker: 2, markerState: int64(newerStateVersion), operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true, wantAllow: true},
+		{name: "activated predecessor is denied", active: 2, activeState: int64(newerStateVersion), marker: 1, markerState: int64(ourStateVersion), operation: "UPDATE", actor: "system:node:test", wantMatch: true},
+		{name: "activated connect is denied", active: 2, activeState: int64(newerStateVersion), marker: 2, markerState: int64(newerStateVersion), operation: "CONNECT", subresource: "exec", actor: "developer", wantMatch: true},
+		{name: "future active release passes retained gate", active: 3, activeState: int64(newerStateVersion + 1), marker: 3, markerState: int64(newerStateVersion + 1), operation: "UPDATE", actor: "system:node:test", wantMatch: true, wantAllow: true},
+		{name: "malformed activation fails closed", active: 1, activeState: int64(ourStateVersion), marker: 1, markerState: int64(ourStateVersion), operation: "UPDATE", actor: "system:node:test", params: func(params map[string]any) any {
 			params["metadata"].(map[string]any)["labels"].(map[string]any)["app.kubernetes.io/component"] = "foreign"
 			return params
 		}, wantMatch: true},
-		{name: "missing activation fails closed", marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", params: func(map[string]any) any { return nil }, wantMatch: true},
+		{name: "missing activation fails closed", marker: 2, markerState: int64(newerStateVersion), operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", params: func(map[string]any) any { return nil }, wantMatch: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1018,7 +1018,7 @@ func runtimePodGuardFixture() *RolloutGuard {
 		ControllerDeploymentName:     "ptah-controller",
 		ControllerReplicas:           1,
 		CertificateDeploymentName:    "ptah-cert-rotator",
-		ControllerStateVersion:       1,
+		ControllerStateVersion:       ourStateVersion,
 		AdmissionContractVersion:     1,
 		ReleaseSequence:              1,
 		ManagerImage:                 managerImage,

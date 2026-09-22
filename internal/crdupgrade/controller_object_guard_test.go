@@ -450,16 +450,16 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		"activeRelease":               int64(0),
 		"candidateRelease":            int64(1),
 		"previousRelease":             int64(0),
-		"activeControllerStateString": "1",
-		"activeControllerState":       int64(1),
+		"activeControllerStateString": ourStateVersionString(),
+		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       activeImage,
 	}
 	active := map[string]any{
 		"activeRelease":               int64(1),
 		"candidateRelease":            int64(1),
 		"previousRelease":             int64(0),
-		"activeControllerStateString": "1",
-		"activeControllerState":       int64(1),
+		"activeControllerStateString": ourStateVersionString(),
+		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       activeImage,
 	}
 	const nextActiveImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -467,14 +467,14 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		"activeRelease":               int64(2),
 		"candidateRelease":            int64(1),
 		"previousRelease":             int64(0),
-		"activeControllerStateString": "2",
-		"activeControllerState":       int64(2),
+		"activeControllerStateString": newerStateVersionString(),
+		"activeControllerState":       int64(newerStateVersion),
 		"activeControllerImage":       nextActiveImage,
 	}
 
 	legacyJob := controllerObjectLegacyJobCELObject(false)
 	legacyApplyJob := controllerObjectLegacyJobCELObject(true)
-	currentJob := controllerObjectCurrentJobCELObject(activeImage, int64(1))
+	currentJob := controllerObjectCurrentJobCELObject(activeImage, int64(ourStateVersion))
 	jobExpression := controllerJobAnnotationContractExpression()
 	for _, test := range []struct {
 		name      string
@@ -494,8 +494,8 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		{name: "active predecessor identity update before cutover", object: currentJob, operation: "UPDATE", variables: bootstrap, want: true},
 		{name: "previous current update after newer activation", object: currentJob, operation: "UPDATE", variables: nextActive, want: true},
 		{name: "previous current create after newer activation", object: currentJob, operation: "CREATE", variables: nextActive, want: false},
-		{name: "current create with foreign image", object: controllerObjectCurrentJobCELObject(nextActiveImage, int64(1)), operation: "CREATE", variables: active, want: false},
-		{name: "current create with foreign state", object: controllerObjectCurrentJobCELObject(activeImage, int64(2)), operation: "CREATE", variables: active, want: false},
+		{name: "current create with foreign image", object: controllerObjectCurrentJobCELObject(nextActiveImage, int64(ourStateVersion)), operation: "CREATE", variables: active, want: false},
+		{name: "current create with foreign state", object: controllerObjectCurrentJobCELObject(activeImage, int64(newerStateVersion)), operation: "CREATE", variables: active, want: false},
 	} {
 		t.Run("Job/"+test.name, func(t *testing.T) {
 			if got := evaluate(jobExpression, test.object, test.operation, test.variables); got != test.want {
@@ -505,7 +505,7 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 	}
 
 	legacyPlan := controllerObjectPlanCELObject(2, "", 0)
-	currentPlan := controllerObjectPlanCELObject(3, activeImage, 1)
+	currentPlan := controllerObjectPlanCELObject(3, activeImage, int64(ourStateVersion))
 	planExpression := controllerPlanContractExpression()
 	for _, test := range []struct {
 		name      string
@@ -517,8 +517,8 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		{name: "legacy v2 after activation", object: legacyPlan, variables: active, want: false},
 		{name: "current v3 after activation", object: currentPlan, variables: active, want: true},
 		{name: "active predecessor v3 before cutover", object: currentPlan, variables: bootstrap, want: true},
-		{name: "current v3 with foreign image", object: controllerObjectPlanCELObject(3, "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 1), variables: active, want: false},
-		{name: "current v3 with foreign state", object: controllerObjectPlanCELObject(3, activeImage, 2), variables: active, want: false},
+		{name: "current v3 with foreign image", object: controllerObjectPlanCELObject(3, "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", int64(ourStateVersion)), variables: active, want: false},
+		{name: "current v3 with foreign state", object: controllerObjectPlanCELObject(3, activeImage, int64(newerStateVersion)), variables: active, want: false},
 	} {
 		t.Run("Plan/"+test.name, func(t *testing.T) {
 			if got := evaluate(planExpression, test.object, "CREATE", test.variables); got != test.want {

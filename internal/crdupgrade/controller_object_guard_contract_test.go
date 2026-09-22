@@ -89,7 +89,7 @@ func publishedPlanChunks(t *testing.T, content []byte) []*corev1.ConfigMap {
 		ExecutionBindingID:       "v1-33333333333333333333333333333333",
 		ControllerImage:          "example.test/controller@sha256:" + strings.Repeat("1", 64),
 		ControllerRevision:       "controller-test-revision",
-		ControllerStateVersion:   1,
+		ControllerStateVersion:   ourStateVersion,
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.test/executor@sha256:" + strings.Repeat("2", 64),
 		RunnerImage:              "example.test/runner@sha256:" + strings.Repeat("3", 64),

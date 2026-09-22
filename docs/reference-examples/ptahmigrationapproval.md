@@ -77,5 +77,5 @@ spec:
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 5
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```

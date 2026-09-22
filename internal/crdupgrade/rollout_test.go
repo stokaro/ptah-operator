@@ -111,7 +111,7 @@ func TestRenderedRolloutGuardMatchesCompiledContract(t *testing.T) {
 		ControllerDeploymentName:           "ptah-e2e-ptah-operator",
 		ControllerReplicas:                 *controllerDeployment.Spec.Replicas,
 		CertificateDeploymentName:          "ptah-e2e-ptah-operator-cert-rotator",
-		ControllerStateVersion:             1,
+		ControllerStateVersion:             ourStateVersion,
 		AdmissionContractVersion:           CurrentAdmissionContractVersion,
 		CertificateRuntimeEnabled:          true,
 		ReleaseSequence:                    1,
@@ -296,8 +296,8 @@ func TestRolloutGuardPrepareRequiresExactHelmCreatedRatchetsAndProvesEnforcement
 	guard, policies, bindings, deployments := readyRolloutGuard()
 	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
 	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
-	policies.objects[rolloutName] = readyPolicy(guard.policy(1, 1))
-	policies.objects[runtimeName] = readyPolicy(guard.runtimePolicy(1, 1, guard.ManagerImage))
+	policies.objects[rolloutName] = readyPolicy(guard.policy(ourStateVersion, 1))
+	policies.objects[runtimeName] = readyPolicy(guard.runtimePolicy(ourStateVersion, 1, guard.ManagerImage))
 	bindings.objects[rolloutName] = guard.binding(rolloutName)
 	bindings.objects[runtimeName] = guard.binding(runtimeName)
 
@@ -311,7 +311,7 @@ func TestRolloutGuardPrepareRequiresExactHelmCreatedRatchetsAndProvesEnforcement
 	if deployments.dryCreates != 5 {
 		t.Fatalf("enforcement probe dry-run creates = %d, want 5", deployments.dryCreates)
 	}
-	want := guard.policy(1, 1)
+	want := guard.policy(ourStateVersion, 1)
 	if !reflect.DeepEqual(policies.objects[rolloutName].Spec, want.Spec) {
 		t.Fatal("verified rollout policy differs from candidate")
 	}
@@ -552,7 +552,7 @@ func TestRolloutGuardCreateBoundaryProbeCarriesTheActiveIdentityWithoutASentinel
 	if probe.Name == guard.ControllerDeploymentName || probe.Name == guard.CertificateDeploymentName {
 		t.Fatalf("boundary probe reused fixed Deployment name %q", probe.Name)
 	}
-	if got := probe.Annotations[ControllerStateVersionAnnotation]; got != "1" {
+	if got := probe.Annotations[ControllerStateVersionAnnotation]; got != ourStateVersionString() {
 		t.Fatalf("boundary probe controller state = %q, want active state 1", got)
 	}
 	if got := probe.Annotations[ReleaseSequenceAnnotation]; got != "1" {
@@ -623,7 +623,7 @@ func TestRolloutGuardEnforcementProbeRetriesNotFoundBetweenReads(t *testing.T) {
 	activation := guard.releaseActivationGuard()
 	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
 	live := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
-	live.Annotations[ControllerStateVersionAnnotation] = "1"
+	live.Annotations[ControllerStateVersionAnnotation] = ourStateVersionString()
 	live.Annotations[ReleaseSequenceAnnotation] = "1"
 	deployments.objects[live.Name] = live
 	resource := schema.GroupResource{Group: "apps", Resource: "deployments"}
@@ -662,7 +662,7 @@ func TestRolloutGuardPrepareRejectsFutureOrTamperedPolicyBeforeMutation(t *testi
 		{
 			name: "future floor",
 			mutate: func(_ *RolloutGuard, policy *admissionregistrationv1.ValidatingAdmissionPolicy) {
-				policy.Annotations[ControllerStateVersionAnnotation] = "2"
+				policy.Annotations[ControllerStateVersionAnnotation] = newerStateVersionString()
 			},
 			want: "not compatible",
 		},
@@ -686,8 +686,8 @@ func TestRolloutGuardPrepareRejectsFutureOrTamperedPolicyBeforeMutation(t *testi
 			guard, policies, bindings, _ := readyRolloutGuard()
 			rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
 			runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
-			policies.objects[rolloutName] = readyPolicy(guard.policy(1, 1))
-			policies.objects[runtimeName] = readyPolicy(guard.runtimePolicy(1, 1, guard.ManagerImage))
+			policies.objects[rolloutName] = readyPolicy(guard.policy(ourStateVersion, 1))
+			policies.objects[runtimeName] = readyPolicy(guard.runtimePolicy(ourStateVersion, 1, guard.ManagerImage))
 			bindings.objects[rolloutName] = guard.binding(rolloutName)
 			bindings.objects[runtimeName] = guard.binding(runtimeName)
 			test.mutate(guard, policies.objects[rolloutName])
@@ -707,8 +707,8 @@ func TestRolloutGuardPrepareRejectsForeignBinding(t *testing.T) {
 	guard, policies, bindings, _ := readyRolloutGuard()
 	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
 	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
-	policies.objects[rolloutName] = readyPolicy(guard.policy(1, 1))
-	policies.objects[runtimeName] = readyPolicy(guard.runtimePolicy(1, 1, guard.ManagerImage))
+	policies.objects[rolloutName] = readyPolicy(guard.policy(ourStateVersion, 1))
+	policies.objects[runtimeName] = readyPolicy(guard.runtimePolicy(ourStateVersion, 1, guard.ManagerImage))
 	bindings.objects[rolloutName] = guard.binding(rolloutName)
 	bindings.objects[runtimeName] = guard.binding(runtimeName)
 	bindings.objects[rolloutName].Spec.PolicyName = "foreign"
@@ -732,7 +732,7 @@ func TestRolloutGuardQuiescesLegacyDeploymentsAfterCompleteDryRun(t *testing.T) 
 	}
 	for _, name := range []string{guard.CertificateDeploymentName, guard.ControllerDeploymentName} {
 		deployment := deployments.objects[name]
-		if got := deployment.Annotations[ControllerStateVersionAnnotation]; got != "1" {
+		if got := deployment.Annotations[ControllerStateVersionAnnotation]; got != ourStateVersionString() {
 			t.Fatalf("Deployment %s state = %q, want 1", name, got)
 		}
 		if got := deployment.Annotations[ReleaseSequenceAnnotation]; got != "1" {
@@ -750,7 +750,7 @@ func TestRolloutGuardQuiescesLegacyDeploymentsAfterCompleteDryRun(t *testing.T) 
 
 func candidateDeployment(guard *RolloutGuard, name, component string) *appsv1.Deployment {
 	deployment := legacyDeployment(guard, name, component)
-	deployment.Annotations[ControllerStateVersionAnnotation] = "1"
+	deployment.Annotations[ControllerStateVersionAnnotation] = ourStateVersionString()
 	deployment.Annotations[ReleaseSequenceAnnotation] = "1"
 	deployment.Spec.Template.Spec.Containers = []corev1.Container{{Name: "manager", Image: guard.ManagerImage}}
 	return deployment
@@ -902,7 +902,7 @@ func TestRolloutGuardQuiesceRejectsForeignAndFutureDeployments(t *testing.T) {
 		{
 			name: "future state",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Annotations[ControllerStateVersionAnnotation] = "2"
+				deployment.Annotations[ControllerStateVersionAnnotation] = newerStateVersionString()
 			},
 			want: "rollback refused",
 		},
@@ -928,7 +928,7 @@ func TestRolloutGuardQuiesceRejectsForeignAndFutureDeployments(t *testing.T) {
 func TestRolloutGuardQuiesceWaitsForSelectedPodsToDisappear(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
 	deployment := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
-	deployment.Annotations[ControllerStateVersionAnnotation] = "1"
+	deployment.Annotations[ControllerStateVersionAnnotation] = ourStateVersionString()
 	deployments.objects[deployment.Name] = deployment
 	guard.Pods = &rolloutPodClient{items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "still-running"}}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
@@ -1733,7 +1733,7 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 		ControllerDeploymentName:     "ptah-controller",
 		ControllerReplicas:           2,
 		CertificateDeploymentName:    "ptah-cert-rotator",
-		ControllerStateVersion:       1,
+		ControllerStateVersion:       ourStateVersion,
 		AdmissionContractVersion:     1,
 		ReleaseSequence:              1,
 		ManagerImage:                 managerImage,

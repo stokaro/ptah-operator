@@ -243,7 +243,7 @@ func testServiceAccountOriginGuard() *ServiceAccountOriginGuard {
 		CertificateServiceAccountName:   "ptah-cert-rotator",
 		ControllerDeploymentName:        "ptah-controller",
 		CertificateDeploymentName:       "ptah-cert-rotator",
-		ControllerStateVersion:          1,
+		ControllerStateVersion:          ourStateVersion,
 		AdmissionContractVersion:        1,
 		ReleaseSequence:                 1,
 		ManagerImage:                    managerImage,
@@ -587,7 +587,11 @@ func originParityGuard(previous int32, namespace, coordination string, managed b
 		if !managed {
 			return fmt.Sprintf("%s-v%d", controllerBase, sequence)
 		}
-		digest := sha256.Sum256([]byte(controllerBase + "\n1\n" + hookIdentityDigest(namespace, release, sequence, image)))
+		// The chart puts the controller-state version in this digest, so the
+		// literal it used to carry here made every rendered principal name
+		// wrong the first time that version moved.
+		digest := sha256.Sum256([]byte(controllerBase + "\n" + ourStateVersionString() + "\n" +
+			hookIdentityDigest(namespace, release, sequence, image)))
 		return fmt.Sprintf("%s-v%d-%s", controllerBase, sequence, fmt.Sprintf("%x", digest)[:12])
 	}
 	admissionVersion := int32(1)
@@ -602,7 +606,7 @@ func originParityGuard(previous int32, namespace, coordination string, managed b
 		PreviousControllerServiceAccountName: controllerName(previous, previousImage), PreviousControllerServiceAccountManaged: managed,
 		PreviousControllerServiceAccountUID: "previous-controller-uid", PreviousControllerReleaseSequence: previous, PreviousControllerManagerImage: previousImage,
 		ControllerDeploymentName: deployment, CertificateDeploymentName: deployment + "-cert-rotator",
-		CertificateRuntimeEnabled: certificateMode == "managed", ControllerStateVersion: 1, AdmissionContractVersion: admissionVersion,
+		CertificateRuntimeEnabled: certificateMode == "managed", ControllerStateVersion: ourStateVersion, AdmissionContractVersion: admissionVersion,
 		ReleaseSequence: previous + 1, ManagerImage: managerImage, PollEvery: time.Nanosecond,
 	})
 }

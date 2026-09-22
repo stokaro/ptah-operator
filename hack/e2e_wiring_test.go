@@ -3311,8 +3311,8 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "migration lifecycle loses the controller identity",
-			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
 			wantError:   `migrations-postgresql phase must bind E2E_CONTROLLER_REVISION to "$CONTROLLER_REVISION", and binds nothing`,
 		},
 		{
@@ -6096,29 +6096,34 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			name: "candidate controller image redirected",
 			old: "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
 				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
-				"E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
+				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_CONTROLLER_IMAGE=$PRODUCTION_OPERATOR_IMAGE \\\n" +
 				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
-				"E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
+				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
 			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds "$PRODUCTION_OPERATOR_IMAGE"`,
 		},
 		{
-			name: "pinned state version unpinned",
-			old: "E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
+			// The version the phases assert against is read out of the Makefile
+			// that stamps the chart. Writing the number here instead is the
+			// mistake this case measures: it reads correctly, it agrees with
+			// the chart on the day it is written, and it stops agreeing the
+			// first time the contract moves.
+			name: "state version pinned to a literal",
+			old: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
+			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
-			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_STATE_VERSION to "1", and binds "$CONTROLLER_STATE_VERSION"`,
+			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_STATE_VERSION to "$CONTROLLER_STATE_VERSION", and binds "1"`,
 		},
 		{
 			name:        "undeclared binding added",
