@@ -316,6 +316,17 @@ fail() {
 	exit 1
 }
 
+# The controller-state version the candidate chart stamps, read out of the
+# Makefile that stamps it. This phase proves both sides of the release fence,
+# so it needs the number the candidate writes and the number one past it; a
+# literal here agrees with the chart until the contract moves and then proves
+# the opposite of what it says -- a rollback marker that is no longer newer is
+# admitted, and the proof that a rollback is refused passes an upgrade.
+CONTROLLER_STATE_VERSION=$(sed -n 's/^CONTROLLER_STATE_VERSION := //p' "$ROOT_DIR/Makefile")
+printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "the Makefile must declare CONTROLLER_STATE_VERSION as a positive integer"
+NEWER_CONTROLLER_STATE_VERSION=$((CONTROLLER_STATE_VERSION + 1))
+
 printf '%s\n' "$PROOF_NAMESPACE" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
 	fail "E2E_PROOF_NAMESPACE must be a DNS-1123 label"
 [ "${#PROOF_NAMESPACE}" -le 63 ] ||
@@ -3333,7 +3344,8 @@ prove_controller_object_supported_window_guard() {
 		grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
 		fail "controller-object proof lacks an exact candidate controller image"
 	jq \
-		--arg controller_image "$PROOF_CONTROLLER_IMAGE" '
+		--arg controller_image "$PROOF_CONTROLLER_IMAGE" \
+		--arg controller_state_version "$CONTROLLER_STATE_VERSION" '
       del(
         .metadata.creationTimestamp,
         .metadata.generation,
@@ -3355,7 +3367,7 @@ prove_controller_object_supported_window_guard() {
       .metadata.name = "ptah-" + .metadata.labels["operator.ptah.run/operation"] + "-vap-probe-0123456789abcdef" |
       .metadata.annotations["operator.ptah.run/controller-image"] = $controller_image |
       .metadata.annotations["operator.ptah.run/controller-revision"] = "e2e-controller-object-guard" |
-      .metadata.annotations["operator.ptah.run/controller-state-version"] = "1" |
+      .metadata.annotations["operator.ptah.run/controller-state-version"] = $controller_state_version |
       del(
         .spec.template.metadata.labels["batch.kubernetes.io/controller-uid"],
         .spec.template.metadata.labels["batch.kubernetes.io/job-name"],
@@ -4575,7 +4587,7 @@ run_upgrade_proof() {
 
 	printf '%s\n' 'e2e crd: proving a newer durable controller-state marker blocks rollback'
 	kube annotate crd ptahschemaplans.operator.ptah.run \
-		operator.ptah.run/controller-state-version=2 --overwrite >/dev/null
+		"operator.ptah.run/controller-state-version=$NEWER_CONTROLLER_STATE_VERSION" --overwrite >/dev/null
 	for crd_name in \
 		ptahschemas.operator.ptah.run \
 		ptahschemaplans.operator.ptah.run \
@@ -4590,7 +4602,7 @@ run_upgrade_proof() {
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-state-rollback.json"
 	done
 	kube annotate crd ptahschemaplans.operator.ptah.run \
-		operator.ptah.run/controller-state-version=1 --overwrite >/dev/null
+		"operator.ptah.run/controller-state-version=$CONTROLLER_STATE_VERSION" --overwrite >/dev/null
 
 	printf '%s\n' 'e2e crd: proving an incomplete schema identity and a digest collision are refused'
 	digest_crd=ptahschemaplans.operator.ptah.run
