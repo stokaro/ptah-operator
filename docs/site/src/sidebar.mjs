@@ -55,6 +55,7 @@ export const sidebar = [
     label: 'Reference',
     items: [
       { label: 'Architecture', link: '/reference/architecture/' },
+      { label: 'Execution guarantees', link: '/reference/guarantees/' },
       {
         label: 'Custom resources',
         items: [
