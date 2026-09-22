@@ -12,6 +12,28 @@ database, and the process that touches a database never holds a Kubernetes
 credential.** Almost every boundary below is that rule being enforced
 somewhere.
 
+## What a deployment looks like {#deployment-scope}
+
+Before the components: the shape a platform owner has to plan for, and where
+to look when something is wrong. Each row is argued for further down the page.
+
+| Question | Answer |
+| --- | --- |
+| How many installations per cluster? | Exactly one. The admission configurations are a fixed singleton, so a second release is refused rather than sharing them. |
+| What does the manager watch? | Every namespace. It is a cluster-scoped controller over namespaced resources. |
+| How is it made available? | Replicas within that one release. One is the active reconciler through a leader-election Lease; every ready replica serves the webhooks. |
+| What contends with what? | Every resource addressing one database, whatever namespace it is in. They take turns through a Lease in one configurable coordination namespace. |
+| What touches a database? | Only a Job, one per operation, in the resource's own namespace. The manager never opens a database connection. |
+| What holds Kubernetes credentials? | Only the control plane. An operation Pod is given a database credential and no Kubernetes one, which is the rule the rest of this page enforces. |
+| What stops SQL nobody approved? | For each family, a named enforcement point: [Execution guarantees](../guarantees/). |
+| Where do I look when an Apply is uncertain? | The resource's own status, and [A migration run nobody accounted for](../../use/operations/#a-migration-run-nobody-accounted-for) for the family that cannot resolve it alone. |
+
+The failure domains that follow from those answers are not the same size.
+Losing a manager replica costs a reconciler and no availability. Losing the
+release costs reconciliation for the whole cluster, while every database keeps
+whatever the last Apply left it holding. Losing a database costs the resources
+bound to it and nothing else: the operator's own state lives in Kubernetes.
+
 ## Words this page uses {#words-this-page-uses}
 
 Five of them are this project's rather than Kubernetes's, and the diagram below
