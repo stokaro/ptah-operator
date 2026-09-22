@@ -280,7 +280,7 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 			// case: DispatchStarted is written before the create and never
 			// cleared, and a UID is only recorded afterwards, so no state holds
 			// one without the other and no mutation can separate them.
-			if operation.DispatchStarted || operation.JobUID != "" || job != nil {
+			if migrationMayHaveDispatched(operation) || job != nil {
 				// Something ran under this claim and nothing read what it did.
 				// The unknown outcome and the database go back first; the next
 				// pass finds no claim and lets the resource go.
@@ -412,7 +412,7 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	}
 	if operation := migration.Status.ActiveOperation; operation != nil &&
 		operation.Type == operatorv1alpha1.MigrationOperationApply &&
-		(operation.DispatchStarted || operation.JobUID != "") {
+		migrationMayHaveDispatched(operation) {
 		// A dispatched Apply is not retired by a rollout. Its Job may already
 		// have changed the database, and dropping the claim would drop the only
 		// record that it might have.
@@ -621,7 +621,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
 	if apierrors.IsNotFound(err) {
-		if applying && (operation.DispatchStarted || operation.JobUID != "") {
+		if applying && migrationMayHaveDispatched(operation) {
 			// A dispatched Apply is never recreated. Whether it ran is a question
 			// for the database, not for a retry.
 			return r.finishUncertainMigrationApply(ctx, migration, nil,

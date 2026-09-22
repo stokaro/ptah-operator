@@ -534,7 +534,7 @@ func (r *SchemaReconciler) reconcileExecutionBinding(
 
 	operation := schema.Status.ActiveOperation
 	if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
-		(operation.DispatchStarted || operation.JobUID != "") {
+		schemaMayHaveDispatched(operation) {
 		result, err := r.finishUncertainApplyForExecutionBindingChange(
 			ctx,
 			schema,
@@ -893,7 +893,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		job := &batchv1.Job{}
 		err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job)
 		dispatchedApplyUnknown := operation.Type == operatorv1alpha1.OperationApply &&
-			(operation.DispatchStarted || operation.JobUID != "") &&
+			schemaMayHaveDispatched(operation) &&
 			(apierrors.IsNotFound(err) || err == nil && (operation.JobUID != "" && operation.JobUID != job.UID || !ownedByUID(job.OwnerReferences, schema.UID)))
 		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) {
 			if operationNeedsTargetLock(schema) {
@@ -1024,7 +1024,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		operation = schema.Status.ActiveOperation
 	}
-	if operation.Type == operatorv1alpha1.OperationApply && !operation.DispatchStarted && operation.JobUID == "" &&
+	if operation.Type == operatorv1alpha1.OperationApply && !schemaMayHaveDispatched(operation) &&
 		schema.Status.Plan != nil {
 		if bindingErr := r.ensureCurrentStatusExecutionBinding(schema, schema.Status.Plan); bindingErr != nil {
 			return r.executionBindingChanged(ctx, schema, schema.Status.Plan, bindingErr)
@@ -1050,7 +1050,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	key := types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
 	if apierrors.IsNotFound(err) {
-		if operation.Type == operatorv1alpha1.OperationApply && (operation.DispatchStarted || operation.JobUID != "") {
+		if operation.Type == operatorv1alpha1.OperationApply && schemaMayHaveDispatched(operation) {
 			acquired, requeue, lockErr := r.acquireApplyLock(ctx, schema)
 			if lockErr != nil {
 				return ctrl.Result{}, lockErr
@@ -2723,7 +2723,7 @@ func (r *SchemaReconciler) executionBindingChanged(
 		}
 	}
 	if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
-		(operation.DispatchStarted || operation.JobUID != "") {
+		schemaMayHaveDispatched(operation) {
 		configured, err := r.configuredExecutionBinding()
 		if err != nil {
 			return ctrl.Result{}, err
@@ -4052,7 +4052,7 @@ func (r *SchemaReconciler) acquireActiveLock(
 
 	before := schema.DeepCopy()
 	continuityLost := expected == "" || reportedContinuityLoss || expected != epoch
-	if continuityLost && expected != "" && !operation.DispatchStarted && operation.JobUID == "" {
+	if continuityLost && expected != "" && !schemaMayHaveDispatched(operation) {
 		// The first Lease creation necessarily has a new epoch. Because the
 		// operation claim persisted its expected token before any dispatch
 		// boundary, adopting the API-assigned epoch here cannot validate stale
