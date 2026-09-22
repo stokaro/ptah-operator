@@ -3,6 +3,28 @@ title: Operations
 description: Installing, upgrading, watching and recovering a running operator.
 ---
 
+## Start here {#start-here}
+
+This page is long because the contracts are. If something is wrong now, the
+row that matches is where to go.
+
+| What you are looking at | Where it is answered |
+| --- | --- |
+| A first installation | [Install](../../start/install/), then [Installation and upgrades](#installation-and-upgrades) |
+| An upgrade to run, or one that failed | [Installation and upgrades](#installation-and-upgrades). A candidate refused before any CRD is touched leaves the active release running. |
+| A resource that is not converging, and no obvious refusal | [Finding a resource that has stopped converging](#finding-a-resource-that-has-stopped-converging) |
+| A resource in `Blocked`, or a condition you do not recognize | [Condition reasons](../../troubleshoot/condition-reasons/) |
+| A migration whose Apply ended `Partial` or `Unknown` | [A migration run nobody accounted for](#a-migration-run-nobody-accounted-for) |
+| Writes failing because the webhook cannot be reached | [Webhook certificate lifecycle](#webhook-certificate-lifecycle) |
+| A write the admission refused, with a message | The message names the guard; [Security model](../security/) says what each one protects |
+| The cluster or the namespace is gone and the database is not | [Recover operator state](../recovery/) |
+| Storage growing with every plan | [Plan retention](#plan-retention), then [Pruning stored plans](#pruning-stored-plans) |
+| Whether the operator can run SQL nobody approved | [Execution guarantees](../../reference/guarantees/) |
+
+Before anything else, do not delete a `PtahMigration` to clear a state you do
+not like. Its record of an Apply nobody accounted for goes with it, and that
+record is what a person needs to find out whether the database was changed.
+
 ## Installation and upgrades
 
 Helm 4 or newer is required, and every lifecycle contour is verified against
