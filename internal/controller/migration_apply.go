@@ -356,7 +356,7 @@ func (r *MigrationReconciler) acquireMigrationApplyLock(
 		return true, 0, nil
 	}
 	continuityLost := operation.LeaseEpoch == "" || result.ContinuityLost || result.Epoch != operation.LeaseEpoch
-	if continuityLost && operation.LeaseEpoch != "" && !operation.DispatchStarted && operation.JobUID == "" {
+	if continuityLost && operation.LeaseEpoch != "" && !migrationMayHaveDispatched(operation) {
 		// The first acquisition necessarily assigns an epoch the claim could not
 		// have known, and reports the loss for that reason. The claim persisted
 		// its expected token before any dispatch, so adopting the assigned epoch
