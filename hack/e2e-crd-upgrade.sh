@@ -4158,6 +4158,22 @@ emit_running_apply_diagnostic() {
 	cat "$running_apply_diagnostic" >&2 || true
 }
 
+# assert_staged_uid_gap holds one condition of the staged gap and says which
+# one failed.
+#
+# One message for five conditions cost a whole lifecycle to diagnose: the phase
+# stops at its first failure, the run is ninety minutes, and the log said only
+# that the gap was not retained. Each condition names itself now, and the
+# schema's own status is printed beside it.
+assert_staged_uid_gap() {
+	staged_gap_filter=$1
+	staged_gap_reason=$2
+	jq -e --arg name "$RUNNING_APPLY_JOB_NAME" "$staged_gap_filter" \
+		"$WORK_DIR/running-apply-staged-gap.json" >/dev/null && return 0
+	emit_running_apply_diagnostic
+	fail "the Apply fixture did not retain the running late-create UID gap: $staged_gap_reason"
+}
+
 # The UID-adoption boundary: a Job the manager created but whose UID it had not
 # yet recorded is still that manager's work. The successor has to adopt it by
 # name and then by UID, before any Pod discovery.
@@ -4191,14 +4207,19 @@ stage_predecessor_apply_job_uid_gap_while_running() {
 		>"$WORK_DIR/running-apply-job-before-cleanup.json"
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$RUNNING_APPLY_SCHEMA" --subresource=status \
 		--type=json -p='[{"op":"remove","path":"/status/activeOperation/jobUID"}]' >/dev/null
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json |
-		jq -e --arg name "$RUNNING_APPLY_JOB_NAME" '
-          .status.activeOperation.type == "Apply" and
-          .status.activeOperation.dispatchStarted == true and
-          .status.activeOperation.jobName == $name and
-          (.status.activeOperation | has("jobUID") | not) and
-          (.status | has("pendingObservation") | not)
-        ' >/dev/null || fail "the Apply fixture did not retain the running late-create UID gap"
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
+		>"$WORK_DIR/running-apply-staged-gap.json"
+	assert_staged_uid_gap '.status.activeOperation.type == "Apply"' \
+		'the claim is no longer an Apply'
+	assert_staged_uid_gap '.status.activeOperation.dispatchStarted == true' \
+		'the claim no longer records a started dispatch'
+	# shellcheck disable=SC2016 # $name is a jq argument, not a shell variable.
+	assert_staged_uid_gap '.status.activeOperation.jobName == $name' \
+		'the claim names another Job'
+	assert_staged_uid_gap '.status.activeOperation | has("jobUID") | not' \
+		'the manager recorded the Job UID again before the upgrade'
+	assert_staged_uid_gap '.status | has("pendingObservation") | not' \
+		'the Apply was already retired into a pending observation'
 }
 
 assert_predecessor_apply_remains_exclusive_while_running() {
