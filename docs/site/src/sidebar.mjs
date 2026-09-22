@@ -67,6 +67,7 @@ export const sidebar = [
           { label: 'Execution and coordination', link: '/reference/execution/' },
           { label: 'Plans and approvals', link: '/reference/plans-and-approvals/' },
           { label: 'Credentials and admission', link: '/reference/credentials-and-admission/' },
+          { label: 'Mutation lifecycle', link: '/reference/mutation-lifecycle/' },
           { label: 'Release lifecycle', link: '/reference/release-lifecycle/' },
           { label: 'Execution guarantees', link: '/reference/guarantees/' },
         ],

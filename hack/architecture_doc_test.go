@@ -47,6 +47,7 @@ var architecturePagePaths = []string{
 	"docs/site/src/content/docs/reference/plans-and-approvals.md",
 	"docs/site/src/content/docs/reference/credentials-and-admission.md",
 	"docs/site/src/content/docs/reference/release-lifecycle.md",
+	"docs/site/src/content/docs/reference/mutation-lifecycle.md",
 }
 
 // The status vocabularies the page is held to, each with the section that has
