@@ -187,6 +187,7 @@ is the one to change when the contract changes.
 | [Execution and coordination](../execution/) | One operation from claim to evidence, the durable claims, and how two resources share a database |
 | [Plans and approvals](../plans-and-approvals/) | What a plan binds, how its bytes are stored, what a decision authorizes, and declared rows |
 | [Credentials and admission](../credentials-and-admission/) | Which process holds which credential, and what the admission contract refuses |
+| [Mutation lifecycle](../mutation-lifecycle/) | The obligations a mutating operation carries, and where each family enforces them |
 | [Release lifecycle](../release-lifecycle/) | Install, upgrade, retirement and uninstall, and the certificate handoffs inside them |
 | [Execution guarantees](../guarantees/) | Each promise mapped to the enforcement point in each family, and the test that proves it |
 
