@@ -4401,10 +4401,10 @@ prove_controller_downgrade_guard() {
 	stop_controller_deployment
 	stored_version=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" \
 		-o jsonpath='{.status.executionBinding.controllerStateVersion}')
-	[ "$stored_version" = 1 ] ||
-		fail "proof PtahSchema controller state version is $stored_version, expected 1"
+	[ "$stored_version" = "$CONTROLLER_STATE_VERSION" ] ||
+		fail "proof PtahSchema controller state version is $stored_version, expected $CONTROLLER_STATE_VERSION"
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$NEWER_CONTROLLER_STATE_VERSION}]" >/dev/null
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
 		jq -S '.status' >"$WORK_DIR/future-controller-state.json"
 	start_controller_deployment
@@ -4414,7 +4414,7 @@ prove_controller_downgrade_guard() {
 	cmp "$WORK_DIR/future-controller-state.json" "$WORK_DIR/future-controller-state-after.json" ||
 		fail "blocked candidate manager rewrote future PtahSchema state"
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":1}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]" >/dev/null
 	kube -n "$E2E_OPERATOR_NAMESPACE" delete pod \
 		-l 'app.kubernetes.io/component=controller' --wait=false >/dev/null
 	wait_runtime_ready
@@ -4677,7 +4677,7 @@ run_upgrade_proof() {
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-future-state.json"
 	done
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$NEWER_CONTROLLER_STATE_VERSION}]" >/dev/null
 	expect_upgrade_failure_without_deployment_change "upgrade against future controller state"
 	for crd_name in \
 		ptahschemas.operator.ptah.run \
@@ -4687,9 +4687,10 @@ run_upgrade_proof() {
 	done
 	stored_version=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" \
 		-o jsonpath='{.status.executionBinding.controllerStateVersion}')
-	[ "$stored_version" = 2 ] || fail "failed CRD preflight rewrote future controller state"
+	[ "$stored_version" = "$NEWER_CONTROLLER_STATE_VERSION" ] ||
+		fail "failed CRD preflight rewrote future controller state"
 	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":1}]' >/dev/null
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]" >/dev/null
 
 	printf '%s\n' 'e2e crd: upgrading drifted CRDs before the manager rollout'
 	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
