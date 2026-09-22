@@ -27,7 +27,7 @@ func TestTheArchitectureOverviewReachesAPlatformOwnerFirst(t *testing.T) {
 	for _, later := range []string{
 		"## Where the code lives",
 		"## The shape of the system",
-		"## The schema lifecycle",
+		"## Where the rest of it is",
 	} {
 		index := strings.Index(page, later)
 		if index < 0 {
@@ -78,6 +78,35 @@ func TestTheAdmissionSingletonNameIsFixed(t *testing.T) {
 func readChartHelpers(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join("charts", "ptah-operator", "templates", "_helpers.tpl")
+	content, err := os.ReadFile(repositoryFile(t, path)) //nolint:gosec // A path under the repository.
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
+}
+
+// The overview keeps its URL and names every page the group was split into.
+//
+// That URL is what four READMEs and every external link point at, so a reader
+// who lands on it has to be able to reach the contract they came for. A page
+// added to the group and not listed here is one only the sidebar knows about.
+func TestTheOverviewNamesEveryPageInItsGroup(t *testing.T) {
+	t.Parallel()
+	overview := readArchitecturePageFile(t, architecturePagePaths[0])
+	for _, path := range architecturePagePaths[1:] {
+		slug := strings.TrimSuffix(filepath.Base(path), ".md")
+		if !strings.Contains(overview, "(../"+slug+"/)") {
+			t.Errorf("the overview does not link to ../%s/, which is in its group", slug)
+		}
+	}
+	// And the page that already had a home of its own.
+	if !strings.Contains(overview, "(../guarantees/)") {
+		t.Error("the overview does not link to ../guarantees/")
+	}
+}
+
+func readArchitecturePageFile(t *testing.T, path string) string {
+	t.Helper()
 	content, err := os.ReadFile(repositoryFile(t, path)) //nolint:gosec // A path under the repository.
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

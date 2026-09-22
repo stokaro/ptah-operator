@@ -55,8 +55,22 @@ export const sidebar = [
   {
     label: 'Reference',
     items: [
-      { label: 'Architecture', link: '/reference/architecture/' },
-      { label: 'Execution guarantees', link: '/reference/guarantees/' },
+      // Architecture first, and the contracts it links to beside it. The
+      // overview keeps its URL: it is what every README and every external
+      // link points at, and a reader who lands there should still be able to
+      // see the shape before choosing which contract they need.
+      {
+        label: 'Architecture',
+        items: [
+          { label: 'Overview', link: '/reference/architecture/' },
+          { label: 'Reconciliation', link: '/reference/reconciliation/' },
+          { label: 'Execution and coordination', link: '/reference/execution/' },
+          { label: 'Plans and approvals', link: '/reference/plans-and-approvals/' },
+          { label: 'Credentials and admission', link: '/reference/credentials-and-admission/' },
+          { label: 'Release lifecycle', link: '/reference/release-lifecycle/' },
+          { label: 'Execution guarantees', link: '/reference/guarantees/' },
+        ],
+      },
       {
         label: 'Custom resources',
         items: [
