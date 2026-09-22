@@ -146,10 +146,10 @@ func TestReconcileStatePreflightLeavesEveryCRDUnchangedOnFutureState(t *testing.
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
 	schemas := &schemaListClient{pages: []*unstructured.UnstructuredList{{
 		Items: []unstructured.Unstructured{
-			schemaWithControllerStateAt("tenant-a", "schema-a", int64(2), "status", "pendingObservation", "plan", "controllerStateVersion"),
+			schemaWithControllerStateAt("tenant-a", "schema-a", int64(newerStateVersion), "status", "pendingObservation", "plan", "controllerStateVersion"),
 		},
 	}}}
-	err := manager.ReconcileWithStatePreflight(context.Background(), storedStateClientsWithSchemas(schemas), 1)
+	err := manager.ReconcileWithStatePreflight(context.Background(), storedStateClientsWithSchemas(schemas), int64(ourStateVersion))
 	if err == nil || !contains(err.Error(), "controller downgrade refused") {
 		t.Fatalf("ReconcileWithStatePreflight error = %v, want downgrade refusal", err)
 	}
@@ -169,7 +169,7 @@ func TestReconcileStatePreflightRequiresEveryDurableClientBeforeCRDWork(t *testi
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
 	state := StoredControllerStateClients{Schemas: &schemaListClient{}}
 
-	err := manager.ReconcileWithStatePreflight(context.Background(), state, 1)
+	err := manager.ReconcileWithStatePreflight(context.Background(), state, int64(ourStateVersion))
 	if err == nil || !contains(err.Error(), "PtahSchemaPlan client is required") {
 		t.Fatalf("ReconcileWithStatePreflight error = %v, want missing-plan-client refusal", err)
 	}
@@ -187,16 +187,16 @@ func TestReconcileRepeatsStatePreflightAfterDryRuns(t *testing.T) {
 	schemas := &schemaListClient{pages: []*unstructured.UnstructuredList{
 		{
 			Items: []unstructured.Unstructured{
-				schemaWithControllerStateAt("tenant-a", "schema-a", int64(1), "status", "executionBinding", "controllerStateVersion"),
+				schemaWithControllerStateAt("tenant-a", "schema-a", int64(ourStateVersion), "status", "executionBinding", "controllerStateVersion"),
 			},
 		},
 		{
 			Items: []unstructured.Unstructured{
-				schemaWithControllerStateAt("tenant-a", "schema-a", int64(2), "status", "pendingObservation", "plan", "controllerStateVersion"),
+				schemaWithControllerStateAt("tenant-a", "schema-a", int64(newerStateVersion), "status", "pendingObservation", "plan", "controllerStateVersion"),
 			},
 		},
 	}}
-	err := manager.ReconcileWithStatePreflight(context.Background(), storedStateClientsWithSchemas(schemas), 1)
+	err := manager.ReconcileWithStatePreflight(context.Background(), storedStateClientsWithSchemas(schemas), int64(ourStateVersion))
 	if err == nil || !contains(err.Error(), "repeat stored controller-state preflight") ||
 		!contains(err.Error(), "controller downgrade refused") {
 		t.Fatalf("ReconcileWithStatePreflight error = %v, want repeated downgrade refusal", err)
@@ -218,31 +218,31 @@ func TestReconcileRepeatsStatePreflightAfterReleaseCutover(t *testing.T) {
 	schemas := &schemaListClient{pages: []*unstructured.UnstructuredList{
 		{
 			Items: []unstructured.Unstructured{
-				schemaWithControllerStateAt("tenant-a", "schema-a", int64(1), "status", "executionBinding", "controllerStateVersion"),
+				schemaWithControllerStateAt("tenant-a", "schema-a", int64(ourStateVersion), "status", "executionBinding", "controllerStateVersion"),
 			},
 		},
 		{
 			Items: []unstructured.Unstructured{
-				schemaWithControllerStateAt("tenant-a", "schema-a", int64(1), "status", "executionBinding", "controllerStateVersion"),
+				schemaWithControllerStateAt("tenant-a", "schema-a", int64(ourStateVersion), "status", "executionBinding", "controllerStateVersion"),
 			},
 		},
 		{
 			Items: []unstructured.Unstructured{
-				schemaWithControllerStateAt("tenant-a", "schema-a", int64(1), "status", "pendingObservation", "plan", "controllerStateVersion"),
+				schemaWithControllerStateAt("tenant-a", "schema-a", int64(ourStateVersion), "status", "pendingObservation", "plan", "controllerStateVersion"),
 			},
 		},
 	}}
 	prepareCalls := 0
 	state := storedStateClientsWithSchemas(schemas)
 	state.Approvals = &schemaListClient{pages: []*unstructured.UnstructuredList{
-		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(1), "spec", "controllerStateVersion")}},
-		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(1), "spec", "controllerStateVersion")}},
-		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(2), "spec", "controllerStateVersion")}},
+		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(ourStateVersion), "spec", "controllerStateVersion")}},
+		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(ourStateVersion), "spec", "controllerStateVersion")}},
+		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(newerStateVersion), "spec", "controllerStateVersion")}},
 	}}
 	err := manager.ReconcileWithStatePreflightAndPrepare(
 		context.Background(),
 		state,
-		1,
+		int64(ourStateVersion),
 		func(context.Context) error {
 			prepareCalls++
 			return nil
@@ -562,7 +562,7 @@ func TestReconcileRechecksEveryIdentityAfterDryRunsBeforeAnyRealUpdate(t *testin
 func TestReconcileRefusesNewerControllerStateMarkerBeforeAnyUpdate(t *testing.T) {
 	candidates := mustCandidates(t)
 	objects := readyObjects(candidates)
-	objects[PtahSchemaPlanCRDName].Annotations[ControllerStateVersionAnnotation] = "2"
+	objects[PtahSchemaPlanCRDName].Annotations[ControllerStateVersionAnnotation] = newerStateVersionString()
 	client := &memoryClient{objects: objects}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
 	err := manager.reconcile(context.Background(), nil)
@@ -589,7 +589,7 @@ func TestReconcileRequiresSupportedVersionToMatchCompiledContract(t *testing.T) 
 
 func TestValidateCandidateIdentityRejectsControllerStateMarkerMismatch(t *testing.T) {
 	candidate := candidateByName(mustCandidates(t), PtahSchemaCRDName).DeepCopy()
-	candidate.Annotations[ControllerStateVersionAnnotation] = "2"
+	candidate.Annotations[ControllerStateVersionAnnotation] = newerStateVersionString()
 	err := validateCandidateIdentity(candidate)
 	if err == nil || !contains(err.Error(), "does not match compiled controller-state version") {
 		t.Fatalf("validateCandidateIdentity error = %v, want controller-state mismatch", err)
@@ -721,7 +721,7 @@ func TestReconcileRefusesCRDsWithoutIdentityBeforeAnyUpdate(t *testing.T) {
 	}
 	client := &memoryClient{objects: objects}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	err := manager.PreflightWithState(context.Background(), emptyStoredStateClients(), 1)
+	err := manager.PreflightWithState(context.Background(), emptyStoredStateClients(), int64(ourStateVersion))
 	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
 		t.Fatalf("PreflightWithState() = %v, want a refusal for the missing identity tuple", err)
 	}

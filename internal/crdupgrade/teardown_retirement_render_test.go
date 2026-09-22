@@ -293,7 +293,7 @@ func teardownRetirementGuardFromRender(t *testing.T, objects []*unstructured.Uns
 		ControllerReplicas:                      parseInt32("--controller-replicas="),
 		CertificateDeploymentName:               teardownRetirementRenderArgument(t, args, "--certificate-deployment-name="),
 		CertificateRuntimeEnabled:               true,
-		ControllerStateVersion:                  1,
+		ControllerStateVersion:                  ourStateVersion,
 		AdmissionContractVersion:                1,
 		ReleaseSequence:                         parseInt32("--release-sequence="),
 		ManagerImage:                            teardownRetirementRenderArgument(t, args, "--manager-image="),

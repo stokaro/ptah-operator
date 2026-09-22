@@ -73,11 +73,14 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 	assertTransitionRenderNoBindingCreate(t, role)
 
 	rollout := &RolloutGuard{
-		ReleaseName:                  "rbac-cutover",
-		ReleaseNamespace:             "ptah-system",
-		CoordinationNamespace:        "ptah-system",
-		HookServiceAccountName:       hookServiceAccount,
-		ControllerServiceAccountName: controllerName + "-v1-4d0b8e1c5cc7",
+		ReleaseName:            "rbac-cutover",
+		ReleaseNamespace:       "ptah-system",
+		CoordinationNamespace:  "ptah-system",
+		HookServiceAccountName: hookServiceAccount,
+		// Read from the render rather than written down: the name carries a
+		// digest over the controller-state version, so a literal here stops
+		// matching the chart the moment that version moves.
+		ControllerServiceAccountName: renderedControllerServiceAccountName(t, objects, "ptah-system", controllerName),
 		ControllerDeploymentName:     controllerName,
 		CertificateDeploymentName:    controllerName + "-cert-rotator",
 		CertificateRuntimeEnabled:    true,
@@ -364,6 +367,25 @@ func renderControllerRBACPredecessorChart(t *testing.T, chart string, guard *Ser
 		t.Fatal(err)
 	}
 	return renderControllerRBACChartObjects(t, []string{"template", guard.ReleaseName, chart, "--namespace", guard.ReleaseNamespace, "-f", "-"}, encoded)
+}
+
+// renderedControllerServiceAccountName reads the principal the chart gave the
+// controller Deployment. The chart derives it from a digest that covers the
+// controller-state version, so nothing on the Go side can spell it correctly
+// for longer than one bump.
+func renderedControllerServiceAccountName(
+	t *testing.T,
+	objects []*unstructured.Unstructured,
+	namespace, deploymentName string,
+) string {
+	t.Helper()
+	deployment := findTransitionRenderObjectInNamespace(t, objects, "Deployment", namespace, deploymentName)
+	name, found, err := unstructured.NestedString(deployment.Object,
+		"spec", "template", "spec", "serviceAccountName")
+	if err != nil || !found || name == "" {
+		t.Fatalf("rendered Deployment/%s/%s names no service account", namespace, deploymentName)
+	}
+	return name
 }
 
 func renderControllerRBACCutoverChart(t *testing.T, extraArgs ...string) []*unstructured.Unstructured {

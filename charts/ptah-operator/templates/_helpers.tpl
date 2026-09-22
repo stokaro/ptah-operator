@@ -748,7 +748,7 @@ wrote; crdupgrade builds the same names from the same identity.
 {{- include "ptah-operator.crdManagerServiceAccountName" . -}}
 {{- end -}}
 
-{{- define "ptah-operator.controllerStateVersion" -}}1{{- end -}}
+{{- define "ptah-operator.controllerStateVersion" -}}2{{- end -}}
 
 {{- define "ptah-operator.admissionContractVersion" -}}
 {{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}2{{- else -}}1{{- end -}}

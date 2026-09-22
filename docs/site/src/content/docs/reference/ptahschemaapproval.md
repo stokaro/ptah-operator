@@ -94,7 +94,7 @@ spec:
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   # The exact manager build, not a number.
   controllerRevision: a7d0119c0bd0d34e0b73f1d9e0e5c6aa0d9ff2b1
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```
 
 ## spec

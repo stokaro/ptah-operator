@@ -236,7 +236,7 @@ func renderedPrivilegeTeardownContract(t *testing.T) *PrivilegeTeardown {
 		base := strings.TrimSuffix(controllerServiceAccountName[:min(len(controllerServiceAccountName), 38)], "-")
 		principalDigest := sha256.Sum256([]byte(strings.Join([]string{
 			controllerServiceAccountName,
-			"1",
+			ourStateVersionString(),
 			attempt,
 		}, "\n")))
 		controllerServiceAccountName = fmt.Sprintf("%s-v1-%x", base, principalDigest)[:len(base)+4+12]
@@ -1888,7 +1888,7 @@ func newPrivilegeTeardownFixtureAt(
 		ControllerReplicas:           1,
 		CertificateDeploymentName:    "ptah-e2e-operator-cert-rotator",
 		CertificateRuntimeEnabled:    certificateEnabled,
-		ControllerStateVersion:       1,
+		ControllerStateVersion:       ourStateVersion,
 		AdmissionContractVersion:     1,
 		ReleaseSequence:              sequence,
 		ManagerImage:                 "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

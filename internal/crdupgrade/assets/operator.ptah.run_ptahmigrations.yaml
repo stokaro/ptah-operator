@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    operator.ptah.run/controller-state-version: "1"
+    operator.ptah.run/controller-state-version: "2"
     operator.ptah.run/crd-schema-version: "15"
     operator.ptah.run/crd-schema-digest: "sha256:925f86946972932a068853f9949278f3c44b9be48363c51bafa7bb6d5e3b295d"
     controller-gen.kubebuilder.io/version: v0.21.0

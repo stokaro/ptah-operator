@@ -29,8 +29,8 @@ func TestControllerJobGuardAcceptsExactPredecessorCreateDuringBootstrap(t *testi
 		"activeRelease":               int64(0),
 		"candidateRelease":            int64(1),
 		"previousRelease":             int64(0),
-		"activeControllerStateString": "1",
-		"activeControllerState":       int64(1),
+		"activeControllerStateString": ourStateVersionString(),
+		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       predecessorControllerImage,
 	}
 	validations, evaluate := controllerJobValidationEvaluator(t, activation)
@@ -78,8 +78,8 @@ func TestControllerJobGuardAcceptsCurrentCreateAfterActivation(t *testing.T) {
 		"activeRelease":               int64(1),
 		"candidateRelease":            int64(1),
 		"previousRelease":             int64(0),
-		"activeControllerStateString": "1",
-		"activeControllerState":       int64(1),
+		"activeControllerStateString": ourStateVersionString(),
+		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       predecessorControllerImage,
 	}
 	validations, evaluate := controllerJobValidationEvaluator(t, activation)
@@ -135,8 +135,8 @@ func TestControllerPlanGuardAcceptsExactContractV2PredecessorCreateDuringBootstr
 		"activeRelease":               int64(0),
 		"candidateRelease":            int64(1),
 		"previousRelease":             int64(0),
-		"activeControllerStateString": "1",
-		"activeControllerState":       int64(1),
+		"activeControllerStateString": ourStateVersionString(),
+		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       predecessorControllerImage,
 	}
 	validations, evaluate := controllerPlanValidationEvaluator(t, activation)
@@ -410,7 +410,7 @@ func predecessorControllerJobFixture(t *testing.T) *batchv1.Job {
 				Epoch:                  "v1-33333333333333333333333333333333",
 				ControllerImage:        predecessorControllerImage,
 				ControllerRevision:     "controller-test-revision",
-				ControllerStateVersion: 1,
+				ControllerStateVersion: ourStateVersion,
 				PtahVersion:            "v0.3.0",
 				ExecutorImage:          "registry.example/ptah@" + digest("d"),
 				RunnerImage:            "registry.example/operator@" + digest("e"),

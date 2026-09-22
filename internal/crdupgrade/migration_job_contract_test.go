@@ -30,7 +30,7 @@ func TestControllerJobWriteGuardAdmitsTheJobsTheBuilderProduces(t *testing.T) {
 		PtahVersion:            "v0.3.0",
 		ControllerImage:        controllerImage,
 		ControllerRevision:     "test-revision",
-		ControllerStateVersion: 1,
+		ControllerStateVersion: ourStateVersion,
 	}
 
 	tests := []struct {
@@ -292,8 +292,8 @@ func evaluateJobContract(t *testing.T, expression string, object map[string]any,
 			"activeRelease":                  int64(2),
 			"previousRelease":                int64(1),
 			"activeControllerImage":          controllerImage,
-			"activeControllerState":          int64(1),
-			"activeControllerStateString":    "1",
+			"activeControllerState":          int64(ourStateVersion),
+			"activeControllerStateString":    ourStateVersionString(),
 			"isAnyAdmissionConvergenceProbe": false,
 		},
 	})

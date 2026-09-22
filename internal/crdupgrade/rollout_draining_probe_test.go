@@ -34,12 +34,12 @@ func TestRolloutGuardDrainingEnforcementProbe(t *testing.T) {
 		bootstrap         bool
 		controllerMissing bool
 	}{
-		{name: "unchanged state certificate", state: 1, certificate: true},
-		{name: "changed state certificate", state: 2, certificate: true},
-		{name: "missing certificate uses predecessor controller replicas", state: 1},
-		{name: "bootstrap stopped controller", state: 1, bootstrap: true},
-		{name: "bootstrap stopped certificate fallback", state: 1, certificate: true, bootstrap: true, controllerMissing: true},
-		{name: "stopped certificate fallback", state: 1, certificate: true, controllerMissing: true},
+		{name: "unchanged state certificate", state: ourStateVersion, certificate: true},
+		{name: "changed state certificate", state: newerStateVersion, certificate: true},
+		{name: "missing certificate uses predecessor controller replicas", state: ourStateVersion},
+		{name: "bootstrap stopped controller", state: ourStateVersion, bootstrap: true},
+		{name: "bootstrap stopped certificate fallback", state: ourStateVersion, certificate: true, bootstrap: true, controllerMissing: true},
+		{name: "stopped certificate fallback", state: ourStateVersion, certificate: true, controllerMissing: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newDrainingProbeFixture(t, objects, test.state, test.certificate, test.bootstrap)
@@ -136,7 +136,7 @@ func TestRolloutGuardDrainingProbeRejectsUnprovenIdentity(t *testing.T) {
 			d.Annotations[guardEnforcementProbeAnnotation] = "foreign"
 		}},
 		{name: "wrong template state", mutate: func(_ *RolloutGuard, d *appsv1.Deployment, _ *corev1.ConfigMap) {
-			d.Spec.Template.Annotations[ControllerStateVersionAnnotation] = "2"
+			d.Spec.Template.Annotations[ControllerStateVersionAnnotation] = newerStateVersionString()
 		}},
 		{name: "wrong template release", mutate: func(_ *RolloutGuard, d *appsv1.Deployment, _ *corev1.ConfigMap) {
 			d.Spec.Template.Annotations[ReleaseSequenceAnnotation] = "2"
@@ -170,7 +170,7 @@ func TestRolloutGuardDrainingProbeRejectsUnprovenIdentity(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, 1, false, false)
+			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
 			deployment := fixture.client.objects[fixture.guard.ControllerDeploymentName]
 			parameter := fixture.guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName]
 			test.mutate(fixture.guard, deployment, parameter)
@@ -229,7 +229,7 @@ func TestRolloutGuardDrainingProbeFullCELControls(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, 1, false, false)
+			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
 			test.mutate(fixture.client.objects[fixture.guard.ControllerDeploymentName])
 			err := fixture.guard.waitEnforced(context.Background(), RolloutGuardPolicyName(2), rolloutGuardProbeDenialMessage(2))
 			if err == nil || !strings.Contains(err.Error(), "prove baseline Deployment is accepted") {
@@ -241,7 +241,7 @@ func TestRolloutGuardDrainingProbeFullCELControls(t *testing.T) {
 		})
 	}
 
-	fixture := newDrainingProbeFixture(t, objects, 1, false, false)
+	fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
 	baseline, _, err := fixture.guard.enforcementProbeDeployment(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 	objects := renderControllerRBACCutoverChart(t)
 	for _, variant := range []string{"running", "unstamped", "different state", "active candidate", "draining active candidate"} {
 		t.Run(variant, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, 1, false, false)
+			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
 			deployment := fixture.client.objects[fixture.guard.ControllerDeploymentName]
 			switch variant {
 			case "running":
@@ -322,7 +322,7 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 			case "unstamped":
 				delete(deployment.Annotations, ReleaseSequenceAnnotation)
 			case "different state":
-				deployment.Annotations[ControllerStateVersionAnnotation] = "2"
+				deployment.Annotations[ControllerStateVersionAnnotation] = newerStateVersionString()
 			default:
 				parameter := fixture.guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName]
 				parameter.Data[activeReleaseDataKey] = "2"
@@ -343,7 +343,7 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 	}
 	for _, variant := range []string{"unstopped", "wrong stamp", "foreign owner", "template identity", "live replicas"} {
 		t.Run("refuse certificate "+variant, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, 1, true, false)
+			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, true, false)
 			certificate := fixture.client.objects[fixture.guard.CertificateDeploymentName]
 			switch variant {
 			case "unstopped":
@@ -364,7 +364,7 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 	}
 	for _, annotation := range []string{ControllerStateVersionAnnotation, ReleaseSequenceAnnotation} {
 		t.Run("bootstrap refuses template "+annotation, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, 1, false, true)
+			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, true)
 			fixture.client.objects[fixture.guard.ControllerDeploymentName].Spec.Template.Annotations[annotation] = "1"
 			if _, _, err := fixture.guard.enforcementProbeDeployment(context.Background()); err == nil {
 				t.Fatal("bootstrap normalization accepted an already versioned template")
@@ -375,7 +375,7 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 
 func TestRolloutGuardDrainingProbeRereadsAfterConflict(t *testing.T) {
 	t.Parallel()
-	fixture := newDrainingProbeFixture(t, renderControllerRBACCutoverChart(t), 1, true, false)
+	fixture := newDrainingProbeFixture(t, renderControllerRBACCutoverChart(t), ourStateVersion, true, false)
 	fixture.client.maxUpdateRequests = 4
 	fixture.client.beforeUpdate = func(call int) {
 		if call == 2 {
@@ -404,7 +404,7 @@ func TestRolloutGuardDrainingProbeRequestBudget(t *testing.T) {
 	objects := renderControllerRBACCutoverChart(t)
 	for _, maximum := range []int{2, 4} {
 		t.Run(strconv.Itoa(maximum), func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, 1, true, false)
+			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, true, false)
 			fixture.client.maxUpdateRequests = maximum
 			// An unenforced sentinel must not leave a t.Context()-bound test
 			// polling indefinitely. This negative never claims enforcement.

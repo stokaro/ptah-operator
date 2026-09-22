@@ -14,7 +14,7 @@ const MaxRevisionBytes = 128
 
 // CurrentVersion is the newest PtahSchema controller-state version this
 // manager can safely interpret and write.
-const CurrentVersion int32 = 1
+const CurrentVersion int32 = 2
 
 // ValidateRevision checks the manager build provenance stored in durable
 // execution identity. Interior whitespace is allowed for custom build labels,

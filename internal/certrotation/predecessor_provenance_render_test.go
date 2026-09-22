@@ -11,11 +11,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
 
 const predecessorProvenanceProbeTemplate = `{{- $fixture := default (dict) .Values.fixture -}}
@@ -126,7 +129,8 @@ func TestControllerPredecessorProvenanceRender(t *testing.T) {
 			mutate: func(fixture map[string]any) {
 				deployment := fixtureObject(fixture, "deployment")
 				metadataOf(deployment)["annotations"].(map[string]any)["operator.ptah.run/release-sequence"] = "1"
-				metadataOf(deployment)["annotations"].(map[string]any)["operator.ptah.run/controller-state-version"] = "1"
+				metadataOf(deployment)["annotations"].(map[string]any)["operator.ptah.run/controller-state-version"] =
+					strconv.FormatInt(int64(controllerstate.CurrentVersion), 10)
 				deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["serviceAccountName"] = candidateName
 				for _, key := range []string{"clusterRoleBinding", "coordinationRoleBinding"} {
 					subjects := fixtureObject(fixture, key)["subjects"].([]any)
@@ -238,7 +242,7 @@ func TestRenderedControllerPrincipalGuardCarriesRetryTuple(t *testing.T) {
 	objects := renderChart(t)
 	guardName := "ptah-operator-service-account-origin-guard-v2-" + provenanceHookIdentityDigest()[:12]
 	wantAnnotations := map[string]string{
-		"operator.ptah.run/controller-state-version":                    "1",
+		"operator.ptah.run/controller-state-version":                    strconv.FormatInt(int64(controllerstate.CurrentVersion), 10),
 		"operator.ptah.run/admission-contract-version":                  "2",
 		"operator.ptah.run/release-sequence":                            "1",
 		"operator.ptah.run/manager-image":                               provenanceManagerImage(),
@@ -322,13 +326,16 @@ func retainedControllerPrincipalObject(kind, weight, previousName string) map[st
 			"name": name,
 			"uid":  "retained-guard-uid",
 			"annotations": map[string]any{
-				"helm.sh/hook":                                                  "pre-install,pre-upgrade",
-				"helm.sh/hook-weight":                                           weight,
-				"helm.sh/resource-policy":                                       "keep",
-				"operator.ptah.run/rollout-guard-version":                       "1",
-				"operator.ptah.run/release-name":                                releaseName,
-				"operator.ptah.run/release-namespace":                           releaseNamespace,
-				"operator.ptah.run/controller-state-version":                    "1",
+				"helm.sh/hook":                            "pre-install,pre-upgrade",
+				"helm.sh/hook-weight":                     weight,
+				"helm.sh/resource-policy":                 "keep",
+				"operator.ptah.run/rollout-guard-version": "1",
+				"operator.ptah.run/release-name":          releaseName,
+				"operator.ptah.run/release-namespace":     releaseNamespace,
+				// The chart refuses a retained principal whose annotation tuple
+				// disagrees with the compiled constant, so this cannot be a
+				// literal: it is the version the chart renders today.
+				"operator.ptah.run/controller-state-version":                    strconv.FormatInt(int64(controllerstate.CurrentVersion), 10),
 				"operator.ptah.run/admission-contract-version":                  "2",
 				"operator.ptah.run/release-sequence":                            "1",
 				"operator.ptah.run/manager-image":                               provenanceManagerImage(),
@@ -441,7 +448,11 @@ func provenanceCandidateControllerServiceAccount() string {
 	if len(base) > 38 {
 		base = base[:38]
 	}
-	identity := sourceBase + "\n1\n" + provenanceHookIdentityDigest()
+	// The chart folds the controller-state version into this digest, so the
+	// literal that used to sit here made the computed principal disagree with
+	// the rendered one the first time that version moved.
+	identity := sourceBase + "\n" + strconv.FormatInt(int64(controllerstate.CurrentVersion), 10) + "\n" +
+		provenanceHookIdentityDigest()
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
 	return base + "-v1-" + digest[:12]
 }

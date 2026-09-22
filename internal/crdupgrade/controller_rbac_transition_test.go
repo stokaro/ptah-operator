@@ -1284,7 +1284,7 @@ func newControllerRBACTransitionFixture(t *testing.T, cursor int) *controllerRBA
 		ControllerDeploymentName:             "ptah-e2e-operator",
 		ControllerReplicas:                   1,
 		CertificateDeploymentName:            "ptah-e2e-operator-cert-rotator",
-		ControllerStateVersion:               1,
+		ControllerStateVersion:               ourStateVersion,
 		AdmissionContractVersion:             1,
 		ReleaseSequence:                      1,
 		ManagerImage:                         "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

@@ -568,10 +568,10 @@ func TestRuntimeVerifierRechecksAdmissionContractBeforeSuccess(t *testing.T) {
 func TestRuntimeVerifierRejectsStoredFutureControllerState(t *testing.T) {
 	verifier := readyRuntimeVerifier(t)
 	state := storedStateClientsWithSchemas(&schemaListClient{pages: []*unstructured.UnstructuredList{{
-		Items: []unstructured.Unstructured{schemaWithControllerState("tenant-a", "schema-a", int64(2))},
+		Items: []unstructured.Unstructured{schemaWithControllerState("tenant-a", "schema-a", int64(newerStateVersion))},
 	}}})
 	verifier.StoredState = &state
-	verifier.SupportedControllerStateVersion = 1
+	verifier.SupportedControllerStateVersion = int64(ourStateVersion)
 	err := verifier.Verify(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "controller downgrade refused") || !strings.Contains(err.Error(), "tenant-a/schema-a") {
 		t.Fatalf("Verify error = %v, want stored future-state refusal", err)
@@ -662,17 +662,17 @@ func TestRuntimeVerifierRejectsFutureControllerStateInEveryDurableLocation(t *te
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			verifier := readyRuntimeVerifier(t)
-			object := schemaWithControllerStateAt("tenant-a", "schema-a", int64(2), test.path...)
+			object := schemaWithControllerStateAt("tenant-a", "schema-a", int64(newerStateVersion), test.path...)
 			// A current top-level plan and a missing legacy execution binding must
 			// not hide future state in another durable evidence location.
 			if test.name == "pending observation plan" {
-				setControllerStateAt(&object, int64(1), "status", "plan", "controllerStateVersion")
+				setControllerStateAt(&object, int64(ourStateVersion), "status", "plan", "controllerStateVersion")
 			}
 			state := storedStateClientsWithSchemas(&schemaListClient{pages: []*unstructured.UnstructuredList{{
 				Items: []unstructured.Unstructured{object},
 			}}})
 			verifier.StoredState = &state
-			verifier.SupportedControllerStateVersion = 1
+			verifier.SupportedControllerStateVersion = int64(ourStateVersion)
 			err := verifier.Verify(context.Background())
 			if err == nil || !strings.Contains(err.Error(), "controller downgrade refused") ||
 				!strings.Contains(err.Error(), strings.Join(test.path[:len(test.path)-1], ".")) {
@@ -694,12 +694,12 @@ func TestRuntimeVerifierAcceptsLegacyAndCurrentStateAcrossPages(t *testing.T) {
 	client := &schemaListClient{pages: []*unstructured.UnstructuredList{
 		firstPage,
 		{
-			Items: []unstructured.Unstructured{schemaWithControllerState("current", "schema", int64(1))},
+			Items: []unstructured.Unstructured{schemaWithControllerState("current", "schema", int64(ourStateVersion))},
 		},
 	}}
 	state := storedStateClientsWithSchemas(client)
 	verifier.StoredState = &state
-	verifier.SupportedControllerStateVersion = 1
+	verifier.SupportedControllerStateVersion = int64(ourStateVersion)
 	if err := verifier.Verify(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +811,7 @@ func TestRuntimeVerifierRejectsMalformedStoredControllerState(t *testing.T) {
 		Items: []unstructured.Unstructured{schemaWithControllerState("tenant-a", "schema-a", "future")},
 	}}})
 	verifier.StoredState = &state
-	verifier.SupportedControllerStateVersion = 1
+	verifier.SupportedControllerStateVersion = int64(ourStateVersion)
 	err := verifier.Verify(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "malformed stored controller state") {
 		t.Fatalf("Verify error = %v, want malformed-state refusal", err)
@@ -912,7 +912,7 @@ func TestVerifyStoredControllerStateRefusesFutureStateInEveryKind(t *testing.T) 
 		for _, location := range resourceKind.locations {
 			t.Run(resourceKind.kind+"/"+location.name, func(t *testing.T) {
 				clients := emptyStoredStateClients()
-				object := schemaWithControllerStateAt("tenant-a", "future", int64(2), location.path...)
+				object := schemaWithControllerStateAt("tenant-a", "future", int64(newerStateVersion), location.path...)
 				stored := &schemaListClient{pages: []*unstructured.UnstructuredList{{
 					Items: []unstructured.Unstructured{object},
 				}}}
@@ -1023,7 +1023,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		ControllerServiceAccountName: "ptah-controller",
 		ControllerDeploymentName:     "ptah-controller",
 		CertificateDeploymentName:    "ptah-cert-rotator",
-		ControllerStateVersion:       1,
+		ControllerStateVersion:       ourStateVersion,
 		AdmissionContractVersion:     CurrentAdmissionContractVersion,
 		ReleaseSequence:              1,
 	}

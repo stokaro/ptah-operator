@@ -6240,7 +6240,7 @@ for singleton_annotation in \
 	'operator.ptah.run/webhook-service-name: "ptah-e2e-ptah-operator-webhook"' \
 	'operator.ptah.run/controller-deployment-name: "ptah-e2e-ptah-operator"' \
 	'operator.ptah.run/certificate-deployment-name: "ptah-e2e-ptah-operator-cert-rotator"' \
-	'operator.ptah.run/controller-state-version: "1"' \
+	"operator.ptah.run/controller-state-version: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" \
 	'operator.ptah.run/admission-contract-version: "1"' \
 	'operator.ptah.run/release-sequence: "1"'; do
 	[ "$(grep -Fc -- "$singleton_annotation" "$ADMISSION_RENDER")" -eq 2 ]
@@ -7085,7 +7085,7 @@ grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
 for controller_identity_assignment in \
 	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE' \
 	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION' \
-	'E2E_CONTROLLER_STATE_VERSION=1'; do
+	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION'; do
 	controller_identity_count=$(grep -Fc -- "$controller_identity_assignment" \
 		"$ROOT_DIR/hack/e2e-kind.sh")
 	[ "$controller_identity_count" -eq 4 ] || {

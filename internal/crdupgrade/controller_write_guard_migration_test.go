@@ -402,7 +402,7 @@ func controllerWriteActivationParams() map[string]any {
 				rolloutGuardVersionAnnotation:      rolloutGuardVersion,
 				ReleaseNameAnnotation:              controllerWriteProofRelease,
 				ReleaseNamespaceAnnotation:         controllerWriteProofRelease,
-				ControllerStateVersionAnnotation:   "1",
+				ControllerStateVersionAnnotation:   ourStateVersionString(),
 				AdmissionContractVersionAnnotation: "1",
 				ReleaseSequenceAnnotation:          sequence,
 				ManagerImageAnnotation:             renderedGuardManagerImage,
