@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
@@ -135,4 +136,101 @@ func TestDeclaredStampVersionRefusesWhatWouldPassVacuously(t *testing.T) {
 			}
 		})
 	}
+}
+
+// controllerStateDocumentation is the page that tells an operator which
+// manager can read which durable state.
+const controllerStateDocumentation = "docs/site/src/content/docs/support/releases.md"
+
+var documentedStateVersionRow = regexp.MustCompile(`(?m)^\| ([0-9]+) \| `)
+
+// The page carries one row per controller-state version, and a row is the only
+// place the difference between two versions is written down. Nothing else in
+// the tree records it: the constant says which version is current and the
+// annotation says which one a release stamps, and neither says what changed.
+//
+// So a bump that forgets the row leaves an operator reading a table that
+// accounts for every version but the one their cluster refuses to accept.
+func TestTheDocumentedStateVersionsReachTheOneTheManagerCompiles(t *testing.T) {
+	t.Parallel()
+	page := readRepositoryFile(t, controllerStateDocumentation)
+	documented := make(map[int64]bool)
+	for _, match := range documentedStateVersionRow.FindAllStringSubmatch(string(page), -1) {
+		version, err := strconv.ParseInt(match[1], 10, 32)
+		if err != nil {
+			t.Fatalf("%s documents a row for %q, which is not a version: %v",
+				controllerStateDocumentation, match[1], err)
+		}
+		documented[version] = true
+	}
+	for version := int64(1); version <= int64(controllerstate.CurrentVersion); version++ {
+		if !documented[version] {
+			t.Fatalf("%s documents no controller-state version %d, and the manager compiles %d",
+				controllerStateDocumentation, version, controllerstate.CurrentVersion)
+		}
+		delete(documented, version)
+	}
+	for version := range documented {
+		t.Fatalf("%s documents controller-state version %d, which no manager compiles",
+			controllerStateDocumentation, version)
+	}
+}
+
+// The page quotes what an operator sees when the fence refuses. A quotation is
+// evidence only while the code still says it, and a refusal nothing emits any
+// more is worse than no example: it sends the reader looking for a message
+// their cluster will never print.
+func TestTheDocumentedRefusalsAreTheOnesTheFenceEmits(t *testing.T) {
+	t.Parallel()
+	page := string(readRepositoryFile(t, controllerStateDocumentation))
+	sources := controllerStateFenceSources(t)
+	for _, refusal := range []string{
+		"controller downgrade refused: ",
+		"does not match compiled controller-state version ",
+		"release activation controller-state rollback refused:",
+	} {
+		if !strings.Contains(page, refusal) {
+			t.Fatalf("%s no longer quotes the refusal %q", controllerStateDocumentation, refusal)
+		}
+		if !strings.Contains(sources, refusal) {
+			t.Fatalf("%s quotes the refusal %q, which internal/crdupgrade does not emit",
+				controllerStateDocumentation, refusal)
+		}
+	}
+}
+
+// controllerStateFenceSources concatenates the non-test Go sources of the
+// package that holds the fence.
+func controllerStateFenceSources(t *testing.T) string {
+	t.Helper()
+	pattern := filepath.Join(repositoryRoot(t), "internal", "crdupgrade", "*.go")
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatalf("glob %s: %v", pattern, err)
+	}
+	if len(paths) == 0 {
+		t.Fatalf("no sources matched %s, so this check would pass over nothing", pattern)
+	}
+	var sources strings.Builder
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		source, readErr := os.ReadFile(path) //nolint:gosec // A path this test globbed inside the repository.
+		if readErr != nil {
+			t.Fatalf("read %s: %v", path, readErr)
+		}
+		sources.Write(source)
+	}
+	return sources.String()
+}
+
+func readRepositoryFile(t *testing.T, relative string) []byte {
+	t.Helper()
+	path := filepath.Join(repositoryRoot(t), relative)
+	content, err := os.ReadFile(path) //nolint:gosec // A path this test built from the repository root.
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return content
 }

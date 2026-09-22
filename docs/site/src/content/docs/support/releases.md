@@ -65,6 +65,66 @@ sequence, and one newly prepared version must use a strictly greater sequence.
 This prevents a different manager image contract from reusing the names of
 retained rollout guards.
 
+## Controller-state contract
+
+The controller-state version says which durable status a manager can read. A
+manager reads state stamped at its own version or below, and the release
+fence refuses anything above it: an upgrade may move forward, a rollback may
+not move behind state that has already been written.
+
+| Version | What state at this version carries that an earlier manager cannot read |
+| --- | --- |
+| 1 | The original durable contract: execution bindings, plan and applied records, approvals, and the operation claim. |
+| 2 | `status.unresolvedRun` on a `PtahMigration`, the record of an Apply whose outcome nobody established, and `status.activeOperation.retryNotBefore`, the delay a retried operation waits out. |
+
+A resource records its version where the run is bound to the components that
+executed it, and never clears it. That is why version 2 covers both fields
+without a new location: a migration can only hold either record after it has
+dispatched, and dispatching is what writes
+`status.executionBinding.controllerStateVersion`.
+
+The number is declared in two places that this repository holds equal:
+`CONTROLLER_STATE_VERSION` in the `Makefile`, which stamps
+`operator.ptah.run/controller-state-version` into every shipped CRD, and
+`controllerstate.CurrentVersion`, which the manager compiles. `make verify`
+refuses a tree where the two disagree.
+
+### What a refusal looks like
+
+The state preflight runs in the chart's pre-upgrade hook, before the first CRD
+update, again before the release cutover, and once more after it. A refusal
+fails the hook and leaves the active release running; the message names the
+resource and the location it read, for example:
+
+```text
+controller downgrade refused: PtahMigration orders/billing stores controller
+state version 2 at status.executionBinding.controllerStateVersion, but this
+manager supports 1
+```
+
+Two neighboring refusals come from the same fence and mean different things.
+A chart and a manager image from different releases are caught before any
+resource is read:
+
+```text
+CRD ptahmigrations.operator.ptah.run annotation
+operator.ptah.run/controller-state-version=1
+does not match compiled controller-state version 2
+```
+
+Install the chart that was published with that image. A candidate release that
+predates the state contract the active release records is refused before any
+CRD is touched:
+
+```text
+release activation controller-state rollback refused:
+active version 2 is newer than candidate 1
+```
+
+None of the three is recoverable by retrying. A cluster whose resources carry
+version `n` accepts a manager compiled for `n` or later, so the way forward is
+the release that reads the state already written, not an older one.
+
 ## Publication transaction
 
 A fresh transaction first creates and attests a minimal `state=prepared` journal
