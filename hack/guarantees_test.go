@@ -160,3 +160,36 @@ func readGuaranteesPage(t *testing.T) string {
 	}
 	return string(content)
 }
+
+// The differences section says which asymmetries are deliberate and which are
+// not. It must not also say which family keeps which record.
+//
+// It did, and the sentence was wrong for a day: the migration family got
+// `status.pendingLockRelease` and the bullet still described it as the schema
+// family's. Nothing noticed, because every function and every test the page
+// cites still existed -- the check above measures citations, and this was
+// prose.
+//
+// Field ownership is stated once, on the mutation-lifecycle page, where it is
+// a table read against the API types. A second statement of it is a second
+// thing to keep current, and this is the one that was not.
+func TestTheDifferencesSectionDoesNotRestateFieldOwnership(t *testing.T) {
+	t.Parallel()
+	page := readGuaranteesPage(t)
+	const heading = "## Where the families still differ"
+	start := strings.Index(page, heading)
+	if start < 0 {
+		t.Fatalf("%s has no %q section", guaranteesPage, heading)
+	}
+	section := page[start:]
+	for _, field := range []string{
+		"status.pendingObservation",
+		"status.pendingLockRelease",
+		"status.unresolvedRun",
+	} {
+		if strings.Contains(section, "`"+field+"`") {
+			t.Errorf("the differences section names %s; ownership belongs to the durable-state table on the mutation-lifecycle page, which is checked against the API types",
+				field)
+		}
+	}
+}
