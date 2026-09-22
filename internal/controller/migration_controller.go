@@ -306,10 +306,51 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 			return ctrl.Result{}, err
 		}
 	}
+	r.reportDiscardedUnresolvedRun(ctx, migration)
 	if err := r.removeMigrationFinalizer(ctx, migration); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
+}
+
+// reportDiscardedUnresolvedRun says what a deletion is about to destroy.
+//
+// status.unresolvedRun is the record that an Apply may have changed the
+// database and nobody established what it did. Only a person clears it, and
+// deleting the resource is one of the ways a person can: the operator does not
+// refuse a deletion, because a refusal it can never lift is a resource nobody
+// can remove.
+//
+// What it does refuse to do is lose the record quietly. The object is going
+// away and the record with it, so the last place the run can be named is an
+// Event and the log -- which is where whoever finds an unaccounted-for change
+// in that database will be looking.
+func (r *MigrationReconciler) reportDiscardedUnresolvedRun(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) {
+	unresolved := migration.Status.UnresolvedRun
+	if unresolved == nil {
+		return
+	}
+	plan := "no plan"
+	if unresolved.PlanRef != nil {
+		plan = "plan " + unresolved.PlanRef.Name
+	}
+	job := unresolved.JobName
+	if job == "" {
+		job = "no Job this claim recorded"
+	}
+	r.event(migration, corev1.EventTypeWarning, "UnresolvedRunDiscarded",
+		"Deleting this resource discards the record of a %s run nobody accounted for: %s, %s, database %s",
+		unresolved.Outcome, job, plan, bounded(unresolved.TargetIdentityDigest, 80))
+	ctrl.LoggerFrom(ctx).Info(
+		"deleting a migration discards an unresolved run",
+		"outcome", unresolved.Outcome,
+		"operation", unresolved.OperationID,
+		"job", unresolved.JobName,
+		"targetIdentityDigest", unresolved.TargetIdentityDigest,
+	)
 }
 
 // dispatchedMigrationApplyJob returns the Job this Apply claim dispatched, and
@@ -1813,6 +1854,19 @@ func (r *MigrationReconciler) removeMigrationFinalizer(
 ) error {
 	if !controllerutil.ContainsFinalizer(migration, migrationOperationFinalizer) {
 		return nil
+	}
+	// Both callers clear the claim before asking for this, and the finalizer
+	// is what holds the resource while one is live, so a third caller that
+	// forgot would hand a deleting resource to the garbage collector with an
+	// Apply still dispatched. The contract is cheap to state here and the
+	// schema family states it, so state it.
+	//
+	// status.unresolvedRun deliberately does not appear: only a person clears
+	// that record, and a finalizer that waited for one would hold the
+	// resource for as long as nobody looked.
+	if migration.Status.ActiveOperation != nil {
+		return fmt.Errorf("the migration operation finalizer still protects a live %s claim",
+			migration.Status.ActiveOperation.Type)
 	}
 	before := migration.DeepCopy()
 	controllerutil.RemoveFinalizer(migration, migrationOperationFinalizer)
