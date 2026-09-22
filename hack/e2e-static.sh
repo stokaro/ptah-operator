@@ -1271,8 +1271,8 @@ for ha_marker in \
 	'wait_for_admitted_operation_pod' \
 	'operator.ptah.run/admission-snapshot-digest' \
 	'validate_custom_operator_metrics' \
-	'ptah_operator_reconciliations_total{result=\"success\"}' \
-	'ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}' \
+	'ptah_operator_reconciliations_total{family=\"schema\",result=\"success\"}' \
+	'ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"}' \
 	'reconciliation_help == 1 && failure_help == 1' \
 	'reconciliation_type == 1 && failure_type == 1' \
 	'reconciliation_sample == 1 && failure_sample == 1' \

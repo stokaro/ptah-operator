@@ -108,11 +108,11 @@ func (r *MigrationReconciler) Reconcile(ctx context.Context, request ctrl.Reques
 			return
 		}
 		if err != nil {
-			r.Telemetry.ObserveReconciliation(telemetry.ReconciliationFailed)
-			r.Telemetry.ObserveFailure(telemetry.FailureStageController, telemetry.FailureInfrastructure)
+			r.Telemetry.ObserveReconciliation(telemetry.FamilyMigration, telemetry.ReconciliationFailed)
+			r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageController, telemetry.FailureInfrastructure)
 			return
 		}
-		r.Telemetry.ObserveReconciliation(telemetry.ReconciliationSucceeded)
+		r.Telemetry.ObserveReconciliation(telemetry.FamilyMigration, telemetry.ReconciliationSucceeded)
 	}()
 	return r.reconcile(ctx, request)
 }
@@ -583,7 +583,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return ctrl.Result{}, fmt.Errorf("read active migration Job: %w", err)
 	}
 	if migration.Spec.Suspend && !applying {
-		return r.discardMigrationOperation(ctx, migration, errors.New("reconciliation was suspended while the operation ran"))
+		return r.discardMigrationOperation(ctx, migration, telemetry.OperationCanceled,
+			errors.New("reconciliation was suspended while the operation ran"))
 	}
 	if operation.JobUID != "" && operation.JobUID != job.UID {
 		if applying {
@@ -607,6 +608,12 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			return ctrl.Result{}, err
 		}
 		operation = migration.Status.ActiveOperation
+		// The Job this claim reserved a name for already existed, so the pass
+		// that created it lost its own status write. Recording the UID is the
+		// same transition either way, and the guard above makes it happen once.
+		if applying && r.Telemetry != nil {
+			r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
+		}
 	}
 	if !jobTerminal(job) {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -624,7 +631,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
 		}
-		return r.discardMigrationOperation(ctx, migration, currentErr)
+		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, currentErr)
 	}
 	evidence, err := r.migrationTerminalLogs(ctx, migration, job)
 	if err != nil {
@@ -886,6 +893,9 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeNormal, "OperationStarted", "%s Job %s started", operation.Type, job.Name)
+	if operation.Type == operatorv1alpha1.MigrationOperationApply && r.Telemetry != nil {
+		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
+	}
 	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
 
@@ -961,6 +971,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
 	if pendingPlanReport != nil {
 		// A second write, deliberately. Between the two the resource is
 		// Planning with no plan, and a controller that stopped there resolves
@@ -1570,6 +1581,10 @@ func (r *MigrationReconciler) retryMigrationOperation(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeWarning, "OperationRetried", "%s attempt %d: %v", operation.Type, operation.Attempt, failure)
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveFailure(telemetry.FamilyMigration,
+			telemetry.StageForMigrationOperation(operation.Type), telemetry.FailureOperation)
+	}
 	return requeueAtDeadline(next.RetryNotBefore, r.now()), nil
 }
 
@@ -1579,15 +1594,22 @@ func (r *MigrationReconciler) retryMigrationOperation(
 func (r *MigrationReconciler) discardMigrationOperation(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
+	outcome telemetry.OperationOutcome,
 	failure error,
 ) (ctrl.Result, error) {
 	before := migration.DeepCopy()
+	operation := migration.Status.ActiveOperation
 	migration.Status.ActiveOperation = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhasePending
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonInputsChanged, bounded(failure.Error(), 512))
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
+	}
+	r.observeMigrationOperation(operation, outcome)
+	if outcome == telemetry.OperationStale && r.Telemetry != nil && operation != nil {
+		r.Telemetry.ObserveFailure(telemetry.FamilyMigration,
+			telemetry.StageForMigrationOperation(operation.Type), telemetry.FailureStaleInput)
 	}
 	return ctrl.Result{Requeue: true}, nil
 }
@@ -1614,7 +1636,7 @@ func (r *MigrationReconciler) discardUndispatchedMigrationOperation(
 	failure error,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
-	result, err := r.discardMigrationOperation(ctx, migration, failure)
+	result, err := r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, failure)
 	if err != nil {
 		return result, err
 	}
@@ -1672,7 +1694,7 @@ func (r *MigrationReconciler) migrationOperationFailure(
 	}
 	r.event(migration, corev1.EventTypeWarning, "OperationFailed", "%v", failure)
 	if r.Telemetry != nil {
-		r.Telemetry.ObserveFailure(telemetry.FailureStageController, telemetry.FailureConfiguration)
+		r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageController, telemetry.FailureConfiguration)
 	}
 	return requeueAtDeadline(migration.Status.NextReconciliationTime, r.now()), nil
 }
@@ -1822,7 +1844,96 @@ func (r *MigrationReconciler) patchMigrationStatus(
 	if err := r.Client.Status().Patch(ctx, after, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("patch migration status: %w", err)
 	}
+	r.observeMigrationStatusTransitions(before, after)
 	return nil
+}
+
+// observeMigrationStatusTransitions counts what changed, not what is true.
+//
+// A resource waiting for a person sits in the same status for a whole interval
+// and is reconciled repeatedly while it waits, so a counter incremented from
+// the status a pass read would climb once per requeue and say nothing about
+// how many plans were published. Every increment here is guarded by a
+// transition, and this runs only after a patch that changed something.
+func (r *MigrationReconciler) observeMigrationStatusTransitions(before, after *operatorv1alpha1.PtahMigration) {
+	if r.Telemetry == nil {
+		return
+	}
+	if migrationPlanPublished(before.Status.Plan, after.Status.Plan) {
+		// Nothing computes whether a hand-written migration destroys data, so
+		// the impact is reported as unexamined rather than as safe.
+		r.Telemetry.ObservePlan(telemetry.FamilyMigration, after.Spec.Target.Engine, telemetry.PlanImpactUnknown)
+	}
+	if migrationConditionBecame(before, after, operatorv1alpha1.ConditionMigrationApprovalRequired,
+		metav1.ConditionTrue, "") {
+		r.Telemetry.ObserveApproval(telemetry.FamilyMigration, telemetry.ApprovalRequired)
+	}
+	// An accepted approval is counted where the decision is consumed, not
+	// here. This condition also goes False with Satisfied under an Always
+	// policy, where the requirement was waived and nobody approved anything.
+	// The plan an approval was being gathered for stopped being current, so
+	// whatever a person had written for it no longer authorizes anything. The
+	// requirement has to have been outstanding: a plan discarded before any
+	// approval was asked for costs nobody an approval.
+	if migrationConditionWas(before, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue) &&
+		migrationConditionBecame(before, after, operatorv1alpha1.ConditionMigrationApprovalRequired,
+			metav1.ConditionFalse, string(operatorv1alpha1.ReasonPlanNoLongerCurrent)) {
+		r.Telemetry.ObserveApproval(telemetry.FamilyMigration, telemetry.ApprovalStale)
+	}
+}
+
+// observeMigrationOperation records how long one logical operation took. An
+// operation with no start instant is one this controller did not time, and a
+// zero duration would read as an operation that took no time at all.
+func (r *MigrationReconciler) observeMigrationOperation(
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	outcome telemetry.OperationOutcome,
+) {
+	if r.Telemetry == nil || operation == nil || operation.StartedAt.IsZero() {
+		return
+	}
+	r.Telemetry.ObserveOperation(telemetry.FamilyMigration, telemetry.OperationForMigration(operation.Type),
+		outcome, r.now().Sub(operation.StartedAt.Time))
+}
+
+// migrationPlanPublished reports a plan reference that names an object the
+// previous status did not.
+func migrationPlanPublished(before, after *operatorv1alpha1.ImmutableObjectReference) bool {
+	if after == nil {
+		return false
+	}
+	return before == nil || before.UID != after.UID
+}
+
+func migrationConditionWas(
+	migration *operatorv1alpha1.PtahMigration,
+	conditionType string,
+	status metav1.ConditionStatus,
+) bool {
+	condition := meta.FindStatusCondition(migration.Status.Conditions, conditionType)
+	return condition != nil && condition.Status == status
+}
+
+// migrationConditionBecame reports a condition that now holds the given status
+// and did not before. An empty reason matches any reason.
+func migrationConditionBecame(
+	before, after *operatorv1alpha1.PtahMigration,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason string,
+) bool {
+	current := meta.FindStatusCondition(after.Status.Conditions, conditionType)
+	if current == nil || current.Status != status {
+		return false
+	}
+	if reason != "" && current.Reason != reason {
+		return false
+	}
+	previous := meta.FindStatusCondition(before.Status.Conditions, conditionType)
+	if previous == nil {
+		return true
+	}
+	return previous.Status != status || reason != "" && previous.Reason != reason
 }
 
 func (r *MigrationReconciler) directReader() client.Reader {

@@ -23,6 +23,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/telemetry"
 )
 
 // migrationApplyLeaseGrace is how much of the Lease is held back from the Pod's
@@ -418,8 +419,41 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome, bounded(message, 256))
+	r.observeMigrationRun(operation, outcome)
 	r.releaseMigrationApplyLock(ctx, migration, operation)
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// observeMigrationRun reports what the Apply did.
+//
+// Partial and Unknown are one signal here. The documented alert watches for an
+// apply whose effect on the database nobody established, and a run that
+// committed part of a migration and cannot say which part is that case as
+// squarely as one that produced no evidence at all: both leave the record only
+// a person can clear, and neither may be retried.
+//
+// Failed is not. A run that reported a failure said what it did, and the
+// history read that follows confirms it; it is counted as an operation failure
+// and not as an uncertain apply.
+func (r *MigrationReconciler) observeMigrationRun(
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	outcome operatorv1alpha1.MigrationRunOutcome,
+) {
+	if r.Telemetry == nil {
+		return
+	}
+	switch outcome {
+	case operatorv1alpha1.MigrationRunOutcomePartial, operatorv1alpha1.MigrationRunOutcomeUnknown:
+		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyUncertain)
+		r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageApply, telemetry.FailureUncertain)
+		r.observeMigrationOperation(operation, telemetry.OperationUncertain)
+	case operatorv1alpha1.MigrationRunOutcomeFailed:
+		r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageApply, telemetry.FailureOperation)
+		r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
+	default:
+		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyCompleted)
+		r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
+	}
 }
 
 // recordUnresolvedMigrationRun latches the run whose effect on the database
@@ -664,6 +698,11 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeWarning, "MigrationRunUncertain", "%v", failure)
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyUncertain)
+		r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageApply, telemetry.FailureUncertain)
+	}
+	r.observeMigrationOperation(operation, telemetry.OperationUncertain)
 	if !r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
 		r.releaseMigrationApplyLock(ctx, migration, operation)
 	}
@@ -731,6 +770,12 @@ func (r *MigrationReconciler) consumeMigrationApproval(
 	approval.Status.ObservedGeneration = approval.Generation
 	if err := r.Client.Status().Patch(ctx, approval, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("record the consumed approval: %w", err)
+	}
+	// One increment per decision. The guard above returns early for an
+	// approval already marked consumed, so a pass that re-reads this one after
+	// a lost answer counts nothing.
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveApproval(telemetry.FamilyMigration, telemetry.ApprovalAccepted)
 	}
 	return nil
 }
