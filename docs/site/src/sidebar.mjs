@@ -76,6 +76,7 @@ export const sidebar = [
       { label: 'Ptah compatibility', link: '/support/ptah/' },
       { label: 'Kubernetes support', link: '/support/kubernetes/' },
       { label: 'Databases and privileges', link: '/support/databases/' },
+      { label: 'API compatibility', link: '/support/api-compatibility/' },
       { label: 'Releases and provenance', link: '/support/releases/' },
     ],
   },
