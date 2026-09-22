@@ -983,6 +983,11 @@ func (in *PtahMigrationStatus) DeepCopyInto(out *PtahMigrationStatus) {
 		*out = new(UnresolvedMigrationRunStatus)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.PendingLockRelease != nil {
+		in, out := &in.PendingLockRelease, &out.PendingLockRelease
+		*out = new(TargetLockReleaseStatus)
+		**out = **in
+	}
 	if in.NextReconciliationTime != nil {
 		in, out := &in.NextReconciliationTime, &out.NextReconciliationTime
 		*out = (*in).DeepCopy()

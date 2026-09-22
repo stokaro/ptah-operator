@@ -437,6 +437,11 @@ spec:
 | `status.lastRun.startedAt` | `string`, required | StartedAt is when the run began. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is when the controller intends to look again. |
 | `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
+| `status.pendingLockRelease` | `object` | PendingLockRelease is a database-realm Lease this resource still owes back, kept whole so the release survives the process that owed it. The release is written here in the same status patch that clears the claim holding the Lease, and removed only once a release has succeeded, so a manager that stops in between hands the realm back on its next pass instead of leaving every other claimant to wait out the full lease. It is never written for a run that may still be executing. A Lease under a live executor is the one thing the Lease exists to prevent, and such a Lease is left to expire rather than recorded as owed. |
+| `status.pendingLockRelease.coordinationDigest` | `string`, required | CoordinationDigest is the realm whose lock is still to be released. |
+| `status.pendingLockRelease.leaseDurationSeconds` | `integer`, required | LeaseDurationSeconds is how long it was taken for. |
+| `status.pendingLockRelease.leaseEpoch` | `string`, required | LeaseEpoch identifies that acquisition, so a release cannot free a lock somebody else acquired in the meantime. |
+| `status.pendingLockRelease.operationID` | `string`, required | OperationID is the operation that took it. |
 | `status.phase` | `string`, one of `Pending`, `Resolving`, `Verifying`, `Reading`, `Planning`, `AwaitingApproval`, `Blocked`, `Applying`, `VerifyingHistory`, `InSync`, `Suspended`, `Failed` | Phase is where the resource stands. It is a summary for a reader: the conditions below are what a decision reads. |
 | `status.plan` | `object` | Plan names the immutable plan object the controller published for the current pending sequence, and is cleared once that sequence is gone. |
 | `status.plan.name` | `string`, required | Name of the referenced object in the same namespace. |

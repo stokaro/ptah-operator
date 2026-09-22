@@ -125,6 +125,15 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	if err := r.rejectUnsupportedStoredControllerState(migration); err != nil {
 		return ctrl.Result{}, err
 	}
+	// A realm this resource still owes back is handed over before anything
+	// else in the pass, including deletion. Every other claimant of that
+	// database is waiting on it, and nothing below needs the Lease.
+	if migration.Status.PendingLockRelease != nil {
+		if err := r.completeMigrationPendingLockRelease(ctx, migration); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
 	}
