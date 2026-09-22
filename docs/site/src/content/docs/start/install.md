@@ -74,7 +74,7 @@ let an in-chart Job prove its own status and deletion integrity against an
 already-authorized concurrent namespace writer. Later upgrades and uninstalls
 between v2-aware releases do not rely on that bootstrap assumption. The exact
 trust boundary is documented in
-[Operations](../../use/operations/#installation-and-upgrades).
+[Operations](../../use/operations/#install-before).
 
 The supplied version is recorded in plans, approvals, Jobs, and applied status
 alongside the executor digest. Verify both values from the executor's release
