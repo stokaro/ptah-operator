@@ -5984,6 +5984,56 @@ done
 # holds the generated files to whatever the Makefile says.
 grep -Eq '^CRD_SCHEMA_VERSION := [0-9]+$' "$ROOT_DIR/Makefile"
 grep -Eq '^CONTROLLER_STATE_VERSION := [0-9]+$' "$ROOT_DIR/Makefile"
+
+# Every e2e proof reads that declaration rather than restating it. These three
+# forms are where restating it does real damage: the annotation a release
+# carries, the stored state a downgrade proof manufactures, and the value a
+# phase is handed. Each reads correctly and agrees with the chart on the day it
+# is written, and the proofs then say the opposite of what they claim -- state
+# manufactured to be newer than the manager stops being newer, so the upgrade
+# a proof exists to refuse is admitted and the proof passes.
+CONTROLLER_STATE_LITERAL='operator[.]ptah[.]run/controller-state-version[]" ]*[=:][^$]*[0-9]'
+CONTROLLER_STATE_LITERAL=$CONTROLLER_STATE_LITERAL'|executionBinding/controllerStateVersion\\?",\\?"value\\?":[0-9]'
+CONTROLLER_STATE_LITERAL=$CONTROLLER_STATE_LITERAL'|E2E_CONTROLLER_STATE_VERSION=[0-9]'
+# Reading the pattern again catches a reasoning error and misses the one that
+# matters, so it is run over the four mistakes that were actually made and the
+# four derived forms that replaced them.
+controller_state_literal_refused=$(grep -cE "$CONTROLLER_STATE_LITERAL" <<'CONTROLLER_STATE_MISTAKES' || true
+	operator.ptah.run/controller-state-version=2 --overwrite
+	.metadata.annotations["operator.ptah.run/controller-state-version"] = "1" |
+	--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]'
+	E2E_CONTROLLER_STATE_VERSION=1 \
+CONTROLLER_STATE_MISTAKES
+)
+[ "$controller_state_literal_refused" -eq 4 ] || {
+	printf 'e2e static: the controller-state literal filter refused %s of 4 known mistakes\n' \
+		"$controller_state_literal_refused" >&2
+	exit 1
+}
+controller_state_literal_accepted=$(grep -cE "$CONTROLLER_STATE_LITERAL" <<'CONTROLLER_STATE_DERIVED' || true
+	"operator.ptah.run/controller-state-version=$NEWER_CONTROLLER_STATE_VERSION" --overwrite
+	.metadata.annotations["operator.ptah.run/controller-state-version"] == $state and
+	--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]"
+	E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
+CONTROLLER_STATE_DERIVED
+)
+[ "$controller_state_literal_accepted" -eq 0 ] || {
+	printf 'e2e static: the controller-state literal filter refused %s derived forms\n' \
+		"$controller_state_literal_accepted" >&2
+	exit 1
+}
+for controller_state_script in "$ROOT_DIR"/hack/e2e-*.sh; do
+	# This file holds the pattern, so scanning it would match the pattern
+	# itself. Its own two uses are the derived form, checked above.
+	case "${controller_state_script##*/}" in
+		e2e-static.sh) continue ;;
+	esac
+	if grep -nE "$CONTROLLER_STATE_LITERAL" "$controller_state_script"; then
+		printf 'e2e static: %s writes a controller-state version as a number\n' \
+			"${controller_state_script##*/}" >&2
+		exit 1
+	fi
+done
 # shellcheck disable=SC2016 # Match the literal deterministic-mode command in the generator.
 grep -F 'chmod 0644 "$STAMP_TEMP"' "$ROOT_DIR/hack/stamp-crd-schema-version.sh" >/dev/null
 grep -F 'ComputeSchemaDigest(crd)' "$ROOT_DIR/hack/crdschemadigest/main.go" >/dev/null
