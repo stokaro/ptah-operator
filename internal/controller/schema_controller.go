@@ -37,6 +37,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
@@ -4112,31 +4113,29 @@ func (r *SchemaReconciler) acquireLockEpoch(ctx context.Context, request targetl
 func targetLockReleaseForOperation(
 	operation *operatorv1alpha1.ActiveOperationStatus,
 ) (*operatorv1alpha1.TargetLockReleaseStatus, error) {
-	if operation == nil || operation.CoordinationDigest == "" || operation.ID == "" ||
-		operation.LeaseDurationSeconds == 0 || operation.LeaseEpoch == "" {
-		return nil, fmt.Errorf("persist target lock release: operation lock binding is incomplete")
+	if operation == nil {
+		return nil, fmt.Errorf("persist target lock release: %w", mutationlifecycle.ErrIncompleteBinding)
 	}
-	return &operatorv1alpha1.TargetLockReleaseStatus{
+	return mutationlifecycle.OwedRelease(mutationlifecycle.LockBinding{
 		CoordinationDigest:   operation.CoordinationDigest,
 		OperationID:          operation.ID,
-		LeaseDurationSeconds: operation.LeaseDurationSeconds,
 		LeaseEpoch:           operation.LeaseEpoch,
-	}, nil
+		LeaseDurationSeconds: operation.LeaseDurationSeconds,
+	})
 }
 
 func targetLockReleaseForPending(
 	pending *operatorv1alpha1.PendingObservationStatus,
 ) (*operatorv1alpha1.TargetLockReleaseStatus, error) {
-	if pending == nil || pending.CoordinationDigest == "" || pending.ApplyOperationID == "" ||
-		pending.LeaseDurationSeconds == 0 || pending.LeaseEpoch == "" {
-		return nil, fmt.Errorf("persist target lock release: post-apply lock binding is incomplete")
+	if pending == nil {
+		return nil, fmt.Errorf("persist target lock release: post-apply %w", mutationlifecycle.ErrIncompleteBinding)
 	}
-	return &operatorv1alpha1.TargetLockReleaseStatus{
+	return mutationlifecycle.OwedRelease(mutationlifecycle.LockBinding{
 		CoordinationDigest:   pending.CoordinationDigest,
 		OperationID:          pending.ApplyOperationID,
-		LeaseDurationSeconds: pending.LeaseDurationSeconds,
 		LeaseEpoch:           pending.LeaseEpoch,
-	}, nil
+		LeaseDurationSeconds: pending.LeaseDurationSeconds,
+	})
 }
 
 func stageOperationLockRelease(
@@ -4192,34 +4191,9 @@ func (r *SchemaReconciler) completePendingLockRelease(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 ) error {
-	release := schema.Status.PendingLockRelease
-	if release == nil {
-		return nil
-	}
-	if r.Locks == nil {
-		return fmt.Errorf("release database target lock: target locker is not configured")
-	}
-	if release.CoordinationDigest == "" || release.OperationID == "" || release.LeaseDurationSeconds == 0 || release.LeaseEpoch == "" {
-		return fmt.Errorf("release database target lock: persisted release binding is incomplete")
-	}
-	if err := r.Locks.Release(ctx, targetlock.Request{
-		CoordinationNamespace: r.LockNamespace,
-		CoordinationDigest:    release.CoordinationDigest,
-		Holder: targetlock.Holder{
-			SchemaUID:   schema.UID,
-			OperationID: release.OperationID,
-		},
-		Duration:      time.Duration(release.LeaseDurationSeconds) * time.Second,
-		ExpectedEpoch: release.LeaseEpoch,
-	}); err != nil {
-		return fmt.Errorf("release database target lock: %w", err)
-	}
 	before := schema.DeepCopy()
-	schema.Status.PendingLockRelease = nil
-	if err := r.patchStatus(ctx, before, schema); err != nil {
-		return err
-	}
-	return nil
+	return mutationlifecycle.CompleteRelease(ctx, r.Locks, r.LockNamespace, schemaLockOwner{schema},
+		func(ctx context.Context) error { return r.patchStatus(ctx, before, schema) })
 }
 
 func (r *SchemaReconciler) pendingLockRequest(schema *operatorv1alpha1.PtahSchema, pending *operatorv1alpha1.PendingObservationStatus) targetlock.Request {

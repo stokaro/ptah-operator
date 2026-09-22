@@ -20,6 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -531,16 +532,15 @@ func recordUnresolvedMigrationRun(
 func targetLockReleaseForMigrationOperation(
 	operation *operatorv1alpha1.MigrationOperationStatus,
 ) (*operatorv1alpha1.TargetLockReleaseStatus, error) {
-	if operation == nil || operation.CoordinationDigest == "" || operation.ID == "" ||
-		operation.LeaseDurationSeconds == 0 || operation.LeaseEpoch == "" {
-		return nil, fmt.Errorf("persist target lock release: operation lock binding is incomplete")
+	if operation == nil {
+		return nil, fmt.Errorf("persist target lock release: %w", mutationlifecycle.ErrIncompleteBinding)
 	}
-	return &operatorv1alpha1.TargetLockReleaseStatus{
+	return mutationlifecycle.OwedRelease(mutationlifecycle.LockBinding{
 		CoordinationDigest:   operation.CoordinationDigest,
 		OperationID:          operation.ID,
-		LeaseDurationSeconds: operation.LeaseDurationSeconds,
 		LeaseEpoch:           operation.LeaseEpoch,
-	}, nil
+		LeaseDurationSeconds: operation.LeaseDurationSeconds,
+	})
 }
 
 // stageMigrationLockRelease records the release on the resource so the caller's
@@ -581,32 +581,9 @@ func (r *MigrationReconciler) completeMigrationPendingLockRelease(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 ) error {
-	release := migration.Status.PendingLockRelease
-	if release == nil {
-		return nil
-	}
-	if r.Locks == nil {
-		return fmt.Errorf("release database target lock: target locker is not configured")
-	}
-	if release.CoordinationDigest == "" || release.OperationID == "" ||
-		release.LeaseDurationSeconds == 0 || release.LeaseEpoch == "" {
-		return fmt.Errorf("release database target lock: persisted release binding is incomplete")
-	}
-	if err := r.Locks.Release(ctx, targetlock.Request{
-		CoordinationNamespace: r.LockNamespace,
-		CoordinationDigest:    release.CoordinationDigest,
-		Holder: targetlock.Holder{
-			SchemaUID:   migration.UID,
-			OperationID: release.OperationID,
-		},
-		Duration:      time.Duration(release.LeaseDurationSeconds) * time.Second,
-		ExpectedEpoch: release.LeaseEpoch,
-	}); err != nil {
-		return fmt.Errorf("release database target lock: %w", err)
-	}
 	before := migration.DeepCopy()
-	migration.Status.PendingLockRelease = nil
-	return r.patchMigrationStatus(ctx, before, migration)
+	return mutationlifecycle.CompleteRelease(ctx, r.Locks, r.LockNamespace, migrationLockOwner{migration},
+		func(ctx context.Context) error { return r.patchMigrationStatus(ctx, before, migration) })
 }
 
 // releaseMigrationApplyLock hands the database back. A failure to release is
