@@ -504,9 +504,94 @@ func recordUnresolvedMigrationRun(
 	migration.Status.UnresolvedRun = unresolved
 }
 
+// targetLockReleaseForMigrationOperation builds the complete credential-free
+// release request out of the claim that took the Lease. Every field is
+// required: a release that names no epoch is refused outright, and one that
+// names no duration cannot reproduce the request that acquired it.
+func targetLockReleaseForMigrationOperation(
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) (*operatorv1alpha1.TargetLockReleaseStatus, error) {
+	if operation == nil || operation.CoordinationDigest == "" || operation.ID == "" ||
+		operation.LeaseDurationSeconds == 0 || operation.LeaseEpoch == "" {
+		return nil, fmt.Errorf("persist target lock release: operation lock binding is incomplete")
+	}
+	return &operatorv1alpha1.TargetLockReleaseStatus{
+		CoordinationDigest:   operation.CoordinationDigest,
+		OperationID:          operation.ID,
+		LeaseDurationSeconds: operation.LeaseDurationSeconds,
+		LeaseEpoch:           operation.LeaseEpoch,
+	}, nil
+}
+
+// stageMigrationLockRelease records the release on the resource so the caller's
+// own status patch carries it. The obligation and the claim it came from move
+// in one write, which is what makes the gap between them survivable: a manager
+// that stops after the write finds the record and hands the realm back, and
+// one that stops before it finds the claim and re-derives the same verdict.
+//
+// It is never staged for a claim that took no Lease, and refuses to replace a
+// release already owed -- two obligations on one resource would mean one of
+// them was silently dropped.
+func stageMigrationLockRelease(
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) error {
+	if migration == nil {
+		return fmt.Errorf("persist target lock release: migration is required")
+	}
+	if operation == nil || operation.LeaseEpoch == "" {
+		return nil
+	}
+	release, err := targetLockReleaseForMigrationOperation(operation)
+	if err != nil {
+		return err
+	}
+	if migration.Status.PendingLockRelease != nil {
+		return fmt.Errorf("persist target lock release: another release is already pending")
+	}
+	migration.Status.PendingLockRelease = release
+	return nil
+}
+
+// completeMigrationPendingLockRelease performs the release the resource owes
+// and clears the record only once it succeeded. A failed release leaves the
+// record standing, so the next pass tries again rather than leaving the realm
+// claimed until the Lease expires.
+func (r *MigrationReconciler) completeMigrationPendingLockRelease(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) error {
+	release := migration.Status.PendingLockRelease
+	if release == nil {
+		return nil
+	}
+	if r.Locks == nil {
+		return fmt.Errorf("release database target lock: target locker is not configured")
+	}
+	if release.CoordinationDigest == "" || release.OperationID == "" ||
+		release.LeaseDurationSeconds == 0 || release.LeaseEpoch == "" {
+		return fmt.Errorf("release database target lock: persisted release binding is incomplete")
+	}
+	if err := r.Locks.Release(ctx, targetlock.Request{
+		CoordinationNamespace: r.LockNamespace,
+		CoordinationDigest:    release.CoordinationDigest,
+		Holder: targetlock.Holder{
+			SchemaUID:   migration.UID,
+			OperationID: release.OperationID,
+		},
+		Duration:      time.Duration(release.LeaseDurationSeconds) * time.Second,
+		ExpectedEpoch: release.LeaseEpoch,
+	}); err != nil {
+		return fmt.Errorf("release database target lock: %w", err)
+	}
+	before := migration.DeepCopy()
+	migration.Status.PendingLockRelease = nil
+	return r.patchMigrationStatus(ctx, before, migration)
+}
+
 // releaseMigrationApplyLock hands the database back. A failure to release is
-// not a failure of the run: the Lease expires on its own, and reporting the
-// run's evidence matters more than the tidy release.
+// not a failure of the run: the run's evidence is already durable, and the
+// obligation staged beside it is what brings the realm back on a later pass.
 //
 // The epoch the claim persisted travels with the request, because releasing
 // without one is not a weaker release -- it is no release at all. Release
@@ -529,7 +614,47 @@ func (r *MigrationReconciler) releaseMigrationApplyLock(
 		ExpectedEpoch:         operation.LeaseEpoch,
 	}); err != nil {
 		ctrl.LoggerFrom(ctx).Info("could not release the database lock", "error", err.Error())
+		r.recordOwedMigrationLockRelease(ctx, migration, operation, err)
 	}
+}
+
+// recordOwedMigrationLockRelease writes down a release that did not happen, so
+// the next pass performs it instead of leaving the realm claimed until the
+// Lease expires.
+//
+// Without it a single API error at this instant costs every other claimant of
+// that database the whole lease duration -- sixteen minutes by default, and as
+// much as a day where the claim asked for one. The record is what turns that
+// into one more pass.
+//
+// Recording is itself best effort, and deliberately so: the evidence of what
+// the run did is already durable, and a failure to write this must not fail
+// the pass that carries it. Where the record cannot be written either, the
+// Lease expires on its own as before.
+func (r *MigrationReconciler) recordOwedMigrationLockRelease(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	cause error,
+) {
+	log := ctrl.LoggerFrom(ctx)
+	before := migration.DeepCopy()
+	if err := stageMigrationLockRelease(migration, operation); err != nil {
+		migration.Status.PendingLockRelease = before.Status.PendingLockRelease
+		log.Info("could not record the database lock as owed", "error", err.Error())
+		return
+	}
+	if migration.Status.PendingLockRelease == nil {
+		// The claim took no Lease, so there is nothing to hand back.
+		return
+	}
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		migration.Status.PendingLockRelease = before.Status.PendingLockRelease
+		log.Info("could not record the database lock as owed", "error", err.Error())
+		return
+	}
+	r.event(migration, corev1.EventTypeWarning, "TargetLockReleaseOwed",
+		"the database lock was not released and will be retried: %s", bounded(cause.Error(), 256))
 }
 
 // dispatchedApplyMayStillWrite reports whether the Apply this claim dispatched

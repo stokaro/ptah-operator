@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "15"
-    operator.ptah.run/crd-schema-digest: "sha256:925f86946972932a068853f9949278f3c44b9be48363c51bafa7bb6d5e3b295d"
+    operator.ptah.run/crd-schema-version: "16"
+    operator.ptah.run/crd-schema-digest: "sha256:0c927d86b580164884bd622bd2e0b06eaf5900983524a8872daeb6ad81eb35e9"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -1435,6 +1435,29 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              pendingLockRelease:
+                properties:
+                  coordinationDigest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  leaseDurationSeconds:
+                    format: int32
+                    maximum: 86460
+                    minimum: 5
+                    type: integer
+                  leaseEpoch:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  operationID:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                required:
+                - coordinationDigest
+                - leaseDurationSeconds
+                - leaseEpoch
+                - operationID
+                type: object
               phase:
                 enum:
                 - Pending
