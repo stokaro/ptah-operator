@@ -20,8 +20,11 @@ import (
 // because prose reorganized once drifts back the moment a paragraph is added
 // to whichever section it fits into most easily.
 
-// runbookGroup is the heading whose task sections this holds to the shape.
-const runbookGroup = "Installation and upgrades"
+// A runbook is a task that changes something, which is why it owes a stopping
+// condition and a way back. A section that only answers a question -- which
+// plans are pinned, how a record clears on its own -- is reference, and saying
+// "where to stop" about a read would be filler. Each group below names which
+// of its sections is which, and a section in neither list is the finding.
 
 // runbookElements are the five questions a runbook answers, in order. The
 // anchor suffix matters as much as the heading: a reader who sends somebody
@@ -35,24 +38,53 @@ var runbookElements = []struct{ suffix, heading string }{
 	{"recovery", "If it fails"},
 }
 
-// declaredRunbooks is the one place the runbooks are written down. anchor is
-// the section's own anchor; prefix is what its five element anchors start
-// with, which is shorter than the anchor wherever the section name is long.
-var declaredRunbooks = []struct{ anchor, prefix string }{
-	{"install", "install"},
-	{"upgrade", "upgrade"},
-	{"retry-upgrade", "retry"},
-	{"repair-runtime", "repair"},
-	{"uninstall", "uninstall"},
-	{"offline-singleton-migration", "offline"},
+// runbookEntry names a task section. anchor is the section's own anchor;
+// prefix is what its five element anchors start with, which is shorter than
+// the anchor wherever the section name is long.
+type runbookEntry struct{ anchor, prefix string }
+
+// runbookGroup is a second-level heading and the decision about each section
+// under it.
+type runbookGroup struct {
+	heading   string
+	runbooks  []runbookEntry
+	reference []string
 }
 
-// declaredReference is every other section under the same heading: material a
-// reader consults rather than acts on. A section that is in neither list is
-// the finding -- somebody added prose and did not decide which it is.
-var declaredReference = []string{
-	"One database, one manager",
-	"Kubernetes admission configuration",
+// runbookGroups is the one place the guide's tasks are written down.
+var runbookGroups = []runbookGroup{
+	{
+		heading: "Installation and upgrades",
+		runbooks: []runbookEntry{
+			{"install", "install"},
+			{"upgrade", "upgrade"},
+			{"retry-upgrade", "retry"},
+			{"repair-runtime", "repair"},
+			{"uninstall", "uninstall"},
+			{"offline-singleton-migration", "offline"},
+		},
+		reference: []string{
+			"One database, one manager",
+			"Kubernetes admission configuration",
+		},
+	},
+	{
+		heading:  "A migration run nobody accounted for",
+		runbooks: []runbookEntry{{"clear-unresolved-run", "clear"}},
+		reference: []string{
+			"How it clears",
+			"Runs adopted by an upgrade",
+			"Deleting the resource discards it",
+		},
+	},
+	{
+		heading:  "Pruning stored plans",
+		runbooks: []runbookEntry{{"prune-plans", "prune"}},
+		reference: []string{
+			"Which plans are pinned",
+			"Export a plan before deleting it",
+		},
+	},
 }
 
 var markdownHeading = regexp.MustCompile(`^(#{2,4}) (.+?)(?: \{#([a-z0-9-]+)\})?$`)
@@ -117,16 +149,25 @@ func parseSections(markdown string) []*docSection {
 // tests below can prove it fires by feeding it a page with one thing wrong.
 func runbookProblems(markdown string) []string {
 	var problems []string
-	var group *docSection
+	sections := map[string]*docSection{}
 	for _, section := range parseSections(markdown) {
-		if section.title == runbookGroup {
-			group = section
+		sections[section.title] = section
+	}
+	for _, declared := range runbookGroups {
+		group, ok := sections[declared.heading]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("the guide has no %q section", declared.heading))
+			continue
 		}
+		problems = append(problems, groupProblems(declared, group)...)
 	}
-	if group == nil {
-		return []string{fmt.Sprintf("the guide has no %q section", runbookGroup)}
-	}
+	return problems
+}
 
+// groupProblems holds one second-level heading to the decision its entry made
+// about every section under it.
+func groupProblems(declaredGroup runbookGroup, group *docSection) []string {
+	var problems []string
 	byAnchor := map[string]*docSection{}
 	byTitle := map[string]*docSection{}
 	for _, section := range group.children {
@@ -134,32 +175,32 @@ func runbookProblems(markdown string) []string {
 		byTitle[section.title] = section
 	}
 
-	declared := map[*docSection]bool{}
-	for _, runbook := range declaredRunbooks {
+	seen := map[*docSection]bool{}
+	for _, runbook := range declaredGroup.runbooks {
 		section, ok := byAnchor[runbook.anchor]
 		if !ok {
 			problems = append(problems, fmt.Sprintf(
 				"no section under %q declares the anchor {#%s}, so the runbook is gone or renamed",
-				runbookGroup, runbook.anchor))
+				declaredGroup.heading, runbook.anchor))
 			continue
 		}
-		declared[section] = true
+		seen[section] = true
 		problems = append(problems, elementProblems(section, runbook.prefix)...)
 	}
-	for _, title := range declaredReference {
+	for _, title := range declaredGroup.reference {
 		section, ok := byTitle[title]
 		if !ok {
 			problems = append(problems, fmt.Sprintf(
-				"%q is declared as reference under %q and is not there", title, runbookGroup))
+				"%q is declared as reference under %q and is not there", title, declaredGroup.heading))
 			continue
 		}
-		declared[section] = true
+		seen[section] = true
 	}
 	for _, section := range group.children {
-		if !declared[section] {
+		if !seen[section] {
 			problems = append(problems, fmt.Sprintf(
 				"%q is under %q and is neither a declared runbook nor declared reference",
-				section.title, runbookGroup))
+				section.title, declaredGroup.heading))
 		}
 	}
 	return problems
@@ -226,23 +267,34 @@ func TestEveryRunbookAnswersTheFiveQuestions(t *testing.T) {
 	}
 }
 
-// A page that answers nothing would pass every check above by having no
-// runbook at all, so the count is asserted against the table that declares it.
-func TestTheGuideCarriesEveryDeclaredRunbook(t *testing.T) {
+// An element anchor is a URL somebody sends to somebody else, so two headings
+// answering to one anchor is a link that lands on whichever the build picked.
+func TestNoTwoRunbookElementsClaimOneAnchor(t *testing.T) {
 	t.Parallel()
 	guide := string(readOperationsGuide(t))
-	var group *docSection
-	for _, section := range parseSections(guide) {
-		if section.title == runbookGroup {
-			group = section
+	owner := map[string]string{}
+	declared := 0
+	for _, group := range runbookGroups {
+		for _, runbook := range group.runbooks {
+			for _, element := range runbookElements {
+				anchor := runbook.prefix + "-" + element.suffix
+				declared++
+				if previous, taken := owner[anchor]; taken {
+					t.Errorf("{#%s} is claimed by both %s and %s", anchor, previous, runbook.anchor)
+					continue
+				}
+				owner[anchor] = runbook.anchor
+			}
 		}
 	}
-	if group == nil {
-		t.Fatalf("%s has no %q section", operationsGuide, runbookGroup)
+	if declared == 0 {
+		t.Fatal("no runbook is declared, so every check over them would pass over nothing")
 	}
-	if len(group.children) < len(declaredRunbooks) {
-		t.Fatalf("%s carries %d sections under %q; %d runbooks are declared",
-			operationsGuide, len(group.children), runbookGroup, len(declaredRunbooks))
+	for anchor := range owner {
+		if strings.Count(guide, "{#"+anchor+"}") != 1 {
+			t.Errorf("%s declares {#%s} %d times", operationsGuide, anchor,
+				strings.Count(guide, "{#"+anchor+"}"))
+		}
 	}
 }
 

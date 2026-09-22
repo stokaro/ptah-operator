@@ -1147,11 +1147,13 @@ before it is stored. Neither does an artifact that ends before the database
 does: an artifact pointed at a shorter sequence says nothing about a run that
 went past it.
 
-### Clearing it by hand
+### Clearing it by hand {#clear-unresolved-run}
 
-Only once you have established what the run did. The record is the operator
-saying it cannot tell, so removing it without answering that question hands the
-next Apply a database in a state nobody checked.
+#### Before you start {#clear-before}
+
+Establish what the run did. The record is the operator saying it cannot tell,
+so removing it without answering that question hands the next Apply a database
+in a state nobody checked.
 
 Clear whatever else is refusing the resource first. A manager older than this
 record held the same state in the `Blocked` condition, and the upgrade path
@@ -1167,15 +1169,17 @@ resource resolves. That reading has nothing of the artifact left to apply,
 nothing dirty and nothing modified, so the upgrade path counts it as the
 account the run was owed and does not write the record again.
 
-That is not the same as the reading clearing it, and the section above says
-why: a record still standing survives such a reading, because the refusal is
-answered before the branch that removes a record is reached. So the refusal has
-to be repaired either way, by publishing an artifact that carries the versions
-the database already applied.
+That is not the same as the reading clearing it, and
+[How it clears](#how-it-clears) says why: a record still standing survives such
+a reading, because the refusal is answered before the branch that removes a
+record is reached. So the refusal has to be repaired either way, by publishing
+an artifact that carries the versions the database already applied.
 
-Then the refusal and the record go in one write. Removing the record alone is
-not enough even with nothing else refusing: the condition outlives it by a
-pass, and the upgrade path reads the condition.
+#### Run it {#clear-run}
+
+The refusal and the record go in one write. Removing the record alone is not
+enough even with nothing else refusing: the condition outlives it by a pass,
+and the upgrade path reads the condition.
 
 ```sh
 kubectl get ptahmigration orders -o json \
@@ -1193,13 +1197,33 @@ timestamp, so `Blocked=False` would go on claiming it became false at the
 instant it became true. Removing it lets the next reading write the condition
 whole.
 
-The operator rewrites the conditions on its next reading, so this is one write
-rather than two: a resource left blocked between them is a resource whose
-record comes back.
+#### What proves it worked {#clear-evidence}
 
-One upgrade case needs this. A manager older than this record held the same
-state in the `Blocked` condition's reason, and an upgrade adopts those runs so
-the defect that rewrote the reason cannot lose them.
+The operator rewrites the conditions on its next reading, so the resource comes
+back carrying a `Blocked` condition written whole and no
+`status.unresolvedRun`. That is also why this is one write rather than two: a
+resource left blocked between them is a resource whose record comes back.
+
+#### Where to stop {#clear-stop}
+
+Do not clear the record to make a resource move again. Do not remove it without
+the refusal beside it, and do not set `Blocked=False` in place of removing the
+condition. Do not reach for `kubectl delete` either;
+[Deleting the resource discards it](#deleting-the-resource-discards-it) says
+what that costs.
+
+#### If it fails {#clear-recovery}
+
+A record that is back on the next pass means a refusal is still standing, and
+the write cleared the one that happened to be current rather than the one that
+keeps returning. Repair the refusal the condition names, then clear the record
+again.
+
+### Runs adopted by an upgrade {#adopted-runs}
+
+A manager older than this record held the same state in the `Blocked`
+condition's reason, and an upgrade adopts those runs so the defect that rewrote
+the reason cannot lose them.
 
 It leaves alone a run the stored reading still accounts for. A reading taken
 after that run finished, with nothing of the artifact left to apply, no dirty
@@ -1210,8 +1234,8 @@ So the runs that arrive this way are the ones no surviving reading settles: a
 resource that has read again and found work pending, or a dirty row, or one
 that has not read since. If such a resource is blocked for an unrelated reason
 at the moment of the upgrade, its old run is adopted with it. Establish what
-the run did, or that a later reading already accounted for it, and clear the
-record.
+the run did, or that a later reading already accounted for it, and then
+[clear the record](#clear-unresolved-run).
 
 ### Deleting the resource discards it
 
@@ -1386,7 +1410,26 @@ unresolved run is a migration that may already have changed the database, and
 its plan is what a person reads to find out what it would have done. Deleting
 it destroys the only record of the work in question.
 
-### A safe procedure
+### Prune plans that nothing pins {#prune-plans}
+
+#### Before you start {#prune-before}
+
+Read [Which plans are pinned](#which-plans-are-pinned) first. Every pin is a
+field on a live object, so the set is checkable rather than inferred, and the
+row easiest to miss is the one that matters most: a plan named by
+`ptahmigration.status.unresolvedRun.planRef` is the only record of work nobody
+has accounted for.
+
+Do this while no operation is in flight for the resources involved. A plan that
+is not pinned when you list it can become pinned a moment later, which is the
+same race any external pruner has and the reason the window matters.
+
+Export anything you intend to keep as evidence before deleting it. Nothing
+reconstructs those bytes once the chunks are gone, and
+[Export a plan before deleting it](#export-a-plan-before-deleting-it) carries
+the commands and the digest check that says the export is the plan.
+
+#### Run it {#prune-run}
 
 Collect the pinned names first, then delete plans outside that set:
 
@@ -1406,8 +1449,31 @@ kubectl get ptahschemaapprovals,ptahmigrationapprovals -A \
 
 Delete a plan only if its name is absent from `pinned.txt`, and delete its
 chunk ConfigMaps with it -- they are selected by
-`operator.ptah.run/plan=<plan-name>`. Export it first if it is evidence you
-intend to keep: nothing reconstructs those bytes once the chunks are gone.
+`operator.ptah.run/plan=<plan-name>`.
+
+#### What proves it worked {#prune-evidence}
+
+The plans you chose are gone with their chunks, and the collection above,
+re-run, still resolves every name it returns. A name that no longer resolves is
+the finding: a pinned plan was deleted, and the resource that pinned it now
+names bytes nothing holds.
+
+#### Where to stop {#prune-stop}
+
+Absence from `pinned.txt` is the only permission to delete a plan. Stop if the
+plan is named by `status.unresolvedRun.planRef`, whatever else is true of it:
+that is the record of a run that may already have changed a database, and
+deleting it destroys the only description of the work in question. Stop if an
+export's digest disagrees with what the plan records -- a chunk is already
+missing or was tampered with, which is a finding rather than a pruning problem.
+
+#### If it fails {#prune-recovery}
+
+The collection reads and nothing else, so a run that fails partway is repeated
+rather than repaired. A deletion is the other way around: nothing restores a
+plan or its chunks, and an export taken beforehand is the whole of the recovery
+path. Take one for anything you are not certain about, and check its digest
+before the delete rather than after.
 
 ### Export a plan before deleting it
 
@@ -1453,10 +1519,6 @@ anything.
 A `PtahMigrationPlan` needs no chunk step: it stores no SQL, only the ordered
 versions and their checksums, and the statements stay in the artifact its
 `spec.artifactDigest` pins. Export the plan document and keep the artifact.
-
-Do this while no operation is in flight for the resources involved. A plan that
-is not pinned when you list it can become pinned a moment later, which is the
-same race any external pruner has and the reason the window matters.
 
 ## Kubernetes versions
 
