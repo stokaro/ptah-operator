@@ -2841,10 +2841,9 @@ E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 # them.
 #
 # One engine per phase, because the two together were the longest stage of the
-# matrix: fifty-five minutes of the migration path and twenty-two of the
-# reference data, measured on the green run 35299742747. A suite runs one
-# engine's phases against a cluster of its own, so the two halves now run at
-# once and neither waits for the other's databases.
+# matrix by a wide margin. A suite runs one engine's phases against a cluster of
+# its own, so the two halves run at once and neither waits for the other's
+# databases.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
