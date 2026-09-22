@@ -690,14 +690,15 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		// was confirmed. So the failure is reported and the record is written.
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			r.event(migration, corev1.EventTypeWarning, "MigrationJobCleanupDeferred",
-				"%s Job %q keeps its own deadline because its cleanup could not be scheduled: %v",
-				operation.Type, job.Name, err)
+				"%s Job %q keeps its own deadline because its cleanup could not be scheduled: %s",
+				operation.Type, job.Name, bounded(err.Error(), 512))
 		}
 	}
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.event(migration, corev1.EventTypeWarning, "MigrationRunUncertain", "%v", failure)
+	r.event(migration, corev1.EventTypeWarning, "MigrationRunUncertain", "%s",
+		bounded(failure.Error(), 512))
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyUncertain)
 		r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageApply, telemetry.FailureUncertain)

@@ -687,7 +687,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			r.event(migration, corev1.EventTypeWarning, "ResultReadTimedOut",
-				"reading the %s result took longer than its bound: %v", operation.Type, err)
+				"reading the %s result took longer than its bound: %s",
+				operation.Type, bounded(err.Error(), 512))
 			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 		}
 		return ctrl.Result{}, err
@@ -1621,7 +1622,8 @@ func (r *MigrationReconciler) retryMigrationOperation(
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.event(migration, corev1.EventTypeWarning, "OperationRetried", "%s attempt %d: %v", operation.Type, operation.Attempt, failure)
+	r.event(migration, corev1.EventTypeWarning, "OperationRetried", "%s attempt %d: %s",
+		operation.Type, operation.Attempt, bounded(failure.Error(), 512))
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilyMigration,
 			telemetry.StageForMigrationOperation(operation.Type), telemetry.FailureOperation)
@@ -1733,7 +1735,7 @@ func (r *MigrationReconciler) migrationOperationFailure(
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.event(migration, corev1.EventTypeWarning, "OperationFailed", "%v", failure)
+	r.event(migration, corev1.EventTypeWarning, "OperationFailed", "%s", bounded(failure.Error(), 512))
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageController, telemetry.FailureConfiguration)
 	}
