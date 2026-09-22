@@ -148,22 +148,17 @@ type DatabaseTargetSpec struct {
 	// its coordination key names, and that every other resource managing that
 	// database has declared the same.
 	//
-	// It defaults to false, and a realm that more than one resource claims is
-	// refused while any claimant leaves it false. Serialization is not
-	// ownership: two resources that never run at the same time still undo each
-	// other's work by taking turns, so the operator blocks them rather than
-	// letting them alternate.
+	// It defaults to false. A realm more than one resource claims is refused
+	// while any claimant leaves it false -- including the resource that did
+	// declare it.
 	//
-	// A resource that runs nothing claims nothing. Deleting one leaves the
-	// realm, and so does suspending it: suspension is how a resource steps
-	// aside without being deleted. Resuming it puts it back in the census, and
-	// the conflict is refused then, before any Job.
+	// Deleting a resource leaves the realm, and so does suspending it;
+	// resuming puts it back, and the conflict is refused then, before any Job.
 	//
-	// The declaration is what is verified, not the disjointness. No analyzer
-	// can tell whether two sets of arbitrary SQL touch the same rows, and a
-	// field that claimed otherwise would be the wrong kind of assurance. What
-	// it buys is that sharing is deliberate on every side: one resource that
-	// has not declared it blocks all of them, itself included.
+	// What is verified is the declaration, never the disjointness: nothing can
+	// tell whether two sets of arbitrary SQL touch the same rows. The
+	// concurrency section of the architecture reference says why taking turns
+	// is not enough.
 	// +kubebuilder:default=false
 	SharedRealm bool `json:"sharedRealm,omitempty"`
 
@@ -657,10 +652,9 @@ type PodAdmissionSnapshot struct {
 	// PriorityClass is the scheduling priority it resolved to.
 	PriorityClass PriorityClassAdmissionSnapshot `json:"priorityClass"`
 	// DefaultTolerationsEnabled records whether kube-apiserver runs the
-	// DefaultTolerationSeconds admission plugin.
-	// DefaultTolerationsEnabled and the two values below record what the
-	// cluster's DefaultTolerationSeconds plugin does, so a toleration the Pod
-	// did not ask for is recognized rather than refused.
+	// DefaultTolerationSeconds admission plugin. It and the two values below
+	// say what that plugin does, so a toleration the Pod did not ask for is
+	// recognized rather than refused.
 	DefaultTolerationsEnabled bool `json:"defaultTolerationsEnabled"`
 	// +kubebuilder:validation:Minimum=0
 	// DefaultNotReadyTolerationSeconds is that plugin's not-ready value.
@@ -669,14 +663,12 @@ type PodAdmissionSnapshot struct {
 	// DefaultUnreachableTolerationSeconds is that plugin's unreachable value.
 	DefaultUnreachableTolerationSeconds int64 `json:"defaultUnreachableTolerationSeconds"`
 	// ExtendedResourceTolerationEnabled records whether kube-apiserver runs the
-	// ExtendedResourceToleration admission plugin.
-	// ExtendedResourceTolerationEnabled records whether the cluster adds a
-	// toleration per extended resource a Pod requests.
+	// ExtendedResourceToleration admission plugin, which adds a toleration per
+	// extended resource a Pod requests.
 	ExtendedResourceTolerationEnabled bool `json:"extendedResourceTolerationEnabled"`
 	// AlwaysPullImagesEnabled records whether kube-apiserver runs the
-	// AlwaysPullImages admission plugin.
-	// AlwaysPullImagesEnabled records whether the cluster rewrites every
-	// imagePullPolicy to Always.
+	// AlwaysPullImages admission plugin, which rewrites every imagePullPolicy
+	// to Always.
 	AlwaysPullImagesEnabled bool `json:"alwaysPullImagesEnabled"`
 }
 
