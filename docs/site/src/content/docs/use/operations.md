@@ -1285,6 +1285,28 @@ at the moment of the upgrade, its old run is adopted with it. Establish what
 the run did, or that a later reading already accounted for it, and clear the
 record.
 
+### Deleting the resource discards it
+
+`kubectl delete ptahmigration` removes the record with the object. The operator
+does not refuse the deletion: only a person clears this record, so a refusal
+would be one the operator could never lift, and a resource nobody can remove is
+worse than a record that ends in the event stream.
+
+It does refuse to lose it quietly. The pass that removes the finalizer emits a
+Warning Event, `UnresolvedRunDiscarded`, naming the outcome, the Job the run
+ran as, the plan it was carrying out and the database it addressed, and logs
+the same. Those are what remain for whoever later finds a change in that
+database nobody can account for, so capture them before the Event's retention
+window closes:
+
+```sh
+kubectl -n "$NAMESPACE" get events --field-selector reason=UnresolvedRunDiscarded \
+  -o custom-columns=WHEN:.lastTimestamp,OBJECT:.involvedObject.name,MESSAGE:.message
+```
+
+Establishing what the run did before deleting the resource is the better order.
+The record names everything needed for that, and it is the last reading of it.
+
 ## Observability
 
 The chart exposes the controller-runtime Prometheus endpoint through the
