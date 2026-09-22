@@ -43,6 +43,7 @@ export const sidebar = [
       { label: 'Manage reference data', link: '/use/reference-data/' },
       { label: 'Exact-plan approvals', link: '/use/approvals/' },
       { label: 'Operations', link: '/use/operations/' },
+      { label: 'Recover operator state', link: '/use/recovery/' },
       { label: 'Security model', link: '/use/security/' },
     ],
   },
