@@ -1355,7 +1355,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			r.event(schema, corev1.EventTypeWarning, "ResultReadTimedOut",
-				"reading the %s result took longer than its bound: %v", operation.Type, err)
+				"reading the %s result took longer than its bound: %s",
+				operation.Type, bounded(err.Error(), 512))
 			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 		}
 		return ctrl.Result{}, err
