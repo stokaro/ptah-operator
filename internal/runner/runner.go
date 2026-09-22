@@ -122,9 +122,9 @@ func Run(ctx context.Context, config Config) Result {
 	}
 	// One authority block for both mutating families. A schema Apply and a
 	// migration Apply reach the same database through the same kind of Pod, so
-	// a boundary that held for one and not the other was never a boundary: the
-	// migration path used to read none of this and dispatched on a changed
-	// target, past both deadlines, with no approved plan named at all.
+	// a boundary that holds for one and not the other is not a boundary: it
+	// leaves the other free to dispatch on a changed target, past both
+	// deadlines, with no approved plan named at all.
 	if config.Operation.Mutating() {
 		if !validProtocolDigest(inputs.ExpectedCoordinationDigest) {
 			setResultError(&result, "missing_coordination_binding", errors.New("expected coordination digest is required"), redactor, config.Diagnostics)

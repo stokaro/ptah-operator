@@ -476,9 +476,9 @@ func recordUnresolvedMigrationRun(
 //
 // The epoch the claim persisted travels with the request, because releasing
 // without one is not a weaker release -- it is no release at all. Release
-// refuses a request that names no epoch, so the Lease kept its holder until it
-// expired, and every other claimant on that database waited out the full lease
-// duration for a run that had already finished.
+// refuses a request that names no epoch, the Lease then runs to its expiry,
+// and every other claimant on that database waits out the full duration for a
+// run that has already finished.
 func (r *MigrationReconciler) releaseMigrationApplyLock(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,

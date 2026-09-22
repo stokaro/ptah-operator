@@ -63,16 +63,15 @@ const (
 	//
 	// It is a local path rather than an OCI reference on purpose. Ptah accepts
 	// `--migrations-dir oci://...` and fetches the artifact itself, which would
-	// put the registry credentials in the same process as the database ones.
-	// The schema path solved this years earlier with a fetch container that
-	// holds the registry credentials and writes what it fetched into a shared
-	// volume; a migration reads that volume.
+	// put the registry credentials in the same process as the database ones. A
+	// fetch container holds the registry credentials and writes what it fetched
+	// into a shared volume; the process that runs SQL reads that volume and
+	// never reaches a registry.
 	EnvMigrationsDir = "PTAH_MIGRATIONS_DIR"
 
 	// EnvTransactionMode is the mode the resource asked Ptah to wrap the run
-	// in. Empty means the resource asked for nothing, and the flag is left off
-	// so Ptah chooses -- which is what every migration did before the field
-	// existed.
+	// in. Empty means the resource asked for nothing and the flag is left off,
+	// so Ptah chooses.
 	EnvTransactionMode = "PTAH_TRANSACTION_MODE"
 
 	envOperationID            = EnvOperationID
@@ -236,11 +235,7 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 		}
 		spec.Args = []string{"schema", "apply", "--plan", inputs.PlanPath, "--auto-approve"}
 	case OperationMigrationHistory, OperationMigrationApply:
-		// The directory is already on disk, put there by a fetch container that
-		// held the registry credentials this process does not. Ptah would
-		// happily take an oci:// reference here and fetch the artifact itself,
-		// which is exactly the isolation the schema path exists to keep: the
-		// process that runs SQL holds database credentials and nothing else.
+		// A local path, never a reference: validateMigrationsDir says why.
 		if err := validateMigrationsDir(inputs.MigrationsDir); err != nil {
 			return CommandSpec{}, err
 		}
@@ -249,17 +244,13 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 			verb = "up"
 		}
 		spec.Args = []string{"migrations", verb, "--migrations-dir", inputs.MigrationsDir, "--json"}
-		// Only on the apply, and only when the resource asked.
+		// Only on the apply, and only when the resource asked. `migrations
+		// status` does not take --tx-mode -- it reads a history and wraps
+		// nothing -- so passing it there is an unknown flag and the command
+		// fails.
 		//
-		// `migrations status` does not take --tx-mode: it reads a history and
-		// wraps nothing, so the flag is not merely redundant there, it is an
-		// unknown flag and the command fails. A resource that named a mode
-		// then never left Reading, because every history read died before it
-		// produced a result.
-		//
-		// An unset mode leaves the flag off entirely and Ptah picks, which is
-		// what every migration did before the field existed -- so a resource
-		// stored before it keeps running unchanged.
+		// An unset mode leaves the flag off and Ptah picks, so a resource
+		// stored before this field existed keeps running unchanged.
 		if mode := strings.TrimSpace(inputs.TransactionMode); mode != "" &&
 			operation == OperationMigrationApply {
 			if err := validateTransactionMode(mode); err != nil {
