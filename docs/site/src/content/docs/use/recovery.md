@@ -41,7 +41,7 @@ Some of what a recovery needs lives outside those objects:
   in the operator namespace, beside the admission singleton
   `ptah-operator-admission` and the webhook certificate Secret.
 
-## Three recovery modes
+## Recovery modes
 
 Decide which one you are in before touching anything. They differ in what you
 are allowed to assume, not in how much work they are.

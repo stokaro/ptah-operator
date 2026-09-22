@@ -186,3 +186,71 @@ func TestTheMutationLifecycleCheckNoticesWhatItIsFor(t *testing.T) {
 		})
 	}
 }
+
+// The page's durable-state table is the one place it says which family keeps
+// which record, and it is the claim that went stale first: a row written when
+// only one family had a field goes on reading correctly after the other gets
+// it, and nothing in the symbol check notices, because both families still
+// declare every symbol the enforcement cells name.
+//
+// So the table is read against the API types. A yes for a field the type does
+// not serialize, and a no for one it does, are both failures.
+func TestTheDurableStateTableMatchesTheAPITypes(t *testing.T) {
+	t.Parallel()
+	page := string(readRepositoryFile(t, mutationLifecyclePage))
+	// The rows are read by column position, so the header has to be the order
+	// the reader assumes. A swapped pair would otherwise invert every row and
+	// still pass.
+	const header = "| Field | `PtahSchema` | `PtahMigration` |"
+	if !strings.Contains(page, header) {
+		t.Fatalf("%s has no durable-state header reading %q, so its columns cannot be read by position",
+			mutationLifecyclePage, header)
+	}
+	rows := durableStateRows(page)
+	if len(rows) < 4 {
+		t.Fatalf("%s carries %d durable-state row(s); the table was written with more",
+			mutationLifecyclePage, len(rows))
+	}
+	types := map[string]string{
+		"PtahSchema":    string(readRepositoryFile(t, "api/v1alpha1/ptahschema_types.go")),
+		"PtahMigration": string(readRepositoryFile(t, "api/v1alpha1/ptahmigration_types.go")),
+	}
+	for _, row := range rows {
+		for family, claimed := range row.families {
+			source, known := types[family]
+			if !known {
+				t.Errorf("the durable-state table has a column for %s, which has no types file here", family)
+				continue
+			}
+			serialized := strings.Contains(source, `json:"`+row.field+`,`)
+			if claimed && !serialized {
+				t.Errorf("the table says %s keeps status.%s; its type does not serialize it", family, row.field)
+			}
+			if !claimed && serialized {
+				t.Errorf("the table says %s does not keep status.%s; its type serializes it", family, row.field)
+			}
+		}
+	}
+}
+
+// durableStateRow is one field and what the table claims about each family.
+type durableStateRow struct {
+	field    string
+	families map[string]bool
+}
+
+var durableStateRowPattern = regexp.MustCompile("(?m)^\\| `status\\.([A-Za-z]+)` \\| (yes|no) \\| (yes|no) \\|\\s*$")
+
+func durableStateRows(page string) []durableStateRow {
+	var rows []durableStateRow
+	for _, match := range durableStateRowPattern.FindAllStringSubmatch(page, -1) {
+		rows = append(rows, durableStateRow{
+			field: match[1],
+			families: map[string]bool{
+				"PtahSchema":    match[2] == "yes",
+				"PtahMigration": match[3] == "yes",
+			},
+		})
+	}
+	return rows
+}
