@@ -278,6 +278,18 @@ American English in code, comments, documentation, issue and PR text, and
 program output. Plain international English: short sentences, concrete nouns,
 active voice. Say what changed and why, once.
 
+Cut the preamble. A clause that labels a statement instead of making one --
+"and that is the current position rather than an omission", "it is worth
+noting that", "the important thing here is" -- gives a reader nothing they did
+not already have. Delete it and start at the statement.
+
+Do not open a passage by counting what follows. "Two things this page does not
+claim", "Three reasons this fails", "Two more contracts": the number is noise
+when the items are right there, it is wrong the moment one is added, and the
+shape reads as filler. Name the first thing and carry on. Where the count is
+itself the point -- a fixed set, a number a reader will check against
+something -- say it inside a sentence that also says something else.
+
 `README.ja.md`, `README.de.md` and `README.fr.md` translate `README.md`.
 `docs/site/scripts/check-translations.mjs` compares fenced blocks and link,
 image and badge addresses in order. Every file links to all other languages
