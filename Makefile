@@ -11,7 +11,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -130,6 +130,12 @@ verify-kubernetes-support:
 
 verify-ptah-support:
 	$(GO) run ./hack/verifyptahsupport
+
+# The PA-01 coverage table for an acceptance record, derived from the two
+# support catalogs and the driver rather than typed beside them. The table's
+# completeness is a test under `go test ./hack/...`; this prints it.
+acceptance-coverage:
+	@$(GO) run ./hack/acceptancecoverage
 
 # This target performs live upstream discovery. Normal verification is offline.
 update-kubernetes-support:
