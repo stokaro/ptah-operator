@@ -244,9 +244,9 @@ validate_custom_operator_metrics() {
         malformed = 1
         next
       }
-      if ($1 == "ptah_operator_reconciliations_total{result=\"success\"}") {
+      if ($1 == "ptah_operator_reconciliations_total{family=\"schema\",result=\"success\"}") {
         reconciliation_sample++
-      } else if ($1 == "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}") {
+      } else if ($1 == "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"}") {
         failure_sample++
       } else {
         malformed = 1
@@ -285,7 +285,7 @@ resolve_operation_failure_counter_from_metrics() {
       return rendered !~ /^[+]?[Ii][Nn][Ff]/ && number >= 0
     }
 
-    $1 == "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}" {
+    $1 == "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"}" {
       if (NF != 2 || !nonnegative_finite_number($2)) {
         malformed = 1
       } else {

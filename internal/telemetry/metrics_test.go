@@ -14,13 +14,15 @@ func TestMetricsExposeRequiredBoundedSeries(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := New(registry)
 
-	metrics.ObserveReconciliation(ReconciliationSucceeded)
+	metrics.ObserveReconciliation(FamilySchema, ReconciliationSucceeded)
 	metrics.ObserveDrift(operatorv1alpha1.DatabaseEnginePostgreSQL, DriftDetected)
-	metrics.ObservePlan(operatorv1alpha1.DatabaseEngineMySQL, true)
-	metrics.ObserveApproval(ApprovalAccepted)
-	metrics.ObserveApply(ApplyCompleted)
-	metrics.ObserveOperation(operatorv1alpha1.OperationApply, OperationSucceeded, 3*time.Second)
-	metrics.ObserveFailure(FailureStageApply, FailureOperation)
+	metrics.ObservePlan(FamilySchema, operatorv1alpha1.DatabaseEngineMySQL, PlanDestructive)
+	metrics.ObservePlan(FamilyMigration, operatorv1alpha1.DatabaseEngineMySQL, PlanImpactUnknown)
+	metrics.ObserveApproval(FamilySchema, ApprovalAccepted)
+	metrics.ObserveApply(FamilyMigration, ApplyCompleted)
+	metrics.ObserveOperation(FamilySchema, OperationApply, OperationSucceeded, 3*time.Second)
+	metrics.ObserveOperation(FamilyMigration, OperationHistory, OperationSucceeded, time.Second)
+	metrics.ObserveFailure(FamilyMigration, FailureStageHistory, FailureOperation)
 
 	families, err := registry.Gather()
 	if err != nil {
@@ -53,12 +55,13 @@ func TestMetricsNormalizeUntrustedLabelValues(t *testing.T) {
 	metrics := New(registry)
 	secret := "postgres://user:password@database.example/customer"
 
-	metrics.ObserveReconciliation(ReconciliationResult(secret))
+	metrics.ObserveReconciliation(ResourceFamily(secret), ReconciliationResult(secret))
 	metrics.ObserveDrift(operatorv1alpha1.DatabaseEngine(secret), DriftOutcome(secret))
-	metrics.ObserveApproval(ApprovalOutcome(secret))
-	metrics.ObserveApply(ApplyOutcome(secret))
-	metrics.ObserveOperation(operatorv1alpha1.OperationType(secret), OperationOutcome(secret), time.Second)
-	metrics.ObserveFailure(FailureStage(secret), FailureCategory(secret))
+	metrics.ObservePlan(ResourceFamily(secret), operatorv1alpha1.DatabaseEngine(secret), PlanImpact(secret))
+	metrics.ObserveApproval(ResourceFamily(secret), ApprovalOutcome(secret))
+	metrics.ObserveApply(ResourceFamily(secret), ApplyOutcome(secret))
+	metrics.ObserveOperation(ResourceFamily(secret), Operation(secret), OperationOutcome(secret), time.Second)
+	metrics.ObserveFailure(ResourceFamily(secret), FailureStage(secret), FailureCategory(secret))
 
 	families, err := registry.Gather()
 	if err != nil {
@@ -82,5 +85,45 @@ func TestStageForOperationIsBounded(t *testing.T) {
 	}
 	if got := StageForOperation("credential-bearing-value"); got != FailureStageController {
 		t.Fatalf("StageForOperation(unknown) = %q, want %q", got, FailureStageController)
+	}
+}
+
+func TestStageForMigrationOperationIsBounded(t *testing.T) {
+	t.Parallel()
+	// History is the one a schema never performs, and mapping it through the
+	// schema enum is what produced an "unknown" stage for a real operation.
+	if got := StageForMigrationOperation(operatorv1alpha1.MigrationOperationHistory); got != FailureStageHistory {
+		t.Fatalf("StageForMigrationOperation(History) = %q, want %q", got, FailureStageHistory)
+	}
+	if got := StageForMigrationOperation("credential-bearing-value"); got != FailureStageController {
+		t.Fatalf("StageForMigrationOperation(unknown) = %q, want %q", got, FailureStageController)
+	}
+}
+
+func TestOperationLabelsCoverBothFamilies(t *testing.T) {
+	t.Parallel()
+	if got := OperationForMigration(operatorv1alpha1.MigrationOperationHistory); got != OperationHistory {
+		t.Fatalf("OperationForMigration(History) = %q, want %q", got, OperationHistory)
+	}
+	if got := OperationForSchema(operatorv1alpha1.OperationObserve); got != OperationObserve {
+		t.Fatalf("OperationForSchema(Observe) = %q, want %q", got, OperationObserve)
+	}
+	// An operation neither mapper recognizes must reach the metric as
+	// "unknown" rather than as a label the caller chose.
+	if got := operationLabel(Operation("postgres://user:password@database.example")); got != "unknown" {
+		t.Fatalf("operationLabel(untrusted) = %q, want unknown", got)
+	}
+	if got := OperationForSchema("Reticulate"); got != "" {
+		t.Fatalf("OperationForSchema(unrecognized) = %q, want the empty label", got)
+	}
+}
+
+func TestDestructivePlanKeepsTheSpellingABooleanLabelHad(t *testing.T) {
+	t.Parallel()
+	if got := DestructivePlan(true); got != PlanDestructive || string(got) != "true" {
+		t.Fatalf("DestructivePlan(true) = %q, want the label %q", got, "true")
+	}
+	if got := DestructivePlan(false); got != PlanNonDestructive || string(got) != "false" {
+		t.Fatalf("DestructivePlan(false) = %q, want the label %q", got, "false")
 	}
 }

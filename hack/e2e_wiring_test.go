@@ -1572,13 +1572,13 @@ func TestHAResolveOperationFailureCounterParser(t *testing.T) {
 		wantError  bool
 	}{
 		{name: "absent", metrics: "# unrelated\n", wantOutput: "0\n"},
-		{name: "zero", metrics: "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} 0\n", wantOutput: "0\n"},
-		{name: "positive exponent", metrics: "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} 3e+02\n", wantOutput: "3e+02\n"},
-		{name: "overflowing exponent", metrics: "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} 1e999\n", wantError: true},
-		{name: "duplicate", metrics: "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} 1\nptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} 2\n", wantError: true},
-		{name: "negative", metrics: "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} -1\n", wantError: true},
-		{name: "non-finite", metrics: "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} NaN\n", wantError: true},
-		{name: "timestamped", metrics: "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} 1 123\n", wantError: true},
+		{name: "zero", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 0\n", wantOutput: "0\n"},
+		{name: "positive exponent", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 3e+02\n", wantOutput: "3e+02\n"},
+		{name: "overflowing exponent", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1e999\n", wantError: true},
+		{name: "duplicate", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1\nptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 2\n", wantError: true},
+		{name: "negative", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} -1\n", wantError: true},
+		{name: "non-finite", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} NaN\n", wantError: true},
+		{name: "timestamped", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1 123\n", wantError: true},
 	}
 	for _, test := range tests {
 		test := test
@@ -1607,10 +1607,10 @@ func TestHACustomMetricValidatorRejectsOverflowingExponent(t *testing.T) {
 	metrics := strings.Join([]string{
 		"# HELP ptah_operator_reconciliations_total Total reconciliations.",
 		"# TYPE ptah_operator_reconciliations_total counter",
-		"ptah_operator_reconciliations_total{result=\"success\"} 2",
+		"ptah_operator_reconciliations_total{family=\"schema\",result=\"success\"} 2",
 		"# HELP ptah_operator_failures_total Total failures.",
 		"# TYPE ptah_operator_failures_total counter",
-		"ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"} 1e999",
+		"ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1e999",
 	}, "\n") + "\n"
 	if output, err := runHACustomMetricValidator(t, metrics); err == nil {
 		t.Fatalf("validator accepted an overflowing metric exponent and returned %q", output)
@@ -1636,10 +1636,10 @@ sleep() { :; }
 emit_metrics() {
   printf '%s\n' '# HELP ptah_operator_reconciliations_total Total reconciliations.'
   printf '%s\n' '# TYPE ptah_operator_reconciliations_total counter'
-  printf '%s\n' 'ptah_operator_reconciliations_total{result="success"} 2'
+  printf '%s\n' 'ptah_operator_reconciliations_total{family="schema",result="success"} 2'
   printf '%s\n' '# HELP ptah_operator_failures_total Total failures.'
   printf '%s\n' '# TYPE ptah_operator_failures_total counter'
-  printf 'ptah_operator_failures_total{category="operation",stage="resolve"} %s\n' "$1"
+  printf 'ptah_operator_failures_total{category="operation",family="schema",stage="resolve"} %s\n' "$1"
 }
 k() {
   scrape_count=$(sed -n '1p' "$SCRAPE_COUNT_FILE")

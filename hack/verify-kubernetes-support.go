@@ -3969,9 +3969,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("cleanup implementation", `cleanup() {`),
 				exactSourceLine("custom metrics validator implementation", `validate_custom_operator_metrics() {`),
 				exactSourceLineSequence("custom metrics exact labeled samples", []string{
-					`if ($1 == "ptah_operator_reconciliations_total{result=\"success\"}") {`,
+					`if ($1 == "ptah_operator_reconciliations_total{family=\"schema\",result=\"success\"}") {`,
 					`reconciliation_sample++`,
-					`} else if ($1 == "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}") {`,
+					`} else if ($1 == "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"}") {`,
 					`failure_sample++`,
 				}),
 				exactSourceLineSequence("custom metrics duplicate and unexpected-family refusal", []string{

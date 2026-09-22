@@ -130,11 +130,11 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 			return
 		}
 		if err != nil {
-			r.Telemetry.ObserveReconciliation(telemetry.ReconciliationFailed)
-			r.Telemetry.ObserveFailure(telemetry.FailureStageController, telemetry.FailureInfrastructure)
+			r.Telemetry.ObserveReconciliation(telemetry.FamilySchema, telemetry.ReconciliationFailed)
+			r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageController, telemetry.FailureInfrastructure)
 			return
 		}
-		r.Telemetry.ObserveReconciliation(telemetry.ReconciliationSucceeded)
+		r.Telemetry.ObserveReconciliation(telemetry.FamilySchema, telemetry.ReconciliationSucceeded)
 	}()
 	return r.reconcile(ctx, request)
 }
@@ -1252,7 +1252,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		r.event(schema, corev1.EventTypeNormal, "OperationStarted", "%s Job %s started", operation.Type, job.Name)
 		if operation.Type == operatorv1alpha1.OperationApply && r.Telemetry != nil {
-			r.Telemetry.ObserveApply(telemetry.ApplyStarted)
+			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStarted)
 		}
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
@@ -2045,7 +2045,7 @@ func (r *SchemaReconciler) consumeResult(
 			r.Telemetry.ObserveDrift(schema.Spec.Target.Engine, outcome)
 		}
 		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
-			r.Telemetry.ObserveApply(telemetry.ApplyCompleted)
+			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyCompleted)
 		}
 	}
 	r.observeOperation(operation, telemetry.OperationSucceeded)
@@ -2427,7 +2427,7 @@ func (r *SchemaReconciler) retryOperationAs(
 		}
 	}
 	if r.Telemetry != nil {
-		r.Telemetry.ObserveFailure(telemetry.StageForOperation(operation.Type), telemetry.FailureOperation)
+		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.StageForOperation(operation.Type), telemetry.FailureOperation)
 	}
 	r.event(schema, corev1.EventTypeWarning, "OperationFailed", "%s", bounded(failure.Error(), 512))
 	return ctrl.Result{RequeueAfter: failureRetry(schema)}, nil
@@ -2562,8 +2562,8 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 		return ctrl.Result{}, err
 	}
 	if r.Telemetry != nil {
-		r.Telemetry.ObserveApply(telemetry.ApplyUncertain)
-		r.Telemetry.ObserveFailure(telemetry.FailureStageApply, telemetry.FailureUncertain)
+		r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyUncertain)
+		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageApply, telemetry.FailureUncertain)
 	}
 	r.observeOperation(operation, telemetry.OperationUncertain)
 	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "Apply outcome is uncertain; observing database state")
@@ -2685,9 +2685,9 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 		stage := telemetry.FailureStagePlan
 		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
 			stage = telemetry.FailureStageApply
-			r.Telemetry.ObserveApply(telemetry.ApplyStale)
+			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 		}
-		r.Telemetry.ObserveFailure(stage, telemetry.FailureStaleInput)
+		r.Telemetry.ObserveFailure(telemetry.FamilySchema, stage, telemetry.FailureStaleInput)
 	}
 	r.observeOperation(operation, telemetry.OperationStale)
 	if schema.Status.PendingObservation == nil {
@@ -2775,9 +2775,9 @@ func (r *SchemaReconciler) executionBindingChanged(
 			return ctrl.Result{}, err
 		}
 		if r.Telemetry != nil {
-			r.Telemetry.ObserveFailure(failureStage, telemetry.FailureStaleInput)
+			r.Telemetry.ObserveFailure(telemetry.FamilySchema, failureStage, telemetry.FailureStaleInput)
 			if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
-				r.Telemetry.ObserveApply(telemetry.ApplyStale)
+				r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 			}
 		}
 		r.observeOperation(operation, telemetry.OperationStale)
@@ -3172,7 +3172,7 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 		}
 	}
 	if r.Telemetry != nil {
-		r.Telemetry.ObserveFailure(telemetry.FailureStagePlan, telemetry.FailureStaleInput)
+		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStagePlan, telemetry.FailureStaleInput)
 	}
 	r.observeOperation(operation, telemetry.OperationStale)
 	if schema.Status.PendingObservation == nil {
@@ -3228,9 +3228,9 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 		}
 	}
 	if r.Telemetry != nil {
-		r.Telemetry.ObserveFailure(telemetry.FailureStageVerify, telemetry.FailurePolicyChanged)
+		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageVerify, telemetry.FailurePolicyChanged)
 		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
-			r.Telemetry.ObserveApply(telemetry.ApplyStale)
+			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 		}
 	}
 	r.observeOperation(operation, telemetry.OperationStale)
@@ -3257,7 +3257,7 @@ func (r *SchemaReconciler) operationFailure(ctx context.Context, schema *operato
 		if schema.Status.ActiveOperation != nil {
 			stage = telemetry.StageForOperation(schema.Status.ActiveOperation.Type)
 		}
-		r.Telemetry.ObserveFailure(stage, telemetry.FailureConfiguration)
+		r.Telemetry.ObserveFailure(telemetry.FamilySchema, stage, telemetry.FailureConfiguration)
 	}
 	return ctrl.Result{RequeueAfter: failureRetry(schema)}, nil
 }
@@ -3275,7 +3275,7 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 			return ctrl.Result{}, err
 		}
 		if r.Telemetry != nil {
-			r.Telemetry.ObserveFailure(telemetry.StageForOperation(operation.Type), telemetry.FailureStaleInput)
+			r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.StageForOperation(operation.Type), telemetry.FailureStaleInput)
 		}
 		r.observeOperation(operation, telemetry.OperationStale)
 		// PendingObservation still owns the database-realm Lease and deletion
@@ -3310,10 +3310,10 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 		if operation != nil {
 			stage = telemetry.StageForOperation(operation.Type)
 			if operation.Type == operatorv1alpha1.OperationApply {
-				r.Telemetry.ObserveApply(telemetry.ApplyStale)
+				r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 			}
 		}
-		r.Telemetry.ObserveFailure(stage, telemetry.FailureStaleInput)
+		r.Telemetry.ObserveFailure(telemetry.FamilySchema, stage, telemetry.FailureStaleInput)
 	}
 	r.observeOperation(operation, telemetry.OperationStale)
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
@@ -3558,7 +3558,7 @@ func (r *SchemaReconciler) markApprovalStaleWithReason(
 	}
 	r.event(approval, corev1.EventTypeWarning, "ApprovalStale", "%s", message)
 	if r.Telemetry != nil {
-		r.Telemetry.ObserveApproval(telemetry.ApprovalStale)
+		r.Telemetry.ObserveApproval(telemetry.FamilySchema, telemetry.ApprovalStale)
 	}
 	return nil
 }
@@ -3649,8 +3649,8 @@ func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *op
 	}
 	if r.Telemetry != nil {
 		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
-			r.Telemetry.ObserveApply(telemetry.ApplyStale)
-			r.Telemetry.ObserveFailure(telemetry.FailureStageApply, telemetry.FailureStaleInput)
+			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
+			r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageApply, telemetry.FailureStaleInput)
 		}
 	}
 	r.observeOperation(operation, telemetry.OperationStale)
@@ -4256,20 +4256,21 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alpha1.PtahSchema) {
 	newPlan := planChanged(before.Status.Plan, after.Status.Plan)
 	if newPlan && after.Status.Plan != nil && r.Telemetry != nil {
-		r.Telemetry.ObservePlan(after.Spec.Target.Engine, after.Status.Plan.Destructive)
+		r.Telemetry.ObservePlan(telemetry.FamilySchema, after.Spec.Target.Engine,
+			telemetry.DestructivePlan(after.Status.Plan.Destructive))
 	}
 	approvalRequired := meta.IsStatusConditionTrue(after.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
 	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "") ||
 		newPlan && approvalRequired {
 		r.event(after, corev1.EventTypeNormal, "ApprovalRequired", "The current immutable plan requires approval")
 		if r.Telemetry != nil {
-			r.Telemetry.ObserveApproval(telemetry.ApprovalRequired)
+			r.Telemetry.ObserveApproval(telemetry.FamilySchema, telemetry.ApprovalRequired)
 		}
 	}
 	if approvalChanged(before.Status.Plan, after.Status.Plan) {
 		r.event(after, corev1.EventTypeNormal, "ApprovalAccepted", "An authenticated approval was accepted for the current immutable plan")
 		if r.Telemetry != nil {
-			r.Telemetry.ObserveApproval(telemetry.ApprovalAccepted)
+			r.Telemetry.ObserveApproval(telemetry.FamilySchema, telemetry.ApprovalAccepted)
 		}
 	}
 	if planInvalidated(before.Status.Plan, after.Status.Plan) {
@@ -4284,7 +4285,8 @@ func (r *SchemaReconciler) observeOperation(operation *operatorv1alpha1.ActiveOp
 	if r.Telemetry == nil || operation == nil || operation.StartedAt.IsZero() {
 		return
 	}
-	r.Telemetry.ObserveOperation(operation.Type, outcome, r.now().Sub(operation.StartedAt.Time))
+	r.Telemetry.ObserveOperation(telemetry.FamilySchema, telemetry.OperationForSchema(operation.Type),
+		outcome, r.now().Sub(operation.StartedAt.Time))
 }
 
 func planChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {

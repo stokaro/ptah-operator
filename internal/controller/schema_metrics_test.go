@@ -21,14 +21,41 @@ import (
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 )
 
+// telemetryObservation records what a reconciler reported. One instance is
+// attached to one reconciler, so families records the family of every
+// observation in order and a test asserts the whole slice rather than tracking
+// a family per metric.
 type telemetryObservation struct {
 	reconciliations []telemetry.ReconciliationResult
 	drifts          []telemetry.DriftOutcome
-	plans           []bool
+	plans           []telemetry.PlanImpact
 	approvals       []telemetry.ApprovalOutcome
 	applies         []telemetry.ApplyOutcome
 	operations      []telemetry.OperationOutcome
 	failures        []telemetry.FailureCategory
+	families        []telemetry.ResourceFamily
+	operationLabels []telemetry.Operation
+	failureStages   []telemetry.FailureStage
+	durations       []time.Duration
+}
+
+// observedFamilies reduces the recorded families to the distinct set, so a
+// test can say which families reported without counting observations.
+func (o *telemetryObservation) observedFamilies() []telemetry.ResourceFamily {
+	var distinct []telemetry.ResourceFamily
+	for _, family := range o.families {
+		found := false
+		for _, seen := range distinct {
+			if seen == family {
+				found = true
+				break
+			}
+		}
+		if !found {
+			distinct = append(distinct, family)
+		}
+	}
+	return distinct
 }
 
 type failingReader struct{ client.Reader }
@@ -37,7 +64,11 @@ func (failingReader) Get(context.Context, client.ObjectKey, client.Object, ...cl
 	return errors.New("API unavailable")
 }
 
-func (o *telemetryObservation) ObserveReconciliation(result telemetry.ReconciliationResult) {
+func (o *telemetryObservation) ObserveReconciliation(
+	family telemetry.ResourceFamily,
+	result telemetry.ReconciliationResult,
+) {
+	o.families = append(o.families, family)
 	o.reconciliations = append(o.reconciliations, result)
 }
 
@@ -45,23 +76,47 @@ func (o *telemetryObservation) ObserveDrift(_ operatorv1alpha1.DatabaseEngine, o
 	o.drifts = append(o.drifts, outcome)
 }
 
-func (o *telemetryObservation) ObservePlan(_ operatorv1alpha1.DatabaseEngine, destructive bool) {
-	o.plans = append(o.plans, destructive)
+func (o *telemetryObservation) ObservePlan(
+	family telemetry.ResourceFamily,
+	_ operatorv1alpha1.DatabaseEngine,
+	impact telemetry.PlanImpact,
+) {
+	o.families = append(o.families, family)
+	o.plans = append(o.plans, impact)
 }
 
-func (o *telemetryObservation) ObserveApproval(outcome telemetry.ApprovalOutcome) {
+func (o *telemetryObservation) ObserveApproval(
+	family telemetry.ResourceFamily,
+	outcome telemetry.ApprovalOutcome,
+) {
+	o.families = append(o.families, family)
 	o.approvals = append(o.approvals, outcome)
 }
 
-func (o *telemetryObservation) ObserveApply(outcome telemetry.ApplyOutcome) {
+func (o *telemetryObservation) ObserveApply(family telemetry.ResourceFamily, outcome telemetry.ApplyOutcome) {
+	o.families = append(o.families, family)
 	o.applies = append(o.applies, outcome)
 }
 
-func (o *telemetryObservation) ObserveOperation(_ operatorv1alpha1.OperationType, outcome telemetry.OperationOutcome, _ time.Duration) {
+func (o *telemetryObservation) ObserveOperation(
+	family telemetry.ResourceFamily,
+	operation telemetry.Operation,
+	outcome telemetry.OperationOutcome,
+	duration time.Duration,
+) {
+	o.families = append(o.families, family)
+	o.operationLabels = append(o.operationLabels, operation)
 	o.operations = append(o.operations, outcome)
+	o.durations = append(o.durations, duration)
 }
 
-func (o *telemetryObservation) ObserveFailure(_ telemetry.FailureStage, category telemetry.FailureCategory) {
+func (o *telemetryObservation) ObserveFailure(
+	family telemetry.ResourceFamily,
+	stage telemetry.FailureStage,
+	category telemetry.FailureCategory,
+) {
+	o.families = append(o.families, family)
+	o.failureStages = append(o.failureStages, stage)
 	o.failures = append(o.failures, category)
 }
 
@@ -125,7 +180,7 @@ func TestPlanAndApprovalRequiredTransitionIsReportedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEvent(t, recorder, corev1.EventTypeNormal+" ApprovalRequired")
-	if len(observations.plans) != 1 || !observations.plans[0] {
+	if len(observations.plans) != 1 || observations.plans[0] != telemetry.PlanDestructive {
 		t.Fatalf("plan observations = %#v, want one destructive plan", observations.plans)
 	}
 	if len(observations.approvals) != 1 || observations.approvals[0] != telemetry.ApprovalRequired {

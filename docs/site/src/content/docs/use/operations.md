@@ -1292,21 +1292,43 @@ optional metrics Service (`metrics.service.enabled=true` by default). The
 operator metrics use only closed, bounded label sets; object names, artifact
 digests, database URLs, SQL, and error strings are never labels.
 
-- `ptah_operator_reconciliations_total{result}` counts successful and failed
-  reconciliations.
+Both resource families report through the same metrics, and `family` says
+which: `schema` for `PtahSchema` and `migration` for `PtahMigration`. An alert
+written without that label covers both, which is what an alert on an uncertain
+apply wants; add `family="migration"` to ask about one.
+
+- `ptah_operator_reconciliations_total{family,result}` counts successful and
+  failed reconciliations.
 - `ptah_operator_drift_observations_total{engine,outcome}` distinguishes
-  detected drift from in-sync observations.
-- `ptah_operator_plans_total{engine,destructive}` counts published immutable
-  plans and exposes their conservative destructive classification.
-- `ptah_operator_approvals_total{outcome}` counts required, accepted, and stale
-  approval transitions.
-- `ptah_operator_applies_total{outcome}` counts started, completed, uncertain,
-  and stale Apply transitions.
-- `ptah_operator_operation_duration_seconds{operation,outcome}` measures
+  detected drift from in-sync observations. It carries no family: a migration
+  reads its own recorded history rather than observing the live database.
+- `ptah_operator_plans_total{family,engine,destructive}` counts published
+  immutable plans. `destructive` is the schema planner's conservative
+  classification; a migration plan reports `unknown`, because nothing examines
+  hand-written migrations for data loss.
+- `ptah_operator_approvals_total{family,outcome}` counts approval transitions.
+  `required` is a plan that asked for a decision, `accepted` is a decision the
+  controller consumed at the dispatch boundary, and `stale` is a decision that
+  stopped being usable because the plan it named is no longer current. A policy
+  of `Always` waives the requirement and counts nothing.
+- `ptah_operator_applies_total{family,outcome}` counts started, completed,
+  uncertain, and stale Apply transitions. A migration run that ended `Partial`
+  or `Unknown` is `uncertain`: neither may be retried, and both leave a record
+  only a person can clear.
+- `ptah_operator_operation_duration_seconds{family,operation,outcome}` measures
   completed logical operations, including uncertain and stale outcomes.
-- `ptah_operator_failures_total{stage,category}` separates infrastructure,
-  configuration, operation, policy-change, stale-input, and uncertain-outcome
-  failures by bounded state-machine stage.
+  `operation` is the union of both families: `resolve`, `verify`, `observe`,
+  `plan`, `apply`, and `history`, the last of which only a migration performs.
+- `ptah_operator_failures_total{family,stage,category}` separates
+  infrastructure, configuration, operation, policy-change, stale-input, and
+  uncertain-outcome failures by bounded state-machine stage. The stages are the
+  operations plus `controller`, which is the operator's own failure rather than
+  an operation's.
+
+Every counter is incremented on a transition, not from the status a
+reconciliation read. A resource waiting for a person is reconciled on its
+interval for as long as it waits, so a counter read from its status would climb
+with the reconciliation cadence and report decisions nobody made.
 
 Production logs are structured. Controller-runtime request context supplies the
 managed object identity; lifecycle records add the closed `operation`, numeric
@@ -1319,11 +1341,40 @@ those operation boundaries; controller-facing failures are generic and typed.
 
 Kubernetes Events provide the object-scoped audit trail for operation claims,
 completion, policy refusal, approval changes, and failures. Alert on a sustained
-increase in `ptah_operator_failures_total`, any increase in
-`ptah_operator_applies_total{outcome="uncertain"}`, and missing successful
-observations for longer than the configured reconciliation interval plus the
-operation deadline. Use status Conditions and Events to identify the affected
-object instead of adding unbounded identity labels to metrics.
+increase in `ptah_operator_failures_total` and on any increase in
+`ptah_operator_applies_total{outcome="uncertain"}`. Use status Conditions and
+Events to identify the affected object instead of adding unbounded identity
+labels to metrics.
+
+### Finding a resource that has stopped converging
+
+The counters above cannot answer this one. They are aggregates over every
+resource the operator manages, so a cluster where one schema stopped reading
+two days ago and forty others are converging normally shows a healthy rate and
+nothing else. There is no per-object series to query, on purpose: an object
+label is unbounded, and a metric that carries one grows with the cluster.
+
+What each resource does carry is its own answer, in its status:
+
+```sh
+kubectl get ptahschemas,ptahmigrations -A -o custom-columns=\
+KIND:.kind,NS:.metadata.namespace,NAME:.metadata.name,\
+PHASE:.status.phase,READY:'.status.conditions[?(@.type=="Ready")].status',\
+NEXT:.status.nextReconciliationTime
+```
+
+`status.nextReconciliationTime` is when the controller intends to look again.
+A value in the past by more than one operation deadline is a resource nothing
+is working on, and the phase and conditions on the same row say why. Run it
+from a cron job, a `kubectl` plugin, or a script beside your alerting, and page
+on rows rather than on rates.
+
+Turning that into a Prometheus series needs an exporter that reads object
+status and emits per-object gauges; `kube-state-metrics` does exactly this for
+custom resources, and its cardinality is then your choice rather than the
+operator's. Durable state and freshness gauges shipped by the operator itself
+are tracked in
+[issue #226](https://github.com/stokaro/ptah-operator/issues/226).
 
 ## Plan retention
 
