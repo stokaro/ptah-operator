@@ -246,13 +246,16 @@ export function staleAllowanceProblemsIn(record, scenarioSources, pending = Rere
 // as evidence about a build the operator no longer runs, so the page has to
 // say both.
 //
-// It has to say them by reading them. A version typed into the page keeps
+// It has to say them by reading them, so a literal version in the page source
+// is the failure this half refuses: a version typed into the page keeps
 // rendering correctly on the day the catalog moves, which is the only day the
-// sentence matters -- so a literal version in the page source is itself the
-// failure, and what is required is the two versions in the page the build
-// produced. Checking the source for the identifiers instead would pass on a
-// page that imports them and renders neither, which an earlier draft did.
-export function pairingProblemsIn(recorded, supported, sources, built) {
+// sentence matters.
+//
+// Whether the rendered page actually tells a reader both is a question about
+// the build, and this check runs before it. scripts/check-demo-page.mjs asks
+// it there. Asking it here against the source instead passes on a page that
+// imports the values and renders neither, which an earlier draft did.
+export function pairingProblemsIn(recorded, supported, sources) {
   if (!recorded) return ['the recording does not say which Ptah it ran against'];
   if (!supported) return ['the Ptah catalog names no supported build for the current operator'];
   const problems = [];
@@ -262,26 +265,7 @@ export function pairingProblemsIn(recorded, supported, sources, built) {
       problems.push(`${name} types a version; the pairing is read from the recording and the catalog`);
     }
   }
-  if (recorded === supported) return problems;
-  if (built === null) {
-    problems.push('the demo page was not built, so what it tells a reader about the pairing is unknown');
-    return problems;
-  }
-  for (const version of [recorded, supported]) {
-    if (!built.includes(version)) {
-      problems.push(
-        `the recording ran against Ptah ${recorded} and ${supported} is supported; the built demo page does not say ${version}`,
-      );
-    }
-  }
   return problems;
-}
-
-// builtDemoPage returns the demo index the build produced, or null when there
-// is none to read.
-function builtDemoPage(scriptDir) {
-  const built = join(scriptDir, '..', 'dist', 'demo', 'index.html');
-  return existsSync(built) ? readFileSync(built, 'utf8') : null;
 }
 
 // A replay is never announced as live. The word is the one thing a reader would
@@ -448,7 +432,7 @@ function main() {
   const problems = problemsIn(record, scenarioIds, TagOrder)
     .concat(bindingProblemsIn(record, scenarioSources))
     .concat(staleAllowanceProblemsIn(record, scenarioSources))
-    .concat(pairingProblemsIn(record.lab?.PTAH_VERSION, supportedPtah, pages, builtDemoPage(scriptDir)))
+    .concat(pairingProblemsIn(record.lab?.PTAH_VERSION, supportedPtah, pages))
     .concat(livenessProblemsIn(pages))
     .concat(environmentProblemsIn(runPage, publishedVariablesIn(recorderSource)));
   if (problems.length > 0) {
