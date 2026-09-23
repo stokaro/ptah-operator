@@ -158,6 +158,17 @@ func main() {
 		os.Exit(1)
 	}
 	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
+	// The population of mutations nobody accounted for, rebuilt from durable
+	// status on every scrape so it survives this process. The view reports
+	// itself unusable until the manager starts it, which happens only after
+	// the cache has synced: an empty list from a cold cache would otherwise be
+	// published as proof that nothing is unresolved.
+	unresolvedView := telemetry.NewCachedUnresolvedView(manager.GetClient())
+	telemetry.NewUnresolvedCollector(ctrlmetrics.Registry, unresolvedView, nil)
+	if err := manager.Add(unresolvedView); err != nil {
+		log.Error(err, "register the unresolved-work view")
+		os.Exit(1)
+	}
 	// Both families are indexed by coordination realm before either controller
 	// is registered. The realm census reads both kinds whichever controller
 	// asks for it, so neither can own the registration on its own.

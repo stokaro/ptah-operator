@@ -1342,6 +1342,50 @@ increase in `ptah_operator_failures_total` and on any increase in
 Events to identify the affected object instead of adding unbounded identity
 labels to metrics.
 
+### What is still unaccounted for {#unresolved-gauges}
+
+The counters above are events. They say an Apply ended uncertain once, in a
+process that may since have restarted, and nothing about whether one is still
+standing now. Four gauges answer that, rebuilt from durable status on every
+scrape rather than kept in memory, which is what makes them survive a restart
+and survive an unrelated refusal rewriting the resource's conditions.
+
+| Series | What it is |
+| --- | --- |
+| `ptah_operator_unresolved_attempts{family}` | Resources carrying a record of a mutation nobody accounted for |
+| `ptah_operator_unresolved_owed_seconds{family}` | Seconds since the operator could first have settled the oldest such record. Absent where a family has none |
+| `ptah_operator_unresolved_view_synced{}` | 1 once the view behind the two gauges has caught up |
+| `ptah_operator_unresolved_view_read_failures_total{}` | Scrapes that could not read that state |
+
+**Every alert on these has to require the view first.** A manager that has just
+started, or one whose read failed, publishes no counts at all and reports
+`ptah_operator_unresolved_view_synced 0`. An absent series and a series reading
+zero are the same thing to most query languages, and here they mean opposite
+things: one is "nothing is unresolved", the other is "nobody has looked yet".
+
+```promql
+ptah_operator_unresolved_view_synced == 1
+  and ptah_operator_unresolved_attempts > 0
+```
+
+The gauges are aggregates, so they say that something is unaccounted for and
+not which resource. That is deliberate -- an object name in a label grows the
+series with the cluster -- and this is the drill-down:
+
+```sh
+kubectl get ptahmigrations -A -o json |
+  jq -r '.items[] | select(.status.unresolvedRun != null) |
+    "\(.metadata.namespace)/\(.metadata.name)\t\(.status.unresolvedRun.outcome)\t\(.status.unresolvedRun.jobName)"'
+kubectl get ptahschemas -A -o json |
+  jq -r '.items[] | select(.status.pendingObservation.outcome == "OutcomeUnknown") |
+    "\(.metadata.namespace)/\(.metadata.name)\t\(.status.pendingObservation.applyJobName)"'
+```
+
+A migration named there is
+[a run nobody accounted for](#a-migration-run-nobody-accounted-for) and waits
+for a person. A schema named there settles itself once its horizon passes and
+a reading of the database confirms convergence.
+
 ### Finding a resource that has stopped converging
 
 The counters above cannot answer this one. They are aggregates over every

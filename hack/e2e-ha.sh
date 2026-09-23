@@ -200,6 +200,15 @@ assert_active_leader_metric() {
 
 validate_custom_operator_metrics() {
 	awk '
+    function nonnegative_finite(value, number, rendered) {
+      if (value !~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/) {
+        return 0
+      }
+      number = value + 0
+      rendered = sprintf("%.17g", number)
+      return rendered !~ /^[+]?[Ii][Nn][Ff]/ && number >= 0
+    }
+
     function positive_finite_number(value, number, rendered) {
       if (value !~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/) {
         return 0
@@ -207,6 +216,17 @@ validate_custom_operator_metrics() {
       number = value + 0
       rendered = sprintf("%.17g", number)
       return rendered !~ /^[+]?[Ii][Nn][Ff]/ && number > 0
+    }
+
+    # The families a running manager publishes whether or not anything has
+    # happened yet: gauges rebuilt from durable state on every scrape, and the
+    # counter that says a scrape could not read it. They are named here rather
+    # than allowed by prefix, so a family added without a decision still fails.
+    BEGIN {
+      always_present["ptah_operator_unresolved_attempts"] = "gauge"
+      always_present["ptah_operator_unresolved_owed_seconds"] = "gauge"
+      always_present["ptah_operator_unresolved_view_synced"] = "gauge"
+      always_present["ptah_operator_unresolved_view_read_failures_total"] = "counter"
     }
 
     /^# HELP ptah_operator_/ {
@@ -218,21 +238,25 @@ validate_custom_operator_metrics() {
         reconciliation_help++
       } else if ($3 == "ptah_operator_failures_total") {
         failure_help++
-      } else {
+      } else if (!(($3) in always_present)) {
         malformed = 1
       }
       next
     }
 
     /^# TYPE ptah_operator_/ {
-      if (NF != 4 || $4 != "counter") {
+      if (NF != 4) {
         malformed = 1
         next
       }
       if ($3 == "ptah_operator_reconciliations_total") {
+        if ($4 != "counter") { malformed = 1; next }
         reconciliation_type++
       } else if ($3 == "ptah_operator_failures_total") {
+        if ($4 != "counter") { malformed = 1; next }
         failure_type++
+      } else if (($3) in always_present) {
+        if ($4 != always_present[$3]) { malformed = 1 }
       } else {
         malformed = 1
       }
@@ -240,7 +264,24 @@ validate_custom_operator_metrics() {
     }
 
     /^ptah_operator_/ {
-      if (NF != 2 || !positive_finite_number($2)) {
+      if (NF != 2) {
+        malformed = 1
+        next
+      }
+      # A gauge rebuilt from durable state is present on every scrape and is
+      # legitimately zero: no resource is carrying an unaccounted mutation is
+      # exactly what this deployment should report. A counter at zero is a
+      # different thing and stays excluded, because this phase measures one
+      # going up.
+      series_name = $1
+      sub(/[{].*$/, "", series_name)
+      if ((series_name) in always_present) {
+        if (!nonnegative_finite($2)) {
+          malformed = 1
+        }
+        next
+      }
+      if (!positive_finite_number($2)) {
         malformed = 1
         next
       }
