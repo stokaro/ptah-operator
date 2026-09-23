@@ -1270,17 +1270,22 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if schema.Spec.Suspend && schema.Status.PendingObservation == nil && isReadOnlyOperation(operation) {
 		return r.suspendActiveOperation(ctx, schema)
 	}
-	if operation.JobUID != "" && operation.JobUID != job.UID {
-		if operation.Type == operatorv1alpha1.OperationApply {
-			return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job was replaced"))
-		}
-		return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job was replaced"))
-	}
-	if !exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID) {
-		if operation.Type == operatorv1alpha1.OperationApply {
-			return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job lost schema ownership"))
-		}
-		return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job is not owned by the schema UID"))
+	// The same decision both families make about the Job under a reserved
+	// name, with the wording each one owes its reader kept here.
+	verdict, cause := mutationlifecycle.VerdictFor(mutationlifecycle.JobClaim{
+		Mutating:        operation.Type == operatorv1alpha1.OperationApply,
+		DispatchStarted: operation.DispatchStarted,
+		RecordedJobUID:  string(operation.JobUID),
+		Found:           true,
+		FoundJobUID:     string(job.UID),
+		OwnedExactly: exactControllerOwner(job.OwnerReferences,
+			operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID),
+	})
+	switch verdict {
+	case mutationlifecycle.VerdictUnaccounted:
+		return r.finishUnknownRunningApply(ctx, schema, errors.New(unaccountedSchemaJobReason(cause)))
+	case mutationlifecycle.VerdictRetry:
+		return r.retryOperation(ctx, schema, nil, errors.New(retriedSchemaJobReason(cause)))
 	}
 	currentInputs, inputErr := r.operationInputFingerprint(schema, operation.Type)
 	if inputErr == nil && currentInputs == operation.InputFingerprint {
@@ -4995,3 +5000,19 @@ func bounded(value string, limit int) string {
 
 func ptrTime(value metav1.Time) *metav1.Time { return &value }
 func ptr[T any](value T) *T                  { return &value }
+
+// unaccountedSchemaJobReason and retriedSchemaJobReason word what the verdict
+// found, for a reader of the condition rather than for the decision.
+func unaccountedSchemaJobReason(cause mutationlifecycle.JobCause) string {
+	if cause == mutationlifecycle.CauseDisowned {
+		return "dispatched Apply Job lost schema ownership"
+	}
+	return "dispatched Apply Job was replaced"
+}
+
+func retriedSchemaJobReason(cause mutationlifecycle.JobCause) string {
+	if cause == mutationlifecycle.CauseDisowned {
+		return "active Job is not owned by the schema UID"
+	}
+	return "active Job was replaced"
+}

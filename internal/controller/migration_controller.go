@@ -31,6 +31,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
@@ -620,35 +621,42 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	job := &batchv1.Job{}
 	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
-	if apierrors.IsNotFound(err) {
-		if applying && migrationMayHaveDispatched(operation) {
-			// A dispatched Apply is never recreated. Whether it ran is a question
-			// for the database, not for a retry.
-			return r.finishUncertainMigrationApply(ctx, migration, nil,
-				errors.New("the dispatched Apply Job is missing and will not be recreated"), "")
-		}
-		return r.dispatchMigrationJob(ctx, migration, key)
-	}
-	if err != nil {
+	found := err == nil
+	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("read active migration Job: %w", err)
 	}
-	if migration.Spec.Suspend && !applying {
+	// Suspension is judged only against a Job that exists. A claim with none
+	// goes to dispatch, which refuses a suspended resource itself and is where
+	// that refusal has always lived.
+	if found && migration.Spec.Suspend && !applying {
 		return r.discardMigrationOperation(ctx, migration, telemetry.OperationCanceled,
 			errors.New("reconciliation was suspended while the operation ran"))
 	}
-	if operation.JobUID != "" && operation.JobUID != job.UID {
-		if applying {
-			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job was replaced"), "")
+	verdict, cause := mutationlifecycle.VerdictFor(mutationlifecycle.JobClaim{
+		Mutating:        applying,
+		DispatchStarted: operation.DispatchStarted,
+		RecordedJobUID:  string(operation.JobUID),
+		Found:           found,
+		FoundJobUID:     string(job.UID),
+		OwnedExactly: found && exactControllerOwner(job.OwnerReferences,
+			operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID),
+	})
+	switch verdict {
+	case mutationlifecycle.VerdictDispatch:
+		return r.dispatchMigrationJob(ctx, migration, key)
+	case mutationlifecycle.VerdictUnaccounted:
+		// A dispatched Apply is never recreated. Whether it ran is a question
+		// for the database, not for a retry.
+		var lost *batchv1.Job
+		if found {
+			lost = job
 		}
-		return r.retryMigrationOperation(ctx, migration, job, errors.New("the active Job was replaced"))
+		return r.finishUncertainMigrationApply(ctx, migration, lost,
+			errors.New(unaccountedMigrationJobReason(cause)), "")
+	case mutationlifecycle.VerdictRetry:
+		return r.retryMigrationOperation(ctx, migration, job, errors.New(retriedMigrationJobReason(cause)))
 	}
-	if !exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID) {
-		if applying {
-			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job lost its owner"), "")
-		}
-		return r.retryMigrationOperation(ctx, migration, job, errors.New("the active Job is not owned by this migration"))
-	}
-	if operation.JobUID == "" {
+	if verdict == mutationlifecycle.VerdictAdopt {
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation.JobUID = job.UID
 		if applying {
@@ -2214,4 +2222,26 @@ func boundedVersions(versions []int64, limit int) []int64 {
 		versions = versions[:limit]
 	}
 	return append([]int64(nil), versions...)
+}
+
+// unaccountedMigrationJobReason and retriedMigrationJobReason word the same
+// three situations for an operator. The verdict decides what happens; these
+// decide what the resource says happened, and the wording is what tells
+// somebody reading a condition where to go and look.
+func unaccountedMigrationJobReason(cause mutationlifecycle.JobCause) string {
+	switch cause {
+	case mutationlifecycle.CauseReplaced:
+		return "the dispatched Apply Job was replaced"
+	case mutationlifecycle.CauseDisowned:
+		return "the dispatched Apply Job lost its owner"
+	default:
+		return "the dispatched Apply Job is missing and will not be recreated"
+	}
+}
+
+func retriedMigrationJobReason(cause mutationlifecycle.JobCause) string {
+	if cause == mutationlifecycle.CauseDisowned {
+		return "the active Job is not owned by this migration"
+	}
+	return "the active Job was replaced"
 }
