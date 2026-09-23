@@ -79,6 +79,195 @@ export function problemsIn(record, scenarioIds, tagOrder = []) {
   return problems;
 }
 
+// A recording claims to be of a scenario, and until now the claim was its own
+// evidence: the check matched ids and counted checks, so replacing a scenario's
+// first command with `false` still reported that every run held. What a reader
+// takes from the page is that these commands, run in this order, produced this
+// transcript, and nothing measured that.
+//
+// So the commands the recording carries are compared with the commands the
+// scenario declares. A changed command, a reordered step, an added one or a
+// removed one all make the recording stop being of that scenario, which is the
+// point: it has to be re-recorded rather than re-labelled.
+
+// commandsInScenario extracts the `run:` of every step, in order.
+//
+// This is a parser for the shape these files have rather than for YAML, and it
+// is deliberately narrow: a step's `run` is either one line or a block scalar,
+// and anything else is reported instead of guessed at. A tolerant parser here
+// would silently bind a recording to fewer commands than the scenario has,
+// which is the failure this exists to catch.
+export function commandsInScenario(source, id = 'scenario') {
+  const lines = source.split('\n');
+  const commands = [];
+  const problems = [];
+  let inSteps = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^steps:\s*$/.test(line)) {
+      inSteps = true;
+      continue;
+    }
+    if (inSteps && /^[A-Za-z_]/.test(line)) break;
+    if (!inSteps) continue;
+
+    const inline = line.match(/^\s+-?\s*run:\s*(.*)$/);
+    if (!inline) continue;
+    const value = inline[1].trim();
+    if (value !== '' && value !== '|' && value !== '|-') {
+      commands.push(value);
+      continue;
+    }
+    if (value === '') {
+      problems.push(`${id} has a run: with neither a command nor a block`);
+      continue;
+    }
+    const indent = (lines[index + 1] ?? '').match(/^(\s*)/)[1].length;
+    const block = [];
+    let cursor = index + 1;
+    while (cursor < lines.length) {
+      const next = lines[cursor];
+      if (next.trim() === '') {
+        block.push('');
+        cursor += 1;
+        continue;
+      }
+      if (next.match(/^(\s*)/)[1].length < indent) break;
+      block.push(next.slice(indent));
+      cursor += 1;
+    }
+    while (block.length > 0 && block[block.length - 1] === '') block.pop();
+    commands.push(block.join('\n'));
+    index = cursor - 1;
+  }
+  return { commands, problems };
+}
+
+// commandsInRun rebuilds what the recording says was typed: a `cmd` event
+// starts a command and every `cont` event that follows continues it.
+export function commandsInRun(run) {
+  const commands = [];
+  for (const [kind, text] of run.events ?? []) {
+    if (kind === 'cmd') {
+      commands.push(text ?? '');
+      continue;
+    }
+    if (kind === 'cont' && commands.length > 0) {
+      commands[commands.length - 1] += '\n' + (text ?? '');
+    }
+  }
+  return commands;
+}
+
+// RerecordPending names a scenario whose definition has moved since the
+// recording was made, with the reason it is still published.
+//
+// A recording that no longer matches its scenario is debt, not a lie, as long
+// as it says so. What it may not be is silent: the entry below is what makes
+// the drift reviewable, and it is removed by re-recording rather than by
+// editing it away. A drift nobody entered here fails, which is the point --
+// the previous check matched ids, so replacing a scenario's first command with
+// `false` still reported that every run held.
+export const RerecordPending = {
+  'failure-recovery': {
+    recordedAt: '8c7fe187707f6ea7af916d6005bc237291a35e18',
+    step: 4,
+    why: 'the step was rewritten to prove the planted credential stays out of status; the recording predates it and remaking it needs a cluster',
+  },
+};
+
+// bindingProblemsIn compares the two, per run.
+export function bindingProblemsIn(record, scenarioSources, pending = RerecordPending) {
+  const problems = [];
+  for (const run of record.scenarios ?? []) {
+    const source = scenarioSources[run.id];
+    if (source === undefined) continue;
+    const { commands: declared, problems: parseProblems } = commandsInScenario(source, run.id);
+    problems.push(...parseProblems);
+    const recorded = commandsInRun(run);
+    if (declared.length === 0) {
+      problems.push(`${run.id} declares no command, so its recording is bound to nothing`);
+      continue;
+    }
+    if (declared.length !== recorded.length) {
+      problems.push(
+        `${run.id} declares ${declared.length} command(s) and its recording carries ${recorded.length}`,
+      );
+      continue;
+    }
+    for (let step = 0; step < declared.length; step += 1) {
+      if (declared[step].trim() === recorded[step].trim()) continue;
+      const allowed = pending[run.id];
+      if (allowed && allowed.step === step + 1 && allowed.recordedAt === run.source?.commit) {
+        continue;
+      }
+      problems.push(
+        `${run.id} step ${step + 1} was recorded running something the scenario no longer declares`,
+      );
+    }
+  }
+  return problems;
+}
+
+// staleAllowanceProblemsIn refuses an allowance that stopped being about
+// anything: a scenario re-recorded, removed, or drifted at a different step
+// leaves an entry that would silently permit the next drift at that step.
+export function staleAllowanceProblemsIn(record, scenarioSources, pending = RerecordPending) {
+  const problems = [];
+  for (const [id, allowed] of Object.entries(pending)) {
+    const run = (record.scenarios ?? []).find((one) => one.id === id);
+    if (!run) {
+      problems.push(`${id} is listed as awaiting a re-recording and has no recorded run`);
+      continue;
+    }
+    if (run.source?.commit !== allowed.recordedAt) {
+      problems.push(`${id} was re-recorded; remove it from the re-recording list`);
+      continue;
+    }
+    const { commands: declared } = commandsInScenario(scenarioSources[id] ?? '', id);
+    const recorded = commandsInRun(run);
+    const step = allowed.step - 1;
+    if (declared[step] === undefined || recorded[step] === undefined) {
+      problems.push(`${id} no longer has a step ${allowed.step} for its allowance to be about`);
+      continue;
+    }
+    if (declared[step].trim() === recorded[step].trim()) {
+      problems.push(`${id} step ${allowed.step} matches again; remove it from the re-recording list`);
+    }
+  }
+  return problems;
+}
+
+// pairingProblemsIn refuses a page that hides the pairing when it has moved,
+// and a page that types it.
+//
+// The recording says which Ptah it ran against. Once the supported executor is
+// a different one, a reader who takes the transcript as current is taking it
+// as evidence about a build the operator no longer runs, so the page has to
+// say both.
+//
+// It has to say them by reading them, so a literal version in the page source
+// is the failure this half refuses: a version typed into the page keeps
+// rendering correctly on the day the catalog moves, which is the only day the
+// sentence matters.
+//
+// Whether the rendered page actually tells a reader both is a question about
+// the build, and this check runs before it. scripts/check-demo-page.mjs asks
+// it there. Asking it here against the source instead passes on a page that
+// imports the values and renders neither, which an earlier draft did.
+export function pairingProblemsIn(recorded, supported, sources) {
+  if (!recorded) return ['the recording does not say which Ptah it ran against'];
+  if (!supported) return ['the Ptah catalog names no supported build for the current operator'];
+  const problems = [];
+  const typed = /\bv[0-9]+\.[0-9]+\.[0-9]+\b/;
+  for (const [name, text] of sources) {
+    if (typed.test(text)) {
+      problems.push(`${name} types a version; the pairing is read from the recording and the catalog`);
+    }
+  }
+  return problems;
+}
+
 // A replay is never announced as live. The word is the one thing a reader would
 // take at face value, and taking it at face value would be wrong.
 //
@@ -220,11 +409,20 @@ function main() {
   const scenarioIds = readdirSync(scenarioDir)
     .filter((name) => name.endsWith('.yaml'))
     .map((name) => name.slice(0, -'.yaml'.length));
+  const scenarioSources = Object.fromEntries(
+    scenarioIds.map((id) => [id, readFileSync(join(scenarioDir, `${id}.yaml`), 'utf8')]),
+  );
 
   const pages = ['index.astro', '[run].astro'].map((name) => [
     `src/pages/demo/${name}`,
     readFileSync(join(scriptDir, '..', 'src', 'pages', 'demo', name), 'utf8'),
   ]);
+
+  const ptahCatalog = JSON.parse(
+    readFileSync(join(repositoryRoot, 'support', 'ptah.json'), 'utf8'),
+  );
+  const supportedPtah =
+    ptahCatalog.releases?.find((release) => release.operator === 'edge')?.verified?.[0]?.ptahRelease ?? '';
 
   const recorderSource = readFileSync(
     join(repositoryRoot, 'demo', 'cmd', 'record', 'scenario.go'),
@@ -232,6 +430,9 @@ function main() {
   );
   const runPage = pages.find(([name]) => name.endsWith('[run].astro'))[1];
   const problems = problemsIn(record, scenarioIds, TagOrder)
+    .concat(bindingProblemsIn(record, scenarioSources))
+    .concat(staleAllowanceProblemsIn(record, scenarioSources))
+    .concat(pairingProblemsIn(record.lab?.PTAH_VERSION, supportedPtah, pages))
     .concat(livenessProblemsIn(pages))
     .concat(environmentProblemsIn(runPage, publishedVariablesIn(recorderSource)));
   if (problems.length > 0) {

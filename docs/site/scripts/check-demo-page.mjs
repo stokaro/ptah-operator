@@ -20,6 +20,25 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { rank } from '../src/lib/run-order.mjs';
+import { RecordedPtah, SupportedPtah } from '../src/lib/runs.mjs';
+
+// pairingProblems refuses a built demo page that does not tell a reader both
+// versions once they differ. Where they agree the page says nothing, because
+// there is nothing to warn about.
+export function pairingProblems(page, recorded, supported) {
+  if (!recorded) return ['the recording does not say which Ptah it ran against'];
+  if (!supported) return ['the Ptah catalog names no supported build for the current operator'];
+  if (recorded === supported) return [];
+  const problems = [];
+  for (const version of [recorded, supported]) {
+    if (!page.includes(version)) {
+      problems.push(
+        `the recording ran against Ptah ${recorded} and ${supported} is supported; the built demo page does not say ${version}`,
+      );
+    }
+  }
+  return problems;
+}
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const siteRoot = join(scriptDir, '..');
@@ -96,7 +115,24 @@ export function pausePoint(events) {
   return null;
 }
 
+function pairingSelftest() {
+  const cases = [
+    [['<p>Ptah v0.6.0 ... v0.7.0</p>', 'v0.6.0', 'v0.7.0'], 0],
+    [['<p>Ptah v0.6.0 only</p>', 'v0.6.0', 'v0.7.0'], 1],
+    [['<p>nothing</p>', 'v0.6.0', 'v0.7.0'], 2],
+    [['<p>nothing</p>', 'v0.7.0', 'v0.7.0'], 0],
+    [['<p>anything</p>', '', 'v0.7.0'], 1],
+  ];
+  for (const [[page, recorded, supported], want] of cases) {
+    const found = pairingProblems(page, recorded, supported).length;
+    if (found !== want) {
+      throw new Error(`pairing ${recorded}/${supported} reported ${found} problem(s), expected ${want}`);
+    }
+  }
+}
+
 function selftest() {
+  pairingSelftest();
   // The shape the page has to have, asserted against a stub rather than a
   // browser: a check whose only failure mode is "playwright is not installed"
   // would pass on a page that lost its tiles.
@@ -590,6 +626,23 @@ async function main() {
   const distRoot = distIndex >= 0 ? process.argv[distIndex + 1] : join(siteRoot, 'dist');
   if (!existsSync(distRoot)) {
     console.error('check-demo-page.mjs: dist/ is missing; build the site first');
+    process.exit(1);
+  }
+
+  // Before anything that needs a browser: the pairing the page tells a reader.
+  // The recording names the Ptah it ran against and the catalog names the
+  // supported one; once they differ, a reader taking the transcript as current
+  // is taking it as evidence about a build the operator no longer runs. The
+  // page derives both, so this reads the rendered result rather than the
+  // source -- a source that imports the values and renders neither passes a
+  // check of the source, which is how an earlier draft of this missed it.
+  const pairing = pairingProblems(
+    readFileSync(join(distRoot, 'demo', 'index.html'), 'utf8'),
+    RecordedPtah,
+    SupportedPtah,
+  );
+  if (pairing.length > 0) {
+    console.error(`check-demo-page.mjs: ${pairing.length} problem(s):\n- ${pairing.join('\n- ')}`);
     process.exit(1);
   }
 

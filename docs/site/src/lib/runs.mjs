@@ -9,9 +9,19 @@
 // can follow the import.
 import runs from '../../../../demo/recordings/runs.json' with { type: 'json' };
 
+import ptahCatalog from '../../../../support/ptah.json' with { type: 'json' };
+
 import { rank } from './run-order.mjs';
 
 /** Every run, in the reading order, and within a tag as they were recorded. */
+// The pairing the runs were recorded against, and the one the operator
+// supports now. Both are read: a page that types either keeps reading
+// correctly on the day it stops being true, which is the only day it matters.
+export const RecordedPtah = runs.lab?.PTAH_VERSION ?? '';
+
+export const SupportedPtah =
+  ptahCatalog.releases?.find((release) => release.operator === 'edge')?.verified?.[0]?.ptahRelease ?? '';
+
 export const Runs = [...runs.scenarios].sort((left, right) => rank(left.tags?.[0]) - rank(right.tags?.[0]));
 
 /**
