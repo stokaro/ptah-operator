@@ -1241,6 +1241,45 @@ func TestMigrationApplyKeepsADispatchedRunWhenTheTransactionModeChanges(t *testi
 	}
 }
 
+// The mirror of the row above, and the one that matters: the run finished
+// before the policy edit landed. An Apply Job that reached a terminal state
+// executed SQL against the database, and its formerly exact inputs saying
+// otherwise now does not take that back.
+//
+// The read-only arm of this fork harvests the Job and discards the claim as
+// stale, which is right for a claim that changed nothing. Taking a finished
+// Apply down that path throws away the only record that a run happened.
+func TestMigrationApplyThatFinishedIsNeverDiscardedAsStale(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	// The inputs move while the Job runs, and the Job finishes anyway.
+	migration.Spec.Policy.TransactionMode = "none"
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan,
+		verificationPolicyConfigMap(), job, pod)
+	// A dispatched Apply holds the database; without that the pass stops at
+	// lease continuity and never reaches the inputs.
+	holdMigrationApplyLease(t, reconciler, api, migration)
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.LastRun == nil ||
+		actual.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
+		t.Fatalf("last run = %#v, want an unknown outcome rather than a discarded claim", actual.Status.LastRun)
+	}
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked after a finished Apply nobody can account for", actual.Status.Phase)
+	}
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("the settled claim outlived its own settlement: %#v", actual.Status.ActiveOperation)
+	}
+}
+
 // A claim refused at the dispatch boundary has already taken the database: the
 // Lease is acquired on the pass that reaches dispatch, before any Job exists.
 // Clearing the claim without handing it back leaves every claimant on that
