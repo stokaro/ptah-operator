@@ -1,5 +1,21 @@
-# Template only: replace namespace and workload labels with identities that
-# your cluster admission policy protects from untrusted writers.
+# Template only: replace the namespace and the workload labels with identities
+# that your cluster admission policy protects from untrusted writers.
+#
+# Assumptions, stated because a policy that quietly does not apply is worse
+# than none. Every policy here lives in the namespace the operation Pods run
+# in, which is the namespace of the PtahSchema or PtahMigration, not the
+# release namespace. The registry rules assume an in-cluster registry; for an
+# external registry, replace the namespace and pod selectors with an
+# admission-controlled CIDR rather than opening Internet egress. The database
+# rules assume the database runs in the same namespace; a database reached
+# through a Service in another namespace or outside the cluster needs the
+# matching namespace selector or CIDR instead.
+#
+# A Pod that no policy selects is not isolated at all, so the two default-deny
+# policies below have to keep selecting every operation Pod both families
+# produce. `TestTheEgressExampleSelectsEveryOperationPod` builds one Pod per
+# operation with the real builders and fails when one stops being covered, or
+# when a policy grants an operation something that operation does not use.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,13 +32,30 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ptah-schema-operations-dns
+  name: ptah-migration-operations-default-deny
   namespace: application
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/managed-by: ptah-operator
-      app.kubernetes.io/component: schema-operation
+      app.kubernetes.io/component: migration-operation
+  policyTypes: [Egress]
+  egress: []
+---
+# Every operation of both families resolves names.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-operations-dns
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [schema-operation, migration-operation]
   policyTypes: [Egress]
   egress:
     - to:
@@ -36,9 +69,9 @@ spec:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}
 ---
-# Resolve, Verify, Observe, and Plan fetch OCI content. This example assumes an
-# in-cluster registry; use an admission-controlled CIDR policy for an external
-# registry rather than opening all Internet egress.
+# Schema Resolve, Verify, Observe and Plan fetch OCI content. Schema Apply does
+# not: it runs bytes the operator already stored, so it is left out rather than
+# covered by a wider selector.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -65,8 +98,38 @@ spec:
       ports:
         - {protocol: TCP, port: 5000}
 ---
-# Observe, Plan, and Apply connect to the database. Narrow the port to the one
-# selected engine when a namespace does not manage both families.
+# Migration Resolve, Verify, History and Apply all fetch the artifact, History
+# and Apply in an init container beside the SQL process. This is where the two
+# families differ: a migration Apply needs the registry and a schema Apply does
+# not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-migration-operations-registry
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+      app.kubernetes.io/component: migration-operation
+    matchExpressions:
+      - key: operator.ptah.run/operation
+        operator: In
+        values: [resolve, verify, history, apply]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: registry
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: registry
+      ports:
+        - {protocol: TCP, port: 5000}
+---
+# Schema Observe, Plan and Apply open the database. Resolve and Verify never
+# receive a credential, so they are not selected here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -89,4 +152,27 @@ spec:
               app.kubernetes.io/name: application-database
       ports:
         - {protocol: TCP, port: 5432}
-        - {protocol: TCP, port: 3306}
+---
+# Migration History and Apply open the database; Resolve and Verify do not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-migration-operations-database
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+      app.kubernetes.io/component: migration-operation
+    matchExpressions:
+      - key: operator.ptah.run/operation
+        operator: In
+        values: [history, apply]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: application-database
+      ports:
+        - {protocol: TCP, port: 5432}
