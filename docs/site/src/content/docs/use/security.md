@@ -252,7 +252,17 @@ SQL output.
 
 - Apply namespace NetworkPolicies that allow executor Pods to reach only the
   required registry, DNS, and database endpoints. Start from the
-  egress-policy example in `examples/networkpolicy-egress.yaml`.
+  egress-policy example in `examples/networkpolicy-egress.yaml`. It covers
+  both families and narrows by operation: a schema Apply runs bytes the
+  operator already stored and is given no registry egress, while a migration
+  Apply fetches its artifact and is. The policies go in the namespace the
+  operation Pods run in, which is the namespace of the `PtahSchema` or
+  `PtahMigration` rather than the release namespace, and they assume the
+  registry and the database are in-cluster; for either one outside, replace
+  the selector with an admission-controlled CIDR rather than opening Internet
+  egress. A Pod no policy selects is not isolated at all, so
+  `TestTheEgressExampleSelectsEveryOperationPod` builds one Pod per operation
+  of both families and fails when one stops being covered.
 - Grant the database user the minimum DDL and introspection privileges needed
   for the selected schemas. See [Database support and privileges](../../support/databases/)
   and do not use a cluster-wide administrative account.
