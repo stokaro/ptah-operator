@@ -149,9 +149,14 @@ was built against.
 - A clean tree. The harness archives the exact commit it runs, and refuses a
   working copy that does not match it.
 
-Measured on macOS against a remote Linux Docker context. The `demo` job in
-`.github/workflows/ci.yml` runs the same targets on a Linux runner, which is
-where Linux is exercised on every run rather than once.
+Measured on macOS against a remote Linux Docker context. Linux is not
+exercised on every run: there is no CI job that executes these scenarios, and
+the checks that do run on every push are static. `check-demo.mjs` holds the
+published recording against the scenario definitions -- a changed command, a
+reordered step, an added or removed one all stop the recording from being of
+that scenario -- and that is a statement about the transcript, not evidence
+that the commands still work against the current executor. Running them is
+`make demo`, on a machine with a cluster.
 
 Windows is not verified and is not expected to work: the harness and these
 scripts are POSIX shell throughout.
