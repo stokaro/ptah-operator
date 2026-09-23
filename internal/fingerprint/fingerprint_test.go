@@ -1,6 +1,7 @@
 package fingerprint_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -98,26 +99,41 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 	}
 
 	mutations := map[string]func(*fingerprint.PlanBinding){
-		"schema":           func(v *fingerprint.PlanBinding) { v.SchemaUID += "-new" },
-		"plan":             func(v *fingerprint.PlanBinding) { v.PlanContentDigest += "-new" },
-		"artifact":         func(v *fingerprint.PlanBinding) { v.ArtifactDigest += "-new" },
-		"coordination":     func(v *fingerprint.PlanBinding) { v.CoordinationDigest += "-new" },
-		"target":           func(v *fingerprint.PlanBinding) { v.TargetIdentityDigest += "-new" },
-		"actual":           func(v *fingerprint.PlanBinding) { v.ActualStateFingerprint += "-new" },
-		"desired":          func(v *fingerprint.PlanBinding) { v.DesiredStateFingerprint += "-new" },
-		"policy":           func(v *fingerprint.PlanBinding) { v.PolicyFingerprint += "-new" },
-		"verification UID": func(v *fingerprint.PlanBinding) { v.VerificationPolicyUID += "-new" },
-		"verification":     func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
-		"execution epoch":  func(v *fingerprint.PlanBinding) { v.ExecutionBindingID = "v1-44444444444444444444444444444444" },
-		"controller image": func(v *fingerprint.PlanBinding) {
+		"SchemaUID":                func(v *fingerprint.PlanBinding) { v.SchemaUID += "-new" },
+		"PlanContentDigest":        func(v *fingerprint.PlanBinding) { v.PlanContentDigest += "-new" },
+		"ArtifactDigest":           func(v *fingerprint.PlanBinding) { v.ArtifactDigest += "-new" },
+		"CoordinationDigest":       func(v *fingerprint.PlanBinding) { v.CoordinationDigest += "-new" },
+		"TargetIdentityDigest":     func(v *fingerprint.PlanBinding) { v.TargetIdentityDigest += "-new" },
+		"ActualStateFingerprint":   func(v *fingerprint.PlanBinding) { v.ActualStateFingerprint += "-new" },
+		"DesiredStateFingerprint":  func(v *fingerprint.PlanBinding) { v.DesiredStateFingerprint += "-new" },
+		"PolicyFingerprint":        func(v *fingerprint.PlanBinding) { v.PolicyFingerprint += "-new" },
+		"VerificationPolicyUID":    func(v *fingerprint.PlanBinding) { v.VerificationPolicyUID += "-new" },
+		"VerificationPolicyDigest": func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
+		"ExecutionBindingID":       func(v *fingerprint.PlanBinding) { v.ExecutionBindingID = "v1-44444444444444444444444444444444" },
+		"ControllerImage": func(v *fingerprint.PlanBinding) {
 			v.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("d", 64)
 		},
-		"controller revision": func(v *fingerprint.PlanBinding) { v.ControllerRevision += "-new" },
-		"controller state":    func(v *fingerprint.PlanBinding) { v.ControllerStateVersion++ },
-		"version":             func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
-		"executor":            func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
-		"runner":              func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
-		"protocol":            func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+		"ControllerRevision":     func(v *fingerprint.PlanBinding) { v.ControllerRevision += "-new" },
+		"ControllerStateVersion": func(v *fingerprint.PlanBinding) { v.ControllerStateVersion++ },
+		"PtahVersion":            func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
+		"ExecutorImage":          func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
+		"RunnerImage":            func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
+		"RunnerProtocolVersion":  func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+	}
+	// Keyed by field name, and checked against the type: a field added to the
+	// binding with no case here fails instead of going unmeasured. Prose keys
+	// read better and cannot be checked against anything.
+	bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
+	for index := range bindingType.NumField() {
+		name := bindingType.Field(index).Name
+		if name == "ContractVersion" {
+			// Not an input: it is the contract these fields are read under,
+			// and ValidatePlanContractVersion is what holds it.
+			continue
+		}
+		if _, declared := mutations[name]; !declared {
+			t.Fatalf("no case mutates %s, so nothing here says whether it is inside the fingerprint", name)
+		}
 	}
 	for name, mutate := range mutations {
 		name, mutate := name, mutate
