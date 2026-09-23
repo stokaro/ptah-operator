@@ -137,6 +137,12 @@ verify-ptah-support:
 acceptance-coverage:
 	@$(GO) run ./hack/acceptancecoverage
 
+# The whole acceptance record #242 asks for: the candidate identity the tree
+# can answer, a disposition for every requirement, and the coverage table. It
+# awards no pass; what a build or a deployment decides is left blank and named.
+acceptance-record:
+	@$(GO) run ./hack/acceptancecoverage -record
+
 # This target performs live upstream discovery. Normal verification is offline.
 update-kubernetes-support:
 	$(GO) run ./hack/updatekubernetessupport
