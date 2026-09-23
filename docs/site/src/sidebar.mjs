@@ -90,6 +90,7 @@ export const sidebar = [
     items: [
       { label: 'Ptah compatibility', link: '/support/ptah/' },
       { label: 'Kubernetes support', link: '/support/kubernetes/' },
+          { label: 'Capacity', link: '/support/capacity/' },
       { label: 'Databases and privileges', link: '/support/databases/' },
       { label: 'API compatibility', link: '/support/api-compatibility/' },
       { label: 'Releases and provenance', link: '/support/releases/' },
