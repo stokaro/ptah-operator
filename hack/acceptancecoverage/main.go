@@ -34,6 +34,7 @@ func main() {
 	root := flag.String("root", ".", "repository root to read the catalogs and the driver from")
 	operator := flag.String("operator", "edge", "the Ptah catalog row naming the candidate")
 	check := flag.Bool("check", false, "verify the coverage is complete and print nothing")
+	record := flag.Bool("record", false, "print the whole acceptance record rather than the coverage table alone")
 	flag.Parse()
 
 	table, err := buildCoverage(*root, *operator)
@@ -42,6 +43,10 @@ func main() {
 		os.Exit(1)
 	}
 	if *check {
+		return
+	}
+	if *record {
+		fmt.Print(table.recordMarkdown(*root))
 		return
 	}
 	fmt.Print(table.markdown())
