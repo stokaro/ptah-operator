@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -77,6 +78,10 @@ func emittedSeriesLabels(t *testing.T) map[string][]string {
 	metrics.ObserveOperation(telemetry.FamilyMigration, telemetry.OperationHistory,
 		telemetry.OperationSucceeded, time.Second)
 	metrics.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageHistory, telemetry.FailureOperation)
+	// The unresolved gauges register separately, and a check that gathered
+	// only the counters would let them ship undocumented -- which is the one
+	// thing this test exists to refuse.
+	telemetry.NewUnresolvedCollector(registry, syncedTestView{}, time.Now)
 
 	gathered, err := registry.Gather()
 	if err != nil {
@@ -108,4 +113,18 @@ func readOperationsGuide(t *testing.T) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return content
+}
+
+// syncedTestView reports one record in each family, so every series the
+// unresolved collector can emit is present in the gather above.
+type syncedTestView struct{}
+
+func (syncedTestView) Synced() bool { return true }
+
+func (syncedTestView) UnresolvedSchemas(context.Context) ([]time.Time, error) {
+	return []time.Time{time.Now().Add(-time.Hour)}, nil
+}
+
+func (syncedTestView) UnresolvedMigrations(context.Context) ([]time.Time, error) {
+	return []time.Time{time.Now().Add(-time.Hour)}, nil
 }
