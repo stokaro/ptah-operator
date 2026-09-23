@@ -72,27 +72,7 @@ func TestDatabaseCoordinationDigestRejectsNonCanonicalKey(t *testing.T) {
 func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 	t.Parallel()
 
-	base := fingerprint.PlanBinding{
-		ContractVersion:          fingerprint.CurrentPlanContractVersion,
-		SchemaUID:                "schema-uid",
-		PlanContentDigest:        "sha256:plan",
-		ArtifactDigest:           "sha256:artifact",
-		CoordinationDigest:       "sha256:coordination",
-		TargetIdentityDigest:     "sha256:target",
-		ActualStateFingerprint:   "sha256:actual",
-		DesiredStateFingerprint:  "sha256:desired",
-		PolicyFingerprint:        "sha256:policy",
-		VerificationPolicyUID:    "verification-policy-uid",
-		VerificationPolicyDigest: "sha256:verification",
-		ExecutionBindingID:       "v1-33333333333333333333333333333333",
-		ControllerImage:          "example.invalid/manager@sha256:" + strings.Repeat("c", 64),
-		ControllerRevision:       "controller-test-revision",
-		ControllerStateVersion:   1,
-		PtahVersion:              "v0.3.0",
-		ExecutorImage:            "example.invalid/ptah@sha256:executor",
-		RunnerImage:              "example.invalid/operator@sha256:runner",
-		RunnerProtocolVersion:    1,
-	}
+	base := completePlanBinding()
 	want, err := base.Fingerprint()
 	if err != nil {
 		t.Fatal(err)
@@ -252,5 +232,57 @@ func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 	}
 	if a != b {
 		t.Fatalf("map insertion order changed operation ID: %s != %s", a, b)
+	}
+}
+
+// TestPlanBindingRefusesAnIncompleteBinding is the other half of the contract
+// above, and it has the same blind spot to close: the requirements are a map,
+// so one empty field exercises the whole loop and an entry that goes missing is
+// invisible to coverage. Three could be deleted with every package green.
+//
+// A binding with a hole in it must not be given an identity. An empty policy
+// fingerprint, say, would let two plans decided under different policies -- one
+// of which failed to produce one -- share the digest an approval names.
+func TestPlanBindingRefusesAnIncompleteBinding(t *testing.T) {
+	t.Parallel()
+
+	bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
+	for index := range bindingType.NumField() {
+		field := bindingType.Field(index)
+		t.Run(field.Name, func(t *testing.T) {
+			t.Parallel()
+
+			binding := completePlanBinding()
+			reflect.ValueOf(&binding).Elem().Field(index).Set(reflect.Zero(field.Type))
+			if _, err := binding.Fingerprint(); err == nil {
+				t.Fatalf("a binding with no %s was given a fingerprint", field.Name)
+			}
+		})
+	}
+}
+
+// completePlanBinding is a binding every check accepts, which is what makes a
+// single emptied field attributable to the check that rejects it.
+func completePlanBinding() fingerprint.PlanBinding {
+	return fingerprint.PlanBinding{
+		ContractVersion:          fingerprint.CurrentPlanContractVersion,
+		SchemaUID:                "schema-uid",
+		PlanContentDigest:        "sha256:plan",
+		ArtifactDigest:           "sha256:artifact",
+		CoordinationDigest:       "sha256:coordination",
+		TargetIdentityDigest:     "sha256:target",
+		ActualStateFingerprint:   "sha256:actual",
+		DesiredStateFingerprint:  "sha256:desired",
+		PolicyFingerprint:        "sha256:policy",
+		VerificationPolicyUID:    "verification-policy-uid",
+		VerificationPolicyDigest: "sha256:verification",
+		ExecutionBindingID:       "v1-33333333333333333333333333333333",
+		ControllerImage:          "example.invalid/manager@sha256:" + strings.Repeat("c", 64),
+		ControllerRevision:       "controller-test-revision",
+		ControllerStateVersion:   1,
+		PtahVersion:              "v0.3.0",
+		ExecutorImage:            "example.invalid/ptah@sha256:executor",
+		RunnerImage:              "example.invalid/operator@sha256:runner",
+		RunnerProtocolVersion:    1,
 	}
 }
