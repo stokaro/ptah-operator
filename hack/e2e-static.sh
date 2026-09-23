@@ -324,6 +324,7 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 "$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"
 "$ROOT_DIR/hack/e2e-sql-selftest.sh"
 "$ROOT_DIR/hack/e2e-hook-log-capture-selftest.sh"
+"$ROOT_DIR/hack/e2e-ha-metrics-selftest.sh"
 
 # Every phase the driver runs is measured, and it is measured in the one place
 # that runs them. A phase invoked around run_recorded_phase would be missing
