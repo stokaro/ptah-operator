@@ -318,3 +318,60 @@ func TestAnApplyClaimDispatchesOnlyWhatIsStillProvable(t *testing.T) {
 		})
 	}
 }
+
+// TestAStaleApplyHandsBackTheDatabaseItHolds covers the other side of the same
+// boundary: an Apply claim that never dispatched still holds the database
+// realm's Lease, and the inputs it was claimed against can move while it does.
+//
+// The stale transition is where that Lease goes back. discardStaleOperation,
+// which is where a read-only claim ends, stages a release for a Plan and for
+// nothing else -- so routing a stale Apply through it drops the claim and
+// leaves the Lease held by an operation that no longer exists, with nothing
+// left in the status to say who owns it.
+func TestAStaleApplyHandsBackTheDatabaseItHolds(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reconciler, api, schema, _ := dispatchableApply(t, false)
+
+	// The first pass persists the lease epoch and acquires nothing; the claim
+	// takes the Lease once its own epoch is durable.
+	acquired := false
+	for range 3 {
+		var err error
+		acquired, _, err = reconciler.acquireApplyLock(ctx, safetyGetSchema(t, api, schema))
+		if err != nil {
+			t.Fatalf("acquireApplyLock() error = %v", err)
+		}
+		if acquired {
+			break
+		}
+	}
+	if !acquired {
+		t.Fatal("the Apply claim did not acquire the database, so handing it back proves nothing")
+	}
+	if holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); holder == "" {
+		t.Fatal("no holder stands on the database Lease, so handing it back proves nothing")
+	}
+
+	// A newer plan replaces the one the claim names. The Apply was claimed
+	// against the plan's fingerprint, so this is what makes it stale.
+	moved := safetyGetSchema(t, api, schema)
+	moved.Status.Plan.Fingerprint = fingerprint.DigestBytes([]byte("a newer plan"))
+	if err := api.Status().Update(ctx, moved); err != nil {
+		t.Fatalf("move the claim's inputs: %v", err)
+	}
+
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	for pass := range 4 {
+		if _, err := reconciler.Reconcile(ctx, request); err != nil {
+			t.Fatalf("Reconcile() pass %d error = %v", pass, err)
+		}
+		if safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest) == "" {
+			return
+		}
+	}
+	settled := safetyGetSchema(t, api, schema)
+	t.Fatalf("a stale Apply kept the database: holder %q, claim %#v",
+		safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest), settled.Status.ActiveOperation)
+}
