@@ -213,6 +213,97 @@ one schema cannot prove the user sees every object it is about to drop. Give
 the shadow database its own user, on a server that holds nothing else of value,
 and keep the target's user on its per-schema grants.
 
+## Adopting an existing database
+
+### Record the history a database already earned {#adopt}
+
+The handoff from a database somebody migrated by hand to one this operator
+manages. It writes nothing to the application schema: what it produces is the
+revision history the database should already have had.
+
+#### Before you start {#adopt-before}
+
+You need write access to the target database's revision table, a shadow
+database of your own on a server holding nothing else of value, and write
+access to the `PtahMigration` in its namespace if one exists. Nothing
+cluster-scoped is touched.
+
+Confirm the database is the case this is for: the schema exists and the
+revision table is empty or absent. A database with a revision history is not
+adopted, it is migrated.
+
+Have the exact artifact the operator will use, pinned by digest rather than by
+tag, and the migration files that artifact carries. Baseline compares what
+those files produce against what the database has, so files that are not the
+artifact's prove nothing about the artifact.
+
+**Nothing may be applying while this runs.** If the resource already exists,
+suspend it and wait for its operation Jobs to finish; a plan approved earlier
+can otherwise dispatch an Apply into the middle of adoption, and that Apply
+would run the whole sequence against a database that already carries the
+schema. If it does not exist yet, create it after baseline rather than before.
+
+#### Run it {#adopt-run}
+
+1. Read the history the database has, and confirm it is empty.
+2. Create the shadow database and its user, with the privileges above.
+3. Run baseline against the target, with the artifact's own migration files.
+
+```sh
+ptah migrations baseline \
+  --db-url "$DATABASE_URL" \
+  --migrations-dir ./migrations \
+  --shadow-db "$SHADOW_DATABASE_URL"
+```
+
+4. Create the `PtahMigration`, or resume the suspended one.
+
+#### What proves it worked {#adopt-evidence}
+
+The revision table now records the versions the files carry, and the
+application schema and its rows are unchanged -- baseline replays into the
+shadow, never into the target.
+
+The resource then reports it without having run anything:
+
+```sh
+kubectl get ptahmigration "$NAME" -o jsonpath=\
+'{.status.history.currentVersion}{"\t"}{.status.phase}{"\n"}'
+```
+
+`currentVersion` is the last version the files carry, the phase is `InSync`,
+and `status.lastRun` is absent, because no Apply happened. A resource that
+reports `InSync` while carrying a `lastRun` from this procedure did not adopt
+anything; it executed.
+
+Publishing the next migration afterwards is ordinary work: the operator plans
+the one pending version, asks for the approval the policy requires, and applies
+it.
+
+#### Where to stop {#adopt-stop}
+
+A mismatch refusal is the answer, not an obstacle. It says the files do not
+produce the schema the database has, and recording them anyway would mark
+migrations as applied that never ran against this database -- which is the
+state every later refusal is designed to catch and the one thing adoption must
+not manufacture. Nothing is recorded when baseline refuses.
+
+Do not point `--shadow-db` at anything you would miss. Ptah empties it first.
+
+Do not adopt a database whose revision table is not empty, and do not empty it
+to make this procedure apply.
+
+#### If it fails {#adopt-recovery}
+
+A mismatch is repaired by finding which of the two is wrong, not by forcing the
+record. Compare the schema the shadow ended with against the target's: a
+missing object means the files are behind the database, an extra one means the
+database is behind the files, and either way the repair is to the files or to
+the database before baseline is run again.
+
+Nothing needs undoing after a refusal. The target was never written to, and the
+shadow is disposable.
+
 ## Approving a run
 
 `spec.policy.apply` decides what a published plan may do:

@@ -44,16 +44,21 @@ var runbookElements = []struct{ suffix, heading string }{
 type runbookEntry struct{ anchor, prefix string }
 
 // runbookGroup is a second-level heading and the decision about each section
-// under it.
+// under it. page is where it lives: the shape belongs to a runbook wherever it
+// is written, not to one file.
 type runbookGroup struct {
+	page      string
 	heading   string
 	runbooks  []runbookEntry
 	reference []string
 }
 
+const migrationsGuide = "docs/site/src/content/docs/use/migrations.md"
+
 // runbookGroups is the one place the guide's tasks are written down.
 var runbookGroups = []runbookGroup{
 	{
+		page:    operationsGuide,
 		heading: "Installation and upgrades",
 		runbooks: []runbookEntry{
 			{"install", "install"},
@@ -69,6 +74,7 @@ var runbookGroups = []runbookGroup{
 		},
 	},
 	{
+		page:     operationsGuide,
 		heading:  "A migration run nobody accounted for",
 		runbooks: []runbookEntry{{"clear-unresolved-run", "clear"}},
 		reference: []string{
@@ -78,12 +84,19 @@ var runbookGroups = []runbookGroup{
 		},
 	},
 	{
+		page:     operationsGuide,
 		heading:  "Pruning stored plans",
 		runbooks: []runbookEntry{{"prune-plans", "prune"}},
 		reference: []string{
 			"Which plans are pinned",
 			"Export a plan before deleting it",
 		},
+	},
+	{
+		page:      migrationsGuide,
+		heading:   "Adopting an existing database",
+		runbooks:  []runbookEntry{{"adopt", "adopt"}},
+		reference: nil,
 	},
 }
 
@@ -147,19 +160,24 @@ func parseSections(markdown string) []*docSection {
 
 // runbookProblems is the whole check, over content rather than a path, so the
 // tests below can prove it fires by feeding it a page with one thing wrong.
-func runbookProblems(markdown string) []string {
+func runbookProblems(pages map[string]string) []string {
 	var problems []string
-	sections := map[string]*docSection{}
-	for _, section := range parseSections(markdown) {
-		sections[section.title] = section
-	}
 	for _, declared := range runbookGroups {
-		group, ok := sections[declared.heading]
-		if !ok {
-			problems = append(problems, fmt.Sprintf("the guide has no %q section", declared.heading))
+		markdown, known := pages[declared.page]
+		if !known {
 			continue
 		}
-		problems = append(problems, groupProblems(declared, group)...)
+		var found *docSection
+		for _, section := range parseSections(markdown) {
+			if section.title == declared.heading {
+				found = section
+			}
+		}
+		if found == nil {
+			problems = append(problems, fmt.Sprintf("%s has no %q section", declared.page, declared.heading))
+			continue
+		}
+		problems = append(problems, groupProblems(declared, found)...)
 	}
 	return problems
 }
@@ -258,12 +276,27 @@ func carriesSomethingToRun(body []string) bool {
 	return false
 }
 
+// runbookPages reads every page a declared group lives on.
+func runbookPages(t *testing.T) map[string]string {
+	t.Helper()
+	pages := map[string]string{}
+	for _, group := range runbookGroups {
+		if _, read := pages[group.page]; read {
+			continue
+		}
+		pages[group.page] = string(readRepositoryFile(t, group.page))
+	}
+	if len(pages) < 2 {
+		t.Fatalf("the groups name %d page(s); runbooks live on more than one", len(pages))
+	}
+	return pages
+}
+
 // Every runbook answers the five questions, in order, under stable anchors.
 func TestEveryRunbookAnswersTheFiveQuestions(t *testing.T) {
 	t.Parallel()
-	guide := string(readOperationsGuide(t))
-	for _, problem := range runbookProblems(guide) {
-		t.Errorf("%s: %s", operationsGuide, problem)
+	for _, problem := range runbookProblems(runbookPages(t)) {
+		t.Errorf("%s", problem)
 	}
 }
 
@@ -271,29 +304,31 @@ func TestEveryRunbookAnswersTheFiveQuestions(t *testing.T) {
 // answering to one anchor is a link that lands on whichever the build picked.
 func TestNoTwoRunbookElementsClaimOneAnchor(t *testing.T) {
 	t.Parallel()
-	guide := string(readOperationsGuide(t))
+	pages := runbookPages(t)
 	owner := map[string]string{}
+	anchorPage := map[string]string{}
 	declared := 0
 	for _, group := range runbookGroups {
 		for _, runbook := range group.runbooks {
 			for _, element := range runbookElements {
 				anchor := runbook.prefix + "-" + element.suffix
 				declared++
+				page := group.page
 				if previous, taken := owner[anchor]; taken {
 					t.Errorf("{#%s} is claimed by both %s and %s", anchor, previous, runbook.anchor)
 					continue
 				}
 				owner[anchor] = runbook.anchor
+				anchorPage[anchor] = page
 			}
 		}
 	}
 	if declared == 0 {
 		t.Fatal("no runbook is declared, so every check over them would pass over nothing")
 	}
-	for anchor := range owner {
-		if strings.Count(guide, "{#"+anchor+"}") != 1 {
-			t.Errorf("%s declares {#%s} %d times", operationsGuide, anchor,
-				strings.Count(guide, "{#"+anchor+"}"))
+	for anchor, page := range anchorPage {
+		if count := strings.Count(pages[page], "{#"+anchor+"}"); count != 1 {
+			t.Errorf("%s declares {#%s} %d times", page, anchor, count)
 		}
 	}
 }
@@ -341,7 +376,9 @@ func TestTheRunbookShapeNoticesWhatItIsFor(t *testing.T) {
 			if broken == guide {
 				t.Fatalf("the mutation changed nothing, so it proves nothing about %s", mistake.name)
 			}
-			problems := strings.Join(runbookProblems(broken), "\n")
+			pages := runbookPages(t)
+			pages[operationsGuide] = broken
+			problems := strings.Join(runbookProblems(pages), "\n")
 			if !strings.Contains(problems, mistake.expects) {
 				t.Errorf("a page with %s was accepted; problems were:\n%s", mistake.name, problems)
 			}
@@ -366,21 +403,23 @@ var runbookAccess = map[string]string{
 	"offline-singleton-migration": "maintenance window",
 	"clear-unresolved-run":        "`status` subresource",
 	"prune-plans":                 "delete access",
+	"adopt":                       "write access to the target database",
 }
 
 // Every runbook says what access it needs, before it says anything else.
 func TestEveryRunbookNamesTheAccessItNeeds(t *testing.T) {
 	t.Parallel()
-	guide := string(readOperationsGuide(t))
-	sections := map[string]*docSection{}
-	for _, section := range parseSections(guide) {
-		sections[section.title] = section
-	}
+	pages := runbookPages(t)
 	checked := 0
 	for _, group := range runbookGroups {
-		found, ok := sections[group.heading]
-		if !ok {
-			t.Errorf("the guide has no %q section", group.heading)
+		var found *docSection
+		for _, section := range parseSections(pages[group.page]) {
+			if section.title == group.heading {
+				found = section
+			}
+		}
+		if found == nil {
+			t.Errorf("%s has no %q section", group.page, group.heading)
 			continue
 		}
 		for _, runbook := range group.runbooks {
