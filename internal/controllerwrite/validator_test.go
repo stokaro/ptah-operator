@@ -1297,10 +1297,32 @@ func TestValidationHandlerReadsAndValidatesApplyPlanChunks(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		corruptStored bool
-		wantAllowed   bool
+		// replaceStored gives the chunk a different identity under the same
+		// name, which is what deleting and recreating the ConfigMap does.
+		replaceStored bool
+		// dropStored removes it entirely.
+		dropStored  bool
+		wantAllowed bool
+		wantMessage string
 	}{
 		{name: "exact stored plan", wantAllowed: true},
 		{name: "corrupt stored chunk", corruptStored: true},
+		{
+			// The bytes under this name are not the bytes that were published,
+			// and nothing about their content says so: a chunk recreated under
+			// the same name carries whatever SQL its author put in it. The
+			// published UID is the only thing that can tell the difference.
+			name:          "replaced stored chunk",
+			replaceStored: true,
+			wantMessage:   "was replaced",
+		},
+		{
+			// Admitting an Apply whose plan cannot be read would dispatch an
+			// executor against SQL nobody can produce.
+			name:        "stored chunk is missing",
+			dropStored:  true,
+			wantMessage: "directly read Apply plan chunk",
+		},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -1330,11 +1352,23 @@ func TestValidationHandlerReadsAndValidatesApplyPlanChunks(t *testing.T) {
 			if test.corruptStored {
 				storedChunk.BinaryData[planstore.ChunkDataKey][0] ^= 0xff
 			}
-			handler := handlerFixture(t, staticJobBuilder{job: expected}, schema, plan, storedChunk)
+			if test.replaceStored {
+				storedChunk.UID = "a-chunk-that-was-put-here-later"
+			}
+			objects := []client.Object{schema, plan, storedChunk}
+			if test.dropStored {
+				objects = objects[:2]
+			}
+			handler := handlerFixture(t, staticJobBuilder{job: expected}, objects...)
 
 			response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, candidate))
 			if response.Allowed != test.wantAllowed {
 				t.Fatalf("Handle() allowed = %t, want %t; result = %#v", response.Allowed, test.wantAllowed, response.Result)
+			}
+			if test.wantMessage != "" {
+				if response.Result == nil || !strings.Contains(response.Result.Message, test.wantMessage) {
+					t.Fatalf("refusal = %#v, want one naming %q", response.Result, test.wantMessage)
+				}
 			}
 		})
 	}
