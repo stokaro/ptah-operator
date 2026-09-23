@@ -226,6 +226,35 @@ Release is withheld while the executor may still be running. A Job that is not
 terminal, a Pod that has not stopped, and a read that could not say are all
 treated as "may still be writing", and the Lease is left to expire instead.
 
+## Every durable write, and what follows it
+
+The obligations above are stated step by step, and each names the window its
+own write opens. Here they are in one place and in order, because the question
+an incident asks is not "what does Claim do" but "the process stopped, what
+does the next pass see".
+
+Read the third column as the answer to that. A row whose third column is "the
+next pass cannot tell" would be a defect; none of them is.
+
+| Durable write | What may happen next | If the process stops in between |
+| --- | --- | --- |
+| The finalizer, through a metadata patch | The claim's own status patch | A finalizer with no claim, which the next pass removes before anything else |
+| `activeOperation`, with the Job's deterministic name | Nothing external; the pass ends | A claim with no dispatch marker and no Job under the reserved name, which proceeds: a claim is not evidence that anything ran |
+| `leaseEpoch`, after the Lease was taken | Nothing external | The Lease held under an epoch the status does not name. The next pass acquires with the stale expectation, which is adopted before dispatch and is continuity loss after |
+| `admissionSnapshot` | Nothing; the pass returns deliberately | No Job can exist yet. The next pass rebuilds the Job and refuses a template whose digest disagrees |
+| The approval's `Consumed` condition | The `dispatchStarted` write, then the one create | An approval spent with nothing dispatched. Consumption is evidence, not permission, so it authorizes no second attempt |
+| `dispatchStarted` | The one permitted create | A claim that says a Job may exist. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again |
+| `jobUID` | An Event and the telemetry | Covered by the marker above: the next pass finds the Job under the reserved name and adopts its UID |
+| The Job's cleanup TTL | The outcome status patch | A Job carrying a TTL under a live claim. The next pass re-reads the same terminal Job and reaches the same verdict |
+| The outcome patch: the claim cleared and the record written together | The Lease release | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
+| `pendingLockRelease`, written with that same patch | The release itself | The realm still claimed, with a record saying so. The next pass releases it before doing anything else |
+
+The one window that is not closed by a record is the migration's release: it
+records a release that **failed**, so a process that stops between the outcome
+patch and the attempt leaves the Lease to expire. A schema stages the
+obligation inside the outcome patch and has no such gap. That difference is the
+last one in the list below.
+
 ## Durable safety state
 
 Which family keeps which record. The prose around this table describes what

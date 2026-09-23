@@ -254,3 +254,73 @@ func durableStateRows(page string) []durableStateRow {
 	}
 	return rows
 }
+
+// #225 asks the transition table to carry the failure window between every
+// durable write and the next external action. The steps above each name their
+// own, and a reader mid-incident is not reading the page top to bottom -- so
+// they are also in one ordered table, and this holds that table to the writes
+// that exist.
+//
+// A row naming a field nothing serializes is a window described for a write
+// the operator does not make, which reads as coverage and is not.
+
+// Every window row names a write the operator makes, and says what the next
+// pass sees.
+func TestEveryDurableWriteRowNamesAWriteThatExists(t *testing.T) {
+	t.Parallel()
+	page := string(readRepositoryFile(t, mutationLifecyclePage))
+	const heading = "## Every durable write, and what follows it"
+	start := strings.Index(page, heading)
+	if start < 0 {
+		t.Fatalf("%s has no %q section", mutationLifecyclePage, heading)
+	}
+	rest := page[start:]
+	end := strings.Index(rest, "\n## ")
+	if end > 0 {
+		rest = rest[:end]
+	}
+
+	// Both families' resources and both approvals: a window row may name a
+	// condition the approval carries as readily as a field the resource does.
+	var types string
+	for _, file := range []string{
+		"api/v1alpha1/ptahschema_types.go",
+		"api/v1alpha1/ptahmigration_types.go",
+		"api/v1alpha1/ptahschemaapproval_types.go",
+		"api/v1alpha1/ptahmigrationapproval_types.go",
+	} {
+		types += string(readRepositoryFile(t, file))
+	}
+
+	rows := 0
+	for _, row := range strings.Split(rest, "\n") {
+		if !strings.HasPrefix(row, "| ") || strings.HasPrefix(row, "| ---") ||
+			strings.HasPrefix(row, "| Durable write") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(row, "|"), "|")
+		if len(cells) != 3 {
+			t.Errorf("a window row does not carry three columns: %s", row)
+			continue
+		}
+		rows++
+		if strings.TrimSpace(cells[2]) == "" {
+			t.Errorf("a window row says nothing about what the next pass sees: %s", row)
+		}
+		for _, field := range codeSpan.FindAllStringSubmatch(cells[0], -1) {
+			name := field[1]
+			// A durable write is a status field the API serializes or a
+			// condition the API declares. Both are things a later pass reads;
+			// a name that is neither describes a window around a write the
+			// operator does not make, which reads as coverage and is not.
+			serialized := strings.Contains(types, `json:"`+name+`,`)
+			condition := strings.Contains(types, `= "`+name+`"`)
+			if !serialized && !condition {
+				t.Errorf("the window table names %s as a durable write; the API serializes no such field and declares no such condition", name)
+			}
+		}
+	}
+	if rows < 8 {
+		t.Fatalf("the window table carries %d rows; the lifecycle makes more durable writes than that", rows)
+	}
+}
