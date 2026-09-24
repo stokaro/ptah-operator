@@ -44,7 +44,7 @@ func TestWhatEachDispatchFailureLeavesTheClaimOwing(t *testing.T) {
 		stage         mutationlifecycle.DispatchStage
 		mutating      bool
 		alreadyExists bool
-		want          mutationlifecycle.DispatchDisposition
+		want          mutationlifecycle.Disposition
 	}{
 		{
 			// The write may have landed and its answer did not come back.
@@ -118,6 +118,46 @@ func TestAnUnknownDispatchStageIsNeverARetry(t *testing.T) {
 		got := mutationlifecycle.DispatchFailure("a stage added later", mutating, true)
 		if got == mutationlifecycle.DispositionRetry {
 			t.Fatalf("an unrecognised stage (mutating=%t) was told to retry", mutating)
+		}
+	}
+}
+
+// The same property as the dispatch boundary, at the other end of the run: a
+// claim that may have changed the database is never dropped and never retried,
+// whatever its Job's evidence turned out to be. Re-reading establishes nothing
+// about SQL that may already have run, and dropping the claim throws away the
+// only record that it might have.
+func TestAMutatingClaimIsNeverDroppedOnItsEvidence(t *testing.T) {
+	t.Parallel()
+
+	for _, fault := range []mutationlifecycle.HarvestFault{
+		mutationlifecycle.FaultInputsChanged,
+		mutationlifecycle.FaultPodMultiplicity,
+		mutationlifecycle.FaultUnreadableResult,
+		"a fault named later",
+	} {
+		if got := mutationlifecycle.HarvestFailure(fault, true); got != mutationlifecycle.DispositionUnaccounted {
+			t.Fatalf("a mutating claim whose evidence was %q = %q, want it unaccounted for", fault, got)
+		}
+	}
+}
+
+// The read-only side, where the answer does depend on the fault: inputs that
+// moved make the question wrong rather than the answer unreadable, so there is
+// nothing to retry.
+func TestWhatEachHarvestFaultLeavesAReadOnlyClaimOwing(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		fault mutationlifecycle.HarvestFault
+		want  mutationlifecycle.Disposition
+	}{
+		{mutationlifecycle.FaultInputsChanged, mutationlifecycle.DispositionDiscard},
+		{mutationlifecycle.FaultPodMultiplicity, mutationlifecycle.DispositionRetry},
+		{mutationlifecycle.FaultUnreadableResult, mutationlifecycle.DispositionRetry},
+	} {
+		if got := mutationlifecycle.HarvestFailure(row.fault, false); got != row.want {
+			t.Fatalf("HarvestFailure(%q, read-only) = %q, want %q", row.fault, got, row.want)
 		}
 	}
 }

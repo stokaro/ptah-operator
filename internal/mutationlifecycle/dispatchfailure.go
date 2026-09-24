@@ -23,20 +23,24 @@ const (
 	StageIntent DispatchStage = "intent"
 )
 
-// DispatchDisposition is what the claim owes after a failure at the boundary.
-type DispatchDisposition string
+// Disposition is what a claim owes after something goes wrong with it.
+type Disposition string
 
 const (
 	// DispositionUnaccounted retires the claim with an outcome nobody
 	// established. A mutating run may already have opened the database, and no
 	// later pass can establish that it did not.
-	DispositionUnaccounted DispatchDisposition = "unaccounted"
+	DispositionUnaccounted Disposition = "unaccounted"
 	// DispositionRetry dispatches again under a fresh attempt. Re-running a
 	// read costs nothing, so a read-only claim takes this wherever it can.
-	DispositionRetry DispatchDisposition = "retry"
+	DispositionRetry Disposition = "retry"
 	// DispositionRequeue keeps the claim and comes back. The next pass reads
 	// the Job the boundary already recorded and decides from what it finds.
-	DispositionRequeue DispatchDisposition = "requeue"
+	DispositionRequeue Disposition = "requeue"
+	// DispositionDiscard drops the claim. Nothing it did needs accounting for,
+	// because a read-only run changed nothing and its result is about inputs
+	// that have since moved.
+	DispositionDiscard Disposition = "discard"
 )
 
 // DispatchFailure reports what a failure at the boundary leaves the claim
@@ -48,7 +52,7 @@ const (
 // answer there is: the Job standing there may be one this claim created on a
 // pass whose answer was lost, so retrying would dispatch a second executor
 // beside an executor that may be running SQL.
-func DispatchFailure(stage DispatchStage, mutating, alreadyExists bool) DispatchDisposition {
+func DispatchFailure(stage DispatchStage, mutating, alreadyExists bool) Disposition {
 	if mutating {
 		switch stage {
 		case StageCreate, StageIntent:
@@ -72,4 +76,40 @@ func DispatchFailure(stage DispatchStage, mutating, alreadyExists bool) Dispatch
 		return DispositionRetry
 	}
 	return DispositionRequeue
+}
+
+// HarvestFault names what a terminal Job's evidence turned out to be.
+type HarvestFault string
+
+const (
+	// FaultInputsChanged means the claim's inputs moved while its Job ran, so
+	// the result describes something the resource no longer asks for.
+	FaultInputsChanged HarvestFault = "inputs-changed"
+	// FaultPodMultiplicity means the Job ran more than one executor Pod, or
+	// one whose intent could not be established. One result frame is one Pod's
+	// account and cannot speak for the other.
+	FaultPodMultiplicity HarvestFault = "pod-multiplicity"
+	// FaultUnreadableResult means the run left no result the controller can
+	// read, or the Job did not succeed.
+	FaultUnreadableResult HarvestFault = "unreadable-result"
+)
+
+// HarvestFailure reports what a claim owes when its terminal Job's evidence
+// cannot settle it.
+//
+// The asymmetry is the whole of it, and it is the same one the dispatch
+// boundary has. A read-only run changed nothing, so a result that cannot be
+// used costs a second read; the claim is retried, or dropped where its inputs
+// have moved and the answer would be about the wrong question. A mutating run
+// may already have changed the database, and no amount of re-reading
+// establishes that it did not -- so every fault retires it with an outcome
+// nobody established, including the one that looks most like staleness.
+func HarvestFailure(fault HarvestFault, mutating bool) Disposition {
+	if mutating {
+		return DispositionUnaccounted
+	}
+	if fault == FaultInputsChanged {
+		return DispositionDiscard
+	}
+	return DispositionRetry
 }

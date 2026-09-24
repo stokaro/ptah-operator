@@ -1340,7 +1340,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		if currentErr == nil {
 			currentErr = fmt.Errorf("operation inputs changed while the Job was running")
 		}
-		if operation.Type == operatorv1alpha1.OperationApply {
+		if mutationlifecycle.HarvestFailure(
+			mutationlifecycle.FaultInputsChanged, operation.Type == operatorv1alpha1.OperationApply,
+		) == mutationlifecycle.DispositionUnaccounted {
 			// Once an Apply Job exists, a mutation may have started even when
 			// its formerly exact inputs became stale. Never classify that case
 			// like an undispatched read-only operation: force fresh observation
@@ -1363,7 +1365,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if errors.Is(err, errTerminalPodMultiplicity) {
 				failure = fmt.Errorf("Job produced multiple executor Pods")
 			}
-			if operation.Type == operatorv1alpha1.OperationApply {
+			if mutationlifecycle.HarvestFailure(
+				mutationlifecycle.FaultPodMultiplicity, operation.Type == operatorv1alpha1.OperationApply,
+			) == mutationlifecycle.DispositionUnaccounted {
 				return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
 			}
 			return r.retryOperation(ctx, schema, job, failure)
@@ -1381,7 +1385,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
 	if parseErr != nil || !jobSucceeded(job) {
-		if operation.Type == operatorv1alpha1.OperationApply {
+		if mutationlifecycle.HarvestFailure(
+			mutationlifecycle.FaultUnreadableResult, operation.Type == operatorv1alpha1.OperationApply,
+		) == mutationlifecycle.DispositionUnaccounted {
 			failure := parseErr
 			if failure == nil {
 				failure = fmt.Errorf("Apply Job did not complete successfully")
