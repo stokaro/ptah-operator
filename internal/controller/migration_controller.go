@@ -681,7 +681,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if currentErr == nil {
 			currentErr = errors.New("the operation inputs changed while the Job was running")
 		}
-		if applying {
+		if mutationlifecycle.HarvestFailure(
+			mutationlifecycle.FaultInputsChanged, applying,
+		) == mutationlifecycle.DispositionUnaccounted {
 			// An Apply Job that exists may already have changed the database,
 			// whatever its formerly exact inputs now say.
 			return r.finishUncertainMigrationApply(ctx, migration, job, currentErr, "")
@@ -697,7 +699,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
 		if errors.Is(err, errTerminalPodMultiplicity) || errors.Is(err, errTerminalPodIntent) {
-			if applying {
+			if mutationlifecycle.HarvestFailure(
+				mutationlifecycle.FaultPodMultiplicity, applying,
+			) == mutationlifecycle.DispositionUnaccounted {
 				return r.finishUncertainMigrationApply(ctx, migration, job, err, "")
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
