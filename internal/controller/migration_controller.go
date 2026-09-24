@@ -1680,6 +1680,7 @@ func (r *MigrationReconciler) discardMigrationOperation(
 	migration.Status.Phase = operatorv1alpha1.MigrationPhasePending
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonInputsChanged, bounded(failure.Error(), 512))
+	r.stageOwedMigrationRelease(ctx, migration, operation)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1718,7 +1719,7 @@ func (r *MigrationReconciler) discardUndispatchedMigrationOperation(
 		return result, err
 	}
 	if operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
-		r.releaseMigrationApplyLock(ctx, migration, operation)
+		r.settleOwedMigrationRelease(ctx, migration)
 	}
 	return result, nil
 }
@@ -1744,7 +1745,7 @@ func (r *MigrationReconciler) failUndispatchedMigrationOperation(
 		return result, err
 	}
 	if operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
-		r.releaseMigrationApplyLock(ctx, migration, operation)
+		r.settleOwedMigrationRelease(ctx, migration)
 	}
 	return result, nil
 }
@@ -1757,11 +1758,13 @@ func (r *MigrationReconciler) migrationOperationFailure(
 	failure error,
 ) (ctrl.Result, error) {
 	before := migration.DeepCopy()
+	operation := migration.Status.ActiveOperation
 	migration.Status.ActiveOperation = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseFailed
 	migration.Status.ObservedGeneration = migration.Generation
 	next := metav1.NewTime(r.now().Add(migrationFailureRetry(migration)))
 	migration.Status.NextReconciliationTime = &next
+	r.stageOwedMigrationRelease(ctx, migration, operation)
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonOperationFailed, bounded(failure.Error(), 512))
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
