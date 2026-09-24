@@ -1492,7 +1492,7 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	}
 
 	before := schema.DeepCopy()
-	if operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil {
+	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1682,7 +1682,7 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	now := metav1.NewTime(r.now())
 	next := metav1.NewTime(r.now().Add(interval(schema)))
 	before := schema.DeepCopy()
-	if operation != nil && schema.Status.PendingObservation == nil {
+	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -2032,6 +2032,12 @@ func (r *SchemaReconciler) consumeResult(
 		if err := stagePendingLockRelease(schema, completedPending); err != nil {
 			return ctrl.Result{}, err
 		}
+		// Not RealmHeldBy. A completed Apply has just handed the realm to the
+		// post-Apply observation above, which inherited its epoch, and the helper
+		// reads a mutating claim with a proof outstanding as the realm's owner --
+		// correct where the Apply is being retired and the proof restarted, wrong
+		// here where the Apply succeeded and the proof is what runs next. This arm
+		// is about a Plan finishing with no proof to complete.
 	} else if operation != nil && operation.Type == operatorv1alpha1.OperationPlan {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
@@ -2402,7 +2408,7 @@ func (r *SchemaReconciler) retryOperationAs(
 	// pinning the new dispatch to the retired attempt's snapshot. Apply never
 	// enters this retry path because its dispatch outcome may be ambiguous.
 	operation.AdmissionSnapshot = nil
-	if operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil {
+	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -2764,6 +2770,11 @@ func (r *SchemaReconciler) executionBindingChanged(
 		// outstanding. That one really was unreachable: isReadOnlyOperation
 		// counts Plan among the read-only operations, so the conjunct above
 		// had already excluded it.
+		// Not RealmHeldBy, and the difference is the point. This site does not
+		// ask who holds the realm: a read-only claim is kept here rather than
+		// retired, so it goes on holding whatever it took. Only the Apply being
+		// retired owes the database back. Asking the realm question stages a
+		// release for a Plan whose claim survives the pass.
 		if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
 			operation.LeaseEpoch != "" {
 			if err := stageOperationLockRelease(schema, operation); err != nil {
@@ -3296,6 +3307,9 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Type-named rather than RealmHeldBy: this site retires one kind of claim,
+	// and the question is whether that claim owes the database back, not who
+	// holds the realm. A claim of another type reaching here is not retired.
 	if operation != nil && operation.Type == operatorv1alpha1.OperationPlan && operation.LeaseEpoch != "" {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
@@ -3636,6 +3650,9 @@ func (r *SchemaReconciler) ensureCurrentApproval(
 func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	before := schema.DeepCopy()
+	// Type-named rather than RealmHeldBy: this site retires one kind of claim,
+	// and the question is whether that claim owes the database back, not who
+	// holds the realm. A claim of another type reaching here is not retired.
 	if operation != nil && operation.Type == operatorv1alpha1.OperationApply && operation.LeaseEpoch != "" {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
