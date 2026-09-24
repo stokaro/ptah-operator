@@ -13,18 +13,20 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
-// TestAnUnconfirmedApplyDispatchIsNeverRetried covers the three ways the
-// dispatch boundary can fail to confirm what it just did, and the reason the
-// boundary exists at all: an API call that does not answer is not an API call
-// that did not happen.
+// TestAnUnconfirmedApplyDispatchIsNeverRetried covers the two ways the
+// dispatch boundary can be left unable to account for what it just did, and
+// the reason the boundary exists at all: an API call that does not answer is
+// not an API call that did not happen.
 //
 // A create whose response was lost leaves a Job running SQL under the name the
-// claim reserved. A read that fails afterwards leaves the operator unable to
-// say whether that Job is its own. A Job whose shape does not match the
-// immutable claim is a Job the operator did not describe, standing where it
-// expected its own. A read-only operation retries through all three, because
-// re-running a read costs nothing; an Apply cannot, so each one settles the
-// claim with an unknown outcome instead.
+// claim reserved. A Job whose shape does not match the immutable claim is a Job
+// the operator did not describe, standing where it expected its own. A
+// read-only operation retries through both, because re-running a read costs
+// nothing; an Apply cannot, so each settles the claim with an unknown outcome
+// instead.
+//
+// A failed confirmation read is not one of these -- see
+// TestAFailedDispatchConfirmationIsRecoveredByTheNextPass.
 //
 // Every one of these branches was uncovered. Nothing in the package could
 // dispatch a schema Apply until the fixture below existed.
@@ -44,21 +46,6 @@ func TestAnUnconfirmedApplyDispatchIsNeverRetried(t *testing.T) {
 				reconciler.Client = &dispatchFaultClient{
 					Client: reconciler.Client, jobName: jobName,
 					created: func(*batchv1.Job) error { return lost },
-				}
-			},
-		},
-		{
-			// The Job exists and the operator cannot say whether it is the one
-			// it created.
-			name: "the confirming read failed",
-			install: func(_ *testing.T, reconciler *SchemaReconciler, api client.Client, jobName string) {
-				dispatched := new(bool)
-				reconciler.Client = &dispatchFaultClient{
-					Client: reconciler.Client, jobName: jobName,
-					created: func(*batchv1.Job) error { *dispatched = true; return nil },
-				}
-				reconciler.APIReader = &jobReadFaultReader{
-					Reader: api, jobName: jobName, failure: lost, after: dispatched,
 				}
 			},
 		},
@@ -161,6 +148,86 @@ func (r *jobReadFaultReader) Get(
 ) error {
 	if _, ok := object.(*batchv1.Job); ok && key.Name == r.jobName && (r.after == nil || *r.after) {
 		return r.failure
+	}
+	return r.Reader.Get(ctx, key, object, options...)
+}
+
+// A read that fails after the create is the one dispatch fault that resolves
+// itself. The boundary is already durable, so the claim records that a Job may
+// stand under the name it reserved, and the next pass re-enters through that
+// claim's own verdict: it adopts the Job if it is there, and settles the Apply
+// as unaccounted for if it is not.
+//
+// Settling immediately would abandon a run a later read can still account for,
+// and turn a transient API error into work for a person. The migration family
+// has always requeued here; the schema family used to settle, and the two now
+// treat it the same way.
+func TestAFailedDispatchConfirmationIsRecoveredByTheNextPass(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reconciler, api, schema, jobName := dispatchableApply(t, false)
+
+	// One read fails, the way a timeout does, and the next one does not.
+	dispatched := new(bool)
+	reconciler.Client = &dispatchFaultClient{
+		Client: reconciler.Client, jobName: jobName,
+		created: func(*batchv1.Job) error { *dispatched = true; return nil },
+	}
+	faults := &countingJobReader{Reader: api, jobName: jobName, after: dispatched, remaining: 1}
+	reconciler.APIReader = faults
+
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	var refused bool
+	for range 6 {
+		if _, err := reconciler.Reconcile(ctx, request); err != nil {
+			refused = true
+			continue
+		}
+		operation := safetyGetSchema(t, api, schema).Status.ActiveOperation
+		if operation != nil && operation.JobUID != "" {
+			if !refused {
+				t.Fatal("no confirmation read failed, so recovering from one proves nothing")
+			}
+			if faults.remaining != 0 {
+				t.Fatal("the injected fault never fired")
+			}
+			jobs := &batchv1.JobList{}
+			if err := api.List(ctx, jobs, client.InNamespace(schema.Namespace)); err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs.Items) != 1 {
+				t.Fatalf("recovery produced %d Jobs, want the one already dispatched", len(jobs.Items))
+			}
+			return
+		}
+		if current := safetyGetSchema(t, api, schema); current.Status.PendingObservation != nil {
+			t.Fatalf("a transient read failure settled the Apply as unaccounted for: %#v",
+				current.Status.PendingObservation)
+		}
+	}
+	t.Fatalf("the claim never adopted the Job it dispatched: %#v",
+		safetyGetSchema(t, api, schema).Status)
+}
+
+// countingJobReader refuses to read one Job a fixed number of times.
+type countingJobReader struct {
+	client.Reader
+	jobName   string
+	after     *bool
+	remaining int
+}
+
+func (r *countingJobReader) Get(
+	ctx context.Context,
+	key client.ObjectKey,
+	object client.Object,
+	options ...client.GetOption,
+) error {
+	if _, ok := object.(*batchv1.Job); ok && key.Name == r.jobName &&
+		(r.after == nil || *r.after) && r.remaining > 0 {
+		r.remaining--
+		return errors.New("connection reset by peer")
 	}
 	return r.Reader.Get(ctx, key, object, options...)
 }
