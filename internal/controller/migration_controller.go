@@ -919,25 +919,38 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		operation = migration.Status.ActiveOperation
 	}
 	expected := job.DeepCopy()
+	mutating := operation.Type == operatorv1alpha1.MigrationOperationApply
 	if err := r.Client.Create(ctx, job); err != nil {
-		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+		switch mutationlifecycle.DispatchFailure(
+			mutationlifecycle.StageCreate, mutating, apierrors.IsAlreadyExists(err),
+		) {
+		case mutationlifecycle.DispositionUnaccounted:
 			// Including AlreadyExists. A Job standing under the name this claim
 			// reserved is one this claim may have created on a pass whose
 			// answer was lost, and retrying would rename the claim and dispatch
 			// beside it. What that Job did is a question for the database.
 			return r.finishUncertainMigrationApply(ctx, migration, nil,
 				fmt.Errorf("the Apply Job create result is uncertain: %w", err), "")
-		}
-		if apierrors.IsAlreadyExists(err) {
+		case mutationlifecycle.DispositionRetry:
 			return r.retryMigrationOperation(ctx, migration, nil, errors.New("the claimed Job name was occupied during dispatch"))
 		}
 		return ctrl.Result{}, fmt.Errorf("create %s Job: %w", operation.Type, err)
 	}
 	if err := r.directReader().Get(ctx, key, job); err != nil {
+		if mutationlifecycle.DispatchFailure(
+			mutationlifecycle.StageConfirm, mutating, false,
+		) == mutationlifecycle.DispositionUnaccounted {
+			return r.finishUncertainMigrationApply(ctx, migration, nil,
+				fmt.Errorf("cannot confirm the dispatched Apply Job: %w", err), "")
+		}
+		// The boundary is already durable, so the next pass re-enters through
+		// the claim's own verdict and can say more than this one.
 		return ctrl.Result{}, fmt.Errorf("read created %s Job: %w", operation.Type, err)
 	}
 	if err := validateMigrationJobIntent(job, expected, migration); err != nil {
-		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+		if mutationlifecycle.DispatchFailure(
+			mutationlifecycle.StageIntent, mutating, false,
+		) == mutationlifecycle.DispositionUnaccounted {
 			// The Job exists by now and its executor may already be opening
 			// the database, so this claim is not free to walk away from it and
 			// dispatch under another name.
