@@ -1225,27 +1225,32 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				}
 			}
 		}
+		mutating := operation.Type == operatorv1alpha1.OperationApply
 		if err := r.Client.Create(ctx, job); err != nil {
-			if operation.Type == operatorv1alpha1.OperationApply {
+			switch mutationlifecycle.DispatchFailure(
+				mutationlifecycle.StageCreate, mutating, apierrors.IsAlreadyExists(err),
+			) {
+			case mutationlifecycle.DispositionUnaccounted:
 				return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("Apply Job create result is uncertain: %w", err))
-			}
-			if apierrors.IsAlreadyExists(err) {
+			case mutationlifecycle.DispositionRetry:
 				return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job name was occupied during dispatch"))
 			}
 			return ctrl.Result{}, fmt.Errorf("create %s Job: %w", operation.Type, err)
 		}
 		if err := r.directReader().Get(ctx, key, job); err != nil {
-			// The dispatch boundary is already durable, so the claim records
-			// that a Job may exist under the name it reserved. Requeueing
-			// re-enters through that claim's own verdict, which adopts the Job
-			// if it is there and settles the Apply as unaccounted for if it is
-			// not. Settling here instead would abandon a run a later read can
-			// still account for, which is what the migration family does not
-			// do.
+			if mutationlifecycle.DispatchFailure(
+				mutationlifecycle.StageConfirm, mutating, false,
+			) == mutationlifecycle.DispositionUnaccounted {
+				return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("cannot confirm dispatched Apply Job: %w", err))
+			}
+			// The boundary is already durable, so the next pass re-enters
+			// through the claim's own verdict and can say more than this one.
 			return ctrl.Result{}, fmt.Errorf("read created %s Job: %w", operation.Type, err)
 		}
 		if err := validateJobIntent(job, expectedJob, schema); err != nil {
-			if operation.Type == operatorv1alpha1.OperationApply {
+			if mutationlifecycle.DispatchFailure(
+				mutationlifecycle.StageIntent, mutating, false,
+			) == mutationlifecycle.DispositionUnaccounted {
 				return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job failed immutable intent validation: %w", err))
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("created Job failed immutable intent validation: %w", err))
