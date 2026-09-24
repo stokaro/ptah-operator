@@ -1235,9 +1235,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return ctrl.Result{}, fmt.Errorf("create %s Job: %w", operation.Type, err)
 		}
 		if err := r.directReader().Get(ctx, key, job); err != nil {
-			if operation.Type == operatorv1alpha1.OperationApply {
-				return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("cannot confirm dispatched Apply Job: %w", err))
-			}
+			// The dispatch boundary is already durable, so the claim records
+			// that a Job may exist under the name it reserved. Requeueing
+			// re-enters through that claim's own verdict, which adopts the Job
+			// if it is there and settles the Apply as unaccounted for if it is
+			// not. Settling here instead would abandon a run a later read can
+			// still account for, which is what the migration family does not
+			// do.
 			return ctrl.Result{}, fmt.Errorf("read created %s Job: %w", operation.Type, err)
 		}
 		if err := validateJobIntent(job, expectedJob, schema); err != nil {
