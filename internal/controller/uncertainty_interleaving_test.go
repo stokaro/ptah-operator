@@ -3,8 +3,12 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -20,6 +24,11 @@ import (
 // issue is about. A migration had "outlives every other refusal" and no
 // suspension row; a schema had suspension and retry and no other-refusal row.
 // The case below is the one neither family had.
+//
+// A changed generation is here for both families, because it is the ordinary
+// thing that happens to a resource and the one most likely to be read as
+// "start again". Suspension and resume is here for the migration family, which
+// is the case neither family had.
 //
 // Two interleavings are deliberately not here.
 //
@@ -106,5 +115,102 @@ func TestAnUnresolvedMigrationRunSurvivesSuspensionAndResume(t *testing.T) {
 	if resumed.Status.ActiveOperation != nil &&
 		resumed.Status.ActiveOperation.Type == operatorv1alpha1.MigrationOperationApply {
 		t.Fatalf("resuming claimed an Apply with the record standing: %#v", resumed.Status.ActiveOperation)
+	}
+}
+
+// TestAnUnresolvedMigrationRunOutlivesANewerGeneration is the last of the four
+// interleavings #225 names.
+//
+// A spec edit is the most ordinary thing that happens to a resource, and it is
+// the one most likely to be read as "start again". It is not: the record asks
+// whether something changed the database, and editing the desired state
+// answers nothing about the run that already happened. The API server stamps a
+// new generation on the edit, so the bump is what a real edit looks like and a
+// fixture that omits it measures a state Kubernetes cannot produce.
+func TestAnUnresolvedMigrationRunOutlivesANewerGeneration(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationWithUnresolvedRun(t)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, verificationPolicyConfigMap())
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() before the edit: %v", err)
+	}
+	before := readMigration(t, api, migration)
+	// The control. A fixture whose record was already gone would pass every
+	// row below without the edit proving anything.
+	if before.Status.UnresolvedRun == nil {
+		t.Fatalf("the fixture holds no unresolved run, so nothing here was measured: %#v", before.Status)
+	}
+	unresolved := before.Status.UnresolvedRun.DeepCopy()
+
+	before.Spec.Interval = metav1.Duration{Duration: 7 * time.Minute}
+	before.Generation++ // what the API server stamps on a spec edit
+	if err := api.Update(context.Background(), before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() after the edit: %v", err)
+	}
+
+	edited := readMigration(t, api, migration)
+	if edited.Status.UnresolvedRun == nil {
+		t.Fatal("a newer desired generation cleared the record of a run nobody accounted for")
+	}
+	if edited.Status.UnresolvedRun.OperationID != unresolved.OperationID {
+		t.Fatalf("the edit rewrote the record it must not touch: %#v", edited.Status.UnresolvedRun)
+	}
+	if edited.Status.ActiveOperation != nil &&
+		edited.Status.ActiveOperation.Type == operatorv1alpha1.MigrationOperationApply {
+		t.Fatalf("the edit authorized an Apply with the record standing: %#v", edited.Status.ActiveOperation)
+	}
+}
+
+// TestPostApplyProofOutlivesANewerGeneration is the same row for the schema
+// family, whose record of work it cannot account for is the post-Apply
+// observation rather than an unresolved run.
+//
+// The proof is owed for an Apply that already ran. A newer desired generation
+// says what the schema should become next and says nothing about whether that
+// Apply changed the database, so the observation is still owed and the pass
+// must still be the one that discharges it.
+func TestPostApplyProofOutlivesANewerGeneration(t *testing.T) {
+	t.Parallel()
+
+	schema := safetyPostApplyObserveSchema(t)
+	schema.Status.ActiveOperation = nil
+	schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, verificationPolicyConfigMap())
+
+	stored := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), stored); err != nil {
+		t.Fatal(err)
+	}
+	// The control, for the same reason the migration row has one.
+	if stored.Status.PendingObservation == nil {
+		t.Fatalf("the fixture owes no proof, so nothing here was measured: %#v", stored.Status)
+	}
+	owed := stored.Status.PendingObservation.DeepCopy()
+
+	stored.Spec.Interval = metav1.Duration{Duration: 7 * time.Minute}
+	stored.Generation++ // what the API server stamps on a spec edit
+	if err := api.Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Namespace: schema.Namespace, Name: schema.Name},
+	}); err != nil {
+		t.Fatalf("Reconcile() after the edit: %v", err)
+	}
+
+	edited := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), edited); err != nil {
+		t.Fatal(err)
+	}
+	if edited.Status.PendingObservation == nil {
+		t.Fatal("a newer desired generation dropped the post-Apply proof the schema still owes")
+	}
+	if edited.Status.PendingObservation.ApplyOperationID != owed.ApplyOperationID {
+		t.Fatalf("the edit rewrote the proof it must not touch: %#v", edited.Status.PendingObservation)
 	}
 }
