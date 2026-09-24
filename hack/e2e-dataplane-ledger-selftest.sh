@@ -651,10 +651,60 @@ audit_with_jq_failure() (
 )
 
 # shellcheck disable=SC2317
-audit_with_missing_full_evidence() (
-	reset_fixture
+emit_running_job_list() {
+	printf '%s\n' '{"apiVersion":"batch/v1","kind":"JobList","items":[{"metadata":{"uid":"uid-1","name":"job-1","creationTimestamp":"2026-01-01T00:00:00Z"},"status":{"active":1}}]}'
+}
+
+emit_terminal_job_list() {
+	printf '%s\n' '{"apiVersion":"batch/v1","kind":"JobList","items":[{"metadata":{"uid":"uid-1","name":"job-1","creationTimestamp":"2026-01-01T00:00:00Z"},"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True"}]}}]}'
+}
+
+record_unaudited_job() {
 	printf '%s\n' '{"uid":"uid-1","name":"job-1","created":"2026-01-01T00:00:00Z","schema":"schema-1","operation":"plan"}' \
 		>"$OBSERVED_JOBS_FILE"
+}
+
+# The Job is gone, which is the failure this assertion exists for.
+audit_with_missing_full_evidence() (
+	reset_fixture
+	record_unaudited_job
+	kubectl() {
+		emit_empty_job_list
+	}
+	assert_observed_jobs_audited
+)
+
+# The Job finished and no audit recorded it, which is the same failure seen
+# one step earlier.
+audit_with_terminal_unaudited_job() (
+	reset_fixture
+	record_unaudited_job
+	kubectl() {
+		emit_terminal_job_list
+	}
+	assert_observed_jobs_audited
+)
+
+# The Job is still running. The operator reconciles on its own interval while
+# the phase winds down, so a Job it starts in those seconds is in the ledger
+# with nothing to audit yet. This must not fail.
+audit_with_running_unaudited_job() (
+	reset_fixture
+	record_unaudited_job
+	kubectl() {
+		emit_running_job_list
+	}
+	assert_observed_jobs_audited
+)
+
+# The API cannot be read, so whether the Job is gone is unknown and the
+# assertion refuses rather than guessing.
+audit_with_unreadable_job_api() (
+	reset_fixture
+	record_unaudited_job
+	kubectl() {
+		return 43
+	}
 	assert_observed_jobs_audited
 )
 
@@ -1445,6 +1495,14 @@ expect_failure 'final audit jq failure' \
 expect_failure 'missing full-audit evidence' \
 	'observed Job UID uid-1 disappeared without a complete credential audit' \
 	audit_with_missing_full_evidence
+expect_failure 'terminal unaudited Job' \
+	'observed Job UID uid-1 finished without a complete credential audit' \
+	audit_with_terminal_unaudited_job
+expect_failure 'unreadable Job API during the final audit' \
+	'could not read observed Job UID uid-1 back for the final audit assertion' \
+	audit_with_unreadable_job_api
+audit_with_running_unaudited_job >/dev/null ||
+	test_fail "a Job still running as the phase ends was reported as an audit gap"
 expect_failure 'new Job count jq failure' \
 	'could not assert the absence of new apply Jobs for schema-1' \
 	count_with_jq_failure
