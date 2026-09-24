@@ -11,7 +11,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage e2e-static e2e
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
