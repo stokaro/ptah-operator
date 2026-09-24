@@ -5,9 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
 
@@ -147,7 +151,31 @@ func migrationClaimRetirements() []claimRetirement {
 		return err
 	})
 
+	runFinished := retire(func(r *MigrationReconciler, migration *operatorv1alpha1.PtahMigration) error {
+		operation := migration.Status.ActiveOperation
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			Namespace: migration.Namespace, Name: operation.JobName, UID: "apply-job-uid",
+			// Already carrying a deadline, so harvesting it writes nothing and
+			// the only writes recorded below are the resource's own.
+			ResourceVersion: "1",
+		}}
+		job.Spec.TTLSecondsAfterFinished = ptr(int32(jobCleanupTTLSeconds))
+		_, err := r.consumeMigrationRun(context.Background(), migration, job, runner.Result{
+			Operation:            runner.OperationMigrationApply,
+			CoordinationDigest:   operation.CoordinationDigest,
+			TargetIdentityDigest: testDigest,
+			MigrationRun: &dataplane.MigrationRunReport{
+				ContractVersion: dataplane.SupportedMigrationRunContract,
+				Direction:       "up", Outcome: dataplane.MigrationOutcomeApplied,
+				Planned: []int64{3}, Applied: []int64{3},
+			},
+		})
+		return err
+	})
+
 	return []claimRetirement{
+		{family: "PtahMigration", name: "a run that finished", leased: true, retire: runFinished},
+		{family: "PtahMigration", name: "a run that finished, holding no Lease", leased: false, retire: runFinished},
 		{family: "PtahMigration", name: "a claim that cannot dispatch", leased: true, retire: cannotDispatch},
 		{family: "PtahMigration", name: "a claim that cannot dispatch, holding no Lease", leased: false, retire: cannotDispatch},
 		{family: "PtahMigration", name: "a claim whose dispatch deadline passed", leased: true, retire: wentStale},
