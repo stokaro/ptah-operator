@@ -140,8 +140,19 @@ acceptance-coverage:
 # The whole acceptance record #242 asks for: the candidate identity the tree
 # can answer, a disposition for every requirement, and the coverage table. It
 # awards no pass; what a build or a deployment decides is left blank and named.
+#
+# ACCEPTANCE_PROFILE points at a declared profile -- the digests, the installed
+# values, the operating and recovery targets, the run the evidence comes from,
+# and a disposition per requirement. The record fills itself from it and is
+# refused rather than printed when the profile would overstate it: a verdict
+# with no evidence, an accepted requirement beside an unfilled target, a tag
+# where a digest belongs.
 acceptance-record:
+ifeq ($(strip $(ACCEPTANCE_PROFILE)),)
 	@$(GO) run ./hack/acceptancecoverage -record
+else
+	@$(GO) run ./hack/acceptancecoverage -record -profile $(ACCEPTANCE_PROFILE)
+endif
 
 # This target performs live upstream discovery. Normal verification is offline.
 update-kubernetes-support:

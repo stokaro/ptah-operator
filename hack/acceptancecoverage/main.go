@@ -35,7 +35,18 @@ func main() {
 	operator := flag.String("operator", "edge", "the Ptah catalog row naming the candidate")
 	check := flag.Bool("check", false, "verify the coverage is complete and print nothing")
 	record := flag.Bool("record", false, "print the whole acceptance record rather than the coverage table alone")
+	profilePath := flag.String("profile", "", "a declared acceptance profile to fill the record from")
 	flag.Parse()
+
+	var declared *profile
+	if *profilePath != "" {
+		read, err := readProfile(*profilePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "acceptance coverage: %v\n", err)
+			os.Exit(1)
+		}
+		declared = read
+	}
 
 	table, err := buildCoverage(*root, *operator)
 	if err != nil {
@@ -46,7 +57,7 @@ func main() {
 		return
 	}
 	if *record {
-		fmt.Print(table.recordMarkdown(*root))
+		fmt.Print(table.recordMarkdown(*root, declared))
 		return
 	}
 	fmt.Print(table.markdown())
