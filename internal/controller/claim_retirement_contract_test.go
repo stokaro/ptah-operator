@@ -107,6 +107,10 @@ type claimRetirement struct {
 	// an obligation unconditionally would name an empty epoch, which is a
 	// release no later pass can perform.
 	leased bool
+	// owes is what the retirement must record. It is not always `leased`: a
+	// claim can hold a Lease it does not owe back, because an outstanding
+	// post-Apply proof inherited the epoch and still needs the realm.
+	owes   bool
 	retire func(t *testing.T, leased bool) []retiredClaim
 }
 
@@ -174,22 +178,43 @@ func migrationClaimRetirements() []claimRetirement {
 	})
 
 	return []claimRetirement{
-		{family: "PtahMigration", name: "a run that finished", leased: true, retire: runFinished},
-		{family: "PtahMigration", name: "a run that finished, holding no Lease", leased: false, retire: runFinished},
-		{family: "PtahMigration", name: "a claim that cannot dispatch", leased: true, retire: cannotDispatch},
-		{family: "PtahMigration", name: "a claim that cannot dispatch, holding no Lease", leased: false, retire: cannotDispatch},
-		{family: "PtahMigration", name: "a claim whose dispatch deadline passed", leased: true, retire: wentStale},
+		{family: "PtahMigration", name: "a run that finished", leased: true, owes: true, retire: runFinished},
+		{family: "PtahMigration", name: "a run that finished, holding no Lease", leased: false, owes: false, retire: runFinished},
+		{family: "PtahMigration", name: "a claim that cannot dispatch", leased: true, owes: true, retire: cannotDispatch},
+		{family: "PtahMigration", name: "a claim that cannot dispatch, holding no Lease", leased: false, owes: false, retire: cannotDispatch},
+		{family: "PtahMigration", name: "a claim whose dispatch deadline passed", leased: true, owes: true, retire: wentStale},
 	}
 }
 
-func schemaClaimRetirements() []claimRetirement {
-	policyChanged := func(t *testing.T, leased bool) []retiredClaim {
+// schemaRetirement arranges a schema whose claim is about to be retired and
+// records the status writes the retirement produced.
+//
+// proof is what separates the two arms of the rule. A post-Apply observation
+// carries the epoch the Apply took, so while one is outstanding the realm
+// belongs to the proof and the claim retiring under it owes nothing, whatever
+// it is holding.
+func schemaRetirement(
+	operation operatorv1alpha1.OperationType,
+	proof bool,
+	drive func(*SchemaReconciler, *operatorv1alpha1.PtahSchema) error,
+) func(*testing.T, bool) []retiredClaim {
+	return func(t *testing.T, leased bool) []retiredClaim {
 		t.Helper()
 
-		schema := safetyLockedOperationSchema(operatorv1alpha1.OperationApply)
+		schema := safetyLockedOperationSchema(operation)
 		if !leased {
 			schema.Status.ActiveOperation.LeaseEpoch = ""
 			schema.Status.ActiveOperation.CoordinationDigest = ""
+		}
+		if proof {
+			schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+				Outcome:              operatorv1alpha1.PendingObservationApplySucceeded,
+				ApplyOperationID:     "the-apply",
+				ApplyGeneration:      schema.Generation,
+				CoordinationDigest:   schema.Status.ActiveOperation.CoordinationDigest,
+				LeaseEpoch:           schema.Status.ActiveOperation.LeaseEpoch,
+				LeaseDurationSeconds: schema.Status.ActiveOperation.LeaseDurationSeconds,
+			}
 		}
 		reconciler, api := fakeReconciler(t, staticLogs{}, schema)
 		writes := &[]retiredClaim{}
@@ -203,17 +228,45 @@ func schemaClaimRetirements() []claimRetirement {
 		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), stored); err != nil {
 			t.Fatal(err)
 		}
-
-		if _, err := reconciler.verificationPolicyChanged(
-			context.Background(), stored, errors.New("the verification policy bytes changed")); err != nil {
+		if err := drive(reconciler, stored); err != nil {
 			t.Fatal(err)
 		}
 		return *writes
 	}
+}
+
+func schemaClaimRetirements() []claimRetirement {
+	policyChanged := schemaRetirement(operatorv1alpha1.OperationApply, false,
+		func(r *SchemaReconciler, schema *operatorv1alpha1.PtahSchema) error {
+			_, err := r.verificationPolicyChanged(
+				context.Background(), schema, errors.New("the verification policy bytes changed"))
+			return err
+		})
+	staleInputs := func(proof bool) func(*testing.T, bool) []retiredClaim {
+		return schemaRetirement(operatorv1alpha1.OperationPlan, proof,
+			func(r *SchemaReconciler, schema *operatorv1alpha1.PtahSchema) error {
+				_, err := r.discardStaleOperation(
+					context.Background(), schema, errors.New("the desired inputs changed"))
+				return err
+			})
+	}
+	approvalWithdrawn := schemaRetirement(operatorv1alpha1.OperationApply, false,
+		func(r *SchemaReconciler, schema *operatorv1alpha1.PtahSchema) error {
+			_, err := r.approvalBecameInvalid(context.Background(), schema)
+			return err
+		})
 
 	return []claimRetirement{
-		{family: "PtahSchema", name: "a verification policy that changed under the claim", leased: true, retire: policyChanged},
-		{family: "PtahSchema", name: "the same, holding no Lease", leased: false, retire: policyChanged},
+		{family: "PtahSchema", name: "a verification policy that changed under the claim", leased: true, owes: true, retire: policyChanged},
+		{family: "PtahSchema", name: "the same, holding no Lease", leased: false, owes: false, retire: policyChanged},
+		{family: "PtahSchema", name: "inputs that changed under a Plan", leased: true, owes: true, retire: staleInputs(false)},
+		{family: "PtahSchema", name: "inputs that changed under a Plan holding no Lease", leased: false, owes: false, retire: staleInputs(false)},
+		// The other arm of the rule, and the only row here where a claim holds
+		// a Lease and still owes nothing: the post-Apply proof inherited that
+		// epoch and the realm is its until the proof is discharged.
+		{family: "PtahSchema", name: "inputs that changed under a Plan owing proof", leased: true, owes: false, retire: staleInputs(true)},
+		{family: "PtahSchema", name: "an approval withdrawn under an Apply", leased: true, owes: true, retire: approvalWithdrawn},
+		{family: "PtahSchema", name: "an approval withdrawn under an Apply holding no Lease", leased: false, owes: false, retire: approvalWithdrawn},
 	}
 }
 
@@ -234,9 +287,9 @@ func TestRetiringAClaimRecordsTheReleaseItOwes(t *testing.T) {
 			if !reached {
 				t.Fatalf("the fixture never gave the claim up, so nothing here was measured: %#v", writes)
 			}
-			if retirement.owed != row.leased {
+			if retirement.owed != row.owes {
 				t.Fatalf("the write that dropped the claim recorded owed=%t, want %t; writes: %#v",
-					retirement.owed, row.leased, writes)
+					retirement.owed, row.owes, writes)
 			}
 		})
 	}
