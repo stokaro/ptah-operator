@@ -1790,8 +1790,40 @@ assert_observed_jobs_audited() {
 	fi
 	while IFS= read -r observed_uid; do
 		[ -n "$observed_uid" ] || continue
-		grep -Fx "$observed_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null ||
+		grep -Fx "$observed_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null && continue
+		# The audit runs when a Job terminates, so what this asserts is that
+		# every observed Job which terminated was audited -- not that every
+		# Job the ledger ever saw did. The operator keeps reconciling on its
+		# own interval while the phase winds down, and a Job it starts in
+		# those seconds enters the ledger and is still running when this
+		# sweep reads it. Demanding its audit measures the phase's exit
+		# timing rather than the operator.
+		#
+		# So read the Job back before deciding. Gone is the failure this
+		# assertion exists for: something ran and its credentials were never
+		# checked. Present and terminal is the same failure seen earlier.
+		# Present and running is neither, and saying so distinguishes a
+		# vanished Job from a phase that ended first -- today they read
+		# identically, and one of them is a false failure that costs a
+		# lifecycle.
+		if ! unaudited_jobs=$(k -n "$TEST_NAMESPACE" get jobs -o json 2>/dev/null); then
+			fail "could not read observed Job UID $observed_uid back for the final audit assertion"
+		fi
+		if ! unaudited_job=$(printf '%s\n' "$unaudited_jobs" | jq -c \
+			--arg uid "$observed_uid" '[.items[] | select(.metadata.uid == $uid)][0] // empty'); then
+			fail "could not project observed Job UID $observed_uid for the final audit assertion"
+		fi
+		[ -n "$unaudited_job" ] ||
 			fail "observed Job UID $observed_uid disappeared without a complete credential audit"
+		printf '%s\n' "$unaudited_job" | jq -e '
+          ((.status.succeeded // 0) + (.status.failed // 0)) == 0 and
+          ((.status.conditions // []) |
+            map(select((.type == "Complete" or .type == "Failed") and .status == "True")) |
+            length) == 0
+        ' >/dev/null ||
+			fail "observed Job UID $observed_uid finished without a complete credential audit"
+		printf 'e2e data plane: observed Job UID %s is still running as this phase ends; its credential audit belongs to whatever finishes it\n' \
+			"$observed_uid"
 	done <"$OBSERVED_JOB_UIDS_FILE"
 }
 
