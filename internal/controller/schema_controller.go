@@ -2752,9 +2752,19 @@ func (r *SchemaReconciler) executionBindingChanged(
 		}
 		before := schema.DeepCopy()
 		retainReadOnlyOperation := isReadOnlyOperation(operation)
-		if operation != nil && !retainReadOnlyOperation &&
-			(operation.Type == operatorv1alpha1.OperationApply ||
-				operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil) &&
+		// Apply is the only claim retired here that can owe the database back,
+		// and naming it is what keeps that true. isReadOnlyOperation answers
+		// false for anything it does not recognize, so !retainReadOnlyOperation
+		// is not "this is an Apply" -- it is "this is an Apply, or a type this
+		// binary has never heard of", which a stored object written by a newer
+		// operator supplies. Retiring one of those would hand back a database
+		// under an epoch belonging to work this binary cannot reason about.
+		//
+		// The condition used to carry a second arm for a Plan with no proof
+		// outstanding. That one really was unreachable: isReadOnlyOperation
+		// counts Plan among the read-only operations, so the conjunct above
+		// had already excluded it.
+		if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
 			operation.LeaseEpoch != "" {
 			if err := stageOperationLockRelease(schema, operation); err != nil {
 				return ctrl.Result{}, err
