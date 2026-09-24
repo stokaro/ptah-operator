@@ -154,6 +154,15 @@ else
 	@$(GO) run ./hack/acceptancecoverage -record -profile $(ACCEPTANCE_PROFILE)
 endif
 
+# The state of every issue the #242 review map links, per requirement, read
+# when it runs. The map deliberately stores no states, so this reads them and
+# stores none either. It awards nothing: a closed issue is not evidence about a
+# candidate.
+#
+# This target performs live forge discovery. Normal verification is offline.
+acceptance-issue-map:
+	@./hack/acceptance-issue-map.sh
+
 # This target performs live upstream discovery. Normal verification is offline.
 update-kubernetes-support:
 	$(GO) run ./hack/updatekubernetessupport
