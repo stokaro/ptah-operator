@@ -942,9 +942,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			}
 		}
 		before := schema.DeepCopy()
-		if (operation.Type == operatorv1alpha1.OperationApply ||
-			operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil) &&
-			operation.LeaseEpoch != "" {
+		if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 			if err := stageOperationLockRelease(schema, operation); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -1729,9 +1727,7 @@ func (r *SchemaReconciler) refuseProtectedTable(
 func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	before := schema.DeepCopy()
-	if operation != nil && (operation.Type == operatorv1alpha1.OperationApply ||
-		operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil) &&
-		operation.LeaseEpoch != "" {
+	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -2680,7 +2676,7 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 		return ctrl.Result{}, err
 	}
 	before := schema.DeepCopy()
-	if operation != nil && operation.Type == operatorv1alpha1.OperationApply && operation.LeaseEpoch != "" {
+	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -2892,8 +2888,7 @@ func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
 	}
 
 	before := schema.DeepCopy()
-	if operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil &&
-		operation.LeaseEpoch != "" {
+	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -3169,8 +3164,7 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 	}
 	before := schema.DeepCopy()
 	operation := schema.Status.ActiveOperation
-	if operation != nil && operation.Type == operatorv1alpha1.OperationPlan &&
-		schema.Status.PendingObservation == nil && operation.LeaseEpoch != "" {
+	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -3212,20 +3206,14 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 		return ctrl.Result{}, err
 	}
 	before := schema.DeepCopy()
-	if operation != nil && operation.Type == operatorv1alpha1.OperationApply && operation.LeaseEpoch != "" {
+	switch mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) {
+	case mutationlifecycle.OwnerClaim:
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
-	}
-	if operation != nil && operation.Type == operatorv1alpha1.OperationPlan {
-		if schema.Status.PendingObservation != nil {
-			if err := stagePendingLockRelease(schema, schema.Status.PendingObservation); err != nil {
-				return ctrl.Result{}, err
-			}
-		} else if operation.LeaseEpoch != "" {
-			if err := stageOperationLockRelease(schema, operation); err != nil {
-				return ctrl.Result{}, err
-			}
+	case mutationlifecycle.OwnerProof:
+		if err := stagePendingLockRelease(schema, schema.Status.PendingObservation); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 	schema.Status.ActiveOperation = nil
@@ -4156,6 +4144,23 @@ func targetLockReleaseForPending(
 		LeaseEpoch:           pending.LeaseEpoch,
 		LeaseDurationSeconds: pending.LeaseDurationSeconds,
 	})
+}
+
+// schemaRealmClaim describes the active claim to the shared realm-ownership
+// decision. A Plan or an Observe is the sort of claim a pending observation
+// carries out; an Apply holds the realm in its own right.
+func schemaRealmClaim(schema *operatorv1alpha1.PtahSchema) mutationlifecycle.RealmClaim {
+	operation := schema.Status.ActiveOperation
+	if operation == nil {
+		return mutationlifecycle.RealmClaim{ProofOutstanding: schema.Status.PendingObservation != nil}
+	}
+	return mutationlifecycle.RealmClaim{
+		Mutating: operation.Type == operatorv1alpha1.OperationApply,
+		ServesProof: operation.Type == operatorv1alpha1.OperationPlan ||
+			operation.Type == operatorv1alpha1.OperationObserve,
+		Locked:           operation.LeaseEpoch != "",
+		ProofOutstanding: schema.Status.PendingObservation != nil,
+	}
 }
 
 func stageOperationLockRelease(
