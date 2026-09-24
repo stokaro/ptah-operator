@@ -166,3 +166,106 @@ func TestTheRecordShowsTheEvidenceBehindADisposition(t *testing.T) {
 		t.Fatal("the profile changed more rows than it named")
 	}
 }
+
+// An exclusion is the cheapest way to turn a failing requirement into a
+// passing record, so #242 fences it: narrow the use, name an owner and a
+// review date, say how the excluded configuration is prevented or detected,
+// and never waive the four protections. These are that fence.
+func TestAnExclusionThatWouldWaiveAProtectionIsRefused(t *testing.T) {
+	t.Parallel()
+
+	valid := `,"exclusions":[{"requirement":"PA-09","scope":"no alerting in the trial profile",` +
+		`"owner":"platform team","reviewBy":"2027-03-01","detection":"install refuses without a receiver"}]`
+
+	for _, row := range []struct {
+		name    string
+		body    string
+		refusal string
+	}{
+		{
+			name:    "a requirement that carries unauthorized mutation",
+			body:    strings.Replace(valid, `"PA-09"`, `"PA-02"`, 1),
+			refusal: "carries unauthorized mutation",
+		},
+		{
+			name:    "a requirement that carries unsafe replay",
+			body:    strings.Replace(valid, `"PA-09"`, `"PA-03"`, 1),
+			refusal: "unsafe replay or overlap",
+		},
+		{
+			name:    "a requirement that carries credential disclosure",
+			body:    strings.Replace(valid, `"PA-09"`, `"PA-05"`, 1),
+			refusal: "credential disclosure",
+		},
+		{
+			name:    "an exclusion with no owner",
+			body:    strings.Replace(valid, `"owner":"platform team"`, `"owner":""`, 1),
+			refusal: "names no owner",
+		},
+		{
+			name:    "a review date that is not a date",
+			body:    strings.Replace(valid, `"2027-03-01"`, `"when we get to it"`, 1),
+			refusal: "never comes back for review",
+		},
+		{
+			name:    "a requirement this record does not carry",
+			body:    strings.Replace(valid, `"PA-09"`, `"PA-99"`, 1),
+			refusal: "not a requirement this record carries",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := strings.Replace(completeProfile, "\n}", row.body+"\n}", 1)
+			if _, err := readProfile(writeProfile(t, body)); err == nil {
+				t.Fatal("the exclusion was accepted")
+			} else if !strings.Contains(err.Error(), row.refusal) {
+				t.Fatalf("refused for the wrong reason: %v", err)
+			}
+		})
+	}
+}
+
+// "Every applicable requirement must pass." A decision is the one place a
+// record can say that once, about everything, so it is the one most worth
+// refusing.
+func TestADecisionTheRequirementsDoNotSupportIsRefused(t *testing.T) {
+	t.Parallel()
+
+	accepted := `,"decision":"Accepted for the stated profile"`
+
+	t.Run("accepted with eleven requirements unassessed", func(t *testing.T) {
+		t.Parallel()
+
+		body := strings.Replace(completeProfile, "\n}", accepted+"\n}", 1)
+		_, err := readProfile(writeProfile(t, body))
+		if err == nil {
+			t.Fatal("the decision was accepted")
+		}
+		if !strings.Contains(err.Error(), "every applicable requirement must pass") {
+			t.Fatalf("refused for the wrong reason: %v", err)
+		}
+		if !strings.Contains(err.Error(), "PA-02") {
+			t.Fatalf("the refusal does not name what is outstanding: %v", err)
+		}
+	})
+
+	t.Run("a decision the issue does not define", func(t *testing.T) {
+		t.Parallel()
+
+		body := strings.Replace(completeProfile, "\n}", `,"decision":"Shipped"`+"\n}", 1)
+		_, err := readProfile(writeProfile(t, body))
+		if err == nil || !strings.Contains(err.Error(), "which is not one of") {
+			t.Fatalf("a decision outside the three was not refused: %v", err)
+		}
+	})
+
+	t.Run("rejected needs nothing, because it claims nothing", func(t *testing.T) {
+		t.Parallel()
+
+		body := strings.Replace(completeProfile, "\n}", `,"decision":"Rejected"`+"\n}", 1)
+		if _, err := readProfile(writeProfile(t, body)); err != nil {
+			t.Fatalf("a rejection was refused: %v", err)
+		}
+	})
+}

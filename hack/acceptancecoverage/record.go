@@ -160,7 +160,29 @@ func (c *coverage) recordMarkdown(root string, declared *profile) string {
 			entry.id, entry.title, disposed, entry.needs, entry.repository)
 	}
 
-	out.WriteString("\n")
+	out.WriteString("\n## Decision\n\n")
+	decision := dispositionNotAssessed
+	if declared != nil && declared.Decision != "" {
+		decision = declared.Decision
+	}
+	fmt.Fprintf(&out, "%s\n\n", decision)
+	if decision == dispositionNotAssessed {
+		out.WriteString("Required evidence or profile values are missing. A decision is recorded by a\n")
+		out.WriteString("declared profile, and is refused while any requirement is neither accepted nor\n")
+		out.WriteString("excluded.\n\n")
+	}
+
+	if declared != nil && len(declared.Exclusions) > 0 {
+		out.WriteString("### Exclusions\n\n")
+		out.WriteString("| Requirement | Narrowed to | Owner | Review by | Prevented or detected by |\n")
+		out.WriteString("| --- | --- | --- | --- | --- |\n")
+		for _, excluded := range declared.Exclusions {
+			fmt.Fprintf(&out, "| %s | %s | %s | %s | %s |\n",
+				excluded.Requirement, excluded.Scope, excluded.Owner, excluded.ReviewBy, excluded.Detection)
+		}
+		out.WriteString("\n")
+	}
+
 	out.WriteString(c.markdown())
 	return out.String()
 }

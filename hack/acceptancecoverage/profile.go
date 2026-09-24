@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // A declared profile is the half of the acceptance record this tree cannot
@@ -28,6 +29,32 @@ type profile struct {
 	RecoveryObjectives  string                 `json:"recoveryObjectives"`
 	RunEvidence         string                 `json:"runEvidence"`
 	Requirements        map[string]disposition `json:"requirements"`
+	Exclusions          []exclusion            `json:"exclusions"`
+	Decision            string                 `json:"decision"`
+}
+
+// exclusion is a requirement the profile narrows out of the supported use.
+//
+// #242 permits them and fences them: one must narrow the use, name an owner
+// and a review date, and say how the excluded configuration is prevented or
+// detected. The fence exists because an exclusion is the cheapest way to turn
+// a failing requirement into a passing record.
+type exclusion struct {
+	Requirement string `json:"requirement"`
+	Scope       string `json:"scope"`
+	Owner       string `json:"owner"`
+	ReviewBy    string `json:"reviewBy"`
+	Detection   string `json:"detection"`
+}
+
+// The protections no exclusion may waive, and the requirement each lives in.
+// Read from #242: "An exclusion cannot waive unauthorized mutation, unsafe
+// replay or overlap, credential disclosure, or loss of the record of an
+// unresolved Apply."
+var unwaivable = map[string]string{
+	"PA-02": "unauthorized mutation",
+	"PA-03": "unsafe replay or overlap, and the record of an unresolved Apply",
+	"PA-05": "credential disclosure and the authority boundary",
 }
 
 // disposition is one requirement's verdict and what stands behind it.
@@ -112,7 +139,111 @@ func readProfile(path string) (*profile, error) {
 			}
 		}
 	}
+	if err := declared.validateExclusions(known); err != nil {
+		return nil, err
+	}
+	if err := declared.validateDecision(); err != nil {
+		return nil, err
+	}
 	return declared, nil
+}
+
+// validateExclusions holds each exclusion to the shape #242 permits.
+func (p *profile) validateExclusions(known map[string]bool) error {
+	seen := map[string]bool{}
+	for _, excluded := range p.Exclusions {
+		if !known[excluded.Requirement] {
+			return fmt.Errorf(
+				"acceptance profile: an exclusion names %q, which is not a requirement this record carries",
+				excluded.Requirement)
+		}
+		if seen[excluded.Requirement] {
+			return fmt.Errorf("acceptance profile: %s is excluded twice", excluded.Requirement)
+		}
+		seen[excluded.Requirement] = true
+		if waives, protected := unwaivable[excluded.Requirement]; protected {
+			return fmt.Errorf(
+				"acceptance profile: %s cannot be excluded, because it carries %s, "+
+					"and an exclusion may narrow the supported use without waiving that",
+				excluded.Requirement, waives)
+		}
+		for _, field := range []struct {
+			name  string
+			value string
+		}{
+			{"scope", excluded.Scope},
+			{"owner", excluded.Owner},
+			{"reviewBy", excluded.ReviewBy},
+			{"detection", excluded.Detection},
+		} {
+			if strings.TrimSpace(field.value) == "" {
+				return fmt.Errorf(
+					"acceptance profile: the exclusion for %s names no %s; a permitted exclusion "+
+						"narrows the use, identifies an owner and a review date, and says how the "+
+						"excluded configuration is prevented or detected",
+					excluded.Requirement, field.name)
+			}
+		}
+		if _, err := time.Parse("2006-01-02", excluded.ReviewBy); err != nil {
+			return fmt.Errorf(
+				"acceptance profile: the exclusion for %s has reviewBy %q, which is not a date; "+
+					"an exclusion without one never comes back for review",
+				excluded.Requirement, excluded.ReviewBy)
+		}
+	}
+	return nil
+}
+
+// validateDecision refuses a decision the requirements do not support.
+//
+// This is the one #242 turns on: "Every applicable requirement must pass."
+// A record can be accepted only where every requirement is accepted or
+// explicitly excluded, and where the profile acceptance is stated for is
+// fixed.
+func (p *profile) validateDecision() error {
+	switch p.Decision {
+	case "", dispositionNotAssessed, dispositionRejected:
+		return nil
+	case dispositionAccepted:
+	default:
+		return fmt.Errorf(
+			"acceptance profile: the decision is %q, which is not one of %q, %q or %q",
+			p.Decision, dispositionNotAssessed, dispositionRejected, dispositionAccepted)
+	}
+
+	if missing := p.unfilled(); len(missing) > 0 {
+		return fmt.Errorf(
+			"acceptance profile: the decision is accepted while the profile leaves %s unfilled; "+
+				"the profile acceptance would be stated for is not yet fixed",
+			strings.Join(missing, ", "))
+	}
+	excluded := map[string]bool{}
+	for _, entry := range p.Exclusions {
+		excluded[entry.Requirement] = true
+	}
+	var outstanding []string
+	for _, entry := range requirements {
+		if excluded[entry.id] {
+			continue
+		}
+		if p.verdictFor(entry.id).Disposition != dispositionAccepted {
+			outstanding = append(outstanding, entry.id)
+		}
+	}
+	if len(outstanding) > 0 {
+		return fmt.Errorf(
+			"acceptance profile: the decision is accepted while %s %s neither accepted nor excluded; "+
+				"every applicable requirement must pass",
+			strings.Join(outstanding, ", "), plural(len(outstanding)))
+	}
+	return nil
+}
+
+func plural(count int) string {
+	if count == 1 {
+		return "is"
+	}
+	return "are"
 }
 
 // unfilled names the candidate values the profile has not declared. A record
