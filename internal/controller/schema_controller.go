@@ -1493,11 +1493,9 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 
 	before := schema.DeepCopy()
 	if operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil {
-		release, err := targetLockReleaseForOperation(operation)
-		if err != nil {
+		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
-		schema.Status.PendingLockRelease = release
 	}
 	schema.Status.ActiveOperation = nil
 	schema.Status.Plan = nil
@@ -1685,11 +1683,9 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	next := metav1.NewTime(r.now().Add(interval(schema)))
 	before := schema.DeepCopy()
 	if operation != nil && schema.Status.PendingObservation == nil {
-		release, err := targetLockReleaseForOperation(operation)
-		if err != nil {
+		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
-		schema.Status.PendingLockRelease = release
 	}
 	schema.Status.ActiveOperation = nil
 	schema.Status.Plan = nil
@@ -2033,17 +2029,13 @@ func (r *SchemaReconciler) consumeResult(
 	}
 
 	if completedPending != nil {
-		release, err := targetLockReleaseForPending(completedPending)
-		if err != nil {
+		if err := stagePendingLockRelease(schema, completedPending); err != nil {
 			return ctrl.Result{}, err
 		}
-		schema.Status.PendingLockRelease = release
 	} else if operation != nil && operation.Type == operatorv1alpha1.OperationPlan {
-		release, err := targetLockReleaseForOperation(operation)
-		if err != nil {
+		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
-		schema.Status.PendingLockRelease = release
 	}
 	schema.Status.ActiveOperation = nil
 	if err := r.patchStatus(ctx, before, schema); err != nil {
@@ -2411,11 +2403,9 @@ func (r *SchemaReconciler) retryOperationAs(
 	// enters this retry path because its dispatch outcome may be ambiguous.
 	operation.AdmissionSnapshot = nil
 	if operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil {
-		release, err := targetLockReleaseForOperation(operation)
-		if err != nil {
+		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
-		schema.Status.PendingLockRelease = release
 		operation.LeaseEpoch = ""
 		operation.LeaseContinuityLost = false
 	}
