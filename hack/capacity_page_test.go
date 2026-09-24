@@ -91,6 +91,50 @@ func TestTheCapacityPageAgreesWithItsSources(t *testing.T) {
 // arithmetic into a capacity claim is the failure worth refusing: the numbers
 // are a lower bound on cost, and reading them as a limit is how a deployment
 // sizes itself on nothing.
+// #224's first acceptance criterion is a declaration rather than a
+// measurement: name the workload dimensions a supported envelope covers. They
+// are listed here because the page cannot derive them from anything in the
+// tree, and because a measurement that quietly drops one describes an
+// installation nobody has.
+var workloadDimensions = []struct {
+	name  string
+	marks []string
+}{
+	{"resource and realm count", []string{"realms across them"}},
+	{"refresh interval", []string{"`spec.interval`"}},
+	{"plan size", []string{"Plan size"}},
+	{"migration history length", []string{"Migration history length"}},
+	{"approval backlog", []string{"Approvals waiting"}},
+	{"concurrent changes", []string{"Changes at once"}},
+}
+
+func TestTheCapacityPageNamesEveryWorkloadDimension(t *testing.T) {
+	t.Parallel()
+	page := collapsed(string(readRepositoryFile(t, capacityPage)))
+	if !strings.Contains(page, "The dimensions an envelope has to be stated over") {
+		t.Fatal("the page no longer names the axes a measured envelope would vary")
+	}
+	for _, dimension := range workloadDimensions {
+		found := false
+		for _, mark := range dimension.marks {
+			if strings.Contains(page, mark) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the page names no dimension for %s, so a measurement could hold it fixed and read as complete",
+				dimension.name)
+		}
+	}
+	// The section says what a measurement would have to produce, and must not
+	// start producing it. The no-claim gate covers the page; this covers the
+	// one place a maximum would most plausibly be typed.
+	if regexp.MustCompile(`(?i)(maximum|up to) [0-9]`).MatchString(page) {
+		t.Error("a dimension grew a number, which is a capacity claim nothing here measured")
+	}
+}
+
 func TestTheCapacityPageClaimsNoMeasurement(t *testing.T) {
 	t.Parallel()
 	page := collapsed(string(readRepositoryFile(t, capacityPage)))
