@@ -653,6 +653,71 @@ func TestValidationHandlerRejectsUnsafeCurrentFormatPendingApplyJobCleanup(t *te
 				job.Status.Conditions = nil
 			},
 		},
+
+		// When the permission applies. Scheduling the deletion of the Job of a
+		// run nobody accounted for is allowed only at the boundary where the
+		// claim has already become durable evidence and nothing is in flight
+		// against it.
+		{
+			name: "a claim is in flight again",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+					Type: operatorv1alpha1.OperationObserve, ID: "a-fresh-observation",
+					JobName: "ptah-observe-app",
+				}
+			},
+		},
+		{
+			name: "the schema has moved past the fence",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.Phase = operatorv1alpha1.PhaseObserving
+			},
+		},
+		{
+			// A run whose outcome is known is not this permission's subject.
+			name: "the pending outcome is no longer unknown",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingObservation.Outcome =
+					operatorv1alpha1.PendingObservationApplySucceeded
+			},
+		},
+		{
+			name: "the pending observation still owes a plan",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingObservation.PlanRequired = true
+			},
+		},
+		{
+			// The Job belongs to the binding in force, so it is not a
+			// predecessor and this path is not what may touch it.
+			name: "the Job belongs to the binding still in force",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingObservation.Plan.ExecutionBindingID =
+					schema.Status.ExecutionBinding.Epoch
+			},
+		},
+
+		// Which object the permission applies to. The evidence names one Job,
+		// and stamping a TTL schedules its deletion, so naming another would
+		// collect the only record of what some other run did.
+		{
+			name: "the evidence names no Apply operation",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingObservation.ApplyOperationID = ""
+			},
+		},
+		{
+			name: "the evidence names another Job",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingObservation.ApplyJobName += "-beside-it"
+			},
+		},
+		{
+			name: "the evidence names another Job identity",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingObservation.ApplyJobUID = "a-job-that-ran-later"
+			},
+		},
 	}
 	for _, test := range tests {
 		test := test
