@@ -436,12 +436,13 @@ func (r *MigrationReconciler) consumeMigrationRun(
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.stageOwedMigrationRelease(ctx, migration, operation)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome, bounded(message, 256))
 	r.observeMigrationRun(operation, outcome)
-	r.releaseMigrationApplyLock(ctx, migration, operation)
+	r.settleOwedMigrationRelease(ctx, migration)
 	return ctrl.Result{Requeue: true}, nil
 }
 
@@ -584,6 +585,46 @@ func (r *MigrationReconciler) completeMigrationPendingLockRelease(
 	before := migration.DeepCopy()
 	return mutationlifecycle.CompleteRelease(ctx, r.Locks, r.LockNamespace, migrationLockOwner{migration},
 		func(ctx context.Context) error { return r.patchMigrationStatus(ctx, before, migration) })
+}
+
+// stageOwedMigrationRelease records the release a claim owes into the same
+// write that drops the claim.
+//
+// The claim is the only stored thing that names the epoch the Lease was taken
+// with, so a pass that persists its removal and releases afterwards can stop
+// in between and leave the database held by an epoch nothing names. Every
+// other claimant on it then waits out the whole lease duration -- sixteen
+// minutes by default -- for a run that has already finished. Staging first
+// turns that into one more pass.
+//
+// Recording is best effort for the reason recordOwedMigrationLockRelease is:
+// the caller's own write carries evidence that must not be lost to a
+// bookkeeping failure, and where the record cannot be staged the Lease expires
+// on its own as it did before.
+func (r *MigrationReconciler) stageOwedMigrationRelease(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) {
+	if err := stageMigrationLockRelease(migration, operation); err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not record the database release the claim owes", "error", err.Error())
+	}
+}
+
+// settleOwedMigrationRelease performs a staged release once the claim it
+// belonged to is gone. A failure leaves the record standing, which is what the
+// top of the next pass is for, so it does not fail the pass that carries the
+// run's evidence.
+func (r *MigrationReconciler) settleOwedMigrationRelease(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) {
+	if migration.Status.PendingLockRelease == nil {
+		return
+	}
+	if err := r.completeMigrationPendingLockRelease(ctx, migration); err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not release the database lock", "error", err.Error())
+	}
 }
 
 // releaseMigrationApplyLock hands the database back. A failure to release is
