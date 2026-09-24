@@ -2032,7 +2032,13 @@ func (r *SchemaReconciler) consumeResult(
 		if err := stagePendingLockRelease(schema, completedPending); err != nil {
 			return ctrl.Result{}, err
 		}
-	} else if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
+		// Not RealmHeldBy. A completed Apply has just handed the realm to the
+		// post-Apply observation above, which inherited its epoch, and the helper
+		// reads a mutating claim with a proof outstanding as the realm's owner --
+		// correct where the Apply is being retired and the proof restarted, wrong
+		// here where the Apply succeeded and the proof is what runs next. This arm
+		// is about a Plan finishing with no proof to complete.
+	} else if operation != nil && operation.Type == operatorv1alpha1.OperationPlan {
 		if err := stageOperationLockRelease(schema, operation); err != nil {
 			return ctrl.Result{}, err
 		}
