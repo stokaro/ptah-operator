@@ -29,14 +29,23 @@ import (
 // twice. Where a restart does carry an obligation -- a schema renewing the
 // Lease its proof still owes -- it belongs with the Lease.
 //
-// A refusal arriving while a *schema* owes proof, because the schema answers
-// it by ordering rather than by a guard, and the fixture needed to demonstrate
-// that does not exist yet: every schema in the suite that owes proof also
-// carries a live read-only claim, whose own failure is what the pass reports.
-// Both refusals I tried -- an unsupported engine and an invalid exclude
-// selector -- break the operation the proof depends on, so a passing test
-// would have said nothing about ordering and a failing one nothing about the
-// refusal. The row needs a schema owing proof with no claim in flight.
+// A refusal arriving while a *schema* owes proof, because there is no such
+// interleaving to write. The note here used to say the row needed a fixture
+// nobody had built -- a schema owing proof with no claim in flight -- so it
+// was built, and the answer is structural rather than missing.
+//
+// schema_controller.go returns on `schema.Status.PendingObservation != nil`
+// well above the realm census and above every refusal decided below it. A
+// schema owing proof discharges the proof and never reaches them. Measured
+// with the sharpest refusal available: a second resource claiming the same
+// database realm without declaring it shared, which the census does count as
+// a conflict on exactly this object pair -- two schemas, both undeclared --
+// and which the pass never asks about, claiming the read-only operation that
+// discharges the proof instead.
+//
+// So the schema family answers this interleaving by ordering, and the ordering
+// is the thing to hold. That belongs with the boundary itself, not with a test
+// asserting that a refusal which cannot arrive does not clear a record.
 //
 // Where a family already answers an interleaving, its existing test does; a
 // second one measuring the same thing is not coverage.
