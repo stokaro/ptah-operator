@@ -1245,10 +1245,9 @@ func TestApplyPodCarriesIndependentAbsoluteAndRuntimeDeadlines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The Job outlives the window it carries by the grace, so a Pod that starts
-	// near the end of the window meets the runner's refusal rather than
-	// Kubernetes' DeadlineExceeded, which would leave no frame at all.
-	wantDeadline := int64(600) + int64(JobDeadlineGrace/time.Second)
+	// A schema Apply Job ends with the window it carries; only a migration
+	// Apply takes JobDeadlineGrace.
+	wantDeadline := int64(600)
 	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != wantDeadline {
 		t.Fatalf("Job activeDeadlineSeconds = %#v, want %d", job.Spec.ActiveDeadlineSeconds, wantDeadline)
 	}
@@ -1589,10 +1588,9 @@ func operationFixture(operation operatorv1alpha1.OperationType) operatorv1alpha1
 				LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 			},
 		}
-		// The window is 600 seconds. The Job outlives it by JobDeadlineGrace so a
-		// late Pod meets the runner's refusal, and the Lease outlives the Job by
-		// the controller's own minute so nothing runs after the realm moves on.
-		active.LeaseDurationSeconds = int32((600*time.Second + JobDeadlineGrace + time.Minute) / time.Second)
+		// The window is 600 seconds, and the Lease outlives it by the
+		// controller's own minute so nothing runs after the realm moves on.
+		active.LeaseDurationSeconds = 660
 		dispatchNotAfter := metav1.NewTime(active.StartedAt.Add(600 * time.Second))
 		active.DispatchNotAfter = &dispatchNotAfter
 		active.ExecutionNotAfter = dispatchNotAfter.DeepCopy()

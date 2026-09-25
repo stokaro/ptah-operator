@@ -4535,9 +4535,9 @@ func TestApplyLockDurationIsImmutableAfterClaim(t *testing.T) {
 	if claimed.Status.ActiveOperation == nil {
 		t.Fatal("Apply claim did not persist ActiveOperation")
 	}
-	// The window, the grace that lets a late Pod reach the runner's refusal, and
-	// the minute by which the Lease outlives that Job.
-	wantedDuration := int32((300*time.Second + workload.JobDeadlineGrace + time.Minute) / time.Second)
+	// The window and the minute by which the Lease outlives it. A schema Apply
+	// Job takes no grace past its window.
+	const wantedDuration = int32(360)
 	if claimed.Status.ActiveOperation.LeaseDurationSeconds != wantedDuration {
 		t.Fatalf("persisted lease duration = %d, want %d", claimed.Status.ActiveOperation.LeaseDurationSeconds, wantedDuration)
 	}

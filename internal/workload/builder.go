@@ -277,6 +277,7 @@ func (b Builder) Build(
 		operation.Type == operatorv1alpha1.OperationApply,
 		operation.StartedAt,
 		operation.ExecutionNotAfter,
+		0,
 	)
 	if err != nil {
 		return nil, err
@@ -1302,7 +1303,7 @@ func OperationIDLabelValue(value string) string { return shortLabelHash(value) }
 // A window that has already closed yields no Job: Kubernetes refuses a
 // non-positive activeDeadlineSeconds, and a claim whose execution bound passed
 // before dispatch is one the controller has to retire rather than send.
-// JobDeadlineGrace is how long a mutating Job outlives the window that
+// JobDeadlineGrace is how long a migration Apply Job outlives the window that
 // authorized it.
 //
 // Without it the two die together. The window ends at startedAt plus the
@@ -1326,6 +1327,11 @@ func OperationIDLabelValue(value string) string { return shortLabelHash(value) }
 // now covers this grace as well, so a Job bounded by it cannot still be running
 // when the Lease has gone to another operation. The child's context deadline is
 // the window itself, so the extra life is refusal time, not execution time.
+//
+// A schema Apply takes no grace. Its Job ends with its window, and the fault
+// suite proves what Kubernetes' DeadlineExceeded leaves behind on that path; a
+// runner deadline a minute ahead of the Job's would make that proof one nothing
+// can reach. The late start the grace makes observable is #182's, a migration's.
 const JobDeadlineGrace = time.Minute
 
 // maximumActiveDeadlineSeconds is what the API accepts and what the typed Job
@@ -1337,6 +1343,7 @@ func boundedDeadline(
 	bounded bool,
 	startedAt metav1.Time,
 	notAfter *metav1.Time,
+	grace time.Duration,
 ) (int64, error) {
 	if !bounded || notAfter == nil {
 		return fallback, nil
@@ -1345,7 +1352,7 @@ func boundedDeadline(
 	if remaining <= 0 {
 		return 0, errors.New("operation execution window closed before dispatch")
 	}
-	return min(remaining+int64(JobDeadlineGrace/time.Second), maximumActiveDeadlineSeconds), nil
+	return min(remaining+int64(grace/time.Second), maximumActiveDeadlineSeconds), nil
 }
 
 func activeDeadlineSeconds(execution operatorv1alpha1.ExecutionSpec) int64 {

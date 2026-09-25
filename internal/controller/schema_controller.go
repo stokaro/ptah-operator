@@ -4785,15 +4785,14 @@ func failureRetry(schema *operatorv1alpha1.PtahSchema) time.Duration {
 }
 
 func leaseDuration(schema *operatorv1alpha1.PtahSchema) time.Duration {
-	return applyWindow(schema) + workload.JobDeadlineGrace + time.Minute
+	return applyWindow(schema) + time.Minute
 }
 
 // applyWindow is how long an Apply is authorized for: the window the claim
-// stamps into dispatchNotAfter, and the child's own context deadline. The Job
-// outlives it by workload.JobDeadlineGrace so that a Pod which starts late meets
-// the runner's refusal rather than Kubernetes' DeadlineExceeded, and the Lease
-// above outlives the Job in turn, so nothing can still be running when the realm
-// has moved on.
+// stamps into dispatchNotAfter, the child's own context deadline, and the Job's
+// deadline. The Lease above outlives it by a minute, so nothing can still be
+// running when the realm has moved on. A schema Apply takes none of the grace a
+// migration Apply Job does; workload.JobDeadlineGrace says why.
 func applyWindow(schema *operatorv1alpha1.PtahSchema) time.Duration {
 	deadline := schema.Spec.Execution.ActiveDeadlineSeconds
 	if deadline <= 0 {
