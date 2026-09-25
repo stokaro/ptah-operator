@@ -56,6 +56,7 @@ decision.
 | `PolicyRefused` | Artifact verification policy explicitly refused the artifact. |
 | `PolicySatisfied` | Artifact type and verification policy checks succeeded. |
 | `ProofInputsChanged` | Post-Apply proof will restart from its durable immutable binding. |
+| `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. |
 | `Published` | Exact plan bytes were committed to immutable storage. |
 | `RealmConflict` | More than one resource claims this database and at least one has not set `spec.target.sharedRealm`. |
 | `RefreshFailed` | A previously resolved source could not be refreshed. |
@@ -128,6 +129,18 @@ leaves what it already committed.
 
 A run that failed on a statement looks different: migrations before the failing
 one are recorded applied, and the count in the message is not zero.
+
+## A change a policy fences off
+
+`ProtectedTable` sets `Blocked=True` and leaves `Ready` false, publishes no
+plan, and dispatches nothing. Unlike the destructive-change policy, it has no
+approval that overrides it: while the table is listed, no plan may change it,
+and the operator keeps reading at `spec.interval` without making progress.
+
+Two things end it, both of them spec edits by a person: take the table out of
+`spec.policy.protectedTables`, or express the change as a versioned migration
+instead. [Protecting a table](../../use/reference-data/#protecting-a-table)
+says which to choose.
 
 ## Unsupported engines
 
