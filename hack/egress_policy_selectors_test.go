@@ -117,6 +117,7 @@ func TestNoEgressPolicySelectsTheOtherFamily(t *testing.T) {
 	t.Parallel()
 
 	pods := dispatchedPods()
+	heldToItsName := map[string]int{}
 	for _, policy := range egressPolicies(t) {
 		selector, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)
 		if err != nil {
@@ -126,8 +127,10 @@ func TestNoEgressPolicySelectsTheOtherFamily(t *testing.T) {
 		switch {
 		case strings.HasPrefix(policy.Name, "ptah-schema-"):
 			forbidden = "PtahMigration"
+			heldToItsName["ptah-schema-"]++
 		case strings.HasPrefix(policy.Name, "ptah-migration-"):
 			forbidden = "PtahSchema"
+			heldToItsName["ptah-migration-"]++
 		default:
 			continue
 		}
@@ -136,6 +139,11 @@ func TestNoEgressPolicySelectsTheOtherFamily(t *testing.T) {
 				t.Errorf("policy %q is named for the other family and selects a %s Pod",
 					policy.Name, name)
 			}
+		}
+	}
+	for _, prefix := range []string{"ptah-schema-", "ptah-migration-"} {
+		if heldToItsName[prefix] == 0 {
+			t.Fatalf("the example carries no policy named %s*, so this check read it and held none of it to its own name", prefix)
 		}
 	}
 }
