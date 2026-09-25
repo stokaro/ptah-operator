@@ -11,7 +11,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map e2e-static e2e
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -153,6 +153,27 @@ ifeq ($(strip $(ACCEPTANCE_PROFILE)),)
 else
 	@$(GO) run ./hack/acceptancecoverage -record -profile $(ACCEPTANCE_PROFILE)
 endif
+
+# Reachable vulnerabilities in what this module builds, read against the
+# current advisory database.
+#
+# Deliberately not pinned, unlike ShellCheck in support/tools.json. A pinned
+# scanner and a pinned database would make this reproducible and useless: PA-11
+# asks for "a current vulnerability database" and for reassessment as new
+# advisories appear, so a run that agrees with last month's is the wrong kind
+# of stable. It is a live-discovery target for the same reason
+# update-kubernetes-support is, and normal verification stays offline.
+#
+# This is the source half. Scanning the shipped bytes -- the published image
+# digests, with their own toolchain -- is the release half, and neither
+# substitutes for the other: a rebuild from the same source needs its own
+# artifact verification.
+scan-vulnerabilities:
+	@command -v govulncheck >/dev/null || { \
+		echo "govulncheck is required: go install golang.org/x/vuln/cmd/govulncheck@latest" >&2; \
+		exit 1; \
+	}
+	govulncheck ./...
 
 # The state of every issue the #242 review map links, per requirement, read
 # when it runs. The map deliberately stores no states, so this reads them and
