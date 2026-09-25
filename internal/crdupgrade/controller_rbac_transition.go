@@ -992,7 +992,6 @@ func sequence1ControllerClusterRoleRules(identity controllerRoleIdentity) []rbac
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrations/finalizers"}, nil, []string{"update"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrations/status"}, nil, []string{"get", "update", "patch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationplans"}, nil, []string{"get", "list", "watch", "create"}),
-		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationplans/status"}, nil, []string{"get", "update", "patch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationapprovals"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationapprovals/status"}, nil, []string{"get", "update", "patch"}),
 		privilegePolicyRule([]string{"batch"}, []string{"jobs"}, nil, []string{"get", "list", "watch", "create", "patch"}),
