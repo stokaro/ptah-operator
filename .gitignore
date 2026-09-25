@@ -2,6 +2,10 @@
 /dist/
 # `go build ./demo/...` writes the recorder here.
 /record
+# `go build ./hack/<tool>` writes the tool here. Two were committed that way;
+# hack/tracked_binaries_test.go refuses any compiled executable in the tree.
+/crdreference
+/unknownlayerfixture
 /cover.out
 /coverage/
 /.idea/
