@@ -224,7 +224,7 @@ spec:
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `status.conditions` | `[]object` | Conditions carry Current, which says the plan still matches the artifact and the history it was computed against, and Executed, which says its sequence ran. |
+| `status.conditions` | `[]object` | Conditions is empty. The operator publishes no Condition on a migration plan: a plan is an immutable artifact, and whether it is still the one to apply is a fact about the PtahMigration, which reports it there. The field stays so a later Condition about the plan itself has somewhere to go. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
 | `status.conditions[].message` | `string`, required | message is a human readable message indicating details about the transition. This may be an empty string. |
 | `status.conditions[].observedGeneration` | `integer` | observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date with respect to the current state of the instance. |
