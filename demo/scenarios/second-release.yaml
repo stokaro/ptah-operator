@@ -122,6 +122,18 @@ steps:
       stdout_contains: ["(3 rows)", "1 EU-1001 dhl", "2 US-2002 ups", "3 EU-1003 dhl"]
 
   - note: The run applied version 2 alone. Keep its Job's UID, to compare after the next pass.
+    # The rows change when the run commits, and the resource records the run
+    # when the operator reads its Job afterwards; the history read that follows
+    # is what says the record is there.
+    await:
+      kind: ptahmigration
+      name: shipments
+      timeout: 6m
+      generation: current
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
     run: |
       kubectl -n "$NAMESPACE" get ptahmigration shipments -o json \
         | jq -r '"applied: \(.status.lastRun.appliedVersions | join(","))", "job: \(.status.lastRun.jobUID)"' \
