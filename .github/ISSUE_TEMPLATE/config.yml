@@ -2,6 +2,9 @@
 # turns somebody away costs more than an unstructured issue costs to triage.
 blank_issues_enabled: true
 contact_links:
+  - name: Security vulnerability
+    url: https://github.com/stokaro/ptah-operator/blob/master/SECURITY.md
+    about: A vulnerability goes to the address the security policy names. An issue is public from the moment it is filed, which tells everyone how to reproduce it before there is a release that fixes it.
   - name: Ptah CLI, schemas, and migrations
     url: https://github.com/stokaro/ptah/issues
     about: Schema rendering, migration files, dialect support, and anything the CLI does on its own belong in the Ptah repository. A report filed here has to be moved before anyone can act on it.
