@@ -41,6 +41,7 @@ var (
 	releaseSequenceHelper  = regexp.MustCompile(`(?m)^\{\{- define "ptah-operator[.]releaseSequence" -\}\}([1-9][0-9]*)\{\{- end -\}\}$`)
 	releaseRunSHA256       = map[string]string{
 		"smoke/verify-release":               "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
+		"smoke/scan-vulnerabilities":         "8e0e527f037d2fc58747bd3fecf5b733bbf3bdc27f1d979508de0626f4bcb9ab",
 		"smoke/chart-reproducibility":        "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
 		"support-preflight/support-evidence": "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7",
 		"publish/release":                    "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
@@ -1765,7 +1766,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("smoke job must be read-only and gated to pull requests or manual dispatch")
 	}
 	if err := verifyStepContract("smoke", smoke.Steps,
-		[]string{"checkout", "setup-go", "setup-helm", "verify-release", "chart-reproducibility", "setup-buildx", "build"},
+		[]string{"checkout", "setup-go", "setup-helm", "verify-release", "scan-vulnerabilities", "chart-reproducibility", "setup-buildx", "build"},
 		map[string]string{
 			"checkout":     "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
 			"setup-go":     "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",

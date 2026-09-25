@@ -43,6 +43,18 @@ jobs:
       - name: Verify release metadata
         id: verify-release
         run: go run ./hack/releaseverify
+      # PA-11 of #242: scan the shipped targets against a current advisory
+      # database. Deliberately unpinned -- a pinned database would make this
+      # reproducible and useless, because the question is what is known now.
+      # A reachable finding fails the release, which is the issue's own
+      # position: it requires a fix or a documented exposure analysis, and a
+      # known exploitable flaw affecting the admitted profile blocks
+      # acceptance.
+      - name: Scan for reachable vulnerabilities
+        id: scan-vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
       - name: Lint and reproducibly package chart
         id: chart-reproducibility
         shell: bash
