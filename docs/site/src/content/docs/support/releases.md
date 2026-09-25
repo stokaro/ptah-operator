@@ -11,6 +11,11 @@ Every `v<chart-version>` tag publishes one version-addressed release set:
 - GitHub build provenance for every downloadable asset;
 - the reproducibly packaged chart, a digest manifest, and SHA-256 checksums.
 
+The release body is that digest manifest and nothing else, so what a version
+asks you to change before you move to it is [Release
+notes](../release-notes/) rather than anything published on the release
+itself.
+
 The release workflow refuses a mismatched tag, mutable external Docker image
 input, unpinned action, incomplete publish permission set, or manager image tag
 that differs from the chart version. It publishes no version or `latest` image

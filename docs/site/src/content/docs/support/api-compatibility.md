@@ -76,4 +76,5 @@ compatibility promise and `v1alpha1` does not make one.
 There is no dated transition to `v1`. Until there is, the only way to stay
 safe is to pin the chart version you deploy and read what a release changed
 before you move to it. An upgrade can require you to edit your resources, and
-the release notes are where that is said.
+[Release notes](../release-notes/) is where that is said, one entry per
+version.

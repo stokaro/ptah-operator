@@ -90,10 +90,11 @@ export const sidebar = [
     items: [
       { label: 'Ptah compatibility', link: '/support/ptah/' },
       { label: 'Kubernetes support', link: '/support/kubernetes/' },
-          { label: 'Capacity', link: '/support/capacity/' },
+      { label: 'Capacity', link: '/support/capacity/' },
       { label: 'Databases and privileges', link: '/support/databases/' },
       { label: 'API compatibility', link: '/support/api-compatibility/' },
       { label: 'Releases and provenance', link: '/support/releases/' },
+      { label: 'Release notes', link: '/support/release-notes/' },
     ],
   },
   // The two pages a reader reaches for when something is wrong. They answer
