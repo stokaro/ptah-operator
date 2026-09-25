@@ -188,7 +188,7 @@ jobs:
         id: verify-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.2.4
+          version: v4.3.0
       - name: Install the pinned ShellCheck
         id: shellcheck
         shell: bash
@@ -247,7 +247,7 @@ jobs:
         id: race-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.2.4
+          version: v4.3.0
       # setup-go caches the module downloads and, on a key miss, whatever build
       # output existed when that job ended. Its key is the Go version and
       # go.sum, so it changes only when a dependency does: every run after the
@@ -311,7 +311,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.2.4
+          version: v4.3.0
       - name: Cache the Go build output
         id: prepare-build-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -454,7 +454,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.2.4
+          version: v4.3.0
       # Per minor, because the three lifecycle jobs run at once: one shared key
       # would have them race to save the same entry, and the last one to finish
       # would be the only one whose work survived.

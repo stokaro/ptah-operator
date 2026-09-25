@@ -106,8 +106,12 @@ metadata:
     operator.ptah.run/release-namespace: {{ .root.Release.Namespace | quote }}
     operator.ptah.run/release-sequence: {{ .sequence | quote }}
     operator.ptah.run/manager-image: {{ .managerImage | quote }}
+    {{- if .helmOwned }}
+    meta.helm.sh/release-name: {{ .root.Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .root.Release.Namespace | quote }}
+    {{- end }}
   labels:
-    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/managed-by: {{ if .helmOwned }}Helm{{ else }}ptah-operator{{ end }}
     app.kubernetes.io/instance: {{ .root.Release.Name }}
     app.kubernetes.io/component: teardown-retirement
 spec:
@@ -427,8 +431,12 @@ metadata:
     operator.ptah.run/release-namespace: {{ $root.Release.Namespace | quote }}
     operator.ptah.run/release-sequence: {{ $sequence | quote }}
     operator.ptah.run/manager-image: {{ $managerImage | quote }}
+    {{- if .helmOwned }}
+    meta.helm.sh/release-name: {{ $root.Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ $root.Release.Namespace | quote }}
+    {{- end }}
   labels:
-    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/managed-by: {{ if .helmOwned }}Helm{{ else }}ptah-operator{{ end }}
     app.kubernetes.io/instance: {{ $root.Release.Name }}
     app.kubernetes.io/component: teardown-retirement
 spec:
@@ -667,6 +675,13 @@ bootstrap credential and proof Job/Pod boundary. They do not match runtime
 callers or the marker probe. Pre-delete replaces these anchors with the broad
 static fence forms below; deleteRelease consequently owns their final removal
 without a non-retriable post-delete hook.
+
+That removal is Helm deleting what it takes for its own objects, and since
+v4.3.0 Helm deletes only an object carrying the ownership it stamps on them:
+the managed-by label set to Helm and the two meta.helm.sh release annotations.
+A hook object carries none of that unless it says so, so the pre-delete fence
+forms say so (helmOwned). Without it Helm leaves both fences and their bindings
+in the cluster after the uninstall.
 */}}
 {{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceA "ordinary" true "fieldManager" $fenceAFieldManager) $fenceContext) }}
 ---
@@ -844,9 +859,9 @@ subjects:
     name: {{ $bootstrapName }}
     namespace: {{ .Release.Namespace }}
 ---
-{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceA "weight" "-329" "fieldManager" $fenceAFieldManager) $fenceContext) }}
+{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceA "weight" "-329" "fieldManager" $fenceAFieldManager "helmOwned" true) $fenceContext) }}
 ---
-{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceA "weight" "-328" "deletePolicy" "before-hook-creation" "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceA "weight" "-328" "deletePolicy" "before-hook-creation" "helmOwned" true "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -1020,9 +1035,9 @@ spec:
                         apiVersion: v1
                         fieldPath: metadata.namespace
 ---
-{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceB "weight" "-310" "fieldManager" $fenceBFieldManager) $fenceContext) }}
+{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceB "weight" "-310" "fieldManager" $fenceBFieldManager "helmOwned" true) $fenceContext) }}
 ---
-{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceB "weight" "-309" "deletePolicy" "before-hook-creation" "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceB "weight" "-309" "deletePolicy" "before-hook-creation" "helmOwned" true "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
 ---
 apiVersion: batch/v1
 kind: Job
