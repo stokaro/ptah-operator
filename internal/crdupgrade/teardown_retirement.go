@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -780,8 +781,26 @@ func (g *TeardownRetirementGuard) OriginalFencePair(fence TeardownFence) (*admis
 	if err != nil {
 		return nil, nil, TeardownRetirementProbe{}, err
 	}
+	policy.ObjectMeta = g.helmOwnedFenceMetadata(policy.ObjectMeta)
 	binding := g.exactBinding(name, bindingWeight, name, "before-hook-creation")
+	binding.ObjectMeta = g.helmOwnedFenceMetadata(binding.ObjectMeta)
 	return policy, binding, g.probe(name), nil
+}
+
+// helmOwnedFenceMetadata gives a pre-delete fence the ownership metadata Helm
+// stamps on the release's own objects.
+//
+// The fence replaces an ordinary release object under the same name, and
+// Helm's deleteRelease removes it as that object. Since v4.3.0 Helm deletes
+// only an object that carries this metadata, so a fence without it outlives
+// the uninstall that created it.
+func (g *TeardownRetirementGuard) helmOwnedFenceMetadata(metadata metav1.ObjectMeta) metav1.ObjectMeta {
+	metadata.Labels = maps.Clone(metadata.Labels)
+	metadata.Labels[managedByLabel] = "Helm"
+	metadata.Annotations = maps.Clone(metadata.Annotations)
+	metadata.Annotations[helmReleaseNameAnnotation] = g.rollout.ReleaseName
+	metadata.Annotations[helmReleaseNamespaceAnnotation] = g.rollout.ReleaseNamespace
+	return metadata
 }
 
 func (g *TeardownRetirementGuard) originalFencePolicy(name, policyWeight string) (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
