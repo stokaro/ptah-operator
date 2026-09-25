@@ -756,7 +756,6 @@ func buildTeardownAuthorizationChecks(
 		{name: "PtahSchemaPlan", resource: "ptahschemaplans"},
 		{name: "PtahSchemaApproval", resource: "ptahschemaapprovals"},
 		{name: "PtahMigration", resource: "ptahmigrations"},
-		{name: "PtahMigrationPlan", resource: "ptahmigrationplans"},
 		{name: "PtahMigrationApproval", resource: "ptahmigrationapprovals"},
 	} {
 		for _, verb := range []string{"update", "patch"} {
