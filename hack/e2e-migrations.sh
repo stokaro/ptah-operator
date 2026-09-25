@@ -3348,11 +3348,20 @@ approve_restore_plan() {
 	rm -f "$RESOURCE_FILE"
 }
 
-# Every revision row the database holds, as "1 2". The state is not filtered:
-# a row the refused run left behind in any state is a row it wrote.
+# Every revision row the database holds, as "1,2". The value helper strips
+# whitespace, which would run the rows together, so the engine joins them. The
+# state is not filtered: a row a refused run left behind in any state is a row
+# it wrote.
 restore_revisions() {
-	migration_query "SELECT version FROM schema_migrations ORDER BY version" "$RESTORE_DATABASE" |
-		tr '\n' ' ' | sed 's/ *$//'
+	case "$ENGINE" in
+	postgresql)
+		restore_revision_query="SELECT COALESCE(string_agg(version::text, ',' ORDER BY version), '') FROM schema_migrations"
+		;;
+	mysql)
+		restore_revision_query="SELECT COALESCE(GROUP_CONCAT(version ORDER BY version SEPARATOR ','), '') FROM schema_migrations"
+		;;
+	esac
+	migration_query "$restore_revision_query" "$RESTORE_DATABASE"
 }
 
 # The approved run is claimed and its Pod is held off every node.
@@ -3443,7 +3452,7 @@ run_restored_history_proof() {
 		fi
 		sleep 5
 	done
-	[ "$(restore_revisions)" = "1 2" ] || {
+	[ "$(restore_revisions)" = "1,2" ] || {
 		report_restore_state
 		fail "$RESTORE_MIGRATION did not bring its database to version 2; it records [$(restore_revisions)]"
 	}
