@@ -1470,6 +1470,39 @@ max_over_time(max(ptah_operator_active_operation_seconds)[7d:1m])
 max_over_time(sum(increase(ptah_operator_failures_total[30m]))[7d:5m])
 ```
 
+#### What reaches a receiver {#alert-delivery}
+
+The rules are tested against synthetic series with promtool, and the path a
+real alert takes is tested on a cluster. The PostgreSQL migrations suite ends
+with a phase that stands up Prometheus, Alertmanager and a webhook receiver as
+plain Deployments, loads the rules from the chart's `PrometheusRule` as a rule
+file, scrapes every manager Pod behind the metrics Service, and asserts what
+the receiver logged:
+
+| Condition the phase creates | Alert at the receiver | Asserted |
+| --- | --- | --- |
+| An Apply Job removed while its run was going, from the migration rows | `PtahOperatorUnresolvedApply{family="migration"}` | Fires; the count in its summary equals what the drill-down above lists; its runbook link resolves to this page |
+| A schema whose Resolve Pod no node will schedule | `PtahOperatorOperationStalled{family="schema",operation="Resolve"}` | Fires no earlier than the threshold and within the detection target; clears within the slack once the Pod runs |
+| Every manager Pod deleted with every node cordoned | `PtahOperatorUnresolvedViewNotSynced` | Fires within `viewUnsyncedFor` plus the slack; clears once the managers are back |
+
+With a five-second scrape and evaluation interval and a five-second
+Alertmanager group wait, the phase declares a detection target of the rule's
+own threshold plus 45 seconds, and a delivery later than that fails it. Those
+intervals are the phase's, not a recommendation: a deployment that scrapes
+every 30 seconds has a target larger by the same amount.
+
+The phase does not drive a certificate close to expiry, an admission webhook
+the API server cannot reach, or a failed upgrade hook. Their rules are tested
+with promtool only. `PtahOperatorAdmissionUnavailable` reads the API server's
+own `apiserver_admission_webhook_rejection_count`, and a Job that a hook left
+failed is Kubernetes object state; both come from the cluster's Kubernetes
+monitoring, not from this operator's endpoint.
+
+The supported integration is a Prometheus that scrapes each manager Pod, as the
+chart's `ServiceMonitor` configures one to, and loads the chart's rules, either
+as a `PrometheusRule` through the Prometheus Operator or as the rule file that
+object's `spec` is.
+
 ### Finding a resource that has stopped converging
 
 The counters above cannot answer this one. They are aggregates over every
