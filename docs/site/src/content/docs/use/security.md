@@ -276,3 +276,11 @@ SQL output.
   across all aliases, proxies, credentials, namespaces, and Ptah resource kinds.
 - Use separate database credentials for production and optional dev rehearsal
   targets.
+
+## Reporting a way across one of these boundaries
+
+Privately, to the address the
+[security policy](https://github.com/stokaro/ptah-operator/blob/master/SECURITY.md)
+names, rather than on the issue tracker: an issue is public from the moment it
+is filed. The policy also says which findings are in scope and which are a
+deployment's own decision.

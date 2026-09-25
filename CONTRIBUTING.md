@@ -28,6 +28,10 @@ interface, and
 says what each reason means and what to do about it. Many surprising states are
 deliberate refusals that name themselves.
 
+A vulnerability does not go here. [Security policy](SECURITY.md) says where it
+goes, and why an issue -- public from the moment it is filed -- is the wrong
+place for one.
+
 ### A bug report that can be acted on
 
 - the operator version, and the manager, executor, and runner image digests;
