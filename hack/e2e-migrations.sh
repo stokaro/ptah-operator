@@ -131,10 +131,19 @@ ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 STATUS_FILE=$WORK_DIR/migration-status.json
 : >"$JOB_RECORDS_FILE"
 
+# Set while the egress proof's policies are in force. The reference data runs
+# next in this namespace, and a policy left behind would isolate its Pods.
+EGRESS_POLICIES_APPLIED=0
+
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	if [ "${EGRESS_POLICIES_APPLIED:-0}" -eq 1 ]; then
+		k -n "$TEST_NAMESPACE" delete networkpolicy -l operator.ptah.run/e2e-proof=egress \
+			--ignore-not-found >/dev/null 2>&1 || true
+		EGRESS_POLICIES_APPLIED=0
+	fi
 	# The scenario that was open is the one this phase died in. The call is
 	# observational and returns the status it was given, so $status below is
 	# the phase's own verdict.
@@ -305,6 +314,11 @@ select_engine() {
 	RETRY_MIGRATION="e2e-retry-${ENGINE}"
 	RETRY_COORDINATION_KEY="e2e/retry/${ENGINE}"
 	UNCERTAIN_RIVAL_SCHEMA="e2e-uncertain-${ENGINE}-rival"
+	EGRESS_DATABASE=ptah_e2e_egress
+	EGRESS_DB_SECRET="e2e-${ENGINE}-egress-db"
+	EGRESS_MIGRATION="e2e-egress-${ENGINE}"
+	EGRESS_COORDINATION_KEY="e2e/egress/${ENGINE}"
+	EGRESS_DB_URL_FILE="$WORK_DIR/${ENGINE}-egress-db-url"
 	DELETION_DATABASE=ptah_e2e_deletion
 	DELETION_DB_SECRET="e2e-${ENGINE}-deletion-db"
 	DELETION_MIGRATION="e2e-deletion-${ENGINE}"
@@ -3289,6 +3303,408 @@ run_unknown_layer_proof() {
 		"$ENGINE_KIND" >&2
 }
 
+# The egress example, enforced.
+#
+# examples/networkpolicy-egress.yaml is a template, and
+# internal/workload/egress_example_test.go already holds its selectors against
+# the Pods the builders produce. A render test cannot say the policies are
+# enforced, though, so this row applies them in a cluster whose CNI enforces
+# NetworkPolicy -- kind's own, through kube-network-policies -- and reads what
+# each operation can actually reach.
+#
+# Only what the example tells a reader to replace is replaced: the namespace,
+# the registry, which here is a container outside the cluster and so takes the
+# ipBlock form the example names for an external registry, and the database,
+# which runs in this namespace under this suite's own labels and port. Every
+# podSelector and policyType is the example's, and the row refuses to run on a
+# rendering where one of them moved.
+#
+# Each operation is represented by a probe Pod that carries exactly the labels
+# the builder gives that operation's Pods. A policy selects by label and
+# nothing else, so what the probe can reach is what the operation can reach.
+# The probes read addresses rather than Service names, so a refused connection
+# is the policy and not a name that failed to resolve; resolution is checked on
+# its own. One real migration then runs to InSync under the same policies,
+# which is the half a probe cannot show: the operation's own containers,
+# including the init container that fetches the artifact, get what they need.
+egress_database_port() {
+	case "$ENGINE" in
+	postgresql) printf '5432' ;;
+	mysql) printf '3306' ;;
+	*) fail "no database port for engine $ENGINE" ;;
+	esac
+}
+
+create_egress_database() {
+	create_database "$EGRESS_DATABASE"
+	database_url "$EGRESS_DATABASE" >"$EGRESS_DB_URL_FILE"
+	chmod 600 "$EGRESS_DB_URL_FILE"
+	{
+		cat "$EGRESS_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$EGRESS_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$EGRESS_DATABASE" \
+		--rawfile url "$EGRESS_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# The addresses the probes dial. Each is read from the object that owns it, and
+# each has to be exactly one: a probe dialing nothing reports every connection
+# refused, which is the verdict a working policy produces too.
+read_egress_addresses() {
+	EGRESS_REGISTRY_IP=$(k -n "$TEST_NAMESPACE" get endpointslice \
+		-l "kubernetes.io/service-name=${REGISTRY_SERVICE}" -o json |
+		jq -r '[.items[].endpoints[]?.addresses[]?] | if length == 1 then .[0] else empty end')
+	[ -n "$EGRESS_REGISTRY_IP" ] ||
+		fail "the registry Service ${REGISTRY_SERVICE} does not resolve to exactly one address"
+	k -n "$TEST_NAMESPACE" get pods -l "app.kubernetes.io/name=${DATABASE_SERVICE}" \
+		--field-selector=status.phase=Running -o json >"$WORK_DIR/egress-database-pods.json" ||
+		fail "the $ENGINE_KIND database Pods could not be listed"
+	EGRESS_DATABASE_IP=$(jq -r '[.items[].status.podIP // empty] | if length == 1 then .[0] else empty end' \
+		"$WORK_DIR/egress-database-pods.json")
+	[ -n "$EGRESS_DATABASE_IP" ] ||
+		fail "the $ENGINE_KIND database is not exactly one running Pod labeled app.kubernetes.io/name=${DATABASE_SERVICE}"
+	# The probes run the PostgreSQL image on both engines: it is on every node
+	# already, and its busybox has nc, timeout and nslookup, which the MySQL
+	# image does not.
+	EGRESS_PROBE_IMAGE=$(k -n "$TEST_NAMESPACE" get pods -l app.kubernetes.io/name=e2e-postgresql \
+		-o json | jq -r '[.items[].spec.containers[0].image] | unique | if length == 1 then .[0] else empty end')
+	[ -n "$EGRESS_PROBE_IMAGE" ] ||
+		fail "no single PostgreSQL image is running in $TEST_NAMESPACE for the egress probes to use"
+	k -n default get endpointslice -l kubernetes.io/service-name=kubernetes -o json \
+		>"$WORK_DIR/egress-api.json" ||
+		fail "the API server endpoints could not be listed"
+	EGRESS_API_IP=$(jq -r '[.items[].endpoints[]?.addresses[]?] | .[0] // empty' "$WORK_DIR/egress-api.json")
+	EGRESS_API_PORT=$(jq -r '[.items[].ports[]?.port] | .[0] // empty' "$WORK_DIR/egress-api.json")
+	[ -n "$EGRESS_API_IP" ] && [ -n "$EGRESS_API_PORT" ] ||
+		fail "the API server has no endpoint for the probes to dial"
+	EGRESS_DATABASE_PORT=$(egress_database_port)
+}
+
+# The example with its replaceable parts replaced. The registry and database
+# policies are found by the suffix the example names them with, and the count
+# of each is held to one, so a renamed policy fails here rather than quietly
+# keeping its in-cluster selector.
+render_egress_policies() {
+	k create --dry-run=client -o json -f "$ROOT_DIR/examples/networkpolicy-egress.yaml" \
+		>"$WORK_DIR/egress-example.json" ||
+		fail "the egress example could not be read"
+	jq -s '[.[] | if .kind == "List" then .items[] else . end]' "$WORK_DIR/egress-example.json" \
+		>"$WORK_DIR/egress-example-items.json"
+	jq -e '
+      length == 7 and all(.[]; .kind == "NetworkPolicy") and
+      ([.[] | select(.metadata.name | endswith("-registry"))] | length) == 2 and
+      ([.[] | select(.metadata.name | endswith("-database"))] | length) == 2 and
+      ([.[] | select(.metadata.name | endswith("-default-deny"))] | length) == 2
+    ' "$WORK_DIR/egress-example-items.json" >/dev/null ||
+		fail "the egress example no longer has the default-deny, registry and database policies this row adapts"
+	jq \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg registry "$EGRESS_REGISTRY_IP" \
+		--arg database "$DATABASE_SERVICE" \
+		--argjson databasePort "$EGRESS_DATABASE_PORT" '
+      map(
+        .metadata.namespace = $namespace
+        | .metadata.labels = ((.metadata.labels // {}) + {"operator.ptah.run/e2e-proof": "egress"})
+        | del(.metadata.creationTimestamp)
+        | if (.metadata.name | endswith("-registry")) then
+            .spec.egress |= map(.to = [{ipBlock: {cidr: ($registry + "/32")}}])
+          elif (.metadata.name | endswith("-database")) then
+            .spec.egress |= map(
+              .to = [{podSelector: {matchLabels: {"app.kubernetes.io/name": $database}}}]
+              | .ports = [{protocol: "TCP", port: $databasePort}])
+          else . end
+      ) | {apiVersion: "v1", kind: "List", items: .}
+    ' "$WORK_DIR/egress-example-items.json" >"$WORK_DIR/egress-policies.json"
+	# What the row is about has to be the example's, byte for byte.
+	jq -n -e \
+		--slurpfile example "$WORK_DIR/egress-example-items.json" \
+		--slurpfile rendered "$WORK_DIR/egress-policies.json" '
+      ($example[0] | map({(.metadata.name): {podSelector: .spec.podSelector, policyTypes: .spec.policyTypes}}) | add) ==
+      ($rendered[0].items | map({(.metadata.name): {podSelector: .spec.podSelector, policyTypes: .spec.policyTypes}}) | add)
+    ' >/dev/null ||
+		fail "rendering the egress example changed a selector; the row would measure a policy the example does not contain"
+}
+
+apply_egress_policies() {
+	k apply -f "$WORK_DIR/egress-policies.json" >/dev/null ||
+		fail "the egress policies could not be applied"
+	EGRESS_POLICIES_APPLIED=1
+}
+
+# Every policy this row applied carries the proof label, so removing them does
+# not depend on a name list that could fall behind the example.
+remove_egress_policies() {
+	k -n "$TEST_NAMESPACE" delete networkpolicy -l operator.ptah.run/e2e-proof=egress \
+		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the egress policies were not removed"
+	EGRESS_POLICIES_APPLIED=0
+}
+
+# What a probe does. It waits first: a policy engine learns about a new Pod from
+# the API, and a connection made before it has is judged as coming from a Pod
+# nothing selects. Addresses are dialed directly, so a refusal is the policy
+# and not a name that did not resolve; resolution is its own line.
+# shellcheck disable=SC2016 # Variables expand inside the probe container.
+EGRESS_PROBE_SCRIPT='
+sleep 5
+reach() {
+	if timeout 8 nc -z -w 4 "$1" "$2" >/dev/null 2>&1; then
+		printf "%s=open\n" "$3"
+	else
+		printf "%s=closed\n" "$3"
+	fi
+}
+if timeout 8 nslookup kubernetes.default.svc.cluster.local >/dev/null 2>&1; then
+	echo dns=open
+else
+	echo dns=closed
+fi
+reach "$DATABASE" "$DATABASE_PORT" database
+reach "$REGISTRY" 5000 registry
+reach "$API" "$API_PORT" api
+'
+
+# One probe Pod. $2 is a JSON object of the labels it carries on top of the
+# probe's own; "{}" is a Pod no policy selects.
+create_egress_probe() {
+	egress_probe_name=$1
+	egress_probe_labels=$2
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$egress_probe_name" \
+		--argjson labels "$egress_probe_labels" \
+		--arg image "$EGRESS_PROBE_IMAGE" \
+		--arg registry "$EGRESS_REGISTRY_IP" \
+		--arg database "$EGRESS_DATABASE_IP" \
+		--arg databasePort "$EGRESS_DATABASE_PORT" \
+		--arg api "$EGRESS_API_IP" \
+		--arg apiPort "$EGRESS_API_PORT" \
+		--arg script "$EGRESS_PROBE_SCRIPT" '
+    {
+      apiVersion: "v1", kind: "Pod",
+      metadata: {
+        namespace: $namespace, name: $name,
+        labels: ({"operator.ptah.run/e2e-probe": "egress"} + $labels)
+      },
+      spec: {
+        restartPolicy: "Never",
+        automountServiceAccountToken: false,
+        enableServiceLinks: false,
+        securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532},
+        containers: [{
+          name: "probe", image: $image, imagePullPolicy: "IfNotPresent",
+          env: [
+            {name: "REGISTRY", value: $registry},
+            {name: "DATABASE", value: $database},
+            {name: "DATABASE_PORT", value: $databasePort},
+            {name: "API", value: $api},
+            {name: "API_PORT", value: $apiPort}
+          ],
+          command: ["/bin/sh", "-c", $script],
+          securityContext: {
+            allowPrivilegeEscalation: false, readOnlyRootFilesystem: true,
+            capabilities: {drop: ["ALL"]}
+          }
+        }]
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "egress probe $egress_probe_name could not be created"
+}
+
+# What a finished probe reached, as one line: "dns=open database=closed ...".
+egress_probe_reading() {
+	egress_read_name=$1
+	egress_read_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$egress_read_deadline" ]; do
+		egress_read_phase=$(k -n "$TEST_NAMESPACE" get pod "$egress_read_name" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		case "$egress_read_phase" in
+		Succeeded)
+			k -n "$TEST_NAMESPACE" logs "$egress_read_name" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
+			return 0
+			;;
+		Failed) fail "egress probe $egress_read_name failed instead of reporting what it reached" ;;
+		esac
+		sleep 2
+	done
+	fail "egress probe $egress_read_name did not finish within ${TIMEOUT_SECONDS}s"
+}
+
+# Every operation of both families, with what the example grants it. The table
+# is the one internal/workload/egress_example_test.go derives from the built
+# Pods; here it is what the network does. Nothing an operation Pod dials
+# outside it -- the API server stands for that -- may connect.
+EGRESS_EXPECTATIONS='
+schema resolve dns=open database=closed registry=open
+schema verify dns=open database=closed registry=open
+schema observe dns=open database=open registry=open
+schema plan dns=open database=open registry=open
+schema apply dns=open database=open registry=closed
+migration resolve dns=open database=closed registry=open
+migration verify dns=open database=closed registry=open
+migration history dns=open database=open registry=open
+migration apply dns=open database=open registry=open
+'
+
+assert_egress_is_enforced() {
+	# Unlabeled, before the policies: everything the table refuses has to be
+	# reachable in the first place, or a refusal below says nothing.
+	create_egress_probe egress-probe-baseline '{}'
+	egress_baseline=$(egress_probe_reading egress-probe-baseline)
+	[ "$egress_baseline" = "api=open database=open dns=open registry=open" ] ||
+		fail "before any policy, an unlabeled probe reached only: $egress_baseline"
+
+	apply_egress_policies
+	# Policies take effect some time after the API accepts them. The canary is
+	# a schema Apply, which the example refuses the registry, and nothing below
+	# is read until one has been refused: a table read earlier would report the
+	# network before enforcement, which is every connection open.
+	egress_canary=0
+	egress_canary_deadline=$(deadline_from_now)
+	while :; do
+		egress_canary=$((egress_canary + 1))
+		create_egress_probe "egress-probe-canary-${egress_canary}" \
+			'{"app.kubernetes.io/managed-by":"ptah-operator","app.kubernetes.io/component":"schema-operation","operator.ptah.run/operation":"apply"}'
+		case "$(egress_probe_reading "egress-probe-canary-${egress_canary}")" in
+		*registry=closed*) break ;;
+		esac
+		[ "$(date +%s)" -lt "$egress_canary_deadline" ] ||
+			fail "the egress example was applied and a schema Apply Pod could still reach the registry after ${TIMEOUT_SECONDS}s: the CNI is not enforcing it"
+	done
+	printf '%s\n' "$EGRESS_EXPECTATIONS" >"$WORK_DIR/egress-expectations.txt"
+	while read -r egress_family egress_operation _; do
+		[ -n "$egress_family" ] || continue
+		create_egress_probe "egress-probe-${egress_family}-${egress_operation}" "$(jq -cn \
+			--arg component "${egress_family}-operation" --arg operation "$egress_operation" '
+          {"app.kubernetes.io/managed-by": "ptah-operator",
+           "app.kubernetes.io/component": $component,
+           "operator.ptah.run/operation": $operation}')"
+	done <"$WORK_DIR/egress-expectations.txt"
+	create_egress_probe egress-probe-unselected '{}'
+
+	egress_checked=0
+	while read -r egress_family egress_operation egress_dns egress_database egress_registry; do
+		[ -n "$egress_family" ] || continue
+		egress_want="api=closed ${egress_database} ${egress_dns} ${egress_registry}"
+		egress_got=$(egress_probe_reading "egress-probe-${egress_family}-${egress_operation}")
+		[ "$egress_got" = "$egress_want" ] ||
+			fail "a ${egress_family} ${egress_operation} Pod under the egress example reached {$egress_got}, and the example grants {$egress_want}"
+		egress_checked=$((egress_checked + 1))
+	done <"$WORK_DIR/egress-expectations.txt"
+	[ "$egress_checked" -eq 9 ] ||
+		fail "the egress row checked $egress_checked operations, and both families have nine"
+
+	# The policies isolate the Pods they select and no others.
+	egress_unselected=$(egress_probe_reading egress-probe-unselected)
+	[ "$egress_unselected" = "api=open database=open dns=open registry=open" ] ||
+		fail "a Pod no egress policy selects reached only: $egress_unselected"
+}
+
+create_egress_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$EGRESS_MIGRATION" \
+		--arg secret "$EGRESS_DB_SECRET" \
+		--arg reference "$MIGRATION_REFERENCE" \
+		--arg coordinationKey "$EGRESS_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: $interval,
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+	rm -f "$RESOURCE_FILE"
+}
+
+# The half a probe cannot show: a real migration, History and Apply included,
+# runs to InSync with the example's policies in force.
+assert_a_migration_converges_under_the_egress_policies() {
+	create_egress_database
+	create_egress_migration_resource
+	egress_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$egress_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/migration=${EGRESS_MIGRATION}" -o json \
+			2>/dev/null | jq -c '.items[]?' >>"$WORK_DIR/egress-migration-jobs.jsonl" || true
+		k -n "$TEST_NAMESPACE" get ptahmigration "$EGRESS_MIGRATION" -o json >"$STATUS_FILE" ||
+			fail "$EGRESS_MIGRATION could not be read"
+		if jq -e '
+          .status.phase == "InSync" and
+          .status.lastRun.outcome == "Applied"
+        ' "$STATUS_FILE" >/dev/null; then
+			break
+		fi
+		sleep 5
+	done
+	jq -e '.status.phase == "InSync" and .status.lastRun.outcome == "Applied"' "$STATUS_FILE" >/dev/null ||
+		fail "$EGRESS_MIGRATION did not apply its sequence under the egress policies within ${TIMEOUT_SECONDS}s; it is in $(jq -r '.status.phase // "<none>"' "$STATUS_FILE")"
+	# And the Pods that did it were ones the policies select: an Apply that
+	# converged because nothing selected it would pass everything above. The
+	# Jobs were recorded while the run went on, because their TTL can remove
+	# them before this line; their Pod templates carry the Pods' labels.
+	jq -s -e '
+      unique_by(.metadata.uid) as $jobs |
+      ([$jobs[] | .spec.template.metadata.labels["operator.ptah.run/operation"]] | index("apply")) != null and
+      all($jobs[];
+        .spec.template.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+        .spec.template.metadata.labels["app.kubernetes.io/component"] == "migration-operation")
+    ' "$WORK_DIR/egress-migration-jobs.jsonl" >/dev/null ||
+		fail "the Jobs that ran $EGRESS_MIGRATION are not all ones the egress example selects, or none of them was the Apply"
+}
+
+run_egress_policy_proof() {
+	printf 'e2e migrations: applying the egress example to the %s operation Pods\n' "$ENGINE_KIND" >&2
+	read_egress_addresses
+	render_egress_policies
+	assert_egress_is_enforced
+	assert_a_migration_converges_under_the_egress_policies
+	remove_egress_policies
+	k -n "$TEST_NAMESPACE" delete pods -l operator.ptah.run/e2e-probe=egress \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the egress probes were not removed"
+	printf 'e2e migrations: PASS %s operation Pods reach what the egress example grants and nothing else\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_engine_migrations() {
 	select_engine "$1"
 	printf 'e2e migrations: starting the %s lifecycle on a database nothing has migrated\n' \
@@ -3333,6 +3749,7 @@ run_engine_migrations() {
 	run_deletion_during_apply_proof
 	run_retry_interval_proof
 	run_unknown_layer_proof
+	run_egress_policy_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
@@ -3540,7 +3957,8 @@ reset_after_an_earlier_run() {
 		fail "$MIGRATION_RIVAL_SCHEMA was not removed"
 	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
 		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
-		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" >/dev/null ||
+		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" \
+		"$EGRESS_DB_SECRET" >/dev/null ||
 		fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
 	# The publisher objects carry the version they published in their names,
 	# and the versions are spread through the proofs, so they are found by the
@@ -3556,9 +3974,18 @@ reset_after_an_earlier_run() {
 	done <"$RESOURCE_FILE"
 	for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
 		"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
-		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE"; do
+		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE" "$EGRESS_DATABASE"; do
 		drop_database "$reset_database"
 	done
+	# An earlier run that died inside the egress proof may have left its
+	# policies, which would isolate every operation Pod this run starts, and
+	# its probes, whose names this run reuses.
+	k -n "$TEST_NAMESPACE" delete networkpolicy -l operator.ptah.run/e2e-proof=egress \
+		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the egress policies an earlier run left behind were not removed"
+	k -n "$TEST_NAMESPACE" delete pods -l operator.ptah.run/e2e-probe=egress \
+		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the egress probes an earlier run left behind were not removed"
 }
 
 reset_after_an_earlier_run

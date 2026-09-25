@@ -262,7 +262,14 @@ SQL output.
   the selector with an admission-controlled CIDR rather than opening Internet
   egress. A Pod no policy selects is not isolated at all, so
   `TestTheEgressExampleSelectsEveryOperationPod` builds one Pod per operation
-  of both families and fails when one stops being covered.
+  of both families and fails when one stops being covered. That test reads
+  selectors; the acceptance suite checks enforcement. On both engines it
+  applies the example in a cluster whose CNI enforces NetworkPolicy, adapted
+  only where the example says to adapt it, and checks what each operation can
+  reach: DNS always, the database and the registry exactly where the example
+  grants them, and nothing else. A real migration then runs to `InSync` under
+  the same policies. A CNI that does not enforce NetworkPolicy makes every one
+  of these policies a no-op, so check yours does before relying on them.
 - Grant the database user the minimum DDL and introspection privileges needed
   for the selected schemas. See [Database support and privileges](../../support/databases/)
   and do not use a cluster-wide administrative account.
