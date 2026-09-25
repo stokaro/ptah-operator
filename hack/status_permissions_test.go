@@ -176,7 +176,7 @@ func writtenStatusKinds(t *testing.T) []string {
 						unresolved = append(unresolved, fileSet.Position(call.Pos()).String())
 						return true
 					}
-					kind, ok := resolveAPIKind(function, name.Name)
+					kind, ok := declaredAPIKind(function, name.Name)
 					if !ok {
 						unresolved = append(unresolved, fileSet.Position(call.Pos()).String()+" writes "+name.Name)
 						return true
@@ -218,57 +218,4 @@ func isStatusWrite(call *ast.CallExpr) bool {
 	}
 	innerSelector, ok := inner.Fun.(*ast.SelectorExpr)
 	return ok && innerSelector.Sel.Name == "Status"
-}
-
-// resolveAPIKind finds the API kind a name holds, from the function's
-// parameters or from where it is assigned an API type in the body.
-func resolveAPIKind(function *ast.FuncDecl, name string) (string, bool) {
-	if function.Type.Params != nil {
-		for _, field := range function.Type.Params.List {
-			for _, parameter := range field.Names {
-				if parameter.Name != name {
-					continue
-				}
-				if kind, ok := apiKindOf(field.Type); ok {
-					return kind, true
-				}
-			}
-		}
-	}
-	kind, found := "", false
-	ast.Inspect(function.Body, func(node ast.Node) bool {
-		assignment, ok := node.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-		for index, target := range assignment.Lhs {
-			identifier, ok := target.(*ast.Ident)
-			if !ok || identifier.Name != name || index >= len(assignment.Rhs) {
-				continue
-			}
-			if resolved, ok := apiKindOf(assignment.Rhs[index]); ok {
-				kind, found = resolved, true
-			}
-		}
-		return !found
-	})
-	return kind, found
-}
-
-// apiKindOf reads the kind out of an expression naming an API type, whether as
-// a pointer type, a composite literal, or the address of one.
-func apiKindOf(expression ast.Expr) (string, bool) {
-	switch node := expression.(type) {
-	case *ast.StarExpr:
-		return apiKindOf(node.X)
-	case *ast.UnaryExpr:
-		return apiKindOf(node.X)
-	case *ast.CompositeLit:
-		return apiKindOf(node.Type)
-	case *ast.SelectorExpr:
-		if identifier, ok := node.X.(*ast.Ident); ok && identifier.Name == "operatorv1alpha1" {
-			return node.Sel.Name, true
-		}
-	}
-	return "", false
 }
