@@ -4300,7 +4300,9 @@ static_require_order "$dataplane_script" 'data-plane full-audit ledger wiring' \
 	"E2E_FULLY_AUDITED_JOBS_FILE=\$FULLY_AUDITED_JOBS_FILE"
 observed_audit_section=$(sed -n '/^assert_observed_jobs_audited()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
-static_require_count "$observed_audit_section" "grep -Fx \"\$observed_uid\" \"\$FULLY_AUDITED_JOBS_FILE\"" 1 \
+# Two reads of the full-audit ledger and no other: one before the Job is read
+# back, and one after a Job that finished late has been audited in the sweep.
+static_require_count "$observed_audit_section" "grep -Fx \"\$observed_uid\" \"\$FULLY_AUDITED_JOBS_FILE\"" 2 \
 	'observed Job full-audit assertion'
 static_reject_marker "$observed_audit_section" \
 	"grep -Fx \"\$observed_uid\" \"\$AUDITED_JOBS_FILE\"" \
