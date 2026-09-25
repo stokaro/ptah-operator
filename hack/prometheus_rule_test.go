@@ -132,6 +132,7 @@ var stateThresholds = []string{
 	"monitoring.prometheusRule.operationStalledAfterSeconds=1800",
 	"monitoring.prometheusRule.lockReleaseOwedFor=15m",
 	"monitoring.prometheusRule.certificateExpiresWithinSeconds=604800",
+	"monitoring.prometheusRule.planStoreBytesAbove=1073741824",
 	"monitoring.prometheusRule.failures.window=30m",
 	"monitoring.prometheusRule.failures.count=20",
 	"monitoring.prometheusRule.admissionFailingFor=5m",
@@ -145,6 +146,7 @@ func TestAStateAlertRendersOnlyWhereItsThresholdIsSet(t *testing.T) {
 	for _, alert := range []string{
 		"PtahOperatorResourceOverdue", "PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
 		"PtahOperatorWebhookCertificateExpiring", "PtahOperatorOperationsFailing", "PtahOperatorAdmissionUnavailable",
+		"PtahOperatorPlanStoreLarge",
 	} {
 		if strings.Contains(rule, alert) {
 			t.Errorf("%s rendered with no threshold set:\n%s", alert, rule)

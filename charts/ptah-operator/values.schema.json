@@ -315,6 +315,7 @@
             "operationStalledAfterSeconds": {"type": ["integer", "null"], "minimum": 1},
             "lockReleaseOwedFor": {"type": "string", "pattern": "^$|^[1-9][0-9]*(s|m|h)$"},
             "certificateExpiresWithinSeconds": {"type": ["integer", "null"], "minimum": 1},
+            "planStoreBytesAbove": {"type": ["integer", "null"], "minimum": 1},
             "failures": {
               "type": "object",
               "additionalProperties": false,

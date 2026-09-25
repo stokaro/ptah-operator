@@ -71,6 +71,12 @@ ptah_operator_active_operation_seconds{family="schema",operation="Observe"} 4
 # HELP ptah_operator_pending_lock_releases Lock releases owed.
 # TYPE ptah_operator_pending_lock_releases gauge
 ptah_operator_pending_lock_releases{family="schema"} 0
+# HELP ptah_operator_stored_plans Retained plans.
+# TYPE ptah_operator_stored_plans gauge
+ptah_operator_stored_plans{family="schema"} 2
+# HELP ptah_operator_stored_plan_bytes Retained plan bytes.
+# TYPE ptah_operator_stored_plan_bytes gauge
+ptah_operator_stored_plan_bytes 4096
 # HELP ptah_operator_webhook_certificate_expiry_timestamp_seconds Certificate expiry.
 # TYPE ptah_operator_webhook_certificate_expiry_timestamp_seconds gauge
 ptah_operator_webhook_certificate_expiry_timestamp_seconds 1.8e+09

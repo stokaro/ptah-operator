@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -171,6 +172,17 @@ func main() {
 	// same synchronized guard.
 	telemetry.NewStateCollector(ctrlmetrics.Registry, unresolvedView, nil)
 	telemetry.NewCertificateCollector(ctrlmetrics.Registry, filepath.Join(webhookCertDir, "tls.crt"))
+	// The retained plans, read through the same view. Nothing else in the
+	// manager lists plans from the cache, so their informers are registered here,
+	// before the manager starts, and the cache syncs them with the rest instead
+	// of a first scrape waiting for them.
+	for _, plan := range []client.Object{&operatorv1alpha1.PtahSchemaPlan{}, &operatorv1alpha1.PtahMigrationPlan{}} {
+		if _, err := manager.GetCache().GetInformer(context.Background(), plan); err != nil {
+			log.Error(err, "register the plan informers the store gauges read")
+			os.Exit(1)
+		}
+	}
+	telemetry.NewPlanStoreCollector(ctrlmetrics.Registry, unresolvedView)
 	if err := manager.Add(unresolvedView); err != nil {
 		log.Error(err, "register the unresolved-work view")
 		os.Exit(1)

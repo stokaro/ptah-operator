@@ -88,6 +88,7 @@ reader of a converged schema can see exactly what produced it.
 | `monitoring.prometheusRule.operationStalledAfterSeconds` | `null` | Seconds one operation may stay in flight. |
 | `monitoring.prometheusRule.lockReleaseOwedFor` | `""` | How long a database-realm Lease release may stay owed. |
 | `monitoring.prometheusRule.certificateExpiresWithinSeconds` | `null` | Seconds before the admission serving certificate expires that are too few. |
+| `monitoring.prometheusRule.planStoreBytesAbove` | `null` | Bytes of retained schema plans that are too many: the budget set for them in etcd. |
 | `monitoring.prometheusRule.failures` |  | Operation failures in a window that are too many. Set both or neither. |
 | `monitoring.prometheusRule.failures.window` | `""` | The window, as a duration. |
 | `monitoring.prometheusRule.failures.count` | `null` | The count in that window. |

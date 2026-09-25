@@ -73,3 +73,21 @@ func (v *CachedUnresolvedView) ListMigrations(ctx context.Context) ([]operatorv1
 	}
 	return migrations.Items, nil
 }
+
+// ListSchemaPlans lists every retained schema plan through the cache.
+func (v *CachedUnresolvedView) ListSchemaPlans(ctx context.Context) ([]operatorv1alpha1.PtahSchemaPlan, error) {
+	plans := &operatorv1alpha1.PtahSchemaPlanList{}
+	if err := v.reader.List(ctx, plans); err != nil {
+		return nil, err
+	}
+	return plans.Items, nil
+}
+
+// ListMigrationPlans lists every retained migration plan through the cache.
+func (v *CachedUnresolvedView) ListMigrationPlans(ctx context.Context) ([]operatorv1alpha1.PtahMigrationPlan, error) {
+	plans := &operatorv1alpha1.PtahMigrationPlanList{}
+	if err := v.reader.List(ctx, plans); err != nil {
+		return nil, err
+	}
+	return plans.Items, nil
+}

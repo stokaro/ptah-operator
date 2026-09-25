@@ -233,6 +233,8 @@ validate_custom_operator_metrics() {
       always_present["ptah_operator_active_operations"] = "gauge"
       always_present["ptah_operator_active_operation_seconds"] = "gauge"
       always_present["ptah_operator_pending_lock_releases"] = "gauge"
+      always_present["ptah_operator_stored_plans"] = "gauge"
+      always_present["ptah_operator_stored_plan_bytes"] = "gauge"
       always_present["ptah_operator_webhook_certificate_expiry_timestamp_seconds"] = "gauge"
       always_present["ptah_operator_webhook_certificate_read_failures_total"] = "counter"
     }

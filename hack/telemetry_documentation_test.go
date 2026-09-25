@@ -94,6 +94,7 @@ func emittedSeriesLabels(t *testing.T) map[string][]string {
 	// the certificate collector once with a certificate it can read and once
 	// with one it cannot, so both of its series are gathered.
 	telemetry.NewStateCollector(registry, stateTestView{}, time.Now)
+	telemetry.NewPlanStoreCollector(registry, planTestView{})
 	telemetry.NewCertificateCollector(registry, writeTestCertificate(t))
 	missingCertificate := prometheus.NewRegistry()
 	telemetry.NewCertificateCollector(missingCertificate, filepath.Join(t.TempDir(), "absent.crt"))
@@ -172,6 +173,19 @@ func (stateTestView) ListMigrations(context.Context) ([]operatorv1alpha1.PtahMig
 		Phase:           "Applying",
 		ActiveOperation: &operatorv1alpha1.MigrationOperationStatus{Type: "Apply", StartedAt: past},
 	}}}, nil
+}
+
+// planTestView is a store with one plan of each family.
+type planTestView struct{}
+
+func (planTestView) Synced() bool { return true }
+
+func (planTestView) ListSchemaPlans(context.Context) ([]operatorv1alpha1.PtahSchemaPlan, error) {
+	return []operatorv1alpha1.PtahSchemaPlan{{Spec: operatorv1alpha1.PtahSchemaPlanSpec{Size: 1}}}, nil
+}
+
+func (planTestView) ListMigrationPlans(context.Context) ([]operatorv1alpha1.PtahMigrationPlan, error) {
+	return []operatorv1alpha1.PtahMigrationPlan{{}}, nil
 }
 
 // writeTestCertificate writes a self-signed certificate the certificate

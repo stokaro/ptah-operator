@@ -58,7 +58,7 @@ spec:
             description: "A scrape that cannot read that state publishes no counts, so PtahOperatorUnresolvedApply cannot fire while this lasts."
             runbook_url: {{ $runbook | quote }}
 {{- $rules := .Values.monitoring.prometheusRule }}
-{{- if or $rules.overdueAfterSeconds $rules.operationStalledAfterSeconds $rules.lockReleaseOwedFor $rules.certificateExpiresWithinSeconds $rules.failures.window $rules.admissionFailingFor }}
+{{- if or $rules.overdueAfterSeconds $rules.operationStalledAfterSeconds $rules.lockReleaseOwedFor $rules.certificateExpiresWithinSeconds $rules.planStoreBytesAbove $rules.failures.window $rules.admissionFailingFor }}
     # One alert per threshold a deployment set, and none for a threshold it left
     # empty: the chart has no number of its own for how late is too late on a
     # given cluster. Every one reads gauges the view publishes only while it is
@@ -105,6 +105,16 @@ spec:
             summary: "The admission serving certificate expires in {{`{{ $value | humanizeDuration }}`}}"
             description: "The rotator replaces it long before this. A value that keeps falling is a rotation that is not happening, and an expired certificate refuses every approval."
             runbook_url: {{ printf "%s#webhook-certificate-lifecycle" $rules.runbookBaseURL | quote }}
+        {{- end }}
+        {{- with $rules.planStoreBytesAbove }}
+        - alert: PtahOperatorPlanStoreLarge
+          expr: max(ptah_operator_stored_plan_bytes) > {{ . }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Retained schema plans hold {{`{{ $value | humanize1024 }}`}}B, over the budget set for them"
+            description: "The operator prunes no plan. The runbook says which plans are pinned and how to export and delete the rest."
+            runbook_url: {{ printf "%s#prune-plans" $rules.runbookBaseURL | quote }}
         {{- end }}
         {{- if $rules.failures.window }}
         {{- $failures := required "monitoring.prometheusRule.failures.count is required with failures.window: how many failures in that window are too many depends on the workload" $rules.failures.count }}

@@ -189,6 +189,9 @@ monitoring:
     lockReleaseOwedFor: ""
     # Seconds before the admission serving certificate expires that are too few.
     certificateExpiresWithinSeconds: null
+    # Bytes of retained schema plans that are too many. The operator prunes no
+    # plan, so this is the budget the installation set for them in etcd.
+    planStoreBytesAbove: null
     # Operation failures in a window that are too many. Set both or neither.
     failures:
       # The window, as a duration.

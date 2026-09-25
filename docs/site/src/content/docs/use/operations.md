@@ -1440,6 +1440,8 @@ while `ptah_operator_unresolved_view_synced` reads 0.
 | `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type. A failed attempt waiting for its retry is not in flight |
 | `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
 | `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
+| `ptah_operator_stored_plans{family}` | Plans retained in the cluster. The operator prunes none; [pruning stored plans](#prune-plans) is the procedure |
+| `ptah_operator_stored_plan_bytes{}` | Bytes the retained schema plans hold in their chunk ConfigMaps, from each plan's `spec.size`. A migration plan stores no chunk |
 | `ptah_operator_webhook_certificate_expiry_timestamp_seconds{}` | When the admission certificate this replica presents expires; every replica publishes it |
 | `ptah_operator_webhook_certificate_read_failures_total{}` | Scrapes that could not read or parse that certificate, which publish no expiry |
 
@@ -1457,6 +1459,7 @@ sets none:
 | `operationStalledAfterSeconds` | `PtahOperatorOperationStalled` |
 | `lockReleaseOwedFor` | `PtahOperatorLockReleaseOwed` |
 | `certificateExpiresWithinSeconds` | `PtahOperatorWebhookCertificateExpiring` |
+| `planStoreBytesAbove` | `PtahOperatorPlanStoreLarge` |
 | `failures.window` with `failures.count` | `PtahOperatorOperationsFailing` |
 | `admissionFailingFor` | `PtahOperatorAdmissionUnavailable`, which reads the API server's metrics |
 
@@ -1502,6 +1505,33 @@ The supported integration is a Prometheus that scrapes each manager Pod, as the
 chart's `ServiceMonitor` configures one to, and loads the chart's rules, either
 as a `PrometheusRule` through the Prometheus Operator or as the rule file that
 object's `spec` is.
+
+### Queries for a dashboard {#dashboard-queries}
+
+A panel per question, over the series above. The state gauges come from the
+leader, so each reads the max across replicas; the counters are per process,
+so each sums them. The operation label on a state gauge is the API's type
+(`Apply`), and on a counter it is the lower-case stage (`apply`).
+
+| Question | Query |
+| --- | --- |
+| What state is the fleet in | `max by (family, phase) (ptah_operator_resources)` |
+| What needs a person | `max by (family) (ptah_operator_unresolved_attempts)` and `max by (family) (ptah_operator_resources{phase=~"Blocked\|AwaitingApproval"})` |
+| What has stopped being looked at | `max by (family) (ptah_operator_overdue_resources)` and `max by (family) (ptah_operator_overdue_seconds)` |
+| How long operations take | `histogram_quantile(0.95, sum by (family, operation, le) (rate(ptah_operator_operation_duration_seconds_bucket[1h])))` |
+| What is in flight, and for how long | `max by (family, operation) (ptah_operator_active_operation_seconds)` |
+| What is failing | `sum by (family, stage, category) (increase(ptah_operator_failures_total[1h]))` |
+| Whether a realm is held up | `max by (family) (ptah_operator_active_operation_seconds{operation="Apply"})` and `max by (family) (ptah_operator_pending_lock_releases)` |
+| How much history is kept | `max by (family) (ptah_operator_stored_plans)` and `max(ptah_operator_stored_plan_bytes)` |
+| What the manager costs | `process_resident_memory_bytes`, `rate(process_cpu_seconds_total[5m])` and `workqueue_depth` for the manager Pods |
+
+A claimed Apply that is waiting for its realm's Lease holds its operation
+claim while it waits, so contention for a realm reads as an Apply in flight for
+longer than its Job would take, and `PtahOperatorOperationStalled` covers a
+wait that does not end. The Lease names its holder:
+`kubectl -n <operator namespace> get leases -o wide`. Two resources claiming
+one realm without `spec.target.sharedRealm` is a refusal instead, and reads as
+`Blocked` with reason `RealmConflict`.
 
 ### Finding a resource that has stopped converging
 

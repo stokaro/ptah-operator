@@ -140,3 +140,23 @@ tests:
               summary: "The API server could not reach the operator's admission webhooks in the last 5m"
               description: "Admission fails closed, so approvals and the operator's own writes are refused while this lasts."
               runbook_url: "https://operator.ptah.run/edge/use/operations/#webhook-certificate-lifecycle"
+
+  # The retained schema plans growing past the budget, on the leader; a
+  # follower publishes no store. Below the budget nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_stored_plan_bytes{pod="leader"}'
+        values: '536870912x5 1610612736x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PtahOperatorPlanStoreLarge
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: PtahOperatorPlanStoreLarge
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Retained schema plans hold 1.5GiB, over the budget set for them"
+              description: "The operator prunes no plan. The runbook says which plans are pinned and how to export and delete the rest."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#prune-plans"
