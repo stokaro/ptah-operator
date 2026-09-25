@@ -74,7 +74,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "5234fe01b5838c9d6c343c6cdc34637bd47f38a4f18bfbb54c555ea3cd3afd42"
+	ciWorkflowSHA256                = "22e5535fb073d09749e4036abeddc933d3989dd5ee896d9eb0276da614a6acf5"
 	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -88,7 +88,7 @@ const (
 	// The Helm the chart-rendering jobs install. One pin, so what CI renders
 	// and what a release renders are the same program.
 	helmSetupAction = "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4"
-	helmVersion     = "v4.3.0"
+	helmVersion     = "v4.2.4"
 
 	ciSupportMatrixTimeoutMinutes     = 10
 	ciVerifyTimeoutMinutes            = 20
