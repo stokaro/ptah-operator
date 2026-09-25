@@ -1335,6 +1335,7 @@ func teardownRetirementPodStatusFields() []string {
 		"allocatedResources",
 		"resources",
 		"nodeAllocatableResourceClaimStatuses",
+		"volumeHealth",
 	}
 }
 

@@ -430,6 +430,7 @@ func parentHookPodStatusFields() []string {
 		"allocatedResources",
 		"resources",
 		"nodeAllocatableResourceClaimStatuses",
+		"volumeHealth",
 	}
 }
 

@@ -40,15 +40,15 @@ repository pins.
 ## What was reviewed, and what was rejected
 
 Two widely-starred operator skills were read and not vendored. Both carry
-technical claims that are wrong against `sigs.k8s.io/controller-runtime v0.24.1`,
-which this repository pins:
+technical claims that are wrong against the `sigs.k8s.io/controller-runtime`
+this repository pins, read at v0.24.1 and again at v0.25.1:
 
 - one instructs the agent to return `ctrl.Result{Requeue: true}, err`, and ships
   a scripted check that flags code which does not. The error branch in
   `pkg/internal/controller/controller.go` requeues with the rate limiter and
-  never reads `result`, and `Requeue` carries `Deprecated: Use RequeueAfter
-  instead` in `pkg/reconcile/reconcile.go`. The rule asks for a deprecated field
-  in a position where it is ignored;
+  ignores `result` beyond a logged warning, and `Requeue` carries `Deprecated:
+  Use RequeueAfter instead` in `pkg/reconcile/reconcile.go`. The rule asks for a
+  deprecated field in a position where it is ignored;
 - both state that a status subresource prevents a reconcile after a status
   write. It prevents the `metadata.generation` bump, not the update event; the
   skip comes from `GenerationChangedPredicate`, whose own documentation says so
