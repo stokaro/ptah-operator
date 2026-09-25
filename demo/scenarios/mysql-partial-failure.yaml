@@ -191,7 +191,15 @@ steps:
       stdout_contains: [created]
 
   - note: All three statements ran this time, and the three deliveries are still there.
-    retry: 6m
+    await:
+      kind: ptahmigration
+      name: deliveries
+      timeout: 6m
+      generation: current
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
     run: |
       kubectl -n "$NAMESPACE" exec deploy/demo-mysql-client -- mysql demo -N -e \
         "SELECT CONCAT('version ', version, ': ', applied, ' of ', total, ' statements, ', state) FROM schema_migrations ORDER BY version;
