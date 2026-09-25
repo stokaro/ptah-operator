@@ -267,8 +267,12 @@ SQL output.
   applies the example in a cluster whose CNI enforces NetworkPolicy, adapted
   only where the example says to adapt it, and checks what each operation can
   reach: DNS always, the database and the registry exactly where the example
-  grants them, and nothing else. A real migration then runs to `InSync` under
-  the same policies. A CNI that does not enforce NetworkPolicy makes every one
+  grants them, and nothing else. The readings come from probe Pods labeled as
+  each operation. Admission refuses a Pod that claims the operator's own
+  `managed-by` value without a Job the operator made, so the probes carry
+  another value and a copy of the policies selects it; the copy differs from
+  the example in that one value, which the suite checks. A real migration then
+  runs to `InSync` under the example itself. A CNI that does not enforce NetworkPolicy makes every one
   of these policies a no-op, so check yours does before relying on them.
 - Grant the database user the minimum DDL and introspection privileges needed
   for the selected schemas. See [Database support and privileges](../../support/databases/)

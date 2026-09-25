@@ -3319,14 +3319,22 @@ run_unknown_layer_proof() {
 # podSelector and policyType is the example's, and the row refuses to run on a
 # rendering where one of them moved.
 #
-# Each operation is represented by a probe Pod that carries exactly the labels
-# the builder gives that operation's Pods. A policy selects by label and
-# nothing else, so what the probe can reach is what the operation can reach.
+# Each operation is represented by a probe Pod carrying the labels the builder
+# gives that operation's Pods, with one exception. Admission refuses a Pod that
+# claims `app.kubernetes.io/managed-by: ptah-operator` without a Job the
+# operator made -- the Pod-intent guard, doing what it is for -- so the probes
+# carry EGRESS_PROBE_MANAGER there instead, and a copy of the policies selects
+# that value where the example selects the operator's. The copy differs from
+# the example in that one value and nothing else, which the row checks. A
+# policy selects by label and nothing else, so what a probe can reach under the
+# copy is what the operation can reach under the example.
 # The probes read addresses rather than Service names, so a refused connection
 # is the policy and not a name that failed to resolve; resolution is checked on
 # its own. One real migration then runs to InSync under the same policies,
 # which is the half a probe cannot show: the operation's own containers,
 # including the init container that fetches the artifact, get what they need.
+EGRESS_PROBE_MANAGER=ptah-operator-e2e-egress-probe
+
 egress_database_port() {
 	case "$ENGINE" in
 	postgresql) printf '5432' ;;
@@ -3438,12 +3446,31 @@ render_egress_policies() {
       ($rendered[0].items | map({(.metadata.name): {podSelector: .spec.podSelector, policyTypes: .spec.policyTypes}}) | add)
     ' >/dev/null ||
 		fail "rendering the egress example changed a selector; the row would measure a policy the example does not contain"
+	jq --arg probe "$EGRESS_PROBE_MANAGER" '
+      .items |= map(
+        .metadata.name += "-probe"
+        | .spec.podSelector.matchLabels["app.kubernetes.io/managed-by"] |=
+            (if . == "ptah-operator" then $probe else error("a policy selects no operation Pod") end))
+    ' "$WORK_DIR/egress-policies.json" >"$WORK_DIR/egress-probe-policies.json" ||
+		fail "the probe copy of the egress policies could not be made"
+	# Mapped back, the copy is the rendering it was made from.
+	jq -n -e \
+		--slurpfile rendered "$WORK_DIR/egress-policies.json" \
+		--slurpfile copy "$WORK_DIR/egress-probe-policies.json" '
+      $rendered[0].items ==
+      ($copy[0].items | map(
+        .metadata.name |= rtrimstr("-probe")
+        | .spec.podSelector.matchLabels["app.kubernetes.io/managed-by"] = "ptah-operator"))
+    ' >/dev/null ||
+		fail "the probe copy of the egress policies differs from the example by more than the manager label"
 }
 
 apply_egress_policies() {
 	k apply -f "$WORK_DIR/egress-policies.json" >/dev/null ||
 		fail "the egress policies could not be applied"
 	EGRESS_POLICIES_APPLIED=1
+	k apply -f "$WORK_DIR/egress-probe-policies.json" >/dev/null ||
+		fail "the probe copy of the egress policies could not be applied"
 }
 
 # Every policy this row applied carries the proof label, so removing them does
@@ -3579,8 +3606,10 @@ assert_egress_is_enforced() {
 	egress_canary_deadline=$(deadline_from_now)
 	while :; do
 		egress_canary=$((egress_canary + 1))
-		create_egress_probe "egress-probe-canary-${egress_canary}" \
-			'{"app.kubernetes.io/managed-by":"ptah-operator","app.kubernetes.io/component":"schema-operation","operator.ptah.run/operation":"apply"}'
+		create_egress_probe "egress-probe-canary-${egress_canary}" "$(jq -cn --arg manager "$EGRESS_PROBE_MANAGER" '
+          {"app.kubernetes.io/managed-by": $manager,
+           "app.kubernetes.io/component": "schema-operation",
+           "operator.ptah.run/operation": "apply"}')"
 		case "$(egress_probe_reading "egress-probe-canary-${egress_canary}")" in
 		*registry=closed*) break ;;
 		esac
@@ -3591,8 +3620,9 @@ assert_egress_is_enforced() {
 	while read -r egress_family egress_operation _; do
 		[ -n "$egress_family" ] || continue
 		create_egress_probe "egress-probe-${egress_family}-${egress_operation}" "$(jq -cn \
+			--arg manager "$EGRESS_PROBE_MANAGER" \
 			--arg component "${egress_family}-operation" --arg operation "$egress_operation" '
-          {"app.kubernetes.io/managed-by": "ptah-operator",
+          {"app.kubernetes.io/managed-by": $manager,
            "app.kubernetes.io/component": $component,
            "operator.ptah.run/operation": $operation}')"
 	done <"$WORK_DIR/egress-expectations.txt"
