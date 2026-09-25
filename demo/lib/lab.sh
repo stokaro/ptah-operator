@@ -147,12 +147,110 @@ lab_prepare() {
     }' | k apply -f - >/dev/null
 	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-psql --timeout=180s >/dev/null
 
+	lab_prepare_mysql
+
 	# The policy ConfigMap is immutable, and the operator refuses one that is
 	# not: a policy that could be edited after an artifact was verified against
 	# it is a policy that decided nothing. Immutable also means it cannot be
 	# applied over, so a changed policy is replaced rather than patched.
 	lab_apply_policy demo-verification-policy verification-policy.yaml
 	lab_apply_policy demo-migration-verification-policy migration-verification-policy.yaml
+}
+
+# lab_prepare_mysql stands up the MySQL the engine-specific scenarios run
+# against: a server in the namespace, its credentials as a Secret the operator
+# reads by the same `url` key, and a client that reads the same Secret.
+#
+# In the cluster rather than beside it, because nothing about a partially
+# committed MySQL migration depends on where the server runs, and a server here
+# is one Deployment instead of a second container the bootstrap would have to
+# route to. The image is the one the bootstrap mirrored for the acceptance
+# suite, so it is the MySQL version this repository supports.
+lab_prepare_mysql() {
+	lab_require LAB_MYSQL_IMAGE
+	mkdir -p "$LAB_WORK"
+	[ -s "$LAB_WORK/mysql-password" ] ||
+		head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' >"$LAB_WORK/mysql-password"
+	lab_mysql_password=$(cat "$LAB_WORK/mysql-password")
+	lab_mysql_host="demo-mysql.${E2E_TEST_NAMESPACE}.svc.cluster.local"
+	k -n "$E2E_TEST_NAMESPACE" create secret generic demo-mysql-database \
+		--from-literal=url="mysql://demo:${lab_mysql_password}@tcp(${lab_mysql_host}:3306)/demo" \
+		--from-literal=host="$lab_mysql_host" \
+		--from-literal=username=demo \
+		--from-literal=password="$lab_mysql_password" \
+		--from-literal=database=demo \
+		--dry-run=client -o yaml | k apply -f - >/dev/null
+	# The mysql client takes its password from MYSQL_PWD and its user from
+	# USER, so what a scenario prints is `mysql demo -e "<statement>"` with
+	# nothing secret on the command line.
+	jq -n \
+		--arg namespace "$E2E_TEST_NAMESPACE" \
+		--arg image "$LAB_MYSQL_IMAGE" '
+    def secret($key): {valueFrom: {secretKeyRef: {name: "demo-mysql-database", key: $key}}};
+    def labels($name): {"app.kubernetes.io/name": $name};
+    {
+      apiVersion: "v1", kind: "List",
+      items: [
+        {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: {namespace: $namespace, name: "demo-mysql"},
+          spec: {
+            replicas: 1,
+            selector: {matchLabels: labels("demo-mysql")},
+            template: {
+              metadata: {labels: labels("demo-mysql")},
+              spec: {
+                automountServiceAccountToken: false,
+                containers: [{
+                  name: "mysql", image: $image, imagePullPolicy: "IfNotPresent",
+                  ports: [{name: "mysql", containerPort: 3306}],
+                  env: [
+                    ({name: "MYSQL_ROOT_PASSWORD"} + secret("password")),
+                    ({name: "MYSQL_PASSWORD"} + secret("password")),
+                    {name: "MYSQL_USER", value: "demo"},
+                    {name: "MYSQL_DATABASE", value: "demo"}
+                  ],
+                  readinessProbe: {
+                    exec: {command: ["sh", "-c", "MYSQL_PWD=\"$MYSQL_PASSWORD\" mysqladmin -h 127.0.0.1 -u demo ping"]},
+                    periodSeconds: 5
+                  }
+                }]
+              }
+            }
+          }
+        },
+        {
+          apiVersion: "v1", kind: "Service",
+          metadata: {namespace: $namespace, name: "demo-mysql"},
+          spec: {selector: labels("demo-mysql"), ports: [{name: "mysql", port: 3306, targetPort: "mysql"}]}
+        },
+        {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: {namespace: $namespace, name: "demo-mysql-client"},
+          spec: {
+            replicas: 1,
+            selector: {matchLabels: labels("demo-mysql-client")},
+            template: {
+              metadata: {labels: labels("demo-mysql-client")},
+              spec: {
+                automountServiceAccountToken: false,
+                containers: [{
+                  name: "mysql", image: $image, imagePullPolicy: "IfNotPresent",
+                  command: ["sleep", "infinity"],
+                  env: [
+                    ({name: "MYSQL_HOST"} + secret("host")),
+                    ({name: "MYSQL_PWD"} + secret("password")),
+                    ({name: "USER"} + secret("username"))
+                  ]
+                }]
+              }
+            }
+          }
+        }
+      ]
+    }' | k apply -f - >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-mysql --timeout=300s >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-mysql-client --timeout=180s >/dev/null
 }
 
 # lab_apply_policy writes one immutable verification policy ConfigMap.
@@ -229,6 +327,9 @@ lab_reset() {
 		              DROP TABLE IF EXISTS schema_migrations CASCADE;
 		              DROP SCHEMA IF EXISTS atlas_schema_revisions CASCADE" >/dev/null ||
 		lab_fail "could not empty the demonstration database"
+	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-mysql-client -- \
+		mysql demo -e "DROP TABLE IF EXISTS deliveries, schema_migrations" >/dev/null ||
+		lab_fail "could not empty the demonstration MySQL database"
 }
 
 # lab_manifest renders one manifest template.

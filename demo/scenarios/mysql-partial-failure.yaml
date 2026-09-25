@@ -1,0 +1,208 @@
+id: mysql-partial-failure
+title: Recover a MySQL migration that stopped halfway
+tagline: DDL that committed, a run nobody can retry, and a repair decided by what the database holds.
+learn: How to find out what a partial MySQL migration left behind before choosing how to repair it.
+tags: [Operations]
+
+reset:
+  - demo/bin/lab reset
+  # Three releases of one sequence: the first creates the table, the second
+  # adds a migration whose last statement fails, the third carries it
+  # corrected. Published the way a CI job publishes them.
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    for release in 1 2 3; do
+      ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/deliveries:release-$release-$$" \
+        --migrations-dir "demo/mysql/release-$release" --dir-format ptah --version "release-$release-$$" --plain-http \
+        | sed -n 's/^Digest: //p' > "demo/.lab/deliveries-$release-digest"
+    done
+
+steps:
+  - note: Release 1 creates the table on the lab's MySQL, and this resource applies it on its own.
+    run: APPLY=Always demo/bin/lab manifest deliveries "$(cat demo/.lab/deliveries-1-digest)" | kubectl apply -f -
+    sync: release 1
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: Three deliveries arrive. The next release has to keep them.
+    await:
+      kind: ptahmigration
+      name: deliveries
+      timeout: 6m
+      generation: current
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-mysql-client -- mysql demo -e \
+        "INSERT INTO deliveries VALUES (1, 'D-100'), (2, 'D-200'), (3, 'D-300'); SELECT * FROM deliveries"
+    expect:
+      exit: 0
+      stdout_contains: [D-100, D-200, D-300]
+
+  - note: Release 2 adds a status, fills it, then constrains it, naming a column that is not there.
+    run: cat demo/mysql/release-2/0000000002_add_status.up.sql
+    expect:
+      exit: 0
+      stdout_contains: [ADD COLUMN status, "UPDATE deliveries", "CHECK (statuz"]
+
+  - note: Point the resource at release 2, and approve the plan it publishes.
+    run: |
+      APPLY=OnApproval demo/bin/lab manifest deliveries "$(cat demo/.lab/deliveries-2-digest)" | kubectl apply -f -
+    sync: release 2
+    expect:
+      exit: 0
+      stdout_contains: [configured]
+
+  - note: The plan holds version 2 alone. Approve it by name, UID and fingerprint.
+    await:
+      kind: ptahmigration
+      name: deliveries
+      timeout: 6m
+      generation: current
+      condition:
+        type: ApprovalRequired
+        status: "True"
+        reason: AwaitingApproval
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration deliveries -o json > demo/.lab/deliveries.json
+      kubectl -n "$NAMESPACE" get ptahmigrationplan \
+        "$(jq -r .status.plan.name demo/.lab/deliveries.json)" -o json > demo/.lab/deliveries-plan.json
+      jq -r '.spec.migrations[] | "planned: \(.version) \(.description)"' demo/.lab/deliveries-plan.json
+      jq -n --slurpfile migration demo/.lab/deliveries.json --slurpfile plan demo/.lab/deliveries-plan.json '
+        {
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+          metadata: {name: "deliveries-release-2"},
+          spec: {
+            migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},
+            planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},
+            planFingerprint: $plan[0].spec.fingerprint
+          }
+        }' | kubectl -n "$NAMESPACE" create -f -
+    sync: approved
+    expect:
+      exit: 0
+      stdout_contains: ["planned: 2 Add Status", created]
+
+  - note: The run stopped partway. The resource records it and will not run anything until it is settled.
+    retry: 6m
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration deliveries -o json \
+        | jq -r '"last run: \(.status.lastRun.outcome)", "unresolved: \(.status.unresolvedRun.outcome // "none")"'
+    sync: stopped
+    expect:
+      exit: 0
+      stdout_contains: ["last run: Partial", "unresolved: Partial"]
+      resource:
+        kind: ptahmigration
+        name: deliveries
+        condition:
+          type: Blocked
+          status: "True"
+          reason: ApplyOutcomeUnknown
+
+  - note: First, what committed. The column exists and every row was filled.
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-mysql-client -- mysql demo -e \
+        "SELECT id, reference, status FROM deliveries"
+    expect:
+      exit: 0
+      stdout_contains: [status, open, D-100, D-300]
+
+  - note: The revision table agrees. Version 2 stopped after two of its three statements.
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-mysql-client -- mysql demo -N -e \
+        "SELECT CONCAT('version ', version, ': ', applied, ' of ', total, ' statements, ', state) FROM schema_migrations ORDER BY version"
+    expect:
+      exit: 0
+      stdout_contains: ["version 1: 1 of 1 statements", "version 2: 2 of 3 statements"]
+
+  - note: This database is disposable, so undo both statements. A real one needs its changes judged first.
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-mysql-client -- mysql demo -e \
+        "ALTER TABLE deliveries DROP COLUMN status; DELETE FROM schema_migrations WHERE version = 2"
+    sync: repaired
+    expect:
+      exit: 0
+
+  - note: Point the resource at release 1, which ends before the migration that failed.
+    run: |
+      APPLY=OnApproval demo/bin/lab manifest deliveries "$(cat demo/.lab/deliveries-1-digest)" | kubectl apply -f -
+    expect:
+      exit: 0
+      stdout_contains: [configured]
+
+  - note: Its next reading finds nothing to apply, and that reading is what clears the record.
+    await:
+      kind: ptahmigration
+      name: deliveries
+      timeout: 6m
+      generation: current
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration deliveries -o json \
+        | jq -r '"unresolved: \(.status.unresolvedRun.outcome // "none")"'
+    sync: cleared
+    expect:
+      exit: 0
+      stdout_contains: ["unresolved: none"]
+
+  - note: Release 3 carries the corrected migration. Point the resource at it.
+    run: |
+      APPLY=OnApproval demo/bin/lab manifest deliveries "$(cat demo/.lab/deliveries-3-digest)" | kubectl apply -f -
+    sync: release 3
+    expect:
+      exit: 0
+      stdout_contains: [configured]
+
+  - note: Its plan holds the corrected version 2. Approve it the same way.
+    await:
+      kind: ptahmigration
+      name: deliveries
+      timeout: 6m
+      generation: current
+      condition:
+        type: ApprovalRequired
+        status: "True"
+        reason: AwaitingApproval
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration deliveries -o json > demo/.lab/deliveries.json
+      kubectl -n "$NAMESPACE" get ptahmigrationplan \
+        "$(jq -r .status.plan.name demo/.lab/deliveries.json)" -o json > demo/.lab/deliveries-plan.json
+      jq -n --slurpfile migration demo/.lab/deliveries.json --slurpfile plan demo/.lab/deliveries-plan.json '
+        {
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+          metadata: {name: "deliveries-release-3"},
+          spec: {
+            migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},
+            planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},
+            planFingerprint: $plan[0].spec.fingerprint
+          }
+        }' | kubectl -n "$NAMESPACE" create -f -
+    sync: approved
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: All three statements ran this time, and the three deliveries are still there.
+    retry: 6m
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-mysql-client -- mysql demo -N -e \
+        "SELECT CONCAT('version ', version, ': ', applied, ' of ', total, ' statements, ', state) FROM schema_migrations ORDER BY version;
+         SELECT CONCAT(id, ' ', reference, ' ', status) FROM deliveries ORDER BY id"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: ["version 2: 3 of 3 statements", "1 D-100 open", "2 D-200 open", "3 D-300 open"]
+      resource:
+        kind: ptahmigration
+        name: deliveries
+        fields:
+          - path: status.lastRun.outcome
+            equals: Applied
