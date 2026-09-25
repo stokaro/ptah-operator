@@ -1386,6 +1386,47 @@ A migration named there is
 for a person. A schema named there settles itself once its horizon passes and
 a reading of the database confirms convergence.
 
+#### The chart's rules {#unresolved-rules}
+
+With the Prometheus Operator, `monitoring.prometheusRule.enabled` renders a
+`PrometheusRule` with three alerts over these gauges:
+
+| Alert | Fires when | Severity |
+| --- | --- | --- |
+| `PtahOperatorUnresolvedApply` | Any resource of a family carries an unresolved record, from the first evaluation that sees it | critical |
+| `PtahOperatorUnresolvedViewNotSynced` | No replica reports a synchronized view, or no replica reports at all, for `viewUnsyncedFor` | warning |
+| `PtahOperatorUnresolvedViewReadFailures` | A scrape failed to read the state within the last `viewUnsyncedFor` | warning |
+
+The first has no threshold and no pending period. There is no count or age of
+unaccounted work that is fine to ignore, and the records are durable, so the
+alert does not flap while one is being closed. The other two exist because
+the first cannot fire while the view is unsynchronized or unreadable.
+
+Only the elected leader starts the view; every other replica reports it
+unsynchronized and publishes no counts. The rules take the `max` across
+replicas, which reads the leader and never counts a record twice.
+
+`viewUnsyncedFor` has no default, and the chart refuses to render the rules
+without it. How long a manager takes to synchronize after a restart or a
+leader change depends on the cluster it runs in, so measure it there: restart
+the manager a few times and move leadership once
+(`kubectl -n <release-namespace> rollout restart deployment/<release>`, and
+delete the leader Pod), then read how many seconds the view spent
+unsynchronized in the hour that covers them:
+
+```promql
+sum_over_time((max(ptah_operator_unresolved_view_synced) == bool 0)[1h:15s]) * 15
+```
+
+Set `viewUnsyncedFor` comfortably above the longest single stretch you saw.
+The same number bounds the read-failure window, so a failure is reported for
+that long after it happened.
+
+The rules are tested with `promtool test rules` against the scenarios in
+`hack/testdata/prometheusrule/`: one unresolved migration beside a follower,
+a healthy fleet at zero, a view that stays unsynchronized past the window, a
+leader change shorter than it, a lost scrape target, and a failed read.
+
 ### Finding a resource that has stopped converging
 
 The counters above cannot answer this one. They are aggregates over every

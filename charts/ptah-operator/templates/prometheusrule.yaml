@@ -1,0 +1,60 @@
+{{- if .Values.monitoring.prometheusRule.enabled }}
+{{- $unsyncedFor := required "monitoring.prometheusRule.viewUnsyncedFor is required when the rules are enabled: how long a manager takes to synchronize its view after a restart or a leader change depends on the cluster it runs in, so measure it there rather than taking a number from this chart" .Values.monitoring.prometheusRule.viewUnsyncedFor }}
+{{- $runbook := printf "%s#unresolved-gauges" .Values.monitoring.prometheusRule.runbookBaseURL }}
+# Alerting rules over the gauges the manager builds from durable state.
+#
+# The first rule has no threshold and no pending period, on purpose: a resource
+# carrying an unresolved record is a mutation nobody accounted for, and only a
+# person reading the database clears it. No count or age of that is fine to
+# ignore, and the records are durable, so the rule does not flap while one is
+# being closed.
+#
+# The other two watch whether the first can fire at all. While the view has
+# not synchronized the counts are absent, and an absent count is not evidence
+# that nothing is unresolved.
+#
+# Only the elected leader starts the view. Every other replica reports it
+# unsynchronized and publishes no counts, so the rules take the max across
+# replicas: that reads the leader, never counts a record twice, and after a
+# leader change reads the new leader once it has synchronized. The
+# not-synchronized rule covers the gap in between.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: ptah-operator-unresolved
+      rules:
+        - alert: PtahOperatorUnresolvedApply
+          expr: max by (family) (ptah_operator_unresolved_attempts) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: {{ printf "{{ $value }} %s resources carry an Apply nobody accounted for" "{{ $labels.family }}" | quote }}
+            description: "Nothing retries these and nothing clears them except a reading of the database. The runbook lists them."
+            runbook_url: {{ $runbook | quote }}
+        - alert: PtahOperatorUnresolvedViewNotSynced
+          expr: max(ptah_operator_unresolved_view_synced) == 0 or absent(ptah_operator_unresolved_view_synced)
+          for: {{ $unsyncedFor | quote }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "The operator's view of unresolved work has not synchronized"
+            description: "While it has not, PtahOperatorUnresolvedApply cannot fire, and its silence says nothing."
+            runbook_url: {{ $runbook | quote }}
+        - alert: PtahOperatorUnresolvedViewReadFailures
+          expr: max(increase(ptah_operator_unresolved_view_read_failures_total[{{ $unsyncedFor }}])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Scrapes are failing to read the state the unresolved counts are built from"
+            description: "A scrape that cannot read that state publishes no counts, so PtahOperatorUnresolvedApply cannot fire while this lasts."
+            runbook_url: {{ $runbook | quote }}
+{{- end }}

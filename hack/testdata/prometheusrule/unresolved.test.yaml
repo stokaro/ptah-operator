@@ -1,0 +1,146 @@
+# The cases the unresolved-work rules exist for, run against the rules the chart
+# renders with viewUnsyncedFor=10m (hack/prometheus_rule_test.go writes them to
+# rules.yaml beside this file). Each series carries a pod label because the
+# manager runs as several replicas and only the leader publishes counts.
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # One migration nobody accounted for, on the leader, beside a follower that
+  # reports its own view unsynchronized and publishes no count. The alert fires
+  # the moment the record exists and names the family; the follower's zero does
+  # not read as a view nobody synchronized.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_unresolved_view_synced{pod="leader"}'
+        values: '1x30'
+      - series: 'ptah_operator_unresolved_view_synced{pod="follower"}'
+        values: '0x30'
+      - series: 'ptah_operator_unresolved_attempts{family="migration",pod="leader"}'
+        values: '0x4 1x25'
+      - series: 'ptah_operator_unresolved_attempts{family="schema",pod="leader"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PtahOperatorUnresolvedApply
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: PtahOperatorUnresolvedApply
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              family: migration
+            exp_annotations:
+              summary: "1 migration resources carry an Apply nobody accounted for"
+              description: "Nothing retries these and nothing clears them except a reading of the database. The runbook lists them."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#unresolved-gauges"
+      - eval_time: 25m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts: []
+
+  # A healthy fleet: the leader synchronized and nothing unresolved. Zero is a
+  # reading, not a page.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_unresolved_view_synced{pod="leader"}'
+        values: '1x30'
+      - series: 'ptah_operator_unresolved_attempts{family="migration",pod="leader"}'
+        values: '0x30'
+      - series: 'ptah_operator_unresolved_attempts{family="schema",pod="leader"}'
+        values: '0x30'
+      - series: 'ptah_operator_unresolved_view_read_failures_total{pod="leader"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: PtahOperatorUnresolvedApply
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: PtahOperatorUnresolvedViewReadFailures
+        exp_alerts: []
+
+  # A manager whose view stays unsynchronized past the window. Before it, the
+  # alert is only pending; after the view catches up, it clears.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_unresolved_view_synced{pod="leader"}'
+        values: '0x14 1x15'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "The operator's view of unresolved work has not synchronized"
+              description: "While it has not, PtahOperatorUnresolvedApply cannot fire, and its silence says nothing."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#unresolved-gauges"
+      - eval_time: 20m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts: []
+
+  # A leader change shorter than the window. The old leader stops reporting a
+  # synchronized view at 5m and the new one catches up at 8m: the gap is not a
+  # page.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_unresolved_view_synced{pod="old-leader"}'
+        values: '1x5 0x20'
+      - series: 'ptah_operator_unresolved_view_synced{pod="new-leader"}'
+        values: '0x7 1x18'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts: []
+
+  # The target lost altogether. No series is not "nothing unresolved": once the
+  # last sample has gone stale and the window has passed, the rule fires.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_unresolved_view_synced{pod="leader"}'
+        values: '1x2 _x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: PtahOperatorUnresolvedViewNotSynced
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "The operator's view of unresolved work has not synchronized"
+              description: "While it has not, PtahOperatorUnresolvedApply cannot fire, and its silence says nothing."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#unresolved-gauges"
+
+  # A scrape that could not read the state. It fires while a failure is inside
+  # the window and clears once the window has passed it.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_unresolved_view_synced{pod="leader"}'
+        values: '1x40'
+      - series: 'ptah_operator_unresolved_view_read_failures_total{pod="leader"}'
+        values: '0x10 1x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: PtahOperatorUnresolvedViewReadFailures
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PtahOperatorUnresolvedViewReadFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Scrapes are failing to read the state the unresolved counts are built from"
+              description: "A scrape that cannot read that state publishes no counts, so PtahOperatorUnresolvedApply cannot fire while this lasts."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#unresolved-gauges"
+      - eval_time: 30m
+        alertname: PtahOperatorUnresolvedViewReadFailures
+        exp_alerts: []

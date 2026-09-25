@@ -74,7 +74,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "5234fe01b5838c9d6c343c6cdc34637bd47f38a4f18bfbb54c555ea3cd3afd42"
+	ciWorkflowSHA256                = "a0982a2dda9457fe2457931a85ba96b7cba28cb397b232eec3c0a3305d16d79e"
 	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -724,7 +724,7 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 	}
 	verifySteps, err := requireWorkflowStepOrder(path, "verify", verifyJob, []string{
 		"checkout", "setup-go", "verify-build-cache", "verify-support", "crd-baseline", "verify-helm",
-		"shellcheck", "client-build-config", "project-verify",
+		"shellcheck", "promtool", "client-build-config", "project-verify",
 	})
 	if err != nil {
 		return err
@@ -844,22 +844,45 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 			return fmt.Errorf("%s: the pinned ShellCheck install does not read %q", path, required)
 		}
 	}
+	// promtool runs the alerting rules the chart renders against their
+	// scenarios. The same rule as ShellCheck: the exact version from
+	// support/tools.json, checked against its digest, and verification below
+	// requires the binary, so a job without it fails rather than skipping the
+	// rule tests.
+	if verifySteps[7].Name != "Install the pinned promtool" ||
+		verifySteps[7].If != "" || verifySteps[7].Uses != "" ||
+		verifySteps[7].Shell != "bash" || verifySteps[7].WorkingDirectory != "" ||
+		len(verifySteps[7].With) != 0 || len(verifySteps[7].Env) != 0 {
+		return fmt.Errorf("%s: the pinned promtool install must be an unconditional bash step with no inputs", path)
+	}
+	for _, required := range []string{
+		"support/tools.json",
+		"sha256sum --check",
+		".promtool.version",
+		".promtool.linuxAmd64Url",
+		".promtool.linuxAmd64Sha256",
+	} {
+		if !strings.Contains(verifySteps[7].Run, required) {
+			return fmt.Errorf("%s: the pinned promtool install does not read %q", path, required)
+		}
+	}
 	// The client build configuration is checked where a pull request sees it:
 	// a release reads its platforms out of that file, so one goreleaser refuses
 	// is a release that cannot be cut.
-	if verifySteps[7].Name != "Check the client build configuration" ||
-		!strings.HasPrefix(verifySteps[7].Uses, "goreleaser/goreleaser-action@") ||
-		verifySteps[7].Run != "" || verifySteps[7].With["args"] != "check" {
+	if verifySteps[8].Name != "Check the client build configuration" ||
+		!strings.HasPrefix(verifySteps[8].Uses, "goreleaser/goreleaser-action@") ||
+		verifySteps[8].Run != "" || verifySteps[8].With["args"] != "check" {
 		return fmt.Errorf("%s: the client build configuration is not checked with goreleaser", path)
 	}
-	if verifySteps[8].Name != "Run project verification" ||
-		verifySteps[8].If != "" || verifySteps[8].Uses != "" || verifySteps[8].Run != "make verify-source" ||
-		verifySteps[8].Shell != "bash" || verifySteps[8].WorkingDirectory != "" ||
-		len(verifySteps[8].With) != 0 || !equalStringMap(verifySteps[8].Env, map[string]string{
+	if verifySteps[9].Name != "Run project verification" ||
+		verifySteps[9].If != "" || verifySteps[9].Uses != "" || verifySteps[9].Run != "make verify-source" ||
+		verifySteps[9].Shell != "bash" || verifySteps[9].WorkingDirectory != "" ||
+		len(verifySteps[9].With) != 0 || !equalStringMap(verifySteps[9].Env, map[string]string{
 		"CRD_SCHEMA_BASELINE_REF":              "${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE": "true",
+		"PTAH_REQUIRE_PROMTOOL":                "1",
 	}) {
-		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline", path)
+		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline and require promtool", path)
 	}
 
 	race := workflow.Jobs["race"]
