@@ -2,7 +2,7 @@ module github.com/stokaro/ptah-operator
 
 go 1.26.0
 
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
 	github.com/google/cel-go v0.30.0
