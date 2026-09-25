@@ -55,7 +55,7 @@ func TestEveryCandidateBlankSaysWhatFillsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build the coverage: %v", err)
 	}
-	fields := candidateFields("../..", coverage)
+	fields := candidateFields("../..", coverage, nil)
 	if len(fields) < 10 {
 		t.Fatalf("the candidate block carries %d fields; it was written with more", len(fields))
 	}
@@ -83,5 +83,5 @@ func buildRecordForTest(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("build the coverage: %v", err)
 	}
-	return coverage.recordMarkdown("../..")
+	return coverage.recordMarkdown("../..", nil)
 }

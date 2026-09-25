@@ -6,6 +6,7 @@ set -eu
 "$(dirname -- "$0")/admission-schema-contract-selftest.sh"
 "$(dirname -- "$0")/controller-object-schema-contract-selftest.sh"
 "$(dirname -- "$0")/migration-refusal-filter-selftest.sh"
+"$(dirname -- "$0")/acceptance-issue-map-selftest.sh"
 
 unset CDPATH
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
@@ -278,7 +279,8 @@ ACTUAL_SHELLCHECK_VERSION=v$(shellcheck --version | awk '/^version:/ { print $2 
 printf 'e2e static: shellcheck %s\n' "$ACTUAL_SHELLCHECK_VERSION"
 # -x so the stopwatch the driver and the phases source is checked in the
 # context that sources it, rather than reported as a file nothing followed.
-shellcheck -x "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
+shellcheck -x "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh" \
+	"$ROOT_DIR/hack/acceptance-issue-map.sh" "$ROOT_DIR/hack/acceptance-issue-map-selftest.sh"
 
 # The demonstration's shell is published: a reader repeats what a scenario ran.
 # The census comes from git rather than from a glob, and holds above a floor,

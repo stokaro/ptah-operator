@@ -11,7 +11,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage e2e-static e2e
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -140,8 +140,28 @@ acceptance-coverage:
 # The whole acceptance record #242 asks for: the candidate identity the tree
 # can answer, a disposition for every requirement, and the coverage table. It
 # awards no pass; what a build or a deployment decides is left blank and named.
+#
+# ACCEPTANCE_PROFILE points at a declared profile -- the digests, the installed
+# values, the operating and recovery targets, the run the evidence comes from,
+# and a disposition per requirement. The record fills itself from it and is
+# refused rather than printed when the profile would overstate it: a verdict
+# with no evidence, an accepted requirement beside an unfilled target, a tag
+# where a digest belongs.
 acceptance-record:
+ifeq ($(strip $(ACCEPTANCE_PROFILE)),)
 	@$(GO) run ./hack/acceptancecoverage -record
+else
+	@$(GO) run ./hack/acceptancecoverage -record -profile $(ACCEPTANCE_PROFILE)
+endif
+
+# The state of every issue the #242 review map links, per requirement, read
+# when it runs. The map deliberately stores no states, so this reads them and
+# stores none either. It awards nothing: a closed issue is not evidence about a
+# candidate.
+#
+# This target performs live forge discovery. Normal verification is offline.
+acceptance-issue-map:
+	@./hack/acceptance-issue-map.sh
 
 # This target performs live upstream discovery. Normal verification is offline.
 update-kubernetes-support:
