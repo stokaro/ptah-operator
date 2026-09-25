@@ -1427,6 +1427,48 @@ The rules are tested with `promtool test rules` against the scenarios in
 a healthy fleet at zero, a view that stays unsynchronized past the window, a
 leader change shorter than it, a lost scrape target, and a failed read.
 
+#### The state gauges {#resource-state}
+
+The same view publishes the fleet as it stands, under the same guard: nothing
+while `ptah_operator_unresolved_view_synced` reads 0.
+
+| Series | What it is |
+| --- | --- |
+| `ptah_operator_resources{family,phase}` | Resources by the phase their status reports; `Unset` before the first reconciliation |
+| `ptah_operator_overdue_resources{family}` | Resources, not suspended, past their own `status.nextReconciliationTime` |
+| `ptah_operator_overdue_seconds{family}` | How far past it the latest one is. Absent where none is overdue |
+| `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type |
+| `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
+| `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
+| `ptah_operator_webhook_certificate_expiry_timestamp_seconds` | When the admission certificate this replica presents expires; every replica publishes it |
+
+Being overdue for a moment is normal: `nextReconciliationTime` passes when a
+pass starts, and the status moves once its Jobs have run. What is not normal
+is a resource that stays late, which is why the alert is on how late rather
+than on whether.
+
+Each of these alerts renders only when its threshold is set, and the chart
+sets none:
+
+| Value | Alert |
+| --- | --- |
+| `overdueAfterSeconds` | `PtahOperatorResourceOverdue` |
+| `operationStalledAfterSeconds` | `PtahOperatorOperationStalled` |
+| `lockReleaseOwedFor` | `PtahOperatorLockReleaseOwed` |
+| `certificateExpiresWithinSeconds` | `PtahOperatorWebhookCertificateExpiring` |
+| `failures.window` with `failures.count` | `PtahOperatorOperationsFailing` |
+| `admissionFailingFor` | `PtahOperatorAdmissionUnavailable`, which reads the API server's metrics |
+
+Read them off the installation they are for, over a period that includes a
+rollout and a busy day, and set each comfortably above what normal work
+produced:
+
+```promql
+max_over_time(max(ptah_operator_overdue_seconds)[7d:1m])
+max_over_time(max(ptah_operator_active_operation_seconds)[7d:1m])
+max_over_time(sum(increase(ptah_operator_failures_total[30m]))[7d:5m])
+```
+
 ### Finding a resource that has stopped converging
 
 The counters above cannot answer this one. They are aggregates over every

@@ -54,3 +54,22 @@ func (v *CachedUnresolvedView) UnresolvedMigrations(ctx context.Context) ([]time
 	}
 	return UnresolvedMigrationRecords(migrations.Items), nil
 }
+
+// ListSchemas returns every PtahSchema the cache holds, for the state gauges.
+func (v *CachedUnresolvedView) ListSchemas(ctx context.Context) ([]operatorv1alpha1.PtahSchema, error) {
+	schemas := &operatorv1alpha1.PtahSchemaList{}
+	if err := v.reader.List(ctx, schemas); err != nil {
+		return nil, err
+	}
+	return schemas.Items, nil
+}
+
+// ListMigrations returns every PtahMigration the cache holds, for the state
+// gauges.
+func (v *CachedUnresolvedView) ListMigrations(ctx context.Context) ([]operatorv1alpha1.PtahMigration, error) {
+	migrations := &operatorv1alpha1.PtahMigrationList{}
+	if err := v.reader.List(ctx, migrations); err != nil {
+		return nil, err
+	}
+	return migrations.Items, nil
+}

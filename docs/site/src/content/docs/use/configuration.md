@@ -84,6 +84,14 @@ reader of a converged schema can see exactly what produced it.
 | `monitoring.prometheusRule.labels` | `{}` | Labels the Prometheus instance selects rules by. |
 | `monitoring.prometheusRule.viewUnsyncedFor` | `""` | How long the view behind the unresolved counts may report itself unsynchronized before that is an alert. Required when the rules are on, and deliberately without a default: how long a manager takes to synchronize after a restart or a leader change depends on the cluster it runs in. The operations guide says how to measure it there. |
 | `monitoring.prometheusRule.runbookBaseURL` | `"https://operator.ptah.run/edge/use/operations/"` | Where each rule's runbook_url points. The page and its anchor are fixed; this is the guide they are read from. |
+| `monitoring.prometheusRule.overdueAfterSeconds` | `null` | The rules below render only where their threshold is set. Each one is a number about a particular cluster -- its intervals, its Job start times, its tolerance -- so the chart ships none; the operations guide says how to read each one off a running installation.  Seconds a resource may be past its own status.nextReconciliationTime. |
+| `monitoring.prometheusRule.operationStalledAfterSeconds` | `null` | Seconds one operation may stay in flight. |
+| `monitoring.prometheusRule.lockReleaseOwedFor` | `""` | How long a database-realm Lease release may stay owed. |
+| `monitoring.prometheusRule.certificateExpiresWithinSeconds` | `null` | Seconds before the admission serving certificate expires that are too few. |
+| `monitoring.prometheusRule.failures` |  | Operation failures in a window that are too many. Set both or neither. |
+| `monitoring.prometheusRule.failures.window` | `""` | The window, as a duration. |
+| `monitoring.prometheusRule.failures.count` | `null` | The count in that window. |
+| `monitoring.prometheusRule.admissionFailingFor` | `""` | How long the API server may fail to reach the admission webhooks. The alert reads the API server's metrics, so it needs the API server scraped. |
 | `webhook` |  | The admission webhook server inside the manager, which is what refuses an approval that does not name an exact plan. |
 | `webhook.port` | `9443` | Port the manager serves admission on. |
 | `webhook.timeoutSeconds` | `5` | Timeout the API server applies to the fast admission paths. |

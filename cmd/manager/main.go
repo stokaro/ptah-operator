@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -165,6 +166,11 @@ func main() {
 	// published as proof that nothing is unresolved.
 	unresolvedView := telemetry.NewCachedUnresolvedView(manager.GetClient())
 	telemetry.NewUnresolvedCollector(ctrlmetrics.Registry, unresolvedView, nil)
+	// The fleet by phase, what is overdue for its own next reconciliation, and
+	// what is in flight, read through the same view and published under the
+	// same synchronized guard.
+	telemetry.NewStateCollector(ctrlmetrics.Registry, unresolvedView, nil)
+	telemetry.NewCertificateCollector(ctrlmetrics.Registry, filepath.Join(webhookCertDir, "tls.crt"))
 	if err := manager.Add(unresolvedView); err != nil {
 		log.Error(err, "register the unresolved-work view")
 		os.Exit(1)

@@ -61,7 +61,7 @@ func TestThePrometheusRuleRefusesToGuessTheSynchronizationWindow(t *testing.T) {
 
 func TestThePrometheusRuleNamesOnlyMetricsTheManagerExports(t *testing.T) {
 	t.Parallel()
-	rule := renderedPrometheusRule(t)
+	rule := renderedPrometheusRuleWith(t, stateThresholds...)
 	named := map[string]bool{}
 	for _, name := range ruleMetricName.FindAllString(rule, -1) {
 		named[name] = true
@@ -86,8 +86,14 @@ func TestThePrometheusRuleNamesOnlyMetricsTheManagerExports(t *testing.T) {
 // as the chart renders them.
 func TestThePrometheusRuleFiresOnWhatItIsFor(t *testing.T) {
 	t.Parallel()
+	runPromtool(t, renderedPrometheusRule(t), "unresolved.test.yaml")
+}
+
+// runPromtool writes the rendered rule groups beside one scenario file and runs
+// promtool over them.
+func runPromtool(t *testing.T, rule, scenarioFile string) {
+	t.Helper()
 	promtool := promtoolOrSkip(t)
-	rule := renderedPrometheusRule(t)
 	var document struct {
 		Spec map[string]any `json:"spec"`
 	}
@@ -105,28 +111,74 @@ func TestThePrometheusRuleFiresOnWhatItIsFor(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "rules.yaml"), rules, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scenarios, err := os.ReadFile(repositoryFile(t, "hack/testdata/prometheusrule/unresolved.test.yaml"))
+	scenarios, err := os.ReadFile(repositoryFile(t, filepath.Join("hack/testdata/prometheusrule", scenarioFile)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "unresolved.test.yaml"), scenarios, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, scenarioFile), scenarios, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(promtool, "test", "rules", "unresolved.test.yaml") //nolint:gosec // The binary is the one on PATH.
+	command := exec.Command(promtool, "test", "rules", scenarioFile) //nolint:gosec // The binary is the one on PATH.
 	command.Dir = directory
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("promtool test rules: %v\n%s", err, output)
 	}
 }
 
+// stateThresholds are the values testdata/prometheusrule/state.test.yaml is
+// written against.
+var stateThresholds = []string{
+	"monitoring.prometheusRule.overdueAfterSeconds=900",
+	"monitoring.prometheusRule.operationStalledAfterSeconds=1800",
+	"monitoring.prometheusRule.lockReleaseOwedFor=15m",
+	"monitoring.prometheusRule.certificateExpiresWithinSeconds=604800",
+	"monitoring.prometheusRule.failures.window=30m",
+	"monitoring.prometheusRule.failures.count=20",
+	"monitoring.prometheusRule.admissionFailingFor=5m",
+}
+
+// A threshold nobody set renders no rule. The state alerts are one number each
+// about one cluster, and the chart has none of its own.
+func TestAStateAlertRendersOnlyWhereItsThresholdIsSet(t *testing.T) {
+	t.Parallel()
+	rule := renderedPrometheusRule(t)
+	for _, alert := range []string{
+		"PtahOperatorResourceOverdue", "PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
+		"PtahOperatorWebhookCertificateExpiring", "PtahOperatorOperationsFailing", "PtahOperatorAdmissionUnavailable",
+	} {
+		if strings.Contains(rule, alert) {
+			t.Errorf("%s rendered with no threshold set:\n%s", alert, rule)
+		}
+	}
+	rendered, err := renderChartForMonitoring(t, []string{
+		"monitoring.prometheusRule.enabled=true",
+		"monitoring.prometheusRule.viewUnsyncedFor=" + testViewUnsyncedFor,
+		"monitoring.prometheusRule.failures.window=30m",
+	})
+	if err == nil || !strings.Contains(rendered, "failures.count") {
+		t.Errorf("a failure window without a count rendered, or the refusal does not name the count:\n%s", rendered)
+	}
+}
+
+// The state alerts against the cases they exist for.
+func TestTheStateAlertsFireOnWhatTheyAreFor(t *testing.T) {
+	t.Parallel()
+	runPromtool(t, renderedPrometheusRuleWith(t, stateThresholds...), "state.test.yaml")
+}
+
 // renderedPrometheusRule is the one PrometheusRule the chart renders with the
 // rules on and the window set.
 func renderedPrometheusRule(t *testing.T) string {
 	t.Helper()
-	rendered, err := renderChartForMonitoring(t, []string{
+	return renderedPrometheusRuleWith(t)
+}
+
+func renderedPrometheusRuleWith(t *testing.T, extra ...string) string {
+	t.Helper()
+	rendered, err := renderChartForMonitoring(t, append([]string{
 		"monitoring.prometheusRule.enabled=true",
 		"monitoring.prometheusRule.viewUnsyncedFor=" + testViewUnsyncedFor,
-	})
+	}, extra...))
 	if err != nil {
 		t.Fatalf("the rules do not render: %v\n%s", err, rendered)
 	}

@@ -88,21 +88,25 @@ func NewUnresolvedCollector(registerer prometheus.Registerer, view UnresolvedVie
 			[]string{"family"}, nil),
 	}
 	if registerer != nil {
-		registerer.MustRegister(collector.collectFailures, collector)
+		registerer.MustRegister(collector)
 	}
 	return collector
 }
 
 func (c *UnresolvedCollector) Describe(into chan<- *prometheus.Desc) {
+	c.collectFailures.Describe(into)
 	into <- c.synced
 	into <- c.count
 	into <- c.oldestAge
 }
 
-// Collect rebuilds the gauges from durable state.
+// Collect rebuilds the gauges from durable state. The failure counter is
+// emitted from here, after the read, so a scrape that failed reports its own
+// failure rather than the count from before it.
 func (c *UnresolvedCollector) Collect(into chan<- prometheus.Metric) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+	defer func() { into <- c.collectFailures }()
 
 	if c.view == nil || !c.view.Synced() {
 		into <- prometheus.MustNewConstMetric(c.synced, prometheus.GaugeValue, 0)

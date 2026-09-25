@@ -227,6 +227,14 @@ validate_custom_operator_metrics() {
       always_present["ptah_operator_unresolved_owed_seconds"] = "gauge"
       always_present["ptah_operator_unresolved_view_synced"] = "gauge"
       always_present["ptah_operator_unresolved_view_read_failures_total"] = "counter"
+      always_present["ptah_operator_resources"] = "gauge"
+      always_present["ptah_operator_overdue_resources"] = "gauge"
+      always_present["ptah_operator_overdue_seconds"] = "gauge"
+      always_present["ptah_operator_active_operations"] = "gauge"
+      always_present["ptah_operator_active_operation_seconds"] = "gauge"
+      always_present["ptah_operator_pending_lock_releases"] = "gauge"
+      always_present["ptah_operator_webhook_certificate_expiry_timestamp_seconds"] = "gauge"
+      always_present["ptah_operator_webhook_certificate_read_failures_total"] = "counter"
     }
 
     /^# HELP ptah_operator_/ {
