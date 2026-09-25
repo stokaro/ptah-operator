@@ -1,0 +1,83 @@
+# Ptah's own baseline, run in the cluster with the executor the operator runs.
+#
+# It reads the migration files the artifact was published from, one mount per
+# file: a ConfigMap volume is a directory of symlinks, and a reader that walks
+# into it finds every file twice. It connects to the database the resource
+# names and to a shadow that holds nothing else, and it records a history only
+# when the files, replayed into the shadow, produce the schema the database
+# already has.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: adopt-baseline-v${BASELINE_VERSION}
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: demo-adopt
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: demo-adopt
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: baseline
+          image: ${EXECUTOR_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/ptah"]
+          args:
+            - migrations
+            - baseline
+            - --migrations-dir
+            - /migrations
+            - --dir-format
+            - ptah
+            - --db-url
+            - $(TARGET_URL)
+            - --shadow-db
+            - $(SHADOW_URL)
+            - --version
+            - "${BASELINE_VERSION}"
+          env:
+            - name: HOME
+              value: /work
+            - name: TMPDIR
+              value: /work
+            - name: TARGET_URL
+              valueFrom:
+                secretKeyRef:
+                  name: demo-database
+                  key: url
+            - name: SHADOW_URL
+              valueFrom:
+                secretKeyRef:
+                  name: demo-shadow-database
+                  key: url
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - {name: migrations, mountPath: /migrations/0000000001_create_shipments.up.sql, subPath: 0000000001_create_shipments.up.sql, readOnly: true}
+            - {name: migrations, mountPath: /migrations/0000000001_create_shipments.down.sql, subPath: 0000000001_create_shipments.down.sql, readOnly: true}
+            - {name: migrations, mountPath: /migrations/0000000002_add_carrier.up.sql, subPath: 0000000002_add_carrier.up.sql, readOnly: true}
+            - {name: migrations, mountPath: /migrations/0000000002_add_carrier.down.sql, subPath: 0000000002_add_carrier.down.sql, readOnly: true}
+            - {name: work, mountPath: /work}
+      volumes:
+        - name: migrations
+          configMap:
+            name: adopt-migrations
+        - name: work
+          emptyDir:
+            sizeLimit: 64Mi

@@ -148,6 +148,7 @@ lab_prepare() {
 	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-psql --timeout=180s >/dev/null
 
 	lab_prepare_mysql
+	lab_prepare_shadow
 
 	# The policy ConfigMap is immutable, and the operator refuses one that is
 	# not: a policy that could be edited after an artifact was verified against
@@ -253,6 +254,60 @@ lab_prepare_mysql() {
 	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-mysql-client --timeout=180s >/dev/null
 }
 
+# lab_prepare_shadow stands up the disposable PostgreSQL the adoption scenario
+# baselines against. It holds nothing else, which is the condition the adoption
+# procedure sets for a shadow: baseline replays every migration into it and
+# empties it afterwards.
+lab_prepare_shadow() {
+	lab_require LAB_POSTGRES_IMAGE
+	mkdir -p "$LAB_WORK"
+	[ -s "$LAB_WORK/shadow-password" ] ||
+		head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' >"$LAB_WORK/shadow-password"
+	lab_shadow_password=$(cat "$LAB_WORK/shadow-password")
+	k -n "$E2E_TEST_NAMESPACE" create secret generic demo-shadow-database \
+		--from-literal=url="postgres://postgres:${lab_shadow_password}@demo-shadow.${E2E_TEST_NAMESPACE}.svc.cluster.local:5432/shadow?sslmode=disable" \
+		--from-literal=password="$lab_shadow_password" \
+		--dry-run=client -o yaml | k apply -f - >/dev/null
+	jq -n \
+		--arg namespace "$E2E_TEST_NAMESPACE" \
+		--arg image "$LAB_POSTGRES_IMAGE" '
+    def labels: {"app.kubernetes.io/name": "demo-shadow"};
+    {
+      apiVersion: "v1", kind: "List",
+      items: [
+        {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: {namespace: $namespace, name: "demo-shadow"},
+          spec: {
+            replicas: 1,
+            selector: {matchLabels: labels},
+            template: {
+              metadata: {labels: labels},
+              spec: {
+                automountServiceAccountToken: false,
+                containers: [{
+                  name: "postgres", image: $image, imagePullPolicy: "IfNotPresent",
+                  env: [
+                    {name: "POSTGRES_PASSWORD", valueFrom: {secretKeyRef: {name: "demo-shadow-database", key: "password"}}},
+                    {name: "POSTGRES_DB", value: "shadow"}
+                  ],
+                  ports: [{name: "postgresql", containerPort: 5432}],
+                  readinessProbe: {exec: {command: ["pg_isready", "-U", "postgres"]}, periodSeconds: 3}
+                }]
+              }
+            }
+          }
+        },
+        {
+          apiVersion: "v1", kind: "Service",
+          metadata: {namespace: $namespace, name: "demo-shadow"},
+          spec: {selector: labels, ports: [{name: "postgresql", port: 5432, targetPort: "postgresql"}]}
+        }
+      ]
+    }' | k apply -f - >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-shadow --timeout=180s >/dev/null
+}
+
 # lab_apply_policy writes one immutable verification policy ConfigMap.
 #
 # Two of them, because a migration directory and a declared schema are
@@ -330,6 +385,16 @@ lab_reset() {
 	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-mysql-client -- \
 		mysql demo -e "DROP TABLE IF EXISTS deliveries, schema_migrations" >/dev/null ||
 		lab_fail "could not empty the demonstration MySQL database"
+	# The shadow starts every scenario empty, the way baseline expects one.
+	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-shadow -- \
+		psql -U postgres -qc "DROP DATABASE IF EXISTS shadow WITH (FORCE)" -c "CREATE DATABASE shadow" >/dev/null ||
+		lab_fail "could not empty the shadow database"
+	k -n "$E2E_TEST_NAMESPACE" delete job -l app.kubernetes.io/name=demo-adopt \
+		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
+		lab_fail "could not remove an earlier adoption's baseline Jobs"
+	k -n "$E2E_TEST_NAMESPACE" delete configmap adopt-migrations \
+		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
+		lab_fail "could not remove an earlier adoption's migration files"
 }
 
 # lab_manifest renders one manifest template.
@@ -346,17 +411,6 @@ lab_reset() {
 # themselves -- and the manifest it printed would not be the manifest the API
 # would have produced from the same intent.
 lab_manifest() {
-	[ -n "${APPLY:-}" ] || {
-		printf 'lab: set APPLY to the policy this scenario is about (Never, OnApproval or Always)\n' >&2
-		exit 1
-	}
-	case "${APPLY}" in
-	Never | OnApproval | Always) ;;
-	*)
-		printf 'lab: APPLY=%s is not a policy the API accepts\n' "$APPLY" >&2
-		exit 1
-		;;
-	esac
 	lab_manifest_name=$1
 	lab_manifest_digest=$2
 	lab_manifest_file="$LAB_ROOT/demo/manifests/${lab_manifest_name}.yaml"
@@ -364,15 +418,34 @@ lab_manifest() {
 		printf 'lab: no manifest template at %s\n' "$lab_manifest_file" >&2
 		exit 1
 	}
+	# A resource's apply policy is the reader's choice, so a template that has
+	# one refuses to render without it. A template with none -- a Job -- has
+	# nothing to choose.
+	# shellcheck disable=SC2016 # The placeholder is matched as written.
+	if grep -q '${APPLY}' "$lab_manifest_file"; then
+		[ -n "${APPLY:-}" ] || {
+			printf 'lab: set APPLY to the policy this scenario is about (Never, OnApproval or Always)\n' >&2
+			exit 1
+		}
+		case "${APPLY}" in
+		Never | OnApproval | Always) ;;
+		*)
+			printf 'lab: APPLY=%s is not a policy the API accepts\n' "$APPLY" >&2
+			exit 1
+			;;
+		esac
+	fi
 	lab_require E2E_TEST_NAMESPACE E2E_REGISTRY_HOST
 	sed \
 		-e "s|\${NAMESPACE}|$E2E_TEST_NAMESPACE|g" \
 		-e "s|\${REGISTRY}|$E2E_REGISTRY_HOST|g" \
 		-e "s|\${DIGEST}|$lab_manifest_digest|g" \
-		-e "s|\${APPLY}|${APPLY}|g" \
+		-e "s|\${APPLY}|${APPLY:-}|g" \
 		-e "s|\${ALLOW_DESTRUCTIVE}|${ALLOW_DESTRUCTIVE:-false}|g" \
 		-e "s|\${INTERVAL}|${INTERVAL:-1m}|g" \
 		-e "s|\${SUSPEND}|${SUSPEND:-false}|g" \
+		-e "s|\${EXECUTOR_IMAGE}|${E2E_EXECUTOR_IMAGE:-}|g" \
+		-e "s|\${BASELINE_VERSION}|${BASELINE_VERSION:-}|g" \
 		"$lab_manifest_file"
 }
 
