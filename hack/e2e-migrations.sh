@@ -3289,10 +3289,20 @@ report_drill_state() {
 	k get nodes -l "$APPLY_GATE_LABEL" -o name 2>/dev/null | sed 's/^/  gate open on /' >&2 || true
 }
 
-# Every revision row the database holds, as "1 2 3".
+# Every revision row the database holds, as "1,2". The value helper strips
+# whitespace, which would run the rows together, so the engine joins them. The
+# state is not filtered: a row a refused run left behind in any state is a row
+# it wrote.
 drill_revisions() {
-	migration_query "SELECT version FROM schema_migrations ORDER BY version" "$DRILL_DATABASE" |
-		tr '\n' ' ' | sed 's/ *$//'
+	case "$ENGINE" in
+	postgresql)
+		drill_revision_query="SELECT COALESCE(string_agg(version::text, ',' ORDER BY version), '') FROM schema_migrations"
+		;;
+	mysql)
+		drill_revision_query="SELECT COALESCE(GROUP_CONCAT(version ORDER BY version SEPARATOR ','), '') FROM schema_migrations"
+		;;
+	esac
+	migration_query "$drill_revision_query" "$DRILL_DATABASE"
 }
 
 # The migrations a published plan approves, in order, as "4".
@@ -3379,7 +3389,7 @@ run_rebuild_drill() {
 	open_apply_gate
 	create_drill_migration_resource
 	wait_for_drill_convergence
-	[ "$(drill_revisions)" = "1 2" ] ||
+	[ "$(drill_revisions)" = "1,2" ] ||
 		fail "$DRILL_MIGRATION did not bring its database to version 2; it records [$(drill_revisions)]"
 
 	# An approval for [3], its Apply claimed and held.
@@ -3433,7 +3443,7 @@ run_rebuild_drill() {
 	# The run goes ahead, so the database moves past the backup.
 	open_apply_gate
 	wait_for_drill_convergence
-	[ "$(drill_revisions)" = "1 2 3" ] ||
+	[ "$(drill_revisions)" = "1,2,3" ] ||
 		fail "the approved run did not bring the $ENGINE database to version 3; it records [$(drill_revisions)]"
 
 	# The loss. The resource's plans go with it through their owner reference,
@@ -3517,7 +3527,7 @@ run_rebuild_drill() {
 	}
 	[ ! -s "$WORK_DIR/drill-rebuilt-applies.txt" ] ||
 		fail "the rebuilt $DRILL_MIGRATION dispatched an Apply after the restore: $(sort -u "$WORK_DIR/drill-rebuilt-applies.txt" | tr '\n' ' ')"
-	[ "$(drill_revisions)" = "1 2 3" ] ||
+	[ "$(drill_revisions)" = "1,2,3" ] ||
 		fail "after the rebuild the $ENGINE database records [$(drill_revisions)]; something ran without an approval"
 	[ "$(drill_marker_tables)" = "0" ] ||
 		fail "after the rebuild the $ENGINE database has the fourth migration's table; it ran without an approval"
