@@ -120,7 +120,15 @@ steps:
       stdout_absent: ["planned: 1"]
 
   - note: Version 2 ran on the rows the application wrote, and the history carries on from there.
-    retry: 6m
+    await:
+      kind: ptahmigration
+      name: shipments
+      timeout: 6m
+      generation: current
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
     run: |
       kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc "SELECT version, state FROM schema_migrations ORDER BY version"
       kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc \
