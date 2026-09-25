@@ -1,0 +1,94 @@
+{
+  // Renovate's configuration. It does nothing until the Renovate GitHub App is
+  // installed on the repository; the file is what the app reads once it is.
+  //
+  // Two things about this repository shape the whole file.
+  //
+  // A pull request here costs hours of runner time: the acceptance matrix fans
+  // out over three Kubernetes minors and four suites on every push. So updates
+  // are grouped hard, limited to two open pull requests, and offered weekly
+  // rather than as they appear. The dependency dashboard carries the rest, where
+  // reading them costs nothing.
+  //
+  // And several versions are declared in more than one place on purpose, each
+  // with a gate that refuses a mismatch. An update that moves one copy and not
+  // the other is refused by `make verify`, which is the intended behavior. The
+  // rules below say which those are.
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    ':dependencyDashboard',
+    ':semanticCommitsDisabled',
+  ],
+  // The repository writes plain imperative subjects. `git log` is the style
+  // guide, and AGENTS.md requires American English and no AI attribution.
+  commitMessageAction: 'Update',
+  timezone: 'Europe/Prague',
+  schedule: ['before 6am on monday'],
+  prConcurrentLimit: 2,
+  prHourlyLimit: 1,
+  rebaseWhen: 'conflicted',
+  postUpdateOptions: ['gomodTidy'],
+  packageRules: [
+    {
+      // The Kubernetes libraries move together or not at all: a client-go that
+      // disagrees with k8s.io/api compiles and then behaves differently against
+      // the API server. `support/kubernetes.json` declares the supported window
+      // and `hack/verify-kubernetes-support.go` refuses a matrix that does not
+      // match it, so a minor bump here is a decision about the support window
+      // rather than a dependency update. It is offered, not merged quietly.
+      groupName: 'Kubernetes libraries',
+      matchPackageNames: ['k8s.io/**', 'sigs.k8s.io/controller-runtime'],
+      matchUpdateTypes: ['major', 'minor'],
+      addLabels: ['kubernetes-support-window'],
+    },
+    {
+      groupName: 'Kubernetes libraries',
+      matchPackageNames: ['k8s.io/**', 'sigs.k8s.io/controller-runtime'],
+      matchUpdateTypes: ['patch', 'digest'],
+    },
+    {
+      // Every workflow pins its actions by digest, and the expected digests are
+      // also literals in `hack/verify-kubernetes-support.go` so that a workflow
+      // edit cannot change them unnoticed. Renovate updates the workflows; the
+      // gate then names the literal that still has the old digest, and that edit
+      // belongs in the same pull request.
+      groupName: 'GitHub Actions',
+      matchManagers: ['github-actions'],
+      prBodyNotes: [
+        'The expected digests are also literals in `hack/verify-kubernetes-support.go`. Move them in this pull request: `make verify` refuses the mismatch and names each one.',
+      ],
+    },
+    {
+      // Base images are digest-pinned, and the release workflow refuses a
+      // mutable external image, so a tag without a digest is not an option.
+      groupName: 'container base images',
+      matchManagers: ['dockerfile'],
+      pinDigests: true,
+    },
+    {
+      groupName: 'documentation site',
+      matchFileNames: ['docs/site/package.json'],
+    },
+    {
+      // A Go release moves the toolchain line, the Dockerfile builder image and
+      // the version the support catalog records. Offer it; do not group it with
+      // library updates, because the reviewer is checking different things.
+      groupName: 'Go toolchain',
+      matchDepNames: ['go', 'golang'],
+    },
+  ],
+  customManagers: [
+    {
+      // controller-gen is not a module dependency: the Makefile runs it with
+      // `go run` at a pinned version, and `make manifests` regenerates the CRDs
+      // with whatever version that names. A bump therefore changes generated
+      // output, which `make verify` compares.
+      customType: 'regex',
+      managerFilePatterns: ['/^Makefile$/'],
+      matchStrings: ['CONTROLLER_GEN_VERSION \\?= (?<currentValue>v\\d+\\.\\d+\\.\\d+)'],
+      depNameTemplate: 'kubernetes-sigs/controller-tools',
+      datasourceTemplate: 'github-releases',
+    },
+  ],
+}

@@ -102,6 +102,23 @@ or the risk.
 American English, and plain international English: short sentences, concrete
 nouns, active voice.
 
+## Dependency updates
+
+Renovate opens them, weekly, two at a time. The limit is deliberate: every pull
+request here runs the acceptance matrix over three Kubernetes minors and four
+suites, so a dependency bump costs hours of runner time and a flood of them
+costs a day. What Renovate does not open sits on its dependency dashboard,
+where reading it costs nothing. [`renovate.json5`](renovate.json5) says which
+updates are grouped and why.
+
+Two of those groups need a reviewer to do more than read a changelog. A GitHub
+Actions update moves the digest in the workflow, and the same digest is a
+literal in `hack/verify-kubernetes-support.go` so that a workflow edit cannot
+change it unnoticed -- `make verify` refuses the mismatch and names each
+literal, and that edit belongs in the same pull request. A Kubernetes library
+update is a decision about the supported window that `support/kubernetes.json`
+declares, not a version bump; take it deliberately or not at all.
+
 ## Licensing of contributions
 
 Ptah Operator is MIT licensed. By contributing you agree that your contribution
