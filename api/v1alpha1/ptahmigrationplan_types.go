@@ -137,28 +137,22 @@ type PtahMigrationPlanSpec struct {
 	CreatedAt metav1.Time `json:"createdAt"`
 }
 
-// PtahMigrationPlanStatus reports whether the plan is still the one the
-// controller would publish today.
+// PtahMigrationPlanStatus is the status subresource of a migration plan. The
+// operator writes nothing to it: a plan is an immutable artifact, and the state
+// a reader wants -- whether it is still the plan to apply -- is reported on the
+// PtahMigration that published it.
 type PtahMigrationPlanStatus struct {
 	// ObservedGeneration is the plan generation this status was written for.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// Conditions carry Current, which says the plan still matches the artifact
-	// and the history it was computed against, and Executed, which says its
-	// sequence ran.
+	// Conditions is empty. The operator publishes no Condition on a migration
+	// plan: a plan is an immutable artifact, and whether it is still the one to
+	// apply is a fact about the PtahMigration, which reports it there. The field
+	// stays so a later Condition about the plan itself has somewhere to go.
 	// +listType=map
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=16
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
-
-// Condition types a PtahMigrationPlan publishes.
-const (
-	// ConditionMigrationPlanCurrent reports that the plan still matches the
-	// artifact and the history it was computed against.
-	ConditionMigrationPlanCurrent = "Current"
-	// ConditionMigrationPlanExecuted reports that the plan's sequence ran.
-	ConditionMigrationPlanExecuted = "Executed"
-)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -166,7 +160,6 @@ const (
 // +kubebuilder:printcolumn:name="Migration",type=string,JSONPath=`.spec.migrationRef.name`
 // +kubebuilder:printcolumn:name="From",type=integer,JSONPath=`.spec.currentVersion`
 // +kubebuilder:printcolumn:name="Steps",type=integer,JSONPath=`.spec.migrations.length()`
-// +kubebuilder:printcolumn:name="Current",type=string,JSONPath=`.status.conditions[?(@.type=='Current')].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type PtahMigrationPlan struct {
 	metav1.TypeMeta   `json:",inline"`
