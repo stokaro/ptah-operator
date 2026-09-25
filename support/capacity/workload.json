@@ -1,0 +1,12 @@
+{
+  "name": "lab-20",
+  "description": "Ten PtahSchemas and ten PtahMigrations on the demonstration lab, each on a database of its own, refreshing every two minutes. Sized to finish on one GitHub-hosted runner; it describes that runner, not an installation.",
+  "schemas": 10,
+  "migrations": 10,
+  "interval": "2m",
+  "settle": "20m",
+  "steadyState": "15m",
+  "sampleEvery": "15s",
+  "changeBatch": 5,
+  "outage": "3m"
+}

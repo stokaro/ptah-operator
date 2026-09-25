@@ -89,6 +89,45 @@ numbers matter.
 None of these has a supported maximum, because none has been measured. What
 follows is what a measurement would have to produce for them.
 
+## How to measure it
+
+`hack/capacity` measures a declared workload on the demonstration lab, which is
+the acceptance harness stopped after its bootstrap, so what it measures is the
+chart and images of the commit it runs from:
+
+```sh
+make demo-up
+CAPACITY_OUT_DIR=/tmp/capacity hack/capacity.sh
+```
+
+`support/capacity/workload.json` declares the workload: how many resources of
+each family, their interval, how long each condition lasts, how many resources
+change at once, and how long the registry is unreachable. The harness gives
+every resource a database of its own, so no two share a realm or an advisory
+lock, and walks the workload through a cold start, a steady state, a restart of
+every manager at once, a batch of changes and a registry outage.
+
+Throughout, it reads the cluster rather than estimating it:
+
+| Figure | Read from |
+| --- | --- |
+| Jobs per minute, time to start and to finish | Each operation Job's own timestamps |
+| Pending and running operation Pods | The Pods, by phase |
+| Oldest reading and time overdue | Each resource's `lastObservedAt` or `history.observedAt`, and its `nextReconciliationTime` |
+| Manager memory and CPU | Each manager Pod's `process_resident_memory_bytes` and `process_cpu_seconds_total` |
+| Queue depth and wait | `workqueue_depth` and `workqueue_queue_duration_seconds` |
+| Client throttling | `rest_client_rate_limiter_duration_seconds` and HTTP 429 responses |
+| Admission latency | The API server's `apiserver_admission_webhook_admission_duration_seconds` for this operator's webhooks |
+| Retained plans and SQL | The plan objects and the bytes in their chunk ConfigMaps |
+| Time to serve an approval during a restart | The approval's admission and its Apply Job's creation |
+
+The report carries the workload and the environment beside the figures: the
+Kubernetes version, the nodes' allocatable CPU and memory, and the manager's
+image and resources. A figure without them says nothing about another
+installation. The Capacity workflow runs the same thing on a schedule, on
+request, and on any change to the measurement itself, and publishes the report
+as an artifact of the run.
+
 ## What has not been measured
 
 Everything that decides whether an installation is inside its budget:
@@ -100,7 +139,7 @@ Everything that decides whether an installation is inside its budget:
 - API throttling and admission latency;
 - fairness across independent database realms, and the time to reach
   safety-critical work while ordinary work is queued;
-- behaviour beyond the admitted limits: whether it degrades or refuses.
+- behavior beyond the admitted limits: whether it degrades or refuses.
 
 An installation that needs a number for any of those has to measure it. Saying
 so is more useful than a figure nobody produced.
