@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 )
 
 type scriptedResponse struct {
@@ -2389,11 +2390,30 @@ func migrationEnvironment(operationID string) []string {
 	return append(databaseEnvironment(operationID), envMigrationsDir+"=/source/migrations")
 }
 
-// testSequenceDigest and testHistoryFingerprint stand for the approved plan's
-// own values. The runner cannot re-derive either -- it holds no artifact and
-// reads no revision table -- so what it checks is that a mutating child was
-// authorized by a plan at all, and these are the shape that authorization takes.
-func testSequenceDigest() string { return "sha256:" + strings.Repeat("c", 64) }
+// testSequence is the approved sequence a migration Apply Job carries, and
+// testSequenceDigest the digest its plan bound. The runner digests the one and
+// compares it with the other, so the pair has to agree.
+func testSequence() string {
+	return `[{"version":3,"version_key":"3","checksum":"sha256:` + strings.Repeat("e", 64) +
+		`","checkpoint":false,"transaction_mode":""},{"version":4,"version_key":"4","checksum":"sha256:` +
+		strings.Repeat("f", 64) + `","checkpoint":false,"transaction_mode":"file"}]`
+}
+
+func testSequenceDigest() string {
+	var entries []fingerprint.SequenceEntry
+	if err := json.Unmarshal([]byte(testSequence()), &entries); err != nil {
+		panic(err)
+	}
+	digest, err := fingerprint.MigrationSequenceDigest(entries)
+	if err != nil {
+		panic(err)
+	}
+	return digest
+}
+
+// testHistoryFingerprint stands for the history the plan was computed
+// against. The runner cannot re-derive it -- it reads no revision table -- so
+// what it checks is that the plan named one.
 
 func testHistoryFingerprint() string { return "sha256:" + strings.Repeat("d", 64) }
 
@@ -2405,6 +2425,7 @@ func migrationApplyEnvironment(t *testing.T, operationID string) []string {
 	return append(migrationEnvironment(operationID),
 		envExpectedCoordination+"="+testCoordinationDigest(),
 		envExpectedTargetDigest+"="+databaseTargetDigest(t),
+		envExpectedSequence+"="+testSequence(),
 		envExpectedSequenceDigest+"="+testSequenceDigest(),
 		envExpectedHistory+"="+testHistoryFingerprint(),
 	)
@@ -2440,6 +2461,58 @@ func TestMigrationApplyKeepsItsReportWhenPtahStops(t *testing.T) {
 	}
 	if _, err := MarshalFrame(result); err != nil {
 		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+}
+
+// The approved sequence reaches Ptah as the file `--expect-sequence` names,
+// holding the versions and keys the plan approved in its order. It exists while
+// the child runs and not after, and the child does not inherit the variable it
+// came from.
+func TestMigrationApplyHandsPtahTheApprovedSequence(t *testing.T) {
+	t.Parallel()
+
+	temporary := t.TempDir()
+	var sequencePath, sequence string
+	var childEnvironment []string
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
+		stdout: migrationRunDocument("applied"),
+		inspect: func(spec CommandSpec) {
+			childEnvironment = spec.Env
+			for index, argument := range spec.Args {
+				if argument == "--expect-sequence" && index+1 < len(spec.Args) {
+					sequencePath = spec.Args[index+1]
+				}
+			}
+			content, err := os.ReadFile(sequencePath)
+			if err != nil {
+				t.Errorf("read the approved sequence while the child runs: %v", err)
+			}
+			sequence = string(content)
+		},
+	}}}
+	Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: migrationApplyEnvironment(t, "migration-apply-sequence"),
+		Executor:    executor,
+		TempDir:     temporary,
+	})
+
+	if len(executor.calls) != 1 {
+		t.Fatalf("executor calls = %d, want the child to have run", len(executor.calls))
+	}
+	if filepath.Dir(sequencePath) != temporary {
+		t.Fatalf("--expect-sequence names %q, want a file in the runner's temporary directory", sequencePath)
+	}
+	if want := `{"migrations":[{"version":3,"version_key":"3"},{"version":4,"version_key":"4"}]}`; sequence != want {
+		t.Fatalf("approved sequence file = %s, want %s", sequence, want)
+	}
+	if _, err := os.Stat(sequencePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("approved sequence file after the run: %v, want it removed", err)
+	}
+	for _, variable := range childEnvironment {
+		if strings.HasPrefix(variable, envExpectedSequence+"=") {
+			t.Fatalf("the child inherited %s", envExpectedSequence)
+		}
 	}
 }
 
@@ -2492,6 +2565,7 @@ func TestMigrationOperationsNeverReachTheRegistry(t *testing.T) {
 				environment = append(environment,
 					envExpectedCoordination+"="+testCoordinationDigest(),
 					envExpectedTargetDigest+"="+databaseTargetDigest(t),
+					envExpectedSequence+"="+testSequence(),
 					envExpectedSequenceDigest+"="+testSequenceDigest(),
 					envExpectedHistory+"="+testHistoryFingerprint(),
 				)
@@ -2601,6 +2675,27 @@ func TestMigrationApplyRefusesEveryUnauthorizedDispatch(t *testing.T) {
 				return append(environment, envExpectedSequenceDigest+"=3")
 			},
 			wantErr: "missing_plan_binding",
+		},
+		{
+			name: "missing approved sequence list",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return environmentWithout(environment, envExpectedSequence)
+			},
+			wantErr: "plan_binding_mismatch",
+		},
+		{
+			name: "a sequence another digest names",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExpectedSequence+"="+strings.Replace(testSequence(), `"version":4`, `"version":5`, 1))
+			},
+			wantErr: "plan_binding_mismatch",
+		},
+		{
+			name: "a sequence with a field the digest does not bind",
+			mutate: func(_ *testing.T, environment []string) []string {
+				return append(environment, envExpectedSequence+"="+strings.Replace(testSequence(), `"version":3,`, `"version":3,"extra":1,`, 1))
+			},
+			wantErr: "plan_binding_mismatch",
 		},
 		{
 			name: "missing history fingerprint",

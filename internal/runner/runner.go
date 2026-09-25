@@ -71,6 +71,7 @@ func Run(ctx context.Context, config Config) Result {
 	}
 	var mutationDispatchDeadline time.Time
 	var mutationExecutionDeadline time.Time
+	var approvedSequence []byte
 
 	if !config.Operation.Valid() {
 		setResultError(&result, "invalid_operation", fmt.Errorf("unsupported operation %q", config.Operation), redactor, config.Diagnostics)
@@ -143,12 +144,13 @@ func Run(ctx context.Context, config Config) Result {
 			return result
 		}
 		if config.Operation == OperationMigrationApply {
-			// `migrations up` takes no sequence argument, so this process
-			// cannot prove the child will execute exactly the approved
-			// sequence -- that proof needs an executor that accepts one. What
-			// it can refuse is a child no plan authorized: a migration Apply
-			// that names neither an approved sequence nor the history that
-			// sequence was computed against has nothing behind it.
+			// A migration Apply that names no approved sequence, or no
+			// history that sequence was computed against, has nothing behind
+			// it. The sequence itself is what bounds the child: it goes to
+			// `migrations up --expect-sequence`, which compares it with what
+			// Ptah selects under the migration lock and runs nothing unless
+			// the two are the same. It is digested again first, so the list
+			// Ptah enforces is the one the plan's digest names.
 			if !validProtocolDigest(inputs.ExpectedSequenceDigest) {
 				setResultError(&result, "missing_plan_binding", errors.New("the approved migration sequence digest is required"), redactor, config.Diagnostics)
 				return result
@@ -157,6 +159,12 @@ func Run(ctx context.Context, config Config) Result {
 				setResultError(&result, "missing_plan_binding", errors.New("the approved history fingerprint is required"), redactor, config.Diagnostics)
 				return result
 			}
+			sequence, err := approvedSequenceDocument(inputs.ExpectedSequence, inputs.ExpectedSequenceDigest)
+			if err != nil {
+				setResultError(&result, "plan_binding_mismatch", err, redactor, config.Diagnostics)
+				return result
+			}
+			approvedSequence = sequence
 		}
 		dispatchNotAfter, err := time.Parse(time.RFC3339Nano, inputs.DispatchNotAfter)
 		if err != nil {
@@ -265,6 +273,23 @@ func Run(ctx context.Context, config Config) Result {
 			return result
 		}
 		inputs.PlanPath = planPath
+	}
+
+	if config.Operation == OperationMigrationApply {
+		sequenceFile, err := os.CreateTemp(config.TempDir, "ptah-expected-sequence-*.json")
+		if err != nil {
+			setResultError(&result, "prepare_plan", errors.New("create the approved sequence file"), redactor, config.Diagnostics)
+			return result
+		}
+		sequencePath := sequenceFile.Name()
+		defer func() { _ = os.Remove(sequencePath) }()
+		_, writeErr := sequenceFile.Write(approvedSequence)
+		closeErr := sequenceFile.Close()
+		if writeErr != nil || closeErr != nil {
+			setResultError(&result, "prepare_plan", errors.New("write the approved sequence file"), redactor, config.Diagnostics)
+			return result
+		}
+		inputs.ExpectedSequencePath = sequencePath
 	}
 
 	spec, err := BuildCommand(config.PtahBinary, config.Operation, inputs)

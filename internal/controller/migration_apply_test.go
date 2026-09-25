@@ -183,6 +183,10 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 		// (stokaro/ptah-operator#94).
 		wantProgressing       metav1.ConditionStatus
 		wantProgressingReason operatorv1alpha1.ConditionReason
+		// wantMessage is what the run says it did. A refused selection and a
+		// first migration that failed both applied nothing; only the message
+		// tells a person which one happened.
+		wantMessage string
 	}{
 		{
 			name: "the database recorded every planned migration",
@@ -210,6 +214,24 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 			wantPhase:             operatorv1alpha1.MigrationPhaseVerifyingHistory,
 			wantProgressing:       metav1.ConditionTrue,
 			wantProgressingReason: operatorv1alpha1.ReasonVerifyingConvergence,
+			wantMessage:           "A migration failed and committed nothing",
+		},
+		{
+			// The history was restored backwards after the plan approved [3],
+			// so Ptah selected [2 3] under the lock and refused to run it.
+			name: "the selection under the lock was not the approved one",
+			report: &dataplane.MigrationRunReport{
+				ContractVersion: dataplane.SupportedMigrationRunContract,
+				Direction:       "up",
+				Outcome:         dataplane.MigrationOutcomeFailed,
+				Planned:         []int64{2, 3},
+			},
+			wantOutcome:           operatorv1alpha1.MigrationRunOutcomeFailed,
+			wantPhase:             operatorv1alpha1.MigrationPhaseVerifyingHistory,
+			wantProgressing:       metav1.ConditionTrue,
+			wantProgressingReason: operatorv1alpha1.ReasonVerifyingConvergence,
+			wantMessage: "Ptah selected [2 3] under the migration lock and the plan approved [3], so it ran nothing: " +
+				"the history moved after the approval",
 		},
 		{
 			name: "a migration committed some of its statements",
@@ -272,6 +294,9 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 			}
 			if actual.Status.LastRun.Outcome != test.wantOutcome {
 				t.Fatalf("outcome = %q, want %q", actual.Status.LastRun.Outcome, test.wantOutcome)
+			}
+			if test.wantMessage != "" && !strings.HasPrefix(actual.Status.LastRun.Message, test.wantMessage) {
+				t.Fatalf("message = %q, want it to start %q", actual.Status.LastRun.Message, test.wantMessage)
 			}
 			if actual.Status.Phase != test.wantPhase {
 				t.Fatalf("phase = %q, want %q", actual.Status.Phase, test.wantPhase)

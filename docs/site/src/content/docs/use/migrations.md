@@ -343,6 +343,15 @@ plan, a history somebody else moved in the meantime, a re-resolved artifact, a
 changed verification policy, a rolled-out executor, or a migration that is not
 waiting for a decision. An approval authorizes one execution.
 
+The execution runs the approved sequence and nothing else. The Job hands Ptah
+the approved list, and `ptah migrations up --expect-sequence` compares it with
+what Ptah selects under the migration lock, after every check the operator can
+make and just before anything runs. If the database was restored to an earlier
+version after the approval, Ptah selects more than was approved and runs none
+of it: `status.lastRun.outcome` reads `Failed`, `status.lastRun.message` names
+the selected and the approved versions, and the resource reads the history
+again as it does after any failed run.
+
 ## What the run reports
 
 The verdict is the database's, read from the revision table rather than from

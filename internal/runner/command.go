@@ -33,6 +33,11 @@ const (
 	// EnvExpectedCoordinationDigest binds Apply to the realm approved in its
 	// immutable plan independently from the operation claim.
 	EnvExpectedCoordinationDigest = "PTAH_EXPECTED_COORDINATION_DIGEST"
+	// EnvExpectedMigrationSequence is the ordered sequence a migration Apply's
+	// approved plan carries, as JSON. The runner digests it again, refuses it
+	// unless it matches EnvExpectedMigrationSequenceDigest, and hands it to
+	// `migrations up --expect-sequence`.
+	EnvExpectedMigrationSequence = "PTAH_EXPECTED_MIGRATION_SEQUENCE"
 	// EnvExpectedMigrationSequenceDigest binds a migration Apply to the exact
 	// ordered sequence its approved plan carries.
 	EnvExpectedMigrationSequenceDigest = "PTAH_EXPECTED_MIGRATION_SEQUENCE_DIGEST"
@@ -84,6 +89,7 @@ const (
 	envExpectedTargetDigest   = EnvExpectedTargetIdentityDigest
 	envCoordinationDigest     = EnvCoordinationDigest
 	envExpectedCoordination   = EnvExpectedCoordinationDigest
+	envExpectedSequence       = EnvExpectedMigrationSequence
 	envExpectedSequenceDigest = EnvExpectedMigrationSequenceDigest
 	envExpectedHistory        = EnvExpectedMigrationHistoryFingerprint
 	envDispatchNotAfter       = EnvDispatchNotAfter
@@ -108,6 +114,7 @@ type Inputs struct {
 	ExpectedTargetDigest       string
 	CoordinationDigest         string
 	ExpectedCoordinationDigest string
+	ExpectedSequence           string
 	ExpectedSequenceDigest     string
 	ExpectedHistoryFingerprint string
 	DispatchNotAfter           string
@@ -116,6 +123,10 @@ type Inputs struct {
 	PlanPath                   string
 	MigrationsDir              string
 	TransactionMode            string
+	// ExpectedSequencePath is the file the runner wrote the approved sequence
+	// to for `migrations up --expect-sequence`. The runner sets it; nothing
+	// reads it from the environment.
+	ExpectedSequencePath string
 }
 
 func InputsFromEnvironment(environment []string) Inputs {
@@ -131,6 +142,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		ExpectedTargetDigest:       values[envExpectedTargetDigest],
 		CoordinationDigest:         values[envCoordinationDigest],
 		ExpectedCoordinationDigest: values[envExpectedCoordination],
+		ExpectedSequence:           values[envExpectedSequence],
 		ExpectedSequenceDigest:     values[envExpectedSequenceDigest],
 		ExpectedHistoryFingerprint: values[envExpectedHistory],
 		DispatchNotAfter:           values[envDispatchNotAfter],
@@ -182,6 +194,7 @@ func childEnvironment(environment []string) []string {
 		EnvExpectedTargetIdentityDigest,
 		EnvCoordinationDigest,
 		EnvExpectedCoordinationDigest,
+		EnvExpectedMigrationSequence,
 		EnvExpectedMigrationSequenceDigest,
 		EnvExpectedMigrationHistoryFingerprint,
 		EnvDispatchNotAfter,
@@ -257,6 +270,15 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 				return CommandSpec{}, err
 			}
 			spec.Args = append(spec.Args, "--tx-mode", mode)
+		}
+		// Every apply names its approved sequence. Without it Ptah runs
+		// whatever it selects, and a history restored backwards after the
+		// approval turns the approved migrations into a longer list.
+		if operation == OperationMigrationApply {
+			if !strings.HasPrefix(inputs.ExpectedSequencePath, "/") {
+				return CommandSpec{}, errors.New("migration apply needs the absolute path of its approved sequence")
+			}
+			spec.Args = append(spec.Args, "--expect-sequence", inputs.ExpectedSequencePath)
 		}
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)

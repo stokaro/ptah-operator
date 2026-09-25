@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 )
 
@@ -124,5 +125,29 @@ func TestAMigrationPlanRefusesAnIncompleteBinding(t *testing.T) {
 				t.Fatalf("a binding with no %s was given a fingerprint", field.Name)
 			}
 		})
+	}
+}
+
+// A sequence the Apply Job could not carry is refused where it is selected,
+// before it becomes a plan anyone is asked to approve. The same sequence with
+// ordinary keys and checksums is selected.
+func TestASequenceNoJobCouldCarryIsNotSelected(t *testing.T) {
+	t.Parallel()
+	report := func(key, checksum string) dataplane.MigrationStatusReport {
+		records := make([]dataplane.MigrationRecord, 0, migrationplan.MaxMigrations)
+		for version := int64(1); version <= migrationplan.MaxMigrations; version++ {
+			records = append(records, dataplane.MigrationRecord{
+				Version: version, VersionKey: key, Checksum: checksum, State: dataplane.MigrationStatePending,
+			})
+		}
+		return dataplane.MigrationStatusReport{ContractVersion: dataplane.SupportedMigrationStatusContract, Migrations: records}
+	}
+
+	if _, err := migrationplan.Sequence(report("20260925120000", "sha256:"+strings.Repeat("a", 64))); err != nil {
+		t.Fatalf("Sequence() of ordinary migrations: %v", err)
+	}
+	_, err := migrationplan.Sequence(report(strings.Repeat("é", 128), strings.Repeat("é", 128)))
+	if err == nil || !strings.Contains(err.Error(), "an Apply Job can carry") {
+		t.Fatalf("Sequence() error = %v, want the refusal of a sequence no Job could carry", err)
 	}
 }

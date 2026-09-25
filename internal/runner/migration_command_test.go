@@ -22,16 +22,17 @@ func TestBuildCommand_MigrationOperations(t *testing.T) {
 			want:      []string{"migrations", "status", "--migrations-dir", directory, "--json"},
 		},
 		{
-			name:      "apply runs the pending migrations",
+			name:      "apply runs the approved migrations",
 			operation: runner.OperationMigrationApply,
-			want:      []string{"migrations", "up", "--migrations-dir", directory, "--json"},
+			want:      []string{"migrations", "up", "--migrations-dir", directory, "--json", "--expect-sequence", "/tmp/expected.json"},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			spec, err := runner.BuildCommand("/usr/local/bin/ptah", test.operation, runner.Inputs{
-				MigrationsDir: directory,
+				MigrationsDir:        directory,
+				ExpectedSequencePath: "/tmp/expected.json",
 			})
 			if err != nil {
 				t.Fatalf("BuildCommand() error = %v", err)
@@ -116,6 +117,69 @@ func TestOperationMutating(t *testing.T) {
 	}
 }
 
+// Every migration Apply names the sequence its plan approved, and nothing else
+// does. `migrations status` takes no --expect-sequence, so the history read
+// carrying it would die before it reported. An Apply with no sequence is not
+// built at all: without it, Ptah runs whatever it selects.
+func TestMigrationCommandNamesTheApprovedSequenceOnlyOnTheApply(t *testing.T) {
+	t.Parallel()
+
+	const directory = "/migrations"
+	tests := []struct {
+		name      string
+		operation runner.Operation
+		path      string
+		want      []string
+		wantError string
+	}{
+		{
+			name:      "the apply names it",
+			operation: runner.OperationMigrationApply,
+			path:      "/tmp/expected.json",
+			want:      []string{"migrations", "up", "--migrations-dir", directory, "--json", "--expect-sequence", "/tmp/expected.json"},
+		},
+		{
+			name:      "the history read never does",
+			operation: runner.OperationMigrationHistory,
+			path:      "/tmp/expected.json",
+			want:      []string{"migrations", "status", "--migrations-dir", directory, "--json"},
+		},
+		{
+			name:      "an apply with no sequence is refused",
+			operation: runner.OperationMigrationApply,
+			wantError: "approved sequence",
+		},
+		{
+			name:      "an apply with a relative sequence path is refused",
+			operation: runner.OperationMigrationApply,
+			path:      "expected.json",
+			wantError: "approved sequence",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			spec, err := runner.BuildCommand("/usr/local/bin/ptah", test.operation, runner.Inputs{
+				MigrationsDir:        directory,
+				ExpectedSequencePath: test.path,
+			})
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("BuildCommand() error = %v, want substring %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("BuildCommand() error = %v", err)
+			}
+			if strings.Join(spec.Args, " ") != strings.Join(test.want, " ") {
+				t.Fatalf("args = %v, want %v", spec.Args, test.want)
+			}
+		})
+	}
+}
+
 // A mode nobody asked for has to leave the command exactly as it was. Every
 // PtahMigration stored before the field existed runs through this code, and a
 // flag appearing for them would change how they execute without anyone editing
@@ -124,6 +188,7 @@ func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 	t.Parallel()
 
 	const directory = "/migrations"
+	const sequence = "/tmp/expected.json"
 	tests := []struct {
 		name      string
 		operation runner.Operation
@@ -134,12 +199,12 @@ func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 		{
 			name: "unset leaves the command as it was",
 			mode: "",
-			want: []string{"migrations", "up", "--migrations-dir", directory, "--json"},
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--expect-sequence", sequence},
 		},
 		{
 			name: "blank is the same as unset",
 			mode: "   ",
-			want: []string{"migrations", "up", "--migrations-dir", directory, "--json"},
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--expect-sequence", sequence},
 		},
 		{
 			// The history read is why this case exists. `migrations status`
@@ -154,12 +219,12 @@ func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 		{
 			name: "none is carried through",
 			mode: "none",
-			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--tx-mode", "none"},
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--tx-mode", "none", "--expect-sequence", sequence},
 		},
 		{
 			name: "file is carried through",
 			mode: "file",
-			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--tx-mode", "file"},
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--tx-mode", "file", "--expect-sequence", sequence},
 		},
 		{
 			name:      "a mode this build does not know is refused here",
@@ -176,8 +241,9 @@ func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 				operation = runner.OperationMigrationApply
 			}
 			spec, err := runner.BuildCommand("/usr/local/bin/ptah", operation, runner.Inputs{
-				MigrationsDir:   directory,
-				TransactionMode: test.mode,
+				MigrationsDir:        directory,
+				TransactionMode:      test.mode,
+				ExpectedSequencePath: sequence,
 			})
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
