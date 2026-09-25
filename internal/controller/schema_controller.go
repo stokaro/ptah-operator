@@ -2274,7 +2274,7 @@ func (r *SchemaReconciler) claimAt(
 		active.CoordinationDigest = schema.Status.Plan.CoordinationDigest
 		active.TargetIdentityDigest = schema.Status.Plan.TargetIdentityDigest
 		active.LeaseDurationSeconds = int32(leaseDuration(schema) / time.Second)
-		dispatchNotAfter := metav1.NewTime(active.StartedAt.Add(leaseDuration(schema) - time.Minute))
+		dispatchNotAfter := metav1.NewTime(active.StartedAt.Add(applyWindow(schema)))
 		active.DispatchNotAfter = &dispatchNotAfter
 		executionNotAfter := dispatchNotAfter.DeepCopy()
 		active.ExecutionNotAfter = executionNotAfter
@@ -4785,11 +4785,21 @@ func failureRetry(schema *operatorv1alpha1.PtahSchema) time.Duration {
 }
 
 func leaseDuration(schema *operatorv1alpha1.PtahSchema) time.Duration {
+	return applyWindow(schema) + workload.JobDeadlineGrace + time.Minute
+}
+
+// applyWindow is how long an Apply is authorized for: the window the claim
+// stamps into dispatchNotAfter, and the child's own context deadline. The Job
+// outlives it by workload.JobDeadlineGrace so that a Pod which starts late meets
+// the runner's refusal rather than Kubernetes' DeadlineExceeded, and the Lease
+// above outlives the Job in turn, so nothing can still be running when the realm
+// has moved on.
+func applyWindow(schema *operatorv1alpha1.PtahSchema) time.Duration {
 	deadline := schema.Spec.Execution.ActiveDeadlineSeconds
 	if deadline <= 0 {
 		deadline = 900
 	}
-	return time.Duration(deadline)*time.Second + time.Minute
+	return time.Duration(deadline) * time.Second
 }
 
 func due(next *metav1.Time, now time.Time) bool { return next == nil || !now.Before(next.Time) }

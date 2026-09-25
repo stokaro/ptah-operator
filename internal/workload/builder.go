@@ -1302,6 +1302,36 @@ func OperationIDLabelValue(value string) string { return shortLabelHash(value) }
 // A window that has already closed yields no Job: Kubernetes refuses a
 // non-positive activeDeadlineSeconds, and a claim whose execution bound passed
 // before dispatch is one the controller has to retire rather than send.
+// JobDeadlineGrace is how long a mutating Job outlives the window that
+// authorized it.
+//
+// Without it the two die together. The window ends at startedAt plus the
+// deadline, and the Job's own relative deadline runs from its status.startTime,
+// which is later by the snapshot and dispatch boundaries -- so a Pod that starts
+// near the end of the window is killed by Kubernetes on DeadlineExceeded at very
+// nearly the instant the runner would have refused it, and the Job ends with no
+// runner frame at all.
+//
+// With the grace the Pod starts, and the runner refuses on
+// dispatch_deadline_expired before it opens the database and says so in its
+// frame. That does not settle the run: a refusal is the runner's account, and
+// what clears an unresolved record is a reading of the database, so the run is
+// still recorded as one nobody accounted for. What changes is the evidence the
+// record carries -- the refusal, named, instead of nothing -- and that the
+// refusal can be observed at all, which a Pod killed at the same instant never
+// allowed.
+//
+// The value is the margin this operator already uses for the same kind of
+// boundary: the Lease outlives the window by a minute, and the Lease duration
+// now covers this grace as well, so a Job bounded by it cannot still be running
+// when the Lease has gone to another operation. The child's context deadline is
+// the window itself, so the extra life is refusal time, not execution time.
+const JobDeadlineGrace = time.Minute
+
+// maximumActiveDeadlineSeconds is what the API accepts and what the typed Job
+// guard enforces, so the grace may not carry a Job past it.
+const maximumActiveDeadlineSeconds int64 = 86400
+
 func boundedDeadline(
 	fallback int64,
 	bounded bool,
@@ -1315,7 +1345,7 @@ func boundedDeadline(
 	if remaining <= 0 {
 		return 0, errors.New("operation execution window closed before dispatch")
 	}
-	return remaining, nil
+	return min(remaining+int64(JobDeadlineGrace/time.Second), maximumActiveDeadlineSeconds), nil
 }
 
 func activeDeadlineSeconds(execution operatorv1alpha1.ExecutionSpec) int64 {

@@ -1245,11 +1245,15 @@ func TestApplyPodCarriesIndependentAbsoluteAndRuntimeDeadlines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 600 {
-		t.Fatalf("Job activeDeadlineSeconds = %#v, want 600", job.Spec.ActiveDeadlineSeconds)
+	// The Job outlives the window it carries by the grace, so a Pod that starts
+	// near the end of the window meets the runner's refusal rather than
+	// Kubernetes' DeadlineExceeded, which would leave no frame at all.
+	wantDeadline := int64(600) + int64(JobDeadlineGrace/time.Second)
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != wantDeadline {
+		t.Fatalf("Job activeDeadlineSeconds = %#v, want %d", job.Spec.ActiveDeadlineSeconds, wantDeadline)
 	}
-	if job.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *job.Spec.Template.Spec.ActiveDeadlineSeconds != 600 {
-		t.Fatalf("orphan-safe Pod activeDeadlineSeconds = %#v, want 600", job.Spec.Template.Spec.ActiveDeadlineSeconds)
+	if job.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *job.Spec.Template.Spec.ActiveDeadlineSeconds != wantDeadline {
+		t.Fatalf("orphan-safe Pod activeDeadlineSeconds = %#v, want %d", job.Spec.Template.Spec.ActiveDeadlineSeconds, wantDeadline)
 	}
 	wantNotAfter := operation.StartedAt.Add(600 * time.Second).UTC().Format(time.RFC3339Nano)
 	if got := requireEnv(t, job, runner.EnvDispatchNotAfter).Value; got != wantNotAfter {
@@ -1585,7 +1589,10 @@ func operationFixture(operation operatorv1alpha1.OperationType) operatorv1alpha1
 				LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
 			},
 		}
-		active.LeaseDurationSeconds = 660
+		// The window is 600 seconds. The Job outlives it by JobDeadlineGrace so a
+		// late Pod meets the runner's refusal, and the Lease outlives the Job by
+		// the controller's own minute so nothing runs after the realm moves on.
+		active.LeaseDurationSeconds = int32((600*time.Second + JobDeadlineGrace + time.Minute) / time.Second)
 		dispatchNotAfter := metav1.NewTime(active.StartedAt.Add(600 * time.Second))
 		active.DispatchNotAfter = &dispatchNotAfter
 		active.ExecutionNotAfter = dispatchNotAfter.DeepCopy()
