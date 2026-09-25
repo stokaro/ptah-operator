@@ -6,7 +6,7 @@ metadata:
     operator.ptah.run/controller-state-version: "2"
     operator.ptah.run/crd-schema-version: "17"
     operator.ptah.run/crd-schema-digest: "sha256:bd3dd4a8c79182fec93e420242d2246aabf1d5e5fb78898c369a944ad489a245"
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrationplans.operator.ptah.run
 spec:
   group: operator.ptah.run

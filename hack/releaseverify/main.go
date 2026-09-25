@@ -68,7 +68,7 @@ const (
 	releaseSequenceHelperPath  = "charts/ptah-operator/templates/_helpers.tpl"
 	releaseSequenceGoPath      = "internal/crdupgrade/rollout.go"
 	kubernetesSupportPath      = "support/kubernetes.json"
-	buildxVersion              = "v0.36.1"
+	buildxVersion              = "v0.37.1"
 	buildkitImage              = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
 	sbomDigest                 = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
 	sbomGenerator              = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
@@ -1768,8 +1768,8 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := verifyStepContract("smoke", smoke.Steps,
 		[]string{"checkout", "setup-go", "setup-helm", "verify-release", "scan-vulnerabilities", "chart-reproducibility", "setup-buildx", "build"},
 		map[string]string{
-			"checkout":     "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-			"setup-go":     "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+			"checkout":     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+			"setup-go":     "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 			"setup-helm":   "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4",
 			"setup-buildx": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
 			"build":        "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
@@ -1816,8 +1816,8 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := verifyStepContract("support-preflight", preflight.Steps,
 		[]string{"checkout", "setup-go", "support-evidence"},
 		map[string]string{
-			"checkout": "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-			"setup-go": "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+			"checkout": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+			"setup-go": "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 		}); err != nil {
 		return err
 	}
@@ -1915,8 +1915,8 @@ func verifyWorkflowSemantics(document []byte) error {
 			"image-attestation", "setup-cosign", "image-signature", "final-verify", "publish-release",
 		},
 		map[string]string{
-			"checkout":            "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-			"setup-go":            "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+			"checkout":            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+			"setup-go":            "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 			"setup-buildx":        "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
 			"registry-login":      "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
 			"image":               "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",

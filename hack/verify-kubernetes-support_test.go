@@ -365,8 +365,8 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        id: matrix\n        if: ${{ false }}\n",
 		},
 		"shallow CRD history checkout": {
-			old: "      - name: Check out repository\n        id: checkout\n        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
-			new: "      - name: Check out repository\n        id: checkout\n        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5\n        with:\n          fetch-depth: 1\n          persist-credentials: false\n",
+			old: "      - name: Check out repository\n        id: checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
+			new: "      - name: Check out repository\n        id: checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n        with:\n          fetch-depth: 1\n          persist-credentials: false\n",
 		},
 		"pull request baseline from candidate": {
 			old: "          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n",
