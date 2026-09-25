@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io"
-	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -139,14 +138,11 @@ func TestPackageChartRejectsSymbolicLinks(t *testing.T) {
 
 func TestPackageChartRejectsSpecialFiles(t *testing.T) {
 	source := newTestChart(t)
-	socketPath := filepath.Join(source, "unexpected.socket")
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Skipf("Unix sockets are unavailable: %v", err)
+	if err := makeSpecialFile(filepath.Join(source, "unexpected.pipe")); err != nil {
+		t.Skipf("a special file could not be created here: %v", err)
 	}
-	defer listener.Close()
 
-	err = packageChart(source, t.TempDir(), time.Unix(1, 0))
+	err := packageChart(source, t.TempDir(), time.Unix(1, 0))
 	if err == nil || !strings.Contains(err.Error(), "special file") {
 		t.Fatalf("packageChart() error = %v, want special-file rejection", err)
 	}
