@@ -75,7 +75,7 @@ decision.
 | `Stale` | The current plan became stale before Apply. |
 | `StaleObservation` | Database state must be observed again before planning. |
 | `StalePlan` | Ready is false because the plan became stale before Apply. |
-| `Succeeded` | The latest operation cleared the reconciliation-failure Condition. |
+| `Succeeded` | The latest operation cleared the `ReconciliationFailed` Condition. |
 | `SupersededApproval` | A duplicate approval lost to another approval for the same plan. |
 | `SupportedEngine` | The selected database engine has an implemented operator lifecycle. |
 | `Suspended` | Reconciliation is suspended and no new operation may start. |
