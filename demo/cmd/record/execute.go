@@ -58,15 +58,20 @@ type recording struct {
 	// scenario because one may be re-recorded without the others, and a record
 	// that named a single commit would then name it for eight transcripts that
 	// were not made at it.
-	Source   map[string]string `json:"source"`
-	Title    string            `json:"title"`
-	Tagline  string            `json:"tagline"`
-	Learn    string            `json:"learn"`
-	Tags     []string          `json:"tags"`
-	Commands int               `json:"commands"`
-	Lines    int               `json:"lines"`
-	Events   []event           `json:"events"`
-	Checks   []check           `json:"checks"`
+	Source map[string]string `json:"source"`
+	// DefinitionDigest is the scenario's commands, waits and expectations at
+	// the moment this ran. A reader comparing it with the scenario's digest
+	// today learns whether the transcript still represents it, without
+	// checking the repository out.
+	DefinitionDigest string   `json:"definitionDigest,omitempty"`
+	Title            string   `json:"title"`
+	Tagline          string   `json:"tagline"`
+	Learn            string   `json:"learn"`
+	Tags             []string `json:"tags"`
+	Commands         int      `json:"commands"`
+	Lines            int      `json:"lines"`
+	Events           []event  `json:"events"`
+	Checks           []check  `json:"checks"`
 }
 
 // run executes one scenario and returns what a reader will see.
@@ -90,12 +95,13 @@ func (r *recorder) run(ctx context.Context, current scenario) (recording, error)
 	// Trimmed: a folded scalar in the scenario file ends with a newline, and a
 	// title with a newline in it is a title the page renders with one.
 	recorded := recording{
-		ID:      current.ID,
-		Source:  r.source,
-		Title:   strings.TrimSpace(current.Title),
-		Tagline: strings.TrimSpace(current.Tagline),
-		Learn:   strings.TrimSpace(current.Learn),
-		Tags:    current.Tags,
+		ID:               current.ID,
+		Source:           r.source,
+		DefinitionDigest: definitionDigest(current),
+		Title:            strings.TrimSpace(current.Title),
+		Tagline:          strings.TrimSpace(current.Tagline),
+		Learn:            strings.TrimSpace(current.Learn),
+		Tags:             current.Tags,
 	}
 	for index, one := range current.Steps {
 		events, checks, err := r.step(ctx, current.ID, index, one)
