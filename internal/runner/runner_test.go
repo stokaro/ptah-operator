@@ -2645,15 +2645,19 @@ func TestMigrationApplyRefusesEveryUnauthorizedDispatch(t *testing.T) {
 			wantErr: "missing_execution_deadline",
 		},
 		{
-			name: "expired execution deadline",
+			// Named for what it measures. Both deadlines are behind now, and the
+			// refusal is the dispatch one: no pair of deadlines reaches
+			// execution_deadline_expired, because that check runs after this one
+			// and after the guard that refuses an execution deadline behind the
+			// dispatch deadline. TestNoDeadlinePairProducesTheExecutionRefusal
+			// walks the pairs and says so.
+			name: "both deadlines behind now",
 			mutate: func(_ *testing.T, environment []string) []string {
 				return append(environment,
 					envDispatchNotAfter+"="+now.Add(-2*time.Hour).Format(time.RFC3339Nano),
 					envExecutionNotAfter+"="+now.Add(-time.Hour).Format(time.RFC3339Nano),
 				)
 			},
-			// The dispatch deadline is read first, and an execution deadline
-			// this stale cannot be reached without passing it.
 			wantErr: "dispatch_deadline_expired",
 		},
 	} {
