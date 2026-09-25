@@ -1,0 +1,36 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- if not .Values.metrics.service.enabled }}
+{{- fail "monitoring.serviceMonitor.enabled requires metrics.service.enabled: a ServiceMonitor selects the metrics Service, and without it the object scrapes nothing while reporting that monitoring is configured" -}}
+{{- end }}
+# A ServiceMonitor rather than a scrape of the Service address: Prometheus
+# resolves the Service to its endpoints and scrapes each manager Pod. A single
+# scrape of the ClusterIP would land on whichever replica the load balancer
+# chose, and process-local counters from one replica read as the fleet's.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "ptah-operator.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http
+      {{- with .Values.monitoring.serviceMonitor.interval }}
+      interval: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.monitoring.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ . | quote }}
+      {{- end }}
+{{- end }}

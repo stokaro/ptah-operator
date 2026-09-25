@@ -139,6 +139,26 @@ metrics:
     # Port the metrics Service listens on.
     port: 8080
 
+# Scrape configuration for a Prometheus that discovers its targets from
+# ServiceMonitor objects.
+monitoring:
+  # A ServiceMonitor, which is how Prometheus reaches each manager Pod behind
+  # the metrics Service rather than one replica behind its address.
+  serviceMonitor:
+    # Whether to create a ServiceMonitor. Off by default: the object needs the
+    # Prometheus Operator CRDs, and an install into a cluster without them fails
+    # on a kind the API server does not serve.
+    enabled: false
+    # Labels the Prometheus instance selects ServiceMonitors by. Empty means the
+    # object is created and selected by nothing, which is why a deployment that
+    # turns this on usually has to set them.
+    labels: {}
+    # How often to scrape. Unset leaves the interval to the Prometheus
+    # configuration rather than pinning it here.
+    interval: ""
+    # How long a scrape may take. Unset leaves it to Prometheus.
+    scrapeTimeout: ""
+
 # The admission webhook server inside the manager, which is what refuses an
 # approval that does not name an exact plan.
 webhook:

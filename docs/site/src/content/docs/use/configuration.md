@@ -73,6 +73,12 @@ reader of a converged schema can see exactly what produced it.
 | `metrics.service` |  | A Service in front of the metrics port, for a scraper that needs one. |
 | `metrics.service.enabled` | `true` | Whether to create the metrics Service. |
 | `metrics.service.port` | `8080` | Port the metrics Service listens on. |
+| `monitoring` |  | Scrape configuration for a Prometheus that discovers its targets from ServiceMonitor objects. |
+| `monitoring.serviceMonitor` |  | A ServiceMonitor, which is how Prometheus reaches each manager Pod behind the metrics Service rather than one replica behind its address. |
+| `monitoring.serviceMonitor.enabled` | `false` | Whether to create a ServiceMonitor. Off by default: the object needs the Prometheus Operator CRDs, and an install into a cluster without them fails on a kind the API server does not serve. |
+| `monitoring.serviceMonitor.labels` | `{}` | Labels the Prometheus instance selects ServiceMonitors by. Empty means the object is created and selected by nothing, which is why a deployment that turns this on usually has to set them. |
+| `monitoring.serviceMonitor.interval` | `""` | How often to scrape. Unset leaves the interval to the Prometheus configuration rather than pinning it here. |
+| `monitoring.serviceMonitor.scrapeTimeout` | `""` | How long a scrape may take. Unset leaves it to Prometheus. |
 | `webhook` |  | The admission webhook server inside the manager, which is what refuses an approval that does not name an exact plan. |
 | `webhook.port` | `9443` | Port the manager serves admission on. |
 | `webhook.timeoutSeconds` | `5` | Timeout the API server applies to the fast admission paths. |
