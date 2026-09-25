@@ -1228,9 +1228,15 @@ if printf '%s\n' "$operator_stage" | grep -F 'e2e-handcraft-oci' >/dev/null; the
 	printf '%s\n' 'e2e static: controller image stage contains the test-only OCI publisher' >&2
 	exit 1
 fi
+if printf '%s\n' "$operator_stage" | grep -F 'e2e-alert-sink' >/dev/null; then
+	printf '%s\n' 'e2e static: controller image stage contains the test-only alert receiver' >&2
+	exit 1
+fi
 fixture_stage=$(sed -n '/ AS fixture$/,$p' "$ROOT_DIR/test/e2e/Dockerfile.operator")
 printf '%s\n' "$fixture_stage" |
 	grep -F 'COPY --from=builder /out/e2e-handcraft-oci /e2e-handcraft-oci' >/dev/null
+printf '%s\n' "$fixture_stage" |
+	grep -F 'COPY --from=builder /out/e2e-alert-sink /e2e-alert-sink' >/dev/null
 if printf '%s\n' "$fixture_stage" | grep -Eq '/out/(manager|ptah-runner|ptah-cert-rotator)'; then
 	printf '%s\n' 'e2e static: isolated fixture image stage contains an operator binary' >&2
 	exit 1
@@ -1626,7 +1632,8 @@ if grep -F 'file="countries.yaml"' "$ROOT_DIR/testdata/e2e/reference/v3/entities
 	printf '%s\n' 'e2e static: the ended-management fixture still declares the countries rows' >&2
 	exit 1
 fi
-for pinned_input in E2E_REGISTRY_IMAGE E2E_POSTGRES_SOURCE_IMAGE E2E_MYSQL_SOURCE_IMAGE; do
+for pinned_input in E2E_REGISTRY_IMAGE E2E_POSTGRES_SOURCE_IMAGE E2E_MYSQL_SOURCE_IMAGE \
+	E2E_PROMETHEUS_SOURCE_IMAGE E2E_ALERTMANAGER_SOURCE_IMAGE; do
 	grep -E "^${pinned_input}=.*@sha256:[0-9a-f]{64}" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 done
 for engine in postgresql mysql; do

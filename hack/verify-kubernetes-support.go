@@ -59,6 +59,7 @@ const (
 	e2eCertRotationPath            = "hack/e2e-cert-rotation.sh"
 	e2eMigrationsPath              = "hack/e2e-migrations.sh"
 	e2eReferenceDataPath           = "hack/e2e-reference-data.sh"
+	e2eAlertingPath                = "hack/e2e-alerting.sh"
 	failedHookEvidencePath         = "hack/failed-hook-evidence.jq"
 	failedHookEvidenceSelftestPath = "hack/failed-hook-evidence-selftest.sh"
 	admissionSchemaContractPath    = "hack/admission-schema-contract.jq"
@@ -221,6 +222,7 @@ func main() {
 		certRotation:               e2eCertRotationPath,
 		migrations:                 e2eMigrationsPath,
 		referenceData:              e2eReferenceDataPath,
+		alerting:                   e2eAlertingPath,
 		failedHookEvidence:         failedHookEvidencePath,
 		failedHookEvidenceSelftest: failedHookEvidenceSelftestPath,
 		admissionSchemaContract:    admissionSchemaContractPath,
@@ -1876,6 +1878,7 @@ type e2eWiringFiles struct {
 	controllerSchemaSelftest   string
 	migrations                 string
 	referenceData              string
+	alerting                   string
 }
 
 type lifecycleSourceContract struct {
@@ -5800,6 +5803,20 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 			},
 		},
 		{
+			phase:  "alerting",
+			script: "hack/e2e-alerting.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
+				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
+				{name: "E2E_FIXTURE_IMAGE", value: `$E2E_FIXTURE_IMAGE`},
+				{name: "E2E_PROMETHEUS_IMAGE", value: `$E2E_PROMETHEUS_IMAGE`},
+				{name: "E2E_ALERTMANAGER_IMAGE", value: `$E2E_ALERTMANAGER_IMAGE`},
+				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+			},
+		},
+		{
 			phase:  "uninstall",
 			script: "hack/e2e-crd-upgrade.sh",
 			bindings: []phaseEnvironmentBinding{
@@ -6071,6 +6088,8 @@ func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
 		return files.migrations
 	case e2eReferenceDataPath:
 		return files.referenceData
+	case e2eAlertingPath:
+		return files.alerting
 	default:
 		return ""
 	}
