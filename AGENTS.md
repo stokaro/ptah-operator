@@ -271,6 +271,32 @@ below was paid for that way:
   Derive the hold from the deadline the resource persisted, and date what
   happened from the object's own timestamp rather than from when the loop
   looked.
+- **A row that reports every member has to prove it read one.** A check that
+  walks a collection and reports each member breaking a rule passes two ways:
+  every member held, or the collection was empty, and nothing in the output
+  separates them. Five rows under `hack/` were one rename from the second --
+  the acceptance record's requirement rows found by a `| **PA-` prefix, the
+  operations routing table's targets by a link regexp, the getting-started
+  namespaces by a `kubectl` regexp, the egress policies by their name prefix,
+  the retired certificate Role by its namespace and name. Count what was
+  examined and refuse to pass on nothing; where a declared number exists, hold
+  the count to that number rather than to more than zero.
+- **A row cannot prove a code path that cannot be reached.** The runner returns
+  `execution_deadline_expired` at two sites and neither can fire: the dispatch
+  check runs first, and the guard beside it refuses an execution deadline
+  behind the dispatch one, so passing the execution deadline means having
+  passed the dispatch one. A row named for that refusal asserted the dispatch
+  one instead and read as its proof. Walk the input space and fail if the code
+  appears, so the day the inputs are decoupled the row says the code became
+  reachable and wants a proof of its own.
+- **A row that skips is not a row that passes.** The row that proved the
+  packager refuses a file which is neither a directory, a regular file nor a
+  symlink built one with a Unix socket, whose path is bounded at about a
+  hundred bytes -- which a macOS temporary directory exceeds before the name
+  is added. It skipped on every developer machine and measured the refusal in
+  CI alone, while reading as a passing test everywhere. Prefer a mechanism
+  with no such bound, and read what the suite actually skips with `go test -v`
+  rather than what merely contains a conditional skip.
 
 ## Language
 
