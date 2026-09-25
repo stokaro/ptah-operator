@@ -415,8 +415,10 @@ function main() {
   const ptahCatalog = JSON.parse(
     readFileSync(join(repositoryRoot, 'support', 'ptah.json'), 'utf8'),
   );
-  const supportedPtah =
-    ptahCatalog.releases?.find((release) => release.operator === 'edge')?.verified?.[0]?.ptahRelease ?? '';
+  // A pin to a commit between releases carries a null release, and names the
+  // build by what git describe reported instead.
+  const supportedBuild = ptahCatalog.releases?.find((release) => release.operator === 'edge')?.verified?.[0];
+  const supportedPtah = supportedBuild?.ptahRelease ?? supportedBuild?.ptahDescribe ?? '';
 
   const recorderSource = readFileSync(
     join(repositoryRoot, 'demo', 'cmd', 'record', 'scenario.go'),

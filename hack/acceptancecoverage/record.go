@@ -199,7 +199,7 @@ func candidateFields(root string, c *coverage, declared *profile) []candidateFie
 		{name: "Chart version", value: readChartVersion(root)},
 		{name: "CRD schema version", value: readMakefileVersion(root, "CRD_SCHEMA_VERSION")},
 		{name: "Controller-state version", value: readMakefileVersion(root, "CONTROLLER_STATE_VERSION")},
-		{name: "Ptah build", value: fmt.Sprintf("%s (`%s`)", c.ptah.PtahRelease, c.ptah.PtahCommit)},
+		{name: "Ptah build", value: fmt.Sprintf("%s (`%s`)", c.ptah.name(), c.ptah.PtahCommit)},
 		{name: "Runner protocol", value: fmt.Sprintf("%d", c.ptah.RunnerProtocolVersion)},
 		{name: "Supported Kubernetes minors", value: strings.Join(c.minors, ", ")},
 		{name: "Manager image digest", value: supplied.ManagerImageDigest, supplied: "the digest the release publishes"},

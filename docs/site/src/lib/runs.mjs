@@ -19,8 +19,10 @@ import { rank } from './run-order.mjs';
 // correctly on the day it stops being true, which is the only day it matters.
 export const RecordedPtah = runs.lab?.PTAH_VERSION ?? '';
 
-export const SupportedPtah =
-  ptahCatalog.releases?.find((release) => release.operator === 'edge')?.verified?.[0]?.ptahRelease ?? '';
+// A pin to a commit between releases carries a null release, and names the
+// build by what git describe reported instead.
+const supportedBuild = ptahCatalog.releases?.find((release) => release.operator === 'edge')?.verified?.[0];
+export const SupportedPtah = supportedBuild?.ptahRelease ?? supportedBuild?.ptahDescribe ?? '';
 
 export const Runs = [...runs.scenarios].sort((left, right) => rank(left.tags?.[0]) - rank(right.tags?.[0]));
 
