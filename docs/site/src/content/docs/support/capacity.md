@@ -69,6 +69,26 @@ of SQL before metadata. That is arithmetic about the limit rather than a
 measurement of any installation. Which plans may be deleted is
 [Pruning stored plans](../../use/operations/#pruning-stored-plans).
 
+## The dimensions an envelope has to be stated over
+
+A measured envelope is a set of numbers against a workload, and these are the
+axes that workload varies along. They are named here because a measurement that
+holds one of them fixed says nothing about an installation that moves it, and
+because the reader sizing an installation needs to know which of their own
+numbers matter.
+
+| Dimension | Why it changes the answer |
+| --- | --- |
+| Resources, and realms across them | Every resource refreshes on its own interval; resources sharing a database realm serialize against each other, and resources in separate realms do not |
+| `spec.interval` | The cadence above multiplies by resource count, and it is the first thing to move on a large installation |
+| Plan size | A plan travels as ConfigMap chunks up to the 8 MiB ceiling, so it costs API bytes, etcd, and a longer read on the way back |
+| Migration history length | History is read on every refresh of a `PtahMigration`, and the reading grows with the sequence already applied |
+| Approvals waiting | A resource waiting for a person keeps refreshing and keeps its plan and its chunks, so a backlog is retained storage as well as queue |
+| Changes at once | A rollout, or a restart, refreshes everything at once; the burst is what a steady-state figure does not describe |
+
+None of these has a supported maximum, because none has been measured. What
+follows is what a measurement would have to produce for them.
+
 ## What has not been measured
 
 Everything that decides whether an installation is inside its budget:
