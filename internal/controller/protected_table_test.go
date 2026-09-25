@@ -178,7 +178,20 @@ func TestAFenceAddedDuringProofMakesThePendingObservationStale(t *testing.T) {
 	// that agrees with it and against one that does not.
 	pending.ProtectedTables = []string{"countries"}
 	schema.Spec.Policy.ProtectedTables = []string{"countries"}
+	// The record has to agree with the schema in every other respect, or the
+	// rows below pass against a record that matches nothing and the fence goes
+	// unmeasured. The fixture carries a deliberately different policy
+	// fingerprint, so it is recomputed here from the schema the comparison
+	// reads.
+	fingerprintOfPolicy, err := policyFingerprint(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.Plan.PolicyFingerprint = fingerprintOfPolicy
 	agreeing := pendingMatchesCurrentSchema(schema, pending)
+	if !agreeing {
+		t.Fatal("the record does not match its schema before the fence is touched, so nothing below is measured")
+	}
 	schema.Spec.Policy.ProtectedTables = []string{"countries", "ref.regions"}
 	widened := pendingMatchesCurrentSchema(schema, pending)
 	if widened {
@@ -195,7 +208,21 @@ func TestAFenceAddedDuringProofMakesThePendingObservationStale(t *testing.T) {
 	if pendingMatchesCurrentSchema(schema, pending) != agreeing {
 		t.Fatal("the same fence was read two ways")
 	}
-	if !agreeing {
-		t.Skip("this fixture does not match its schema for reasons other than the fence")
+	// Moving the schema's fence moves the policy fingerprint with it, so the
+	// rows above are refused by the digest and say nothing about the fence
+	// field itself. This one moves the record instead: the schema, and every
+	// digest computed from it, is left exactly as it was, so the only thing
+	// that can refuse is the comparison of the two fences.
+	pending.ProtectedTables = []string{"countries", "ref.regions"}
+	if pendingMatchesCurrentSchema(schema, pending) {
+		t.Fatal("a record fencing tables the schema does not read as current")
+	}
+	pending.ProtectedTables = nil
+	if pendingMatchesCurrentSchema(schema, pending) {
+		t.Fatal("a record fencing nothing read as current against a schema that fences a table")
+	}
+	pending.ProtectedTables = []string{"countries"}
+	if !pendingMatchesCurrentSchema(schema, pending) {
+		t.Fatal("restoring the record's fence did not restore the match")
 	}
 }
