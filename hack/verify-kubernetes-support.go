@@ -74,8 +74,8 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "d45eeb9027b7b57f4920a105d10c47cce443afccad57e46d49d83756a600b7e6"
-	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
+	ciWorkflowSHA256                = "22e5535fb073d09749e4036abeddc933d3989dd5ee896d9eb0276da614a6acf5"
+	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
@@ -736,7 +736,7 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 		path,
 		"verify",
 		verifySteps[0],
-		"actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+		"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
 		map[string]string{"fetch-depth": "0", "persist-credentials": "false"},
 	); err != nil {
 		return err
@@ -748,7 +748,7 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 		path,
 		"verify",
 		verifySteps[1],
-		"actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+		"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 		map[string]string{"go-version-file": "go.mod", "cache-dependency-path": "go.sum"},
 	); err != nil {
 		return err
@@ -882,7 +882,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		path,
 		"race",
 		raceSteps[0],
-		"actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+		"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
 		map[string]string{"fetch-depth": "0", "persist-credentials": "false"},
 	); err != nil {
 		return err
@@ -894,7 +894,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		path,
 		"race",
 		raceSteps[1],
-		"actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+		"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 		map[string]string{"go-version-file": "go.mod", "cache-dependency-path": "go.sum"},
 	); err != nil {
 		return err
@@ -1254,7 +1254,7 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		return err
 	}
 	if err := verifyUpdaterActionStep(path, "prepare", prepareSteps[0],
-		"actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+		"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
 		map[string]string{
 			"ref":                 "${{ github.event.repository.default_branch }}",
 			"fetch-depth":         "0",
@@ -1263,7 +1263,7 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		return err
 	}
 	if err := verifyUpdaterActionStep(path, "prepare", prepareSteps[1],
-		"actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+		"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 		map[string]string{
 			"go-version-file":       "go.mod",
 			"cache-dependency-path": "go.sum",
@@ -1315,7 +1315,7 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		return err
 	}
 	if err := verifyUpdaterActionStep(path, "propose", proposeSteps[0],
-		"actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+		"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
 		map[string]string{
 			"ref":                 "${{ needs.prepare.outputs.base-sha }}",
 			"fetch-depth":         "0",
@@ -5280,7 +5280,7 @@ const (
 	e2eImagesArtifactName = "shared-task-images"
 	e2eImagesArtifactPath = "${{ runner.temp }}/task-images"
 	uploadArtifactPin     = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadArtifactPin   = "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
+	downloadArtifactPin   = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 )
 
 // verifySharedImageHandover requires the built images to leave the preparation

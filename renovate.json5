@@ -41,6 +41,7 @@
       matchPackageNames: ['k8s.io/**', 'sigs.k8s.io/controller-runtime'],
       matchUpdateTypes: ['major', 'minor'],
       addLabels: ['kubernetes-support-window'],
+      dependencyDashboardApproval: true,
     },
     {
       groupName: 'Kubernetes libraries',
@@ -48,15 +49,23 @@
       matchUpdateTypes: ['patch', 'digest'],
     },
     {
-      // Every workflow pins its actions by digest, and the expected digests are
-      // also literals in `hack/verify-kubernetes-support.go` so that a workflow
-      // edit cannot change them unnoticed. Renovate updates the workflows; the
-      // gate then names the literal that still has the old digest, and that edit
-      // belongs in the same pull request.
+      // An actions update cannot be green as Renovate opens it, and it is not
+      // opened until somebody asks for it on the dependency dashboard.
+      //
+      // Every workflow pins its actions by digest, and the same digests are
+      // literals in `hack/verify-kubernetes-support.go` and
+      // `hack/releaseverify/main.go`; the Helm and Buildx versions inside the
+      // steps are literals there too; and each audited workflow is held to a
+      // SHA-256 of the whole file (`ciWorkflowSHA256`, `updateWorkflowSHA256`,
+      // `releasecontract.WorkflowSHA256`). Renovate can move none of those, and
+      // the hosted app runs no post-upgrade commands. Opened automatically, the
+      // updates were merged red and left master refusing its own workflows.
+      // Asked for, the pull request is the start of a change a person finishes.
       groupName: 'GitHub Actions',
       matchManagers: ['github-actions'],
+      dependencyDashboardApproval: true,
       prBodyNotes: [
-        'The expected digests are also literals in `hack/verify-kubernetes-support.go`. Move them in this pull request: `make verify` refuses the mismatch and names each one.',
+        'Not mergeable as opened. Move the same digests and versions in `hack/verify-kubernetes-support.go` and `hack/releaseverify/main.go`, then the whole-file digests they name, until `make verify` passes; each refusal names what is still stale.',
       ],
     },
     {
@@ -76,6 +85,13 @@
       // library updates, because the reviewer is checking different things.
       groupName: 'Go toolchain',
       matchDepNames: ['go', 'golang'],
+    },
+    {
+      // controller-gen writes the CRDs, and `make verify` compares them with what
+      // is committed. Renovate cannot run `make manifests`, so its bump arrives
+      // without the regenerated output and is refused until somebody commits it.
+      matchPackageNames: ['kubernetes-sigs/controller-tools'],
+      dependencyDashboardApproval: true,
     },
     {
       // The manager image is this project's own artifact, not a dependency.
