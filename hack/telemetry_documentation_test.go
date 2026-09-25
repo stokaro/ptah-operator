@@ -2,6 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +18,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
@@ -82,11 +90,23 @@ func emittedSeriesLabels(t *testing.T) map[string][]string {
 	// only the counters would let them ship undocumented -- which is the one
 	// thing this test exists to refuse.
 	telemetry.NewUnresolvedCollector(registry, syncedTestView{}, time.Now)
+	// The state gauges too, from a fleet that has something in every one, and
+	// the certificate collector once with a certificate it can read and once
+	// with one it cannot, so both of its series are gathered.
+	telemetry.NewStateCollector(registry, stateTestView{}, time.Now)
+	telemetry.NewCertificateCollector(registry, writeTestCertificate(t))
+	missingCertificate := prometheus.NewRegistry()
+	telemetry.NewCertificateCollector(missingCertificate, filepath.Join(t.TempDir(), "absent.crt"))
+	failures, err := missingCertificate.Gather()
+	if err != nil {
+		t.Fatalf("gather the certificate collector without a certificate: %v", err)
+	}
 
 	gathered, err := registry.Gather()
 	if err != nil {
 		t.Fatalf("gather the operator collectors: %v", err)
 	}
+	gathered = append(gathered, failures...)
 	emitted := make(map[string][]string, len(gathered))
 	for _, family := range gathered {
 		var labels []string
@@ -127,4 +147,54 @@ func (syncedTestView) UnresolvedSchemas(context.Context) ([]time.Time, error) {
 
 func (syncedTestView) UnresolvedMigrations(context.Context) ([]time.Time, error) {
 	return []time.Time{time.Now().Add(-time.Hour)}, nil
+}
+
+// stateTestView is a fleet with a resource in every state the state gauges
+// report: one schema overdue with an operation in flight and a lock release
+// owed, and one migration with an Apply in flight.
+type stateTestView struct{}
+
+func (stateTestView) Synced() bool { return true }
+
+func (stateTestView) ListSchemas(context.Context) ([]operatorv1alpha1.PtahSchema, error) {
+	past := metav1.NewTime(time.Now().Add(-time.Hour))
+	return []operatorv1alpha1.PtahSchema{{Status: operatorv1alpha1.PtahSchemaStatus{
+		Phase:                  "Observing",
+		NextReconciliationTime: &past,
+		ActiveOperation:        &operatorv1alpha1.ActiveOperationStatus{Type: "Observe", StartedAt: past},
+		PendingLockRelease:     &operatorv1alpha1.TargetLockReleaseStatus{OperationID: "owed"},
+	}}}, nil
+}
+
+func (stateTestView) ListMigrations(context.Context) ([]operatorv1alpha1.PtahMigration, error) {
+	past := metav1.NewTime(time.Now().Add(-time.Hour))
+	return []operatorv1alpha1.PtahMigration{{Status: operatorv1alpha1.PtahMigrationStatus{
+		Phase:           "Applying",
+		ActiveOperation: &operatorv1alpha1.MigrationOperationStatus{Type: "Apply", StartedAt: past},
+	}}}, nil
+}
+
+// writeTestCertificate writes a self-signed certificate the certificate
+// collector can read, and returns its path.
+func writeTestCertificate(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "webhook"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "tls.crt")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

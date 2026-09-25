@@ -1440,7 +1440,8 @@ while `ptah_operator_unresolved_view_synced` reads 0.
 | `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type |
 | `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
 | `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
-| `ptah_operator_webhook_certificate_expiry_timestamp_seconds` | When the admission certificate this replica presents expires; every replica publishes it |
+| `ptah_operator_webhook_certificate_expiry_timestamp_seconds{}` | When the admission certificate this replica presents expires; every replica publishes it |
+| `ptah_operator_webhook_certificate_read_failures_total{}` | Scrapes that could not read or parse that certificate, which publish no expiry |
 
 Being overdue for a moment is normal: `nextReconciliationTime` passes when a
 pass starts, and the status moves once its Jobs have run. What is not normal
