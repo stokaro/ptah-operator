@@ -39,7 +39,7 @@ jobs:
         id: setup-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.2.4
+          version: v4.3.0
       - name: Verify release metadata
         id: verify-release
         run: go run ./hack/releaseverify
@@ -76,7 +76,7 @@ jobs:
         id: setup-buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
-          version: v0.36.1
+          version: v0.37.1
           cache-binary: false
           driver-opts: |
             image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
@@ -321,7 +321,7 @@ jobs:
         id: setup-buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
-          version: v0.36.1
+          version: v0.37.1
           cache-binary: false
           driver-opts: |
             image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
@@ -596,7 +596,7 @@ jobs:
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: v2.15.4
+          version: v2.18.2
           args: build --clean
       - name: Materialize immutable release assets
         id: artifacts
