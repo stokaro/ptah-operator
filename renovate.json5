@@ -77,6 +77,17 @@
       groupName: 'Go toolchain',
       matchDepNames: ['go', 'golang'],
     },
+    {
+      // The manager image is this project's own artifact, not a dependency.
+      // The release workflow publishes it and `hack/releaseverify` holds
+      // `image.tag` equal to the chart version, so an update here would be a
+      // bot arguing with a gate. It does not exist yet either: no version has
+      // shipped, which is what the first run reported -- `Failed to look up
+      // docker package ghcr.io/stokaro/ptah-operator: no-result`, from
+      // `charts/ptah-operator/values.yaml`.
+      matchPackageNames: ['ghcr.io/stokaro/ptah-operator'],
+      enabled: false,
+    },
   ],
   customManagers: [
     {
