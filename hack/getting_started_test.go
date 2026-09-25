@@ -72,13 +72,18 @@ func TestTheGettingStartedPagesCreateTheNamespacesTheyWriteInto(t *testing.T) {
 			}
 		}
 	}
+	writes := 0
 	for _, page := range gettingStartedPages {
 		content := readDocumentationPage(t, page)
 		for _, match := range shellNamespace.FindAllStringSubmatch(content, -1) {
+			writes++
 			if !created[match[1]] {
 				used = append(used, page+" writes into "+match[1])
 			}
 		}
+	}
+	if writes == 0 {
+		t.Fatal("no getting-started command names a namespace to work in, so this check read every page and measured none")
 	}
 	sort.Strings(used)
 	for _, problem := range distinctLines(used) {

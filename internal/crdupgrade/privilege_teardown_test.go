@@ -1640,15 +1640,20 @@ func TestPrivilegeTeardownAdmissionV2CompilesCertificateCanaryConfigMapRevocatio
 
 func TestPrivilegeTeardownAdmissionV1OmitsCertificateCanaryConfigMapRule(t *testing.T) {
 	fixture := newPrivilegeTeardownFixture(t, true, true)
+	examined := 0
 	for _, contract := range fixture.teardown.retiredAuthorizationContracts() {
 		if contract.cluster || contract.namespace != fixture.guard.ReleaseNamespace || contract.name != fixture.guard.CertificateDeploymentName {
 			continue
 		}
+		examined++
 		for _, rule := range contract.rules {
 			if containsString(rule.Resources, "configmaps") {
 				t.Fatalf("admission contract v1 certificate Role contains a canary ConfigMap rule: %#v", rule)
 			}
 		}
+	}
+	if examined == 0 {
+		t.Fatal("the teardown retires no namespace-bound certificate Role, so this check read the whole contract and none of what it is about")
 	}
 }
 

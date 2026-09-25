@@ -36,13 +36,18 @@ func TestTheRecordCarriesEveryRequirement(t *testing.T) {
 func TestTheRecordAwardsNoPass(t *testing.T) {
 	t.Parallel()
 	table := buildRecordForTest(t)
+	read := 0
 	for _, line := range strings.Split(table, "\n") {
 		if !strings.HasPrefix(line, "| **PA-") {
 			continue
 		}
+		read++
 		if !strings.Contains(line, "| Not assessed |") {
 			t.Errorf("a requirement row carries a disposition the repository awarded itself: %s", line)
 		}
+	}
+	if read != len(requirements) {
+		t.Fatalf("this check recognized %d requirement rows of %d, so a row whose shape it does not know could award itself anything", read, len(requirements))
 	}
 }
 

@@ -52,7 +52,11 @@ func TestTheOperationsRoutingTableNamesSectionsThatExist(t *testing.T) {
 		}
 		anchors[slugify(match[1])] = true
 	}
-	for _, match := range regexp.MustCompile(`\]\(#([a-z0-9-]+)\)`).FindAllStringSubmatch(routingTable(t, guide), -1) {
+	targets := regexp.MustCompile(`\]\(#([a-z0-9-]+)\)`).FindAllStringSubmatch(routingTable(t, guide), -1)
+	if len(targets) == 0 {
+		t.Fatal("the routing table sends a reader to no section at all, so this check holds the guide to nothing")
+	}
+	for _, match := range targets {
 		if !anchors[match[1]] {
 			t.Errorf("the routing table sends a reader to #%s, which this guide has no section for", match[1])
 		}
