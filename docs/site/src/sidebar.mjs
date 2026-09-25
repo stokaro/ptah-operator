@@ -100,5 +100,6 @@ export const sidebar = [
   // The two pages a reader reaches for when something is wrong. They answer
   // across the groups above rather than inside one, so they sit beside them.
   { label: 'Condition reasons', link: '/troubleshoot/condition-reasons/' },
+  { label: 'Events', link: '/troubleshoot/events/' },
   { label: 'FAQ', link: '/faq/', badge: { text: '28', variant: 'default' } },
 ];
