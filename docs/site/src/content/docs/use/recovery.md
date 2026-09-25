@@ -71,6 +71,14 @@ This mode is safe by construction, and the reason is worth stating: nothing
 that authorized work survives it. See [what does not
 survive](#what-does-not-survive).
 
+The migrations acceptance suite rehearses this mode on PostgreSQL and MySQL. It
+backs up a `PtahMigration` and its approval while the approved Apply is claimed
+and held, lets the run finish so the database moves past the backup, deletes
+the resource, its plans and its approval, and moves the artifact tag on to one
+more migration. It then reapplies both specs. The rebuilt resource asks for a
+decision on the new migration, dispatches no Apply and records no run, and the
+database holds what it held before the loss.
+
 ## What to preserve
 
 A backup that omits any of these turns a consistent restore into a rebuild.

@@ -336,6 +336,13 @@ select_engine() {
 	LATE_MIGRATION="e2e-late-dispatch-${ENGINE}"
 	LATE_COORDINATION_KEY="e2e/late-dispatch/${ENGINE}"
 	LATE_DB_URL_FILE="$WORK_DIR/${ENGINE}-late-dispatch-db-url"
+	DRILL_DATABASE=ptah_e2e_drill
+	DRILL_DB_SECRET="e2e-${ENGINE}-drill-db"
+	DRILL_MIGRATION="e2e-drill-${ENGINE}"
+	DRILL_COORDINATION_KEY="e2e/drill/${ENGINE}"
+	DRILL_DB_URL_FILE="$WORK_DIR/${ENGINE}-drill-db-url"
+	DRILL_OLDER_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-drill-older:stable"
+	DRILL_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-drill:stable"
 	DELETION_DATABASE=ptah_e2e_deletion
 	DELETION_DB_SECRET="e2e-${ENGINE}-deletion-db"
 	DELETION_MIGRATION="e2e-deletion-${ENGINE}"
@@ -3177,6 +3184,348 @@ run_late_dispatch_proof() {
 		"$ENGINE_KIND" >&2
 }
 
+# A rebuild against a database that moved on after the backup.
+#
+# docs/site/src/content/docs/use/recovery.md calls this mode safe by
+# construction: nothing that authorized work survives it, because every binding
+# names a UID the rebuild does not reproduce. This row is that claim exercised.
+#
+# The backup is taken at the worst moment the page allows for: an approval
+# exists and its Apply is claimed, held by the apply gate before it runs. The
+# run then goes ahead, so the database is ahead of the backup. The resource,
+# its plans and its approval are lost, and the artifact tag moves on to a
+# fourth migration, so the rebuilt resource has work a surviving approval could
+# authorize. The resource and the approval are restored from the backup the way
+# the page says to rebuild: specs reapplied. The row asserts that the rebuilt
+# resource asks for a decision on the fourth migration instead of running it,
+# that it dispatched no Apply and recorded no run, and that the database holds
+# exactly what it held before the loss.
+create_drill_database() {
+	create_database "$DRILL_DATABASE"
+	database_url "$DRILL_DATABASE" >"$DRILL_DB_URL_FILE"
+	chmod 600 "$DRILL_DB_URL_FILE"
+	{
+		cat "$DRILL_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$DRILL_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$DRILL_DATABASE" \
+		--rawfile url "$DRILL_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# Always, on the two-migration artifact, so the database reaches version 2 with
+# nothing to approve. The gate's selector is there from the start, and the gate
+# is open, because the selector reaches every operation Job of the resource.
+create_drill_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$DRILL_MIGRATION" \
+		--arg secret "$DRILL_DB_SECRET" \
+		--arg reference "$DRILL_OLDER_REFERENCE" \
+		--arg coordinationKey "$DRILL_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg gate "$APPLY_GATE_LABEL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "1h",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s",
+          nodeSelector: ($gate | {(.): "open"})
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+	rm -f "$RESOURCE_FILE"
+}
+
+drill_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$DRILL_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$DRILL_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$DRILL_MIGRATION status"
+}
+
+report_drill_state() {
+	printf 'e2e migrations: %s state when the wait ended:\n' "$DRILL_MIGRATION" >&2
+	jq -r '
+      .status as $s |
+      "  uid=\(.metadata.uid) phase=\($s.phase // "<none>") plan=\(($s.plan // {}).name // "<none>")",
+      "  activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.jobName // "<none>")")",
+      "  lastRun=\(($s.lastRun // {}) | "\(.outcome // "<none>") \(.message // "")")",
+      (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason) message=\(.message[0:160])")
+    ' "$STATUS_FILE" >&2 2>/dev/null || true
+	k get nodes -l "$APPLY_GATE_LABEL" -o name 2>/dev/null | sed 's/^/  gate open on /' >&2 || true
+}
+
+# Every revision row the database holds, as "1 2 3".
+drill_revisions() {
+	migration_query "SELECT version FROM schema_migrations ORDER BY version" "$DRILL_DATABASE" |
+		tr '\n' ' ' | sed 's/ *$//'
+}
+
+# The migrations a published plan approves, in order, as "4".
+drill_plan_versions() {
+	k -n "$TEST_NAMESPACE" get ptahmigrationplan "$1" -o json |
+		jq -r '[.spec.migrations[].version | tostring] | join(" ")'
+}
+
+# Waits until the database holds every migration the artifact carries. The
+# condition is asserted rather than the phase, which moves on every read.
+wait_for_drill_convergence() {
+	drill_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$drill_deadline" ]; do
+		drill_status
+		if jq -e '
+          any(.status.conditions[]?; .type == "Ready" and .status == "True" and .reason == "HistoryMatched")
+        ' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	report_drill_state
+	fail "$DRILL_MIGRATION did not converge within ${TIMEOUT_SECONDS}s"
+}
+
+# Waits until the resource asks for a decision on a plan, and leaves it in
+# DRILL_PLAN.
+wait_for_drill_plan() {
+	drill_plan_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$drill_plan_deadline" ]; do
+		drill_status
+		if jq -e '
+          ((.status.plan.name // "") | length) > 0 and
+          any(.status.conditions[]?;
+            .type == "ApprovalRequired" and .status == "True" and .reason == "AwaitingApproval")
+        ' "$STATUS_FILE" >/dev/null; then
+			DRILL_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 5
+	done
+	report_drill_state
+	fail "$DRILL_MIGRATION did not ask for a decision on a plan within ${TIMEOUT_SECONDS}s"
+}
+
+# The fields a server stamps, removed so a backed-up object can be created
+# again. What is left is what a rebuild reapplies: the spec, and for an approval
+# the bindings it was admitted with.
+strip_server_fields() {
+	jq 'del(.metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp,
+             .metadata.generation, .metadata.managedFields, .metadata.finalizers,
+             .metadata.ownerReferences, .metadata.deletionTimestamp,
+             .metadata.deletionGracePeriodSeconds, .status)' "$1"
+}
+
+# The artifact the tag moves on to while the cluster is gone: the three
+# migrations the database holds, and a fourth it does not. Built from the
+# engine's own fixtures so it cannot fall out of step with them.
+publish_drill_fourth_migration() {
+	drill_next_dir="$WORK_DIR/${ENGINE}-drill-next"
+	rm -rf "$drill_next_dir"
+	mkdir -p "$drill_next_dir"
+	cp "$MIGRATION_FIXTURE_DIR"/*.sql "$drill_next_dir/"
+	printf 'CREATE TABLE e2e_drill_marker (id INTEGER PRIMARY KEY);\n' \
+		>"$drill_next_dir/0000000004_create_drill_marker.up.sql"
+	printf 'DROP TABLE e2e_drill_marker;\n' \
+		>"$drill_next_dir/0000000004_create_drill_marker.down.sql"
+	publish_migrations "drill-next" "$drill_next_dir" "$DRILL_REFERENCE"
+}
+
+drill_marker_tables() {
+	case "$ENGINE" in
+	postgresql) drill_schema="table_schema = current_schema()" ;;
+	mysql) drill_schema="table_schema = database()" ;;
+	esac
+	migration_query "SELECT count(*) FROM information_schema.tables
+                   WHERE ${drill_schema} AND table_name = 'e2e_drill_marker'" "$DRILL_DATABASE"
+}
+
+run_rebuild_drill() {
+	create_drill_database
+	publish_migrations "drill-older" "$MIGRATION_OLDER_FIXTURE_DIR" "$DRILL_OLDER_REFERENCE"
+	publish_migrations "drill" "$MIGRATION_FIXTURE_DIR" "$DRILL_REFERENCE"
+	open_apply_gate
+	create_drill_migration_resource
+	wait_for_drill_convergence
+	[ "$(drill_revisions)" = "1 2" ] ||
+		fail "$DRILL_MIGRATION did not bring its database to version 2; it records [$(drill_revisions)]"
+
+	# An approval for [3], its Apply claimed and held.
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$DRILL_MIGRATION" --type merge -p "$(jq -cn \
+		--arg reference "$DRILL_REFERENCE" \
+		'{spec: {artifact: {ociRef: $reference}, policy: {apply: "OnApproval"}}}')" >/dev/null ||
+		fail "$DRILL_MIGRATION could not be moved to the three-migration artifact"
+	wait_for_drill_plan
+	[ "$(drill_plan_versions "$DRILL_PLAN")" = "3" ] ||
+		fail "the plan $DRILL_MIGRATION published approves [$(drill_plan_versions "$DRILL_PLAN")], and this row needs [3]"
+	close_apply_gate
+	drill_migration_uid=$(jq -er '.metadata.uid' "$STATUS_FILE")
+	k -n "$TEST_NAMESPACE" get ptahmigrationplan "$DRILL_PLAN" -o json >"$WORK_DIR/drill-plan.json" ||
+		fail "the $DRILL_MIGRATION plan could not be read"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "${DRILL_MIGRATION}-approval" \
+		--arg migration "$DRILL_MIGRATION" \
+		--arg migrationUID "$drill_migration_uid" \
+		--slurpfile plan "$WORK_DIR/drill-plan.json" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan[0].metadata.name, uid: $plan[0].metadata.uid},
+        planFingerprint: $plan[0].spec.fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null || fail "the $ENGINE drill approval could not be created"
+	rm -f "$RESOURCE_FILE"
+	drill_claim_deadline=$(deadline_from_now)
+	while :; do
+		drill_status
+		jq -e '.status.activeOperation.type == "Apply" and ((.status.activeOperation.jobName // "") | length) > 0' \
+			"$STATUS_FILE" >/dev/null && break
+		[ "$(date +%s)" -lt "$drill_claim_deadline" ] || {
+			report_drill_state
+			fail "$DRILL_MIGRATION did not claim the approved Apply within ${TIMEOUT_SECONDS}s"
+		}
+		sleep 1
+	done
+
+	# The backup, at the worst moment: an approval and a claimed Apply that has
+	# not run.
+	cp "$STATUS_FILE" "$WORK_DIR/drill-backup-migration.json"
+	k -n "$TEST_NAMESPACE" get ptahmigrationapproval "${DRILL_MIGRATION}-approval" -o json \
+		>"$WORK_DIR/drill-backup-approval.json" ||
+		fail "the drill approval could not be backed up"
+
+	# The run goes ahead, so the database moves past the backup.
+	open_apply_gate
+	wait_for_drill_convergence
+	[ "$(drill_revisions)" = "1 2 3" ] ||
+		fail "the approved run did not bring the $ENGINE database to version 3; it records [$(drill_revisions)]"
+
+	# The loss. The resource's plans go with it through their owner reference,
+	# and they are deleted by label as well so none outlives the row.
+	printf 'e2e migrations: losing %s, its plans and its approval\n' "$DRILL_MIGRATION" >&2
+	k -n "$TEST_NAMESPACE" delete ptahmigrationapproval "${DRILL_MIGRATION}-approval" \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the drill approval could not be deleted"
+	k -n "$TEST_NAMESPACE" delete ptahmigration "$DRILL_MIGRATION" \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "$DRILL_MIGRATION could not be deleted"
+	k -n "$TEST_NAMESPACE" delete ptahmigrationplan -l "operator.ptah.run/migration=${DRILL_MIGRATION}" \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the $DRILL_MIGRATION plans could not be deleted"
+
+	# While the cluster is gone the release moves on, so the rebuilt resource
+	# has a migration to run and a surviving approval would have something to
+	# authorize.
+	publish_drill_fourth_migration
+
+	# The rebuild: the specs reapplied from the backup.
+	strip_server_fields "$WORK_DIR/drill-backup-migration.json" >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null || fail "$DRILL_MIGRATION could not be restored from its backup"
+	rm -f "$RESOURCE_FILE"
+	drill_rebuilt_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$DRILL_MIGRATION" -o jsonpath='{.metadata.uid}')
+	[ -n "$drill_rebuilt_uid" ] && [ "$drill_rebuilt_uid" != "$drill_migration_uid" ] ||
+		fail "the rebuilt $DRILL_MIGRATION kept the UID its backup had, so this is not the rebuild the row is about"
+
+	# The restored approval names a migration and a plan that no longer exist.
+	# Admission may refuse it; if it is admitted it has to authorize nothing,
+	# which the rest of the row checks either way.
+	strip_server_fields "$WORK_DIR/drill-backup-approval.json" >"$RESOURCE_FILE"
+	if k create -f "$RESOURCE_FILE" >"$WORK_DIR/drill-approval-restore.txt" 2>&1; then
+		printf 'e2e migrations: the restored approval was admitted; holding it to authorizing nothing\n' >&2
+	else
+		scan_for_credentials "$WORK_DIR/drill-approval-restore.txt" "the restored approval's refusal"
+		printf 'e2e migrations: the restored approval was refused: %s\n' \
+			"$(head -c 300 "$WORK_DIR/drill-approval-restore.txt")" >&2
+	fi
+	rm -f "$RESOURCE_FILE"
+
+	# The rebuilt resource reads the database, which already holds [1 2 3], and
+	# asks for a decision on [4]. The Apply Jobs it owns are recorded on every
+	# poll rather than listed at the end, because a finished Job's TTL can remove
+	# it before then.
+	: >"$WORK_DIR/drill-rebuilt-applies.txt"
+	drill_waiting=no
+	drill_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$drill_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get jobs \
+			-l "operator.ptah.run/migration=${DRILL_MIGRATION},operator.ptah.run/operation=apply" -o json |
+			jq -r --arg owner "$drill_rebuilt_uid" \
+				'.items[] | select(any(.metadata.ownerReferences[]?; .uid == $owner)) | .metadata.uid' \
+				>>"$WORK_DIR/drill-rebuilt-applies.txt" ||
+			fail "the $DRILL_MIGRATION Apply Jobs could not be listed"
+		drill_status
+		if jq -e --arg uid "$drill_rebuilt_uid" '
+          .metadata.uid == $uid and
+          ((.status.plan.name // "") | length) > 0 and
+          any(.status.conditions[]?;
+            .type == "ApprovalRequired" and .status == "True" and .reason == "AwaitingApproval")
+        ' "$STATUS_FILE" >/dev/null; then
+			drill_waiting=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$drill_waiting" = yes ] || {
+		report_drill_state
+		fail "the rebuilt $DRILL_MIGRATION never asked for a decision on the migration its database lacks"
+	}
+	# The document that matched is the one held to the rest of the claim.
+	cp "$STATUS_FILE" "$WORK_DIR/drill-rebuilt-status.json"
+	drill_rebuilt_plan=$(jq -er '.status.plan.name' "$WORK_DIR/drill-rebuilt-status.json")
+	[ "$(drill_plan_versions "$drill_rebuilt_plan")" = "4" ] ||
+		fail "the rebuilt $DRILL_MIGRATION asks to approve [$(drill_plan_versions "$drill_rebuilt_plan")], and the database lacks only [4]"
+	jq -e '(.status | has("lastRun") | not) and (.status.activeOperation.type // "") != "Apply"' \
+		"$WORK_DIR/drill-rebuilt-status.json" >/dev/null || {
+		report_drill_state
+		fail "the rebuilt $DRILL_MIGRATION recorded a run or claimed an Apply it had no approval for"
+	}
+	[ ! -s "$WORK_DIR/drill-rebuilt-applies.txt" ] ||
+		fail "the rebuilt $DRILL_MIGRATION dispatched an Apply after the restore: $(sort -u "$WORK_DIR/drill-rebuilt-applies.txt" | tr '\n' ' ')"
+	[ "$(drill_revisions)" = "1 2 3" ] ||
+		fail "after the rebuild the $ENGINE database records [$(drill_revisions)]; something ran without an approval"
+	[ "$(drill_marker_tables)" = "0" ] ||
+		fail "after the rebuild the $ENGINE database has the fourth migration's table; it ran without an approval"
+	close_apply_gate
+	printf 'e2e migrations: PASS %s rebuilt against a database ahead of its backup and ran nothing unapproved\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_uncertain_apply_proof() {
 	create_uncertain_database
 	publish_migrations "uncertain" "$UNCERTAIN_FIXTURE_DIR" "$UNCERTAIN_REFERENCE"
@@ -4195,6 +4544,7 @@ run_engine_migrations() {
 	run_checkpoint_bootstrap_proof
 	run_uncertain_apply_proof
 	run_late_dispatch_proof
+	run_rebuild_drill
 	run_deletion_during_apply_proof
 	run_retry_interval_proof
 	run_unknown_layer_proof
