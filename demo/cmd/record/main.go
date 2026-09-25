@@ -43,6 +43,7 @@ func run(arguments []string, diagnostics io.Writer) error {
 		output      = flags.String("output", "demo/recordings/runs.json", "where to write the recording")
 		only        = flags.String("only", "", "record one scenario by id, for iterating on it")
 		checkOnly   = flags.Bool("check", false, "load and validate the scenarios, run nothing")
+		verify      = flags.String("verify", "", "report recordings in this run record whose scenario has changed under them, and run nothing")
 		stepTimeout = flags.Duration("step-timeout", 5*time.Minute, "how long one command may take")
 		quiet       = flags.Bool("quiet", false, "say nothing but failures")
 	)
@@ -59,6 +60,9 @@ func run(arguments []string, diagnostics io.Writer) error {
 		if len(loaded) == 0 {
 			return fmt.Errorf("no scenario has id %q", *only)
 		}
+	}
+	if *verify != "" {
+		return verifyRecordings(*verify, loaded, diagnostics)
 	}
 	if *checkOnly {
 		fmt.Fprintf(diagnostics, "record: %d scenarios, %d steps, all valid\n", len(loaded), countSteps(loaded))
