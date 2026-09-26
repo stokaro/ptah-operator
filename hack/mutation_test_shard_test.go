@@ -193,6 +193,52 @@ func TestRaceShardCountMakeValidation(t *testing.T) {
 	}
 }
 
+// ci.yml hands each shard job its index in the RACE_MUTATION_SHARD environment
+// variable rather than on the make command line, so the index has to reach the
+// recipe from there, against the Makefile's count, and still be validated.
+func TestRaceMutationShardReachesMakeFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Fatal("make is required: ci.yml runs every race shard through it")
+	}
+	makefile := filepath.Join("..", makefilePath)
+	// A stand-in for go that reports the shard the recipe selected and runs
+	// nothing.
+	fakeGo := filepath.Join(t.TempDir(), "go")
+	if err := os.WriteFile(fakeGo, []byte("#!/bin/sh\nprintf 'selected %s\\n' \"$PTAH_MUTATION_TEST_SHARD\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(t *testing.T, shard string) (string, error) {
+		t.Helper()
+		command := exec.Command(makePath, "--no-print-directory", "-f", makefile, "test-race-mutation", "GO="+fakeGo)
+		command.Env = []string{"PATH=" + os.Getenv("PATH"), "RACE_MUTATION_SHARD=" + shard}
+		output, err := command.CombinedOutput()
+		return string(output), err
+	}
+	for shard := range raceMutationShards {
+		t.Run(fmt.Sprint(shard), func(t *testing.T) {
+			t.Parallel()
+			output, err := run(t, fmt.Sprint(shard))
+			if err != nil {
+				t.Fatalf("test-race-mutation rejected RACE_MUTATION_SHARD=%d: %v\n%s", shard, err, output)
+			}
+			want := fmt.Sprintf("selected %d/%d\n", shard, raceMutationShards)
+			if !strings.Contains(output, want) {
+				t.Fatalf("test-race-mutation did not select shard %d of %d:\n%s", shard, raceMutationShards, output)
+			}
+		})
+	}
+	t.Run("past the last shard", func(t *testing.T) {
+		t.Parallel()
+		output, err := run(t, fmt.Sprint(raceMutationShards))
+		if err == nil || strings.Contains(output, "selected") {
+			t.Fatalf("test-race-mutation ran RACE_MUTATION_SHARD=%d:\n%s", raceMutationShards, output)
+		}
+	})
+}
+
 func TestVerifyMakeRaceTargetsRejectsRuleBypasses(t *testing.T) {
 	t.Parallel()
 
@@ -259,6 +305,21 @@ func TestVerifyMakeRaceTargetsRejectsRuleBypasses(t *testing.T) {
 					source,
 					"test-race: validate-race-shards test-race-base",
 					"test-race: test-race-base",
+				)
+			},
+		},
+		// ci.yml runs one job per shard of this count, and the support
+		// verifier holds that matrix to the same number. A Makefile that
+		// splits the tables seven ways under an eight-entry matrix leaves
+		// the eighth shard selecting nothing.
+		{
+			name: "shard count moved away from the CI matrix",
+			mutate: func(source string) string {
+				return replaceMakeSourceExactly(
+					t,
+					source,
+					"RACE_MUTATION_SHARDS ?= 8",
+					"RACE_MUTATION_SHARDS ?= 7",
 				)
 			},
 		},
