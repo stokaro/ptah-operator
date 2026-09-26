@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -89,4 +92,79 @@ func buildRecordForTest(t *testing.T) string {
 		t.Fatalf("build the coverage: %v", err)
 	}
 	return coverage.recordMarkdown("../..", nil)
+}
+
+// A proof the record names is one a reader can open. A shell function that
+// was renamed or a script that was split leaves the record pointing at
+// nothing while it goes on reading as coverage, so every backquoted name has
+// to resolve: a path to a file or directory in the tree, a function to a
+// definition in a script under hack.
+func TestEveryProofTheRecordNamesExists(t *testing.T) {
+	t.Parallel()
+	scripts, err := filepath.Glob("../../hack/*.sh")
+	if err != nil || len(scripts) == 0 {
+		t.Fatalf("read the scripts under hack: %v", err)
+	}
+	var defined strings.Builder
+	for _, script := range scripts {
+		body, err := os.ReadFile(script) //nolint:gosec // A path the glob above produced.
+		if err != nil {
+			t.Fatalf("read %s: %v", script, err)
+		}
+		defined.Write(body)
+		defined.WriteByte('\n')
+	}
+	quoted := regexp.MustCompile("`([^`]+)`")
+	function := regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)+$`)
+	resolved := 0
+	for _, entry := range requirements {
+		for _, match := range quoted.FindAllStringSubmatch(entry.repository, -1) {
+			name := match[1]
+			switch {
+			case strings.Contains(name, "/"):
+				if _, err := os.Stat(filepath.Join("../..", name)); err != nil {
+					t.Errorf("%s names %s, which the tree does not have", entry.id, name)
+					continue
+				}
+			case function.MatchString(name):
+				definition := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `\(\) \{`)
+				if !definition.MatchString(defined.String()) {
+					t.Errorf("%s names %s, which no script under hack defines", entry.id, name)
+					continue
+				}
+			default:
+				t.Errorf("%s quotes %q, which is neither a path nor a shell function, so nothing here can check it", entry.id, name)
+				continue
+			}
+			resolved++
+		}
+	}
+	// Counted against the names this was written over, so a change that
+	// stopped quoting them could not pass by checking nothing.
+	if resolved < 35 {
+		t.Fatalf("resolved %d named proofs; the record was written naming more", resolved)
+	}
+}
+
+// The gaps are rendered where a reader of the record finds them, one line per
+// requirement that has any.
+func TestTheRecordListsWhatNothingExercises(t *testing.T) {
+	t.Parallel()
+	record := buildRecordForTest(t)
+	if !strings.Contains(record, "### Not yet exercised") {
+		t.Fatal("the record no longer lists what nothing in the tree exercises")
+	}
+	listed := 0
+	for _, entry := range requirements {
+		if entry.untested == "" {
+			continue
+		}
+		listed++
+		if !strings.Contains(record, "- **"+entry.id+"**: "+entry.untested+".") {
+			t.Errorf("the record does not list what %s leaves unexercised", entry.id)
+		}
+	}
+	if listed == 0 {
+		t.Fatal("no requirement lists a gap, so this check read nothing")
+	}
 }

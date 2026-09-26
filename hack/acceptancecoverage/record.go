@@ -36,8 +36,14 @@ type requirement struct {
 	// "Not assessed": the evidence, not the fix.
 	needs string
 	// repository is what the tree already carries toward it, which is never a
-	// pass on its own.
+	// pass on its own. A proof is named by its shell function or its path in
+	// backquotes, and TestEveryProofTheRecordNamesExists holds each name to
+	// something the tree still defines.
 	repository string
+	// untested is the part of the requirement's pass condition that nothing
+	// in the tree exercises yet. Empty means none is known, not that the
+	// requirement passes.
+	untested string
 }
 
 // requirements are the twelve of #242, in order. The issue is authoritative
@@ -46,40 +52,75 @@ type requirement struct {
 var requirements = []requirement{
 	{"PA-01", "Identify the candidate and its coverage",
 		"the candidate's image digests and chart digest, and a run whose jobs are named as evidence",
-		"the coverage table below, derived from the catalogs and the driver"},
+		"the coverage table below, derived from the catalogs and the driver",
+		""},
 	{"PA-02", "Execute only authorized database work",
 		"every binding mutated between planning, approval and dispatch on both engines and families, with database evidence of zero unauthorized statements",
-		"the binding contracts and their unit proofs under internal/controller"},
+		"the stale-approval and destructive-gate rows of `run_engine_lifecycle` and `assert_destructive_gate` on both engines, " +
+			"the drift-before-dispatch fault in `hack/e2e-faults.sh`, the approval bindings `hack/e2e-assert.sh` refuses, " +
+			"and `assert_approval_hydrated`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations",
+		"a target Secret, policy or transaction mode changed between approval and dispatch; " +
+			"drift before dispatch on MySQL; a count of the statements the database received; " +
+			"and an author changing policy to bypass approval, on a cluster"},
 	{"PA-03", "Preserve safety through interrupted Apply",
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
-		"the fault-injection scenarios in the data-plane suite and the mutation-lifecycle contract"},
+		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `hack/e2e-faults.sh`, " +
+			"`run_uncertain_apply_proof`, `run_late_dispatch_proof` and `run_deletion_during_apply_proof`, " +
+			"an Apply held across an upgrade by `assert_predecessor_apply_remains_exclusive_while_running`, " +
+			"and one realm claimed from two namespaces in `assert_second_claimant_blocks_the_realm`",
+		"an isolated node, a fault during lock release, and suspension during an Apply"},
 	{"PA-04", "Make progress and refusal states actionable",
 		"a measured progress target, dependency recovery inside it, and no hot loop on a permanent refusal",
-		"the condition-reason map and the runbooks that name a recovery path"},
+		"`run_retry_interval_proof`, the bounded refresh count under a standing refusal in `assert_destructive_gate`, " +
+			"`assert_registry_outage_and_recovery`, and `assert_partial_run_blocks_and_recovers`",
+		"a declared progress target to measure recovery against, and a result read that hangs"},
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
-		"the CRD schema history gates and the stored-object compatibility check"},
+		"the CRD schema history gates, the admission rows in `hack/e2e-assert.sh`, " +
+			"`prove_controller_write_guard`, `prove_controller_downgrade_guard`, `prove_certificate_write_guards`, " +
+			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans `audit_runtime_credentials`, " +
+			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`",
+		"accepted values at the size and name limits, author and approver identities against admission on a cluster, " +
+			"and who may read a plan's SQL"},
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",
-		"the lifecycle suite and the release-lifecycle reference"},
+		"`run_upgrade_proof`, `run_next_release_upgrade_proof` and `run_uninstall_proof`, leader failover in `hack/e2e-ha.sh`, " +
+			"and certificate recovery in `hack/e2e-cert-rotation.sh`, on every supported minor",
+		"an upgrade from a published release, since none exists yet; a cluster with a ResourceQuota or Pod Security admission; " +
+			"and a database audit after the lifecycle"},
 	{"PA-07", "Restore operator and database state safely",
 		"a restore drill with a database ahead of the restored Kubernetes state, proving no unapproved replay",
-		"the recovery runbook and its derived inventory check"},
+		"the recovery runbook, its derived inventory check, and `run_rebuild_drill`, " +
+			"which rebuilds a resource against a database ahead of its backup",
+		"operator state restored from a backup into an isolated cluster, the database restored with it, " +
+			"and a measured recovery time"},
 	{"PA-08", "Establish capacity and failure limits",
 		"declared thresholds and a soak long enough to measure repeated cycles and retention",
-		"the plan and chunk ceilings, and the pruning runbook"},
+		"the plan and chunk ceilings, the pruning runbook, `hack/capacity` with its weekly workflow and " +
+			"`support/capacity/workload.json`, and one published reading",
+		"pass and fail thresholds, a soak, churn and unrelated objects, varied plan and history sizes, " +
+			"and behavior beyond the admitted limits"},
 	{"PA-09", "Detect and diagnose operational failures",
 		"alerts firing inside a declared detection target and reaching a configured receiver",
-		"the family-labelled metrics and the observability section"},
+		"`hack/e2e-alerting.sh`, which delivers the unresolved-Apply, stalled-operation and lost-view alerts " +
+			"from the chart's rules through Alertmanager to a receiver, and the operator metrics on a new leader in `hack/e2e-ha.sh`",
+		"on a cluster, the certificate, upgrade, overdue, lock-release, plan-store, failure-rate, admission and view-read alerts; " +
+			"one scrape target lost; and approval waits kept from paging"},
 	{"PA-10", "Make documentation executable and usable",
 		"the documented install and primary examples executed from a fresh environment on the candidate's versions",
-		"the runbook shape, access and contract-page gates under hack/"},
+		"the demo workflow, which runs every scenario under `demo/scenarios` on the lab and repeats one without the lab's scripts, " +
+			"the recordings bound in `demo/recordings/runs.json`, and the runbook, access and contract-page gates under `hack/`",
+		"the documented install run on a fresh cluster, and a PtahSchema on MySQL among the examples"},
 	{"PA-11", "Verify the artifacts that will be installed",
 		"checksums, signatures, provenance and a vulnerability scan against the published digests",
-		"the release contract and provenance checks"},
+		"the provenance, SBOM, signature and read-back steps of `.github/workflows/release.yml`, " +
+			"the reproducible chart, the checksum file, and a govulncheck scan of the source",
+		"the Ptah executor image, which the release neither builds nor signs; the lifecycle run against the published digests; " +
+			"a scan of the shipped images and binaries; and an interrupted publication"},
 	{"PA-12", "Retain evidence and make a bounded decision",
 		"the retained evidence of every executed requirement and a recorded decision for the stated profile",
-		"this record"},
+		"this record",
+		"evidence kept past the retention of a CI run"},
 }
 
 // candidateField is one line of the identity block. supplied is empty where
@@ -158,6 +199,15 @@ func (c *coverage) recordMarkdown(root string, declared *profile) string {
 		}
 		fmt.Fprintf(&out, "| **%s** %s | %s | %s | %s |\n",
 			entry.id, entry.title, disposed, entry.needs, entry.repository)
+	}
+
+	out.WriteString("\n### Not yet exercised\n\n")
+	out.WriteString("What each requirement's pass condition asks for and nothing in the tree runs. A\n")
+	out.WriteString("requirement absent here has no known gap, which is still not a pass.\n\n")
+	for _, entry := range requirements {
+		if entry.untested != "" {
+			fmt.Fprintf(&out, "- **%s**: %s.\n", entry.id, entry.untested)
+		}
 	}
 
 	out.WriteString("\n## Decision\n\n")
