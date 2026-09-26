@@ -365,6 +365,11 @@ select_engine() {
 	DRILL_DB_URL_FILE="$WORK_DIR/${ENGINE}-drill-db-url"
 	DRILL_OLDER_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-drill-older:stable"
 	DRILL_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-drill:stable"
+	SUSPEND_DATABASE=ptah_e2e_suspend
+	SUSPEND_DB_SECRET="e2e-${ENGINE}-suspend-db"
+	SUSPEND_MIGRATION="e2e-suspend-${ENGINE}"
+	SUSPEND_COORDINATION_KEY="e2e/suspend/${ENGINE}"
+	SUSPEND_DB_URL_FILE="$WORK_DIR/${ENGINE}-suspend-db-url"
 	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-uncertain:stable"
 	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
 	UNKNOWN_LAYER_DATABASE=ptah_e2e_unknown_layer
@@ -4265,6 +4270,247 @@ wait_for_deletion_apply_dispatch() {
 	fail "$DELETION_MIGRATION did not dispatch an Apply bound to its own Job within ${TIMEOUT_SECONDS}s"
 }
 
+# Suspension while an Apply is running.
+#
+# #242 asks that suspension issue no cleanup SQL and leave an operation that may
+# have started SQL accounted for. The controller reads the claim before it reads
+# spec.suspend, so a dispatched Apply is carried to its result and only the work
+# after it is withheld. The row suspends the resource inside the uncertain
+# artifact's slow third migration, when two migrations have committed and the
+# executor is still running, and holds three things apart: the claim and its Job
+# outlive the suspension, the run's result is recorded against that Job, and
+# nothing is dispatched once the resource reads Suspended.
+run_suspension_during_apply_proof() {
+	create_suspend_database
+	create_suspend_migration_resource
+	wait_for_suspend_apply_dispatch
+	suspend_commit_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$suspend_commit_deadline" ]; do
+		[ "$(suspend_applied_count 2)" = 2 ] && break
+		sleep 2
+	done
+	[ "$(suspend_applied_count 2)" = 2 ] ||
+		fail "the $ENGINE suspension run did not commit its first two migrations within ${TIMEOUT_SECONDS}s"
+
+	printf 'e2e migrations: suspending the %s PtahMigration while its Apply is still running\n' \
+		"$ENGINE_KIND" >&2
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$SUSPEND_MIGRATION" --type=merge \
+		--patch '{"spec":{"suspend":true}}' >/dev/null ||
+		fail "$SUSPEND_MIGRATION could not be suspended"
+	suspend_hold_deadline=$(($(date +%s) + 20))
+	while [ "$(date +%s)" -lt "$suspend_hold_deadline" ]; do
+		assert_suspension_retains_its_running_apply
+		sleep 5
+	done
+
+	wait_for_suspended_after_apply
+	# The run finished what it started, once, and suspension undid none of it.
+	[ "$(suspend_applied_count 3)" = 3 ] ||
+		fail "the $ENGINE suspended run did not end with its three migrations applied once"
+	[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$SUSPEND_DATABASE")" = 3 ] ||
+		fail "the $ENGINE suspension changed the rows the run committed"
+
+	# Nothing is dispatched once the resource reads Suspended. The interval is
+	# thirty seconds, so ninety is three refreshes a suspension that did not
+	# hold would have started, and the cleanup TTL is longer than the window, so
+	# a Job created inside it is still there to count at the end.
+	#
+	# Ready's transition time cannot date the suspension: Ready was already
+	# False while the Apply ran, and a condition keeps its transition time
+	# while its status stays the same. So the window starts from the Jobs that
+	# existed when Suspended was first read, and every poll inside it also
+	# requires no claim, which the controller writes before it creates a Job.
+	suspend_quiet_deadline=$(($(date +%s) + 90))
+	while [ "$(date +%s)" -lt "$suspend_quiet_deadline" ]; do
+		suspend_status
+		jq -e --arg uid "$SUSPEND_APPLY_JOB_UID" '
+          .status.phase == "Suspended" and
+          (.status.activeOperation // null) == null and
+          .status.lastRun.jobUID == $uid
+        ' "$STATUS_FILE" >/dev/null || {
+			report_suspend_state
+			fail "$SUSPEND_MIGRATION claimed new work while it was suspended"
+		}
+		sleep 10
+	done
+	suspend_late_jobs=$(suspend_job_uids |
+		jq --argjson before "$SUSPENDED_JOB_UIDS" '. - $before | length')
+	[ "$suspend_late_jobs" -eq 0 ] || {
+		report_suspend_state
+		fail "$SUSPEND_MIGRATION created $suspend_late_jobs Job(s) after it read Suspended"
+	}
+	k -n "$TEST_NAMESPACE" delete ptahmigration "$SUSPEND_MIGRATION" \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "$SUSPEND_MIGRATION was not removed"
+	printf 'e2e migrations: PASS %s carried a suspended Apply to its result and dispatched nothing after\n' \
+		"$ENGINE_KIND" >&2
+}
+
+suspend_job_uids() {
+	k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${SUSPEND_MIGRATION}" -o json |
+		jq -c '[.items[].metadata.uid]' ||
+		fail "the Jobs of $SUSPEND_MIGRATION could not be listed"
+}
+
+suspend_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$SUSPEND_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$SUSPEND_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$SUSPEND_MIGRATION status"
+}
+
+# How many of the migrations up to the given version the revision table records
+# as applied. The slow third one has a row while it runs, so the state is what
+# separates committed from started.
+suspend_applied_count() {
+	migration_query "SELECT count(*) FROM schema_migrations WHERE version <= $1 AND state = 'applied'" \
+		"$SUSPEND_DATABASE"
+}
+
+report_suspend_state() {
+	printf 'e2e migrations: %s state when the check failed:\n' "$SUSPEND_MIGRATION" >&2
+	jq -r '
+      .status as $s |
+      "  suspend=\(.spec.suspend) phase=\($s.phase // "<none>") activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.jobName // "<none>")")",
+      "  lastRun=\(($s.lastRun // {}) | "\(.outcome // "<none>")/\(.jobName // "<none>")/\(.jobUID // "<none>")")",
+      (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason) at=\(.lastTransitionTime)")
+    ' "$STATUS_FILE" >&2 2>/dev/null || true
+	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/migration=${SUSPEND_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  job \(.metadata.name) operation=\(.metadata.labels["operator.ptah.run/operation"] // "<none>") created=\(.metadata.creationTimestamp)"
+    ' >&2 2>/dev/null || true
+}
+
+# The claim, its Job and its Pod, all still the ones dispatched before the
+# suspension. Without the Pod still running, the retention proves nothing.
+assert_suspension_retains_its_running_apply() {
+	suspend_status
+	jq -e --arg uid "$SUSPEND_APPLY_JOB_UID" --arg finalizer "operator.ptah.run/migration-operation" '
+      .spec.suspend == true and
+      any(.metadata.finalizers[]?; . == $finalizer) and
+      .status.activeOperation.type == "Apply" and
+      .status.activeOperation.jobUID == $uid
+    ' "$STATUS_FILE" >/dev/null || {
+		report_suspend_state
+		fail "$SUSPEND_MIGRATION dropped the claim that accounts for its running Apply when it was suspended"
+	}
+	[ "$(k -n "$TEST_NAMESPACE" get job "$SUSPEND_APPLY_JOB" -o jsonpath='{.metadata.uid}' 2>/dev/null)" = \
+		"$SUSPEND_APPLY_JOB_UID" ] ||
+		fail "the $ENGINE Apply Job was removed or replaced when its resource was suspended"
+	[ "$(k -n "$TEST_NAMESPACE" get pod -l "job-name=${SUSPEND_APPLY_JOB}" \
+		-o jsonpath='{.items[*].status.phase}' 2>/dev/null)" = Running ] ||
+		fail "the $ENGINE Apply Pod stopped, so the retention above proved nothing"
+}
+
+# The result the resource records is the dispatched Job's, and the resource
+# settles as Suspended only after it. The Jobs that exist on the document that
+# matched are the ones the quiet window below is measured against.
+wait_for_suspended_after_apply() {
+	suspended_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$suspended_deadline" ]; do
+		suspend_status
+		if jq -e --arg uid "$SUSPEND_APPLY_JOB_UID" '
+          .status.phase == "Suspended" and
+          (.status.activeOperation // null) == null and
+          .status.lastRun.jobUID == $uid and
+          .status.lastRun.outcome == "Applied" and
+          any(.status.conditions[]?; .type == "Ready" and .status == "False" and .reason == "Suspended")
+        ' "$STATUS_FILE" >/dev/null; then
+			SUSPENDED_JOB_UIDS=$(suspend_job_uids)
+			return 0
+		fi
+		sleep 5
+	done
+	report_suspend_state
+	fail "$SUSPEND_MIGRATION did not record its Apply's result and settle as Suspended within ${TIMEOUT_SECONDS}s"
+}
+
+create_suspend_database() {
+	create_database "$SUSPEND_DATABASE"
+	database_url "$SUSPEND_DATABASE" >"$SUSPEND_DB_URL_FILE"
+	chmod 600 "$SUSPEND_DB_URL_FILE"
+	{
+		cat "$SUSPEND_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$SUSPEND_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$SUSPEND_DATABASE" \
+		--rawfile url "$SUSPEND_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# The uncertain row's artifact again, for its slow third migration. Always,
+# because the moment this row needs is inside the run rather than before it.
+create_suspend_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$SUSPEND_MIGRATION" \
+		--arg secret "$SUSPEND_DB_SECRET" \
+		--arg reference "$UNCERTAIN_REFERENCE" \
+		--arg coordinationKey "$SUSPEND_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "30s",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_suspend_apply_dispatch() {
+	suspend_dispatch_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$suspend_dispatch_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$SUSPEND_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null || true
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null 2>&1; then
+			SUSPEND_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
+			SUSPEND_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 2
+	done
+	fail "$SUSPEND_MIGRATION did not dispatch an Apply bound to its own Job within ${TIMEOUT_SECONDS}s"
+}
+
 # The retry interval, against a real API server, real watches and real Jobs.
 #
 # spec.execution.failureRetryInterval is the delay a resource asks for between
@@ -4917,6 +5163,7 @@ run_engine_migrations() {
 	run_restored_history_proof
 	run_deletion_during_apply_proof
 	run_retry_interval_proof
+	run_suspension_during_apply_proof
 	run_unknown_layer_proof
 	run_egress_policy_proof
 	run_rebuild_drill
