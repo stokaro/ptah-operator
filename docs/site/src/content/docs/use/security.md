@@ -375,12 +375,12 @@ Job before any Ptah process or network request. The key name cannot be selected
 by a schema author. Anonymous registry access may use a custom CA without a
 Secret grant, but it is still size-bounded and snapshotted before use.
 
-`clientCertificateFrom` remains in the alpha source shape for compatibility but
-is rejected by both API validation and Job construction. The pinned executor
-loads a client pair into a process-wide TLS configuration and cannot constrain
-certificate selection after a cross-host redirect. Re-enable this field only
-with an executor contract that selects the certificate against the effective
-TLS authority on every handshake.
+A registry that requires a client certificate is not supported, and the API
+has no field for one. The pinned executor loads a client pair into a
+process-wide TLS configuration and cannot constrain certificate selection after
+a cross-host redirect. A client-certificate transport needs an executor
+contract that selects the certificate against the effective TLS authority on
+every handshake.
 
 ## Plan and approval visibility
 

@@ -296,14 +296,7 @@ func TestValidationHandlerRejectsJobCreateOutsideReconstructedIntent(t *testing.
 func TestValidationHandlerAllowsExactTerminalJobCleanup(t *testing.T) {
 	t.Parallel()
 
-	schema := schemaFixture(operatorv1alpha1.OperationResolve)
-	expected := expectedJob(schema, schema.Status.ActiveOperation)
-	oldJob := withGeneratedJobIdentity(expected)
-	oldJob.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
-	schema.Status.ActiveOperation.JobUID = oldJob.UID
-	job := oldJob.DeepCopy()
-	ttl := int32(300)
-	job.Spec.TTLSecondsAfterFinished = &ttl
+	schema, expected, oldJob, job := currentCleanupFixture(t, operatorv1alpha1.OperationResolve)
 	handler := handlerFixture(t, staticJobBuilder{job: expected}, schema)
 
 	request := requestFor(t, admissionv1.Update, job)

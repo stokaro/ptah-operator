@@ -290,28 +290,16 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 	if operation == nil || operation.JobName != oldJob.Name || operation.JobUID != oldJob.UID {
 		return denyf("Job is not the exact active operation instance")
 	}
-	if currentOperationAnnotations(oldJob.Annotations) {
-		if err := validateClaimBoundJobCleanup(schema, operation, oldJob); err != nil {
-			return denyf("Job cleanup is outside the persisted operation claim: %v", err)
-		}
-		if err := validateOnlyCleanupTTLChanged(oldJob, job); err != nil {
-			return denyf("Job cleanup update changes fields outside the cleanup TTL: %v", err)
-		}
-		return nil
+	if !currentOperationAnnotations(oldJob.Annotations) {
+		// Every Job the builder makes carries this envelope, and a rebuilt Job
+		// is compared annotation for annotation, so rebuilding this claim's
+		// Job -- a direct read of its plan first -- could only refuse it.
+		return denyf("Job %s does not carry the operation envelope the controller writes on every Job it builds "+
+			"(%d annotations for a read-only operation, %d for an Apply; it has %d)",
+			oldJob.Name, len(operationEnvelopeAnnotations), len(applyOperationAnnotations()), len(oldJob.Annotations))
 	}
-	plan, err := v.planForJob(ctx, schema, operation)
-	if err != nil {
-		return err
-	}
-	expected, err := v.Jobs.Build(schema.DeepCopy(), *operation.DeepCopy(), plan)
-	if err != nil {
-		return denyf("active operation cannot reconstruct the terminal Job: %v", err)
-	}
-	if err := validateAdmissionSnapshot(operation, expected); err != nil {
-		return denyf("active operation Pod admission snapshot is invalid: %v", err)
-	}
-	if err := validateJobIntent(oldJob, expected, schemaSubject(schema), true); err != nil {
-		return denyf("terminal Job is outside the active operation intent: %v", err)
+	if err := validateClaimBoundJobCleanup(schema, operation, oldJob); err != nil {
+		return denyf("Job cleanup is outside the persisted operation claim: %v", err)
 	}
 	if err := validateOnlyCleanupTTLChanged(oldJob, job); err != nil {
 		return denyf("Job cleanup update changes fields outside the cleanup TTL: %v", err)
@@ -627,9 +615,14 @@ func currentOperationAnnotations(annotations map[string]string) bool {
 }
 
 // currentApplyAnnotations reports whether a Job carries exactly the keys the
-// builder writes on a schema Apply: the envelope, the plan binding, and the
-// mutating-operation marks.
+// builder writes on a schema Apply.
 func currentApplyAnnotations(annotations map[string]string) bool {
+	return hasExactlyKeys(annotations, applyOperationAnnotations())
+}
+
+// applyOperationAnnotations are the keys the builder writes on a schema
+// Apply: the envelope, the plan binding, and the mutating-operation marks.
+func applyOperationAnnotations() []string {
 	keys := append([]string{workload.AnnotationPlanFingerprint, workload.AnnotationPlanContentDigest},
 		operationEnvelopeAnnotations...)
 	marks := map[string]string{}
@@ -637,7 +630,7 @@ func currentApplyAnnotations(annotations map[string]string) bool {
 	for key := range marks {
 		keys = append(keys, key)
 	}
-	return hasExactlyKeys(annotations, keys)
+	return keys
 }
 
 // hasExactlyKeys reports whether annotations hold the distinct keys and

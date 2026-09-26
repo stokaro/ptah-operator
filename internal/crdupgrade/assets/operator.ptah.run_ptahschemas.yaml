@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "20"
-    operator.ptah.run/crd-schema-digest: "sha256:9d8f3393089171d1d0b123a681e22efb936f793743d2a7678295d9d2b36cae6c"
+    operator.ptah.run/crd-schema-version: "21"
+    operator.ptah.run/crd-schema-digest: "sha256:0b4a5185926fa1bfd8f3baab684533da6a430a5ed114e77fc70db56ba2226b2f"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -104,19 +104,6 @@ spec:
                         - key
                         type: object
                         x-kubernetes-map-type: atomic
-                      clientCertificateFrom:
-                        properties:
-                          certificateKey:
-                            default: tls.crt
-                            type: string
-                          name:
-                            type: string
-                          privateKeyKey:
-                            default: tls.key
-                            type: string
-                        required:
-                        - name
-                        type: object
                       plainHTTP:
                         default: false
                         type: boolean
@@ -124,11 +111,6 @@ spec:
                     x-kubernetes-validations:
                     - message: caFrom cannot be used with plainHTTP
                       rule: '!self.plainHTTP || !has(self.caFrom)'
-                    - message: clientCertificateFrom cannot be used with plainHTTP
-                      rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
-                    - message: clientCertificateFrom is not supported until the executor
-                        can scope client certificates across redirects
-                      rule: '!has(self.clientCertificateFrom)'
                   verificationPolicyFrom:
                     properties:
                       key:
@@ -1167,19 +1149,6 @@ spec:
                             - key
                             type: object
                             x-kubernetes-map-type: atomic
-                          clientCertificateFrom:
-                            properties:
-                              certificateKey:
-                                default: tls.crt
-                                type: string
-                              name:
-                                type: string
-                              privateKeyKey:
-                                default: tls.key
-                                type: string
-                            required:
-                            - name
-                            type: object
                           plainHTTP:
                             default: false
                             type: boolean
@@ -1187,11 +1156,6 @@ spec:
                         x-kubernetes-validations:
                         - message: caFrom cannot be used with plainHTTP
                           rule: '!self.plainHTTP || !has(self.caFrom)'
-                        - message: clientCertificateFrom cannot be used with plainHTTP
-                          rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
-                        - message: clientCertificateFrom is not supported until the
-                            executor can scope client certificates across redirects
-                          rule: '!has(self.clientCertificateFrom)'
                     required:
                     - digest
                     - resolvedReference
@@ -1244,6 +1208,7 @@ spec:
                     type: string
                 required:
                 - attempt
+                - executionBindingID
                 - id
                 - inputFingerprint
                 - jobName
@@ -1891,19 +1856,6 @@ spec:
                             - key
                             type: object
                             x-kubernetes-map-type: atomic
-                          clientCertificateFrom:
-                            properties:
-                              certificateKey:
-                                default: tls.crt
-                                type: string
-                              name:
-                                type: string
-                              privateKeyKey:
-                                default: tls.key
-                                type: string
-                            required:
-                            - name
-                            type: object
                           plainHTTP:
                             default: false
                             type: boolean
@@ -1911,11 +1863,6 @@ spec:
                         x-kubernetes-validations:
                         - message: caFrom cannot be used with plainHTTP
                           rule: '!self.plainHTTP || !has(self.caFrom)'
-                        - message: clientCertificateFrom cannot be used with plainHTTP
-                          rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
-                        - message: clientCertificateFrom is not supported until the
-                            executor can scope client certificates across redirects
-                          rule: '!has(self.clientCertificateFrom)'
                     required:
                     - digest
                     - resolvedReference

@@ -1091,8 +1091,6 @@ malformed, or mismatched authority grants stop the Job before Ptah can make a
 registry request. Authenticated plain HTTP also requires
 `allowPlainHTTP: "true"` in the authentication Secret. Rotate those values only
 when intentionally changing the credential's authority or transport grant.
-`clientCertificateFrom` is currently refused because the executor cannot scope
-the certificate safely across cross-host redirects.
 
 An authenticated source with `transport.caFrom` must also place
 `caSHA256: sha256:<64 lowercase hex>` in that same registry Secret. Compute the

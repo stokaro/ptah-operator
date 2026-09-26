@@ -3355,11 +3355,14 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 		name                string
 		deleteJob           bool
 		keepConfiguredTuple bool
-		eraseOperationEpoch bool
+		foreignEpoch        bool
 	}{
 		{name: "existing Job"},
 		{name: "missing Job", deleteJob: true},
-		{name: "operation missing epoch", keepConfiguredTuple: true, eraseOperationEpoch: true},
+		// The components are the ones in force, but the claim names an epoch
+		// the binding does not: nothing proves the run was authorized under
+		// the binding that would now read its result.
+		{name: "operation from another epoch", keepConfiguredTuple: true, foreignEpoch: true},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -3395,8 +3398,8 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 			}
 			applyJob.UID = "job-uid"
 			schema.Status.ActiveOperation.JobUID = applyJob.UID
-			if test.eraseOperationEpoch {
-				schema.Status.ActiveOperation.ExecutionBindingID = ""
+			if test.foreignEpoch {
+				schema.Status.ActiveOperation.ExecutionBindingID = "v1-99999999999999999999999999999999"
 			}
 			oldPlan := *schema.Status.Plan
 			reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, approval, policyConfig, applyJob)

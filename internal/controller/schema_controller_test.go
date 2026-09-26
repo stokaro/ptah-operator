@@ -1426,8 +1426,8 @@ func TestMissingReadOnlyJobWaitsForItsExactOwnerPod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() resolve retry admission snapshot error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("Reconcile() resolve retry admission snapshot result = %#v", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("Reconcile() resolve retry admission snapshot result = %#v, want explicit requeue %s", result, statusPatchRequeue)
 	}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted); err != nil {
 		t.Fatal(err)

@@ -70,6 +70,8 @@ func migrationWithUnresolvedRun(t *testing.T) *operatorv1alpha1.PtahMigration {
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 	migration.Status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
 		Outcome:              operatorv1alpha1.MigrationRunOutcomeUnknown,
+		OperationID:          safetyOtherDigest,
+		PlanRef:              operatorv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-earlier", UID: "earlier-plan-uid"},
 		RecordedAt:           metav1.Now(),
 		JobName:              "ptah-m-apply-orders-abcdef0123456789",
 		JobUID:               "apply-job-uid",

@@ -754,9 +754,6 @@ func addRegistryAccess(
 		)
 	}
 
-	if transport.ClientCertificateFrom != nil {
-		return nil, nil, nil, errors.New("registry client certificates are not supported until the executor can scope them across redirects")
-	}
 	return environment, volumes, mounts, nil
 }
 

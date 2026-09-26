@@ -3,12 +3,16 @@ package controllerwrite_test
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // The operator is permitted exactly one update to a Job it created: stamping
@@ -121,4 +125,109 @@ func TestValidationHandlerAllowsOnlyTheExactCleanupUpdate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The workload builder writes the operation envelope on every Job it makes:
+// eight annotations on a read-only operation's Job, ten on an Apply's. A Job
+// that is the claim's own instance by name and UID but carries anything else
+// was not made by the builder, and a Job rebuilt from the claim is compared
+// with it annotation for annotation, so a rebuild could only refuse it too.
+//
+// The refusal therefore comes first. Rebuilding an Apply's Job starts with a
+// direct read of its plan and of every chunk, and that read would be spent on
+// an answer already known; the plan-read count is what tells this refusal apart
+// from the rebuild it replaced, since both end in a denial.
+func TestValidationHandlerRefusesCleanupOfJobOutsideTheOperationEnvelope(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name          string
+		operationType operatorv1alpha1.OperationType
+		change        func(annotations map[string]string)
+	}{
+		{
+			name:          "a read-only Job without its admission snapshot digest",
+			operationType: operatorv1alpha1.OperationResolve,
+			change: func(annotations map[string]string) {
+				delete(annotations, workload.AnnotationAdmissionSnapshotDigest)
+			},
+		},
+		{
+			name:          "an Apply Job without its plan fingerprint",
+			operationType: operatorv1alpha1.OperationApply,
+			change: func(annotations map[string]string) {
+				delete(annotations, workload.AnnotationPlanFingerprint)
+			},
+		},
+		{
+			name:          "an Apply Job without its controller provenance",
+			operationType: operatorv1alpha1.OperationApply,
+			change: func(annotations map[string]string) {
+				delete(annotations, workload.AnnotationControllerImage)
+				delete(annotations, workload.AnnotationControllerRevision)
+				delete(annotations, workload.AnnotationControllerStateVersion)
+			},
+		},
+		{
+			name:          "a read-only Job with an annotation the builder never writes",
+			operationType: operatorv1alpha1.OperationResolve,
+			change: func(annotations map[string]string) {
+				annotations["example.test/added-after-dispatch"] = "true"
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, expected, oldJob, job := currentCleanupFixture(t, row.operationType)
+			reader := &planReadCounter{Reader: fake.NewClientBuilder().
+				WithScheme(controllerWriteScheme(t)).WithObjects(schema).Build()}
+			handler := handlerWithReader(staticJobBuilder{job: expected}, reader)
+
+			exact := requestFor(t, admissionv1.Update, job)
+			exact.OldObject = rawObject(t, oldJob)
+			if response := handler.Handle(context.Background(), exact); !response.Allowed {
+				t.Fatalf("the exact cleanup update was denied, so refusing a changed one proves "+
+					"nothing: %#v", response.Result)
+			}
+
+			for _, candidate := range []*batchv1.Job{oldJob, job} {
+				row.change(candidate.Annotations)
+				row.change(candidate.Spec.Template.Annotations)
+			}
+			changed := requestFor(t, admissionv1.Update, job)
+			changed.OldObject = rawObject(t, oldJob)
+
+			response := handler.Handle(context.Background(), changed)
+			if response.Allowed {
+				t.Fatal("a cleanup update for a Job outside the operation envelope was admitted")
+			}
+			const want = "does not carry the operation envelope"
+			if response.Result == nil || !strings.Contains(response.Result.Message, want) {
+				t.Fatalf("refusal = %#v, want one naming %q", response.Result, want)
+			}
+			if reads := reader.planReads.Load(); reads != 0 {
+				t.Fatalf("the refusal read the plan %d times to reach an answer the annotations already gave", reads)
+			}
+		})
+	}
+}
+
+// planReadCounter counts the direct reads of a PtahSchemaPlan.
+type planReadCounter struct {
+	client.Reader
+
+	planReads atomic.Int32
+}
+
+func (r *planReadCounter) Get(
+	ctx context.Context,
+	key client.ObjectKey,
+	object client.Object,
+	options ...client.GetOption,
+) error {
+	if _, isPlan := object.(*operatorv1alpha1.PtahSchemaPlan); isPlan {
+		r.planReads.Add(1)
+	}
+	return r.Reader.Get(ctx, key, object, options...)
 }

@@ -1,4 +1,3 @@
-{{- $fullname := include "ptah-operator.fullname" . -}}
 {{- include "ptah-operator.validateAdmissionSingleton" . -}}
 {{- include "ptah-operator.validateReleaseNamespace" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
@@ -6,10 +5,11 @@
 {{- fail "certificateRotation.enabled must be true when webhook.existingSecret is empty" -}}
 {{- end -}}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
-{{- $caBundle := "" -}}
-{{- $caKey := "" -}}
-{{- $tlsCrt := "" -}}
-{{- $tlsKey := "" -}}
+{{- $material := include "ptah-operator.webhookCertificateMaterialJSON" (dict "root" . "existing" $existing) | fromJson -}}
+{{- $caBundle := $material.caBundle -}}
+{{- $caKey := $material.caKey -}}
+{{- $tlsCrt := $material.tlsCrt -}}
+{{- $tlsKey := $material.tlsKey -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
@@ -18,41 +18,6 @@
 {{- $certificateUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.certRotatorServiceAccountName" .) -}}
 {{- $existingMutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $configurationName -}}
 {{- $existingValidating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $configurationName -}}
-{{- if .Values.webhook.existingSecret -}}
-{{- if .Values.webhook.caBundle -}}
-{{- $caBundle = .Values.webhook.caBundle | b64enc -}}
-{{- else if $existing -}}
-{{- $caBundle = required "webhook.existingSecret must contain ca.crt" (index $existing.data "ca.crt") -}}
-{{- else -}}
-{{- fail "webhook.caBundle is required when webhook.existingSecret cannot be read" -}}
-{{- end -}}
-{{- else if $existing -}}
-{{- $expectedLabels := dict
-      "app.kubernetes.io/managed-by" "Helm"
-      "operator.ptah.run/generated-webhook-certificate" "true" -}}
-{{- $expectedAnnotations := dict
-      "meta.helm.sh/release-name" .Release.Name
-      "meta.helm.sh/release-namespace" .Release.Namespace -}}
-{{- if or
-      (not (deepEqual (default (dict) $existing.metadata.labels) $expectedLabels))
-      (not (deepEqual (default (dict) $existing.metadata.annotations) $expectedAnnotations)) -}}
-{{- fail "generated webhook Secret has foreign or incomplete Helm ownership metadata" -}}
-{{- end -}}
-{{- $caBundle = required "generated webhook Secret must contain ca.crt" (index $existing.data "ca.crt") -}}
-{{- $caKey = required "generated webhook Secret must contain ca.key" (index $existing.data "ca.key") -}}
-{{- $tlsCrt = required "generated webhook Secret must contain tls.crt" (index $existing.data "tls.crt") -}}
-{{- $tlsKey = required "generated webhook Secret must contain tls.key" (index $existing.data "tls.key") -}}
-{{- else -}}
-{{- /* Bootstrap material is deliberately short-lived. The rotator promptly replaces it with certificates matching the configured policy. */ -}}
-{{- $ca := genCA (printf "%s-ca" $fullname) 2 -}}
-{{- $service := include "ptah-operator.webhookServiceName" . -}}
-{{- $dnsNames := list $service (printf "%s.%s" $service .Release.Namespace) (printf "%s.%s.svc" $service .Release.Namespace) (printf "%s.%s.svc.cluster.local" $service .Release.Namespace) -}}
-{{- $cert := genSignedCert $service nil $dnsNames 1 $ca -}}
-{{- $caBundle = $ca.Cert | b64enc -}}
-{{- $caKey = $ca.Key | b64enc -}}
-{{- $tlsCrt = $cert.Cert | b64enc -}}
-{{- $tlsKey = $cert.Key | b64enc -}}
-{{- end -}}
 {{- $entryBundles := dict "mutating" $caBundle "migrationMutating" $caBundle "mutatingCanary" $caBundle "approvalValidating" $caBundle "migrationApprovalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle "validatingCanary" $caBundle -}}
 {{- if not .Values.webhook.existingSecret -}}
 {{- if $existingMutating -}}

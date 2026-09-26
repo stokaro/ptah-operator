@@ -1347,25 +1347,39 @@ ptah-operator-parameter-informer-anchor
 
 {{- define "ptah-operator.validateAdmissionSingleton" -}}
 {{- $name := include "ptah-operator.approvalWebhookConfigurationName" . -}}
-{{- $mutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $name -}}
-{{- $validating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $name -}}
+{{- include "ptah-operator.validateAdmissionSingletonObjects" (dict
+      "root" .
+      "name" $name
+      "mutating" (lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $name)
+      "validating" (lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $name)) -}}
+{{- end -}}
+
+{{/*
+The admission singleton check over the two configurations it is handed. The
+caller does the lookups, so a render can hand it objects it has to refuse.
+*/}}
+{{- define "ptah-operator.validateAdmissionSingletonObjects" -}}
+{{- $root := .root -}}
+{{- $name := .name -}}
+{{- $mutating := .mutating -}}
+{{- $validating := .validating -}}
 {{- if or (and $mutating (not $validating)) (and $validating (not $mutating)) -}}
 {{- fail (printf "fixed admission singleton %s is incomplete; both mutating and validating configurations must exist or both must be absent" $name) -}}
 {{- end -}}
 {{- $expectedImmutable := dict
-      "operator.ptah.run/release-name" .Release.Name
-      "operator.ptah.run/release-namespace" .Release.Namespace
-      "operator.ptah.run/coordination-namespace" (include "ptah-operator.coordinationNamespace" .)
-      "operator.ptah.run/leader-election" (printf "%t" .Values.leaderElection)
-      "operator.ptah.run/leader-election-id" (include "ptah-operator.leaderElectionID" .)
-      "operator.ptah.run/webhook-service-name" (include "ptah-operator.webhookServiceName" .)
-      "operator.ptah.run/controller-deployment-name" (include "ptah-operator.fullname" .)
-      "operator.ptah.run/certificate-deployment-name" (include "ptah-operator.certRotatorServiceAccountName" .) -}}
+      "operator.ptah.run/release-name" $root.Release.Name
+      "operator.ptah.run/release-namespace" $root.Release.Namespace
+      "operator.ptah.run/coordination-namespace" (include "ptah-operator.coordinationNamespace" $root)
+      "operator.ptah.run/leader-election" (printf "%t" $root.Values.leaderElection)
+      "operator.ptah.run/leader-election-id" (include "ptah-operator.leaderElectionID" $root)
+      "operator.ptah.run/webhook-service-name" (include "ptah-operator.webhookServiceName" $root)
+      "operator.ptah.run/controller-deployment-name" (include "ptah-operator.fullname" $root)
+      "operator.ptah.run/certificate-deployment-name" (include "ptah-operator.certRotatorServiceAccountName" $root) -}}
 {{- $expectedVersions := dict
-      "operator.ptah.run/controller-state-version" (include "ptah-operator.controllerStateVersion" .)
-      "operator.ptah.run/admission-contract-version" (include "ptah-operator.admissionContractVersion" .)
-      "operator.ptah.run/release-sequence" (include "ptah-operator.releaseSequence" .) -}}
-{{- $context := dict "expectedImmutable" $expectedImmutable "expectedVersions" $expectedVersions "expectedHook" (include "ptah-operator.crdManagerServiceAccountName" .) "expectedController" (include "ptah-operator.serviceAccountName" .) "expectedPreviousController" (include "ptah-operator.previousControllerServiceAccountName" .) "expectedPreviousRelease" (include "ptah-operator.previousControllerReleaseSequence" .) "releaseName" .Release.Name "releaseNamespace" .Release.Namespace -}}
+      "operator.ptah.run/controller-state-version" (include "ptah-operator.controllerStateVersion" $root)
+      "operator.ptah.run/admission-contract-version" (include "ptah-operator.admissionContractVersion" $root)
+      "operator.ptah.run/release-sequence" (include "ptah-operator.releaseSequence" $root) -}}
+{{- $context := dict "expectedImmutable" $expectedImmutable "expectedVersions" $expectedVersions "expectedHook" (include "ptah-operator.crdManagerServiceAccountName" $root) "expectedController" (include "ptah-operator.serviceAccountName" $root) "expectedPreviousController" (include "ptah-operator.previousControllerServiceAccountName" $root) "expectedPreviousRelease" (include "ptah-operator.previousControllerReleaseSequence" $root) "releaseName" $root.Release.Name "releaseNamespace" $root.Release.Namespace -}}
 {{- include "ptah-operator.validateAdmissionSingletonObject" (merge (dict "kind" "MutatingWebhookConfiguration" "object" $mutating) $context) -}}
 {{- include "ptah-operator.validateAdmissionSingletonObject" (merge (dict "kind" "ValidatingWebhookConfiguration" "object" $validating) $context) -}}
 {{- end -}}
@@ -1566,6 +1580,54 @@ the objects it names, so it counts for pods/exec and serviceaccounts/token.
 {{- end -}}
 {{- end -}}
 {{- $granted | toJson -}}
+{{- end -}}
+
+{{/*
+The certificate material the webhook Secret carries: read from the Secret the
+release already holds, or generated when it holds none. The caller does the
+lookup and passes the result as .existing, so a render can hand this helper a
+Secret it has to refuse.
+*/}}
+{{- define "ptah-operator.webhookCertificateMaterialJSON" -}}
+{{- $root := .root -}}
+{{- $existing := .existing -}}
+{{- $material := dict "caBundle" "" "caKey" "" "tlsCrt" "" "tlsKey" "" -}}
+{{- if $root.Values.webhook.existingSecret -}}
+{{- if $root.Values.webhook.caBundle -}}
+{{- $_ := set $material "caBundle" ($root.Values.webhook.caBundle | b64enc) -}}
+{{- else if $existing -}}
+{{- $_ := set $material "caBundle" (required "webhook.existingSecret must contain ca.crt" (index $existing.data "ca.crt")) -}}
+{{- else -}}
+{{- fail "webhook.caBundle is required when webhook.existingSecret cannot be read" -}}
+{{- end -}}
+{{- else if $existing -}}
+{{- $expectedLabels := dict
+      "app.kubernetes.io/managed-by" "Helm"
+      "operator.ptah.run/generated-webhook-certificate" "true" -}}
+{{- $expectedAnnotations := dict
+      "meta.helm.sh/release-name" $root.Release.Name
+      "meta.helm.sh/release-namespace" $root.Release.Namespace -}}
+{{- if or
+      (not (deepEqual (default (dict) $existing.metadata.labels) $expectedLabels))
+      (not (deepEqual (default (dict) $existing.metadata.annotations) $expectedAnnotations)) -}}
+{{- fail "generated webhook Secret has foreign or incomplete Helm ownership metadata" -}}
+{{- end -}}
+{{- $_ := set $material "caBundle" (required "generated webhook Secret must contain ca.crt" (index $existing.data "ca.crt")) -}}
+{{- $_ := set $material "caKey" (required "generated webhook Secret must contain ca.key" (index $existing.data "ca.key")) -}}
+{{- $_ := set $material "tlsCrt" (required "generated webhook Secret must contain tls.crt" (index $existing.data "tls.crt")) -}}
+{{- $_ := set $material "tlsKey" (required "generated webhook Secret must contain tls.key" (index $existing.data "tls.key")) -}}
+{{- else -}}
+{{- /* Bootstrap material is deliberately short-lived. The rotator promptly replaces it with certificates matching the configured policy. */ -}}
+{{- $ca := genCA (printf "%s-ca" (include "ptah-operator.fullname" $root)) 2 -}}
+{{- $service := include "ptah-operator.webhookServiceName" $root -}}
+{{- $dnsNames := list $service (printf "%s.%s" $service $root.Release.Namespace) (printf "%s.%s.svc" $service $root.Release.Namespace) (printf "%s.%s.svc.cluster.local" $service $root.Release.Namespace) -}}
+{{- $cert := genSignedCert $service nil $dnsNames 1 $ca -}}
+{{- $_ := set $material "caBundle" ($ca.Cert | b64enc) -}}
+{{- $_ := set $material "caKey" ($ca.Key | b64enc) -}}
+{{- $_ := set $material "tlsCrt" ($cert.Cert | b64enc) -}}
+{{- $_ := set $material "tlsKey" ($cert.Key | b64enc) -}}
+{{- end -}}
+{{- $material | toJson -}}
 {{- end -}}
 
 {{- define "ptah-operator.webhookEntryCABundle" -}}
