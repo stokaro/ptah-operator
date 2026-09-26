@@ -158,5 +158,6 @@ what the operator is and is not allowed to read.
 
 The lab installs a verified combination because this repository declares one.
 Doing the same against your own cluster means supplying the manager, runner and
-executor digests and the Ptah version yourself, until a published release
-carries them.
+executor digests and the Ptah version yourself. A published release names all
+of them in its release manifest, and [Install](../install/) says which field is
+which.

@@ -65,7 +65,10 @@ operator was actually run against, the evidence behind it, and what ran.
 `ptahRelease` is `null` when the build is not a released Ptah, and the table
 then names the build by `ptahDescribe`. The suite builds its executor from the
 pinned commit rather than pulling a published image, so what the measurement
-covers is the code at that commit.
+covers is the code at that commit. An operator release builds its executor from
+the same commit with the same recipe, and
+[Releases and provenance](../releases/#the-executor) says how that image is
+checked against this row before it is signed.
 
 **Absent** is neither. A combination no row mentions is untested, and untested
 is not incompatible. A version with nothing verified carries
@@ -97,17 +100,19 @@ everything".
 
 The commit in `verified[].ptahCommit` is the commit the lifecycle suite builds.
 `hack/e2e-kind.sh` reads it from this file, and the `kubernetes-e2e` job takes
-it from the same place through the support job's output. Nothing else may write
-it down:
+it from the same place through the support job's output. The release workflow
+reads it here too, through `hack/releaseverify`, when it builds the executor it
+publishes. Nothing else may write it down:
 
 ```sh
 make verify-ptah-support
 ```
 
 The guard refuses a catalog that is malformed or self-contradictory, and it
-refuses the lifecycle script or the CI workflow carrying the commit a second
-time. A literal in either place would keep working on the day the two
-disagreed, and the table on this page would then name a build nothing ran.
+refuses the lifecycle script, the CI or release workflow, or the executor
+recipe carrying the commit a second time. A literal in any of them would keep
+working on the day it and the catalog disagreed, and the table on this page
+would then name a build nothing ran.
 
 The command performs no network requests.
 

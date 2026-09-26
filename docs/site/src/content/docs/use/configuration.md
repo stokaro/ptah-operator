@@ -13,11 +13,15 @@ names something the operator must not guess.
 accepted, and a Docker image ID is not a registry manifest digest.
 
 `execution.executorImage` is the Ptah build the operator runs, by digest.
-`execution.runnerImage` is the runner beside it, also by digest.
+`execution.runnerImage` is the runner beside it, also by digest. Each release
+builds an executor from the Ptah commit it was tested with and names its digest
+in the release manifest, as [the executor](../../support/releases/#the-executor)
+describes; the chart still takes it only as an explicit value.
 
 `execution.ptahVersion` is the identity of the build inside that executor
 digest. It is verified from the image's own provenance and never inferred from
-a tag, so the chart has no default to fall back on. Which build has actually
+a tag, so the chart has no default to fall back on. For a release's executor,
+the manifest carries it as `executor-ptah-version`. Which build has actually
 been run against this operator is [Ptah compatibility](../../support/ptah/).
 
 All three are recorded in every plan, approval, Job and applied status, so a

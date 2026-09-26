@@ -2511,7 +2511,7 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 		{marker: `chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")`, count: 1},
 		{marker: `go -C "$ROOT_DIR" run ./hack/chartpackage \`, count: 1},
 		{marker: `"$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >"$KIND_CONFIG"`, count: 1},
-		{marker: `cp "$ROOT_DIR/test/e2e/Dockerfile.ptah" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"`, count: 1},
+		{marker: `cp "$ROOT_DIR/Dockerfile.executor" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"`, count: 1},
 		{marker: `--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \`, count: 2},
 		{marker: `--tag "$OPERATOR_IMAGE" "$ROOT_DIR"`, count: 1},
 		{marker: `--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"`, count: 1},

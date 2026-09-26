@@ -33,8 +33,8 @@ carries the verification.
 ```sh
 VERSION=<release tag>
 gh release download "$VERSION" --repo stokaro/ptah-operator \
-  --pattern 'ptah-operator-*.tgz' --pattern '*.sha256'
-# Verify the asset before installing it, then use the .tgz below in place of
+  --pattern 'ptah-operator-*.tgz' --pattern release-manifest.txt --pattern SHA256SUMS
+# Verify the assets before installing them, then use the .tgz below in place of
 # ./charts/ptah-operator.
 ```
 
@@ -56,13 +56,24 @@ three are required to use immutable SHA-256 references. The executor version
 is explicit too: it must identify the verified build in the selected executor
 digest and is never inferred from an image tag or supplied by a chart default.
 
+A release names every one of them in its `release-manifest.txt`. The digest in
+`image` is `<operator-image-digest>`, and the same image is the runner. The
+release also builds the executor from the Ptah commit it was tested with: the
+digest in `executor` is `<executor-image-digest>`, and `executor-ptah-version`
+is the `<ptah-version>` to pass with it. The chart does not read the manifest,
+and it would take any other verified executor just as well; the values below
+are where the choice is made. Authenticate the manifest and verify each image's
+signature first, as
+[Releases and provenance](../../support/releases/#verify-before-installation)
+shows.
+
 ```sh
 helm upgrade --install ptah-operator ./charts/ptah-operator \
   --namespace ptah-system \
   --create-namespace \
   --set-string image.digest=sha256:<operator-image-digest> \
   --set-string execution.runnerImage=ghcr.io/stokaro/ptah-operator@sha256:<operator-image-digest> \
-  --set-string execution.executorImage=ghcr.io/stokaro/ptah@sha256:<ptah-image-digest> \
+  --set-string execution.executorImage=ghcr.io/stokaro/ptah-operator-executor@sha256:<executor-image-digest> \
   --set-string execution.ptahVersion=<ptah-version>
 ```
 

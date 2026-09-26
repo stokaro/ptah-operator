@@ -1212,8 +1212,8 @@ for tls_fixture_source_marker in \
 		"$ROOT_DIR/test/e2e/handcraftoci/main.go" \
 		"$ROOT_DIR/test/e2e/handcraftoci/main_test.go" >/dev/null
 done
-grep -F './cmd/ptah' "$ROOT_DIR/test/e2e/Dockerfile.ptah" >/dev/null
-grep -Eq '^FROM .*@sha256:[0-9a-f]{64}' "$ROOT_DIR/test/e2e/Dockerfile.ptah"
+grep -F './cmd/ptah' "$ROOT_DIR/Dockerfile.executor" >/dev/null
+grep -Eq '^FROM .*@sha256:[0-9a-f]{64}' "$ROOT_DIR/Dockerfile.executor"
 grep -F './cmd/manager' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
 grep -F './cmd/ptah-runner' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
 grep -F './cmd/ptah-cert-rotator' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
