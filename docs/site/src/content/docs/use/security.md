@@ -49,13 +49,13 @@ lists it as out of scope.
 The boundary the operator is built to hold lies between it and the application
 namespaces: the people who write `PtahSchema`, `PtahMigration` and approval
 resources there, the database credentials those namespaces hold, and the
-operation Pods that run there with those credentials. The four authorities in
+operation Pods that run there with those credentials. The authorities in
 [Trust boundaries](#trust-boundaries) are that boundary, and the rest of this
-page says how each is held. The open work that hardens it:
+page says how each is held. Realm membership is one of them: a claim on a
+database reaches past its namespace only when a `PtahRealm` grants it, as
+[Who may claim a database](#who-may-claim-a-database) describes. The open work
+that hardens the rest:
 
-- [#445](https://github.com/stokaro/ptah-operator/issues/445): authorize
-  membership of a database realm instead of letting any resource claim a
-  coordination key.
 - [#446](https://github.com/stokaro/ptah-operator/issues/446): keep status
   writable only by the manager, and resolve an unaccounted run through an
   identity-stamped acknowledgment.
@@ -101,7 +101,7 @@ outside this contract, and
 
 ## Trust boundaries
 
-The operator separates four authorities:
+The operator separates five authorities:
 
 1. A desired-state author may change `PtahSchema` but cannot approve a plan
    merely by editing that resource. They can, however, make approvals
@@ -121,6 +121,10 @@ The operator separates four authorities:
    reads.
 4. A Job receives only the credentials needed for its fixed operation through
    same-namespace Secret selectors resolved by the kubelet.
+5. A realm administrator decides which namespaces may manage a database more
+   than one namespace reaches, by writing a cluster-scoped `PtahRealm`. An
+   author names a realm and cannot grant it. See
+   [Who may claim a database](#who-may-claim-a-database).
 
 ### Who may turn the approval requirement off {#who-may-turn-the-approval-requirement-off}
 
@@ -228,6 +232,46 @@ Memory-backed `emptyDir` usage is charged to the writing container by
 Kubernetes. The chart defaults bound each volume, but production resource
 limits must also leave headroom for the runner binary, fetched schema, plan,
 and client scratch data in addition to the process heap.
+
+### Who may claim a database {#who-may-claim-a-database}
+
+Which resources count as managing one database decides who can refuse whom:
+the operator refuses every claimant of a realm more than one resource claims
+without agreeing to share it. A claim anybody could make by writing a string
+would let a principal who can create a `PtahSchema` in one namespace, with no
+Secret and no database access, stop every resource of another namespace and
+learn that the key was in use.
+
+So a claim reaches only as far as something grants it. A
+`spec.target.coordinationKey` is scoped to its resource's namespace: the realm
+is the engine, the namespace and the key, and the same key elsewhere is another
+realm and another Lease. A claim across namespaces is made with
+`spec.target.realmRef`, and the `PtahRealm` it names lists the namespaces it
+admits. A resource elsewhere is refused with reason `RealmNotAuthorized`, runs
+nothing, and is left out of the census of the admitted resources, so the
+refusal falls on the resource that made the claim and on nobody else.
+
+The boundary holds only while authors cannot write realms. Realms are
+cluster-scoped, so no namespaced Role grants them; grant them only through a
+ClusterRole such as
+[`examples/realm-administrator-role.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/realm-administrator-role.yaml),
+and do not aggregate `ptahrealms` into the built-in `edit` or `admin` roles.
+The manager reads realms and holds no write verb on them. A realm lists
+namespaces by name rather than by selector, because a namespace's labels are
+often writable by whoever administers that namespace.
+
+Visibility follows the same line. A realm names the namespaces it admits, so
+it is for administrators, and the operator writes no status into it. A
+resource's own status names the realm it asked for, its own namespace and
+counts of claimants, never another namespace or resource. A refused resource
+reads the same message whether the realm is missing, does not list its
+namespace or names another engine, so a tenant cannot probe for realms it may
+not use.
+
+Listing a namespace in a realm is trusting it with the database. A listed
+namespace can still contest the realm by creating a second claimant, as any
+claimant can; what a realm withholds is that power from the namespaces it
+does not list.
 
 ## OCI integrity and identity
 
@@ -366,7 +410,8 @@ credential values, derives and redacts standalone and escaped credentials from
 database URLs, bounds stdout and stderr, and validates a framed result containing
 the operation ID, coordination digest, and protocol version. The required
 `spec.target.coordinationKey` is a non-secret operator input; it is hashed with
-the normalized engine, and the plaintext key is never copied into status.
+the normalized engine and the resource's namespace, and the plaintext key is
+never copied into status.
 Status otherwise stores only hashes, counts, classification, immutable
 references, and timestamps.
 
@@ -457,7 +502,10 @@ in for, or a grant the default roles keep for the control plane.
   that release for high availability; the singleton admission configuration
   intentionally prevents ordinary independent-release ownership.
 - Assign one stable coordination key to every physical database and reuse it
-  across all aliases, proxies, credentials, namespaces, and Ptah resource kinds.
+  across all aliases, proxies, credentials, and Ptah resource kinds in the
+  namespace. For a database that more than one namespace manages, create a
+  `PtahRealm` listing exactly those namespaces, and keep write access to
+  realms with the cluster's administrators.
 - Use separate database credentials for production and optional dev rehearsal
   targets.
 

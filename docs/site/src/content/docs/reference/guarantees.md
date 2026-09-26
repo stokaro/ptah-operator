@@ -101,12 +101,25 @@ claimant declares the sharing.
 | | `PtahSchema` | `PtahMigration` |
 | --- | --- | --- |
 | Enforced in | `takeRealmCensus`, before any Job is dispatched | the same function, in the same place |
-| Bound to | the coordination digest of the engine and coordination key | the same |
+| Bound to | the coordination digest of the engine with the namespace and its coordination key, or with the name of the `PtahRealm` the resource names | the same |
 | Failure behavior | `Blocked` with reason `RealmConflict`; the verdict is re-taken on a bounded cadence because another resource's edit produces no event here | the same |
 | Proved by | `TestSchemaBlocksOnAContestedRealmWithoutDispatchingAJob` | `TestMigrationBlocksOnAContestedRealmWithoutDispatchingAJob` |
 
 This is the one guarantee with a single implementation for both families, and
 it is the model the rest is moving toward.
+
+## A claim reaches only as far as it is granted
+
+A coordination key names a realm inside its own namespace, and a claim across
+namespaces needs a `PtahRealm` that lists the namespace. A claim nobody granted
+is refused itself and contests nothing.
+
+| | `PtahSchema` | `PtahMigration` |
+| --- | --- | --- |
+| Enforced in | `takeRealmCensus`, before any Job is dispatched, reading the `PtahRealm` from the manager's cache | the same function, in the same place |
+| Bound to | the namespace in a key's digest; for a realm reference, the namespaces and the engine the `PtahRealm` lists | the same |
+| Failure behavior | `Blocked` with reason `RealmNotAuthorized`, left out of every admitted claimant's census; re-taken on a bounded cadence and when the realm changes | the same |
+| Proved by | `TestSchemaRefusesARealmThatDoesNotAdmitItsNamespace` | `TestAnUnlistedNamespaceIsRefusedAndBlocksNobody`, `TestAKeyWrittenInAnotherNamespaceContestsNothing` |
 
 ## Stored state is never interpreted by a manager that predates it
 

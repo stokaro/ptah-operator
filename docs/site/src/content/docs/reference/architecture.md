@@ -55,7 +55,7 @@ answers a different question, and each is invalidated by a different event.
 
 | Identity | Answers | Invalidated by |
 | --- | --- | --- |
-| Coordination identity | Which realm a resource claims -- derived from `spec.target.engine` and `spec.target.coordinationKey`, and from nothing a credential carries | Editing either field, which moves the resource to another realm |
+| Coordination identity | Which realm a resource claims -- derived from `spec.target.engine` and either the namespace with `spec.target.coordinationKey` or the `PtahRealm` in `spec.target.realmRef`, and from nothing a credential carries | Editing any of those fields, which moves the resource to another realm |
 | Target identity | Which database a run actually reached, derived by the Pod from the URL it resolved | The URL resolving somewhere else: another host, port or database |
 | Lease epoch | Which uninterrupted interval of realm ownership a claim holds | The Lease lapsing and being acquired again, which loses continuity and discards any result produced across the change |
 | Execution binding epoch | Which set of execution components a plan was computed under -- manager image and revision, controller-state version, Ptah version, executor and runner images, runner protocol | Any one of those components changing, which retires the plans computed under the old set |
@@ -156,9 +156,15 @@ authorize exactly that plan.
 | Declared schema | `PtahSchema` | `PtahSchemaPlan` | `PtahSchemaApproval` |
 | Versioned migrations | `PtahMigration` | `PtahMigrationPlan` | `PtahMigrationApproval` |
 
+A seventh kind belongs to neither family. `PtahRealm` is cluster-scoped and
+written by an administrator: it names a database that resources in more than
+one namespace manage, and lists the namespaces allowed to claim it. The manager
+reads it and never writes it. See
+[Concurrency and coordination](../execution/#concurrency-and-coordination).
+
 The manager reconciles the two desired-state kinds, watches the two approval
-kinds, and watches the verification-policy ConfigMaps resources point at, so an
-edited policy is noticed rather than waited out. It does not watch the plan
+kinds and the realms, and watches the verification-policy ConfigMaps resources
+point at, so an edited policy or grant is noticed rather than waited out. It does not watch the plan
 kinds: it writes them, and a plan it wrote tells it nothing it did not already
 know.
 

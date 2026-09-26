@@ -6,8 +6,11 @@ metadata:
 spec:
   target:
     engine: PostgreSQL
-    # Every resource that can mutate this physical database, including through
-    # another DNS alias, proxy, or credential, must use this exact non-secret key.
+    # Every resource in this namespace that can mutate this physical database,
+    # including through another DNS alias, proxy, or credential, must use this
+    # exact non-secret key. The key reaches no further than the namespace: a
+    # database another namespace also manages is named with realmRef and a
+    # PtahRealm an administrator creates (ptahrealm.yaml) instead.
     coordinationKey: production/application-primary
     # This database is also managed by the PtahMigration beside this file, so
     # both say so. Taking turns is not sharing: with either one left false, both

@@ -23,15 +23,15 @@ func TestNormalizeSet(t *testing.T) {
 	}
 }
 
-func TestDatabaseCoordinationDigestBindsEngineAndExactKey(t *testing.T) {
+func TestDatabaseCoordinationDigestBindsEngineNamespaceAndExactKey(t *testing.T) {
 	t.Parallel()
 
-	postgres, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/payments-primary")
+	postgres, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "payments", "prod/payments-primary")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, alias := range []string{"postgres", "postgresql", "pgx"} {
-		aliasDigest, err := fingerprint.DatabaseCoordinationDigest(alias, "prod/payments-primary")
+		aliasDigest, err := fingerprint.DatabaseCoordinationDigest(alias, "payments", "prod/payments-primary")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -40,11 +40,11 @@ func TestDatabaseCoordinationDigestBindsEngineAndExactKey(t *testing.T) {
 		}
 	}
 
-	mysql, err := fingerprint.DatabaseCoordinationDigest("MySQL", "prod/payments-primary")
+	mysql, err := fingerprint.DatabaseCoordinationDigest("MySQL", "payments", "prod/payments-primary")
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherKey, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/payments-replica")
+	otherKey, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "payments", "prod/payments-replica")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,16 +56,97 @@ func TestDatabaseCoordinationDigestBindsEngineAndExactKey(t *testing.T) {
 	}
 }
 
-func TestDatabaseCoordinationDigestRejectsNonCanonicalKey(t *testing.T) {
+// The attack a coordination key used to allow: anybody who could create a
+// resource in another namespace wrote the same key and joined the realm. The
+// namespace is part of the identity, so the same string elsewhere is another
+// realm, another census and another Lease.
+func TestTheSameKeyInAnotherNamespaceIsAnotherRealm(t *testing.T) {
+	t.Parallel()
+
+	owner, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	intruder, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-b", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intruder == owner {
+		t.Fatal("a key written in another namespace named the same realm")
+	}
+	// A key cannot spell its way into another namespace either: the
+	// namespace is a field of its own, not a prefix of the key.
+	spelled, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-b", "team-a/orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spelled == owner {
+		t.Fatal("a key that spells another namespace named that namespace's realm")
+	}
+}
+
+func TestDatabaseCoordinationDigestRejectsNonCanonicalKeyOrNamespace(t *testing.T) {
 	t.Parallel()
 
 	for _, key := range []string{"", " production", "production ", "Production", "prod key", strings.Repeat("a", 254)} {
-		if _, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", key); err == nil {
+		if _, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "payments", key); err == nil {
 			t.Fatalf("DatabaseCoordinationDigest accepted %q", key)
 		}
 	}
-	if _, err := fingerprint.DatabaseCoordinationDigest("SQLite", "production"); err == nil {
+	for _, namespace := range []string{"", "Payments", "team/a", "-team", strings.Repeat("a", 64)} {
+		if _, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", namespace, "production"); err == nil {
+			t.Fatalf("DatabaseCoordinationDigest accepted namespace %q", namespace)
+		}
+	}
+	if _, err := fingerprint.DatabaseCoordinationDigest("SQLite", "payments", "production"); err == nil {
 		t.Fatal("DatabaseCoordinationDigest accepted an unsupported engine")
+	}
+}
+
+// A realm is named once, at cluster scope, and every namespace it admits
+// derives the same identity from it -- which no namespace key can derive.
+func TestDatabaseRealmDigestIsOneIdentityNoKeyReaches(t *testing.T) {
+	t.Parallel()
+
+	realm, err := fingerprint.DatabaseRealmDigest("PostgreSQL", "orders-primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias, err := fingerprint.DatabaseRealmDigest("postgres", "orders-primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias != realm {
+		t.Fatalf("engine alias produced %q, want %q", alias, realm)
+	}
+	mysql, err := fingerprint.DatabaseRealmDigest("MySQL", "orders-primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := fingerprint.DatabaseRealmDigest("PostgreSQL", "orders-replica")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mysql == realm || other == realm {
+		t.Fatal("engine or realm name change retained the digest")
+	}
+	for _, namespace := range []string{"orders-primary", "default", "team-a"} {
+		key, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", namespace, "orders-primary")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key == realm {
+			t.Fatalf("the key orders-primary in namespace %s derived the realm's digest", namespace)
+		}
+	}
+
+	for _, name := range []string{"", "Orders", "orders/primary", "orders_primary", "-orders", strings.Repeat("a", 254)} {
+		if _, err := fingerprint.DatabaseRealmDigest("PostgreSQL", name); err == nil {
+			t.Fatalf("DatabaseRealmDigest accepted %q", name)
+		}
+	}
+	if _, err := fingerprint.DatabaseRealmDigest("SQLite", "orders-primary"); err == nil {
+		t.Fatal("DatabaseRealmDigest accepted an unsupported engine")
 	}
 }
 

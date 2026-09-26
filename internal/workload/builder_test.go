@@ -1721,7 +1721,7 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 func digest(character byte) string { return "sha256:" + strings.Repeat(string(character), 64) }
 
 func testCoordinationDigest() string {
-	digest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/team-a/orders-primary")
+	digest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-a", "prod/team-a/orders-primary")
 	if err != nil {
 		panic(err)
 	}

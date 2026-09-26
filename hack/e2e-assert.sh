@@ -202,6 +202,22 @@ for owner_resource in ptahschemas.operator.ptah.run ptahschemaplans.operator.pta
 		fail "controller service account cannot update the $owner_resource finalizers subresource"
 done
 
+# The realm census reads a PtahRealm before every claim, and a realm is an
+# administrator's grant. So the manager reads realms cluster-wide and holds no
+# verb that writes one: an identity that could edit the grant it is judged by
+# would be the author of its own authorization.
+printf '%s\n' 'e2e assertions: checking that the manager reads realms and writes none'
+for realm_verb in get list watch; do
+	answer=$(k auth can-i "$realm_verb" ptahrealms.operator.ptah.run --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = yes ] ||
+		fail "controller service account cannot $realm_verb ptahrealms, so the realm census cannot read a grant"
+done
+for realm_verb in create update patch delete deletecollection; do
+	answer=$(k auth can-i "$realm_verb" ptahrealms.operator.ptah.run --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = no ] ||
+		fail "controller service account can $realm_verb ptahrealms, which only an administrator may"
+done
+
 printf '%s\n' 'e2e assertions: checking webhook failure policy and scope'
 k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" '

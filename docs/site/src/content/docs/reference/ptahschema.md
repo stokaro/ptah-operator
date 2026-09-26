@@ -29,8 +29,9 @@ metadata:
 spec:
   target:
     engine: PostgreSQL
-    # Every resource that can write to this physical database must use this
-    # exact key, whatever DNS alias, proxy or credential it reaches it through.
+    # Every resource in this namespace that can write to this physical
+    # database must use this exact key, whatever DNS alias, proxy or credential
+    # it reaches it through. The key reaches no further than the namespace.
     coordinationKey: production/application-primary
     urlFrom:
       name: application-database
@@ -88,8 +89,10 @@ spec:
 ### A database more than one resource manages
 
 `sharedRealm` is the declaration that taking turns is intended. Every claimant
-of the same `coordinationKey` has to set it: with one left `false`, all of them
-are refused rather than allowed to undo each other's work.
+of the same `coordinationKey` in this namespace has to set it: with one left
+`false`, all of them are refused rather than allowed to undo each other's work.
+When the other claimant lives in another namespace, the database is named by a
+[PtahRealm](../ptahrealm/) instead, and the realm has to allow the sharing too.
 
 `protectedTables` is a fence with no override. A plan that would touch one of
 these leaves the resource `Blocked` with reason `ProtectedTable`, and no
@@ -293,9 +296,11 @@ spec:
 | `spec.policy.transactionMode` | `string`, one of `all`, `file`, `none`, default `file` | TransactionMode is how the statements are wrapped: all in one transaction, one per file, or none at all. An engine that refuses a mode decides over this rather than around it. |
 | `spec.suspend` | `boolean`, default `false` | Suspend prevents new Jobs. A Job already applying is observed to a terminal result and is never replaced by a destructive cleanup action. |
 | `spec.target` | `object`, required | This resource requires: target.urlFrom must name a required Secret key. Target is the database to converge, named through a Secret the manager itself has no permission to read. |
-| `spec.target.coordinationKey` | `string`, required | CoordinationKey is a non-secret, stable identifier for the physical database realm. Every schema that can reach the same database through an alias, proxy, or different credential must use exactly the same key. |
+| `spec.target.coordinationKey` | `string` | CoordinationKey is a non-secret, stable identifier for the physical database, scoped to this resource's namespace. Every resource in the namespace that can reach the same database through an alias, proxy, or different credential must use exactly the same key. The same key in another namespace is another realm: a resource elsewhere can neither block this one nor take turns with it by choosing the same string. A database more than one namespace manages is named with realmRef instead, which an administrator has to grant. Exactly one of coordinationKey and realmRef is set. |
 | `spec.target.engine` | `string`, required | Engine is the database this target speaks. An engine outside the supported set is refused with a condition rather than attempted. |
-| `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its coordination key names, and that every other resource managing that database has declared the same. It defaults to false. A realm more than one resource claims is refused while any claimant leaves it false -- including the resource that did declare it. Deleting a resource leaves the realm, and so does suspending it; resuming puts it back, and the conflict is refused then, before any Job. What is verified is the declaration, never the disjointness: nothing can tell whether two sets of arbitrary SQL touch the same rows. The concurrency section of the architecture reference says why taking turns is not enough. |
+| `spec.target.realmRef` | `object` | RealmRef names the cluster-scoped PtahRealm this database belongs to. The realm, not this resource, decides whether the claim is allowed: a resource whose namespace the realm does not list, or whose engine it does not name, is refused with reason RealmNotAuthorized and runs nothing, and it is not counted against the resources the realm does admit. Exactly one of coordinationKey and realmRef is set. |
+| `spec.target.realmRef.name` | `string`, required | Name is the PtahRealm's name. |
+| `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its realm names, and that every other resource managing that database has declared the same. It defaults to false. A realm more than one resource claims is refused while any claimant leaves it false -- including the resource that did declare it. A PtahRealm with sharing Exclusive refuses a second claimant whatever this says. Deleting a resource leaves the realm, and so does suspending it; resuming puts it back, and the conflict is refused then, before any Job. What is verified is the declaration, never the disjointness: nothing can tell whether two sets of arbitrary SQL touch the same rows. The concurrency section of the architecture reference says why taking turns is not enough. |
 | `spec.target.urlFrom` | `object`, required | This resource requires: target.urlFrom must name a required Secret key. URLFrom names the Secret key holding the connection URL. The manager has no permission to read it: the operation Pod resolves it, and the URL never reaches status, an Event or a command line. |
 | `spec.target.urlFrom.key` | `string`, required | This resource requires: target.urlFrom must name a required Secret key. The key of the secret to select from. Must be a valid secret key. |
 | `spec.target.urlFrom.name` | `string`, default `` | This resource requires: target.urlFrom must name a required Secret key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |

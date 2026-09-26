@@ -41,10 +41,10 @@ spec:
 
 ### Beside a PtahSchema, over one database
 
-Both resources name the same `coordinationKey` and both set `sharedRealm`, so
-they take turns under one lease rather than running at once. The operator
-checks that a person decided to share; it cannot check that the areas they
-write to are really disjoint.
+Both resources live in one namespace, name the same `coordinationKey` and set
+`sharedRealm`, so they take turns under one lease rather than running at once.
+The operator checks that a person decided to share; it cannot check that the
+areas they write to are really disjoint.
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
@@ -114,6 +114,37 @@ spec:
     apply: OnApproval
     transactionMode: none
   suspend: false
+```
+
+### A database another namespace manages too
+
+A key reaches no further than its namespace, so a database that resources in
+two namespaces manage is named by a [PtahRealm](../ptahrealm/) an
+administrator created instead. `realmRef` replaces `coordinationKey`; a target
+names one or the other. The realm has to list this resource's namespace, or the
+resource is refused with reason `RealmNotAuthorized` and runs nothing, and a
+realm that allows sharing still needs `sharedRealm` from every claimant.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: reporting-views
+  namespace: reporting
+spec:
+  target:
+    engine: PostgreSQL
+    realmRef:
+      name: production-application-primary
+    sharedRealm: true
+    urlFrom:
+      name: application-database-reporting
+      key: url
+  artifact:
+    ociRef: oci://ghcr.io/example/reporting-migrations:2.0.1
+    verificationPolicyFrom:
+      name: ptah-migration-verification-policy
+      key: policy.yaml
 ```
 
 ## spec
@@ -269,9 +300,11 @@ spec:
 | `spec.policy.transactionMode` | `string`, one of `file`, `none` | TransactionMode is how Ptah is asked to wrap the run: "file" for one transaction per migration file, "none" to wrap nothing. The spellings are Ptah's own. Unset passes no mode and Ptah chooses. There is no default here on purpose: one would change how every stored resource already runs, and would pin this API to a value Ptah is free to move. A MySQL-family database refuses "file" whenever an interceptor is installed, so this is a requirement to check against the target rather than a preference. The migration lifecycle section of the architecture reference says what the operator does with the answer. |
 | `spec.suspend` | `boolean`, default `false` | Suspend prevents new Jobs. A Job already applying is observed to a terminal result: a migration that is running is never abandoned, because the database would be left in a state nothing recorded. |
 | `spec.target` | `object`, required | This resource requires: target.urlFrom must name a required Secret key. Target is the database this sequence runs against, named through a Secret the manager never reads. |
-| `spec.target.coordinationKey` | `string`, required | CoordinationKey is a non-secret, stable identifier for the physical database realm. Every schema that can reach the same database through an alias, proxy, or different credential must use exactly the same key. |
+| `spec.target.coordinationKey` | `string` | CoordinationKey is a non-secret, stable identifier for the physical database, scoped to this resource's namespace. Every resource in the namespace that can reach the same database through an alias, proxy, or different credential must use exactly the same key. The same key in another namespace is another realm: a resource elsewhere can neither block this one nor take turns with it by choosing the same string. A database more than one namespace manages is named with realmRef instead, which an administrator has to grant. Exactly one of coordinationKey and realmRef is set. |
 | `spec.target.engine` | `string`, required | Engine is the database this target speaks. An engine outside the supported set is refused with a condition rather than attempted. |
-| `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its coordination key names, and that every other resource managing that database has declared the same. It defaults to false. A realm more than one resource claims is refused while any claimant leaves it false -- including the resource that did declare it. Deleting a resource leaves the realm, and so does suspending it; resuming puts it back, and the conflict is refused then, before any Job. What is verified is the declaration, never the disjointness: nothing can tell whether two sets of arbitrary SQL touch the same rows. The concurrency section of the architecture reference says why taking turns is not enough. |
+| `spec.target.realmRef` | `object` | RealmRef names the cluster-scoped PtahRealm this database belongs to. The realm, not this resource, decides whether the claim is allowed: a resource whose namespace the realm does not list, or whose engine it does not name, is refused with reason RealmNotAuthorized and runs nothing, and it is not counted against the resources the realm does admit. Exactly one of coordinationKey and realmRef is set. |
+| `spec.target.realmRef.name` | `string`, required | Name is the PtahRealm's name. |
+| `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its realm names, and that every other resource managing that database has declared the same. It defaults to false. A realm more than one resource claims is refused while any claimant leaves it false -- including the resource that did declare it. A PtahRealm with sharing Exclusive refuses a second claimant whatever this says. Deleting a resource leaves the realm, and so does suspending it; resuming puts it back, and the conflict is refused then, before any Job. What is verified is the declaration, never the disjointness: nothing can tell whether two sets of arbitrary SQL touch the same rows. The concurrency section of the architecture reference says why taking turns is not enough. |
 | `spec.target.urlFrom` | `object`, required | This resource requires: target.urlFrom must name a required Secret key. URLFrom names the Secret key holding the connection URL. The manager has no permission to read it: the operation Pod resolves it, and the URL never reaches status, an Event or a command line. |
 | `spec.target.urlFrom.key` | `string`, required | This resource requires: target.urlFrom must name a required Secret key. The key of the secret to select from. Must be a valid secret key. |
 | `spec.target.urlFrom.name` | `string`, default `` | This resource requires: target.urlFrom must name a required Secret key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |

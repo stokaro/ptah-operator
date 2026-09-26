@@ -262,7 +262,7 @@ func TestLoadRejectsInexactChunkOwnerReference(t *testing.T) {
 func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan, [][]byte) {
 	t.Helper()
 	schema := &operatorv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "app", UID: "schema-uid"}}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/team-a/app")
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", schema.Namespace, "prod/team-a/app")
 	if err != nil {
 		t.Fatal(err)
 	}

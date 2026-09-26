@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/yaml"
 )
 
 // The guides and examples describe an operator that serves two families, and
@@ -38,14 +41,44 @@ func servedResources(t *testing.T) []string {
 	return resources
 }
 
+// clusterScopedResources are the served kinds that live outside every
+// namespace, read from each generated CRD's scope. A namespaced Role cannot
+// grant them, and the ones this operator serves are an administrator's: the
+// PtahRealm that decides which namespaces may manage a database.
+func clusterScopedResources(t *testing.T) map[string]bool {
+	t.Helper()
+
+	scoped := map[string]bool{}
+	for _, resource := range servedResources(t) {
+		contents, err := os.ReadFile(filepath.Join("..", "config", "crd", "bases", "operator.ptah.run_"+resource+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		crd := apiextensionsv1.CustomResourceDefinition{}
+		if err := yaml.Unmarshal(contents, &crd); err != nil {
+			t.Fatalf("parse the %s CRD: %v", resource, err)
+		}
+		switch crd.Spec.Scope {
+		case apiextensionsv1.ClusterScoped:
+			scoped[resource] = true
+		case apiextensionsv1.NamespaceScoped:
+		default:
+			t.Fatalf("the %s CRD has scope %q", resource, crd.Spec.Scope)
+		}
+	}
+	return scoped
+}
+
 // desiredStateResources are the kinds a person writes to ask for work. They are
-// the ones an author Role has to grant; plans and approvals are not authored.
+// the ones an author Role has to grant; plans and approvals are not authored,
+// and a realm is not work but the authorization for it.
 func desiredStateResources(t *testing.T) []string {
 	t.Helper()
 
+	clusterScoped := clusterScopedResources(t)
 	var authored []string
 	for _, resource := range servedResources(t) {
-		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "approvals") {
+		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "approvals") || clusterScoped[resource] {
 			continue
 		}
 		authored = append(authored, resource)
@@ -77,9 +110,60 @@ func TestTheDiagnosticReaderCoversEveryKindTheOperatorServes(t *testing.T) {
 			granted[resource] = true
 		}
 	}
+	clusterScoped := clusterScopedResources(t)
 	for _, resource := range servedResources(t) {
+		// A realm lists every namespace that may manage its database, and a
+		// namespace's on-call is not entitled to that list. A namespaced Role
+		// could not grant it anyway.
+		if clusterScoped[resource] {
+			if granted[resource] {
+				t.Fatalf("the diagnostic reader names %s, which a namespace's reader must not see", resource)
+			}
+			continue
+		}
 		if !granted[resource] {
 			t.Fatalf("the diagnostic reader cannot read %s, so it diagnoses part of this operator", resource)
+		}
+	}
+}
+
+// Realm membership is an authorization, so the only example that can write a
+// realm is the administrator's, and it can write nothing else. A starting
+// point that let an author list their own namespace in a realm would hand
+// every tenant the cross-namespace claim a realm exists to withhold.
+func TestOnlyTheRealmAdministratorWritesRealms(t *testing.T) {
+	clusterScoped := clusterScopedResources(t)
+	if len(clusterScoped) == 0 {
+		t.Fatal("no served kind is cluster-scoped, so this checks nothing")
+	}
+
+	role, binding := readClusterRoleExample(t, "realm-administrator-role.yaml")
+	granted := map[string]bool{}
+	for _, rule := range role.Rules {
+		if !grantsGroup(rule.APIGroups, "operator.ptah.run") {
+			t.Fatalf("the realm administrator reaches API groups %v", rule.APIGroups)
+		}
+		for _, resource := range rule.Resources {
+			if !clusterScoped[resource] {
+				t.Fatalf("the realm administrator reaches %s, which is desired state rather than a grant", resource)
+			}
+			granted[resource] = true
+		}
+	}
+	for resource := range clusterScoped {
+		if !granted[resource] {
+			t.Fatalf("the realm administrator cannot write %s", resource)
+		}
+	}
+	assertClusterGroupBinding(t, role, binding, "<realm-administrator-group>")
+
+	for _, example := range []string{"desired-state-author-role.yaml", "diagnostic-reader-role.yaml", "approver-plan-reader-role.yaml"} {
+		for _, rule := range readRoleRules(t, example) {
+			for _, resource := range rule.Resources {
+				if clusterScoped[resource] || resource == "*" {
+					t.Fatalf("%s reaches %s, which only a realm administrator may", example, resource)
+				}
+			}
 		}
 	}
 }

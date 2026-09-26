@@ -68,7 +68,7 @@ var requirements = []requirement{
 		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `hack/e2e-faults.sh`, " +
 			"`run_uncertain_apply_proof`, `run_late_dispatch_proof` and `run_deletion_during_apply_proof`, " +
 			"an Apply held across an upgrade by `assert_predecessor_apply_remains_exclusive_while_running`, " +
-			"one realm claimed from two namespaces in `assert_second_claimant_blocks_the_realm`, " +
+			"one realm claimed from two listed namespaces in `assert_realm_admits_only_listed_claimants`, " +
 			"a migration suspended inside its Apply in `run_suspension_during_apply_proof`, " +
 			"a refused realm release in `run_lock_release_fault_proof`, " +
 			"and an Apply held across its node's isolation from the API server in `run_isolated_node_proof`",
@@ -85,7 +85,9 @@ var requirements = []requirement{
 			"`prove_controller_write_guard`, `prove_controller_downgrade_guard`, `prove_certificate_write_guards`, " +
 			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans `audit_runtime_credentials`, " +
 			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`, " +
-			"and author, approver and administrator identities against RBAC and the example guard in `run_apply_policy_guard_proof`",
+			"author, approver and administrator identities against RBAC and the example guard in `run_apply_policy_guard_proof`, " +
+			"and a realm claim made from a namespace the PtahRealm does not list, by an author the API server will not let write the realm, " +
+			"refused alone while the listed claimant keeps running, in `assert_realm_admits_only_listed_claimants`",
 		"accepted values at the size and name limits, and who may read a plan's SQL"},
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",

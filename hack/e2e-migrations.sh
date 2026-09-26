@@ -294,13 +294,17 @@ DATABASE_USER=ptah_e2e
 : >"$CREDENTIAL_PATTERNS_FILE"
 chmod 600 "$CREDENTIAL_PATTERNS_FILE"
 
-coordination_digest() {
-	coordination_canonical=$(jq -cn \
+# realm_digest is the coordination digest of a resource that names a PtahRealm:
+# the canonical engine and the realm's name, and no namespace, because every
+# namespace the realm admits has to meet in one census and one Lease. The field
+# order is the operator's (internal/fingerprint), which jq keeps as written.
+realm_digest() {
+	realm_canonical=$(jq -cn \
 		--arg engine "$1" \
-		--arg key "$2" '
-      {contract_version: 1, engine: $engine, coordination_key: $key}
+		--arg realm "$2" '
+      {contract_version: 1, engine: $engine, realm: $realm}
     ')
-	printf 'sha256:%s\n' "$(printf '%s' "$coordination_canonical" | sha256)"
+	printf 'sha256:%s\n' "$(printf '%s' "$realm_canonical" | sha256)"
 }
 
 # select_engine names everything one engine's lifecycle needs. The two run the
@@ -326,10 +330,20 @@ select_engine() {
 	MIGRATION_APPROVAL="e2e-migrations-${ENGINE}-approval"
 	MIGRATION_STALE_APPROVAL="e2e-migrations-${ENGINE}-stale-approval"
 	MIGRATION_RIVAL_SCHEMA="e2e-migrations-${ENGINE}-rival"
-	# The rival lives in a namespace of its own. A realm is the database, not
-	# the namespace a resource was created in, and a census that counted one
-	# namespace would let a second tenant manage the same tables unrefused.
+	# The rival lives in a namespace of its own, which the realm below does not
+	# list until the row lists it. A key reaches no further than its namespace,
+	# so across namespaces a database is named by a PtahRealm, and the realm is
+	# what decides who may claim it.
 	MIGRATION_RIVAL_NAMESPACE="e2e-realm-rival-${ENGINE}"
+	# Named unlike the migration and the rival, so a refusal that names the
+	# realm it was asked about cannot pass for one that names the other
+	# claimant, and the other way round.
+	MIGRATION_REALM="e2e-realm-${ENGINE}"
+	# The rival is created by an author holding the example author Role in the
+	# rival namespace and nothing else: the principal #445 names, who can create
+	# a PtahSchema there and has no Secret and no database.
+	RIVAL_AUTHOR="e2e-realm-rival-author-${ENGINE}"
+	RIVAL_AUTHOR_GROUP="e2e:realm-rival-authors-${ENGINE}"
 	GUARD_MIGRATION="e2e-apply-guard-${ENGINE}"
 	GUARD_DATABASE=ptah_e2e_apply_guard
 	GUARD_DB_SECRET="e2e-${ENGINE}-apply-guard-db"
@@ -347,7 +361,6 @@ select_engine() {
 	RELEASE_FAULT_DB_URL_FILE="$WORK_DIR/${ENGINE}-release-fault-db-url"
 	RELEASE_FAULT_POLICY="ptah-e2e-release-fault-${ENGINE}"
 	MIGRATION_PARTIAL_APPROVAL="e2e-migrations-${ENGINE}-partial-approval"
-	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}:stable"
 	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
 	BRANCH_DATABASE=ptah_e2e_branch
@@ -450,7 +463,7 @@ select_engine() {
 	MIGRATION_EDITED_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-modified"
 	MIGRATION_PARTIAL_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-partial"
 	MIGRATION_OLDER_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-older"
-	MIGRATION_COORDINATION_DIGEST=$(coordination_digest "$ENGINE" "$MIGRATION_COORDINATION_KEY")
+	MIGRATION_COORDINATION_DIGEST=$(realm_digest "$ENGINE" "$MIGRATION_REALM")
 	[ -d "$MIGRATION_FIXTURE_DIR" ] || fail "migration fixtures are missing: $MIGRATION_FIXTURE_DIR"
 	[ -d "$MIGRATION_PARTIAL_FIXTURE_DIR" ] ||
 		fail "migration fixtures are missing: $MIGRATION_PARTIAL_FIXTURE_DIR"
@@ -565,6 +578,29 @@ wait_for_migration_phase() {
 		sleep 5
 	done
 	fail "$MIGRATION_NAME did not reach $wait_phase within ${TIMEOUT_SECONDS}s; it is in ${observed_phase:-<none>}"
+}
+
+# wait_for_migration_generation_in_sync waits for the migration to finish a
+# cycle for the spec it holds now, and leaves the status that satisfied it in
+# STATUS_FILE: InSync for the current generation, with no operation in flight.
+# A phase read alone would pass on the InSync the resource held before the
+# edit it is waiting on.
+wait_for_migration_generation_in_sync() {
+	generation_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$generation_deadline" ]; do
+		migration_status
+		if jq -e '
+          .status.observedGeneration == .metadata.generation and
+          .status.phase == "InSync" and
+          (.status.activeOperation // null) == null
+        ' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	jq '{generation: .metadata.generation, status: {observedGeneration: .status.observedGeneration,
+	  phase: .status.phase, conditions: .status.conditions}}' "$STATUS_FILE" >&2 || true
+	fail "$MIGRATION_NAME did not finish a cycle for generation $(jq -r '.metadata.generation' "$STATUS_FILE") within ${TIMEOUT_SECONDS}s"
 }
 
 # The database this proof migrates is created on the server the data plane
@@ -835,13 +871,32 @@ publish_migrations() {
 		fail "could not read the published migration digest from Job $publish_job"
 }
 
+# The migration database is named by a PtahRealm rather than a key, so the
+# whole lifecycle below -- plan, approval, Apply, history -- runs on a claim an
+# administrator granted, and the realm row can name the same database from a
+# namespace the realm does not list. It admits this namespace alone and one
+# claimant at a time.
+create_migration_realm() {
+	jq -n \
+		--arg name "$MIGRATION_REALM" \
+		--arg engine "$ENGINE_KIND" \
+		--arg namespace "$TEST_NAMESPACE" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahRealm",
+      metadata: {name: $name},
+      spec: {engine: $engine, namespaces: [$namespace], sharing: "Exclusive"}
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the PtahRealm $MIGRATION_REALM could not be created"
+}
+
 create_migration_resource() {
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$MIGRATION_NAME" \
 		--arg secret "$MIGRATION_DB_SECRET" \
 		--arg reference "$MIGRATION_REFERENCE" \
-		--arg coordinationKey "$MIGRATION_COORDINATION_KEY" \
+		--arg realm "$MIGRATION_REALM" \
 		--arg policy "$MIGRATION_POLICY" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
 		--arg interval "$INTERVAL" \
@@ -852,7 +907,7 @@ create_migration_resource() {
       spec: {
         target: {
           engine: $engine,
-          coordinationKey: $coordinationKey,
+          realmRef: {name: $realm},
           urlFrom: {name: $secret, key: "url"}
         },
         artifact: {
@@ -885,7 +940,6 @@ assert_awaiting_approval() {
 	migration_status
 	jq -e \
 		--arg digest "$PUBLISHED_DIGEST" \
-		--arg coordinationKey "$MIGRATION_COORDINATION_KEY" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
 		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
@@ -910,8 +964,7 @@ assert_awaiting_approval() {
         .reason == "AwaitingApproval")) and
       (any($status.conditions[];
         .type == "ArtifactVerified" and .status == "True")) and
-      (any($status.conditions[]; .type == "Ready" and .status == "True") | not) and
-      ([$status | .. | scalars | select(. == $coordinationKey)] | length) == 0
+      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
     ' "$STATUS_FILE" >/dev/null ||
 		fail "$MIGRATION_NAME did not reach an exact three-migration approval gate"
 	MIGRATION_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
@@ -1015,8 +1068,7 @@ assert_approval_hydrated() {
 assert_in_sync() {
 	migration_status
 	jq -e \
-		--arg digest "$PUBLISHED_DIGEST" \
-		--arg coordinationKey "$MIGRATION_COORDINATION_KEY" '
+		--arg digest "$PUBLISHED_DIGEST" '
       .status as $status |
       $status.phase == "InSync" and
       $status.artifact.digest == $digest and
@@ -1035,8 +1087,7 @@ assert_in_sync() {
         .type == "Ready" and .status == "True" and .reason == "HistoryMatched")) and
       (any($status.conditions[];
         .type == "ApprovalRequired" and .status == "True") | not) and
-      (any($status.conditions[]; .type == "Blocked" and .status == "True") | not) and
-      ([$status | .. | scalars | select(. == $coordinationKey)] | length) == 0
+      (any($status.conditions[]; .type == "Blocked" and .status == "True") | not)
     ' "$STATUS_FILE" >/dev/null ||
 		fail "$MIGRATION_NAME did not settle on a history that matches the artifact"
 	# A run's evidence explains what happened without reproducing what ran.
@@ -1165,31 +1216,62 @@ assert_replaced_plan_approval_refused() {
 # The plan-inspection row of the matrix: a reader reviews the migration order
 # through the plugin rather than by extracting a ConfigMap by hand, and never
 # sees a statement while doing it.
-# The ownership row of the matrix, and the combination #45 names outright: a
-# PtahSchema and a PtahMigration claiming one database.
+# grant_rival_author_role installs the example author Role in the rival
+# namespace, bound to the rival's author group. It is the example's, with its
+# namespace and group replaced, so the row measures the starting point a reader
+# copies rather than a Role written for the test.
+grant_rival_author_role() {
+	k create --dry-run=client -o json -f "$ROOT_DIR/examples/desired-state-author-role.yaml" \
+		>"$WORK_DIR/rival-author-role.json" ||
+		fail "the desired-state author example could not be read"
+	jq -s --arg namespace "$MIGRATION_RIVAL_NAMESPACE" --arg group "$RIVAL_AUTHOR_GROUP" '
+      [.[] | if .kind == "List" then .items[] else . end] |
+      if ([.[].kind] | sort) != ["Role", "RoleBinding"] then
+        error("the author example is not a Role and a RoleBinding")
+      else . end |
+      {apiVersion: "v1", kind: "List", items: [.[] |
+        .metadata.namespace = $namespace |
+        if .kind == "RoleBinding" then
+          .subjects = [{apiGroup: "rbac.authorization.k8s.io", kind: "Group", name: $group}]
+        else . end]}
+    ' "$WORK_DIR/rival-author-role.json" >"$WORK_DIR/rival-author-role-applied.json" ||
+		fail "the desired-state author example is not the Role and RoleBinding this row adapts"
+	k apply -f "$WORK_DIR/rival-author-role-applied.json" >/dev/null ||
+		fail "the desired-state author Role could not be installed in $MIGRATION_RIVAL_NAMESPACE"
+}
+
+# The ownership row of the matrix, and the authority one: who may claim a
+# database. #45 named the combination -- a PtahSchema and a PtahMigration
+# claiming one database -- and #445 the attack inside it: a claim anybody could
+# make by writing a string.
 #
-# Serialization is not ownership. These two would take turns through the Lease
-# and the database's own lock, and undo each other while doing it, so the
-# operator refuses both until each declares the realm shared. Here neither
-# does, and what the proof wants is the refusal and the recovery: removing the
-# second claimant ends it without anybody editing the first.
+# The migration names a PtahRealm that lists this namespace alone. A PtahSchema
+# in another namespace names the same realm. The realm does not list that
+# namespace, so the rival is refused itself, before it resolves anything, and
+# it is not counted against the migration: the migration keeps running, which
+# the row shows by giving it a new generation and watching it read the database
+# again while the rival stands refused.
 #
-# The PtahSchema is created in another namespace, which is the mapping #242
-# asks to see across namespaces: the realm is the engine and the coordination
-# key, wherever the claimant lives. Same-namespace aliases are the faults
-# suite's row. The rival's Secrets are never created there, because the
-# refusal comes before it reads any.
-assert_second_claimant_blocks_the_realm() {
-	printf 'e2e migrations: claiming the %s migration database with a PtahSchema in %s as well\n' \
+# Then the administrator lists the rival's namespace. Both are claimants now,
+# the realm admits one at a time, and both are refused -- the conflict a realm
+# exists to decide, across namespaces, because an administrator said the two
+# share one database. Suspending the rival hands the database back without
+# anybody editing the migration.
+#
+# The rival's Secrets are never created there, because every refusal comes
+# before it reads any.
+assert_realm_admits_only_listed_claimants() {
+	printf 'e2e migrations: naming the %s migration realm from %s, which it does not list\n' \
 		"$ENGINE_KIND" "$MIGRATION_RIVAL_NAMESPACE" >&2
 	k create namespace "$MIGRATION_RIVAL_NAMESPACE" >/dev/null
 	RIVAL_NAMESPACE_CREATED=1
+	grant_rival_author_role
 	jq -n \
 		--arg namespace "$MIGRATION_RIVAL_NAMESPACE" \
 		--arg name "$MIGRATION_RIVAL_SCHEMA" \
 		--arg engine "$ENGINE_KIND" \
 		--arg secret "$MIGRATION_DB_SECRET" \
-		--arg coordinationKey "$MIGRATION_COORDINATION_KEY" \
+		--arg realm "$MIGRATION_REALM" \
 		--arg policy "$MIGRATION_POLICY" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" '
     {
@@ -1198,7 +1280,7 @@ assert_second_claimant_blocks_the_realm() {
       spec: {
         target: {
           engine: $engine,
-          coordinationKey: $coordinationKey,
+          realmRef: {name: $realm},
           urlFrom: {name: $secret, key: "url"}
         },
         desired: {
@@ -1214,22 +1296,129 @@ assert_second_claimant_blocks_the_realm() {
         execution: {activeDeadlineSeconds: 300}
       }
     }' >"$RESOURCE_FILE"
-	k create -f "$RESOURCE_FILE" >/dev/null
+	k_as "$RIVAL_AUTHOR" "$RIVAL_AUTHOR_GROUP" create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the rival's author could not create a PtahSchema in its own namespace"
+	# Naming a realm is all an author can do with one. Writing the grant that
+	# would admit the namespace is the administrator's, and the API server
+	# refuses it to the author whatever the realm says.
+	guard_refused "$RIVAL_AUTHOR" "$RIVAL_AUTHOR_GROUP" 'forbidden' \
+		"the rival's author listed its own namespace in $MIGRATION_REALM" \
+		patch ptahrealm "$MIGRATION_REALM" --type=merge --patch "$(jq -cn \
+		--arg listed "$TEST_NAMESPACE" --arg rival "$MIGRATION_RIVAL_NAMESPACE" \
+		'{spec: {namespaces: [$listed, $rival]}}')"
+	jq -n --arg name "e2e-realm-rival-${ENGINE}" --arg engine "$ENGINE_KIND" \
+		--arg rival "$MIGRATION_RIVAL_NAMESPACE" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahRealm",
+      metadata: {name: $name},
+      spec: {engine: $engine, namespaces: [$rival], sharing: "Shared"}
+    }' >"$WORK_DIR/rival-realm.json"
+	guard_refused "$RIVAL_AUTHOR" "$RIVAL_AUTHOR_GROUP" 'forbidden' \
+		"the rival's author created a PtahRealm of its own" \
+		create -f "$WORK_DIR/rival-realm.json"
 
-	# Both claimants, not only the newcomer: a refusal that blocked one side
-	# would leave the other free to keep changing the database.
+	# The rival is refused for the realm and for nothing else. The document
+	# that matched is the one asserted below, and its own transition time is
+	# what dates the refusal.
+	rival_file=$WORK_DIR/realm-rival.json
+	rival_refused=no
 	rival_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$rival_deadline" ]; do
-		migration_status
-		rival_phase=$(jq -er '.status.phase' "$STATUS_FILE")
-		schema_refused=$(k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json |
-			jq -r 'if (.status.conditions // []) | any(.type == "Ready" and .reason == "RealmConflict")
-                   then "yes" else "no" end')
-		if [ "$rival_phase" = Blocked ] && [ "$schema_refused" = yes ]; then
+		k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json >"$rival_file" ||
+			fail "$MIGRATION_RIVAL_SCHEMA could not be read"
+		if jq -e '(.status.conditions // []) |
+          any(.type == "Ready" and .status == "False" and .reason == "RealmNotAuthorized")' \
+			"$rival_file" >/dev/null; then
+			rival_refused=yes
 			break
 		fi
 		sleep 5
 	done
+	[ "$rival_refused" = yes ] || {
+		jq '.status' "$rival_file" >&2 || true
+		fail "$MIGRATION_RIVAL_SCHEMA was never refused for naming a realm that does not list $MIGRATION_RIVAL_NAMESPACE within ${TIMEOUT_SECONDS}s"
+	}
+	scan_for_credentials "$rival_file" "the rival's realm refusal"
+	# Refused as a whole -- nothing claimed, nothing approvable -- and told
+	# nothing about who the realm does admit. The rival reads the realm it
+	# asked for and its own namespace, and not the migration's.
+	jq -e --arg namespace "$TEST_NAMESPACE" --arg name "$MIGRATION_NAME" '
+      .status as $status |
+      $status.phase == "Blocked" and
+      ($status.activeOperation // null) == null and
+      (any($status.conditions[];
+        .type == "ApprovalRequired" and .status == "False" and .reason == "RealmNotAuthorized")) and
+      ([$status.conditions[]?.message | select(contains($namespace) or contains($name))] | length == 0)
+    ' "$rival_file" >/dev/null || {
+		jq '.status.conditions' "$rival_file" >&2 || true
+		fail "$MIGRATION_RIVAL_SCHEMA was not refused whole, or its refusal named the claimant the realm admits"
+	}
+	rival_refused_at=$(jq -er '.status.conditions[] | select(.type == "Ready") | .lastTransitionTime' "$rival_file") ||
+		fail "$MIGRATION_RIVAL_SCHEMA's refusal carries no transition time to date it by"
+
+	# The migration keeps running. A new generation makes it resolve, verify
+	# and read the database again, and the reading it records is dated after
+	# the rival was refused -- by the migration's own timestamp, not by the
+	# poll that noticed. The lock timeout is a value nothing below depends on,
+	# and it is put back at the end of the row.
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$MIGRATION_NAME" --type=merge \
+		--patch '{"spec":{"policy":{"lockTimeout":"45s"}}}' >/dev/null
+	wait_for_migration_generation_in_sync
+	jq -e --arg refusedAt "$rival_refused_at" '
+      .status as $status |
+      $status.history.observedAt >= $refusedAt and
+      $status.history.currentVersion == 3 and $status.history.pendingCount == 0 and
+      (any($status.conditions[]; .type == "Ready" and .status == "True")) and
+      (any($status.conditions[]; .type == "Blocked" and .status == "True") | not)
+    ' "$STATUS_FILE" >/dev/null || {
+		jq '{history: .status.history, conditions: .status.conditions}' "$STATUS_FILE" >&2 || true
+		fail "$MIGRATION_NAME stopped running while a namespace the realm does not list claimed it (refused at $rival_refused_at)"
+	}
+	# And the rival is still refused after the migration ran: it re-examines
+	# its claim on a bounded cadence, and nothing it saw since admitted it.
+	k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json >"$rival_file" ||
+		fail "$MIGRATION_RIVAL_SCHEMA could not be read"
+	jq -e '
+      (.status.activeOperation // null) == null and
+      any(.status.conditions[]; .type == "Ready" and .reason == "RealmNotAuthorized")
+    ' "$rival_file" >/dev/null ||
+		fail "$MIGRATION_RIVAL_SCHEMA was admitted to a realm that still does not list its namespace"
+	printf 'e2e migrations: PASS %s refused a claim the realm does not grant, and kept the granted one running\n' \
+		"$ENGINE_KIND" >&2
+
+	# Now the administrator lists the rival's namespace. The grant is what
+	# changed, and it wakes both claimants.
+	printf 'e2e migrations: listing %s in the %s realm, which admits one claimant at a time\n' \
+		"$MIGRATION_RIVAL_NAMESPACE" "$ENGINE_KIND" >&2
+	k patch ptahrealm "$MIGRATION_REALM" --type=merge --patch "$(jq -cn \
+		--arg listed "$TEST_NAMESPACE" --arg rival "$MIGRATION_RIVAL_NAMESPACE" \
+		'{spec: {namespaces: [$listed, $rival]}}')" >/dev/null ||
+		fail "the PtahRealm $MIGRATION_REALM could not be widened"
+
+	# Both claimants, not only the newcomer: a refusal that blocked one side
+	# would leave the other free to keep changing the database. The two
+	# documents that matched are the ones asserted.
+	conflict_file=$WORK_DIR/realm-conflict-migration.json
+	both_refused=no
+	conflict_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$conflict_deadline" ]; do
+		migration_status
+		cp "$STATUS_FILE" "$conflict_file"
+		k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json >"$rival_file" ||
+			fail "$MIGRATION_RIVAL_SCHEMA could not be read"
+		if jq -e 'any(.status.conditions[]?; .type == "Blocked" and .status == "True" and .reason == "RealmConflict")' \
+			"$conflict_file" >/dev/null &&
+			jq -e 'any(.status.conditions[]?; .type == "Ready" and .reason == "RealmConflict")' \
+				"$rival_file" >/dev/null; then
+			both_refused=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$both_refused" = yes ] || {
+		jq '.status.conditions' "$conflict_file" "$rival_file" >&2 || true
+		fail "the two claimants of $MIGRATION_REALM were not both refused once the realm listed both namespaces"
+	}
 	jq -e '
       .status as $status |
       $status.phase == "Blocked" and
@@ -1237,43 +1426,34 @@ assert_second_claimant_blocks_the_realm() {
       (any($status.conditions[];
         .type == "Blocked" and .status == "True" and .reason == "RealmConflict")) and
       (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
-    ' "$STATUS_FILE" >/dev/null ||
+    ' "$conflict_file" >/dev/null ||
 		fail "$MIGRATION_NAME kept managing a database a PtahSchema also claims"
-	[ "${schema_refused:-no}" = yes ] ||
-		fail "$MIGRATION_RIVAL_SCHEMA was allowed to manage a database a PtahMigration also claims"
-	# The refusal names counts and kinds and no other namespace's objects.
-	# Each side is read for the other's namespace and name: the claimants are
-	# different tenants, and a refusal that told one of them where the other
-	# lives would be the census leaking what it exists to count.
+	# The refusal names counts and the realm, and no other namespace's
+	# objects. Each side is read for the other's namespace and name: the
+	# claimants are different tenants, and a refusal that told one of them
+	# where the other lives would be the census leaking what it exists to
+	# count.
 	#
 	# The census writes into the condition messages, so that is where the other
 	# claimant is looked for. The rest of the status carries image references,
 	# and this harness serves its images from a registry Service in the test
 	# namespace, so the whole status names that namespace on every resource.
-	scan_for_credentials "$STATUS_FILE" "the realm refusal"
-	jq -e --arg key "$MIGRATION_COORDINATION_KEY" \
-		--arg namespace "$MIGRATION_RIVAL_NAMESPACE" --arg name "$MIGRATION_RIVAL_SCHEMA" '
-      ([.status | .. | scalars | select(. == $key)] | length == 0) and
-      ([.status.conditions[]?.message | select(contains($namespace) or contains($name))] | length == 0)
-    ' "$STATUS_FILE" >/dev/null ||
-		fail "the realm refusal published the coordination key or the other claimant"
-	# Read, then held to having a refusal to read: an empty status names
-	# nobody and would pass.
-	k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json \
-		>"$WORK_DIR/realm-rival.json" ||
-		fail "$MIGRATION_RIVAL_SCHEMA could not be read"
-	scan_for_credentials "$WORK_DIR/realm-rival.json" "the rival's realm refusal"
-	jq -e --arg key "$MIGRATION_COORDINATION_KEY" \
-		--arg namespace "$TEST_NAMESPACE" --arg name "$MIGRATION_NAME" '
+	scan_for_credentials "$conflict_file" "the realm refusal"
+	jq -e --arg namespace "$MIGRATION_RIVAL_NAMESPACE" --arg name "$MIGRATION_RIVAL_SCHEMA" '
+      [.status.conditions[]?.message | select(contains($namespace) or contains($name))] | length == 0
+    ' "$conflict_file" >/dev/null ||
+		fail "the realm refusal published the other claimant"
+	scan_for_credentials "$rival_file" "the rival's realm refusal"
+	jq -e --arg namespace "$TEST_NAMESPACE" --arg name "$MIGRATION_NAME" '
       any(.status.conditions[]?; .reason == "RealmConflict") and
-      ([.status | .. | scalars | select(. == $key)] | length == 0) and
+      (.status.activeOperation // null) == null and
       ([.status.conditions[]?.message | select(contains($namespace) or contains($name))] | length == 0)
-    ' "$WORK_DIR/realm-rival.json" >/dev/null || {
-		jq '.status.conditions' "$WORK_DIR/realm-rival.json" >&2 || true
-		fail "$MIGRATION_RIVAL_SCHEMA's refusal published the coordination key or the other claimant"
+    ' "$rival_file" >/dev/null || {
+		jq '.status.conditions' "$rival_file" >&2 || true
+		fail "$MIGRATION_RIVAL_SCHEMA was allowed to manage a database a PtahMigration also claims, or its refusal published the other claimant"
 	}
 
-	# The refusal precedes the first claim, so the newcomer never resolved its
+	# Every refusal precedes the first claim, so the rival never resolved its
 	# reference and never created a Job, in its own namespace or any other.
 	[ "$(k get jobs -A \
 		-l "operator.ptah.run/schema=${MIGRATION_RIVAL_SCHEMA}" -o json |
@@ -1291,6 +1471,15 @@ assert_second_claimant_blocks_the_realm() {
 		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "$MIGRATION_RIVAL_NAMESPACE was not removed"
 	RIVAL_NAMESPACE_CREATED=0
+
+	# Back to what the rows after this one were written against: a realm that
+	# lists this namespace, and the migration's own lock timeout.
+	k patch ptahrealm "$MIGRATION_REALM" --type=merge --patch "$(jq -cn \
+		--arg listed "$TEST_NAMESPACE" '{spec: {namespaces: [$listed]}}')" >/dev/null ||
+		fail "the PtahRealm $MIGRATION_REALM could not be narrowed back"
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$MIGRATION_NAME" --type=merge \
+		--patch '{"spec":{"policy":{"lockTimeout":"30s"}}}' >/dev/null
+	wait_for_migration_generation_in_sync
 	printf 'e2e migrations: PASS %s realm refusal and recovery\n' "$ENGINE_KIND" >&2
 }
 
@@ -6989,6 +7178,7 @@ run_engine_migrations() {
 	create_migration_database
 	publish_migrations
 
+	create_migration_realm
 	create_migration_resource
 	wait_for_migration_phase AwaitingApproval
 	assert_awaiting_approval
@@ -7014,7 +7204,7 @@ run_engine_migrations() {
 	# settled view is a statement about the settled state.
 	wait_for_migration_phase InSync
 	assert_kubectl_ptah_migration InSync
-	assert_second_claimant_blocks_the_realm
+	assert_realm_admits_only_listed_claimants
 	assert_partial_run_blocks_and_recovers
 	assert_older_artifact_blocks_everything
 	assert_modified_file_blocks_everything
@@ -7247,6 +7437,11 @@ reset_after_an_earlier_run() {
 	k delete namespace "$MIGRATION_RIVAL_NAMESPACE" \
 		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "$MIGRATION_RIVAL_NAMESPACE was not removed"
+	# After the migrations that name it, so none of them is refused on the way
+	# out; create_migration_realm creates it again.
+	k delete ptahrealm "$MIGRATION_REALM" --ignore-not-found --wait=true \
+		--timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the PtahRealm $MIGRATION_REALM an earlier run left behind was not removed"
 	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
 		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
 		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" \

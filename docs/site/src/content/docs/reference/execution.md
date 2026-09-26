@@ -195,15 +195,27 @@ whole frame, and a log that cannot be read at all is still retried.
 
 One operation claim per resource prevents two Jobs for one resource. Across
 resources, coordination is by **database realm**: a Lease keyed by a SHA-256
-digest of a versioned tuple of the normalized engine and the exact
-`spec.target.coordinationKey`. The key is a non-secret, stable name for one
-physical database, and every resource that can mutate that database must use
-the same one, including resources that reach it through different DNS aliases,
-proxies or credentials. The plaintext key stays in spec; status, plans,
-approvals, Jobs and Leases carry only the digest.
+digest of a versioned tuple. A resource names its realm one of two ways. A
+`spec.target.coordinationKey` is hashed with the normalized engine and the
+resource's namespace, so it names a realm inside that namespace and nowhere
+else. A `spec.target.realmRef` names a cluster-scoped `PtahRealm`, hashed with
+the normalized engine and the realm's name, which is the same from every
+namespace. Either way the name is non-secret and stable, and every resource
+that can mutate one database must use the same one, including resources that
+reach it through different DNS aliases, proxies or credentials. The plaintext
+key stays in spec; status, plans, approvals, Jobs and Leases carry only the
+digest.
+
+A `PtahRealm` is an administrator's grant: it lists the namespaces that may
+claim it and says whether more than one claimant may share it. A resource the
+realm does not admit is refused with reason `RealmNotAuthorized` before any Job
+and is left out of every other claimant's census, so a claim nobody granted
+cannot contest a realm. A key needs no grant, because it cannot reach past its
+namespace.
 
 Two resources claiming one realm is refused rather than queued unless every
-claimant declares `spec.target.sharedRealm`. The census counts `PtahSchema` and
+claimant declares `spec.target.sharedRealm`, and, for a `PtahRealm`, unless the
+realm's `sharing` is `Shared`. The census counts `PtahSchema` and
 `PtahMigration` together — a suspended or dormant resource claims nothing — and
 the refusal names the conflict instead of letting two owners discover each
 other through a lock.

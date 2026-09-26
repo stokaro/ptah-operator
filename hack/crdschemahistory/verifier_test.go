@@ -388,12 +388,14 @@ func fixtureCRD(name, description string) *apiextensionsv1.CustomResourceDefinit
 		kind = "PtahSchemaApproval"
 	case "ptahschemaplans":
 		kind = "PtahSchemaPlan"
-	case "ptahmigrations.operator.ptah.run":
+	case "ptahmigrations":
 		kind = "PtahMigration"
-	case "ptahmigrationapprovals.operator.ptah.run":
+	case "ptahmigrationapprovals":
 		kind = "PtahMigrationApproval"
-	case "ptahmigrationplans.operator.ptah.run":
+	case "ptahmigrationplans":
 		kind = "PtahMigrationPlan"
+	case "ptahrealms":
+		kind = "PtahRealm"
 	}
 	return &apiextensionsv1.CustomResourceDefinition{
 		TypeMeta: metav1.TypeMeta{

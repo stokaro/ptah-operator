@@ -27,12 +27,15 @@ The boundary this policy covers lies between the operator and the application
 namespaces it serves: the people who write `PtahSchema`, `PtahMigration` and
 approval resources there, the database credentials those namespaces hold, and
 the operation Pods that run with them. The operator's job at that boundary is
-to hold four authorities apart -- who writes desired state, who approves a
-plan, what the controller may write, and what credentials a Job receives --
-and to bind evidence to the exact artifact it was produced from. A way to
-cross one of those boundaries is what this policy is for:
+to hold five authorities apart -- who writes desired state, who approves a
+plan, what the controller may write, what credentials a Job receives, and
+which namespaces may manage a database another namespace manages too -- and to
+bind evidence to the exact artifact it was produced from. A way to cross one
+of those boundaries is what this policy is for:
 
 - running SQL a plan does not contain, or applying a plan nobody approved;
+- stopping or delaying another namespace's resources by claiming its database
+  without a `PtahRealm` that admits the claim;
 - reaching a credential from a resource or a Job that should not have it;
 - making the operator write an object its admission policies refuse, or writing
   one on its behalf;

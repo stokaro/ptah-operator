@@ -77,7 +77,7 @@ func (l *lab) storeDocument(
 	adjust ...func(*operatorv1alpha1.PtahSchemaPlanSpec),
 ) *operatorv1alpha1.PtahSchemaPlan {
 	t.Helper()
-	coordination, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/application/"+l.schema.Name)
+	coordination, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", l.schema.Namespace, "prod/application/"+l.schema.Name)
 	if err != nil {
 		t.Fatal(err)
 	}

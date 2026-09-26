@@ -20,6 +20,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controller"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
@@ -129,10 +130,7 @@ func buildFixture(
 	if len(decoded.PrivilegeChanges) > 0 {
 		return fixtureBundle{}, errors.New("upgrade fixture plan must change no privilege")
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
-		string(schema.Spec.Target.Engine),
-		schema.Spec.Target.CoordinationKey,
-	)
+	coordinationDigest, err := coordination.Digest(schema.Namespace, schema.Spec.Target)
 	if err != nil {
 		return fixtureBundle{}, fmt.Errorf("derive coordination digest: %w", err)
 	}

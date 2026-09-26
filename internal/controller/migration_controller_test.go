@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/podintent"
@@ -864,9 +865,7 @@ func migrationClaim(
 		operation.Source = migrationSourceBinding(migration)
 	}
 	if operationType == operatorv1alpha1.MigrationOperationHistory {
-		coordinationDigest, digestErr := fingerprint.DatabaseCoordinationDigest(
-			string(migration.Spec.Target.Engine), migration.Spec.Target.CoordinationKey,
-		)
+		coordinationDigest, digestErr := coordination.Digest(migration.Namespace, migration.Spec.Target)
 		if digestErr != nil {
 			t.Fatal(digestErr)
 		}
@@ -1115,7 +1114,7 @@ func TestAnUnresolvedMigrationRunOutlivesEveryOtherRefusal(t *testing.T) {
 			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
 				t.Helper()
 
-				competitor := realmSchemaFixture("orders", migration.Spec.Target.CoordinationKey, false)
+				competitor := realmSchemaFixture(migration.Namespace, "orders", migration.Spec.Target.CoordinationKey, false)
 				reconciler, api := fakeMigrationReconciler(
 					t, staticLogs{}, migration.DeepCopy(), competitor, verificationPolicyConfigMap(),
 				)

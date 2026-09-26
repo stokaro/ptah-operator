@@ -81,6 +81,10 @@ func TestTheApproverRoleCheckRefusesWhatItExistsToRefuse(t *testing.T) {
 			operatorRule([]string{"update"}, "ptahschemaapprovals/status")),
 		"a wildcard": append(slices.Clone(complete),
 			operatorRule([]string{"*"}, "*")),
+		// A realm lists the namespaces that may manage a database, which is
+		// an administrator's view rather than an approver's.
+		"a realm": append(slices.Clone(complete),
+			operatorRule(approverReadVerbs, "ptahrealms")),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -157,9 +161,14 @@ func approvalResources(served []string) []string {
 	return approvals
 }
 
-// servedOperatorResources reads the plural of every CRD the generator wrote.
-// It refuses fewer than two families, and fewer approval kinds than families,
-// because a short list turns every check above into one that passes.
+// servedOperatorResources reads the plural of every namespaced CRD the
+// generator wrote. It refuses fewer than two families, and fewer approval kinds
+// than families, because a short list turns every check above into one that
+// passes.
+//
+// A cluster-scoped kind is an administrator's: the PtahRealm, which names the
+// namespaces allowed to manage a database. The approver's role reaches none of
+// it, and leaving it out of the list is what makes a grant on it a problem.
 func servedOperatorResources(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(repositoryRoot(t), generatedCRDsPath, operatorAPIGroup+"_*.yaml"))
@@ -175,6 +184,7 @@ func servedOperatorResources(t *testing.T) []string {
 		var crd struct {
 			Spec struct {
 				Group string `json:"group"`
+				Scope string `json:"scope"`
 				Names struct {
 					Plural string `json:"plural"`
 				} `json:"names"`
@@ -186,7 +196,13 @@ func servedOperatorResources(t *testing.T) []string {
 		if crd.Spec.Group != operatorAPIGroup || crd.Spec.Names.Plural == "" {
 			t.Fatalf("%s is not a generated %s CRD", path, operatorAPIGroup)
 		}
-		served = append(served, crd.Spec.Names.Plural)
+		switch crd.Spec.Scope {
+		case "Namespaced":
+			served = append(served, crd.Spec.Names.Plural)
+		case "Cluster":
+		default:
+			t.Fatalf("%s has scope %q", path, crd.Spec.Scope)
+		}
 	}
 	sort.Strings(served)
 	if len(served) < 6 || len(approvalResources(served)) < 2 {

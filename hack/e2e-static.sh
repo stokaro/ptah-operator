@@ -1322,7 +1322,15 @@ for migration_marker in \
 	'did not settle on a history that matches the artifact' \
 	'assert_database_migrated' \
 	'assert_repeated_reconciliation_runs_nothing' \
-	'assert_second_claimant_blocks_the_realm' \
+	'create_migration_realm' \
+	'realmRef: {name: $realm}' \
+	'assert_realm_admits_only_listed_claimants' \
+	'grant_rival_author_role' \
+	"the rival's author listed its own namespace in" \
+	"the rival's author created a PtahRealm of its own" \
+	'was never refused for naming a realm that does not list' \
+	'stopped running while a namespace the realm does not list claimed it' \
+	'$status.history.observedAt >= $refusedAt' \
 	'kept managing a database a PtahSchema also claims' \
 	'was allowed to manage a database a PtahMigration also claims' \
 	'a resource that runs nothing claims nothing' \
@@ -2269,10 +2277,17 @@ for controller_identity_consumer in e2e-assert.sh e2e-dataplane.sh e2e-faults.sh
 done
 # shellcheck disable=SC2016 # Match the exact generated OpenAPI regular expression.
 controller_revision_pattern='pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$'
+# The realm kind is an administrator's grant and carries no controller state,
+# so it is the one CRD allowed no controllerRevision. It is not skipped: a
+# revision field added to it later is held to the exact pattern like the rest.
 for controller_revision_crd in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	controller_revision_fields=$(grep -c '^[[:space:]]*controllerRevision:' "$controller_revision_crd" || true)
 	controller_revision_patterns=$(grep -Fc "$controller_revision_pattern" "$controller_revision_crd" || true)
-	if [ "$controller_revision_fields" -le 0 ] ||
+	controller_revision_minimum=1
+	if [ "${controller_revision_crd##*/}" = operator.ptah.run_ptahrealms.yaml ]; then
+		controller_revision_minimum=0
+	fi
+	if [ "$controller_revision_fields" -lt "$controller_revision_minimum" ] ||
 		[ "$controller_revision_patterns" -ne "$controller_revision_fields" ]; then
 		printf 'e2e static: %s lacks exact revision validation on every controllerRevision field\n' \
 			"$controller_revision_crd" >&2
@@ -5968,8 +5983,8 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	[ "$(grep -Fc "operator.ptah.run/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]run/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
-[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 6 ]
-[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 6 ]
+[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 7 ]
+[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 7 ]
 for crd_directory in \
 	"$ROOT_DIR/config/crd/bases" \
 	"$ROOT_DIR/charts/ptah-operator/crds" \

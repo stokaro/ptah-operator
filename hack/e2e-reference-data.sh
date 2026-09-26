@@ -206,11 +206,15 @@ DATABASE_USER=ptah_e2e
 : >"$CREDENTIAL_PATTERNS_FILE"
 chmod 600 "$CREDENTIAL_PATTERNS_FILE"
 
+# coordination_digest is the realm a coordination key names: the canonical
+# engine, the namespace, and the key, in the order internal/fingerprint writes
+# them.
 coordination_digest() {
 	coordination_canonical=$(jq -cn \
 		--arg engine "$1" \
-		--arg key "$2" '
-      {contract_version: 1, engine: $engine, coordination_key: $key}
+		--arg namespace "$2" \
+		--arg key "$3" '
+      {contract_version: 1, engine: $engine, namespace: $namespace, coordination_key: $key}
     ')
 	printf 'sha256:%s\n' "$(printf '%s' "$coordination_canonical" | sha256)"
 }

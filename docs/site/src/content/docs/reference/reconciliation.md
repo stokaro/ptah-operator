@@ -29,7 +29,7 @@ stateDiagram-v2
   Blocked --> Resolving: interval
   Verifying --> Blocked: artifact refused
   Planning --> Blocked: protected table, destructive<br/>disallowed, or apply Never
-  Pending --> Blocked: realm conflict, unsupported engine
+  Pending --> Blocked: realm conflict or refusal,<br/>unsupported engine
   Applying --> Failed: run failed
   Failed --> Resolving: retry interval
   Pending --> Suspended: suspend
@@ -61,7 +61,8 @@ never establishes that the database changed the way the plan said it would.
 ### Blocked is a refusal, not a fault
 
 `Blocked` means the answer will not change until somebody changes an input. It
-is reached from six places: a realm conflict, an unsupported engine, a
+is reached from seven places: a realm conflict, a `PtahRealm` that does not
+admit the resource, an unsupported engine, a
 verification policy that refused the artifact, a plan that would change a
 a protected table, a destructive plan the policy disallows, and `apply: Never`,
 which is not a problem at all — it is the policy that records plans and applies

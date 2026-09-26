@@ -145,13 +145,19 @@ sha256() {
 	shasum -a 256 | awk '{print $1}'
 }
 
+# coordination_digest is the realm a coordination key names: the canonical
+# engine, the namespace the resource lives in, and the key, in the field order
+# internal/fingerprint writes them. The namespace is part of it, so the same
+# key in another namespace is another realm and another Lease.
 coordination_digest() {
 	coordination_engine=$1
-	coordination_key=$2
+	coordination_namespace=$2
+	coordination_key=$3
 	coordination_canonical=$(jq -cn \
 		--arg engine "$coordination_engine" \
+		--arg namespace "$coordination_namespace" \
 		--arg key "$coordination_key" '
-      {contract_version: 1, engine: $engine, coordination_key: $key}
+      {contract_version: 1, engine: $engine, namespace: $namespace, coordination_key: $key}
     ')
 	printf 'sha256:%s\n' "$(printf '%s' "$coordination_canonical" | sha256)"
 }
@@ -6061,7 +6067,7 @@ assert_automatic_external_postgresql_lifecycle() {
 
 run_external_postgresql_lifecycle() {
 	external_publish_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"
-	external_coordination_digest=$(coordination_digest postgresql "$EXTERNAL_PG_COORDINATION_KEY")
+	external_coordination_digest=$(coordination_digest postgresql "$TEST_NAMESPACE" "$EXTERNAL_PG_COORDINATION_KEY")
 	external_before="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-before.json"
 	checkpoint_schema_jobs "$EXTERNAL_PG_SCHEMA" "$external_before"
 	external_digest=$(publish_schema postgresql-external v1 postgres "$external_publish_reference" \
@@ -6119,7 +6125,7 @@ run_engine_lifecycle() {
 	*) fail "unsupported coordination engine $lifecycle_engine" ;;
 	esac
 	lifecycle_coordination_digest=$(coordination_digest \
-		"$lifecycle_coordination_engine" "$lifecycle_coordination_key")
+		"$lifecycle_coordination_engine" "$TEST_NAMESPACE" "$lifecycle_coordination_key")
 	lifecycle_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/${lifecycle_slug}:stable"
 
 	printf 'e2e data plane: starting %s lifecycle\n' "$lifecycle_engine"

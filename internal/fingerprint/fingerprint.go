@@ -26,6 +26,8 @@ const (
 
 var (
 	coordinationKeyPattern    = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`)
+	namespacePattern          = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$`)
+	realmNamePattern          = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
 	imageDigestPattern        = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 )
@@ -47,13 +49,24 @@ func DigestCanonicalJSON(value any) (string, error) {
 }
 
 // DatabaseCoordinationDigest returns the credential-free identity used to
-// serialize mutations for one user-declared physical database realm. The key
-// is deliberately absent from the returned value and must never be copied to
-// status. It is a stable non-secret identifier, not an authentication secret.
-func DatabaseCoordinationDigest(engine, coordinationKey string) (string, error) {
+// serialize mutations for one physical database realm that a coordination key
+// names inside one namespace. The key is deliberately absent from the returned
+// value and must never be copied to status. It is a stable non-secret
+// identifier, not an authentication secret.
+//
+// The namespace is part of the identity. A key is a string anybody who can
+// create a resource may write, so a realm it names reaches no further than the
+// namespace that wrote it: the same key elsewhere is a different census and a
+// different Lease, and cannot refuse or delay what runs here. A database
+// managed from several namespaces is named by a PtahRealm instead, through
+// DatabaseRealmDigest.
+func DatabaseCoordinationDigest(engine, namespace, coordinationKey string) (string, error) {
 	canonicalEngine, err := canonicalDatabaseEngine(engine)
 	if err != nil {
 		return "", err
+	}
+	if !namespacePattern.MatchString(namespace) {
+		return "", fmt.Errorf("coordination namespace must be a DNS-1123 label of at most 63 characters")
 	}
 	if !coordinationKeyPattern.MatchString(coordinationKey) {
 		return "", fmt.Errorf("coordination key must be 1-253 lowercase ASCII characters using letters, digits, '.', '_', ':', '/', or '-'")
@@ -62,12 +75,47 @@ func DatabaseCoordinationDigest(engine, coordinationKey string) (string, error) 
 	return DigestCanonicalJSON(struct {
 		ContractVersion int    `json:"contract_version"`
 		Engine          string `json:"engine"`
+		Namespace       string `json:"namespace"`
 		CoordinationKey string `json:"coordination_key"`
 	}{
 		ContractVersion: coordinationContractVersion,
 		Engine:          canonicalEngine,
+		Namespace:       namespace,
 		CoordinationKey: coordinationKey,
 	})
+}
+
+// DatabaseRealmDigest returns the identity of the realm a cluster-scoped
+// PtahRealm names. Every resource an administrator admits to that realm, in
+// whichever namespace, derives the same value, so they share one census and
+// one Lease.
+//
+// The document has a different set of fields from a namespace key's, so no
+// realm name and no key, in any namespace, can derive the other's digest.
+func DatabaseRealmDigest(engine, realm string) (string, error) {
+	canonicalEngine, err := canonicalDatabaseEngine(engine)
+	if err != nil {
+		return "", err
+	}
+	if len(realm) > 253 || !realmNamePattern.MatchString(realm) {
+		return "", fmt.Errorf("realm name must be a DNS-1123 subdomain of at most 253 characters")
+	}
+
+	return DigestCanonicalJSON(struct {
+		ContractVersion int    `json:"contract_version"`
+		Engine          string `json:"engine"`
+		Realm           string `json:"realm"`
+	}{
+		ContractVersion: coordinationContractVersion,
+		Engine:          canonicalEngine,
+		Realm:           realm,
+	})
+}
+
+// CanonicalDatabaseEngine returns the engine family both digests use, so two
+// spellings the API accepts compare as one engine.
+func CanonicalDatabaseEngine(engine string) (string, error) {
+	return canonicalDatabaseEngine(engine)
 }
 
 func canonicalDatabaseEngine(engine string) (string, error) {

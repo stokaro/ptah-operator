@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
@@ -178,14 +179,12 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	// After suspension and before any claim: a suspended resource runs nothing
 	// and needs no verdict about the realm, and a resource already carrying an
 	// operation returned above. A dispatched Apply is never abandoned for this.
-	census, censusErr := takeRealmCensus(
-		ctx, r.Client, migration.Spec.Target.Engine, migration.Spec.Target.CoordinationKey,
-	)
+	verdict, censusErr := takeRealmCensus(ctx, r.Client, migration.Namespace, migration.Spec.Target)
 	if censusErr != nil {
 		return ctrl.Result{}, censusErr
 	}
-	if census.conflict() {
-		return r.migrationRealmBlocked(ctx, migration, census)
+	if refusal, refused := verdict.refusal(); refused {
+		return r.migrationRealmBlocked(ctx, migration, refusal)
 	}
 
 	now := r.now()
@@ -556,9 +555,7 @@ func (r *MigrationReconciler) claimMigration(
 		operation.Source = migrationSourceBinding(migration)
 	}
 	if operationType == operatorv1alpha1.MigrationOperationHistory {
-		coordinationDigest, digestErr := fingerprint.DatabaseCoordinationDigest(
-			string(migration.Spec.Target.Engine), migration.Spec.Target.CoordinationKey,
-		)
+		coordinationDigest, digestErr := coordination.Digest(migration.Namespace, migration.Spec.Target)
 		if digestErr != nil {
 			return r.migrationOperationFailure(ctx, migration, fmt.Errorf("derive coordination digest: %w", digestErr))
 		}
@@ -1256,9 +1253,7 @@ func (r *MigrationReconciler) publishMigrationPlan(
 	if err != nil {
 		return err
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
-		string(migration.Spec.Target.Engine), migration.Spec.Target.CoordinationKey,
-	)
+	coordinationDigest, err := coordination.Digest(migration.Namespace, migration.Spec.Target)
 	if err != nil {
 		return fmt.Errorf("derive coordination digest: %w", err)
 	}
@@ -1638,15 +1633,18 @@ func (r *MigrationReconciler) migrationOperationFailure(
 }
 
 // migrationBlocked reports a state reconciliation cannot leave on its own.
-// migrationRealmBlocked refuses a database more than one resource claims.
+// migrationRealmBlocked refuses a claim the realm census does not allow: a
+// database more than one resource claims, or a PtahRealm that does not admit
+// this resource.
 //
-// What ends this is another resource's spec change, and that resource's events
-// do not reach this one, so the verdict is re-taken on a bounded cadence rather
-// than waited on: the shorter of this resource's interval and a minute.
+// What ends this is another object's change -- a peer's spec, or the realm's
+// grant -- and a peer's events do not reach this one, so the verdict is
+// re-taken on a bounded cadence rather than waited on: the shorter of this
+// resource's interval and a minute.
 func (r *MigrationReconciler) migrationRealmBlocked(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
-	census realmCensus,
+	refusal realmRefusal,
 ) (ctrl.Result, error) {
 	now := r.now()
 	next := realmBlockDeadline(migration.Status.NextReconciliationTime, now, migration.Spec.Interval.Duration)
@@ -1654,11 +1652,10 @@ func (r *MigrationReconciler) migrationRealmBlocked(
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 	migration.Status.ObservedGeneration = migration.Generation
 	migration.Status.NextReconciliationTime = &next
-	message := census.message()
-	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonRealmConflict, message)
-	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, message)
-	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, message)
-	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, "No plan is approvable while the database realm is contested")
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, refusal.Reason, refusal.Message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, refusal.Reason, refusal.Message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, refusal.Reason, refusal.Message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, refusal.Reason, refusal.Approval)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1949,6 +1946,11 @@ func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 		Owns(&batchv1.Job{}).
 		Watches(&operatorv1alpha1.PtahMigrationApproval{}, handler.EnqueueRequestsFromMapFunc(migrationForApproval)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.migrationsForVerificationPolicy)).
+		Watches(&operatorv1alpha1.PtahRealm{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, object client.Object) []reconcile.Request {
+				return realmClaimantRequests(ctx, r.Client,
+					func() client.ObjectList { return &operatorv1alpha1.PtahMigrationList{} }, object)
+			})).
 		Complete(r)
 }
 
