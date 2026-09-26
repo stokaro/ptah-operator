@@ -682,6 +682,25 @@ audit_with_terminal_unaudited_job() (
 	kubectl() {
 		emit_terminal_job_list
 	}
+	# The closing audit pass ran and could not audit the Job: its Pod is gone,
+	# or the audit refused it. The gap stands.
+	audit_completed_jobs() {
+		:
+	}
+	assert_observed_jobs_audited
+)
+
+# The Job finished after the last audit pass, and the closing sweep audits it:
+# that is not a gap.
+audit_with_terminal_job_audited_late() (
+	reset_fixture
+	record_unaudited_job
+	kubectl() {
+		emit_terminal_job_list
+	}
+	audit_completed_jobs() {
+		printf '%s\n' uid-1 >>"$FULLY_AUDITED_JOBS_FILE"
+	}
 	assert_observed_jobs_audited
 )
 
@@ -1503,6 +1522,8 @@ expect_failure 'unreadable Job API during the final audit' \
 	audit_with_unreadable_job_api
 audit_with_running_unaudited_job >/dev/null ||
 	test_fail "a Job still running as the phase ends was reported as an audit gap"
+audit_with_terminal_job_audited_late >/dev/null ||
+	test_fail "a Job that finished after the last audit pass and was audited in the closing sweep was reported as a gap"
 expect_failure 'new Job count jq failure' \
 	'could not assert the absence of new apply Jobs for schema-1' \
 	count_with_jq_failure

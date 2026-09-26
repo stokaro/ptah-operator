@@ -1815,14 +1815,26 @@ assert_observed_jobs_audited() {
 		fi
 		[ -n "$unaudited_job" ] ||
 			fail "observed Job UID $observed_uid disappeared without a complete credential audit"
-		printf '%s\n' "$unaudited_job" | jq -e '
+		if printf '%s\n' "$unaudited_job" | jq -e '
           ((.status.succeeded // 0) + (.status.failed // 0)) == 0 and
           ((.status.conditions // []) |
             map(select((.type == "Complete" or .type == "Failed") and .status == "True")) |
             length) == 0
-        ' >/dev/null ||
+        ' >/dev/null; then
+			printf 'e2e data plane: observed Job UID %s is still running as this phase ends; its credential audit belongs to whatever finishes it\n' \
+				"$observed_uid"
+			continue
+		fi
+		# Terminal, and not audited: it finished after the last audit pass and
+		# before this sweep, which is the same wind-down the running case is
+		# about, a few seconds later. Its Pod is still here, so it is audited
+		# now, by the same routine every other terminal Job went through. What
+		# still fails is a Job that cannot be audited -- its Pod gone, or the
+		# audit refusing it.
+		audit_completed_jobs
+		grep -Fx "$observed_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null ||
 			fail "observed Job UID $observed_uid finished without a complete credential audit"
-		printf 'e2e data plane: observed Job UID %s is still running as this phase ends; its credential audit belongs to whatever finishes it\n' \
+		printf 'e2e data plane: observed Job UID %s finished after the last audit pass and was audited in the closing sweep\n' \
 			"$observed_uid"
 	done <"$OBSERVED_JOB_UIDS_FILE"
 }
