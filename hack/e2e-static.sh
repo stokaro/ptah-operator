@@ -6708,6 +6708,10 @@ for crd_live_marker in \
 	'the successor did not adopt and retire the quiesced Apply Job' \
 	'coordination namespace mutation' \
 	'leader-election mutation' \
+	'proving the chart refuses a release namespace that runs foreign workloads' \
+	'shared release namespace upgrade' \
+	'failed without the shared-namespace refusal naming it' \
+	'releaseNamespace.allowSharedNamespace=true did not admit the upgrade over a foreign CronJob' \
 	'execution binding mutation' \
 	'pins the executable contract of release sequence' \
 	'runtime rejection of an incomplete singleton' \

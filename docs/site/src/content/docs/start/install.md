@@ -88,6 +88,14 @@ administer Ptah. A separate `coordination.namespace` is held the same way.
 and [Operations](../../use/operations/#install-before) lists what else an
 installation has to satisfy.
 
+The chart refuses to install into `default`, into a `kube-*` namespace, or
+into one that already runs workloads that are not this release's. Its notes
+warn about RoleBindings there that would make somebody else a Ptah
+administrator. Both read the cluster, so neither runs under `helm template` or
+a GitOps tool that renders with it;
+[What the chart checks](../../use/security/#release-namespace-check) says what
+else they cannot see.
+
 The supplied version is recorded in plans, approvals, Jobs, and applied status
 alongside the executor digest. Verify both values from the executor's release
 provenance before installation; changing the digest requires verifying and
