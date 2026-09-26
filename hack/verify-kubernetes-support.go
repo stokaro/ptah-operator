@@ -5675,7 +5675,8 @@ func verifyMakeE2ETarget(path string) error {
 // verifyMakeRaceTargets holds the race pass to its audited rule, and the tests
 // it skips to the shell mutation suites and nothing else. Those suites run only
 // in the test target, so that target has to stay every package with nothing
-// skipped, and verify-source, which the verify job runs, has to run it.
+// skipped and a timeout ./hack fits in, and verify-source, which the verify job
+// runs, has to run it.
 func verifyMakeRaceTargets(path string) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -5706,8 +5707,8 @@ func verifyMakeRaceTargets(path string) error {
 	if err != nil {
 		return err
 	}
-	if exactMakeRule(parsed.lines, test.line) != "test:\n\t$(GO) test ./..." {
-		return fmt.Errorf("%s: test must run every package with nothing skipped, because it is the only run of the shell mutation suites", path)
+	if exactMakeRule(parsed.lines, test.line) != "test:\n\t$(GO) test -timeout=30m ./..." {
+		return fmt.Errorf("%s: test must run every package with nothing skipped and a 30-minute timeout, because it is the only run of the shell mutation suites", path)
 	}
 	sources := parsed.rules["verify-source"]
 	if len(sources) != 1 || sources[0].operator != ":" || sources[0].conditionalDepth != 0 {

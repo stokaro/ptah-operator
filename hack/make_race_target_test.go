@@ -101,7 +101,8 @@ func TestVerifyMakeRaceTargetsRejectsRuleBypasses(t *testing.T) {
 		},
 		// The race pass skips the mutation suites because the test target runs
 		// them. A test target that skips them, or runs short, leaves them run
-		// nowhere.
+		// nowhere, and one that times out before ./hack finishes fails the
+		// verify job on a healthy tree.
 		{
 			name: "test target skips the mutation suites",
 			mutate: func(source string) string {
@@ -109,20 +110,34 @@ func TestVerifyMakeRaceTargetsRejectsRuleBypasses(t *testing.T) {
 					t,
 					source,
 					testRule,
-					"test:\n\t$(GO) test -skip '^($(RACE_MUTATION_TESTS))$$' ./...",
+					"test:\n\t$(GO) test -timeout=30m -skip '^($(RACE_MUTATION_TESTS))$$' ./...",
 				)
 			},
 		},
 		{
 			name: "test target runs in short mode",
 			mutate: func(source string) string {
-				return replaceMakeSourceExactly(t, source, testRule, "test:\n\t$(GO) test -short ./...")
+				return replaceMakeSourceExactly(t, source, testRule, "test:\n\t$(GO) test -timeout=30m -short ./...")
 			},
 		},
 		{
 			name: "test target leaves out ./hack",
 			mutate: func(source string) string {
-				return replaceMakeSourceExactly(t, source, testRule, "test:\n\t$(GO) test ./api/... ./cmd/... ./internal/...")
+				return replaceMakeSourceExactly(t, source, testRule, "test:\n\t$(GO) test -timeout=30m ./api/... ./cmd/... ./internal/...")
+			},
+		},
+		// Go's default is ten minutes, which a loaded machine runs ./hack past.
+		{
+			name: "test target without a timeout",
+			mutate: func(source string) string {
+				return replaceMakeSourceExactly(t, source, testRule, "test:\n\t$(GO) test ./...")
+			},
+		},
+		// ./hack took 331 and 338 seconds in the verify job.
+		{
+			name: "test target times out before ./hack finishes",
+			mutate: func(source string) string {
+				return replaceMakeSourceExactly(t, source, testRule, "test:\n\t$(GO) test -timeout=5m ./...")
 			},
 		},
 		{

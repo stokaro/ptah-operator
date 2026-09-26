@@ -23,8 +23,11 @@ build:
 	@# a binary nothing builds. Non-main packages type-check and write nothing.
 	$(GO) build ./...
 
+# ./hack took 331 and 338 seconds in the verify job on acd17c4 and 93b209b, and
+# a loaded machine runs it past go test's default of ten minutes. The shell
+# mutation suites in it run nowhere else.
 test:
-	$(GO) test ./...
+	$(GO) test -timeout=30m ./...
 
 test-race:
 	@# The skipped suites are the shell mutation tables. Each row rewrites a
