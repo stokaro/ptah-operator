@@ -14,7 +14,7 @@
   <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go%20%E2%89%A5&logo=go&logoColor=white" alt="The lowest Go version this module compiles against, declared in go.mod"></a>
 </p>
 
-<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Install</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">First schema</a> · <a href="https://operator.ptah.run/demo/">Recorded runs</a> · <a href="https://operator.ptah.run/">Documentation</a> · <a href="https://docs.ptah.run/compatibility/operator/">Ptah compatibility</a></p>
+<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Install</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">First schema</a> · <a href="https://operator.ptah.run/demo/">Recorded runs</a> · <a href="https://operator.ptah.run/">Documentation</a> · <a href="https://operator.ptah.run/support/ptah/">Ptah compatibility</a></p>
 
 Ptah Operator is a Kubernetes-native control plane for continuously converging
 PostgreSQL and MySQL schemas from immutable OCI artifacts. Database work runs
@@ -119,9 +119,9 @@ code rather than for somebody running it:
   pieces, where they live, and which invariant each one holds.
 
 Ptah itself -- the schema formats, the OCI artifact layout, the CLI -- is
-documented at [docs.ptah.run](https://docs.ptah.run/edge/), and which Ptah
-builds have been verified with this operator is published as the
-[compatibility matrix](https://docs.ptah.run/compatibility/operator/).
+documented at [docs.ptah.run](https://docs.ptah.run/edge/). Which Ptah builds
+have been verified with this operator is published in the user guide, as the
+[compatibility matrix](https://operator.ptah.run/support/ptah/).
 
 `PtahMigration` is deliberately not folded into `PtahSchema`. A declared row
 set describes desired rows and a migration sequence describes a transition

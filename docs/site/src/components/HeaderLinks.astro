@@ -4,10 +4,11 @@
  * ptah.run's own header reads them. Replaces Starlight's SocialIcons, so it
  * also renders inside the mobile menu footer.
  *
- * Four of the five leave this site, and that is the point: the operator's
- * guide, Ptah's and the blog are separate sites, and a reader who arrived at
- * one of them by search has to be able to reach the others without knowing
- * they exist. The addresses come from the one module that declares them.
+ * The links to ptah.run, Ptah's documentation and the blog leave this site,
+ * and that is the point: the operator's guide, Ptah's and the blog are
+ * separate sites, and a reader who arrived at one of them by search has to be
+ * able to reach the others without knowing they exist. The addresses come
+ * from the one module that declares them.
  */
 import config from 'virtual:starlight/user-config';
 import { PtahBlogOrigin, PtahDocsURL, PtahSiteOrigin, CompatibilityURL } from '../lib/docs-origin.mjs';
@@ -22,8 +23,9 @@ const ptahHost = new URL(PtahSiteOrigin).host;
 {/* Ptah's documentation. The operator runs a Ptah, and the schema formats, the
     OCI artifact and the CLI are documented there rather than here. */}
 <a class="ptah-nav-link" href={PtahDocsURL('edge', '')}>Ptah docs</a>
-{/* Which Ptah build this operator works with. It is published on Ptah's site
-    because it is about both, and it is current rather than versioned. */}
+{/* Which Ptah build this operator works with. The address opens the current
+    table from every version's header, rather than the copy this version was
+    built with. */}
 <a class="ptah-nav-link" href={CompatibilityURL}>Compatibility</a>
 {/* Install is the first page after the Overview of the "Start" group in
     src/sidebar.mjs; the header names it by its route so it stays a plain link. */}

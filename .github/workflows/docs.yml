@@ -69,12 +69,19 @@ jobs:
           npm run check:versions:selftest
           npm run check:gen-versions:selftest
           npm run check:values:selftest
+          npm run check:compatibility:selftest
           npm run check:demo:selftest
           npm run check:demo-page:selftest
           npm run check:translations:selftest
       - name: The values table matches the chart
         working-directory: docs/site
         run: npm run check:values
+      # The Ptah compatibility page renders support/ptah.json, so a catalog
+      # change that did not regenerate the page is refused here rather than
+      # published as the old answer.
+      - name: The compatibility table matches the catalog
+        working-directory: docs/site
+        run: npm run check:compatibility
       # The README is not a site page, so nothing in the build sees it. This is
       # the step that holds the Japanese README to the English one: the prose is
       # a translation, the commands are the same bytes, and a flag that differs

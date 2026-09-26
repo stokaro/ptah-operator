@@ -10,11 +10,13 @@ npm run build          # the development guide, at /edge/
 npm run check:links
 npm run check:navigation
 npm run check:values
+npm run check:compatibility
 ```
 
 `npm run values:write` regenerates the chart values table on the configuration
 page from `charts/ptah-operator/values.yaml`, which is where those values are
-declared.
+declared. `npm run compatibility:write` does the same for the Ptah compatibility
+table, from `support/ptah.json`.
 
 ## The design
 
@@ -62,6 +64,11 @@ see `docs/site/src/content/docs/support/ptah.md` for that mechanism. The apex
 serves the newest release once one exists, and `edge` until then, because there
 is no release to call stable yet.
 
+A few addresses other sites link to are kept at the root without a version:
+`/demo/` follows the apex, and `/support/ptah/` always opens `edge`, whose
+compatibility table is rendered from the current catalog. `ROOT_ALIASES` in
+`gen-versions.mjs` is the list.
+
 `check-versions.mjs` reads the assembled root back: every directory carries its
 own `build-info.json` naming itself and the commit it came from, and no two
 directories may name the same commit. A switcher that only changed a label
@@ -95,33 +102,3 @@ HTTP as well as HTTPS. The certificate is approved, so turning it on is a
 single toggle in the same settings page.
 
 Nothing here touches the settings that serve `docs.ptah.run`.
-
-## Announcing the catalog
-
-`.github/workflows/notify-compatibility.yml` tells `stokaro/ptah` that the
-compatibility catalog moved, so the matrix it publishes refreshes promptly. It
-sends a repository and a commit and nothing else.
-
-It runs on the organization's automation app. The app is installed on every
-repository in `stokaro`, and its credentials are already organization-wide under
-the names the capability matrix gave them first: the `CAPABILITY_MATRIX_APP_ID`
-variable and the `CAPABILITY_MATRIX_APP_KEY` secret. The workflow mints a token
-narrowed to `stokaro/ptah` and to **Contents: write**, which is the permission a
-`repository_dispatch` requires. The dispatch writes nothing itself: GitHub maps
-the endpoint onto Contents because starting a workflow somewhere is as far
-reaching as writing there, and no narrower permission exists to ask for.
-
-The app needs that permission. Grant it in the app's settings and approve the
-request for the organization installation; until the installation accepts it,
-the old permissions stay in force and the mint fails.
-
-**`PTAH_COMPATIBILITY_DISPATCH_TOKEN`** remains as a fallback and is not
-required. Set it only if the app is unavailable: a fine-grained token scoped to
-`stokaro/ptah` alone with **Contents: read and write**. A personal token has an
-owner and an expiry, and the day it lapses this workflow stops announcing, which
-is the reason it is not the primary credential.
-
-With neither available the step warns, writes a job summary saying nothing was
-announced, and exits zero: the receiving repository reconciles the two files on
-a schedule, so a missing notification makes the refresh late rather than lost.
-It exits zero but it does not look like a run that announced, which it used to.

@@ -14,7 +14,7 @@
   <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go%20%E2%89%A5&logo=go&logoColor=white" alt="このモジュールがコンパイル可能な最も低い Go のバージョン。go.mod が宣言する"></a>
 </p>
 
-<p align="center"><a href="https://operator.ptah.run/edge/start/install/">インストール</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">最初のスキーマ</a> · <a href="https://operator.ptah.run/demo/">記録された実行</a> · <a href="https://operator.ptah.run/">ドキュメント</a> · <a href="https://docs.ptah.run/compatibility/operator/">Ptah との互換性</a></p>
+<p align="center"><a href="https://operator.ptah.run/edge/start/install/">インストール</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">最初のスキーマ</a> · <a href="https://operator.ptah.run/demo/">記録された実行</a> · <a href="https://operator.ptah.run/">ドキュメント</a> · <a href="https://operator.ptah.run/support/ptah/">Ptah との互換性</a></p>
 
 Ptah Operator は、PostgreSQL と MySQL のスキーマを不変の OCI アーティファクトから
 継続的に収束させる、Kubernetes ネイティブのコントロールプレーンです。データベースに対する
@@ -114,8 +114,8 @@ cd docs/site && npm ci && npm run build
 
 Ptah 自体、つまりスキーマ形式、OCI アーティファクトのレイアウト、CLI は
 [docs.ptah.run](https://docs.ptah.run/edge/) に文書化されています。どの Ptah ビルドが
-このオペレーターで検証済みかは
-[互換性マトリクス](https://docs.ptah.run/compatibility/operator/)で公開しています。
+このオペレーターで検証済みかは、利用者向けガイドの
+[互換性マトリクス](https://operator.ptah.run/support/ptah/)で公開しています。
 
 `PtahMigration` は意図的に `PtahSchema` に統合していません。宣言された行の集合は望ましい
 行を記述し、マイグレーション列は状態間の遷移を記述します。そのため両者は OCI 転送、
