@@ -407,6 +407,18 @@ chunks, so access to Plan Pod logs is plan access. See
 [Pod logs carry plans](#pod-logs-carry-plans). Apply frames never contain
 native SQL output.
 
+The runner also writes a summary of each frame into its container's
+termination message, which the kubelet copies into Pod status, where anyone who
+can read the Pod can read it. It holds the operation id, two flags, an error
+code from a fixed vocabulary, the realm and target identity digests, a
+migration run's outcome with the count and the first and last applied
+versions, and the frame's SHA-256. Apart from that digest, the resource's own
+status already carries all of it, and it holds no plan bytes, error text, SQL
+or native output. Pod status is written by the kubelet and by control-plane
+controllers, and no default user-facing role grants it, so forging a summary
+takes either the node's credentials, which can already forge the log it stands
+in for, or a grant the default roles keep for the control plane.
+
 ## Remaining deployment responsibilities
 
 - Apply namespace NetworkPolicies that allow executor Pods to reach only the

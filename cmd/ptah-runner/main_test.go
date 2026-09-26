@@ -32,6 +32,7 @@ func TestRunUsesConfiguredBinaryAndResultLimit(t *testing.T) {
 			"PTAH_OPERATION_ID=resolve-flags",
 			"PTAH_REQUESTED_REFERENCE=oci://registry.example/schema:main",
 		},
+		"",
 	)
 	if exitCode != 0 {
 		t.Fatalf("run() exit code = %d, stderr = %q", exitCode, stderr.String())
@@ -59,6 +60,7 @@ func TestRunRejectsIncoherentPlanFlags(t *testing.T) {
 		&stdout,
 		&stderr,
 		nil,
+		"",
 	)
 	if exitCode != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "must not exceed") {
 		t.Fatalf("run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
@@ -102,6 +104,7 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 				&stdout,
 				&stderr,
 				test.environment,
+				"",
 			)
 			if exitCode != test.wantExit || stdout.Len() != 0 {
 				t.Fatalf("run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
@@ -147,6 +150,7 @@ func TestRunSnapshotsValidatedOCICA(t *testing.T) {
 				&stdout,
 				&stderr,
 				environment,
+				"",
 			)
 			if name == "mismatched" {
 				if exitCode != 2 || stdout.Len() != 0 {
@@ -189,6 +193,7 @@ func TestRunRejectsCASnapshotFlagOutsideValidationMode(t *testing.T) {
 		&stdout,
 		&stderr,
 		nil,
+		"",
 	)
 	if exitCode != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "requires --validate-oci-source") {
 		t.Fatalf("run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())

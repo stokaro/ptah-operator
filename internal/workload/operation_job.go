@@ -21,8 +21,9 @@ const (
 	// container runs as.
 	operationUserID int64 = 65532
 	// defaultTerminationGracePeriodSeconds is what an operation Pod gets when
-	// its family names no grace of its own.
-	defaultTerminationGracePeriodSeconds int64 = 30
+	// its family names no grace of its own: runner.DefaultTerminationGracePeriod
+	// in the unit the Pod spec takes.
+	defaultTerminationGracePeriodSeconds = int64(runner.DefaultTerminationGracePeriod / time.Second)
 )
 
 // operationFamily is what is fixed for every Job one resource kind dispatches.
@@ -122,6 +123,9 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 		}
 		annotations[AnnotationAdmissionSnapshotDigest] = snapshot.Digest
 	}
+	if spec.mutating {
+		annotations[AnnotationSafeToEvict] = "false"
+	}
 	labels := map[string]string{
 		LabelManagedBy:           "ptah-operator",
 		LabelComponent:           spec.family.component,
@@ -146,7 +150,14 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 	}
 
 	resources := *spec.execution.Resources.DeepCopy()
-	environment := spec.env
+	environment := append([]corev1.EnvVar(nil), spec.env...)
+	if spec.mutating {
+		// The same number the Pod spec carries below. The runner sizes the
+		// time it gives a stopped child against it, and refuses a mutating
+		// Pod that does not say.
+		environment = append(environment,
+			literalEnv(runner.EnvTerminationGracePeriod, strconv.FormatInt(terminationGrace, 10)))
+	}
 	volumes := spec.volumes
 	mounts := spec.mounts
 	initContainers := []corev1.Container{{
@@ -238,6 +249,10 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 							{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true},
 							{Name: workVolumeName, MountPath: workPath},
 						}, mounts...),
+						// The runner writes its result summary here, and the
+						// kubelet copies it into Pod status.
+						TerminationMessagePath:   runner.TerminationMessagePath,
+						TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 					}},
 					Volumes:           append(baseVolumes(), volumes...),
 					NodeSelector:      copyMap(execution.NodeSelector),

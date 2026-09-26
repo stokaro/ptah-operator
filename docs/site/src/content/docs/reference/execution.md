@@ -131,6 +131,66 @@ deadline with nothing left to schedule its collection. The timing changes
 nothing -- Kubernetes starts that timer when a Job finishes either way -- so
 the exception is written for a schema Apply and for no other shape.
 
+## When a Pod is stopped
+
+A node drain, a preemption, an eviction or a Pod deadline stops an operation
+Pod the way Kubernetes stops any Pod: SIGTERM to the container, then SIGKILL
+once `terminationGracePeriodSeconds` has passed. The runner is the container's
+first process, so the signal reaches the runner rather than Ptah. It passes
+SIGTERM on, gives Ptah two thirds of the grace to stop, kills it if it has not,
+and keeps the last third to write the result frame. Every operation Pod gets
+thirty seconds. A schema Apply records its grace on the claim, and every
+mutating Pod is told its grace in `PTAH_TERMINATION_GRACE_PERIOD_SECONDS`, so
+the runner never sizes the wait against a grace its Pod does not have; a
+mutating Pod that is not told is refused before Ptah starts.
+
+Ptah answers SIGTERM by cancelling the statement it is running, which rolls
+back a migration it runs in a transaction, and then reads the history and
+writes its account of the run. A run stopped between two files, or inside one
+that rolled back, reports a failed run with the versions it applied, which the
+history read that follows confirms, instead of a run nobody can account for.
+One stopped inside a file that committed part of its statements reports a
+partial run and blocks the resource, as a partial run always has. A child that
+does not stop in time writes nothing, and the run is unknown. A schema Apply
+that was stopped is unknown either way, because its account is only ever the
+whole frame of a run that completed.
+
+Mutating Pods carry `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`,
+so the cluster autoscaler does not remove their node while they run. Nothing
+else reads that annotation: a drain, a preemption and node-pressure eviction
+still stop the Pod. Whatever stops it with less than its own grace can kill the
+runner before its frame is written, and that run is unknown as it always was:
+hard node-pressure eviction gives the Pod the kubelet's minimum of two
+seconds, soft eviction caps the grace at the kubelet's
+`evictionMaxPodGracePeriod`, and a deletion can ask for a shorter one.
+
+### The termination summary
+
+The frame lives only in the container log on the node, and that log can be gone
+before the manager reads it. So the runner also writes a summary of the frame,
+at most 2 KiB, to `/dev/termination-log`, which the kubelet copies into the
+Pod's status: the operation id, whether a mutation started and whether its
+outcome is uncertain, the error code, the realm and target identity digests,
+a migration run's outcome with the count and the first and last applied
+versions, and the SHA-256 of the frame it summarizes. It carries no plan, no
+error text and nothing Ptah printed.
+
+The migration controller reads it for an Apply, and only when the log was read
+and held no frame, or ended inside the frame the summary names, once the
+window in which a frame may still be arriving has passed. A frame that is
+there and was refused is never replaced. A summary that names another attempt
+or another frame is set aside with a `TerminationSummaryRefused` Event, and the
+run is unknown as before. What a summary says is decided by the same code that
+decides a frame, including the check that the run reached the planned
+database, so it can report less than the frame would have and never more.
+
+Neither family narrows an unknown outcome on a Pod's report that no mutation
+started, not even from a frame: a Job may run more than one Pod, and one Pod's
+account of itself says nothing about another. So what a summary adds is a
+migration run's outcome and nothing else. The schema family and read-only
+operations do not read it, because neither can be decided from less than the
+whole frame, and a log that cannot be read at all is still retried.
+
 ## Concurrency and coordination
 
 One operation claim per resource prevents two Jobs for one resource. Across
@@ -166,9 +226,14 @@ unless the claim's absolute dispatch and execution deadlines are both present,
 ordered and unexpired. The deadline check is repeated immediately before the
 child is executed, because a Pod scheduled late or resumed after an
 interruption can cross its window while the plan is being prepared, and the
-execution deadline is imposed on the child's own context so a run cannot
-outlive it. A migration Apply carries two more bindings, since its child
-selects its own work: the approved ordered sequence with its digest, and the
+execution deadline is imposed on the child's own context. At that deadline the
+child is asked to stop exactly as it is when its Pod is stopped
+([When a Pod is stopped](#when-a-pod-is-stopped)), and killed if it is still
+running two thirds of the Pod's grace later. A run outlives its deadline by at
+most that, which is inside the whole grace the controller waits out before it
+reads the database after an Apply it cannot account for. A migration Apply
+carries two more bindings, since its child selects its own work: the approved
+ordered sequence with its digest, and the
 fingerprint of the history that sequence was computed against. The runner
 cannot re-derive either — it holds no artifact and reads no revision table — so
 it enforces that a migration child no plan authorized never starts, and hands

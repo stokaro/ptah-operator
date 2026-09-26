@@ -61,7 +61,10 @@ const (
 	jobCleanupTTLSeconds     = int32(300)
 	maxLockContentionPoll    = 5 * time.Second
 	statusPatchRequeue       = time.Millisecond
-	applyTerminationGrace    = 30 * time.Second
+	// applyTerminationGrace is recorded on every Apply claim. The builder
+	// gives the Apply Pod this grace and tells the runner the same number, and
+	// the controller dates the end of the Apply's execution horizon by it.
+	applyTerminationGrace = runner.DefaultTerminationGracePeriod
 )
 
 var (
@@ -3698,6 +3701,10 @@ type terminalEvidence struct {
 	PodUIDs  []types.UID
 	PodCount int32
 	Trusted  bool
+	// TerminationMessage is the executor container's termination message as
+	// the kubelet recorded it in Pod status. It is set only where Trusted is:
+	// a container that never terminated wrote none.
+	TerminationMessage string
 }
 
 func (r *SchemaReconciler) collectTerminalPodEvidence(
@@ -3750,6 +3757,7 @@ func collectTerminalPodEvidence(
 	for _, status := range selected.Status.ContainerStatuses {
 		if status.Name == executorContainerName && status.State.Terminated != nil {
 			evidence.Trusted = true
+			evidence.TerminationMessage = status.State.Terminated.Message
 			return evidence, selected, nil
 		}
 	}

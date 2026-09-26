@@ -75,6 +75,15 @@ const (
 	// AnnotationAdmissionSnapshotDigest binds the Job and every resulting Pod
 	// to the credential-free admission envelope persisted before dispatch.
 	AnnotationAdmissionSnapshotDigest = "operator.ptah.run/admission-snapshot-digest"
+	// AnnotationSafeToEvict is the cluster autoscaler's own annotation. A Pod
+	// that says "false" is not evicted to remove its node.
+	//
+	// Every mutating operation Pod says so. An Apply stopped part way is an
+	// Apply the controller has to account for before anything else runs, and a
+	// scale-down is not a reason to leave one. The annotation binds only the
+	// autoscaler: a drain, a preemption and node pressure still stop the Pod,
+	// which is what the runner's SIGTERM handling is for.
+	AnnotationSafeToEvict = "cluster-autoscaler.kubernetes.io/safe-to-evict"
 
 	mainContainerName    = "ptah"
 	initContainerName    = "install-runner"
@@ -1116,7 +1125,9 @@ func OperationIDLabelValue(value string) string { return shortLabelHash(value) }
 // boundary: the Lease outlives the window by a minute, and the Lease duration
 // now covers this grace as well, so a Job bounded by it cannot still be running
 // when the Lease has gone to another operation. The child's context deadline is
-// the window itself, so the extra life is refusal time, not execution time.
+// the window itself, so the extra life is refusal time and the time a child
+// asked to stop at the window takes to do so (runner.ChildStopDelay, twenty
+// seconds of the Pod's default grace), not execution time.
 //
 // A schema Apply takes no grace. Its Job ends with its window, and the fault
 // suite proves what Kubernetes' DeadlineExceeded leaves behind on that path; a

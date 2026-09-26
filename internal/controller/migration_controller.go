@@ -717,26 +717,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		// status said: a run that stopped is exactly the run whose controller
 		// has to be told what the database now holds.
 		if parseErr != nil {
-			return r.finishUncertainMigrationApply(ctx, migration, job,
-				fmt.Errorf("read the Apply result: %w", parseErr), "")
+			return r.settleUnreadMigrationApply(ctx, migration, job, evidence, parseErr)
 		}
-		if result.MigrationRun == nil || result.Uncertain {
-			failure := errors.New("the Apply produced no readable account of what the database now holds")
-			if result.Error != nil {
-				failure = fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))
-			}
-			if result.MigrationRun != nil {
-				return r.consumeMigrationRun(ctx, migration, job, result)
-			}
-			return r.finishUncertainMigrationApply(ctx, migration, job, failure, result.TargetIdentityDigest)
-		}
-		if result.CoordinationDigest != operation.CoordinationDigest ||
-			operation.Target != nil && result.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
-			return r.finishUncertainMigrationApply(ctx, migration, job,
-				errors.New("the Apply ran against a database other than the one it was planned for"),
-				result.TargetIdentityDigest)
-		}
-		return r.consumeMigrationRun(ctx, migration, job, result)
+		return r.settleMigrationApply(ctx, migration, job, r.frameMigrationApply(ctx, migration, result))
 	}
 	if parseErr != nil {
 		if boundary, boundaryErr := r.failedInitBoundary(ctx, migration, job); boundaryErr != nil {

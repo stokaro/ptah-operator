@@ -372,6 +372,77 @@ func (r *MigrationReconciler) acquireMigrationApplyLock(
 	return false, statusPatchRequeue, nil
 }
 
+// reportedMigrationApply is what a migration Apply's runner said about it, in
+// the terms the controller decides by. It comes from the result frame, or, when
+// the log held no frame, from the runner's termination summary; one decision,
+// settleMigrationApply, reads either, so the summary cannot be taken where the
+// frame would have been refused.
+type reportedMigrationApply struct {
+	// run is what the database accounted for, and nil when the runner decoded
+	// no report.
+	run *migrationRunAccount
+	// failure is why there is no report, when there is none.
+	failure              error
+	uncertain            bool
+	coordinationDigest   string
+	targetIdentityDigest string
+}
+
+// migrationRunAccount is a run report in the terms status keeps.
+type migrationRunAccount struct {
+	outcome operatorv1alpha1.MigrationRunOutcome
+	applied []int64
+	message string
+}
+
+// frameMigrationApply is what a result frame says about a migration Apply.
+func (r *MigrationReconciler) frameMigrationApply(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	result runner.Result,
+) reportedMigrationApply {
+	reported := reportedMigrationApply{
+		uncertain:            result.Uncertain,
+		coordinationDigest:   result.CoordinationDigest,
+		targetIdentityDigest: result.TargetIdentityDigest,
+	}
+	if result.MigrationRun != nil {
+		run := r.reportedMigrationRun(ctx, migration, result.MigrationRun)
+		reported.run = &run
+		return reported
+	}
+	reported.failure = errors.New("the Apply produced no readable account of what the database now holds")
+	if result.Error != nil {
+		reported.failure = fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))
+	}
+	return reported
+}
+
+// settleMigrationApply decides a migration Apply from what its runner reported.
+//
+// A run with no report is one nobody accounted for. A run whose report the
+// database accounted for is taken only from the database the claim named; a
+// partial or unknown one is taken whatever it names, because it blocks the
+// resource either way and is settled only by a reading of the database.
+func (r *MigrationReconciler) settleMigrationApply(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	reported reportedMigrationApply,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	if reported.run == nil {
+		return r.finishUncertainMigrationApply(ctx, migration, job, reported.failure, reported.targetIdentityDigest)
+	}
+	if !reported.uncertain && (reported.coordinationDigest != operation.CoordinationDigest ||
+		operation.Target != nil && reported.targetIdentityDigest != migration.Status.History.TargetIdentityDigest) {
+		return r.finishUncertainMigrationApply(ctx, migration, job,
+			errors.New("the Apply ran against a database other than the one it was planned for"),
+			reported.targetIdentityDigest)
+	}
+	return r.recordMigrationRun(ctx, migration, job, *reported.run, reported.targetIdentityDigest)
+}
+
 // consumeMigrationRun records what the database accounted for. The verdict is
 // the one Ptah read from the revision table, never the Job's exit status: a run
 // that stopped is exactly the run whose controller has to be told what the
@@ -382,19 +453,47 @@ func (r *MigrationReconciler) consumeMigrationRun(
 	job *batchv1.Job,
 	result runner.Result,
 ) (ctrl.Result, error) {
-	operation := migration.Status.ActiveOperation
-	report := result.MigrationRun
-	outcome := operatorv1alpha1.MigrationRunOutcomeUnknown
-	message := "The run produced no readable evidence"
-	var applied []int64
-	if report != nil {
-		outcome = migrationRunOutcome(report.Outcome)
-		applied = boundedVersions(report.Applied, 256)
-		message = migrationRunMessage(*report)
-		if refusal, refused := r.sequenceRefusal(ctx, migration, operation, *report); refused {
-			message = refusal
+	return r.recordMigrationRun(ctx, migration, job,
+		r.reportedMigrationRun(ctx, migration, result.MigrationRun), result.TargetIdentityDigest)
+}
+
+// reportedMigrationRun is a run report in the terms status keeps. A missing
+// report is an unknown outcome.
+func (r *MigrationReconciler) reportedMigrationRun(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	report *dataplane.MigrationRunReport,
+) migrationRunAccount {
+	if report == nil {
+		return migrationRunAccount{
+			outcome: operatorv1alpha1.MigrationRunOutcomeUnknown,
+			message: "The run produced no readable evidence",
 		}
 	}
+	run := migrationRunAccount{
+		outcome: migrationRunOutcome(report.Outcome),
+		applied: boundedVersions(report.Applied, 256),
+		message: migrationRunMessage(*report),
+	}
+	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report); refused {
+		run.message = refusal
+	}
+	return run
+}
+
+// recordMigrationRun writes a finished run into status and retires its claim.
+// reportedTarget is the database the run said it opened, which is the one an
+// unresolved record has to name.
+func (r *MigrationReconciler) recordMigrationRun(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	run migrationRunAccount,
+	reportedTarget string,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	outcome := run.outcome
+	message := run.message
 	finishedAt := metav1.NewTime(r.now())
 	before := migration.DeepCopy()
 	migration.Status.LastRun = &operatorv1alpha1.MigrationRunStatus{
@@ -403,7 +502,7 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		JobUID:          job.UID,
 		StartedAt:       operation.StartedAt,
 		FinishedAt:      &finishedAt,
-		AppliedVersions: applied,
+		AppliedVersions: run.applied,
 		Message:         bounded(message, 1024),
 	}
 	migration.Status.ActiveOperation = nil
@@ -414,7 +513,7 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		// statements and not the rest, and an unknown one cannot say whether it
 		// did; running the same file again would run those statements twice.
 		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun,
-			result.TargetIdentityDigest, r.now())
+			reportedTarget, r.now())
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, bounded(message, 1024))

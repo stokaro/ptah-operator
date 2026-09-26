@@ -7,6 +7,8 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const (
@@ -50,6 +52,11 @@ const (
 	// EnvExecutionNotAfter is the absolute deadline enforced on the mutating
 	// child process after dispatch.
 	EnvExecutionNotAfter = "PTAH_EXECUTION_NOT_AFTER"
+	// EnvTerminationGracePeriod is the Pod's terminationGracePeriodSeconds, in
+	// whole seconds. The builder writes the same value into the Pod spec and
+	// here, and the runner derives from it how long a child it stopped may take
+	// (ChildStopDelay).
+	EnvTerminationGracePeriod = "PTAH_TERMINATION_GRACE_PERIOD_SECONDS"
 	// EnvDatabaseURL carries the target database credential to the child only.
 	EnvDatabaseURL = "PTAH_DB_URL"
 	// EnvDevelopmentDatabaseURL carries an optional development database credential.
@@ -94,6 +101,7 @@ const (
 	envExpectedHistory        = EnvExpectedMigrationHistoryFingerprint
 	envDispatchNotAfter       = EnvDispatchNotAfter
 	envExecutionNotAfter      = EnvExecutionNotAfter
+	envTerminationGracePeriod = EnvTerminationGracePeriod
 	envDatabaseURL            = EnvDatabaseURL
 	envSchemaFile             = EnvSchemaFile
 	envExpectedDatabaseEngine = EnvExpectedDatabaseEngine
@@ -199,6 +207,7 @@ func childEnvironment(environment []string) []string {
 		EnvExpectedMigrationHistoryFingerprint,
 		EnvDispatchNotAfter,
 		EnvExecutionNotAfter,
+		EnvTerminationGracePeriod,
 		EnvExpectedDatabaseEngine,
 		EnvOCIAuthMode,
 		EnvOCIAuthRegistryGrant,
@@ -346,13 +355,34 @@ type Executor interface {
 	Execute(ctx context.Context, spec CommandSpec, stdout, stderr io.Writer) (int, error)
 }
 
-type OSExecutor struct{}
+// OSExecutor runs a child process and stops it the way the kubelet stops a
+// container: SIGTERM first, and SIGKILL only if the child is still running
+// StopDelay later.
+//
+// Ptah cancels its own work on the first SIGTERM and writes what it did before
+// it exits, so a migration stopped between two files can say which files it
+// applied. SIGKILL, which is what exec.CommandContext sends by default, ends
+// the child where it stands and leaves nothing to read. A zero StopDelay keeps
+// that default, because a SIGTERM with no bound on what follows would let a
+// child that ignores it outlive every deadline the runner enforces.
+type OSExecutor struct {
+	StopDelay time.Duration
+}
 
-func (OSExecutor) Execute(ctx context.Context, spec CommandSpec, stdout, stderr io.Writer) (int, error) {
+func (e OSExecutor) Execute(ctx context.Context, spec CommandSpec, stdout, stderr io.Writer) (int, error) {
 	command := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	command.Env = append([]string(nil), spec.Env...)
 	command.Stdout = stdout
 	command.Stderr = stderr
+	if e.StopDelay > 0 {
+		// Sent once. Ptah treats a second SIGTERM as a request to stop at
+		// once, and the kill that follows the delay is that request already.
+		command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
+		// The delay also bounds how long a child that exited may leave its
+		// output pipes open through a process it started, so what the child
+		// wrote is read either way.
+		command.WaitDelay = e.StopDelay
+	}
 	err := command.Run()
 	if err == nil {
 		return 0, nil

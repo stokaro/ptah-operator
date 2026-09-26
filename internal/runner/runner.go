@@ -191,6 +191,14 @@ func Run(ctx context.Context, config Config) Result {
 		}
 		mutationExecutionDeadline = executionNotAfter
 	}
+	// How long a stopped child may take is part of the same authority. The
+	// deadlines above say when the child has to be stopped; the grace says how
+	// long stopping it may take before the Pod is killed around it.
+	terminationGrace, err := terminationGracePeriod(values, config.Operation)
+	if err != nil {
+		setResultError(&result, "missing_termination_grace", err, redactor, config.Diagnostics)
+		return result
+	}
 
 	if config.PtahBinary == "" {
 		config.PtahBinary = "ptah"
@@ -199,7 +207,7 @@ func Run(ctx context.Context, config Config) Result {
 		config.Diagnostics = io.Discard
 	}
 	if config.Executor == nil {
-		config.Executor = OSExecutor{}
+		config.Executor = OSExecutor{StopDelay: ChildStopDelay(terminationGrace)}
 	}
 	// Every operation that reaches the registry prepares its access first: the
 	// authority check, the authenticated-plain-HTTP refusal and the verified CA
@@ -357,7 +365,7 @@ func Run(ctx context.Context, config Config) Result {
 	if config.Operation == OperationApply {
 		finishApplyCommandResult(&result, outcome, redactor, config.Diagnostics)
 	} else if outcome.err != nil {
-		setResultError(&result, "execution_error", errors.New("ptah resolve process could not be completed"), redactor, config.Diagnostics)
+		setResultError(&result, "execution_error", childFailure(config.Operation, outcome.err), redactor, config.Diagnostics)
 	} else {
 		finishSingleCommandResult(&result, outcome, redactor, config.Diagnostics)
 	}
@@ -375,7 +383,11 @@ func Run(ctx context.Context, config Config) Result {
 	// whose controller has to be told what the database now holds, and a
 	// nonzero exit is how Ptah reports that it stopped -- reading the report
 	// only on the clean path drops the evidence precisely when it decides the
-	// next move. Truncated output is not a document, so it is not read.
+	// next move. That holds for a run this process stopped as well: Ptah
+	// answers SIGTERM by cancelling the statement it is running, which rolls
+	// back a file it runs in a transaction, and then reads the history and
+	// writes the same document. Truncated output is not a document, so it is
+	// not read.
 	if config.Operation == OperationMigrationHistory || config.Operation == OperationMigrationApply {
 		decodeMigrationReport(&result, config, outcome, redactor)
 	}
@@ -410,8 +422,16 @@ func Run(ctx context.Context, config Config) Result {
 // An unreadable document is only this function's error to report when nothing
 // else already failed: a child that exited nonzero and wrote nothing is
 // reported as the child exit it was, not as malformed output.
+//
+// A child this process stopped is read too, whether it was stopped at its
+// execution deadline or because the Pod is terminating. Its document is still
+// the database's account, taken after the run returned, and the report is what
+// separates a run that stopped cleanly between two files from one that stopped
+// inside one. A child that was killed before it wrote one leaves nothing that
+// decodes, and the frame keeps claiming a started, uncertain mutation. Any
+// other failure to run the child leaves no document at all, and is not read.
 func decodeMigrationReport(result *Result, config Config, outcome commandOutcome, redactor Redactor) {
-	if outcome.err != nil || outcome.stdout.dropped() != 0 {
+	if (outcome.err != nil && !stoppedByContext(outcome.err)) || outcome.stdout.dropped() != 0 {
 		return
 	}
 	if config.Operation == OperationMigrationHistory {
@@ -1060,10 +1080,31 @@ func consumeOutcome(
 
 func finishApplyCommandResult(result *Result, outcome commandOutcome, redactor Redactor, diagnostics io.Writer) {
 	if outcome.err != nil {
-		setResultError(result, "execution_error", errors.New("ptah apply process could not be completed"), redactor, diagnostics)
+		setResultError(result, "execution_error", childFailure(OperationApply, outcome.err), redactor, diagnostics)
 		return
 	}
 	finishSingleCommandResult(result, outcome, redactor, diagnostics)
+}
+
+// stoppedByContext reports that a child produced no exit status of its own
+// because this process stopped it: its execution deadline passed, or the Pod
+// is terminating and the runner passed the signal on.
+func stoppedByContext(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+// childFailure says why a child has no exit status to report. The operation
+// is a fixed vocabulary and the reason is one of three sentences, so nothing
+// the child wrote reaches the frame through it.
+func childFailure(operation Operation, err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("the ptah %s process was stopped at its execution deadline", operation)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("the ptah %s process was stopped because the Pod is terminating", operation)
+	default:
+		return fmt.Errorf("the ptah %s process could not be completed", operation)
+	}
 }
 
 func finishSingleCommandResult(result *Result, outcome commandOutcome, redactor Redactor, diagnostics io.Writer) {
