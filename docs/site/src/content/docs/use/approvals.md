@@ -16,11 +16,15 @@ corrects a conflicting value. The validating webhook then checks the complete
 post-mutation object against the current schema, plan storage commit, observed
 database state, artifact digest, policy bytes, and execution images.
 
-Approvals are required where `spec.policy.apply` asks for them. That field is
-on the desired-state resource, so whoever may edit a `PtahSchema` or a
-`PtahMigration` may also select `Always` and have non-destructive plans applied
-without any approval. If this guide's gate is meant to be one a person cannot
-step around, install the administrator-owned policy in
+Approvals are required where `spec.policy.apply` asks for them, and for any
+schema plan that
+[changes privileges](../../reference/plans-and-approvals/#privilege-changes)
+whatever it asks. That field is on the desired-state resource, so whoever may
+edit a `PtahSchema` or a `PtahMigration` may also select `Always` and have the
+remaining plans applied without any approval: for a schema, the ones that
+destroy nothing and change no privilege; for a migration, all of them. If this
+guide's gate is meant to be one a person cannot step around, install the
+administrator-owned policy in
 [`examples/approval-policy-guard.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/approval-policy-guard.yaml)
 as well; the [security model](../security/#who-may-turn-the-approval-requirement-off)
 says why RBAC alone does not do it.

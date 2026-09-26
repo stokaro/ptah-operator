@@ -159,4 +159,19 @@ func TestBuildFixtureRefusesADestructivePlan(t *testing.T) {
 	}
 }
 
+// TestBuildFixtureRefusesAPrivilegedPlan holds the fixture to the state it
+// writes: ReadyToApply under Always is what the controller publishes for a plan
+// that changes no privilege, and for no other.
+func TestBuildFixtureRefusesAPrivilegedPlan(t *testing.T) {
+	t.Parallel()
+
+	privileged := []byte(`{"format_version":1,"name":"upgrade-proof","dialect":"postgres","from_fingerprint":"` +
+		digest('c') + `","to_fingerprint":"` + digest('d') +
+		`","destructive":false,"statements":[{"sql":"GRANT SELECT ON widgets TO PUBLIC","severity":"safe","reason":"proof"}]}` + "\n")
+	_, err := buildFixture(fixtureSchema(), privileged, "policy-uid", []byte("version: 1\n"), testDatabaseURL, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "must change no privilege") {
+		t.Fatalf("buildFixture() error = %v", err)
+	}
+}
+
 func digest(fill byte) string { return "sha256:" + strings.Repeat(string(fill), 64) }

@@ -106,8 +106,9 @@ The operator separates four authorities:
 1. A desired-state author may change `PtahSchema` but cannot approve a plan
    merely by editing that resource. They can, however, make approvals
    unnecessary: `spec.policy.apply` is a field of the resource they own, and
-   selecting `Always` applies non-destructive plans with no approval at all.
-   RBAC cannot close that, because the bypass is not an approval. See
+   selecting `Always` applies a schema plan that destroys nothing and changes
+   no privilege with no approval at all. RBAC cannot close that, because the
+   bypass is not an approval. See
    [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off).
 2. An approver may read schemas, migrations and their plans, and create
    immutable approvals for either family. The chart creates an optional
@@ -128,11 +129,24 @@ who may decide one is not needed, and those are different questions with
 different answers.
 
 `spec.policy.apply` lives on the desired-state resource. An author with the
-rights the example Role grants may set it to `Always`, after which
-non-destructive schema plans apply without an approval; `PtahMigration`
-exposes the same field. Separating the approver Role from the author Role does
-not prevent this, and no amount of RBAC on approval objects will, because
-nothing is approving anything.
+rights the example Role grants may set it to `Always`, after which schema plans
+that destroy nothing and change no privilege apply without an approval;
+`PtahMigration` exposes the same field, and there every plan applies. Separating
+the approver Role from the author Role does not prevent this, and no amount of
+RBAC on approval objects will, because nothing is approving anything.
+
+What `Always` does not waive is a change of authority. A schema plan that
+grants or revokes a privilege, changes a role or its members, hands an object
+to another owner, creates, alters or drops a row-security policy, or makes code
+run with its owner's rights waits for an approval under `Always` as under
+`OnApproval`, and a destructive plan still needs `allowDestructive` as well.
+Whoever can push the artifact's tag can still change the schema unattended; the
+changes of authority the operator can read in it wait for a person. The
+operator decides this from the SQL rather than from Ptah's severity, and
+[Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
+lists what it reads and what it cannot see: rights an engine grants by default,
+such as a view reading with its owner's rights, SQL built at run time, and every
+`PtahMigration`.
 
 `Always` is not wrong. It is the deliberate unattended mode, and an
 installation that wants it should have it. What matters is that choosing it is

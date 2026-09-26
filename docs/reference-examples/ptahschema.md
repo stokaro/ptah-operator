@@ -36,9 +36,11 @@ spec:
 ### Unattended, where nobody is waiting to approve
 
 `apply: Always` skips the approval and applies what it planned. It stays safe
-to leave running because the two fences below it hold: a destructive change is
-refused rather than applied, and a table named in `protectedTables` is refused
-even when it is not.
+to leave running because the fences below it hold: a destructive change is
+refused rather than applied, a table named in `protectedTables` is refused even
+when it is not, and a plan that changes privileges -- a grant, a role, an owner,
+a row-security policy, a `SECURITY DEFINER` function -- waits for an approval
+the way it would under `OnApproval`.
 
 Suitable for a development or staging database. On a production database it
 means an artifact push is a schema change with no person between the two.

@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 )
@@ -192,6 +193,59 @@ func TestGeneratedPtahSchemaCRDAcceptsUntruncatedTargetStatus(t *testing.T) {
 				t.Fatalf("API server CEL rejected untruncated target status: %v", errs.ToAggregate())
 			}
 		})
+	}
+}
+
+// The plan decoder names privilege changes and the API server stores them, so
+// the two lists are one list. A kind the decoder raises and the CRD refuses
+// would fail every plan that carries it at publication; a kind the CRD accepts
+// and nothing raises is a promise nothing keeps. Both places a plan's kinds
+// are written are held to it, and so are the Go constants.
+func TestGeneratedCRDsUseThePrivilegeChangeVocabulary(t *testing.T) {
+	t.Parallel()
+
+	want := dataplane.PrivilegeChangeKinds()
+	constants := []operatorv1alpha1.PrivilegeChange{
+		operatorv1alpha1.PrivilegeChangeGrant, operatorv1alpha1.PrivilegeChangeRevoke,
+		operatorv1alpha1.PrivilegeChangeRoleMembership, operatorv1alpha1.PrivilegeChangeRole,
+		operatorv1alpha1.PrivilegeChangeOwnership, operatorv1alpha1.PrivilegeChangeRowSecurityPolicy,
+		operatorv1alpha1.PrivilegeChangeSecurityDefiner, operatorv1alpha1.PrivilegeChangeDefiner,
+		operatorv1alpha1.PrivilegeChangeFunctionReplacement,
+	}
+	got := make([]string, 0, len(constants))
+	for _, constant := range constants {
+		got = append(got, string(constant))
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("PrivilegeChange constants = %q, decoder vocabulary = %q", got, want)
+	}
+
+	planCRD := loadGeneratedCRD(t, filepath.Join(repositoryRoot(t), "config", "crd", "bases", "operator.ptah.run_ptahschemaplans.yaml"))
+	schemaCRD := loadGeneratedCRD(t, filepath.Join(repositoryRoot(t), "config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml"))
+	status := storageVersionSchema(t, schemaCRD).Properties["status"]
+	for name, field := range map[string]apiextensions.JSONSchemaProps{
+		"PtahSchemaPlan spec.privilegeChanges":                       storageVersionSchema(t, planCRD).Properties["spec"].Properties["privilegeChanges"],
+		"PtahSchema status.plan.privilegeChanges":                    status.Properties["plan"].Properties["privilegeChanges"],
+		"PtahSchema status.pendingObservation.plan.privilegeChanges": status.Properties["pendingObservation"].Properties["plan"].Properties["privilegeChanges"],
+	} {
+		if field.Type != "array" || field.Items == nil || field.Items.Schema == nil {
+			t.Errorf("%s is not a list of kinds: %#v", name, field)
+			continue
+		}
+		if field.XListType == nil || *field.XListType != "set" || field.MaxItems == nil || *field.MaxItems < int64(len(want)) {
+			t.Errorf("%s is not a bounded set that can hold every kind", name)
+		}
+		enum := make([]string, 0, len(field.Items.Schema.Enum))
+		for _, raw := range field.Items.Schema.Enum {
+			value, ok := raw.(string)
+			if !ok {
+				t.Fatalf("%s enum holds %#v", name, raw)
+			}
+			enum = append(enum, value)
+		}
+		if !slices.Equal(enum, want) {
+			t.Errorf("%s enum = %q, decoder vocabulary = %q", name, enum, want)
+		}
 	}
 }
 

@@ -175,6 +175,51 @@ func TestRenderJSONIsTheSameView(t *testing.T) {
 	}
 }
 
+// A plan that changes privileges says which kinds in both outputs, and a plan
+// that changes none says nothing, the way "destructive" appears only when it
+// is true.
+func TestRenderNamesThePlansPrivilegeChanges(t *testing.T) {
+	t.Parallel()
+
+	privileged := fixture()
+	privileged.Status.Plan.PrivilegeChanges = []operatorv1alpha1.PrivilegeChange{
+		operatorv1alpha1.PrivilegeChangeGrant, operatorv1alpha1.PrivilegeChangeRowSecurityPolicy,
+	}
+	for _, test := range []struct {
+		name   string
+		schema *operatorv1alpha1.PtahSchema
+		text   string
+		json   string
+	}{
+		{name: "privileged", schema: privileged, text: "  changes privileges: Grant, RowSecurityPolicy\n", json: `"privilegeChanges": [`},
+		{name: "unprivileged", schema: fixture()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			view, err := schemaview.Load(context.Background(), readerWith(t, test.schema), "team-a", "storefront")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text, encoded bytes.Buffer
+			if err := schemaview.Render(&text, view, schemaview.Text); err != nil {
+				t.Fatal(err)
+			}
+			if err := schemaview.Render(&encoded, view, schemaview.JSON); err != nil {
+				t.Fatal(err)
+			}
+			if test.text == "" {
+				if strings.Contains(text.String(), "changes privileges") || strings.Contains(encoded.String(), "privilegeChanges") {
+					t.Fatalf("a plan with no privilege change reported one:\n%s\n%s", text.String(), encoded.String())
+				}
+				return
+			}
+			if !strings.Contains(text.String(), test.text) || !strings.Contains(encoded.String(), test.json) {
+				t.Fatalf("the views do not name the kinds:\n%s\n%s", text.String(), encoded.String())
+			}
+		})
+	}
+}
+
 func TestRenderFailurePath(t *testing.T) {
 	t.Parallel()
 

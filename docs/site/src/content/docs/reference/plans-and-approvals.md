@@ -97,3 +97,68 @@ reason `ProtectedTable` on `PlanReady`, `InSync` and `Ready`, no failure is
 recorded, no plan is published, and the operation ends rather than re-planning
 within the second. Where the change is wanted, the entry goes, or the rows are
 written as a migration.
+
+## Plans that change privileges {#privilege-changes}
+
+`destructive` answers whether a plan can lose data. A plan that grants a role
+access to a table, makes a function run with its owner's rights or opens a
+table's rows to everyone loses nothing, and Ptah rates those statements `safe`.
+Read alone, that rating would let `apply: Always` apply them with nobody
+looking.
+
+So the operator reads every statement itself and records the kinds of authority
+the plan changes in `spec.privilegeChanges`, which `status.plan.privilegeChanges`
+repeats. A plan that lists any kind needs an approval naming its exact bytes,
+whatever `spec.policy.apply` says. Under `Always` the schema waits in
+`AwaitingApproval` with `ApprovalRequired=True` and reason `PrivilegeChanges`,
+and the condition message names the kinds. Under `OnApproval` it waits as it
+always did, and under `Never` nothing runs. No field turns this off: an
+approval is how a person agrees to a change of authority, and a switch that
+waived it would be the same `Always` again.
+
+| Kind | Raised by |
+| --- | --- |
+| `Grant` | `GRANT` of a privilege on an object, including `ALTER DEFAULT PRIVILEGES ... GRANT` |
+| `Revoke` | `REVOKE` of a privilege, including `ALTER DEFAULT PRIVILEGES ... REVOKE`, and `DROP OWNED` |
+| `RoleMembership` | `GRANT role TO role`, `REVOKE role FROM role`, `ALTER GROUP ... ADD USER` or `DROP USER`, MySQL `SET DEFAULT ROLE` |
+| `Role` | `CREATE`, `ALTER` or `DROP` of a `ROLE`, `USER` or `GROUP`: attributes such as `SUPERUSER`, and per-role settings |
+| `Ownership` | `OWNER TO`, `REASSIGN OWNED`, `CREATE SCHEMA ... AUTHORIZATION` |
+| `RowSecurityPolicy` | `CREATE`, `ALTER` or `DROP POLICY`, and `DISABLE` or `NO FORCE ROW LEVEL SECURITY` |
+| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure, MySQL `SQL SECURITY DEFINER`, a PostgreSQL view's `security_invoker` set to `false` or `off`, or reset |
+| `Definer` | a MySQL `DEFINER =` clause on a view, routine, trigger or event |
+| `FunctionReplacement` | `CREATE OR REPLACE FUNCTION` or `PROCEDURE` |
+
+The reading errs the same way the destructive one does. It reads keywords,
+never what a clause evaluates to, so it raises every policy: `USING (true)` and
+a tenant filter look alike to it, and so does `USING (tenant_id = tenant_id)`,
+which opens the table as surely as `true` does. It raises every
+`CREATE OR REPLACE FUNCTION`, because a plan does not say whether the function
+existed. Ptah writes a new PostgreSQL function that way too, trigger functions
+included, so under `Always` any plan that creates or changes one waits for an
+approval. It reads function bodies, so a `GRANT` that only runs when the
+function is called is raised as well. And it reads each statement under both
+string-escaping modes the server might be in, and reads dollar-quoted bodies,
+`E''` strings and nested comments the way PostgreSQL does, so a quote cannot
+hide a clause from it.
+
+The class only adds. Ptah's plan document has no field for it and a document
+that tried to supply one is refused, a statement Ptah rated `safe` is raised all
+the same, and nothing about it lowers `destructive`. What Ptah already rates
+destructive stays destructive -- `DROP ROLE`, `DROP POLICY`, `DROP FUNCTION`,
+and switching row security off or unforcing it -- and such a plan still needs
+`allowDestructive` as well; the kinds say what else it changes. Status carries
+the kinds and nothing else: no object, no role and no statement text.
+
+What it cannot see:
+
+- Rights that come from an engine default rather than from the statement. A
+  view in either engine reads its tables with its owner's rights unless it says
+  otherwise, and a MySQL trigger, like a MySQL view that names no
+  `SQL SECURITY`, runs as its definer. Ptah writes no `SQL SECURITY` clause on a
+  MySQL view, so no MySQL view is raised.
+- SQL built at run time, such as a `DO` block that `EXECUTE`s a string.
+- `CREATE EXTENSION`, whose install script runs with whatever rights the
+  extension asks for.
+- A `PtahMigration`. Its plan is a sequence of files the operator does not
+  read, so `Always` applies it as published, which is why `OnApproval` is its
+  default.

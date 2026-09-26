@@ -79,6 +79,7 @@ Content digest: sha256:99a821c0f52b1eb6d643633d40a7db7467b81e10a3be16982626807ef
 Dialect:        postgres
 Statements:     1
 Destructive:    false
+Privileges:     none
 Stored:         2026-09-13T08:04:05Z
 Applied:        2026-09-13T08:04:24Z
 
@@ -90,6 +91,10 @@ CREATE TABLE "customers" (
 ```
 
 The statements come out as the planner wrote them, comments and all.
+`Privileges` names the kinds of authority the plan changes, or says `none`. A
+plan that names any waits for an approval even under `apply: Always`, and
+[Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
+says what each kind covers.
 
 `-o sql` prints the statements alone, in the order the plan holds them, each
 terminated once. Nothing is re-split on a semicolon: a statement may carry one

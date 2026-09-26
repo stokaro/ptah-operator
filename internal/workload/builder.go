@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -913,7 +914,12 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 	if plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive {
 		return errors.New("current policy forbids destructive plans")
 	}
-	if (applyPolicy == operatorv1alpha1.ApplyPolicyOnApproval || plan.Spec.Destructive) &&
+	// A plan that changes privileges waits for a person under Always as well,
+	// the same as a destructive one. The controller decides this before it
+	// claims the Apply; this decides it again from the immutable plan, and the
+	// controller-write webhook runs it once more when it rebuilds the Job.
+	if (applyPolicy == operatorv1alpha1.ApplyPolicyOnApproval || plan.Spec.Destructive ||
+		len(plan.Spec.PrivilegeChanges) > 0) &&
 		(current.Approval == nil || current.Approval.Name == "" || current.Approval.UID == "") {
 		return errors.New("current policy requires an immutable plan approval")
 	}
@@ -934,7 +940,9 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		current.ControllerStateVersion < 1 || current.ControllerStateVersion != plan.Spec.ControllerStateVersion ||
 		current.PtahVersion != plan.Spec.PtahVersion || current.ExecutorImage != plan.Spec.ExecutorImage ||
 		current.RunnerImage != plan.Spec.RunnerImage || current.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion ||
-		current.Destructive != plan.Spec.Destructive || current.StatementCount != plan.Spec.StatementCount {
+		current.Destructive != plan.Spec.Destructive ||
+		!slices.Equal(current.PrivilegeChanges, plan.Spec.PrivilegeChanges) ||
+		current.StatementCount != plan.Spec.StatementCount {
 		return errors.New("apply plan is not the schema current plan")
 	}
 	if plan.Spec.ArtifactDigest != schema.Status.Source.Digest ||

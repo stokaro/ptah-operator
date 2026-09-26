@@ -103,6 +103,7 @@ type PlanView struct {
 	Fingerprint      string       `json:"fingerprint,omitempty"`
 	StatementCount   int32        `json:"statementCount"`
 	Destructive      bool         `json:"destructive,omitempty"`
+	PrivilegeChanges []string     `json:"privilegeChanges,omitempty"`
 	CreatedAt        metav1.Time  `json:"createdAt"`
 	Approved         bool         `json:"approved"`
 	ApprovedAt       *metav1.Time `json:"approvedAt,omitempty"`
@@ -168,6 +169,9 @@ func Load(ctx context.Context, reader client.Reader, namespace, name string) (Vi
 			StatementCount: plan.StatementCount,
 			Destructive:    plan.Destructive,
 			CreatedAt:      plan.CreatedAt,
+		}
+		for _, kind := range plan.PrivilegeChanges {
+			view.Plan.PrivilegeChanges = append(view.Plan.PrivilegeChanges, string(kind))
 		}
 		if approval := plan.Approval; approval != nil {
 			view.Plan.Approved = true

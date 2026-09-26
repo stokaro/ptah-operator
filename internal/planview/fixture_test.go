@@ -70,7 +70,12 @@ func (l *lab) store(t *testing.T, statements []string, marker string) (*operator
 
 // storeDocument publishes exact bytes, for the cases that are about what the
 // document says rather than about the statements in it.
-func (l *lab) storeDocument(t *testing.T, document []byte, marker string) *operatorv1alpha1.PtahSchemaPlan {
+func (l *lab) storeDocument(
+	t *testing.T,
+	document []byte,
+	marker string,
+	adjust ...func(*operatorv1alpha1.PtahSchemaPlanSpec),
+) *operatorv1alpha1.PtahSchemaPlan {
 	t.Helper()
 	coordination, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/application/"+l.schema.Name)
 	if err != nil {
@@ -98,6 +103,9 @@ func (l *lab) storeDocument(t *testing.T, document []byte, marker string) *opera
 		Dialect:                  "postgresql",
 		StatementCount:           1,
 		Destructive:              false,
+	}
+	for _, change := range adjust {
+		change(&spec)
 	}
 	spec.ContentDigest = fingerprint.DigestBytes(document)
 	spec.Fingerprint, err = binding(l.schema, spec).Fingerprint()
