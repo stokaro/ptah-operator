@@ -1,8 +1,10 @@
 package workload
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -364,18 +366,27 @@ func migrationDataPlane(
 			// the Job that carries it is where the approved plan reaches the
 			// data plane. The schema Apply mounts its plan bytes; a migration
 			// has no bytes to mount -- `migrations up` reads the artifact
-			// directory -- so what travels is the plan's identity: the
-			// sequence it approved and the history it approved it against.
+			// directory -- so what travels is the sequence it approved, its
+			// digest, and the history it was approved against. The runner
+			// digests the sequence again and hands it to `migrations up
+			// --expect-sequence`, which compares it with what it selects under
+			// the migration lock.
 			if err := validateMigrationApplyPlan(migration, operation, plan); err != nil {
 				return nil, nil, nil, nil, err
 			}
-			sequenceDigest, err := MigrationSequenceDigest(plan.Spec.Migrations)
+			entries := migrationSequenceEntries(plan.Spec.Migrations)
+			sequenceDigest, err := fingerprint.MigrationSequenceDigest(entries)
 			if err != nil {
 				return nil, nil, nil, nil, fmt.Errorf("digest the approved migration sequence: %w", err)
+			}
+			sequence, err := encodeMigrationSequence(entries)
+			if err != nil {
+				return nil, nil, nil, nil, err
 			}
 			environment = append(environment,
 				literalEnv(runner.EnvExpectedTargetIdentityDigest, plan.Spec.TargetIdentityDigest),
 				literalEnv(runner.EnvExpectedCoordinationDigest, plan.Spec.CoordinationDigest),
+				literalEnv(runner.EnvExpectedMigrationSequence, sequence),
 				literalEnv(runner.EnvExpectedMigrationSequenceDigest, sequenceDigest),
 				literalEnv(runner.EnvExpectedMigrationHistoryFingerprint, plan.Spec.HistoryFingerprint),
 				literalEnv(runner.EnvDispatchNotAfter, operation.DispatchNotAfter.UTC().Format(time.RFC3339Nano)),
@@ -388,29 +399,63 @@ func migrationDataPlane(
 	return environment, volumes, mounts, annotations, nil
 }
 
-// MigrationSequenceDigest binds a plan to the exact sequence it carries, in the
-// order it carries it: a plan that applies the same migrations in another order
-// is a different plan.
+// MigrationSequenceDigest is fingerprint.MigrationSequenceDigest over a plan's
+// sequence.
 //
 // It lives here rather than beside the rest of the plan derivation because the
 // Job that executes a plan has to carry this digest, and internal/migrationplan
-// is built on top of this package. That package's SequenceDigest calls this, so
-// there is one rule rather than two copies that can drift.
+// is built on top of this package. That package's SequenceDigest calls this,
+// and the runner digests the sequence it receives with the same function, so
+// there is one rule rather than copies that can drift.
 func MigrationSequenceDigest(planned []operatorv1alpha1.PlannedMigration) (string, error) {
-	if len(planned) == 0 {
-		return "", errors.New("a plan carries at least one migration")
+	return fingerprint.MigrationSequenceDigest(migrationSequenceEntries(planned))
+}
+
+// MaxEncodedMigrationSequence is the most bytes the approved sequence may take
+// in the Apply Job's environment. The kernel refuses to start a process with
+// any one environment string over 128 KiB, and a Job whose container cannot
+// start leaves a run nobody can account for, so the bound sits below that with
+// room for the variable's name. A plan is refused at publication rather than
+// here, by EncodeMigrationSequence.
+const MaxEncodedMigrationSequence = 120 << 10
+
+// EncodeMigrationSequence is the approved sequence as the Apply Job carries it,
+// or an error when it would not fit. Plan publication calls it so a sequence
+// no Job could carry never becomes a plan anyone approves.
+func EncodeMigrationSequence(planned []operatorv1alpha1.PlannedMigration) (string, error) {
+	return encodeMigrationSequence(migrationSequenceEntries(planned))
+}
+
+func encodeMigrationSequence(entries []fingerprint.SequenceEntry) (string, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	// Escaping <, > and & would make the same key six bytes a character for
+	// nothing: the value is read by the runner, never by a browser.
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(entries); err != nil {
+		return "", fmt.Errorf("encode the approved migration sequence: %w", err)
 	}
-	entries := make([]map[string]any, 0, len(planned))
+	encoded := strings.TrimSuffix(buffer.String(), "\n")
+	if len(encoded) > MaxEncodedMigrationSequence {
+		return "", fmt.Errorf("the approved sequence encodes to %d bytes, over the %d an Apply Job can carry",
+			len(encoded), MaxEncodedMigrationSequence)
+	}
+	return encoded, nil
+}
+
+// migrationSequenceEntries is a plan's sequence in the shape the digest binds.
+func migrationSequenceEntries(planned []operatorv1alpha1.PlannedMigration) []fingerprint.SequenceEntry {
+	entries := make([]fingerprint.SequenceEntry, 0, len(planned))
 	for _, migration := range planned {
-		entries = append(entries, map[string]any{
-			"version":          migration.Version,
-			"version_key":      migration.VersionKey,
-			"checksum":         migration.Checksum,
-			"checkpoint":       migration.Checkpoint,
-			"transaction_mode": migration.TransactionMode,
+		entries = append(entries, fingerprint.SequenceEntry{
+			Version:         migration.Version,
+			VersionKey:      migration.VersionKey,
+			Checksum:        migration.Checksum,
+			Checkpoint:      migration.Checkpoint,
+			TransactionMode: migration.TransactionMode,
 		})
 	}
-	return fingerprint.DigestCanonicalJSON(entries)
+	return entries
 }
 
 // validateMigrationApplyPlan refuses to build an Apply Job whose plan is not

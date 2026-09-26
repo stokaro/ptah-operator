@@ -93,7 +93,7 @@ func TestTheCoverageTableNamesEveryRequiredCell(t *testing.T) {
 	}
 	// The Ptah build under test is part of the candidate's identity, so an
 	// empty one would leave the table naming cells against nothing.
-	if table.ptah.PtahRelease == "" || table.ptah.RunnerProtocolVersion == 0 {
+	if table.ptah.name() == "" || table.ptah.RunnerProtocolVersion == 0 {
 		t.Fatalf("the table names no Ptah build: %#v", table.ptah)
 	}
 }

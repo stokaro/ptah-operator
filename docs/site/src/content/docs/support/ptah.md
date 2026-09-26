@@ -27,10 +27,11 @@ provenance, and the supported build is exactly the one the matrix exercised.
 
 **Verified** is a measurement. Each `verified` entry names a Ptah build the
 operator was actually run against, the evidence behind it, and what ran.
-`ptahRelease` is `null` when the build is not a released Ptah. The row names
-`v0.7.0`, and the suite builds its executor from the commit that release was cut
-at rather than pulling the image the release published, so what the measurement
-covers is the code the release carries.
+`ptahRelease` is `null` when the build is not a released Ptah, and today it is:
+the row names a commit after v0.8.1 that adds `migrations up --expect-sequence`,
+which every migration Apply this operator dispatches passes. The suite builds
+its executor from the pinned commit rather than pulling a published image, so
+what the measurement covers is the code at that commit.
 
 **Absent** is neither. A combination no row mentions is untested, and untested
 is not incompatible. A version with nothing verified carries

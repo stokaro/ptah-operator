@@ -212,3 +212,35 @@ func (i OperationInput) ID() (string, error) {
 	}
 	return DigestCanonicalJSON(i)
 }
+
+// SequenceEntry is one migration of an approved sequence, carrying exactly
+// what MigrationSequenceDigest binds. The runner receives the sequence in this
+// shape and digests it again, so the list it hands Ptah is the one the plan's
+// digest names rather than one that merely travelled beside it.
+type SequenceEntry struct {
+	Version         int64  `json:"version"`
+	VersionKey      string `json:"version_key"`
+	Checksum        string `json:"checksum"`
+	Checkpoint      bool   `json:"checkpoint"`
+	TransactionMode string `json:"transaction_mode"`
+}
+
+// MigrationSequenceDigest binds a plan to the exact sequence it carries, in the
+// order it carries it: a plan that applies the same migrations in another order
+// is a different plan.
+func MigrationSequenceDigest(entries []SequenceEntry) (string, error) {
+	if len(entries) == 0 {
+		return "", fmt.Errorf("a plan carries at least one migration")
+	}
+	document := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		document = append(document, map[string]any{
+			"version":          entry.Version,
+			"version_key":      entry.VersionKey,
+			"checksum":         entry.Checksum,
+			"checkpoint":       entry.Checkpoint,
+			"transaction_mode": entry.TransactionMode,
+		})
+	}
+	return DigestCanonicalJSON(document)
+}

@@ -1,6 +1,7 @@
 package workload
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -248,6 +250,15 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 		if got := requireEnv(t, job, name).Value; got != want {
 			t.Fatalf("%s = %q, want %q", name, got, want)
 		}
+	}
+	// The sequence travels beside its digest, and it is the list the digest
+	// names: the runner digests it again and refuses it otherwise.
+	var carried []fingerprint.SequenceEntry
+	if err := json.Unmarshal([]byte(requireEnv(t, job, runner.EnvExpectedMigrationSequence).Value), &carried); err != nil {
+		t.Fatalf("decode the carried sequence: %v", err)
+	}
+	if digest, err := fingerprint.MigrationSequenceDigest(carried); err != nil || digest != sequenceDigest {
+		t.Fatalf("carried sequence digests to %q (%v), want %q", digest, err, sequenceDigest)
 	}
 
 	wantNotAfter := operation.StartedAt.Add(300 * time.Second).UTC().Format(time.RFC3339Nano)
@@ -589,5 +600,53 @@ func migrationPlanFixture() *operatorv1alpha1.PtahMigrationPlan {
 				Checksum: "h1:orders-0003",
 			}},
 		},
+	}
+}
+
+// The sequence rides in one environment variable, and the kernel refuses to
+// start a process with a string over 128 KiB in its environment. A sequence the
+// API accepts can exceed that, so the encoder refuses it -- at plan
+// publication, before anyone approves a plan no Job could carry.
+func TestEncodeMigrationSequenceRefusesWhatNoJobCouldCarry(t *testing.T) {
+	t.Parallel()
+	sequence := func(key, checksum string) []operatorv1alpha1.PlannedMigration {
+		planned := make([]operatorv1alpha1.PlannedMigration, 0, 256)
+		for version := int64(1); version <= 256; version++ {
+			planned = append(planned, operatorv1alpha1.PlannedMigration{
+				Version: version, VersionKey: key, Checksum: checksum, TransactionMode: "file",
+			})
+		}
+		return planned
+	}
+	tests := []struct {
+		name    string
+		planned []operatorv1alpha1.PlannedMigration
+		fits    bool
+	}{
+		{
+			name:    "the longest sequence of ordinary migrations",
+			planned: sequence("20260925120000", "sha256:"+strings.Repeat("a", 64)),
+			fits:    true,
+		},
+		{
+			name:    "the longest sequence with the widest fields the API admits",
+			planned: sequence(strings.Repeat("\u00e9", 128), strings.Repeat("\u00e9", 128)),
+			fits:    false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			encoded, err := EncodeMigrationSequence(test.planned)
+			if test.fits {
+				if err != nil || len(encoded) > MaxEncodedMigrationSequence {
+					t.Fatalf("EncodeMigrationSequence() = %d bytes, %v; want it to fit", len(encoded), err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "over the") {
+				t.Fatalf("EncodeMigrationSequence() error = %v, want the size refusal", err)
+			}
+		})
 	}
 }

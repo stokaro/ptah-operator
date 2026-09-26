@@ -187,7 +187,7 @@ func (c *coverage) markdown() string {
 		"`phases` and nowhere else.\n\n",
 		len(c.minors), len(c.cells)/len(c.minors), len(c.cells))
 	fmt.Fprintf(&out, "Ptah build under test: %s (`%s`), runner protocol %d.\n\n",
-		c.ptah.PtahRelease, c.ptah.PtahCommit, c.ptah.RunnerProtocolVersion)
+		c.ptah.name(), c.ptah.PtahCommit, c.ptah.RunnerProtocolVersion)
 	out.WriteString("| Kubernetes minor | Suite | Phase | Engine | Families | Scenarios | Prepared by | CI job (evidence) |\n")
 	out.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, cell := range c.cells {

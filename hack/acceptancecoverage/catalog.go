@@ -53,7 +53,17 @@ type kubernetesCatalog struct {
 type ptahVerification struct {
 	PtahRelease           string `json:"ptahRelease"`
 	PtahCommit            string `json:"ptahCommit"`
+	PtahDescribe          string `json:"ptahDescribe"`
 	RunnerProtocolVersion int    `json:"runnerProtocolVersion"`
+}
+
+// name is what a reader calls the build: its release, or, for a pin to a commit
+// between releases, what git describe reported for it.
+func (v ptahVerification) name() string {
+	if v.PtahRelease != "" {
+		return v.PtahRelease
+	}
+	return v.PtahDescribe
 }
 
 type ptahRelease struct {

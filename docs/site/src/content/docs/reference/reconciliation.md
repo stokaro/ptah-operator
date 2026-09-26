@@ -134,6 +134,13 @@ replaying a non-idempotent statement is exactly the damage the refusal exists to
 prevent. Every other outcome is confirmed by reading the history back in
 `VerifyingHistory`.
 
+An `Apply` runs the approved sequence and nothing else. The Job carries the
+sequence, and Ptah compares it with its own selection under the migration lock,
+the moment every earlier check is behind it. Any difference refuses the run
+before it changes anything, which reads as `Failed` with nothing applied: a
+history restored backwards after the approval is caught there rather than
+executed.
+
 Adoption of an existing schema is deliberately not an operator feature: an
 empty revision table reads as everything pending, and the answer is Ptah's own
 `migrations baseline`, run by a person against a shadow database. The operator

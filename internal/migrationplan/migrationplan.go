@@ -205,6 +205,12 @@ func Sequence(report dataplane.MigrationStatusReport) ([]operatorv1alpha1.Planne
 	if len(planned) > MaxMigrations {
 		return nil, fmt.Errorf("the pending sequence is %d migrations, over the %d a plan may carry", len(planned), MaxMigrations)
 	}
+	// The Apply Job carries the sequence to the runner, which hands it to
+	// Ptah. A sequence it cannot carry is refused here, before anyone is asked
+	// to approve a plan that no Job could execute.
+	if _, err := workload.EncodeMigrationSequence(planned); err != nil {
+		return nil, err
+	}
 	return planned, nil
 }
 

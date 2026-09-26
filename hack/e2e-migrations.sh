@@ -336,6 +336,13 @@ select_engine() {
 	LATE_MIGRATION="e2e-late-dispatch-${ENGINE}"
 	LATE_COORDINATION_KEY="e2e/late-dispatch/${ENGINE}"
 	LATE_DB_URL_FILE="$WORK_DIR/${ENGINE}-late-dispatch-db-url"
+	RESTORE_DATABASE=ptah_e2e_restore
+	RESTORE_DB_SECRET="e2e-${ENGINE}-restore-db"
+	RESTORE_MIGRATION="e2e-restore-${ENGINE}"
+	RESTORE_COORDINATION_KEY="e2e/restore/${ENGINE}"
+	RESTORE_DB_URL_FILE="$WORK_DIR/${ENGINE}-restore-db-url"
+	RESTORE_OLDER_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-restore-older:stable"
+	RESTORE_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-restore:stable"
 	DELETION_DATABASE=ptah_e2e_deletion
 	DELETION_DB_SECRET="e2e-${ENGINE}-deletion-db"
 	DELETION_MIGRATION="e2e-deletion-${ENGINE}"
@@ -561,20 +568,21 @@ migration_statement() {
 # catalog rather than of the migration that was supposed to add it. The two
 # engines spell the current database differently in information_schema, and
 # MySQL's spans the whole server, so an unfiltered count there would answer for
-# another phase's database.
+# another phase's database. The second argument names a database other than the
+# phase's own.
 migration_widget_column_count() {
 	case "$ENGINE" in
 	postgresql)
 		migration_query "SELECT count(*) FROM information_schema.columns
                      WHERE table_schema = current_schema()
                        AND table_name = 'e2e_migration_widgets'
-                       AND column_name = '$1'"
+                       AND column_name = '$1'" "${2:-}"
 		;;
 	mysql)
 		migration_query "SELECT count(*) FROM information_schema.columns
                      WHERE table_schema = database()
                        AND table_name = 'e2e_migration_widgets'
-                       AND column_name = '$1'"
+                       AND column_name = '$1'" "${2:-}"
 		;;
 	esac
 }
@@ -3184,6 +3192,312 @@ run_late_dispatch_proof() {
 		"$ENGINE_KIND" >&2
 }
 
+# A history restored backwards between the approval and the run.
+#
+# The operator checks a plan's history against the last reading before it
+# dispatches, and that reading is another session at another moment. What
+# decides is the selection Ptah makes under the migration lock, which the runner
+# holds to the approved sequence with `migrations up --expect-sequence`.
+#
+# The resource applies the two-migration artifact, then moves to the
+# three-migration one, whose plan approves [3] alone. The apply gate holds the
+# Apply Pod while the database is restored to version 1: migration 2's column
+# dropped and its revision row deleted, which is what restoring an older backup
+# does. Released, the run selects [2 3] under the lock, and the row asserts that
+# it ran none of it, that the resource says so by name, and that the next plan
+# asks for [2 3] rather than running it.
+create_restore_database() {
+	create_database "$RESTORE_DATABASE"
+	database_url "$RESTORE_DATABASE" >"$RESTORE_DB_URL_FILE"
+	chmod 600 "$RESTORE_DB_URL_FILE"
+	{
+		cat "$RESTORE_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RESTORE_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$RESTORE_DATABASE" \
+		--rawfile url "$RESTORE_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# Always, on the two-migration artifact, so the database reaches version 2 with
+# nothing to approve. The gate's selector is there from the start, and the gate
+# is open, because the selector reaches every operation Job of the resource.
+create_restore_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RESTORE_MIGRATION" \
+		--arg secret "$RESTORE_DB_SECRET" \
+		--arg reference "$RESTORE_OLDER_REFERENCE" \
+		--arg coordinationKey "$RESTORE_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg gate "$APPLY_GATE_LABEL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "1h",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s",
+          nodeSelector: ($gate | {(.): "open"})
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+	rm -f "$RESOURCE_FILE"
+}
+
+restore_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$RESTORE_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$RESTORE_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$RESTORE_MIGRATION status"
+}
+
+# What the resource was doing when a wait ran out.
+report_restore_state() {
+	printf 'e2e migrations: %s state when the wait ended:\n' "$RESTORE_MIGRATION" >&2
+	jq -r '
+      .status as $s |
+      "  phase=\($s.phase // "<none>") plan=\(($s.plan // {}).name // "<none>")",
+      "  activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.jobName // "<none>")")",
+      "  lastRun=\(($s.lastRun // {}) | "\(.outcome // "<none>") \(.message // "")")",
+      (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason) message=\(.message[0:160])")
+    ' "$STATUS_FILE" >&2 2>/dev/null || true
+	k get nodes -l "$APPLY_GATE_LABEL" -o name 2>/dev/null | sed 's/^/  gate open on /' >&2 || true
+}
+
+# The migrations a published plan approves, in order, as "2 3".
+restore_plan_versions() {
+	k -n "$TEST_NAMESPACE" get ptahmigrationplan "$1" -o json |
+		jq -r '[.spec.migrations[].version | tostring] | join(" ")'
+}
+
+# Waits until the resource asks for a decision on a plan other than the one
+# named in the argument, and leaves it in RESTORE_PLAN. The condition is what is
+# asserted: the phase moves on every read the resource makes while it waits.
+wait_for_restore_plan() {
+	restore_plan_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$restore_plan_deadline" ]; do
+		restore_status
+		if jq -e --arg previous "${1:-}" '
+          ((.status.plan.name // "") | length) > 0 and
+          .status.plan.name != $previous and
+          any(.status.conditions[]?;
+            .type == "ApprovalRequired" and .status == "True" and .reason == "AwaitingApproval")
+        ' "$STATUS_FILE" >/dev/null; then
+			RESTORE_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 5
+	done
+	report_restore_state
+	fail "$RESTORE_MIGRATION did not ask for a decision on a new plan within ${TIMEOUT_SECONDS}s"
+}
+
+approve_restore_plan() {
+	restore_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$RESTORE_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	restore_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$RESTORE_PLAN" \
+		-o jsonpath='{.metadata.uid}')
+	restore_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$RESTORE_PLAN" \
+		-o jsonpath='{.spec.fingerprint}')
+	[ -n "$restore_migration_uid" ] && [ -n "$restore_plan_uid" ] && [ -n "$restore_plan_fingerprint" ] ||
+		fail "$RESTORE_MIGRATION or its plan $RESTORE_PLAN carries no identity to approve"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "${RESTORE_MIGRATION}-approval" \
+		--arg migration "$RESTORE_MIGRATION" \
+		--arg migrationUID "$restore_migration_uid" \
+		--arg plan "$RESTORE_PLAN" \
+		--arg planUID "$restore_plan_uid" \
+		--arg fingerprint "$restore_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the $ENGINE restore approval could not be created"
+	rm -f "$RESOURCE_FILE"
+}
+
+# Every revision row the database holds, as "1,2". The value helper strips
+# whitespace, which would run the rows together, so the engine joins them. The
+# state is not filtered: a row a refused run left behind in any state is a row
+# it wrote.
+restore_revisions() {
+	case "$ENGINE" in
+	postgresql)
+		restore_revision_query="SELECT COALESCE(string_agg(version::text, ',' ORDER BY version), '') FROM schema_migrations"
+		;;
+	mysql)
+		restore_revision_query="SELECT COALESCE(GROUP_CONCAT(version ORDER BY version SEPARATOR ','), '') FROM schema_migrations"
+		;;
+	esac
+	migration_query "$restore_revision_query" "$RESTORE_DATABASE"
+}
+
+# The approved run is claimed and its Pod is held off every node.
+wait_for_restore_apply_held() {
+	restore_claim_deadline=$(deadline_from_now)
+	RESTORE_APPLY_JOB=
+	while [ "$(date +%s)" -lt "$restore_claim_deadline" ]; do
+		restore_status
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			RESTORE_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
+			RESTORE_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			break
+		fi
+		sleep 1
+	done
+	[ -n "$RESTORE_APPLY_JOB" ] || {
+		report_restore_state
+		fail "$RESTORE_MIGRATION did not claim the approved Apply within ${TIMEOUT_SECONDS}s"
+	}
+	restore_gated_deadline=$(deadline_from_now)
+	while :; do
+		k -n "$TEST_NAMESPACE" get pods -l "job-name=${RESTORE_APPLY_JOB}" -o json \
+			>"$WORK_DIR/restore-pods.json" ||
+			fail "the $ENGINE Apply Pods could not be read while the gate was closed"
+		if jq -e --arg gate "$APPLY_GATE_LABEL" -f "$ROOT_DIR/testdata/e2e/gated-apply-pod.jq" \
+			"$WORK_DIR/restore-pods.json" >/dev/null; then
+			return 0
+		fi
+		[ "$(date +%s)" -lt "$restore_gated_deadline" ] || {
+			report_restore_state
+			fail "the $ENGINE Apply never produced a Pod held off every node, so the restore could race the run"
+		}
+		sleep 2
+	done
+}
+
+# The restore: the database goes back to version 1, objects and revision row
+# both, while the approved run is held.
+restore_database_to_version_one() {
+	printf 'e2e migrations: restoring the %s database to version 1 under a held Apply\n' \
+		"$ENGINE_KIND" >&2
+	migration_statement "ALTER TABLE e2e_migration_widgets DROP COLUMN color" "$RESTORE_DATABASE" ||
+		fail "migration 2's column could not be dropped"
+	migration_statement "DELETE FROM schema_migrations WHERE version = 2" "$RESTORE_DATABASE" ||
+		fail "migration 2's revision row could not be deleted"
+	[ "$(restore_revisions)" = "1" ] ||
+		fail "the restore left the $ENGINE database recording [$(restore_revisions)], and this row needs [1]"
+}
+
+# The refusal is read from the run the approval claimed, by its Job UID, and by
+# the message that names both lists: a first migration failing also reads as
+# Failed with nothing applied, and only the refusal selected something else.
+wait_for_restore_refusal() {
+	restore_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$restore_deadline" ]; do
+		restore_status
+		if jq -e --arg uid "$RESTORE_APPLY_JOB_UID" '
+          .status.lastRun.jobUID == $uid and .status.lastRun.outcome == "Failed" and
+          (.status.lastRun.message | startswith(
+            "Ptah selected [2 3] under the migration lock and the plan approved [3], so it ran nothing"))
+        ' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	report_restore_state
+	fail "$RESTORE_MIGRATION never recorded that its approved [3] was refused for a selection of [2 3]"
+}
+
+run_restored_history_proof() {
+	create_restore_database
+	publish_migrations "restore-older" "$MIGRATION_OLDER_FIXTURE_DIR" "$RESTORE_OLDER_REFERENCE"
+	publish_migrations "restore" "$MIGRATION_FIXTURE_DIR" "$RESTORE_REFERENCE"
+	open_apply_gate
+	create_restore_migration_resource
+
+	# Version 2, applied by the operator itself.
+	restore_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$restore_deadline" ]; do
+		restore_status
+		if jq -e '.status.phase == "InSync" and .status.lastRun.outcome == "Applied"' \
+			"$STATUS_FILE" >/dev/null; then
+			break
+		fi
+		sleep 5
+	done
+	[ "$(restore_revisions)" = "1,2" ] || {
+		report_restore_state
+		fail "$RESTORE_MIGRATION did not bring its database to version 2; it records [$(restore_revisions)]"
+	}
+
+	# The three-migration artifact, and a decision to make. The plan approves
+	# exactly [3]: the history it was computed against holds 1 and 2.
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$RESTORE_MIGRATION" --type merge -p "$(jq -cn \
+		--arg reference "$RESTORE_REFERENCE" \
+		'{spec: {artifact: {ociRef: $reference}, policy: {apply: "OnApproval"}}}')" >/dev/null ||
+		fail "$RESTORE_MIGRATION could not be moved to the three-migration artifact"
+	wait_for_restore_plan
+	restore_approved_plan=$RESTORE_PLAN
+	[ "$(restore_plan_versions "$restore_approved_plan")" = "3" ] ||
+		fail "the plan $RESTORE_MIGRATION published approves [$(restore_plan_versions "$restore_approved_plan")], and this row needs [3]"
+
+	printf 'e2e migrations: closing the gate before approving the %s plan for [3]\n' "$ENGINE_KIND" >&2
+	close_apply_gate
+	approve_restore_plan
+	wait_for_restore_apply_held
+	restore_database_to_version_one
+	open_apply_gate
+	wait_for_restore_refusal
+
+	# Nothing of [2 3] ran: the database is exactly where the restore left it.
+	[ "$(restore_revisions)" = "1" ] ||
+		fail "after the refused run the $ENGINE database records [$(restore_revisions)]; the selection ran"
+	[ "$(migration_widget_column_count color "$RESTORE_DATABASE")" = "0" ] ||
+		fail "after the refused run the $ENGINE database has migration 2's column again; the selection ran"
+
+	# And the resource asks again, for what the history now needs.
+	wait_for_restore_plan "$restore_approved_plan"
+	[ "$(restore_plan_versions "$RESTORE_PLAN")" = "2 3" ] ||
+		fail "after the restore $RESTORE_MIGRATION asks to approve [$(restore_plan_versions "$RESTORE_PLAN")], and the history needs [2 3]"
+	close_apply_gate
+	printf 'e2e migrations: PASS %s refused an approved [3] that a restored history turned into [2 3]\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_uncertain_apply_proof() {
 	create_uncertain_database
 	publish_migrations "uncertain" "$UNCERTAIN_FIXTURE_DIR" "$UNCERTAIN_REFERENCE"
@@ -4554,6 +4868,7 @@ run_engine_migrations() {
 	run_checkpoint_bootstrap_proof
 	run_uncertain_apply_proof
 	run_late_dispatch_proof
+	run_restored_history_proof
 	run_deletion_during_apply_proof
 	run_retry_interval_proof
 	run_unknown_layer_proof

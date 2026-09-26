@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -219,21 +221,14 @@ func (r *MigrationReconciler) findMigrationApproval(
 // which it may not dispatch, and the instant after which it may not still be
 // running -- is decided here and persisted before the Job exists.
 //
-// The run itself is `ptah migrations up`, which applies everything the artifact
-// has and the database does not; there is no target-version flag to bound it to
-// the planned sequence. The artifact is digest-pinned, so the migrations that
-// could run are drawn from exactly the file set the plan enumerated, and a
-// history that only advanced can have removed some of them -- that case applies
-// a subset of the plan and the history read afterwards says which.
-//
-// A history that went backwards is the case this does not cover. Restore the
-// database to an earlier version between the plan and the run and `migrations
-// up` selects the versions that became pending again, which is a superset of
-// what was approved. The claim's bindings travel to the runner and the runner
-// refuses a child that names no approved sequence at all, but bounding the run
-// to that sequence needs an executor that accepts one. Until then the plan's
-// premise is checked against the history this controller last read, not
-// against the history under the lock the mutation takes.
+// The run itself is `ptah migrations up --expect-sequence`. The claim's plan
+// travels to the runner, which hands Ptah the approved sequence, and Ptah
+// compares it with what it selects under the migration lock the mutation takes.
+// A history that moved after the approval, forwards or backwards, selects
+// something else, and Ptah refuses before it changes anything: the run reads as
+// Failed with nothing applied, and the history read that follows every failed
+// run decides what comes next. What this controller checks here is the history
+// it last read; the check that decides is the one under the lock.
 func (r *MigrationReconciler) claimMigrationApply(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -396,6 +391,9 @@ func (r *MigrationReconciler) consumeMigrationRun(
 		outcome = migrationRunOutcome(report.Outcome)
 		applied = boundedVersions(report.Applied, 256)
 		message = migrationRunMessage(*report)
+		if refusal, refused := r.sequenceRefusal(ctx, migration, operation, *report); refused {
+			message = refusal
+		}
 	}
 	finishedAt := metav1.NewTime(r.now())
 	before := migration.DeepCopy()
@@ -445,6 +443,57 @@ func (r *MigrationReconciler) consumeMigrationRun(
 	r.observeMigrationRun(operation, outcome)
 	r.settleOwedMigrationRelease(ctx, migration)
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// sequenceRefusal names the selection Ptah refused to run.
+//
+// The runner hands Ptah the approved sequence, and Ptah refuses the run before
+// it changes anything when what it selects under the migration lock is not that
+// sequence. That reads as a failed run that applied nothing, which is also what
+// a first migration failing looks like; what tells them apart is that only the
+// refusal selected something other than the plan. The plan is read for its
+// list, and when it cannot be read the run keeps the general message rather
+// than a guess.
+func (r *MigrationReconciler) sequenceRefusal(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	report dataplane.MigrationRunReport,
+) (string, bool) {
+	if report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 ||
+		operation == nil || operation.PlanRef == nil {
+		return "", false
+	}
+	plan := &operatorv1alpha1.PtahMigrationPlan{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.PlanRef.Name}
+	if err := r.directReader().Get(ctx, key, plan); err != nil || plan.UID != operation.PlanRef.UID {
+		return "", false
+	}
+	approved := make([]int64, 0, len(plan.Spec.Migrations))
+	for _, planned := range plan.Spec.Migrations {
+		approved = append(approved, planned.Version)
+	}
+	if slices.Equal(approved, report.Planned) {
+		return "", false
+	}
+	return fmt.Sprintf("Ptah selected %s under the migration lock and the plan approved %s, so it ran nothing: "+
+		"the history moved after the approval", versionList(report.Planned), versionList(approved)), true
+}
+
+// versionList spells a list of versions for a status message, naming the
+// first few and counting the rest so the message keeps its point within its
+// bound.
+func versionList(versions []int64) string {
+	const shown = 8
+	parts := make([]string, 0, shown+1)
+	for index, version := range versions {
+		if index == shown {
+			parts = append(parts, fmt.Sprintf("and %d more", len(versions)-shown))
+			break
+		}
+		parts = append(parts, strconv.FormatInt(version, 10))
+	}
+	return "[" + strings.Join(parts, " ") + "]"
 }
 
 // observeMigrationRun reports what the Apply did.
