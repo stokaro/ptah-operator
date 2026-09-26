@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The capacity page states what a resource costs before anything is measured.
@@ -151,6 +153,49 @@ func TestTheCapacityPageClaimsNoMeasurement(t *testing.T) {
 	} {
 		if regexp.MustCompile(`(?i)` + regexp.QuoteMeta(forbidden)).MatchString(page) {
 			t.Errorf("the page says %q, which is a capacity claim nothing here measured", forbidden)
+		}
+	}
+}
+
+// A published reading is of the workload the repository declares, or it is a
+// figure about something nobody can reproduce from this tree.
+func TestTheCapacityReadingIsOfTheDeclaredWorkload(t *testing.T) {
+	t.Parallel()
+	page := string(readRepositoryFile(t, capacityPage))
+	link := regexp.MustCompile(`support/capacity/readings/[a-z0-9-]+\.json`).FindString(page)
+	if link == "" {
+		t.Fatal("the capacity page names no reading under support/capacity/readings")
+	}
+	var declared, reading struct {
+		Workload map[string]any `json:"workload"`
+	}
+	if err := json.Unmarshal(readRepositoryFile(t, "support/capacity/workload.json"), &declared.Workload); err != nil {
+		t.Fatalf("read the declared workload: %v", err)
+	}
+	if err := json.Unmarshal(readRepositoryFile(t, link), &reading); err != nil {
+		t.Fatalf("read %s: %v", link, err)
+	}
+	if len(declared.Workload) == 0 || len(reading.Workload) == 0 {
+		t.Fatalf("a workload is empty: declared %v, reading %v", declared.Workload, reading.Workload)
+	}
+	for key, want := range declared.Workload {
+		got, present := reading.Workload[key]
+		if !present {
+			t.Errorf("%s carries no %q, which the declared workload sets", link, key)
+			continue
+		}
+		// The tool writes durations back in Go's own spelling, 2m0s for 2m.
+		if wantText, isText := want.(string); isText {
+			if wantDuration, err := time.ParseDuration(wantText); err == nil {
+				gotDuration, err := time.ParseDuration(fmt.Sprint(got))
+				if err != nil || gotDuration != wantDuration {
+					t.Errorf("%s measured %s = %v, and the declared workload says %v", link, key, got, want)
+				}
+				continue
+			}
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s measured %s = %v, and the declared workload says %v", link, key, got, want)
 		}
 	}
 }
