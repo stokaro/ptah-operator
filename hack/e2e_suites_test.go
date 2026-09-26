@@ -39,6 +39,9 @@ func TestTheAcceptanceSuitesCoverEveryPhaseTheDriverRuns(t *testing.T) {
 	if len(catalog.Suites) < 2 {
 		t.Fatalf("the catalog holds %d suites, which is not a partition", len(catalog.Suites))
 	}
+	if err := verifyE2ESuiteIsolationWorker(catalog); err != nil {
+		t.Fatalf("the suites do not match the phases that isolate a node: %v", err)
+	}
 }
 
 // writeSuiteCatalog writes a catalog with one thing changed, which is how a
@@ -104,6 +107,15 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			new: `"phases": ["migrations-mysql", "reference-data-mysql"],
       "prepare": ["migrations-mysql"]`,
 			wantError: `both runs and prepares with phase "migrations-mysql"`,
+		},
+		"an isolation worker that is not a yes or a no": {
+			old: `"alerting"],
+      "prepare": ["dataplane"],
+      "isolationWorker": true`,
+			new: `"alerting"],
+      "prepare": ["dataplane"],
+      "isolationWorker": "yes"`,
+			wantError: `isolationWorker`,
 		},
 		"an unknown field": {
 			old:       `"summary": "The versioned migration rows and the declared reference data, on MySQL",`,
@@ -208,5 +220,57 @@ func TestTheAcceptanceMatrixIsEveryMinorAgainstEverySuite(t *testing.T) {
 	// pair it validates out of the plain matrix.
 	if entries[len(entries)-1].Minor != "1.37" {
 		t.Fatalf("the matrix ends on minor %s", entries[len(entries)-1].Minor)
+	}
+}
+
+// A suite's cluster carries the isolation worker exactly when the suite runs a
+// phase that cuts it off. The phases that do are the ones whose environment
+// contract says so, and the contract is held to the script that does it.
+func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		old       string
+		new       string
+		wantError string
+	}{
+		"a suite that isolates a node on a cluster without one": {
+			old: `"phases": ["migrations-mysql", "reference-data-mysql"],
+      "prepare": ["dataplane"],
+      "isolationWorker": true`,
+			new: `"phases": ["migrations-mysql", "reference-data-mysql"],
+      "prepare": ["dataplane"]`,
+			wantError: `suite "migrations-mysql" runs migrations-mysql, which isolates a node, and does not declare isolationWorker`,
+		},
+		"a suite that pays for a node nothing isolates": {
+			old: `"phases": ["cert-rotation"],
+      "prepare": ["assert"]`,
+			new: `"phases": ["cert-rotation"],
+      "prepare": ["assert"],
+      "isolationWorker": true`,
+			wantError: `suite "certificates" declares isolationWorker and runs no phase that isolates a node`,
+		},
+		// Preparation runs the phase in full wherever it has no preparation
+		// mode, so a suite that prepares with a phase that isolates a node
+		// needs the node as much as the suite that covers it.
+		"a suite that prepares with a phase that isolates a node": {
+			old: `"phases": ["cert-rotation"],
+      "prepare": ["assert"]`,
+			new: `"phases": ["cert-rotation"],
+      "prepare": ["assert", "migrations-postgresql"]`,
+			wantError: `suite "certificates" runs migrations-postgresql, which isolates a node, and does not declare isolationWorker`,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			catalog, err := loadE2ESuites(writeSuiteCatalog(t, test.old, test.new))
+			if err != nil {
+				t.Fatalf("load the mutated catalog: %v", err)
+			}
+			err = verifyE2ESuiteIsolationWorker(catalog)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2ESuiteIsolationWorker() error = %v, want substring %q", err, test.wantError)
+			}
+		})
 	}
 }

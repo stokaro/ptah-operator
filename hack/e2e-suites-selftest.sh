@@ -97,6 +97,62 @@ for driver_phase in $driver_phases; do
 	esac
 done
 
+# Whether a run's cluster carries the isolation worker, decided by the driver's
+# own function against the real catalog: exactly the suites that declare it,
+# every phase in one cluster whenever any suite does, and never a bootstrap that
+# stops before its phases. A catalog where no suite declares it is the refusal
+# the "all" branch has to be able to give.
+ISOLATION_FUNCTIONS_FILE=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-suites-isolation.XXXXXX")
+NO_ISOLATION_CATALOG=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-suites-catalog.XXXXXX")
+SUITE_NAMES_FILE=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-suites-names.XXXXXX")
+trap 'rm -f -- "$FUNCTIONS_FILE" "$ISOLATION_FUNCTIONS_FILE" "$NO_ISOLATION_CATALOG" "$SUITE_NAMES_FILE"' EXIT
+awk '
+	/^suite_isolation_worker\(\) \{$/ { capture = 1 }
+	capture { print }
+	capture && /^\}$/ { exit }
+' "$ROOT_DIR/hack/e2e-kind.sh" >"$ISOLATION_FUNCTIONS_FILE"
+grep -q '^suite_isolation_worker() {' "$ISOLATION_FUNCTIONS_FILE" ||
+	fail "the extraction from hack/e2e-kind.sh does not carry suite_isolation_worker"
+jq '.suites |= map(del(.isolationWorker))' "$CATALOG" >"$NO_ISOLATION_CATALOG"
+
+# shellcheck disable=SC2034 # Read by the function this sources.
+isolation_worker() {
+	(
+		E2E_SUITE=$1
+		E2E_STOP_AFTER=$2
+		SUITE_CATALOG=$3
+		# shellcheck source=/dev/null
+		. "$ISOLATION_FUNCTIONS_FILE"
+		suite_isolation_worker
+	)
+}
+
+# Redirected rather than piped, so a fail inside the loop ends this shell.
+isolation_declarations=0
+printf '%s\n' "$catalog_suites" >"$SUITE_NAMES_FILE"
+while IFS= read -r suite_name; do
+	[ -n "$suite_name" ] || continue
+	declared=$(jq -r --arg suite "$suite_name" \
+		'.suites[] | select(.name == $suite) | .isolationWorker == true' "$CATALOG")
+	[ "$declared" = false ] || isolation_declarations=$((isolation_declarations + 1))
+	[ "$(isolation_worker "$suite_name" '' "$CATALOG")" = "$declared" ] ||
+		fail "suite $suite_name declares isolationWorker $declared, and the driver does not give its cluster that"
+	[ "$(isolation_worker "$suite_name" bootstrap "$CATALOG")" = false ] ||
+		fail "a bootstrap of suite $suite_name that runs no phase gets the isolation worker"
+done <"$SUITE_NAMES_FILE"
+# Held to a declaration the catalog actually makes, or every comparison above
+# compared false with false.
+[ "$isolation_declarations" -gt 0 ] ||
+	fail "no suite in the catalog declares the isolation worker, so nothing above measured a cluster that has one"
+[ "$(isolation_worker all '' "$CATALOG")" = true ] ||
+	fail "running every phase in one cluster does not get the isolation worker a suite declares"
+[ "$(isolation_worker all bootstrap "$CATALOG")" = false ] ||
+	fail "a bootstrap of every phase that runs none of them gets the isolation worker"
+[ "$(isolation_worker all '' "$NO_ISOLATION_CATALOG")" = false ] ||
+	fail "running every phase in one cluster gets the isolation worker where no suite declares it"
+[ "$(isolation_worker migrations-mysql '' "$NO_ISOLATION_CATALOG")" = false ] ||
+	fail "a suite gets the isolation worker the catalog no longer declares for it"
+
 # The data plane is the phase another suite prepares with, and preparation is a
 # mode of that phase rather than a copy of its setup.
 # shellcheck disable=SC2016 # Match the literal mode bindings in the harness.

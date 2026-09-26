@@ -759,8 +759,9 @@ func TestControlPlaneShapeFilterSeparatesUnreadyFromWrong(t *testing.T) {
 func TestVerifyKindHAConfig(t *testing.T) {
 	t.Parallel()
 
-	source := readE2ESource(t, repositoryE2EWiringFiles().kindConfig)
-	if err := verifyKindHAConfig(repositoryE2EWiringFiles().kindConfig); err != nil {
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.kindConfig)
+	if err := verifyKindHAConfig(files.kindConfig, files.kindIsolationWorker); err != nil {
 		t.Fatalf("verifyKindHAConfig() error = %v", err)
 	}
 	workerBlock := `  - role: worker
@@ -795,6 +796,14 @@ func TestVerifyKindHAConfig(t *testing.T) {
 			want:        "exact kubelet feature-gate patch",
 		},
 		{
+			// A label on the worker everything else runs on is a selector a
+			// Pod meant for the isolation worker could land on instead.
+			name:        "worker labelled",
+			old:         "  - role: worker\n",
+			replacement: "  - role: worker\n    labels:\n      operator.ptah.run/e2e-isolation: \"true\"\n",
+			want:        "only the isolation worker is labelled",
+		},
+		{
 			name:        "API server exposed",
 			old:         `  apiServerAddress: "127.0.0.1"`,
 			replacement: `  apiServerAddress: "0.0.0.0"`,
@@ -810,9 +819,211 @@ func TestVerifyKindHAConfig(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			path := writeMutatedE2ESource(t, "kind.yaml.tmpl", source, test.old, test.replacement)
-			err := verifyKindHAConfig(path)
+			err := verifyKindHAConfig(path, files.kindIsolationWorker)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("verifyKindHAConfig() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+// The isolation worker is audited the way the driver builds it: appended to the
+// template, as one more node. Each refusal is a worker that would take more
+// than the one Apply down with it, or let that Apply land somewhere else.
+func TestVerifyKindHAConfigRefusesAnIsolationWorkerThatIsNotIsolated(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	fragment := readE2ESource(t, files.kindIsolationWorker)
+	joinPatch := `      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: operator.ptah.run/e2e-isolation
+              value: "true"
+              effect: NoSchedule
+`
+	kubeletPatch := `      - |
+        kind: KubeletConfiguration
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        featureGates:
+          KubeletInUserNamespace: true
+`
+	for _, test := range []struct {
+		name        string
+		old         string
+		replacement string
+		want        string
+	}{
+		{
+			name:        "untainted, so the scheduler places anything on it",
+			old:         joinPatch,
+			replacement: "",
+			want:        "exactly the isolation taint",
+		},
+		{
+			name:        "a taint the scheduler may ignore",
+			old:         "              effect: NoSchedule\n",
+			replacement: "              effect: PreferNoSchedule\n",
+			want:        "exactly the isolation taint",
+		},
+		{
+			name:        "a taint that evicts what already runs there",
+			old:         "              effect: NoSchedule\n",
+			replacement: "              effect: NoExecute\n",
+			want:        "exactly the isolation taint",
+		},
+		{
+			name:        "unlabelled, so nothing can select it",
+			old:         "    labels:\n      operator.ptah.run/e2e-isolation: \"true\"\n",
+			replacement: "",
+			want:        "exactly the label",
+		},
+		{
+			name:        "labelled with another key",
+			old:         "      operator.ptah.run/e2e-isolation: \"true\"\n",
+			replacement: "      operator.ptah.run/e2e-isolated: \"true\"\n",
+			want:        "exactly the label",
+		},
+		{
+			name:        "a second label",
+			old:         "      operator.ptah.run/e2e-isolation: \"true\"\n",
+			replacement: "      operator.ptah.run/e2e-isolation: \"true\"\n      operator.ptah.run/e2e-apply-gate: open\n",
+			want:        "exactly the label",
+		},
+		{
+			name:        "promoted to a control plane",
+			old:         "  - role: worker\n",
+			replacement: "  - role: control-plane\n",
+			want:        "isolation worker's role",
+		},
+		{
+			name:        "kubelet contract omitted",
+			old:         kubeletPatch,
+			replacement: "",
+			want:        "kubelet feature-gate patch and exactly the isolation taint",
+		},
+		{
+			name:        "two nodes appended",
+			old:         fragment,
+			replacement: fragment + fragment,
+			want:        "want exactly five",
+		},
+		{
+			name:        "not a node of the list",
+			old:         "  - role: worker\n",
+			replacement: "nodes:\n  - role: worker\n",
+			want:        "decode",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeMutatedE2ESource(t, "kind-isolation-worker.yaml.tmpl", fragment, test.old, test.replacement)
+			err := verifyKindHAConfig(files.kindConfig, path)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("verifyKindHAConfig() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+// The node inventory filter in assert_kind_ha_topology, run as the driver runs
+// it. It is taken out of the audited contract rather than out of the driver,
+// so what passes here is the program the audit holds the driver to.
+func TestKindHATopologyFilterHoldsTheIsolationWorkerToItsSuite(t *testing.T) {
+	t.Parallel()
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const opening = "--arg key \"$ISOLATION_NODE_KEY\" '\n"
+	const closing = "\n    ' \"$NODE_READINESS_FILE\""
+	start := strings.Index(kindHATopologyContract, opening)
+	end := strings.Index(kindHATopologyContract, closing)
+	if start < 0 || end <= start {
+		t.Fatal("the node inventory filter could not be found in the kind HA topology contract")
+	}
+	filter := kindHATopologyContract[start+len(opening) : end]
+	key := strings.TrimPrefix(isolationNodeKeyDeclaration, "ISOLATION_NODE_KEY=")
+
+	type node struct {
+		name, label  string
+		controlPlane bool
+		taints       []map[string]string
+		ready        string
+	}
+	isolationTaint := []map[string]string{{"key": key, "value": "true", "effect": "NoSchedule"}}
+	inventory := func(nodes ...node) string {
+		items := make([]map[string]any, 0, len(nodes))
+		for _, n := range nodes {
+			labels := map[string]string{"kubernetes.io/hostname": "c-" + n.name}
+			if n.controlPlane {
+				labels["node-role.kubernetes.io/control-plane"] = ""
+			}
+			if n.label != "" {
+				labels[key] = n.label
+			}
+			item := map[string]any{
+				"metadata": map[string]any{"name": "c-" + n.name, "labels": labels},
+				"status":   map[string]any{"conditions": []map[string]string{{"type": "Ready", "status": n.ready}}},
+			}
+			if len(n.taints) > 0 {
+				item["spec"] = map[string]any{"taints": n.taints}
+			}
+			items = append(items, item)
+		}
+		encoded, err := json.Marshal(map[string]any{"items": items})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+	controlPlanes := []node{
+		{name: "control-plane", controlPlane: true, ready: "True"},
+		{name: "control-plane2", controlPlane: true, ready: "True"},
+		{name: "control-plane3", controlPlane: true, ready: "True"},
+	}
+	worker := node{name: "worker", ready: "True"}
+	isolated := node{name: "worker2", label: "true", taints: isolationTaint, ready: "True"}
+	with := func(nodes ...node) string {
+		return inventory(append(append([]node(nil), controlPlanes...), nodes...)...)
+	}
+
+	for _, test := range []struct {
+		name      string
+		isolation bool
+		nodes     string
+		accept    bool
+	}{
+		{name: "four nodes where no suite declared the worker", isolation: false, nodes: with(worker), accept: true},
+		{name: "five nodes where the suite declared it", isolation: true, nodes: with(worker, isolated), accept: true},
+		{name: "the worker missing where the suite declared it", isolation: true, nodes: with(worker)},
+		{name: "the worker present where no suite declared it", isolation: false, nodes: with(worker, isolated)},
+		{name: "the worker without its taint", isolation: true, nodes: with(worker, node{name: "worker2", label: "true", ready: "True"})},
+		{name: "the worker without its label", isolation: true, nodes: with(worker, node{name: "worker2", taints: isolationTaint, ready: "True"})},
+		{name: "a taint the scheduler may ignore", isolation: true, nodes: with(worker, node{name: "worker2", label: "true",
+			taints: []map[string]string{{"key": key, "value": "true", "effect": "PreferNoSchedule"}}, ready: "True"})},
+		{name: "the label on the worker everything runs on", isolation: true,
+			nodes: with(node{name: "worker", label: "true", ready: "True"}, isolated)},
+		{name: "the taint on the worker everything runs on", isolation: true,
+			nodes: with(node{name: "worker", taints: isolationTaint, ready: "True"}, isolated)},
+		{name: "the worker not ready", isolation: true, nodes: with(worker, node{name: "worker2", label: "true", taints: isolationTaint, ready: "False"})},
+		{name: "the worker under another name", isolation: true, nodes: with(worker, node{name: "worker3", label: "true", taints: isolationTaint, ready: "True"})},
+		{name: "the worker made a control plane", isolation: true,
+			nodes: with(worker, node{name: "worker2", label: "true", taints: isolationTaint, controlPlane: true, ready: "True"})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "nodes.json")
+			if err := os.WriteFile(path, []byte(test.nodes), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command(jqPath, "-e", "--arg", "cluster", "c",
+				"--argjson", "isolation", strconv.FormatBool(test.isolation),
+				"--arg", "key", key, filter, path)
+			output, err := command.CombinedOutput()
+			if accepted := err == nil; accepted != test.accept {
+				t.Fatalf("filter accepted = %v, want %v; output %s", accepted, test.accept, output)
 			}
 		})
 	}
@@ -2704,7 +2915,7 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "exact node-count readiness guard bypassed",
-			old:         `if ! jq -e '.items | length == 4' "$NODE_READINESS_FILE" >/dev/null; then`,
+			old:         `if ! jq -e --argjson count "$KIND_NODE_COUNT" '.items | length == $count' "$NODE_READINESS_FILE" >/dev/null; then`,
 			replacement: `if ! jq -e 'true' "$NODE_READINESS_FILE" >/dev/null; then`,
 			wantError:   "bounded hard node readiness wait",
 		},
@@ -2716,11 +2927,11 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name: "immediate readiness predicate accepts a partial cluster",
-			old: "\t  ((.items | length) == 4) and\n" +
+			old: "\t  ((.items | length) == $count) and\n" +
 				"\t  all(.items[];\n" +
 				"        any((.status.conditions // [])[];\n" +
 				`          .type == "Ready" and .status == "True"`,
-			replacement: "\t  ((.items | length) == 4) and\n" +
+			replacement: "\t  ((.items | length) == $count) and\n" +
 				"\t  all(.items[];\n" +
 				"        any((.status.conditions // [])[];\n" +
 				`          .status == "True"`,
@@ -2728,8 +2939,14 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "immediate readiness predicate accepts a partial topology",
-			old:         `((.items | length) == 4) and`,
+			old:         `((.items | length) == $count) and`,
 			replacement: `true and`,
+			wantError:   "immediate all-node readiness predicate",
+		},
+		{
+			name:        "immediate readiness predicate counts four nodes whatever the suite declared",
+			old:         `jq -e --argjson count "$KIND_NODE_COUNT" '` + "\n\t  ((.items | length) == $count) and",
+			replacement: `jq -e '` + "\n\t  ((.items | length) == 4) and",
 			wantError:   "immediate all-node readiness predicate",
 		},
 		{
@@ -2884,9 +3101,90 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "worker registry configuration omitted",
-			old:         "\t\t\"${CLUSTER_NAME}-worker\"; do",
-			replacement: "\t\t\"${CLUSTER_NAME}-control-plane3\"; do",
+			old:         "\t\t\"${CLUSTER_NAME}-worker\" \\\n\t\t\"${CLUSTER_NAME}-worker2\"; do",
+			replacement: "\t\t\"${CLUSTER_NAME}-worker2\"; do",
 			wantError:   "all-node registry hosts contract",
+		},
+		{
+			name:        "isolation worker registry configuration omitted",
+			old:         "\t\t\"${CLUSTER_NAME}-worker\" \\\n\t\t\"${CLUSTER_NAME}-worker2\"; do",
+			replacement: "\t\t\"${CLUSTER_NAME}-worker\"; do",
+			wantError:   "all-node registry hosts contract",
+		},
+		{
+			name:        "isolation worker registry configuration skipped where it exists",
+			old:         `if [ "$kind_node_container" = "${CLUSTER_NAME}-worker2" ] && [ "$ISOLATION_WORKER" != true ]; then`,
+			replacement: `if [ "$kind_node_container" = "${CLUSTER_NAME}-worker2" ]; then`,
+			wantError:   "all-node registry hosts contract",
+		},
+		{
+			name: "isolation worker left out of the kind inventory",
+			old: "\t\tif [ \"$ISOLATION_WORKER\" = true ]; then\n" +
+				"\t\t\tprintf '%s\\n' \"${CLUSTER_NAME}-worker2\"\n" +
+				"\t\tfi\n",
+			replacement: "",
+			wantError:   "kind HA topology contract",
+		},
+		{
+			name:        "isolation worker accepted where no suite declared it",
+			old:         `(if $isolation then [$cluster + "-worker2"] else [] end) as $isolated |`,
+			replacement: `[$cluster + "-worker2"] as $isolated |`,
+			wantError:   "kind HA topology contract",
+		},
+		{
+			name:        "isolation taint no longer required of the isolation worker",
+			old:         `$label == "true" and $taints == [{key: $key, value: "true", effect: "NoSchedule"}]`,
+			replacement: `$label == "true"`,
+			wantError:   "kind HA topology contract",
+		},
+		{
+			name:        "isolation key allowed on every other node",
+			old:         `$label == null and $taints == []`,
+			replacement: `true`,
+			wantError:   "kind HA topology contract",
+		},
+		{
+			name:        "isolation worker key renamed",
+			old:         "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation\n",
+			replacement: "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolated\n",
+			wantError:   "isolation worker key",
+		},
+		{
+			name:        "isolation worker declared for every suite",
+			old:         `'any(.suites[]; .name == $suite and .isolationWorker == true)' "$SUITE_CATALOG"`,
+			replacement: `'any(.suites[]; .isolationWorker == true)' "$SUITE_CATALOG"`,
+			wantError:   "isolation worker declared by the suite catalog",
+		},
+		{
+			name: "isolation worker given to a bootstrap that runs no phase",
+			old: "\tif [ \"$E2E_STOP_AFTER\" = bootstrap ]; then\n" +
+				"\t\tprintf '%s\\n' false\n" +
+				"\telif [ \"$E2E_SUITE\" = all ]; then\n",
+			replacement: "\tif [ \"$E2E_SUITE\" = all ]; then\n",
+			wantError:   "isolation worker declared by the suite catalog",
+		},
+		{
+			name:        "node count fixed at four",
+			old:         "\t\tKIND_NODE_COUNT=5\n",
+			replacement: "\t\tKIND_NODE_COUNT=4\n",
+			wantError:   "isolation worker declared by the suite catalog",
+		},
+		{
+			name: "isolation worker appended whatever the suite declared",
+			old: "if [ \"$ISOLATION_WORKER\" = true ]; then\n" +
+				"\tcat \"$ROOT_DIR/testdata/e2e/kind-isolation-worker.yaml.tmpl\" >>\"$KIND_CONFIG\"\n" +
+				"fi\n",
+			replacement: "cat \"$ROOT_DIR/testdata/e2e/kind-isolation-worker.yaml.tmpl\" >>\"$KIND_CONFIG\"\n",
+			wantError:   "isolation worker appended to the node list",
+		},
+		{
+			name: "isolation worker appended after the node list ended",
+			old: "if [ \"$ISOLATION_WORKER\" = true ]; then\n" +
+				"\tcat \"$ROOT_DIR/testdata/e2e/kind-isolation-worker.yaml.tmpl\" >>\"$KIND_CONFIG\"\n" +
+				"fi\n" +
+				"EXPECTED_API_SERVER_FEATURE_GATES=\n",
+			replacement: "EXPECTED_API_SERVER_FEATURE_GATES=\n",
+			wantError:   "isolation worker appended to the node list",
 		},
 		{
 			name:        "all-node registry configuration call omitted",
@@ -3311,8 +3609,8 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "migration lifecycle loses the controller identity",
-			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
 			wantError:   `migrations-postgresql phase must bind E2E_CONTROLLER_REVISION to "$CONTROLLER_REVISION", and binds nothing`,
 		},
 		{
@@ -6079,17 +6377,21 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 	files := repositoryE2EWiringFiles()
 	harness := readE2ESource(t, files.harness)
 	migrations := readE2ESource(t, files.migrations)
+	referenceData := readE2ESource(t, files.referenceData)
+	// Between the credentials and the engine, in every migration phase's call.
+	isolationBindings := "E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n"
 	tests := []struct {
-		name        string
-		script      bool
-		old         string
-		replacement string
-		wantError   string
+		name          string
+		script        bool
+		referenceData bool
+		old           string
+		replacement   string
+		wantError     string
 	}{
 		{
 			name:        "binding removed",
-			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
 			wantError:   `migrations-postgresql phase must bind E2E_REGISTRY_HOST_ADDRESS to "$REMOTE_REGISTRY", and binds nothing`,
 		},
 		{
@@ -6099,13 +6401,13 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_CONTROLLER_IMAGE=$PRODUCTION_OPERATOR_IMAGE \\\n" +
 				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
 				"E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
 			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds "$PRODUCTION_OPERATOR_IMAGE"`,
 		},
 		{
@@ -6118,17 +6420,17 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			old: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
 			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_STATE_VERSION to "$CONTROLLER_STATE_VERSION", and binds "1"`,
 		},
 		{
 			name:        "undeclared binding added",
-			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
-			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n" + "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n" + "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
 			wantError:   "migrations-postgresql phase binds E2E_MIGRATION_INTERVAL, which no environment contract declares",
 		},
 		{
@@ -6167,21 +6469,63 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			name: "bindings reordered",
 			old: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
-				"E2E_ENGINE=postgresql \\\n",
+				isolationBindings + "E2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
 				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\n" +
 				"E2E_ENGINE=postgresql \\\n",
 			wantError: "",
+		},
+		{
+			name:        "isolation worker container unbound",
+			old:         "E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=mysql \\\n",
+			replacement: "E2E_ENGINE=mysql \\\n",
+			wantError:   `migrations-mysql phase must bind E2E_KIND_CLUSTER_NAME to "$CLUSTER_NAME", and binds nothing`,
+		},
+		{
+			name: "isolation worker reached through another Docker daemon",
+			old: "E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n" +
+				"E2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_DOCKER_CONTEXT=$SELECTED_DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n" +
+				"E2E_ENGINE=postgresql \\\n",
+			wantError: `migrations-postgresql phase must bind E2E_DOCKER_CONTEXT to "$DOCKER_CONTEXT", and binds "$SELECTED_DOCKER_CONTEXT"`,
+		},
+		{
+			name:        "script stops reading the cluster it isolates a node of",
+			script:      true,
+			old:         "KIND_CLUSTER_NAME=${E2E_KIND_CLUSTER_NAME:-}\n",
+			replacement: "KIND_CLUSTER_NAME=kind\n",
+			wantError:   "migrations-postgresql phase binds E2E_KIND_CLUSTER_NAME, which hack/e2e-migrations.sh never reads",
+		},
+		{
+			// A phase that isolates a node, in a suite the audit no longer
+			// knows to give one: the declaration is what the suite check reads.
+			name:        "script stops declaring the isolation key",
+			script:      true,
+			old:         "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation\n",
+			replacement: "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolated\n",
+			wantError:   "the migrations-postgresql phase isolates a node, and hack/e2e-migrations.sh does not declare ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation",
+		},
+		{
+			name:          "another phase's script declares the isolation key",
+			referenceData: true,
+			old:           "PHASE_ENGINE=${E2E_ENGINE:-}\n",
+			replacement:   "PHASE_ENGINE=${E2E_ENGINE:-}\nISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation\n",
+			wantError:     "hack/e2e-reference-data.sh declares ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation, and the reference-data-postgresql phase is not one that isolates a node",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
-			if test.script {
+			switch {
+			case test.script:
 				mutatedFiles.migrations = writeMutatedE2ESource(
 					t, "e2e-migrations.sh", migrations, test.old, test.replacement)
-			} else {
+			case test.referenceData:
+				mutatedFiles.referenceData = writeMutatedE2ESource(
+					t, "e2e-reference-data.sh", referenceData, test.old, test.replacement)
+			default:
 				mutatedFiles.harness = writeMutatedE2ESource(
 					t, "e2e-kind.sh", harness, test.old, test.replacement)
 			}
@@ -6205,6 +6549,7 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		harness:                    filepath.Join("..", e2eHarnessPath),
 		supportImageResolver:       filepath.Join("..", e2eSupportImageResolverPath),
 		kindConfig:                 filepath.Join("..", e2eKindConfigPath),
+		kindIsolationWorker:        filepath.Join("..", e2eKindIsolationWorkerPath),
 		apiServerEndpointFilter:    filepath.Join("..", apiServerEndpointFilterPath),
 		staticChecks:               filepath.Join("..", e2eStaticPath),
 		dataPlane:                  filepath.Join("..", e2eDataPlanePath),

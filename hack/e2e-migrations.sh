@@ -35,6 +35,11 @@ REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}
 PHASE_ENGINE=${E2E_ENGINE:-}
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
+# The node container run_isolated_node_proof cuts off from the API server is
+# reached through the Docker daemon the cluster runs on, under the name kind
+# gives the second worker.
+NODE_DOCKER_CONTEXT=${E2E_DOCKER_CONTEXT:-}
+KIND_CLUSTER_NAME=${E2E_KIND_CLUSTER_NAME:-}
 
 # Imported variables retain their export attribute across reassignment in POSIX
 # shells. Clear every secret-bearing name before loading task values.
@@ -71,7 +76,7 @@ sha256() {
 	shasum -a 256 | awk '{print $1}'
 }
 
-for command_name in kubectl jq awk sed grep tr mktemp date go env base64; do
+for command_name in kubectl jq awk sed grep tr mktemp date go env base64 docker; do
 	require_command "$command_name"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -79,11 +84,14 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 fi
 for value_name in \
 	KUBECONFIG_FILE TEST_NAMESPACE EXECUTOR_IMAGE RUNNER_IMAGE \
-	CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION; do
+	CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION \
+	NODE_DOCKER_CONTEXT KIND_CLUSTER_NAME; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
+printf '%s\n' "$KIND_CLUSTER_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
+	fail "E2E_KIND_CLUSTER_NAME must be a DNS label, and names \"$KIND_CLUSTER_NAME\""
 for image in "$EXECUTOR_IMAGE" "$RUNNER_IMAGE" "$CONTROLLER_IMAGE"; do
 	is_pinned_image "$image" ||
 		fail "migration phase images must be pinned by a lowercase SHA-256 digest: $image"
@@ -143,10 +151,25 @@ EGRESS_POLICIES_APPLIED=0
 APPLY_GATE_LABEL=operator.ptah.run/e2e-apply-gate
 APPLY_GATE_OPEN=0
 
+# The node run_isolated_node_proof cuts off from the API server, and the key its
+# label and its taint share. hack/e2e-kind.sh defines the same key and gives
+# this phase's suites the node, and nothing but this resource's operation Pods
+# is scheduled on it. The rules carry a comment, so removing them finds exactly
+# these, and cleanup removes them however the phase ends: a node left cut off
+# reads NotReady to every phase after this one.
+ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation
+ISOLATED_NODE="${KIND_CLUSTER_NAME}-worker2"
+ISOLATION_RULE_COMMENT=ptah-e2e-isolated-node
+ISOLATION_RULES_APPLIED=0
+
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	if [ "${ISOLATION_RULES_APPLIED:-0}" -eq 1 ]; then
+		remove_isolation_rules >/dev/null 2>&1 || true
+		ISOLATION_RULES_APPLIED=0
+	fi
 	if [ "${EGRESS_POLICIES_APPLIED:-0}" -eq 1 ]; then
 		k -n "$TEST_NAMESPACE" delete networkpolicy -l operator.ptah.run/e2e-proof=egress \
 			--ignore-not-found >/dev/null 2>&1 || true
@@ -414,6 +437,11 @@ select_engine() {
 	RETARGET_COORDINATION_KEY="e2e/retarget/${ENGINE}"
 	RETARGET_DB_URL_FILE="$WORK_DIR/${ENGINE}-retarget-db-url"
 	RETARGET_OTHER_DB_URL_FILE="$WORK_DIR/${ENGINE}-retarget-other-db-url"
+	ISOLATED_DATABASE=ptah_e2e_isolated_node
+	ISOLATED_DB_SECRET="e2e-${ENGINE}-isolated-node-db"
+	ISOLATED_MIGRATION="e2e-isolated-node-${ENGINE}"
+	ISOLATED_COORDINATION_KEY="e2e/isolated-node/${ENGINE}"
+	ISOLATED_DB_URL_FILE="$WORK_DIR/${ENGINE}-isolated-node-db-url"
 	# The adoption row reads the artifact this engine already publishes. A
 	# second copy of the same three migrations would be a second thing to keep
 	# in step with the schema the proof builds out of them by hand.
@@ -4925,6 +4953,736 @@ wait_for_release_owed() {
 	fail "$RELEASE_FAULT_MIGRATION did not record its run and owe the refused release within ${TIMEOUT_SECONDS}s"
 }
 
+# A node cut off from the API server in the middle of an Apply.
+#
+# #242's PA-03 asks that a replacement never write while an earlier execution
+# can still write, and names what does not prove the earlier one stopped: a
+# missing Job, or an expired Lease. An isolated node is where that matters.
+# The API server loses the kubelet, so every signal a controller reads about
+# the run -- the Pod's phase, its log, its deletion -- stops, while the executor
+# on that node goes on reaching the database: a Pod's traffic is forwarded
+# through its node rather than sent by it.
+#
+# The node is the isolation worker, which runs nothing but what this row places
+# on it: every operation of this resource selects its label and tolerates its
+# taint. From inside the node container, the rules drop the node's own traffic
+# to the API server and the API server's traffic to the kubelet. The run then
+# commits its third migration while the node is cut off, and the database is
+# what shows it.
+#
+# The isolation is held past every clock that could tempt a replacement: the
+# node going Unknown, the Pod's toleration of the unreachable taint running
+# out, the Job's own deadline, and the term of the Lease the claim took. Each is
+# read from what Kubernetes and the resource persisted. The resource tolerates
+# the unreachable taint for thirty seconds rather than the cluster's default,
+# so the Pod is evicted while its Job is still alive -- the moment a Job would
+# start a second Pod if anything let it -- and the deadline comes after.
+#
+# What the controller does across the hold, read from the code:
+#
+#   - Kubernetes does not mark a Job Failed while one of its Pods is still
+#     terminating. At the deadline it writes the interim FailureTarget and
+#     deletes the Pod, and a Pod on an unreachable node stays terminating until
+#     its kubelet answers. jobTerminal (internal/controller/schema_controller.go)
+#     reads only Complete and Failed, so reconcileActiveMigration
+#     (internal/controller/migration_controller.go) renews the Lease through
+#     acquireMigrationApplyLock and requeues at its non-terminal check. Nothing
+#     reaches finishUncertainMigrationApply: the claim stands, no release is
+#     owed, and the Lease keeps the claim's holder and epoch.
+#   - The Job's podReplacementPolicy is Failed
+#     (internal/workload/migration_builder.go), so the Job controller counts the
+#     evicted Pod as terminating and starts no second one. The controller never
+#     creates a second Apply Job for a claim (mutationlifecycle.VerdictFor).
+#
+# And once the node rejoins:
+#
+#   - The kubelet reports the Pod finished and deletes it in the same status
+#     sync. The object goes at once, because the Job controller took its
+#     tracking finalizer off when the deadline passed, and the Job turns Failed
+#     only after that report. So migrationTerminalLogs finds no Pod and no
+#     result frame, and finishUncertainMigrationApply records the run Unknown
+#     against its Job. dispatchedApplyMayStillWrite
+#     (internal/controller/migration_apply.go) now sees a terminal Job and no
+#     Pod, and that is where the Lease is handed back.
+#   - The next reading of the same database finds nothing pending, and that
+#     reading removes the record (recordMigrationHistory), because the run did
+#     finish every migration it was given.
+run_isolated_node_proof() {
+	require_the_isolation_worker
+	create_isolated_database
+	create_isolated_migration_resource
+	wait_for_isolated_apply_claim
+	find_isolated_lease
+	wait_for_isolated_apply_pod
+	assert_only_the_apply_runs_on_the_isolated_node
+	wait_for_isolated_commit
+	isolate_the_node
+	hold_the_isolated_node
+	rejoin_the_isolated_node
+	assert_the_isolated_run_settles
+	k -n "$TEST_NAMESPACE" delete ptahmigration "$ISOLATED_MIGRATION" \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "$ISOLATED_MIGRATION was not removed"
+	printf 'e2e migrations: PASS %s held an Apply on an isolated node until nothing could write, and replayed nothing\n' \
+		"$ENGINE_KIND" >&2
+}
+
+# The node has to be the one hack/e2e-kind.sh provisions for this row: Ready,
+# carrying the isolation label, and tainted with nothing but the isolation
+# taint under that key. A suite that stopped declaring it would send the Apply
+# to a node that does not exist, and the row would wait out a Pod the scheduler
+# cannot place.
+require_the_isolation_worker() {
+	k get node "$ISOLATED_NODE" -o json >"$WORK_DIR/isolated-node.json" 2>/dev/null ||
+		fail "the isolation worker $ISOLATED_NODE is not in this cluster; the suite has to declare isolationWorker in support/e2e-suites.json"
+	jq -e --arg key "$ISOLATION_NODE_KEY" '
+      (.metadata.labels // {})[$key] == "true" and
+      [(.spec.taints // [])[] | select(.key == $key)] == [{key: $key, value: "true", effect: "NoSchedule"}] and
+      any(.status.conditions[]?; .type == "Ready" and .status == "True")
+    ' "$WORK_DIR/isolated-node.json" >/dev/null ||
+		fail "$ISOLATED_NODE is not the Ready, labelled and tainted isolation worker"
+	isolated_rules=$(isolation_rules) ||
+		fail "the rules on $ISOLATED_NODE could not be read through Docker context $NODE_DOCKER_CONTEXT"
+	[ "$isolated_rules" = 0 ] ||
+		fail "$ISOLATED_NODE already carries $isolated_rules isolation rules, so an earlier run left it cut off"
+}
+
+# How many rules marked as this row's the node carries, in any chain.
+isolation_rules() {
+	docker --context "$NODE_DOCKER_CONTEXT" exec "$ISOLATED_NODE" iptables -S \
+		>"$WORK_DIR/isolation-rules.txt" || return 1
+	grep -cF -- "$ISOLATION_RULE_COMMENT" "$WORK_DIR/isolation-rules.txt" || true
+}
+
+# Deleted until none is left, so a rule a failed run inserted twice goes too.
+remove_isolation_rules() {
+	while docker --context "$NODE_DOCKER_CONTEXT" exec "$ISOLATED_NODE" \
+		iptables -D OUTPUT -p tcp --dport 6443 \
+		-m comment --comment "$ISOLATION_RULE_COMMENT" -j DROP >/dev/null 2>&1; do
+		:
+	done
+	while docker --context "$NODE_DOCKER_CONTEXT" exec "$ISOLATED_NODE" \
+		iptables -D INPUT -p tcp --dport 10250 \
+		-m comment --comment "$ISOLATION_RULE_COMMENT" -j DROP >/dev/null 2>&1; do
+		:
+	done
+	[ "$(isolation_rules)" = 0 ]
+}
+
+isolated_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$ISOLATED_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$ISOLATED_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$ISOLATED_MIGRATION status"
+}
+
+# Everything that decides whether a replacement could run, from each side: the
+# claim, the Jobs and Pods the resource owns, the node the API server lost, the
+# realm Lease, and the rules this row put in. Fields are chosen, not dumped: a
+# Pod spec names Secrets, and a status carries no value but its own.
+report_isolated_state() {
+	printf 'e2e migrations: %s state when the check failed:\n' "$ISOLATED_MIGRATION" >&2
+	if k -n "$TEST_NAMESPACE" get ptahmigration "$ISOLATED_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null; then
+		jq -r '
+          .status as $s |
+          "  phase=\($s.phase // "<none>") finalizers=\(.metadata.finalizers // [] | join(","))",
+          "  activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.jobUID // "<none>")/\(.leaseEpoch // "<none>") continuityLost=\(.leaseContinuityLost // false)")",
+          "  pendingLockRelease=\(($s.pendingLockRelease // {}).leaseEpoch // "<none>")",
+          "  lastRun=\(($s.lastRun // {}) | "\(.outcome // "<none>")/\(.jobUID // "<none>") finishedAt=\(.finishedAt // "<none>")")",
+          "  unresolvedRun=\(($s.unresolvedRun // {}) | "\(.outcome // "<none>")/\(.jobUID // "<none>")")",
+          "  history=\(($s.history // {}) | "observedAt=\(.observedAt // "<none>") pending=\(.pendingCount // "<none>") applied=\(.appliedCount // "<none>")")",
+          (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason) message=\(.message[0:160])")
+        ' "$STATUS_FILE" >&2 2>/dev/null || true
+	else
+		printf '  the resource could not be read\n' >&2
+	fi
+	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/migration=${ISOLATED_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  job \(.metadata.name) uid=\(.metadata.uid) operation=\(.metadata.labels["operator.ptah.run/operation"] // "<none>") " +
+      "active=\(.status.active // 0) terminating=\(.status.terminating // 0) failed=\(.status.failed // 0) " +
+      "succeeded=\(.status.succeeded // 0) startTime=\(.status.startTime // "<none>") " +
+      "deadline=\(.spec.activeDeadlineSeconds // "<none>") " +
+      "conditions=\([(.status.conditions // [])[] | "\(.type)=\(.status)(\(.reason // ""))"] | join(","))"
+    ' >&2 2>/dev/null || true
+	k -n "$TEST_NAMESPACE" get pods -l "operator.ptah.run/migration=${ISOLATED_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  pod \(.metadata.name) uid=\(.metadata.uid) node=\(.spec.nodeName // "<unscheduled>") " +
+      "phase=\(.status.phase) deletionTimestamp=\(.metadata.deletionTimestamp // "<none>") " +
+      "conditions=\([(.status.conditions // [])[] | "\(.type)=\(.status)(\(.reason // ""))"] | join(","))"
+    ' >&2 2>/dev/null || true
+	k get node "$ISOLATED_NODE" -o json 2>/dev/null | jq -r '
+      "  node \(.metadata.name) " +
+      "ready=\([(.status.conditions // [])[] | select(.type == "Ready") | "\(.status) since \(.lastTransitionTime)"] | join(",")) " +
+      "taints=\([(.spec.taints // [])[] | "\(.key):\(.effect)@\(.timeAdded // "-")"] | join(","))"
+    ' >&2 2>/dev/null || true
+	if [ -n "${ISOLATED_LEASE:-}" ]; then
+		k -n "$ISOLATED_LEASE_NAMESPACE" get lease "$ISOLATED_LEASE" -o json 2>/dev/null | jq -r '
+          "  lease \(.metadata.name) holder=\(.spec.holderIdentity // "") " +
+          "epoch=\(.metadata.annotations["operator.ptah.run/lease-epoch"] // "") " +
+          "renewTime=\(.spec.renewTime // "<none>") duration=\(.spec.leaseDurationSeconds // "<none>")"
+        ' >&2 2>/dev/null || true
+	fi
+	printf '  isolation rules on %s: %s\n' "$ISOLATED_NODE" "$(isolation_rules 2>/dev/null || printf unreadable)" >&2
+}
+
+create_isolated_database() {
+	create_database "$ISOLATED_DATABASE"
+	database_url "$ISOLATED_DATABASE" >"$ISOLATED_DB_URL_FILE"
+	chmod 600 "$ISOLATED_DB_URL_FILE"
+	{
+		cat "$ISOLATED_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$ISOLATED_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$ISOLATED_DATABASE" \
+		--rawfile url "$ISOLATED_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# The uncertain row's artifact, for its slow third migration: the node is cut
+# off inside it. Always, because the moment this row needs is inside the run.
+#
+# The selector and the first toleration put every operation of this resource,
+# and nothing else, on the isolation worker. The second toleration replaces the
+# cluster's five-minute default for the unreachable taint, so the Pod is evicted
+# while its Job is alive; the hold reads it back from the Pod rather than from
+# here.
+#
+# The deadline has to cover the read-only chain on a node that pulls the images
+# for the first time, and a run whose third migration sleeps for forty-five
+# seconds. The Job and the Lease outlive it by the grace the operator adds, and
+# the hold is measured from what they persisted.
+#
+# The interval is how long the resource stays Blocked on the run it could not
+# read before a reading of the database settles it, so it is long enough for
+# every poll to land inside it.
+create_isolated_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$ISOLATED_MIGRATION" \
+		--arg secret "$ISOLATED_DB_SECRET" \
+		--arg reference "$UNCERTAIN_REFERENCE" \
+		--arg coordinationKey "$ISOLATED_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg isolation "$ISOLATION_NODE_KEY" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "2m",
+        execution: {
+          activeDeadlineSeconds: 180, failureRetryInterval: "10s", connectTimeout: "30s",
+          nodeSelector: {($isolation): "true"},
+          tolerations: [
+            {key: $isolation, operator: "Equal", value: "true", effect: "NoSchedule"},
+            {key: "node.kubernetes.io/unreachable", operator: "Exists", effect: "NoExecute",
+             tolerationSeconds: 30}
+          ]
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+# The claim the rest of the row holds the resource to, read from one document:
+# its Job, and the epoch and duration of the Lease it took.
+wait_for_isolated_apply_claim() {
+	isolated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$isolated_deadline" ]; do
+		isolated_status
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0 and
+          ((.status.activeOperation.leaseEpoch // "") | length) > 0 and
+          (.status.activeOperation.leaseDurationSeconds // 0) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			ISOLATED_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
+			ISOLATED_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			ISOLATED_EPOCH=$(jq -er '.status.activeOperation.leaseEpoch' "$STATUS_FILE")
+			ISOLATED_LEASE_DURATION=$(jq -er '.status.activeOperation.leaseDurationSeconds' "$STATUS_FILE")
+			printf '%s\n' "$ISOLATED_APPLY_JOB_UID" >"$WORK_DIR/isolated-apply-jobs-seen.txt"
+			return 0
+		fi
+		sleep 2
+	done
+	report_isolated_state
+	fail "$ISOLATED_MIGRATION did not claim an Apply under a realm Lease within ${TIMEOUT_SECONDS}s"
+}
+
+# The Lease the claim took, found by the epoch the claim recorded, and held to
+# the duration the claim recorded. Its term is when it would have lapsed had
+# nothing renewed it: the acquisition the epoch names, plus that duration.
+find_isolated_lease() {
+	k get leases -A -o json >"$WORK_DIR/isolated-leases.json" ||
+		fail "the Leases could not be listed"
+	jq -r --arg epoch "$ISOLATED_EPOCH" --argjson duration "$ISOLATED_LEASE_DURATION" '
+      [.items[] | select(.metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch)] |
+      if length != 1 then error("expected exactly one realm Lease for the epoch of the claim")
+      elif .[0].spec.leaseDurationSeconds != $duration then error("the realm Lease is not the duration the claim recorded")
+      else .[0] | "\(.metadata.namespace) \(.metadata.name) \(.spec.holderIdentity // "")" end
+    ' "$WORK_DIR/isolated-leases.json" >"$WORK_DIR/isolated-lease.txt" ||
+		fail "no single realm Lease carries the epoch and duration $ISOLATED_MIGRATION claimed under"
+	read -r ISOLATED_LEASE_NAMESPACE ISOLATED_LEASE ISOLATED_HOLDER <"$WORK_DIR/isolated-lease.txt"
+	[ -n "$ISOLATED_HOLDER" ] ||
+		fail "the realm Lease under $ISOLATED_MIGRATION's Apply names no holder"
+	ISOLATED_LEASE_TERM_END=$(jq -er --arg epoch "$ISOLATED_EPOCH" '
+      .items[] | select(.metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch) |
+      (.spec.acquireTime | sub("\\.[0-9]+"; "") | fromdateiso8601) + .spec.leaseDurationSeconds
+    ' "$WORK_DIR/isolated-leases.json") ||
+		fail "the realm Lease under $ISOLATED_MIGRATION's Apply carries no acquisition to measure its term from"
+}
+
+# The Apply Pod, running on the isolation worker, and the two clocks it and its
+# Job carry: how long the Pod tolerates an unreachable node, and when the Job's
+# own deadline runs out.
+wait_for_isolated_apply_pod() {
+	isolated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$isolated_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get pods -l "batch.kubernetes.io/controller-uid=${ISOLATED_APPLY_JOB_UID}" \
+			-o json >"$WORK_DIR/isolated-pods.json" ||
+			fail "the $ENGINE Apply Pods could not be listed"
+		if jq -e --arg node "$ISOLATED_NODE" '
+          (.items | length) == 1 and
+          .items[0].spec.nodeName == $node and
+          .items[0].status.phase == "Running"
+        ' "$WORK_DIR/isolated-pods.json" >/dev/null; then
+			ISOLATED_POD=$(jq -er '.items[0].metadata.name' "$WORK_DIR/isolated-pods.json")
+			ISOLATED_POD_UID=$(jq -er '.items[0].metadata.uid' "$WORK_DIR/isolated-pods.json")
+			ISOLATED_UNREACHABLE_TOLERATION=$(jq -er '
+              [.items[0].spec.tolerations[]? |
+                select(.key == "node.kubernetes.io/unreachable" and .effect == "NoExecute")] |
+              if length == 1 and (.[0].tolerationSeconds | type) == "number" and .[0].tolerationSeconds > 0
+              then .[0].tolerationSeconds
+              else error("the Apply Pod does not carry one bounded toleration of an unreachable node") end
+            ' "$WORK_DIR/isolated-pods.json") ||
+				fail "the $ENGINE Apply Pod carries no bounded toleration of an unreachable node to hold past"
+			k -n "$TEST_NAMESPACE" get job "$ISOLATED_APPLY_JOB" -o json >"$WORK_DIR/isolated-job.json" ||
+				fail "the $ENGINE Apply Job could not be read"
+			ISOLATED_JOB_DEADLINE_AT=$(jq -er --arg uid "$ISOLATED_APPLY_JOB_UID" '
+              if .metadata.uid != $uid then error("the Job under the claimed name is another one")
+              else (.status.startTime | fromdateiso8601) + .spec.activeDeadlineSeconds end
+            ' "$WORK_DIR/isolated-job.json") ||
+				fail "the $ENGINE Apply Job carries no deadline the hold can be measured against"
+			return 0
+		fi
+		# A Pod placed anywhere else is not something waiting longer fixes.
+		if jq -e --arg node "$ISOLATED_NODE" '
+          any(.items[]?; ((.spec.nodeName // "") | length) > 0 and .spec.nodeName != $node)
+        ' "$WORK_DIR/isolated-pods.json" >/dev/null; then
+			report_isolated_state
+			fail "the $ENGINE Apply Pod was placed on a node other than $ISOLATED_NODE"
+		fi
+		sleep 2
+	done
+	report_isolated_state
+	fail "the $ENGINE Apply Pod did not run on $ISOLATED_NODE within ${TIMEOUT_SECONDS}s"
+}
+
+# What cutting the node off takes away has to be this Apply and nothing else.
+# Every live Pod on it that a DaemonSet does not own belongs to this resource,
+# and there is at least one, or the check read an empty node.
+assert_only_the_apply_runs_on_the_isolated_node() {
+	k get pods -A --field-selector "spec.nodeName=${ISOLATED_NODE}" -o json \
+		>"$WORK_DIR/isolated-node-pods.json" ||
+		fail "the Pods on $ISOLATED_NODE could not be listed"
+	jq -e --arg namespace "$TEST_NAMESPACE" --arg migration "$ISOLATED_MIGRATION" --arg pod "$ISOLATED_POD_UID" '
+      [.items[]
+        | select(.status.phase != "Succeeded" and .status.phase != "Failed")
+        | select(any(.metadata.ownerReferences[]?; .kind == "DaemonSet") | not)] as $live |
+      any($live[]; .metadata.uid == $pod) and
+      all($live[];
+        .metadata.namespace == $namespace and
+        .metadata.labels["operator.ptah.run/migration"] == $migration)
+    ' "$WORK_DIR/isolated-node-pods.json" >/dev/null || {
+		report_isolated_state
+		fail "$ISOLATED_NODE runs something besides the Apply this row isolates"
+	}
+}
+
+# One engine-specific reading of the whole revision table and the table the
+# first migration filled: rows, distinct versions, versions recorded applied,
+# and widgets, joined with commas because the reading helper strips whitespace.
+isolated_database_reading() {
+	case "$ENGINE" in
+	postgresql)
+		migration_query "SELECT (SELECT count(*) FROM schema_migrations) || ',' ||
+                     (SELECT count(DISTINCT version) FROM schema_migrations) || ',' ||
+                     (SELECT count(*) FROM schema_migrations WHERE state = 'applied') || ',' ||
+                     (SELECT count(*) FROM e2e_migration_widgets)" "$ISOLATED_DATABASE"
+		;;
+	mysql)
+		migration_query "SELECT CONCAT((SELECT COUNT(*) FROM schema_migrations), ',',
+                     (SELECT COUNT(DISTINCT version) FROM schema_migrations), ',',
+                     (SELECT COUNT(*) FROM schema_migrations WHERE state = 'applied'), ',',
+                     (SELECT COUNT(*) FROM e2e_migration_widgets))" "$ISOLATED_DATABASE"
+		;;
+	esac
+}
+
+# The database never holds more than the three migrations, never records one
+# twice, and never more than the three rows the first migration inserted: a
+# replay shows up here whatever the controller's status says. It leaves the
+# number of migrations recorded applied in ISOLATED_APPLIED.
+assert_isolated_database_ran_once() {
+	isolated_reading=$(isolated_database_reading)
+	printf '%s\n' "$isolated_reading" | grep -Eq '^[0-9]+,[0-9]+,[0-9]+,[0-9]+$' || {
+		report_isolated_state
+		fail "the $ENGINE database of $ISOLATED_MIGRATION could not be read: [$isolated_reading]"
+	}
+	IFS=, read -r isolated_rows isolated_versions ISOLATED_APPLIED isolated_widgets <<EOF
+$isolated_reading
+EOF
+	[ "$isolated_rows" -le 3 ] && [ "$isolated_versions" -eq "$isolated_rows" ] &&
+		[ "$ISOLATED_APPLIED" -le 3 ] && [ "$isolated_widgets" -eq 3 ] || {
+		report_isolated_state
+		fail "the $ENGINE database of $ISOLATED_MIGRATION holds $isolated_rows revision rows over $isolated_versions versions and $isolated_widgets widgets, so a migration ran twice"
+	}
+}
+
+# The database is what says the SQL committed. The first two migrations are the
+# part of the run that has to be behind it when the node is cut off, and the
+# third, which sleeps, is the part that has to be in front of it.
+wait_for_isolated_commit() {
+	isolated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$isolated_deadline" ]; do
+		if [ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE version <= 2 AND state = 'applied'" \
+			"$ISOLATED_DATABASE")" = 2 ]; then
+			return 0
+		fi
+		sleep 2
+	done
+	report_isolated_state
+	fail "the $ENGINE Apply on $ISOLATED_NODE did not commit its first two migrations within ${TIMEOUT_SECONDS}s"
+}
+
+# The node's own traffic to the API server leaves through OUTPUT: the kubelet,
+# and kube-proxy and the CNI on its host network. The API server's traffic to
+# the kubelet -- logs, exec -- arrives through INPUT. A Pod's traffic crosses
+# the node through FORWARD, so the executor keeps its database; that is checked
+# below from the database rather than assumed from this.
+isolate_the_node() {
+	printf 'e2e migrations: cutting %s off from the API server inside the %s Apply\n' \
+		"$ISOLATED_NODE" "$ENGINE_KIND" >&2
+	# Armed before the first rule, so a failure between the two still has
+	# cleanup take down whichever went in.
+	ISOLATION_RULES_APPLIED=1
+	docker --context "$NODE_DOCKER_CONTEXT" exec "$ISOLATED_NODE" \
+		iptables -I OUTPUT 1 -p tcp --dport 6443 \
+		-m comment --comment "$ISOLATION_RULE_COMMENT" -j DROP ||
+		fail "the rule cutting $ISOLATED_NODE off from the API server could not be inserted"
+	docker --context "$NODE_DOCKER_CONTEXT" exec "$ISOLATED_NODE" \
+		iptables -I INPUT 1 -p tcp --dport 10250 \
+		-m comment --comment "$ISOLATION_RULE_COMMENT" -j DROP ||
+		fail "the rule cutting the API server off from $ISOLATED_NODE's kubelet could not be inserted"
+	ISOLATED_AT=$(date +%s)
+	ISOLATED_JOBS_AT_ISOLATION=$(isolated_job_uids)
+	isolated_rules=$(isolation_rules) ||
+		fail "the rules on $ISOLATED_NODE could not be read back"
+	[ "$isolated_rules" = 2 ] ||
+		fail "$ISOLATED_NODE carries $isolated_rules isolation rules, not the two this row inserted"
+	# The run has to be going when the node is cut off. A run already over
+	# would make the hold below about nothing that could still write.
+	assert_isolated_database_ran_once
+	[ "$ISOLATED_APPLIED" -eq 2 ] || {
+		report_isolated_state
+		fail "the $ENGINE Apply had $ISOLATED_APPLIED migrations applied when its node was cut off, not the two before the one that sleeps"
+	}
+}
+
+# One poll of everything a replacement or a premature release would change.
+# The Pod list is left behind for the caller.
+assert_the_isolated_apply_is_held() {
+	isolated_status
+	jq -e --arg job "$ISOLATED_APPLY_JOB_UID" --arg epoch "$ISOLATED_EPOCH" \
+		-f "$ROOT_DIR/testdata/e2e/isolated-apply-held.jq" "$STATUS_FILE" >/dev/null || {
+		report_isolated_state
+		fail "$ISOLATED_MIGRATION let go of an Apply whose node is cut off, while its Pod may still be writing"
+	}
+	# One Apply Job and one Apply Pod, the ones dispatched before the node was
+	# cut off, and no Job of any other operation either: while the claim
+	# stands, the resource runs nothing else against this database.
+	migration_apply_job_uids "$ISOLATED_MIGRATION" >"$WORK_DIR/isolated-apply-jobs-now.txt"
+	cat "$WORK_DIR/isolated-apply-jobs-now.txt" >>"$WORK_DIR/isolated-apply-jobs-seen.txt"
+	[ "$(cat "$WORK_DIR/isolated-apply-jobs-now.txt")" = "$ISOLATED_APPLY_JOB_UID" ] || {
+		report_isolated_state
+		fail "$ISOLATED_MIGRATION has Apply Jobs [$(tr '\n' ' ' <"$WORK_DIR/isolated-apply-jobs-now.txt")] while the one it dispatched may still be writing"
+	}
+	[ "$(isolated_job_uids | jq --argjson before "$ISOLATED_JOBS_AT_ISOLATION" '. - $before | length')" -eq 0 ] || {
+		report_isolated_state
+		fail "$ISOLATED_MIGRATION created a Job while its Apply's node was cut off"
+	}
+	k -n "$TEST_NAMESPACE" get pods \
+		-l "operator.ptah.run/migration=${ISOLATED_MIGRATION},operator.ptah.run/operation=apply" \
+		-o json >"$WORK_DIR/isolated-pods.json" ||
+		fail "the $ENGINE Apply Pods could not be listed"
+	jq -e --arg pod "$ISOLATED_POD_UID" '[.items[].metadata.uid] == [$pod]' \
+		"$WORK_DIR/isolated-pods.json" >/dev/null || {
+		report_isolated_state
+		fail "$ISOLATED_MIGRATION has Apply Pods other than the one on the node that was cut off"
+	}
+	# The realm stays with the claim: same holder, same epoch, still there.
+	k -n "$ISOLATED_LEASE_NAMESPACE" get lease "$ISOLATED_LEASE" -o json >"$WORK_DIR/isolated-lease.json" || {
+		report_isolated_state
+		fail "the $ENGINE realm Lease is gone while the Apply that took it may still be writing"
+	}
+	jq -e --arg holder "$ISOLATED_HOLDER" --arg epoch "$ISOLATED_EPOCH" '
+      .spec.holderIdentity == $holder and
+      .metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch
+    ' "$WORK_DIR/isolated-lease.json" >/dev/null || {
+		report_isolated_state
+		fail "the $ENGINE realm Lease left the claim while its Apply may still be writing"
+	}
+	assert_isolated_database_ran_once
+}
+
+isolated_job_uids() {
+	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/migration=${ISOLATED_MIGRATION}" -o json |
+		jq -c '[.items[].metadata.uid] | sort' ||
+		fail "the Jobs of $ISOLATED_MIGRATION could not be listed"
+}
+
+# Held until every clock that could tempt a replacement has run out, each read
+# from what was persisted: the unreachable taint's timeAdded plus the Pod's own
+# toleration, the Job's startTime plus its activeDeadlineSeconds, and the
+# claim's startedAt plus its Lease duration. The node going Unknown comes
+# before the first of them. The hold ends on a poll that ran every assertion
+# after the last of them, with a margin for the controller's own requeue and
+# for the harness clock.
+#
+# Four things have to have happened inside the hold for it to have held
+# anything: the node went Unknown, the API server could not read the Pod's
+# log, the Pod was asked to stop, and the run committed its third migration
+# while the node was cut off -- the executor was writing where no controller
+# could see it.
+hold_the_isolated_node() {
+	isolated_margin=20
+	isolated_bound=$((ISOLATED_LEASE_TERM_END + TIMEOUT_SECONDS))
+	[ "$ISOLATED_JOB_DEADLINE_AT" -lt "$isolated_bound" ] || isolated_bound=$((ISOLATED_JOB_DEADLINE_AT + TIMEOUT_SECONDS))
+	isolated_unreachable=no
+	isolated_eviction_at=
+	isolated_stop_requested_at=
+	isolated_logs_refused=no
+	isolated_committed=no
+	while :; do
+		if [ "$(date +%s)" -ge "$isolated_bound" ]; then
+			report_isolated_state
+			fail "the hold on $ISOLATED_NODE did not see every clock run out by its bound: unreachable=$isolated_unreachable eviction=${isolated_eviction_at:-unknown} stopRequested=${isolated_stop_requested_at:-never} logsRefused=$isolated_logs_refused committed=$isolated_committed"
+		fi
+		assert_the_isolated_apply_is_held
+		[ "$ISOLATED_APPLIED" -lt 3 ] || isolated_committed=yes
+		# The Pod list assert_the_isolated_apply_is_held left behind: when the
+		# Pod was asked to stop, which is its deletion less its grace period.
+		isolated_stop=$(jq -r '
+          .items[0].metadata as $meta |
+          if $meta.deletionTimestamp == null then ""
+          else ($meta.deletionTimestamp | fromdateiso8601) - ($meta.deletionGracePeriodSeconds // 0) end
+        ' "$WORK_DIR/isolated-pods.json")
+		[ -z "$isolated_stop" ] || [ -n "$isolated_stop_requested_at" ] ||
+			isolated_stop_requested_at=$isolated_stop
+		k get node "$ISOLATED_NODE" -o json >"$WORK_DIR/isolated-node.json" ||
+			fail "$ISOLATED_NODE could not be read"
+		if jq -e '
+          any(.status.conditions[]?; .type == "Ready" and .status != "True")
+        ' "$WORK_DIR/isolated-node.json" >/dev/null; then
+			isolated_unreachable=yes
+		fi
+		isolated_taint_added=$(jq -r '
+          [.spec.taints[]? |
+            select(.key == "node.kubernetes.io/unreachable" and .effect == "NoExecute") |
+            .timeAdded | select(. != null) | fromdateiso8601] | first // empty
+        ' "$WORK_DIR/isolated-node.json")
+		if [ -n "$isolated_taint_added" ] && [ -z "$isolated_eviction_at" ]; then
+			isolated_eviction_at=$((isolated_taint_added + ISOLATED_UNREACHABLE_TOLERATION))
+		fi
+		# The log the controller would read the result from, asked for through
+		# the API server the way the controller asks. Nothing is printed: a
+		# read that succeeded would carry the executor's output.
+		if [ "$isolated_unreachable" = yes ] && [ "$isolated_logs_refused" = no ]; then
+			if k -n "$TEST_NAMESPACE" logs "$ISOLATED_POD" -c ptah --request-timeout=20s \
+				>/dev/null 2>&1; then
+				report_isolated_state
+				fail "the API server still read the $ENGINE Apply Pod's log from $ISOLATED_NODE, so the node was not cut off"
+			fi
+			isolated_logs_refused=yes
+		fi
+		if [ "$isolated_unreachable" = yes ] && [ -n "$isolated_eviction_at" ] &&
+			[ -n "$isolated_stop_requested_at" ] && [ "$isolated_logs_refused" = yes ] &&
+			[ "$isolated_committed" = yes ]; then
+			isolated_hold_until=$ISOLATED_LEASE_TERM_END
+			[ "$ISOLATED_JOB_DEADLINE_AT" -le "$isolated_hold_until" ] || isolated_hold_until=$ISOLATED_JOB_DEADLINE_AT
+			[ "$isolated_eviction_at" -le "$isolated_hold_until" ] || isolated_hold_until=$isolated_eviction_at
+			[ "$(date +%s)" -le $((isolated_hold_until + isolated_margin)) ] || break
+		fi
+		sleep 5
+	done
+	# The eviction came while the Job was alive, which is the state in which a
+	# Job would start a second Pod if its replacement policy let it. Measured
+	# from the Pod's and the Job's own timestamps rather than from the polls.
+	[ "$isolated_stop_requested_at" -lt "$ISOLATED_JOB_DEADLINE_AT" ] || {
+		report_isolated_state
+		fail "the $ENGINE Apply Pod was first asked to stop at $isolated_stop_requested_at, not before its Job's deadline at $ISOLATED_JOB_DEADLINE_AT, so the row never held an evicted Pod under a live Job"
+	}
+	# Past the term the Lease was taken for, it is still held, and renewed:
+	# the controller did not leave it to lapse under a Pod it cannot see stop.
+	jq -e --argjson isolatedAt "$ISOLATED_AT" --argjson now "$(date +%s)" '
+      (.spec.renewTime | sub("\\.[0-9]+"; "") | fromdateiso8601) as $renewed |
+      $renewed > $isolatedAt and $renewed + .spec.leaseDurationSeconds > $now
+    ' "$WORK_DIR/isolated-lease.json" >/dev/null || {
+		report_isolated_state
+		fail "the $ENGINE realm Lease was not renewed while its Apply's node was cut off"
+	}
+	printf 'e2e migrations: %s held its Apply past the node going Unknown, the eviction, the Job deadline and the Lease term\n' \
+		"$ISOLATED_MIGRATION" >&2
+}
+
+rejoin_the_isolated_node() {
+	printf 'e2e migrations: letting %s back to the API server\n' "$ISOLATED_NODE" >&2
+	remove_isolation_rules ||
+		fail "the isolation rules could not be removed from $ISOLATED_NODE"
+	ISOLATION_RULES_APPLIED=0
+	isolated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$isolated_deadline" ]; do
+		if k get node "$ISOLATED_NODE" -o json 2>/dev/null |
+			jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	report_isolated_state
+	fail "$ISOLATED_NODE did not become Ready within ${TIMEOUT_SECONDS}s of rejoining"
+}
+
+# The end state the code defines, in the order it writes it: the run recorded
+# Unknown against its own Job, the Lease handed back once no Pod of that Job is
+# left, and the record settled by a reading of the same database. Across all of
+# it, no second Apply and nothing run twice.
+assert_the_isolated_run_settles() {
+	isolated_deadline=$(deadline_from_now)
+	isolated_recorded=no
+	while [ "$(date +%s)" -lt "$isolated_deadline" ]; do
+		isolated_status
+		assert_no_new_apply_job "$WORK_DIR/isolated-apply-jobs-seen.txt" \
+			"after its isolated Apply" "$ISOLATED_MIGRATION"
+		migration_apply_job_uids "$ISOLATED_MIGRATION" >>"$WORK_DIR/isolated-apply-jobs-seen.txt"
+		assert_isolated_database_ran_once
+		if jq -e --arg job "$ISOLATED_APPLY_JOB_UID" '
+          (.status.activeOperation // null) == null and .status.lastRun.jobUID == $job
+        ' "$STATUS_FILE" >/dev/null; then
+			isolated_recorded=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$isolated_recorded" = yes ] || {
+		report_isolated_state
+		fail "$ISOLATED_MIGRATION did not record its isolated Apply within ${TIMEOUT_SECONDS}s of the node rejoining"
+	}
+	jq -e --arg job "$ISOLATED_APPLY_JOB_UID" \
+		-f "$ROOT_DIR/testdata/e2e/isolated-run-unknown.jq" "$STATUS_FILE" >/dev/null || {
+		report_isolated_state
+		fail "$ISOLATED_MIGRATION did not record its isolated Apply as a run nobody accounted for"
+	}
+
+	isolated_deadline=$(deadline_from_now)
+	isolated_released=no
+	while [ "$(date +%s)" -lt "$isolated_deadline" ]; do
+		# Released is an emptied holder. The controller never deletes the Lease,
+		# so a read that fails is a read to repeat, not a release.
+		if k -n "$ISOLATED_LEASE_NAMESPACE" get lease "$ISOLATED_LEASE" -o json \
+			>"$WORK_DIR/isolated-lease.json" 2>/dev/null &&
+			jq -e '(.spec.holderIdentity // "") == ""' "$WORK_DIR/isolated-lease.json" >/dev/null; then
+			isolated_released=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$isolated_released" = yes ] || {
+		report_isolated_state
+		fail "the $ENGINE realm Lease was not handed back once the isolated Apply was recorded"
+	}
+	[ "$(k -n "$TEST_NAMESPACE" get pods -l "batch.kubernetes.io/controller-uid=${ISOLATED_APPLY_JOB_UID}" \
+		-o json | jq '.items | length')" -eq 0 ] || {
+		report_isolated_state
+		fail "the $ENGINE realm Lease was handed back while a Pod of the isolated Apply still exists"
+	}
+
+	isolated_deadline=$(deadline_from_now)
+	isolated_settled=no
+	while [ "$(date +%s)" -lt "$isolated_deadline" ]; do
+		isolated_status
+		assert_no_new_apply_job "$WORK_DIR/isolated-apply-jobs-seen.txt" \
+			"after its isolated Apply" "$ISOLATED_MIGRATION"
+		assert_isolated_database_ran_once
+		if jq -e --arg job "$ISOLATED_APPLY_JOB_UID" \
+			-f "$ROOT_DIR/testdata/e2e/isolated-run-settled.jq" "$STATUS_FILE" >/dev/null; then
+			isolated_settled=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$isolated_settled" = yes ] || {
+		report_isolated_state
+		fail "$ISOLATED_MIGRATION did not settle its isolated Apply by reading the database within ${TIMEOUT_SECONDS}s"
+	}
+
+	# The database holds the three migrations, each once, and the rows the first
+	# one inserted, once.
+	case "$ENGINE" in
+	postgresql)
+		isolated_versions=$(migration_query \
+			"SELECT COALESCE(string_agg(version::text, ',' ORDER BY version), '') FROM schema_migrations WHERE state = 'applied'" \
+			"$ISOLATED_DATABASE")
+		;;
+	mysql)
+		isolated_versions=$(migration_query \
+			"SELECT COALESCE(GROUP_CONCAT(version ORDER BY version SEPARATOR ','), '') FROM schema_migrations WHERE state = 'applied'" \
+			"$ISOLATED_DATABASE")
+		;;
+	esac
+	[ "$isolated_versions" = 1,2,3 ] ||
+		fail "the $ENGINE database of $ISOLATED_MIGRATION records [$isolated_versions] applied, not migrations 1 to 3 once each"
+	assert_isolated_database_ran_once
+	[ "$ISOLATED_APPLIED" -eq 3 ] ||
+		fail "the $ENGINE database of $ISOLATED_MIGRATION records $ISOLATED_APPLIED migrations applied, not three"
+	# Exactly one Apply Job ever existed for this resource. The record is every
+	# listing taken from the claim to the settlement, because the cleanup TTL
+	# removes a harvested Job before the row ends.
+	[ "$(LC_ALL=C sort -u "$WORK_DIR/isolated-apply-jobs-seen.txt")" = "$ISOLATED_APPLY_JOB_UID" ] ||
+		fail "$ISOLATED_MIGRATION dispatched Apply Jobs [$(LC_ALL=C sort -u "$WORK_DIR/isolated-apply-jobs-seen.txt" | tr '\n' ' ')], not the one it isolated"
+}
+
 # Suspension while an Apply is running.
 #
 # #242 asks that suspension issue no cleanup SQL and leave an operation that may
@@ -6107,6 +6865,7 @@ run_engine_migrations() {
 	run_retry_interval_proof
 	run_suspension_during_apply_proof
 	run_lock_release_fault_proof
+	run_isolated_node_proof
 	run_unknown_layer_proof
 	run_egress_policy_proof
 	run_retarget_before_dispatch_proof
@@ -6306,6 +7065,10 @@ reset_after_an_earlier_run() {
 	[ -n "$PHASE_RERUN" ] || return 0
 	printf 'e2e migrations: rerun %s: removing what an earlier run of this phase left behind\n' \
 		"$PHASE_RERUN" >&2
+	# First, because a run that died with the isolation worker cut off left an
+	# Apply its resource still holds, and the deletions below would wait on it.
+	remove_isolation_rules ||
+		fail "the isolation rules an earlier run left on $ISOLATED_NODE could not be removed"
 	# A run that died with the apply gate closed left an Apply Pod
 	# waiting for a node, and its resource keeps its finalizer until that Job
 	# ends. Opening the gate lets the Pod start and be refused for its window
@@ -6324,7 +7087,7 @@ reset_after_an_earlier_run() {
 	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
 		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
 		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" \
-		"$EGRESS_DB_SECRET" "$LATE_DB_SECRET" >/dev/null ||
+		"$EGRESS_DB_SECRET" "$LATE_DB_SECRET" "$ISOLATED_DB_SECRET" >/dev/null ||
 		fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
 	# The publisher objects carry the version they published in their names,
 	# and the versions are spread through the proofs, so they are found by the
@@ -6341,7 +7104,7 @@ reset_after_an_earlier_run() {
 	for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
 		"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
 		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE" "$EGRESS_DATABASE" \
-		"$LATE_DATABASE"; do
+		"$LATE_DATABASE" "$ISOLATED_DATABASE"; do
 		drop_database "$reset_database"
 	done
 	# An earlier run that died inside the egress proof may have left its
