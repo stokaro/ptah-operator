@@ -1700,6 +1700,18 @@ audit_runtime_credentials() {
 			fail "could not audit logs for exact manager Pod $manager_audit_pod UID $manager_audit_uid"
 		fi
 		scan_file_for_credentials "$LOG_FILE" "logs for exact manager Pod $manager_audit_pod"
+		# A label value is the one place an error message could reach the
+		# metrics, and a scraper keeps what it reads for as long as it keeps
+		# anything. An empty or refused read would scan clean, so the body has
+		# to be an exposition before its absence of credentials means anything.
+		if ! k get --raw \
+			"/api/v1/namespaces/${OPERATOR_NAMESPACE}/pods/${manager_audit_pod}:8080/proxy/metrics" \
+			>"$LOG_FILE"; then
+			fail "could not read metrics for exact manager Pod $manager_audit_pod UID $manager_audit_uid"
+		fi
+		grep -q '^# TYPE ' "$LOG_FILE" ||
+			fail "metrics for exact manager Pod $manager_audit_pod are not a Prometheus exposition"
+		scan_file_for_credentials "$LOG_FILE" "metrics for exact manager Pod $manager_audit_pod"
 	done <"$MANAGER_POD_NAMES_FILE"
 	audit_pods_snapshot=$(k -n "$TEST_NAMESPACE" get pods -o json)
 	if ! audit_pod_records=$(printf '%s\n' "$audit_pods_snapshot" | jq -r '
