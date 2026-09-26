@@ -551,19 +551,22 @@ printf 'e2e alerting: PASS the receiver got PtahOperatorOperationStalled %ss aft
 	"$stalled_after" >&2
 
 # Released, the Resolve runs, fails against the unreachable registry and leaves
-# flight, and the alert has to clear on its own.
+# flight, and the alert has to clear on its own. A schema keeps a failed
+# attempt's claim in status.activeOperation until its retry, with the resource
+# in Failed, and the gauges count that as ended; this reads it the same way.
 k label nodes --all "${GATE_LABEL}=open" --overwrite >/dev/null || fail "the gate could not be opened"
 GATE_OPENED=1
+LEFT_FLIGHT='(.status.activeOperation.type // "") != "Resolve" or .status.phase == "Failed"'
 left_deadline=$(deadline_from_now)
 while [ "$(date +%s)" -lt "$left_deadline" ]; do
 	if k -n "$STALLED_NAMESPACE" get ptahschema "$STALLED_SCHEMA" -o json |
-		jq -e '(.status.activeOperation.type // "") != "Resolve"' >/dev/null; then
+		jq -e "$LEFT_FLIGHT" >/dev/null; then
 		break
 	fi
 	sleep 2
 done
 k -n "$STALLED_NAMESPACE" get ptahschema "$STALLED_SCHEMA" -o json |
-	jq -e '(.status.activeOperation.type // "") != "Resolve"' >/dev/null ||
+	jq -e "$LEFT_FLIGHT" >/dev/null ||
 	fail "the released Resolve never left flight"
 left_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 wait_for_delivery \
