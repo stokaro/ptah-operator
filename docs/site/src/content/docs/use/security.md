@@ -13,8 +13,9 @@ The operator separates four authorities:
    selecting `Always` applies non-destructive plans with no approval at all.
    RBAC cannot close that, because the bypass is not an approval. See
    [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off).
-2. An approver may read schemas and plans and create immutable approvals. The
-   chart creates an optional ClusterRole but never binds it automatically.
+2. An approver may read schemas, migrations and their plans, and create
+   immutable approvals for either family. The chart creates an optional
+   ClusterRole but never binds it automatically.
 3. The controller may manage plans, Jobs, ConfigMaps, Leases, status, and
    Events. Its shipped ClusterRole contains no Secret permission. Retained,
    typed admission policies constrain its main-resource writes to structural
@@ -70,7 +71,8 @@ desired-state author (`examples/desired-state-author-role.yaml`) and
 diagnostic reader (`examples/diagnostic-reader-role.yaml`) examples. The
 chart's optional approver ClusterRole remains unbound, so these three human
 permission sets can be assigned to different identities. Diagnostic access
-deliberately excludes Secrets and plan-chunk ConfigMaps; grant exact plan-chunk
+deliberately excludes Secrets, plan-chunk ConfigMaps and operation Pod logs,
+because [Pod logs carry plans](#pod-logs-carry-plans); grant exact plan-chunk
 access separately for an approver reviewing one immutable plan.
 
 These write boundaries reduce the effect of controller bugs and prevent its
@@ -192,6 +194,54 @@ restricted to the current plan chunk names, as described in
 those ConfigMaps and nothing else; [Read a plan](../read-a-plan/) carries the
 Role and the [install](../read-a-plan/#install).
 
+### Pod logs carry plans {#pod-logs-carry-plans}
+
+A Plan Job reports to the controller through its container log. The runner
+writes one framed result to stdout, and a successful Plan frame holds the whole
+plan document: every statement, and for
+[declared reference data](../reference-data/) the row values in them. The
+controller reads the frame through the `pods/log` API, checks it, and only then
+commits the same bytes to the chunk ConfigMaps. The frame also stays where the
+chunk Role does not reach:
+
+- in the Pod's log, readable by anyone with `get` on `pods/log` in the
+  namespace until the Job is removed, which is five minutes after it finished
+  at the earliest;
+- in the container log file on the node, until the kubelet garbage-collects the
+  container;
+- in any log store a node agent ships container logs to, with that store's
+  readers and its retention.
+
+RBAC cannot narrow `pods/log` to the operation Pods that carry no plan. A rule
+has no label selector, and `resourceNames` cannot name a Pod whose name is
+generated for each attempt. A grant of `pods/log` in an application namespace
+therefore reads every plan published there, including plans its holder was
+never asked to review, which is broader than the exact-chunk Role in
+[Exact-plan approvals](../approvals/).
+
+What to do about it:
+
+- Treat `pods/log` in an application namespace as plan access. Grant it in a
+  Role of its own, only to people who may read every plan in that namespace,
+  and keep it out of diagnostic and developer Roles. The diagnostic reader
+  example leaves it out for this reason; status, conditions and Events carry
+  what the controller made of each result.
+- Keep Plan Pod logs out of shared log stores, or store them with the access
+  control and retention a plan needs. Plan Pods carry the labels
+  `app.kubernetes.io/component: schema-operation` and
+  `operator.ptah.run/operation: plan`, which an agent that adds Pod labels to
+  each record can match to drop or reroute them. Dropping them costs the
+  operator nothing: it reads the frame from the kubelet, never from a log
+  store.
+- Check what the pipeline already shipped. Changing it does not recall a plan
+  it copied earlier, which stays in the store until that store's retention
+  ends.
+
+The manager's own ClusterRole keeps `get` on `pods/log`, because reading the
+frame is how it learns every result. Only a Plan frame carries the plan.
+Sealing that payload to the manager, so that the log holds only ciphertext, is
+tracked in [#449](https://github.com/stokaro/ptah-operator/issues/449).
+
 Approval admission fails closed. It binds names to UIDs, rejects a plan whose
 storage commit is incomplete, rejects changed policy bytes or target state, and
 makes the stamped decision immutable. Both approval webhook configurations use
@@ -241,12 +291,11 @@ the runner. Stale Apply is classified as pre-mutation only for the exact native
 diagnostic bound to the reconstructed plan's source fingerprint; altered,
 extra, or truncated output is treated as uncertain.
 
-Treat access to Job Pod logs as a separate privilege. The controller needs it
-to harvest the framed result, while ordinary desired-state authors usually do
-not. A successful Plan frame necessarily transports exact plan bytes to the
-controller before they are committed to immutable chunks, so Pod-log access is
-at least as sensitive as plan-chunk access. Apply frames never contain native
-SQL output.
+A successful Plan frame is the one frame that carries the plan: it transports
+the exact plan bytes to the controller before they are committed to immutable
+chunks, so access to Plan Pod logs is plan access. See
+[Pod logs carry plans](#pod-logs-carry-plans). Apply frames never contain
+native SQL output.
 
 ## Remaining deployment responsibilities
 

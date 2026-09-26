@@ -65,8 +65,8 @@ Sicherheitseigenschaften:
 ## Das angewendete SQL lesen
 
 Das SQL liegt in unveränderlichen ConfigMaps, die ein Plan über Index, Größe
-und Digest bindet. Es steht weder im Status noch im Log. `kubectl ptah` liest es
-auf dieselbe Weise wie der Operator:
+und Digest bindet. Es steht weder im Status noch im Log des Managers.
+`kubectl ptah` liest es auf dieselbe Weise wie der Operator:
 
 ```sh
 kubectl ptah plan storefront --applied -n application -o sql

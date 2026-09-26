@@ -343,6 +343,11 @@ plan, a history somebody else moved in the meantime, a re-resolved artifact, a
 changed verification policy, a rolled-out executor, or a migration that is not
 waiting for a decision. An approval authorizes one execution.
 
+The chart's optional approver ClusterRole grants what an approver needs for
+either family: read on the migration, its plans and approvals, and create on
+`PtahMigrationApproval`. The chart binds it to nobody;
+[Exact-plan approvals](../approvals/) says what it leaves out and why.
+
 The execution runs the approved sequence and nothing else. The Job hands Ptah
 the approved list, and `ptah migrations up --expect-sequence` compares it with
 what Ptah selects under the migration lock, after every check the operator can

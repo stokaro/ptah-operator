@@ -135,6 +135,12 @@ statements a plan holds, and for a data change those statements carry the
 values. Access to a plan is access to data. Treat it that way when you decide
 who may read plans.
 
+That includes the Plan Pod's log. The runner hands the plan to the controller
+through it, so the values are in that log, on the node, and in any log store
+the cluster ships container logs to.
+[Pod logs carry plans](../security/#pod-logs-carry-plans) says who should be
+able to read it and how to keep it out of shared stores.
+
 ## Order between tables
 
 One limitation is worth planning around. Ptah emits declared rows grouped by

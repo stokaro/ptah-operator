@@ -63,8 +63,8 @@ resolve tag to digest -> verify artifact -> observe database -> publish plan
 ## 何が適用されたかを読む
 
 SQL は不変の ConfigMap にあり、計画がそれをインデックス、サイズ、ダイジェストで束縛
-します。status フィールドやログ行には入りません。`kubectl ptah` は、オペレーターと同じ
-方法でそれを読み戻します。
+します。status フィールドやマネージャーのログには入りません。`kubectl ptah` は、
+オペレーターと同じ方法でそれを読み戻します。
 
 ```sh
 kubectl ptah plan storefront --applied -n application -o sql

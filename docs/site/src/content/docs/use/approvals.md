@@ -58,6 +58,14 @@ joins them in index order and checks the whole document against
 reading the SQL they refer to is not an independent review, and neither is
 reading one chunk of a plan that has several.
 
+The chunk Role limits who reads a plan through its chunks, and the chunks are
+not the only copy. The Plan Pod hands the whole document to the controller
+through its log, so whoever may read Pod logs in the namespace, or the log
+store a node agent ships them to, reads every plan published there without any
+chunk Role. Keep `pods/log` for the people who may read every plan in the
+namespace, and keep Plan Pod logs out of shared log stores;
+[Pod logs carry plans](../security/#pod-logs-carry-plans) says how.
+
 Fill those values in the approval and use server-side dry run to inspect the
 object after authenticated identity and derived bindings are stamped:
 
@@ -74,8 +82,9 @@ approval already owns that decision. Concurrent duplicates are retired, and
 the accepted approval is consumed only at the persisted Apply dispatch
 boundary. Updates cannot change `spec`; create a new approval for a new plan.
 
-The chart's optional approver ClusterRole grants read access to schemas and
-plan metadata plus create access to approvals, but it has no binding and no
-ConfigMap permission. Bind approval permission only to authenticated identities
-that are independent from routine desired-state writers, and grant plan-chunk
-access separately in each application namespace.
+The chart's optional approver ClusterRole grants read access to schemas,
+migrations, their plan metadata and approvals, plus create access to
+`PtahSchemaApproval` and `PtahMigrationApproval`. It has no binding, no
+ConfigMap permission and no Pod log permission. Bind approval permission only
+to authenticated identities that are independent from routine desired-state
+writers, and grant plan-chunk access separately in each application namespace.

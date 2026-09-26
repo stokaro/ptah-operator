@@ -78,7 +78,10 @@ it would execute, and the SQL for a data change carries literal values, so the
 plan bytes are data. They are stored in immutable ConfigMaps and reconstructed
 by `kubectl ptah plan`: whoever may read a plan may read the rows in it, and
 that is the access decision to make. What never carries a value is everything
-outside the plan — status, Events and the controller's log.
+outside the plan — status, Events and the controller's log. The Plan Pod's log
+is not outside it: the runner hands the plan to the controller through that
+log, so reading it is reading the plan
+([Pod logs carry plans](../../use/security/#pod-logs-carry-plans)).
 
 Status carries counts by category — rows inserted, updated, deleted — with no
 key, no column name and no value. A row-only change still retires a waiting
