@@ -248,12 +248,17 @@ jobs:
         shell: bash
         run: make verify-source
 
-  race:
-    name: Race detector
+  # The race detector is a base pass and eight mutation shards that run at
+  # once, and the job named Race detector below is the one the gate and a
+  # release read. Run one after another in a single job, they hit the
+  # 60-minute limit on eb89fd3 with the last shard still going: about 66
+  # minutes, projected.
+  race-base:
+    name: Race detector base pass
     runs-on: ubuntu-latest
-    # The base pass and eight mutation shards run one after another, and the
-    # shards grow with the shell they inspect: 66 minutes on eb89fd3.
-    timeout-minutes: 90
+    # The base pass took nine minutes on eb89fd3 and 5b183cf, and the job nine
+    # and a half on #439, each on a cold build cache.
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         id: race-checkout
@@ -295,21 +300,93 @@ jobs:
           restore-keys: |
             go-build-${{ runner.os }}-race-${{ hashFiles('go.sum') }}-
             go-build-${{ runner.os }}-race-
-      # A pull request runs the race detector over every package. The four
-      # shell mutation suites it skips rewrite fixtures and re-run a static
-      # verifier in one goroutine, so the detector finds nothing in them while
-      # they take the bulk of the hour; master, the weekly schedule and a
-      # manual dispatch still run them.
       - name: Run race coverage without the shell mutation suites
         id: project-race-base
-        if: github.event_name == 'pull_request'
         shell: bash
         run: make test-race-base
-      - name: Run complete race coverage
-        id: project-race
-        if: github.event_name != 'pull_request'
+
+  # The four shell mutation suites rewrite fixtures and re-run a static
+  # verifier in one goroutine, so the detector finds nothing in them while they
+  # take most of the time. A pull request skips them; master, the weekly
+  # schedule and a manual dispatch run them, one shard per job.
+  race-mutation:
+    name: Race detector mutation shard ${{ matrix.shard }}
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # A shard's tests took 388 to 433 seconds on eb89fd3 and 5b183cf, 65 to 72
+    # percent of the ten minutes the Makefile gives go test. That budget is
+    # the one a growing shard meets first; this leaves the whole of it, plus
+    # the setup and a cold compile of ./hack.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # One entry per shard of RACE_MUTATION_SHARDS in the Makefile.
+        # hack/verify-kubernetes-support.go refuses a list that disagrees.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - name: Check out repository
+        id: race-mutation-checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        id: race-mutation-setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # A shard compiles part of what the base pass compiles, with the same
+      # flags, so it reads the base pass's cache and saves none: eight jobs
+      # saving one key would race, and a shard that won would replace the
+      # complete cache with a part of it.
+      - name: Restore the race build output
+        id: race-mutation-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-race-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-race-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-race-
+      - name: Run one race mutation shard
+        id: project-race-mutation
+        env:
+          RACE_MUTATION_SHARD: ${{ matrix.shard }}
         shell: bash
-        run: make test-race
+        run: make test-race-mutation
+
+  race:
+    name: Race detector
+    if: ${{ !cancelled() }}
+    needs: [race-base, race-mutation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the base pass and every mutation shard
+        id: require-race-results
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RACE_BASE_RESULT: ${{ needs.race-base.result }}
+          RACE_MUTATION_RESULT: ${{ needs.race-mutation.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A pull request runs the base pass alone, so its shards are skipped
+          # rather than passed. Every other event requires all of them.
+          expected_mutation=success
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            expected_mutation=skipped
+          fi
+          if [[ "$RACE_BASE_RESULT" != success ]]; then
+            echo "race base pass concluded: $RACE_BASE_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$RACE_MUTATION_RESULT" != "$expected_mutation" ]]; then
+            echo "race mutation shards concluded: $RACE_MUTATION_RESULT, expected $expected_mutation" >&2
+            exit 1
+          fi
 
   # The four task images do not depend on the Kubernetes minor: the operator, the
   # synthetic next release, the isolated fixture and the Ptah executor are built

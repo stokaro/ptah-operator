@@ -400,17 +400,89 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "        run: make verify-source\n",
 			new: "        run: make verify\n",
 		},
-		"race target bypassed": {
-			old: "        run: make test-race\n",
+		"race shard target bypassed": {
+			old: "        run: make test-race-mutation\n",
 			new: "        run: go test ./...\n",
 		},
 		"pull-request race target bypassed": {
 			old: "        run: make test-race-base\n",
 			new: "        run: go test ./...\n",
 		},
-		"pull-request race step made unconditional": {
-			old: "        if: github.event_name == 'pull_request'\n",
+		"race shards run on pull requests": {
+			old: "    if: github.event_name != 'pull_request'\n",
 			new: "",
+		},
+		"race shards skipped on master": {
+			old: "    if: github.event_name != 'pull_request'\n",
+			new: "    if: github.event_name == 'schedule'\n",
+		},
+		"race base pass made conditional": {
+			old: "        id: project-race-base\n        shell: bash\n",
+			new: "        id: project-race-base\n        if: github.event_name == 'pull_request'\n        shell: bash\n",
+		},
+		"missing race shard": {
+			old: "        shard: [0, 1, 2, 3, 4, 5, 6, 7]\n",
+			new: "        shard: [0, 1, 2, 3, 4, 5, 6]\n",
+		},
+		"repeated race shard in place of another": {
+			old: "        shard: [0, 1, 2, 3, 4, 5, 6, 7]\n",
+			new: "        shard: [0, 1, 2, 3, 4, 5, 6, 6]\n",
+		},
+		"more race shards than the Makefile splits": {
+			old: "        shard: [0, 1, 2, 3, 4, 5, 6, 7]\n",
+			new: "        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]\n",
+		},
+		"race shards as strings": {
+			old: "        shard: [0, 1, 2, 3, 4, 5, 6, 7]\n",
+			new: "        shard: ['0', '1', '2', '3', '4', '5', '6', '7']\n",
+		},
+		"race shard count overridden": {
+			old: "          RACE_MUTATION_SHARD: ${{ matrix.shard }}\n",
+			new: "          RACE_MUTATION_SHARD: ${{ matrix.shard }}\n          RACE_MUTATION_SHARDS: \"7\"\n",
+		},
+		"race shard index unbound": {
+			old: "          RACE_MUTATION_SHARD: ${{ matrix.shard }}\n",
+			new: "          RACE_MUTATION_SHARD: \"0\"\n",
+		},
+		"race shards fail fast": {
+			old: "      fail-fast: false\n      matrix:\n        # One entry per shard",
+			new: "      fail-fast: true\n      matrix:\n        # One entry per shard",
+		},
+		"race shard saves the shared cache": {
+			old: "        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\n",
+			new: "        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\n",
+		},
+		"race detector renamed": {
+			old: "    name: Race detector\n",
+			new: "    name: Race detector summary\n",
+		},
+		"race detector without the shards": {
+			old: "    needs: [race-base, race-mutation]\n",
+			new: "    needs: [race-base]\n",
+		},
+		"race detector without the base pass": {
+			old: "    needs: [race-base, race-mutation]\n",
+			new: "    needs: [race-mutation]\n",
+		},
+		"implicit success race detector": {
+			old: "  race:\n    name: Race detector\n    if: ${{ !cancelled() }}\n",
+			new: "  race:\n    name: Race detector\n",
+		},
+		"unbound race shard result": {
+			old: "          RACE_MUTATION_RESULT: ${{ needs.race-mutation.result }}\n",
+			new: "          RACE_MUTATION_RESULT: success\n",
+		},
+		"unbound race base result": {
+			old: "          RACE_BASE_RESULT: ${{ needs.race-base.result }}\n",
+			new: "          RACE_BASE_RESULT: success\n",
+		},
+		"race detector accepts skipped shards on master": {
+			old: "          expected_mutation=success\n",
+			new: "          expected_mutation=skipped\n",
+		},
+		"race detector passes a failed shard": {
+			old: "            echo \"race mutation shards concluded: $RACE_MUTATION_RESULT, expected $expected_mutation\" >&2\n            exit 1\n",
+			new: "            echo \"race mutation shards concluded: $RACE_MUTATION_RESULT, expected $expected_mutation\" >&2\n            exit 0\n",
 		},
 		"E2E dependencies": {
 			old: "    needs: [support-matrix, verify, prepare-images]\n",
@@ -485,9 +557,17 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n",
 			new: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n",
 		},
-		"race timeout drift": {
-			old: "    name: Race detector\n    runs-on: ubuntu-latest\n    # The base pass and eight mutation shards run one after another, and the\n    # shards grow with the shell they inspect: 66 minutes on eb89fd3.\n    timeout-minutes: 90\n",
-			new: "    name: Race detector\n    runs-on: ubuntu-latest\n    # The base pass and eight mutation shards run one after another, and the\n    # shards grow with the shell they inspect: 66 minutes on eb89fd3.\n    timeout-minutes: 95\n",
+		"race base timeout drift": {
+			old: "    # and a half on #439, each on a cold build cache.\n    timeout-minutes: 20\n",
+			new: "    # and a half on #439, each on a cold build cache.\n    timeout-minutes: 90\n",
+		},
+		"race shard timeout drift": {
+			old: "    # the setup and a cold compile of ./hack.\n    timeout-minutes: 20\n",
+			new: "    # the setup and a cold compile of ./hack.\n    timeout-minutes: 90\n",
+		},
+		"race detector timeout drift": {
+			old: "    needs: [race-base, race-mutation]\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n",
+			new: "    needs: [race-base, race-mutation]\n    runs-on: ubuntu-latest\n    timeout-minutes: 90\n",
 		},
 		"matrix timeout drift": {
 			old: "    name: Build Kubernetes support matrix\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
@@ -497,9 +577,19 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "    timeout-minutes: 180\n",
 			new: "    timeout-minutes: 185\n",
 		},
+		// The run is not complete until the published timings are, and the
+		// release preflight waits for the run to complete.
+		"lifecycle timings timeout drift": {
+			old: "    needs: [kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
+			new: "    needs: [kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n",
+		},
+		"lifecycle timings after the gate": {
+			old: "    needs: [kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
+			new: "    needs: [kubernetes-e2e, kubernetes-support-gate]\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
+		},
 		"gate timeout drift": {
-			old: "    timeout-minutes: 5\n",
-			new: "    timeout-minutes: 4\n",
+			old: "    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n",
+			new: "    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]\n    runs-on: ubuntu-latest\n    timeout-minutes: 4\n",
 		},
 		"unstable check name": {
 			old: "    name: Kubernetes support gate\n",
@@ -637,6 +727,176 @@ func TestSupportGateRequiresEverySuccessfulDependency(t *testing.T) {
 				run(t, dependency, result, false)
 			})
 		}
+	}
+}
+
+// The job named Race detector is the only race verdict the gate and a release
+// read, so it has to fail on every conclusion of the base pass or the shards
+// that is not the one the event requires. A pull request runs no shard, which
+// makes skipped the only acceptable shard result there and a refusal
+// everywhere else.
+func TestRaceDetectorRequiresTheBasePassAndEveryShard(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", workflowPath)
+	workflow, _, err := readWorkflow(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := requireWorkflowStep(path, "race", workflow.Jobs["race"], "require-race-results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(t *testing.T, event, base, mutation string) (string, int) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-c", step.Run)
+		cmd.Env = []string{
+			"EVENT_NAME=" + event,
+			"RACE_BASE_RESULT=" + base,
+			"RACE_MUTATION_RESULT=" + mutation,
+		}
+		output, err := cmd.CombinedOutput()
+		if ctx.Err() != nil {
+			t.Fatalf("Race detector did not finish: %v", ctx.Err())
+		}
+		if err != nil && cmd.ProcessState == nil {
+			t.Fatalf("Race detector did not run: %v", err)
+		}
+		return string(output), cmd.ProcessState.ExitCode()
+	}
+	results := []string{"success", "failure", "cancelled", "skipped"}
+	for _, event := range []string{"pull_request", "push", "schedule", "workflow_dispatch"} {
+		wantMutation := "success"
+		if event == "pull_request" {
+			wantMutation = "skipped"
+		}
+		for _, base := range results {
+			for _, mutation := range results {
+				t.Run(event+"/"+base+"/"+mutation, func(t *testing.T) {
+					t.Parallel()
+					output, code := run(t, event, base, mutation)
+					switch {
+					case base == "success" && mutation == wantMutation:
+						if code != 0 {
+							t.Fatalf("Race detector exited %d on a complete race run:\n%s", code, output)
+						}
+					case code != 1:
+						t.Fatalf("Race detector exited %d, want 1:\n%s", code, output)
+					case base != "success" && !strings.Contains(output, "race base pass concluded: "+base):
+						t.Fatalf("Race detector did not name the base pass's result:\n%s", output)
+					case base == "success" && !strings.Contains(output, "race mutation shards concluded: "+mutation+", expected "+wantMutation):
+						t.Fatalf("Race detector did not name the shards' result:\n%s", output)
+					}
+				})
+			}
+		}
+	}
+}
+
+// The release preflight waits for a CI run to complete, so its bound has to be
+// the latest the run can end, read off the needs in ci.yml rather than off a
+// formula that happens to agree with them today.
+func TestVerifyCIRunBoundFollowsTheNeedsGraph(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", workflowPath)
+	workflow, _, err := readWorkflow(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCIRunBound(path, workflow, ciRunEndMinutes); err != nil {
+		t.Fatalf("verifyCIRunBound(ci.yml, %d) error = %v", ciRunEndMinutes, err)
+	}
+	with := func(name string, mutate func(*workflowJob)) workflowDocument {
+		jobs := make(map[string]workflowJob, len(workflow.Jobs))
+		for jobName, job := range workflow.Jobs {
+			jobs[jobName] = job
+		}
+		job, ok := jobs[name]
+		if !ok {
+			t.Fatalf("ci.yml has no job %q", name)
+		}
+		job.Needs = append(workflowStringList(nil), job.Needs...)
+		mutate(&job)
+		jobs[name] = job
+		mutated := workflow
+		mutated.Jobs = jobs
+		return mutated
+	}
+
+	// The race detector ends long before the lifecycles, so it can grow up to
+	// their path without moving the end of the run.
+	inShadow := with("race-base", func(job *workflowJob) { job.TimeoutMinutes = 60 })
+	if err := verifyCIRunBound(path, inShadow, ciRunEndMinutes); err != nil {
+		t.Fatalf("a race detector inside the lifecycle's path moved the bound: %v", err)
+	}
+
+	tests := map[string]struct {
+		workflow workflowDocument
+		bound    int
+		want     string
+	}{
+		// The formula this replaced: the slowest of the matrix, the
+		// verification and the race detector, then the lifecycle, then the
+		// gate. It left out the shared images and the published timings, and
+		// the race detector's 60 and then 90 minutes hid both.
+		"the race detector counted before the lifecycle": {
+			workflow: workflow,
+			bound: max(ciSupportMatrixTimeoutMinutes, ciVerifyTimeoutMinutes, ciRaceTimeoutMinutes) +
+				ciKubernetesE2ETimeoutMinutes + ciKubernetesSupportTimeoutMinutes,
+			want: "ends at 245 minutes, after lifecycle-timings",
+		},
+		"the race detector past the lifecycle": {
+			workflow: with("race-base", func(job *workflowJob) { job.TimeoutMinutes = 300 }),
+			bound:    ciRunEndMinutes,
+			want:     "ends at 310 minutes, after kubernetes-support-gate",
+		},
+		"a lifecycle that waits for the race detector": {
+			workflow: with("kubernetes-e2e", func(job *workflowJob) {
+				job.Needs = append(job.Needs, "race")
+			}),
+			bound: ciRunEndMinutes,
+			want:  "", // Accepted: race ends at 25, before the images do.
+		},
+		"slower published timings": {
+			workflow: with("lifecycle-timings", func(job *workflowJob) { job.TimeoutMinutes = 30 }),
+			bound:    ciRunEndMinutes,
+			want:     "ends at 265 minutes, after lifecycle-timings",
+		},
+		"a job with no limit": {
+			workflow: with("prepare-images", func(job *workflowJob) { job.TimeoutMinutes = 0 }),
+			bound:    ciRunEndMinutes,
+			want:     "ends at 560 minutes",
+		},
+		"a need nobody defines": {
+			workflow: with("kubernetes-e2e", func(job *workflowJob) {
+				job.Needs = append(job.Needs, "images")
+			}),
+			bound: ciRunEndMinutes,
+			want:  `a job needs "images", which the workflow does not define`,
+		},
+		"a cycle": {
+			workflow: with("race-base", func(job *workflowJob) { job.Needs = workflowStringList{"race"} }),
+			bound:    ciRunEndMinutes,
+			want:     "needs itself through its dependencies",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := verifyCIRunBound(path, test.workflow, test.bound)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("verifyCIRunBound() error = %v, want acceptance", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("verifyCIRunBound() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -841,12 +1101,12 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "      actions: write\n",
 		},
 		"short preflight job": {
-			old: "    timeout-minutes: 290\n",
-			new: "    timeout-minutes: 280\n",
+			old: "    timeout-minutes: 260\n",
+			new: "    timeout-minutes: 250\n",
 		},
 		"short support poll": {
-			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"280\"\n",
-			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"260\"\n",
+			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"250\"\n",
+			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"245\"\n",
 		},
 		"default branch binding": {
 			old: "          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n",

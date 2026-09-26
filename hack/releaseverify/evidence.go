@@ -38,6 +38,12 @@ const (
 
 // gatePrerequisiteJobs are the jobs the Kubernetes support gate needs besides
 // the acceptance matrix, by the names .github/workflows/ci.yml gives them.
+//
+// Race detector stands for the race base pass and every mutation shard: it
+// needs them and fails unless each concluded as the event requires, which
+// hack/verify-kubernetes-support.go holds. Listing the shards here would be one
+// more place their count is written down, and would tell a release nothing
+// that Race detector's success does not.
 var gatePrerequisiteJobs = []string{
 	"Build Kubernetes support matrix",
 	"Verify source and generated files",

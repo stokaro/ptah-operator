@@ -13,4 +13,4 @@ package releasecontract
 // Changing the release workflow means changing this line in the same commit.
 // That is the point: the digest is how a reviewer sees that the release
 // contract moved, rather than only the diff of the file that moved it.
-const WorkflowSHA256 = "96d5d4fb44c19788e3a07a66cbf616d735217bf084e4eaf537202b6853501162"
+const WorkflowSHA256 = "010656e2eab5563e5fed377a2dabeded561156de5346d124811661bc16f66f91"
