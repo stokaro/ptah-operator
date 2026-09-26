@@ -11,7 +11,8 @@ Every `v<chart-version>` tag publishes one version-addressed release set:
 - a reproducible Helm chart asset whose version and `appVersion` match the tag;
 - a keyless signature and GitHub build provenance for each image digest;
 - GitHub build provenance for every downloadable asset;
-- the reproducibly packaged chart, a digest manifest, and SHA-256 checksums.
+- the reproducibly packaged chart, a digest manifest, and SHA-256 checksums;
+- the acceptance evidence of the CI run that proved the candidate.
 
 The release body is that digest manifest and nothing else, so what a version
 asks you to change before you move to it is [Release
@@ -51,9 +52,47 @@ replace their same-name per-minor artifacts, and the aggregate gate accepts the
 run only after the latest job results succeed. A prepared journal is only
 transaction intent and does not claim a CI run; recovery may select another
 successful exact-source run before the final manifest is materialized. CI
-artifacts expire after 90 days, so this pointer preserves provenance but not the
-artifact bytes. If no complete unexpired exact-source evidence set remains,
-release or recovery preflight fails closed and requires a new release commit.
+artifacts expire, so the pointer alone would preserve provenance but not the
+artifact bytes; the release keeps those in its acceptance evidence, described
+below. The installed charts expire after 90 days and the lifecycle timings after
+30, so a candidate has to be released within 30 days of its CI run. If no
+complete unexpired exact-source evidence set remains, release or recovery
+preflight fails closed and requires a new release commit.
+
+## Acceptance evidence
+
+A CI run's logs and artifacts expire; an immutable release does not. So the
+release keeps the evidence of the run that proved it as one more asset,
+`acceptance-evidence.tar.gz`, which holds:
+
+- `jobs.json`: the CI run's ID and attempt, and for every job the release
+  requires, its name, job ID, the attempt that concluded it, and its conclusion,
+  as the GitHub API reported them. The required jobs are the ones the Kubernetes
+  support gate needs, one lifecycle per supported minor and suite, and the gate
+  itself;
+- `artifacts/lifecycle-timings-<minor>-<suite>/`: what each lifecycle uploaded,
+  its timing ledger, run context, timing report and resource samples;
+- `acceptance-record.md`: the output of
+  `go run ./hack/acceptancecoverage -record -profile support/acceptance/lab-20.json`
+  at the release commit.
+
+The support preflight builds the bundle from the run it has just verified. It
+refuses the release when any required job did not conclude in success on the
+attempt that last ran it, whether it failed, was canceled or was skipped, and
+when any lifecycle's download is missing or incomplete. The bundle is
+deterministic: entries sorted by name, one modification time (the release
+commit's), root ownership, mode 0644, and a gzip header with no timestamp. The
+publish job takes exactly the bytes the preflight reported. It records their
+digest in the manifest as `acceptance-evidence-sha256`, lists them in
+`SHA256SUMS`, attests, uploads, and downloads them back like every other asset,
+and `hack/releaseverify` opens the bundle again and requires `jobs.json` to name
+the same run as `support-evidence-run-id` and a success for every required job.
+
+A rerun rebuilds the bundle from the CI run the preflight selects. Once the
+manifest is final, that bundle has to be byte-identical to the one it records,
+so a rerun after the CI run was executed again fails closed. A draft can be
+deleted to start a new transaction; a published release keeps the bundle it
+published.
 
 ## The executor
 
@@ -192,7 +231,7 @@ packages to be byte-identical.
 
 The workflow attests `release-manifest.txt`, compares the prepared draft body,
 then replaces that body with the same authenticated final manifest bytes before
-synchronizing the three release assets. It never replaces uploaded asset bytes.
+synchronizing the release assets. It never replaces uploaded asset bytes.
 A failed upload may leave an empty `starter` asset; recovery deletes only that
 exact incomplete asset ID and uploads the journaled bytes again. Any uploaded
 mismatch, duplicate name, unexpected asset, or unknown state fails closed.
@@ -295,7 +334,7 @@ release attestation.
 ## Verify before installation
 
 Choose the tag independently, resolve its commit, and authenticate the release
-and all three assets before reading the manifest or trusting its checksums:
+and its assets before reading the manifest or trusting its checksums:
 
 ```sh
 tag=v0.1.0
@@ -307,12 +346,14 @@ gh release verify "$tag" --repo "$repository"
 gh release download "$tag" --repo "$repository" \
   --pattern "ptah-operator-$version.tgz" \
   --pattern release-manifest.txt \
-  --pattern SHA256SUMS
+  --pattern SHA256SUMS \
+  --pattern acceptance-evidence.tar.gz
 
 for asset in \
   "ptah-operator-$version.tgz" \
   release-manifest.txt \
-  SHA256SUMS
+  SHA256SUMS \
+  acceptance-evidence.tar.gz
 do
   gh release verify-asset "$tag" "$asset" --repo "$repository"
   gh attestation verify "$asset" \
@@ -326,7 +367,17 @@ grep -Fx "version=$version" release-manifest.txt
 grep -Fx "source-repository=$repository" release-manifest.txt
 grep -Fx "source-ref=refs/tags/$tag" release-manifest.txt
 grep -Fx "source-sha=$source_sha" release-manifest.txt
-sha256sum --check SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+grep -Fx "acceptance-evidence-sha256=$(sha256sum acceptance-evidence.tar.gz | awk '{print $1}')" \
+  release-manifest.txt
+```
+
+The acceptance evidence is then readable as it was when the release was cut:
+
+```sh
+tar -tzf acceptance-evidence.tar.gz
+tar -xzOf acceptance-evidence.tar.gz jobs.json |
+  jq -r '"run \(.runId) attempt \(.runAttempt)", (.jobs[] | "\(.name)\t\(.id)\t\(.attempt)\t\(.conclusion)")'
 ```
 
 Only after those checks should the image reference be read from the manifest.

@@ -121,8 +121,10 @@ var requirements = []requirement{
 			"a scan of the shipped images and binaries; and an interrupted publication"},
 	{"PA-12", "Retain evidence and make a bounded decision",
 		"the retained evidence of every executed requirement and a recorded decision for the stated profile",
-		"this record",
-		"evidence kept past the retention of a CI run"},
+		"this record, and the acceptance evidence bundle `.github/workflows/release.yml` attaches to the immutable release: " +
+			"the required jobs of the exact CI run with their IDs, attempts and conclusions, every lifecycle's timing artifacts, " +
+			"and this record at the release commit",
+		"a candidate release whose evidence bundle was published"},
 }
 
 // candidateField is one line of the identity block. supplied is empty where

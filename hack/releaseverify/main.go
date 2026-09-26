@@ -40,30 +40,32 @@ var (
 	dockerStagePattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 	releaseSequenceHelper  = regexp.MustCompile(`(?m)^\{\{- define "ptah-operator[.]releaseSequence" -\}\}([1-9][0-9]*)\{\{- end -\}\}$`)
 	releaseRunSHA256       = map[string]string{
-		"smoke/verify-release":               "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
-		"smoke/scan-vulnerabilities":         "8e0e527f037d2fc58747bd3fecf5b733bbf3bdc27f1d979508de0626f4bcb9ab",
-		"smoke/chart-reproducibility":        "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
-		"smoke/executor-source":              "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
-		"support-preflight/support-evidence": "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7",
-		"publish/release":                    "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
-		"publish/executor-source":            "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
-		"publish/transaction":                "f0f4f8c28e222c0aaed707d5e531c9f747bcea67b0a2c1e3e11ce621043e9445",
-		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
-		"publish/draft":                      "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
-		"publish/stage-inspect":              "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
-		"publish/executor-stage-inspect":     "9101f2bf05b917e79f04cbafdf82982ea27ccf4798c4d058797d1c276dbb86e2",
-		"publish/chart-package":              "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
-		"publish/artifacts":                  "414c2c004e2128d064542bb9307781b5b3f2f561c80a982cb060cb7f3f24db6b",
-		"publish/image-structure":            "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
-		"publish/executor-structure":         "accafc13c918f4ee400aa83e7453418aade64bae112778ac6487119f2f7736c7",
-		"publish/finalize-journal":           "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
-		"publish/asset-auth":                 "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
-		"publish/asset-sync":                 "9edd9f8cac27bffcecf3bd2d456d2e007eeaa9e8223a18c58940e00b94c25db6",
-		"publish/image-signature":            "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
-		"publish/executor-signature":         "5e217c59d27aab1a85bb03fde7613fd4585a4386fc654ae50f4e7c68ae3932fe",
-		"publish/final-verify":               "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
-		"publish/executor-final-verify":      "6bef003c921421ec68e90568239626b8ea50e7dd28676ec02963d9445c9f5c87",
-		"publish/publish-release":            "ba0397a317ec34cb0e98c2c8c575a0afc1e0ed441e39121b7eda787cd4269a7c",
+		"smoke/verify-release":                  "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
+		"smoke/scan-vulnerabilities":            "8e0e527f037d2fc58747bd3fecf5b733bbf3bdc27f1d979508de0626f4bcb9ab",
+		"smoke/chart-reproducibility":           "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
+		"smoke/executor-source":                 "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
+		"support-preflight/support-evidence":    "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7",
+		"support-preflight/acceptance-evidence": "b0a58ac48a8ffab51e1b39afd2f5dbb2368ecf198883ba69e24383c241fc947f",
+		"publish/release":                       "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
+		"publish/executor-source":               "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
+		"publish/transaction":                   "f0f4f8c28e222c0aaed707d5e531c9f747bcea67b0a2c1e3e11ce621043e9445",
+		"publish/immutability-preflight":        "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
+		"publish/draft":                         "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
+		"publish/stage-inspect":                 "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
+		"publish/executor-stage-inspect":        "9101f2bf05b917e79f04cbafdf82982ea27ccf4798c4d058797d1c276dbb86e2",
+		"publish/chart-package":                 "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
+		"publish/evidence-asset":                "c2e48485cc0a816250d727c998137b3144de5521909c0c6f4c00089dfabfdcdc",
+		"publish/artifacts":                     "3b56d24d01ea5f69c5adcd7967b30fc4f8bbbb4e3de497cd77cbd32fbf86d183",
+		"publish/image-structure":               "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
+		"publish/executor-structure":            "accafc13c918f4ee400aa83e7453418aade64bae112778ac6487119f2f7736c7",
+		"publish/finalize-journal":              "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
+		"publish/asset-auth":                    "3475070ed01f5a39c10e6523e24e18a725974935dee9fced605fab129ab3e8d0",
+		"publish/asset-sync":                    "00964fd7c43c95088755d469802e8a202feebfe138a61e5d567e1f116aefe1ed",
+		"publish/image-signature":               "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
+		"publish/executor-signature":            "5e217c59d27aab1a85bb03fde7613fd4585a4386fc654ae50f4e7c68ae3932fe",
+		"publish/final-verify":                  "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
+		"publish/executor-final-verify":         "6bef003c921421ec68e90568239626b8ea50e7dd28676ec02963d9445c9f5c87",
+		"publish/publish-release":               "4174ba4db5d9431c156bdef5ea78ff98765f9ff2d6e83dbe92da79e3a7f8e735",
 	}
 	// BuildKit reads parser directives from the leading comment lines, in this
 	// shape, and stops at the first line that is not one.
@@ -128,6 +130,15 @@ func main() {
 	)
 	executorProvenance := flag.String("executor-provenance", "", "Buildx provenance JSON of the executor image to verify")
 	executorProvenanceDate := flag.String("executor-provenance-date", "", "expected executor PTAH_BUILD_DATE build argument")
+	printAcceptanceArtifacts := flag.Bool(
+		"print-acceptance-artifacts",
+		false,
+		"print the name of every acceptance artifact the release keeps, one per line",
+	)
+	evidenceInput := flag.String("acceptance-evidence-input", "", "directory the release workflow fetched the CI run's evidence into")
+	evidenceOutput := flag.String("acceptance-evidence-output", "", "path to write the acceptance evidence bundle to")
+	evidenceSource := flag.String("acceptance-evidence-source", "", "release source commit the evidence must be about")
+	evidenceEpoch := flag.Int64("acceptance-evidence-epoch", 0, "commit time, in Unix seconds, every bundle entry carries")
 	flag.Parse()
 
 	if err := verifyRepository(*root, *tag); err != nil {
@@ -185,6 +196,34 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("ptah-commit=%s\nptah-version=%s\n", pin.Commit, pin.Version)
+		return
+	}
+	if *printAcceptanceArtifacts {
+		jobs, err := requiredAcceptanceJobs(*root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for _, job := range jobs {
+			if job.artifact != "" {
+				fmt.Println(job.artifact)
+			}
+		}
+		return
+	}
+	if *evidenceInput != "" || *evidenceOutput != "" || *evidenceSource != "" || *evidenceEpoch != 0 {
+		if *evidenceInput == "" || *evidenceOutput == "" || *evidenceSource == "" || *evidenceEpoch == 0 {
+			fmt.Fprintln(os.Stderr, "acceptance evidence requires -acceptance-evidence-input, -acceptance-evidence-output, -acceptance-evidence-source and -acceptance-evidence-epoch")
+			os.Exit(1)
+		}
+		bundle, err := buildAcceptanceEvidence(*root, *evidenceInput, *evidenceSource, *evidenceEpoch)
+		if err == nil {
+			err = os.WriteFile(*evidenceOutput, bundle, 0o644) //nolint:gosec // A release asset every reader may read.
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 	if *executorProvenance != "" || *executorProvenanceDate != "" {
@@ -440,6 +479,9 @@ func verifyRepository(root, tag string) error {
 		return err
 	}
 	if _, err := repositoryPtahPin(root); err != nil {
+		return err
+	}
+	if _, err := requiredAcceptanceJobs(root); err != nil {
 		return err
 	}
 	if err := verifyWorkflow(workflow); err != nil {
@@ -2149,18 +2191,20 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("support-preflight permissions must be actions: read and contents: read")
 	}
 	if !equalStringMap(preflight.Outputs, map[string]string{
-		"chart-sha256":              "${{ steps.support-evidence.outputs.chart-sha256 }}",
-		"kubernetes-support-window": "${{ steps.support-evidence.outputs.kubernetes-support-window }}",
-		"source-sha":                "${{ steps.support-evidence.outputs.source-sha }}",
-		"support-evidence-run-id":   "${{ steps.support-evidence.outputs.support-evidence-run-id }}",
+		"acceptance-evidence-sha256": "${{ steps.acceptance-evidence.outputs.sha256 }}",
+		"chart-sha256":               "${{ steps.support-evidence.outputs.chart-sha256 }}",
+		"kubernetes-support-window":  "${{ steps.support-evidence.outputs.kubernetes-support-window }}",
+		"source-sha":                 "${{ steps.support-evidence.outputs.source-sha }}",
+		"support-evidence-run-id":    "${{ steps.support-evidence.outputs.support-evidence-run-id }}",
 	}) {
-		return errors.New("support-preflight must expose only its verified chart, source, run, and Kubernetes window evidence")
+		return errors.New("support-preflight must expose only its verified chart, source, run, Kubernetes window and acceptance evidence")
 	}
 	if err := verifyStepContract("support-preflight", preflight.Steps,
-		[]string{"checkout", "setup-go", "support-evidence"},
+		[]string{"checkout", "setup-go", "support-evidence", "acceptance-evidence", "acceptance-evidence-upload"},
 		map[string]string{
-			"checkout": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-			"setup-go": "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+			"checkout":                   "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+			"setup-go":                   "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+			"acceptance-evidence-upload": uploadArtifactAction,
 		}); err != nil {
 		return err
 	}
@@ -2254,7 +2298,7 @@ func verifyWorkflowSemantics(document []byte) error {
 			"checkout", "setup-go", "setup-buildx", "release", "executor-source", "immutability-preflight", "transaction",
 			"journal-attestation", "draft", "stage-inspect", "executor-stage-inspect", "registry-login",
 			"image", "build-checkpoint", "executor-image", "executor-build-checkpoint",
-			"chart-package", "client", "artifacts", "image-structure", "executor-structure",
+			"chart-package", "client", "evidence-download", "evidence-asset", "artifacts", "image-structure", "executor-structure",
 			"asset-attestation", "finalize-journal", "asset-auth", "asset-sync",
 			"image-attestation", "executor-attestation", "setup-cosign", "image-signature", "executor-signature",
 			"final-verify", "executor-final-verify", "publish-release",
@@ -2274,6 +2318,7 @@ func verifyWorkflowSemantics(document []byte) error {
 			"image-attestation":         "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"executor-attestation":      "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"setup-cosign":              "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+			"evidence-download":         downloadArtifactAction,
 		}); err != nil {
 		return err
 	}
@@ -2451,6 +2496,7 @@ func verifyWorkflowSemantics(document []byte) error {
 
 	if err := verifyAttestationStep(steps, "asset-attestation", map[string]string{
 		"subject-path": "${{ steps.chart-package.outputs.path }}\ndist/release-manifest.txt\ndist/SHA256SUMS\n" +
+			"dist/" + acceptanceEvidenceAsset + "\n" +
 			"dist/kubectl-ptah-darwin-amd64\ndist/kubectl-ptah-darwin-arm64\n" +
 			"dist/kubectl-ptah-linux-amd64\ndist/kubectl-ptah-linux-arm64\n",
 	}, "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'"); err != nil {
@@ -2572,13 +2618,16 @@ func verifyWorkflowSemantics(document []byte) error {
 		return err
 	}
 	if err := requireRunBindings(steps, "asset-auth",
-		"dist/release-manifest.txt", "dist/SHA256SUMS",
+		"dist/release-manifest.txt", "dist/SHA256SUMS", "dist/"+acceptanceEvidenceAsset,
 		"--source-ref \"$GITHUB_REF\"", "--source-digest \"$GITHUB_SHA\""); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "asset-sync",
 		"cmp dist/release-manifest.txt", "gh release upload", "gh release download",
-		"state\" == starter", "--method DELETE"); err != nil {
+		"state\" == starter", "--method DELETE", "\n  "+acceptanceEvidenceAsset+" \\\n"); err != nil {
+		return err
+	}
+	if err := verifyAcceptanceEvidenceSteps(preflightSteps, steps); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "final-verify",
@@ -2590,6 +2639,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		return err
 	}
 	if err := requireRunBindings(steps, "publish-release",
+		"\n  "+acceptanceEvidenceAsset+" \\\n",
 		"if [[ \"$mode\" != published ]]", "gh release edit", "--draft=false", "--latest=false", "-verify-tag-identity",
 		"cmp dist/release-manifest.txt", "gh release download", "gh attestation verify",
 		"-checksums \"$gate_dir/SHA256SUMS\"", ".immutable", "gh release verify",
@@ -2742,6 +2792,80 @@ const (
 		"PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}\n"
 )
 
+const (
+	uploadArtifactAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+	downloadArtifactAction = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+)
+
+// verifyAcceptanceEvidenceSteps holds the path the acceptance evidence takes:
+// the preflight bundles the run it verified and reports the digest, and the
+// publish job takes those exact bytes, and only those, into the release.
+func verifyAcceptanceEvidenceSteps(preflightSteps, publishSteps map[string]workflowStep) error {
+	bundle, err := requireStep(preflightSteps, "acceptance-evidence")
+	if err != nil {
+		return err
+	}
+	if bundle.If != "" || !equalStringMap(bundle.Env, map[string]string{
+		"GH_TOKEN":        "${{ secrets.GITHUB_TOKEN }}",
+		"EVIDENCE_RUN_ID": "${{ steps.support-evidence.outputs.support-evidence-run-id }}",
+	}) {
+		return errors.New("the acceptance evidence must be bundled unconditionally from the CI run the preflight verified")
+	}
+	if err := requireRunBindings(preflightSteps, "acceptance-evidence",
+		"[[ \"$EVIDENCE_RUN_ID\" =~ ^[1-9][0-9]*$ ]]",
+		"\"repos/$GITHUB_REPOSITORY/actions/runs/$EVIDENCE_RUN_ID\" > \"$input/run.json\"",
+		"\"repos/$GITHUB_REPOSITORY/actions/runs/$EVIDENCE_RUN_ID/jobs?filter=latest&per_page=100\"",
+		"--paginate",
+		"go run ./hack/releaseverify -print-acceptance-artifacts",
+		"gh run download \"$EVIDENCE_RUN_ID\"",
+		"go run ./hack/acceptancecoverage -record -profile support/acceptance/lab-20.json",
+		"-acceptance-evidence-source \"$GITHUB_SHA\"",
+		"source_epoch=\"$(git show -s --format=%ct HEAD)\"",
+		"-acceptance-evidence-epoch \"$source_epoch\"",
+		"printf 'sha256=%s\\n' \"$digest\""); err != nil {
+		return err
+	}
+	upload, err := requireStep(preflightSteps, "acceptance-evidence-upload")
+	if err != nil {
+		return err
+	}
+	if upload.If != "" || len(upload.With) != 6 ||
+		value(upload.With, "name") != "acceptance-evidence" ||
+		value(upload.With, "path") != "${{ runner.temp }}/"+acceptanceEvidenceAsset ||
+		value(upload.With, "if-no-files-found") != "error" ||
+		value(upload.With, "overwrite") != "true" {
+		return errors.New("the preflight must hand on exactly the bundle it built")
+	}
+	download, err := requireStep(publishSteps, "evidence-download")
+	if err != nil {
+		return err
+	}
+	if download.If != "" || len(download.With) != 2 ||
+		value(download.With, "name") != "acceptance-evidence" ||
+		value(download.With, "path") != "${{ runner.temp }}/acceptance-evidence" {
+		return errors.New("the publish job must collect the preflight's bundle in every mode")
+	}
+	asset, err := requireStep(publishSteps, "evidence-asset")
+	if err != nil {
+		return err
+	}
+	if asset.If != "" || !equalStringMap(asset.Env, map[string]string{
+		"TESTED_ACCEPTANCE_EVIDENCE_SHA256": "${{ needs.support-preflight.outputs.acceptance-evidence-sha256 }}",
+	}) {
+		return errors.New("the acceptance evidence asset must bind only the digest the preflight reported")
+	}
+	if err := requireRunBindings(publishSteps, "evidence-asset",
+		"[[ \"$TESTED_ACCEPTANCE_EVIDENCE_SHA256\" =~ ^[0-9a-f]{64}$ ]]",
+		"[[ \"$(sha256sum \"$bundle\" | awk '{print $1}')\" == \"$TESTED_ACCEPTANCE_EVIDENCE_SHA256\" ]]",
+		"mv \"$bundle\" dist/"+acceptanceEvidenceAsset); err != nil {
+		return err
+	}
+	return requireRunBindings(publishSteps, "artifacts",
+		"evidence_sha256=\"$(sha256sum dist/"+acceptanceEvidenceAsset+" | awk '{print $1}')\"",
+		"printf 'acceptance-evidence-sha256=%s\\n' \"$evidence_sha256\"",
+		"sha256sum \"$chart_name\" release-manifest.txt "+acceptanceEvidenceAsset)
+}
+
 // verifyExecutorSourceStep holds the step that fetches the Ptah source to the
 // pin: it reads the commit through this program, fetches exactly that commit,
 // refuses anything else Git resolves, and hands on only an archive of it.
@@ -2886,12 +3010,31 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	if filepath.Base(chartPath) != fields["chart-asset"] || chartDigest != fields["chart-asset-sha256"] {
 		return errors.New("packaged chart does not match the release manifest")
 	}
+	// The acceptance evidence sits beside the chart and the checksum file, as
+	// it is uploaded, and it is the bundle of the run the manifest names.
+	evidencePath := filepath.Join(filepath.Dir(checksumsPath), acceptanceEvidenceAsset)
+	evidence, err := readEvidenceFile(evidencePath)
+	if err != nil {
+		return err
+	}
+	evidenceDigest := fmt.Sprintf("%x", sha256.Sum256(evidence))
+	if evidenceDigest != fields["acceptance-evidence-sha256"] {
+		return fmt.Errorf("%s has digest %s, and the release manifest records %s",
+			acceptanceEvidenceAsset, evidenceDigest, fields["acceptance-evidence-sha256"])
+	}
+	runID, err := strconv.ParseInt(fields["support-evidence-run-id"], 10, 64)
+	if err != nil {
+		return fmt.Errorf("release manifest support evidence run identity: %w", err)
+	}
+	if err := verifyAcceptanceEvidence(root, evidence, sourceSHA, runID); err != nil {
+		return err
+	}
 	checksums, err := os.ReadFile(checksumsPath)
 	if err != nil {
 		return fmt.Errorf("read SHA256SUMS: %w", err)
 	}
-	wantChecksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n",
-		chartDigest, fields["chart-asset"], sha256.Sum256(manifest))
+	wantChecksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n%s  %s\n",
+		chartDigest, fields["chart-asset"], sha256.Sum256(manifest), evidenceDigest, acceptanceEvidenceAsset)
 	// Every client binary, digested from the file that will be uploaded. A
 	// checksum file that named one and shipped another would be a checksum file
 	// nobody could use.
@@ -2903,7 +3046,7 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 		wantChecksums += fmt.Sprintf("%x  %s\n", sha256.Sum256(binary), asset)
 	}
 	if string(checksums) != wantChecksums {
-		return errors.New("SHA256SUMS is not the exact checksum set for the chart, the manifest and the client binaries")
+		return errors.New("SHA256SUMS is not the exact checksum set for the chart, the manifest, the acceptance evidence and the client binaries")
 	}
 	return nil
 }
@@ -2975,7 +3118,7 @@ func parseReleaseManifest(
 		"image", "image-tag",
 		"executor", "executor-tag", "executor-ptah-commit", "executor-ptah-version",
 		"chart-asset", "chart-asset-sha256", "client-assets",
-		"support-evidence-run-id", "kubernetes-support-window",
+		"acceptance-evidence-sha256", "support-evidence-run-id", "kubernetes-support-window",
 	}
 	fields, err := exactRecords(document, wantKeys, "release manifest")
 	if err != nil {
@@ -3003,6 +3146,9 @@ func parseReleaseManifest(
 	}
 	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(fields["chart-asset-sha256"]) {
 		return nil, nil, errors.New("release manifest chart asset digest is invalid")
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(fields["acceptance-evidence-sha256"]) {
+		return nil, nil, errors.New("release manifest acceptance evidence digest is invalid")
 	}
 	if !transactionPattern.MatchString(fields["transaction"]) {
 		return nil, nil, errors.New("release manifest transaction identity is invalid")

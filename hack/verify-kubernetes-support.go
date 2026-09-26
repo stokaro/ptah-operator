@@ -1447,12 +1447,13 @@ func verifyReleaseWorkflow(path string) error {
 		return fmt.Errorf("%s: support preflight timeout must be %d minutes", path, releasePreflightJobTimeoutMinutes)
 	}
 	if !equalStringMap(preflight.Outputs, map[string]string{
-		"chart-sha256":              "${{ steps.support-evidence.outputs.chart-sha256 }}",
-		"kubernetes-support-window": "${{ steps.support-evidence.outputs.kubernetes-support-window }}",
-		"source-sha":                "${{ steps.support-evidence.outputs.source-sha }}",
-		"support-evidence-run-id":   "${{ steps.support-evidence.outputs.support-evidence-run-id }}",
+		"acceptance-evidence-sha256": "${{ steps.acceptance-evidence.outputs.sha256 }}",
+		"chart-sha256":               "${{ steps.support-evidence.outputs.chart-sha256 }}",
+		"kubernetes-support-window":  "${{ steps.support-evidence.outputs.kubernetes-support-window }}",
+		"source-sha":                 "${{ steps.support-evidence.outputs.source-sha }}",
+		"support-evidence-run-id":    "${{ steps.support-evidence.outputs.support-evidence-run-id }}",
 	}) {
-		return fmt.Errorf("%s: support preflight must expose its verified source SHA, CI run, support window, and installed chart digest", path)
+		return fmt.Errorf("%s: support preflight must expose its verified source SHA, CI run, support window, installed chart digest, and acceptance evidence digest", path)
 	}
 	evidence, err := requireWorkflowStep(path, "support-preflight", preflight, "support-evidence")
 	if err != nil {
