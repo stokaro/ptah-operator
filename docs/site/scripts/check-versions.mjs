@@ -11,7 +11,7 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isVersionFolder, order, ROOT_ALIASES } from './gen-versions.mjs';
+import { aliasVersion, isVersionFolder, order, ROOT_ALIASES } from './gen-versions.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
@@ -75,13 +75,15 @@ export function inspect(root) {
   const defaultVersion = existsSync(indexPath)
     ? JSON.parse(readFileSync(indexPath, 'utf8')).default
     : null;
-  for (const route of ROOT_ALIASES) {
+  for (const alias of ROOT_ALIASES) {
+    const { route } = alias;
     if (!existsSync(join(root, route, 'index.html'))) {
       problems.push(`/${route}/ is linked from elsewhere and the assembled root does not answer it`);
       continue;
     }
-    if (defaultVersion && !existsSync(join(root, defaultVersion, route, 'index.html'))) {
-      problems.push(`/${route}/ redirects into ${defaultVersion}, which publishes no such page`);
+    const version = aliasVersion(alias, defaultVersion);
+    if (version && !existsSync(join(root, version, route, 'index.html'))) {
+      problems.push(`/${route}/ redirects into ${version}, which publishes no such page`);
     }
   }
 
@@ -110,25 +112,42 @@ function selftest() {
       ],
     }),
   );
-  for (const route of ROOT_ALIASES) {
+  for (const alias of ROOT_ALIASES) {
+    const { route } = alias;
+    const version = aliasVersion(alias, 'v0.1.0');
     mkdirSync(join(root, route), { recursive: true });
     writeFileSync(join(root, route, 'index.html'), '<!doctype html>');
-    mkdirSync(join(root, 'v0.1.0', route), { recursive: true });
-    writeFileSync(join(root, 'v0.1.0', route, 'index.html'), '<!doctype html>');
+    mkdirSync(join(root, version, route), { recursive: true });
+    writeFileSync(join(root, version, route, 'index.html'), '<!doctype html>');
   }
   let problems = inspect(root);
   if (problems.length !== 0) throw new Error(`a correct root was refused: ${problems.join('; ')}`);
 
   // An alias nothing is behind is the failure another site would carry.
-  for (const route of ROOT_ALIASES) rmSync(join(root, route), { recursive: true, force: true });
+  for (const { route } of ROOT_ALIASES) rmSync(join(root, route), { recursive: true, force: true });
   problems = inspect(root);
   if (!problems.some((problem) => problem.includes('does not answer it'))) {
     throw new Error(`a missing root alias was accepted: ${problems.join('; ')}`);
   }
-  for (const route of ROOT_ALIASES) {
+  for (const { route } of ROOT_ALIASES) {
     mkdirSync(join(root, route), { recursive: true });
     writeFileSync(join(root, route, 'index.html'), '<!doctype html>');
   }
+
+  // An alias that names its own version is read against that version, not
+  // against the apex: the page missing from edge is refused even though the
+  // default release publishes one.
+  const pinned = ROOT_ALIASES.find((alias) => alias.version);
+  if (!pinned) throw new Error('no root alias names its own version, so the case below measures nothing');
+  mkdirSync(join(root, 'v0.1.0', pinned.route), { recursive: true });
+  writeFileSync(join(root, 'v0.1.0', pinned.route, 'index.html'), '<!doctype html>');
+  rmSync(join(root, pinned.version, pinned.route), { recursive: true, force: true });
+  problems = inspect(root);
+  if (!problems.some((problem) => problem.includes(`/${pinned.route}/ redirects into ${pinned.version}`))) {
+    throw new Error(`an alias into a version that lacks the page was accepted: ${problems.join('; ')}`);
+  }
+  mkdirSync(join(root, pinned.version, pinned.route), { recursive: true });
+  writeFileSync(join(root, pinned.version, pinned.route, 'index.html'), '<!doctype html>');
 
   // The failure this file exists for: one build published twice.
   write('v0.1.0', { documentation_version: 'v0.1.0', source_commit: commit });
@@ -145,7 +164,10 @@ function selftest() {
   }
 
   rmSync(root, { recursive: true, force: true });
-  console.log('check-versions.mjs --selftest: OK (correct root, relabeled build, mislabeled directory)');
+  console.log(
+    'check-versions.mjs --selftest: OK (correct root, missing alias, alias into its own version, ' +
+      'relabeled build, mislabeled directory)',
+  );
 }
 
 function main() {

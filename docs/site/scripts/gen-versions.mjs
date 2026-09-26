@@ -165,17 +165,28 @@ ${items}
 
 // ROOT_ALIASES are addresses other sites link to, kept at the site root so a
 // link from elsewhere does not name a version and then rot when a release
-// ships. Each one redirects to the same page of whichever version the apex
-// serves. The list is short on purpose: a root alias per page would be a second
-// copy of the site's routes, free to disagree with the first.
-export const ROOT_ALIASES = ['demo'];
+// ships. Each one redirects to the same page of one published version. The
+// list is short on purpose: a root alias per page would be a second copy of
+// the site's routes, free to disagree with the first.
+//
+// An alias follows whichever version the apex serves unless it names one. The
+// Ptah compatibility page names edge: its table is rendered from the catalog
+// at the revision a guide was built from, edge is rebuilt from master whenever
+// the catalog changes, and a release guide keeps the catalog as it stood at its
+// tag. Whoever follows a link to the table is asking what works now.
+export const ROOT_ALIASES = [{ route: 'demo' }, { route: 'support/ptah', version: EDGE }];
 
-function aliasHTML(defaultVersion, route) {
-  const target = `${Origin}/${defaultVersion}/${route}/`;
+// aliasVersion is the version an alias redirects into.
+export function aliasVersion(alias, defaultVersion) {
+  return alias.version ?? defaultVersion;
+}
+
+function aliasHTML(version, route) {
+  const target = `${Origin}/${version}/${route}/`;
   return redirectPage(
     target,
     'Ptah Operator documentation',
-    `    <p>Opening <a href="${target}">${defaultVersion}/${route}/</a>.</p>`,
+    `    <p>Opening <a href="${target}">${version}/${route}/</a>.</p>`,
   );
 }
 
@@ -195,6 +206,14 @@ function selftest() {
     throw new Error(`reconcile said ${JSON.stringify(missing)}`);
   }
   if (isVersionFolder('v1.2') || isVersionFolder('nightly')) throw new Error('a non-version folder was accepted');
+  const demo = ROOT_ALIASES.find((entry) => entry.route === 'demo');
+  const compatibility = ROOT_ALIASES.find((entry) => entry.route === 'support/ptah');
+  if (aliasVersion(demo, 'v0.1.0') !== 'v0.1.0') throw new Error('the demo alias does not follow the apex');
+  // Once a release is the default, the table a link from elsewhere opens is
+  // still the current one.
+  if (aliasVersion(compatibility, 'v0.1.0') !== EDGE) {
+    throw new Error('the compatibility alias follows the apex instead of the current catalog');
+  }
   const alias = aliasHTML('v0.1.0', 'demo');
   if (!alias.includes('/v0.1.0/demo/')) throw new Error('a root alias did not address the default version');
   // Every redirect at the root leaves before it is drawn. Without the script a
@@ -255,14 +274,16 @@ function main() {
   };
   writeFileSync(join(root, 'versions.json'), `${JSON.stringify(index, null, 2)}\n`);
   writeFileSync(join(root, 'index.html'), indexHTML(defaultVersion, versions));
-  for (const route of ROOT_ALIASES) {
-    const published = join(root, defaultVersion, route, 'index.html');
+  for (const alias of ROOT_ALIASES) {
+    const { route } = alias;
+    const version = aliasVersion(alias, defaultVersion);
+    const published = join(root, version, route, 'index.html');
     if (!existsSync(published)) {
-      console.error(`gen-versions.mjs: ${defaultVersion} publishes no /${route}/, so the root alias would 404`);
+      console.error(`gen-versions.mjs: ${version} publishes no /${route}/, so the root alias would 404`);
       process.exit(1);
     }
     mkdirSync(join(root, route), { recursive: true });
-    writeFileSync(join(root, route, 'index.html'), aliasHTML(defaultVersion, route));
+    writeFileSync(join(root, route, 'index.html'), aliasHTML(version, route));
   }
   console.log(
     `gen-versions.mjs: ${versions.length} version(s), apex serves ${defaultVersion}, ` +

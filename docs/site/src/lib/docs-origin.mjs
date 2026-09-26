@@ -56,8 +56,9 @@ export function PtahDocsURL(version, route) {
   return `${PtahOrigin}/${version}/${route}`;
 }
 
-// CompatibilityURL is the permanent address of the compatibility matrix on
-// Ptah's site. It sits outside the per-version archives on purpose: the matrix
-// is current, and a copy frozen into a CLI release would answer with whatever
-// was true the day that CLI shipped.
-export const CompatibilityURL = `${PtahOrigin}/compatibility/operator/`;
+// CompatibilityURL is the permanent address of the Ptah compatibility table.
+// It is a root alias rather than a page of one version on purpose: the table
+// is current, and the alias opens the development guide's copy, which is
+// rebuilt whenever the catalog changes. A release guide's own copy answers with
+// whatever was true the day that release was tagged.
+export const CompatibilityURL = RootURL('support/ptah/');

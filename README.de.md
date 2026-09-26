@@ -14,7 +14,7 @@
   <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go%20%E2%89%A5&logo=go&logoColor=white" alt="Die in go.mod angegebene niedrigste Go-Version, mit der sich dieses Modul kompilieren lässt"></a>
 </p>
 
-<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Installation</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">Erstes Schema</a> · <a href="https://operator.ptah.run/demo/">Aufgezeichnete Abläufe</a> · <a href="https://operator.ptah.run/">Dokumentation</a> · <a href="https://docs.ptah.run/compatibility/operator/">Ptah-Kompatibilität</a></p>
+<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Installation</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">Erstes Schema</a> · <a href="https://operator.ptah.run/demo/">Aufgezeichnete Abläufe</a> · <a href="https://operator.ptah.run/">Dokumentation</a> · <a href="https://operator.ptah.run/support/ptah/">Ptah-Kompatibilität</a></p>
 
 Ptah Operator ist eine Kubernetes-native Steuerungsebene, die PostgreSQL- und
 MySQL-Schemas fortlaufend mit unveränderlichen OCI-Artefakten abgleicht.
@@ -120,8 +120,8 @@ die den Code ändern:
 
 Ptah selbst, seine Schemaformate, das OCI-Artefaktlayout und die CLI sind auf
 [docs.ptah.run](https://docs.ptah.run/edge/) dokumentiert. Die
-[Kompatibilitätsmatrix](https://docs.ptah.run/compatibility/operator/)
-nennt die mit diesem Operator geprüften Ptah-Builds. Beide Ressourcen sind auf Englisch.
+[Kompatibilitätsmatrix](https://operator.ptah.run/support/ptah/) der
+Anleitung nennt die mit diesem Operator geprüften Ptah-Builds. Beide Ressourcen sind auf Englisch.
 
 `PtahMigration` und `PtahSchema` bleiben getrennt. Eine deklarierte Zeilenmenge
 beschreibt die gewünschten Daten, eine Migrationsfolge einen Zustandsübergang.
