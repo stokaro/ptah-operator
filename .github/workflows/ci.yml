@@ -94,7 +94,10 @@ jobs:
   verify:
     name: Verify source and generated files
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # make test gives go test 30 minutes, and the setup and checks before it
+    # took four minutes on acd17c4 and 93b209b. The limit outlasts both, so a
+    # hung test ends with Go's goroutine dump rather than a canceled job.
+    timeout-minutes: 40
     steps:
       - name: Check out repository
         id: checkout

@@ -77,7 +77,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "7132b7ed6d68bde38b9b171dd8e4e71dac073fe66cb893c10e20f192b75c5031"
+	ciWorkflowSHA256                = "a29bb5abb40c6d0512f37d22533f4352259233752310f57bbae2420e8a278815"
 	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -90,8 +90,18 @@ const (
 	helmSetupAction = "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4"
 	helmVersion     = "v4.3.0"
 
-	ciSupportMatrixTimeoutMinutes     = 10
-	ciVerifyTimeoutMinutes            = 20
+	ciSupportMatrixTimeoutMinutes = 10
+	// The verify job outlasts go test's own timeout plus what runs before it,
+	// which verifyJobOutlastsTests holds.
+	ciVerifyTimeoutMinutes = 40
+	// makeTestTimeoutMinutes is the -timeout the Makefile's test target gives
+	// go test, which verifyMakeRaceTargets pins.
+	makeTestTimeoutMinutes = 30
+	// ciVerifyBeforeTestMinutes is what runs in the verify job before go test
+	// starts: the job's setup steps and the checks verify-source runs ahead of
+	// test. It took four minutes on acd17c4 and 93b209b with the rolling build
+	// cache, and this is twice that, for a cold one.
+	ciVerifyBeforeTestMinutes         = 8
 	ciRaceTimeoutMinutes              = 20
 	ciKubernetesE2ETimeoutMinutes     = 180
 	ciPrepareImagesTimeoutMinutes     = 45
@@ -738,6 +748,9 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 	}
 
 	verifyJob := workflow.Jobs["verify"]
+	if err := verifyJobOutlastsTests(path, verifyJob.TimeoutMinutes); err != nil {
+		return err
+	}
 	if verifyJob.If != "" || verifyJob.TimeoutMinutes != ciVerifyTimeoutMinutes {
 		return fmt.Errorf("%s: verify must run unconditionally with a %d-minute timeout", path, ciVerifyTimeoutMinutes)
 	}
@@ -1113,6 +1126,18 @@ done
 `
 	if step.Shell != "bash" || step.Run != wantGateRun {
 		return fmt.Errorf("%s: Kubernetes support gate must fail explicitly unless every dependency succeeded", path)
+	}
+	return nil
+}
+
+// verifyJobOutlastsTests holds the verify job's limit above go test's own
+// timeout and what runs before it. At or under that sum, the job limit ends a
+// hung test first, and the run shows a canceled job instead of the goroutine
+// dump and the name of the running test that Go's timeout prints.
+func verifyJobOutlastsTests(path string, limit int) error {
+	if limit <= makeTestTimeoutMinutes+ciVerifyBeforeTestMinutes {
+		return fmt.Errorf("%s: verify's %d-minute limit must exceed make test's %d-minute go test timeout plus the %d minutes before it",
+			path, limit, makeTestTimeoutMinutes, ciVerifyBeforeTestMinutes)
 	}
 	return nil
 }
@@ -5707,8 +5732,9 @@ func verifyMakeRaceTargets(path string) error {
 	if err != nil {
 		return err
 	}
-	if exactMakeRule(parsed.lines, test.line) != "test:\n\t$(GO) test -timeout=30m ./..." {
-		return fmt.Errorf("%s: test must run every package with nothing skipped and a 30-minute timeout, because it is the only run of the shell mutation suites", path)
+	if exactMakeRule(parsed.lines, test.line) != fmt.Sprintf("test:\n\t$(GO) test -timeout=%dm ./...", makeTestTimeoutMinutes) {
+		return fmt.Errorf("%s: test must run every package with nothing skipped and a %d-minute timeout, because it is the only run of the shell mutation suites",
+			path, makeTestTimeoutMinutes)
 	}
 	sources := parsed.rules["verify-source"]
 	if len(sources) != 1 || sources[0].operator != ":" || sources[0].conditionalDepth != 0 {

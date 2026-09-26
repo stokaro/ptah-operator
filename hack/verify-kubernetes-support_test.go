@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -500,8 +501,12 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        run: make e2e\n      - name: Duplicate lifecycle\n        run: make e2e\n      # One chart per minor",
 		},
 		"verify timeout drift": {
-			old: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n",
-			new: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n",
+			old: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 40\n",
+			new: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 45\n",
+		},
+		"verify limit inside the test timeout": {
+			old: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 40\n",
+			new: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 35\n",
 		},
 		"race timeout drift": {
 			old: "    # a half on #439, each on a cold build cache.\n    timeout-minutes: 20\n",
@@ -668,6 +673,38 @@ func TestSupportGateRequiresEverySuccessfulDependency(t *testing.T) {
 	}
 }
 
+// The verify job's limit has to outlast go test's own timeout on ./hack and the
+// minutes before go test starts, or the job limit ends a hung test first and
+// the run loses the goroutine dump and the name of the test. The old 20 minutes
+// is refused, and so is every limit up to the sum, including the sum itself.
+func TestVerifyJobOutlastsTheTestTimeout(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", workflowPath)
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCIWorkflowSemanticsAtPath(path); err != nil {
+		t.Fatalf("verifyCIWorkflowSemantics(ci.yml) error = %v", err)
+	}
+	const limit = "    timeout-minutes: 40\n"
+	sum := makeTestTimeoutMinutes + ciVerifyBeforeTestMinutes
+	for _, minutes := range []int{20, makeTestTimeoutMinutes, 35, sum} {
+		t.Run(strconv.Itoa(minutes), func(t *testing.T) {
+			t.Parallel()
+			mutated := writeMutatedWorkflow(t, string(contents), limit, fmt.Sprintf("    timeout-minutes: %d\n", minutes))
+			err := verifyCIWorkflowSemanticsAtPath(mutated)
+			if err == nil || !strings.Contains(err.Error(), "must exceed make test's") {
+				t.Fatalf("verifyCIWorkflowSemantics() with a %d-minute verify limit error = %v, want the test-timeout refusal", minutes, err)
+			}
+		})
+	}
+	if err := verifyJobOutlastsTests(path, sum+1); err != nil {
+		t.Fatalf("verifyJobOutlastsTests(%d) error = %v, want acceptance one minute past the sum", sum+1, err)
+	}
+}
+
 // The release preflight waits for a CI run to complete, so its bound has to be
 // the latest the run can end, read off the needs in ci.yml rather than off a
 // formula that happens to agree with them today.
@@ -697,6 +734,29 @@ func TestVerifyCIRunBoundFollowsTheNeedsGraph(t *testing.T) {
 		mutated := workflow
 		mutated.Jobs = jobs
 		return mutated
+	}
+
+	// The verify job ends inside the path of the support matrix and the shared
+	// images, which the lifecycles wait for as well, so its limit can grow to
+	// theirs without moving the end of the run. Raising it to outlast the test
+	// timeout left the release poll at 250 minutes; one minute past that path
+	// moves the end, and the poll would have to follow.
+	imagePath := ciSupportMatrixTimeoutMinutes + ciPrepareImagesTimeoutMinutes
+	if ciVerifyTimeoutMinutes > imagePath {
+		t.Fatalf("verify's %d-minute limit is past the %d-minute image path", ciVerifyTimeoutMinutes, imagePath)
+	}
+	if releaseSupportPollTimeoutMinutes != 250 || releasePreflightJobTimeoutMinutes != 260 {
+		t.Fatalf("release poll %d and preflight %d minutes, want 250 and 260 as release.yml and hack/releaseverify hold them",
+			releaseSupportPollTimeoutMinutes, releasePreflightJobTimeoutMinutes)
+	}
+	atImagePath := with("verify", func(job *workflowJob) { job.TimeoutMinutes = imagePath })
+	if err := verifyCIRunBound(path, atImagePath, ciRunEndMinutes); err != nil {
+		t.Fatalf("a verify job as long as the image path moved the bound: %v", err)
+	}
+	pastImagePath := with("verify", func(job *workflowJob) { job.TimeoutMinutes = imagePath + 1 })
+	if err := verifyCIRunBound(path, pastImagePath, ciRunEndMinutes); err == nil ||
+		!strings.Contains(err.Error(), fmt.Sprintf("ends at %d minutes", ciRunEndMinutes+1)) {
+		t.Fatalf("a verify job past the image path left the bound at %d: %v", ciRunEndMinutes, err)
 	}
 
 	// The race detector ends long before the lifecycles, so it can grow up to
