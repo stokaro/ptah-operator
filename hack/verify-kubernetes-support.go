@@ -1830,15 +1830,15 @@ func verifyReleaseWorkflow(path string) error {
 // The workflow that cancels a closed pull request's runs.
 const (
 	cancelWorkflowPath           = ".github/workflows/cancel-closed-pull-request.yml"
-	cancelWorkflowSHA256         = "74011f445ed20fa21ef38d5bd332e0a319de85d16a357a948c9cf4d506a74b3d"
+	cancelWorkflowSHA256         = "8c17abf9a78870818011e9bf69db27f0b48d7bd4d61617d3abe6ec9c3dafc473"
 	cancelWorkflowTimeoutMinutes = 5
 )
 
-// wantCancelRun is the whole cancellation command. It lists the unfinished
-// runs of the closed pull request's head branch by pull_request event, keeps
-// the ones from this repository other than its own, and cancels them. A run
-// that concludes between the listing and the request is not a failure; one
-// that is still running afterwards is.
+// wantCancelRun is the whole cancellation command. It lists every page of the
+// unfinished runs of the closed pull request's head branch by pull_request
+// event, keeps the ones from this repository other than its own, and cancels
+// them. A run that concludes between the listing and the request is not a
+// failure; one that is still running afterwards is.
 const wantCancelRun = `set -euo pipefail
 [[ -n "$HEAD_BRANCH" ]]
 run_ids_file="$RUNNER_TEMP/closed-pull-request-run-ids"
@@ -1846,18 +1846,19 @@ run_ids_file="$RUNNER_TEMP/closed-pull-request-run-ids"
 # Every status a run can hold before it concludes. This run is itself
 # an unfinished pull_request run on the branch, and is left out.
 for status in requested queued pending waiting in_progress; do
+  # --paginate follows the Link header to the last page and prints
+  # each page as a JSON object of its own, which jq reads in turn.
+  # Nothing reads total_count: on a branch with a handful of runs, a
+  # status-filtered listing has returned one its page disagreed with.
   runs="$(gh api \
     --method GET \
+    --paginate \
     -H 'X-GitHub-Api-Version: 2026-03-10' \
     "repos/$GITHUB_REPOSITORY/actions/runs" \
     -f branch="$HEAD_BRANCH" \
     -f event=pull_request \
     -f status="$status" \
     -f per_page=100)"
-  if ! jq -e '(.workflow_runs | length) == .total_count' <<<"$runs" >/dev/null; then
-    echo "the $status run listing for $HEAD_BRANCH is a partial page" >&2
-    exit 1
-  fi
   jq -r \
     --arg branch "$HEAD_BRANCH" \
     --arg repository "$GITHUB_REPOSITORY" \
