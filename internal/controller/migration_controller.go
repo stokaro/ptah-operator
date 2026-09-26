@@ -88,8 +88,12 @@ type MigrationReconciler struct {
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
-	Jobs              MigrationJobBuilder
-	Locks             *targetlock.Locker
+	// resultLogs is when this process first failed to read each result log
+	// it is still waiting on; resultLogLossWindow is measured on it. It is made
+	// on first use, by resultLogFailuresOf.
+	resultLogs *resultLogFailures
+	Jobs       MigrationJobBuilder
+	Locks      *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// resource, including resources that live in different namespaces: two
 	// namespaces that address the same database must not run at the same time.
@@ -697,15 +701,24 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			r.event(migration, corev1.EventTypeWarning, "ResultReadTimedOut",
-				"reading the %s result took longer than its bound: %s",
-				operation.Type, bounded(err.Error(), 512))
+		if errors.Is(err, errResultReadRetry) {
+			if errors.Is(err, context.DeadlineExceeded) {
+				r.event(migration, corev1.EventTypeWarning, "ResultReadTimedOut",
+					"reading the %s result took longer than its bound: %s",
+					operation.Type, bounded(err.Error(), 512))
+			} else {
+				r.event(migration, corev1.EventTypeWarning, "ResultReadFailed",
+					"reading the %s result failed and will be tried again: %s",
+					operation.Type, bounded(err.Error(), 512))
+			}
 			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 		}
 		return ctrl.Result{}, err
 	}
 	result, parseErr := runner.ParseResultFor(evidence.Logs, migrationRunnerOperation(operation.Type), operation.ID)
+	if evidence.LogLost != nil {
+		parseErr = evidence.LogLost
+	}
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
@@ -1704,9 +1717,13 @@ func (r *MigrationReconciler) migrationTerminalLogs(
 	if r.Logs == nil {
 		return evidence, errors.New("pod log reader is not configured")
 	}
-	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout,
-		leaseReadBudget(operation.LeaseDurationSeconds),
-		migration.Namespace, selected.Name, executorContainerName)
+	logs, err := readResultLog(ctx, r.Logs, resultLogFailuresOf(&r.resultLogs), r.now(), r.ResultReadTimeout,
+		leaseReadBudget(operation.LeaseDurationSeconds), selected)
+	var lost *resultLogLost
+	if errors.As(err, &lost) {
+		evidence.LogLost = lost
+		return evidence, nil
+	}
 	if err != nil {
 		return evidence, err
 	}

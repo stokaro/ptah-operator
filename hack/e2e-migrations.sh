@@ -455,6 +455,18 @@ select_engine() {
 	ISOLATED_MIGRATION="e2e-isolated-node-${ENGINE}"
 	ISOLATED_COORDINATION_KEY="e2e/isolated-node/${ENGINE}"
 	ISOLATED_DB_URL_FILE="$WORK_DIR/${ENGINE}-isolated-node-db-url"
+	STOPPED_DATABASE=ptah_e2e_stopped
+	STOPPED_DB_SECRET="e2e-${ENGINE}-stopped-db"
+	STOPPED_MIGRATION="e2e-stopped-${ENGINE}"
+	STOPPED_COORDINATION_KEY="e2e/stopped/${ENGINE}"
+	STOPPED_DB_URL_FILE="$WORK_DIR/${ENGINE}-stopped-db-url"
+	STOPPED_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-stopped:stable"
+	STOPPED_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-stopped"
+	LOST_LOG_DATABASE=ptah_e2e_lost_log
+	LOST_LOG_DB_SECRET="e2e-${ENGINE}-lost-log-db"
+	LOST_LOG_MIGRATION="e2e-lost-log-${ENGINE}"
+	LOST_LOG_COORDINATION_KEY="e2e/lost-log/${ENGINE}"
+	LOST_LOG_DB_URL_FILE="$WORK_DIR/${ENGINE}-lost-log-db-url"
 	# The adoption row reads the artifact this engine already publishes. A
 	# second copy of the same three migrations would be a second thing to keep
 	# in step with the schema the proof builds out of them by hand.
@@ -473,6 +485,8 @@ select_engine() {
 		fail "migration fixtures are missing: $CHECKPOINT_FIXTURE_DIR"
 	[ -d "$UNCERTAIN_FIXTURE_DIR" ] ||
 		fail "migration fixtures are missing: $UNCERTAIN_FIXTURE_DIR"
+	[ -d "$STOPPED_FIXTURE_DIR" ] ||
+		fail "migration fixtures are missing: $STOPPED_FIXTURE_DIR"
 
 	# The password is read back from the Secret the data plane created rather
 	# than derived a second time here. A second derivation is a second
@@ -7156,6 +7170,372 @@ wait_for_retarget_refusal() {
 	fail "$RETARGET_MIGRATION never reported that its Apply was refused for a repointed target"
 }
 
+# A migration Apply stopped part way, and a migration Apply whose log is lost.
+#
+# Both rows reach a run from outside while it is still executing SQL, and both
+# ask the same question of the record it leaves: did the controller learn what
+# the database now holds, or did it have to call the run unknown? Each has a
+# database, a Secret and a coordination key of its own, so the history each
+# reads is its own run's.
+
+# How long the stopped row's Apply may run. It has to be long enough for the
+# Pod to reach its second migration on a node that pulls nothing, and far
+# shorter than that migration's sleep, so the only thing that ends the run is
+# the window closing.
+STOPPED_APPLY_WINDOW_SECONDS=90
+
+create_stop_row_database() {
+	row_database=$1
+	row_secret=$2
+	row_url_file=$3
+	create_database "$row_database"
+	database_url "$row_database" >"$row_url_file"
+	chmod 600 "$row_url_file"
+	{
+		cat "$row_url_file"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$row_secret" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$row_database" \
+		--rawfile url "$row_url_file" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# Always, because both rows are about a run that started and not about the gate
+# that authorizes one.
+create_stop_row_resource() {
+	row_name=$1
+	row_secret=$2
+	row_reference=$3
+	row_coordination_key=$4
+	row_deadline=$5
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$row_name" \
+		--arg secret "$row_secret" \
+		--arg reference "$row_reference" \
+		--arg coordinationKey "$row_coordination_key" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg engine "$ENGINE_KIND" \
+		--argjson deadline "$row_deadline" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "30s",
+        execution: {
+          activeDeadlineSeconds: $deadline, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+# The Apply the resource dispatched, named by its Job's name and UID -- a Job
+# found by label could be a later attempt under the same name -- and the
+# absolute deadline its claim carries, in epoch seconds.
+wait_for_stop_row_apply() {
+	row_name=$1
+	row_dispatch_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$row_dispatch_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$row_name" -o json >"$STATUS_FILE" 2>/dev/null || true
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0 and
+          ((.status.activeOperation.executionNotAfter // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null 2>&1; then
+			STOP_ROW_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			STOP_ROW_EXECUTION_NOT_AFTER=$(jq -er '.status.activeOperation.executionNotAfter | fromdateiso8601' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 2
+	done
+	fail "$row_name did not dispatch an Apply bound to its own Job within ${TIMEOUT_SECONDS}s"
+}
+
+# The one Pod the Apply Job owns, found by the Job's UID.
+read_stop_row_pod() {
+	row_job_uid=$1
+	row_pod_file=$2
+	k -n "$TEST_NAMESPACE" get pods -l "batch.kubernetes.io/controller-uid=${row_job_uid}" -o json \
+		>"$row_pod_file" || fail "the Pods of Apply Job $row_job_uid could not be read"
+	[ "$(jq '.items | length' "$row_pod_file")" -eq 1 ] ||
+		fail "Apply Job $row_job_uid owns $(jq '.items | length' "$row_pod_file") Pods, not one"
+}
+
+# Sessions in one database executing a sleep, other than the one asking. Both
+# fixtures the rows use end in a migration that does nothing but sleep, and a
+# session in it is the evidence that the run is inside that migration: the
+# statement that commits the migration before it has already returned.
+stop_row_sleeping_sessions() {
+	case "$ENGINE" in
+	postgresql)
+		migration_query "SELECT count(*) FROM pg_stat_activity
+                     WHERE datname = current_database() AND state = 'active'
+                       AND query LIKE '%pg_sleep%' AND pid <> pg_backend_pid()" "$1"
+		;;
+	mysql)
+		migration_query "SELECT COUNT(*) FROM information_schema.processlist
+                     WHERE db = '$1' AND info LIKE '%SLEEP(%' AND id <> CONNECTION_ID()" "$1"
+		;;
+	esac
+}
+
+# Ends every session still sleeping in one database, and fails if one remains.
+#
+# MySQL's driver stops a statement by closing its connection, and the server
+# goes on running the statement until it returns, holding what that session
+# held -- Ptah's migration lock among them, whose name is the same on every
+# database of the server. A stopped run's sleep would hold it for the rest of
+# its ten minutes and make every later run on this server wait. PostgreSQL
+# cancels the statement itself, and the query here finds nothing to end.
+end_stop_row_sleeping_sessions() {
+	case "$ENGINE" in
+	postgresql)
+		migration_query "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
+                     WHERE datname = current_database() AND query LIKE '%pg_sleep%'
+                       AND pid <> pg_backend_pid()" "$1" >/dev/null
+		;;
+	mysql)
+		end_sessions=$(migration_query "SELECT COALESCE(GROUP_CONCAT(id), '') FROM information_schema.processlist
+                     WHERE db = '$1' AND info LIKE '%SLEEP(%' AND id <> CONNECTION_ID()" "$1")
+		for end_session in $(printf '%s' "$end_sessions" | tr ',' ' '); do
+			migration_statement "KILL ${end_session}" "$1" >/dev/null 2>&1 || true
+		done
+		;;
+	esac
+	end_deadline=$(($(date +%s) + 30))
+	while [ "$(stop_row_sleeping_sessions "$1")" -ne 0 ]; do
+		[ "$(date +%s)" -lt "$end_deadline" ] ||
+			fail "a session is still sleeping in $1 on $ENGINE after it was ended"
+		sleep 2
+	done
+}
+
+# Waits until the run has committed every migration below $2 and is sleeping in
+# $2, and returns when it sees that.
+wait_for_stop_row_sleep() {
+	row_database=$1
+	row_sleeping_in=$2
+	row_sleep_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$row_sleep_deadline" ]; do
+		if [ "$(migration_query "SELECT count(*) FROM schema_migrations
+                     WHERE version < ${row_sleeping_in} AND state = 'applied'" "$row_database")" = \
+			$((row_sleeping_in - 1)) ] &&
+			[ "$(stop_row_sleeping_sessions "$row_database")" -ge 1 ]; then
+			return 0
+		fi
+		sleep 2
+	done
+	fail "the $ENGINE run against $row_database never reached migration $row_sleeping_in within ${TIMEOUT_SECONDS}s"
+}
+
+# Waits for the record of this Job's run, and leaves the reading that carried
+# it in $STATUS_FILE: the document that matched, not a later read.
+wait_for_stop_row_last_run() {
+	row_name=$1
+	row_job_uid=$2
+	row_record_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$row_record_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$row_name" -o json >"$STATUS_FILE" ||
+			fail "$row_name could not be read"
+		scan_for_credentials "$STATUS_FILE" "$row_name status"
+		if jq -e --arg job "$row_job_uid" '.status.lastRun.jobUID == $job' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 2
+	done
+	jq '{phase: .status.phase, lastRun: .status.lastRun, unresolvedRun: .status.unresolvedRun}' \
+		"$STATUS_FILE" >&2 || true
+	fail "$row_name recorded no run for its Apply Job $row_job_uid within ${TIMEOUT_SECONDS}s"
+}
+
+# A migration Apply stopped part way reports what it applied (#452).
+#
+# The runner passes the stop to Ptah as SIGTERM and waits for it; Ptah cancels
+# the statement it is in and writes its account of the run, which the runner
+# reads and frames. Before that the runner killed Ptah
+# with SIGKILL and read nothing, and every stopped run was recorded Unknown.
+#
+# The stop here is the one the runner imposes itself: the Apply's execution
+# deadline, which it enforces on Ptah's context whatever the Pod is doing. A
+# Pod deleted by an eviction or a drain is stopped with the same SIGTERM, but
+# its Job's controller removes the Pod's tracking finalizer before it marks the
+# Job finished, so the Pod object -- and with it the log and the termination
+# message -- is gone by the time this controller reads a result, and that run is
+# Unknown whatever the runner wrote. The deadline is the stop whose Pod stays.
+#
+# What the row asks of the record is the report's: the outcome Failed, and the
+# first migration as the one applied. The revision table has to say the same,
+# and the Pod's own record of the process has to show it ended after the
+# deadline and inside the grace.
+run_stopped_apply_proof() {
+	create_stop_row_database "$STOPPED_DATABASE" "$STOPPED_DB_SECRET" "$STOPPED_DB_URL_FILE"
+	publish_migrations stopped "$STOPPED_FIXTURE_DIR" "$STOPPED_REFERENCE"
+	create_stop_row_resource "$STOPPED_MIGRATION" "$STOPPED_DB_SECRET" "$STOPPED_REFERENCE" \
+		"$STOPPED_COORDINATION_KEY" "$STOPPED_APPLY_WINDOW_SECONDS"
+	wait_for_stop_row_apply "$STOPPED_MIGRATION"
+	stopped_job_uid=$STOP_ROW_JOB_UID
+	stopped_not_after=$STOP_ROW_EXECUTION_NOT_AFTER
+	wait_for_stop_row_sleep "$STOPPED_DATABASE" 2
+	# A run that reached its second migration only after the window closed was
+	# refused or cut off by something other than the stop under proof.
+	[ "$(date +%s)" -lt "$stopped_not_after" ] ||
+		fail "the $ENGINE run reached its second migration only after its window closed at $stopped_not_after; raise STOPPED_APPLY_WINDOW_SECONDS"
+	printf 'e2e migrations: the %s run is inside its second migration, %s seconds before its window closes\n' \
+		"$ENGINE_KIND" "$((stopped_not_after - $(date +%s)))" >&2
+
+	wait_for_stop_row_last_run "$STOPPED_MIGRATION" "$stopped_job_uid"
+	jq -e --arg job "$stopped_job_uid" --argjson stoppedAt 2 \
+		-f "$ROOT_DIR/testdata/e2e/migration-stopped-run-recorded.jq" "$STATUS_FILE" >/dev/null || {
+		jq '.status.lastRun' "$STATUS_FILE" >&2 || true
+		fail "$STOPPED_MIGRATION did not record the account its stopped run gave"
+	}
+
+	# The database says the same: the first migration applied, the second
+	# recorded as a failure with none of its statements committed.
+	[ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE version = 1 AND state = 'applied'" \
+		"$STOPPED_DATABASE")" = 1 ] ||
+		fail "the $ENGINE database does not record the first migration of the stopped run as applied"
+	[ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE version = 2 AND state <> 'applied' AND applied = 0" \
+		"$STOPPED_DATABASE")" = 1 ] ||
+		fail "the $ENGINE database does not record the stopped migration as failed with nothing committed"
+	end_stop_row_sleeping_sessions "$STOPPED_DATABASE"
+
+	# Dated by the Pod's own record of the process, not by when this row looked:
+	# the runner ended after the window closed, and inside the grace the Pod had.
+	read_stop_row_pod "$stopped_job_uid" "$WORK_DIR/stopped-pod.json"
+	jq -e --argjson notAfter "$stopped_not_after" '
+      .items[0] as $pod |
+      ([$pod.status.containerStatuses[]? | select(.name == "ptah") |
+        .state.terminated.finishedAt // empty | fromdateiso8601] | first) as $finished |
+      $finished != null and
+      $finished >= $notAfter and
+      $finished < $notAfter + $pod.spec.terminationGracePeriodSeconds
+    ' "$WORK_DIR/stopped-pod.json" >/dev/null || {
+		jq '.items[0] | {grace: .spec.terminationGracePeriodSeconds,
+		  ptah: [.status.containerStatuses[]? | select(.name == "ptah") | .state]}' \
+			"$WORK_DIR/stopped-pod.json" >&2 || true
+		fail "the $ENGINE runner did not end between its deadline at $stopped_not_after and the end of its grace"
+	}
+	# The account came from the frame in the log. The lost-log row below makes
+	# the same read of a log that is gone and has to find none.
+	stopped_pod=$(jq -er '.items[0].metadata.name' "$WORK_DIR/stopped-pod.json")
+	k -n "$TEST_NAMESPACE" logs "$stopped_pod" -c ptah --request-timeout=20s \
+		>"$WORK_DIR/stopped-apply.log" ||
+		fail "the stopped $ENGINE Apply Pod's log could not be read"
+	scan_for_credentials "$WORK_DIR/stopped-apply.log" "the stopped Apply's log"
+	grep -F 'PTAH_RUNNER_RESULT_V1 ' "$WORK_DIR/stopped-apply.log" >/dev/null ||
+		fail "the stopped $ENGINE runner wrote no frame"
+	printf 'e2e migrations: PASS %s run stopped at its deadline reported what it applied\n' \
+		"$ENGINE_KIND" >&2
+}
+
+# A migration Apply whose log is gone is settled from its termination summary
+# (#453).
+#
+# The frame is in the container log on the node, and the summary the runner
+# wrote beside it is in the Pod's status. The row removes the log while the run
+# is still going, so the frame goes into a file nobody can read, and asks
+# whether the run is still accounted for.
+#
+# The log directory is replaced with a file rather than removed. The kubelet
+# reopens a running container's missing log every ten seconds, and a directory
+# it can recreate would let the frame reach a new log; a file where the
+# directory was is a path nothing can open a log under. The run is inside its
+# last migration, which sleeps for forty-five seconds, when that happens, and
+# the row checks it is still there afterwards, so the frame cannot have been
+# written before the log went.
+run_lost_log_proof() {
+	[ -n "$NODE_DOCKER_CONTEXT" ] ||
+		fail "E2E_DOCKER_CONTEXT is not set, and the lost-log row reaches the node through it"
+	create_stop_row_database "$LOST_LOG_DATABASE" "$LOST_LOG_DB_SECRET" "$LOST_LOG_DB_URL_FILE"
+	create_stop_row_resource "$LOST_LOG_MIGRATION" "$LOST_LOG_DB_SECRET" "$UNCERTAIN_REFERENCE" \
+		"$LOST_LOG_COORDINATION_KEY" 300
+	wait_for_stop_row_apply "$LOST_LOG_MIGRATION"
+	lost_job_uid=$STOP_ROW_JOB_UID
+	wait_for_stop_row_sleep "$LOST_LOG_DATABASE" 3
+
+	read_stop_row_pod "$lost_job_uid" "$WORK_DIR/lost-log-pod.json"
+	lost_pod=$(jq -er '.items[0].metadata.name' "$WORK_DIR/lost-log-pod.json")
+	lost_pod_uid=$(jq -er '.items[0].metadata.uid' "$WORK_DIR/lost-log-pod.json")
+	lost_node=$(jq -er '.items[0].spec.nodeName' "$WORK_DIR/lost-log-pod.json")
+	lost_log_dir="/var/log/pods/${TEST_NAMESPACE}_${lost_pod}_${lost_pod_uid}/ptah"
+	docker --context "$NODE_DOCKER_CONTEXT" exec "$lost_node" test -d "$lost_log_dir" ||
+		fail "$lost_node keeps no log directory for the $ENGINE Apply Pod at $lost_log_dir"
+	printf 'e2e migrations: removing the %s Apply log on %s while its run is still going\n' \
+		"$ENGINE_KIND" "$lost_node" >&2
+	# shellcheck disable=SC2016 # The path expands inside the node container.
+	docker --context "$NODE_DOCKER_CONTEXT" exec "$lost_node" \
+		sh -c 'rm -rf -- "$1" && : >"$1"' sh "$lost_log_dir" ||
+		fail "the $ENGINE Apply log on $lost_node could not be removed"
+	[ "$(stop_row_sleeping_sessions "$LOST_LOG_DATABASE")" -ge 1 ] ||
+		fail "the $ENGINE run had left its last migration before its log was removed, so its frame may be in the log"
+
+	wait_for_stop_row_last_run "$LOST_LOG_MIGRATION" "$lost_job_uid"
+	cp "$STATUS_FILE" "$WORK_DIR/lost-log-status.json"
+
+	# The log really is gone. The stopped row above found a frame with this
+	# same read, so a read that finds none here is the log and not the check.
+	k -n "$TEST_NAMESPACE" logs "$lost_pod" -c ptah --request-timeout=20s \
+		>"$WORK_DIR/lost-log.log" 2>&1 || true
+	scan_for_credentials "$WORK_DIR/lost-log.log" "the lost Apply log"
+	if grep -F 'PTAH_RUNNER_RESULT_V1 ' "$WORK_DIR/lost-log.log" >/dev/null; then
+		fail "the $ENGINE Apply Pod's log still holds a frame, so the row lost nothing"
+	fi
+
+	# The summary the kubelet kept in Pod status, and the frame it names.
+	read_stop_row_pod "$lost_job_uid" "$WORK_DIR/lost-log-pod.json"
+	jq -er '.items[0].status.containerStatuses[] | select(.name == "ptah") |
+      .state.terminated.message' "$WORK_DIR/lost-log-pod.json" >"$WORK_DIR/lost-log-summary.txt" ||
+		fail "the $ENGINE Apply Pod's status carries no termination message"
+	scan_for_credentials "$WORK_DIR/lost-log-summary.txt" "the Apply's termination summary"
+	lost_digest=$(sed -n 's/^.*PTAH_RUNNER_SUMMARY_V1 //p' "$WORK_DIR/lost-log-summary.txt" |
+		jq -er '.frameDigest') ||
+		fail "the $ENGINE Apply Pod's termination message is not a runner summary"
+	jq -e --arg job "$lost_job_uid" --arg digest "$lost_digest" --argjson stoppedAt 3 \
+		-f "$ROOT_DIR/testdata/e2e/migration-lost-log-run-recorded.jq" \
+		"$WORK_DIR/lost-log-status.json" >/dev/null || {
+		jq '.status.lastRun' "$WORK_DIR/lost-log-status.json" >&2 || true
+		fail "$LOST_LOG_MIGRATION did not settle its run from the termination summary"
+	}
+	[ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE state = 'applied'" \
+		"$LOST_LOG_DATABASE")" = 3 ] ||
+		fail "the $ENGINE database does not record the three migrations the summary reported"
+	printf 'e2e migrations: PASS %s run whose log was lost was settled from its termination summary\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_egress_policy_proof() {
 	printf 'e2e migrations: applying the egress example to the %s operation Pods\n' "$ENGINE_KIND" >&2
 	read_egress_addresses
@@ -7216,6 +7596,8 @@ run_engine_migrations() {
 	run_late_dispatch_proof
 	run_restored_history_proof
 	run_deletion_during_apply_proof
+	run_stopped_apply_proof
+	run_lost_log_proof
 	run_retry_interval_proof
 	run_suspension_during_apply_proof
 	run_lock_release_fault_proof
@@ -7445,7 +7827,8 @@ reset_after_an_earlier_run() {
 	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
 		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
 		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" \
-		"$EGRESS_DB_SECRET" "$LATE_DB_SECRET" "$ISOLATED_DB_SECRET" >/dev/null ||
+		"$EGRESS_DB_SECRET" "$LATE_DB_SECRET" "$ISOLATED_DB_SECRET" \
+		"$STOPPED_DB_SECRET" "$LOST_LOG_DB_SECRET" >/dev/null ||
 		fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
 	# The publisher objects carry the version they published in their names,
 	# and the versions are spread through the proofs, so they are found by the
@@ -7462,7 +7845,7 @@ reset_after_an_earlier_run() {
 	for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
 		"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
 		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE" "$EGRESS_DATABASE" \
-		"$LATE_DATABASE" "$ISOLATED_DATABASE"; do
+		"$LATE_DATABASE" "$ISOLATED_DATABASE" "$STOPPED_DATABASE" "$LOST_LOG_DATABASE"; do
 		drop_database "$reset_database"
 	done
 	# An earlier run that died inside the egress proof may have left its

@@ -35,7 +35,8 @@ full on the resource's own status and in the operation's Job.
 | `OperationStarted` | Normal | `PtahSchema`, `PtahMigration` | A Job was created for the named operation. |
 | `PlanStale` | Warning | `PtahSchema` | The plan stopped matching what it was computed against, so nothing applies it. |
 | `ProtectedTableRefused` | Warning | `PtahSchema` | A plan would change a table `spec.policy.protectedTables` fences off, so no plan is published. |
-| `ResultReadTimedOut` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result took longer than the bound it is given. |
+| `ResultReadFailed` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result failed in a way that may pass, such as a kubelet the API server cannot reach, and will be tried again. A log that keeps failing for two minutes is treated as gone. |
+| `ResultReadTimedOut` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result took longer than the bound it is given. A log that keeps failing for two minutes is treated as gone. |
 | `TargetLockReleaseOwed` | Warning | `PtahMigration` | The database lock was not released, and the release the claim owes will be retried. |
 | `TerminationSummaryRefused` | Warning | `PtahMigration` | An Apply's log held no readable result, and the summary in its Pod's termination message was not read in its place. The message says why: another attempt, a summary cut short, or a log that holds a different frame. The run is recorded as unknown. |
 | `UnresolvedRunDiscarded` | Warning | `PtahMigration` | Deleting this resource discarded the record of a run nobody accounted for. The message names the outcome, the version, and the database. |

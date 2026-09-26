@@ -106,9 +106,13 @@ type SchemaReconciler struct {
 	// ResultReadTimeout bounds the pod/log read of one terminal operation.
 	// Zero means defaultResultReadTimeout, which is what the manager runs.
 	ResultReadTimeout time.Duration
-	Jobs              JobBuilder
-	Plans             planstore.Store
-	Locks             *targetlock.Locker
+	// resultLogs is when this process first failed to read each result log
+	// it is still waiting on; resultLogLossWindow is measured on it. It is made
+	// on first use, by resultLogFailuresOf.
+	resultLogs *resultLogFailures
+	Jobs       JobBuilder
+	Plans      planstore.Store
+	Locks      *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// PtahSchema, including schemas that live in different namespaces.
 	LockNamespace string
@@ -1364,15 +1368,24 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.retryOperation(ctx, schema, job, failure)
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			r.event(schema, corev1.EventTypeWarning, "ResultReadTimedOut",
-				"reading the %s result took longer than its bound: %s",
-				operation.Type, bounded(err.Error(), 512))
+		if errors.Is(err, errResultReadRetry) {
+			if errors.Is(err, context.DeadlineExceeded) {
+				r.event(schema, corev1.EventTypeWarning, "ResultReadTimedOut",
+					"reading the %s result took longer than its bound: %s",
+					operation.Type, bounded(err.Error(), 512))
+			} else {
+				r.event(schema, corev1.EventTypeWarning, "ResultReadFailed",
+					"reading the %s result failed and will be tried again: %s",
+					operation.Type, bounded(err.Error(), 512))
+			}
 			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
 		}
 		return ctrl.Result{}, err
 	}
 	result, parseErr := runner.ParseResultFor(evidence.Logs, runnerOperation(operation.Type), operation.ID)
+	if evidence.LogLost != nil {
+		parseErr = evidence.LogLost
+	}
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
@@ -3706,6 +3719,10 @@ type terminalEvidence struct {
 	// the kubelet recorded it in Pod status. It is set only where Trusted is:
 	// a container that never terminated wrote none.
 	TerminationMessage string
+	// LogLost is set, and Logs empty, when the executor's log will not be read
+	// again (readResultLog). It stands in for the parse error of a log that
+	// holds no frame.
+	LogLost *resultLogLost
 }
 
 func (r *SchemaReconciler) collectTerminalPodEvidence(
@@ -3886,9 +3903,13 @@ func (r *SchemaReconciler) terminalLogs(
 	if r.Logs == nil {
 		return evidence, fmt.Errorf("pod log reader is not configured")
 	}
-	logs, err := readOperationResult(ctx, r.Logs, r.ResultReadTimeout,
-		schemaResultReadBudget(schema),
-		schema.Namespace, selected.Name, executorContainerName)
+	logs, err := readResultLog(ctx, r.Logs, resultLogFailuresOf(&r.resultLogs), r.now(), r.ResultReadTimeout,
+		schemaResultReadBudget(schema), selected)
+	var lost *resultLogLost
+	if errors.As(err, &lost) {
+		evidence.LogLost = lost
+		return evidence, nil
+	}
 	if err != nil {
 		return evidence, err
 	}
