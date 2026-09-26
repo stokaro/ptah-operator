@@ -254,8 +254,11 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 	if got := requireEnv(t, job, runner.EnvExecutionNotAfter).Value; got != wantNotAfter {
 		t.Fatalf("execution deadline = %q, want %q", got, wantNotAfter)
 	}
-	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 300 {
-		t.Fatalf("activeDeadlineSeconds = %v, want what remains of the execution window", job.Spec.ActiveDeadlineSeconds)
+	// What remains of the execution window, plus the grace that lets a Pod which
+	// starts late reach the runner's refusal instead of Kubernetes' deadline.
+	wantDeadline := int64(300) + int64(JobDeadlineGrace/time.Second)
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != wantDeadline {
+		t.Fatalf("activeDeadlineSeconds = %v, want the execution window plus the grace (%d)", job.Spec.ActiveDeadlineSeconds, wantDeadline)
 	}
 	// The Job carries no plan annotation: the claim names the plan, admission
 	// reads the claim, and the sealed Job contract has no key for a migration

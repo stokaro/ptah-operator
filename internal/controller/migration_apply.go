@@ -25,6 +25,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // migrationApplyLeaseGrace is how much of the Lease is held back from the Pod's
@@ -272,7 +273,7 @@ func (r *MigrationReconciler) claimMigrationApply(
 	}
 	startedAt := r.now()
 	leaseDuration := migrationLeaseDuration(migration)
-	dispatchNotAfter := metav1.NewTime(startedAt.Add(leaseDuration - migrationApplyLeaseGrace))
+	dispatchNotAfter := metav1.NewTime(startedAt.Add(migrationApplyWindow(migration)))
 	operation := &operatorv1alpha1.MigrationOperationStatus{
 		Type:                 operatorv1alpha1.MigrationOperationApply,
 		ID:                   id,
@@ -996,8 +997,14 @@ func migrationRunEventType(outcome operatorv1alpha1.MigrationRunOutcome) string 
 }
 
 func migrationLeaseDuration(migration *operatorv1alpha1.PtahMigration) time.Duration {
-	deadline := time.Duration(migrationActiveDeadline(migration)) * time.Second
-	return deadline + migrationApplyLeaseGrace
+	return migrationApplyWindow(migration) + workload.JobDeadlineGrace + migrationApplyLeaseGrace
+}
+
+// migrationApplyWindow is how long a migration Apply is authorized for. The Job
+// outlives it by workload.JobDeadlineGrace and the Lease outlives the Job, for
+// the reasons stated on those constants.
+func migrationApplyWindow(migration *operatorv1alpha1.PtahMigration) time.Duration {
+	return time.Duration(migrationActiveDeadline(migration)) * time.Second
 }
 
 func migrationActiveDeadline(migration *operatorv1alpha1.PtahMigration) int64 {

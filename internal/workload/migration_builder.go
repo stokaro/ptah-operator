@@ -121,6 +121,7 @@ func (b Builder) BuildMigration(
 		operation.Type == operatorv1alpha1.MigrationOperationApply,
 		operation.StartedAt,
 		operation.ExecutionNotAfter,
+		JobDeadlineGrace,
 	)
 	if err != nil {
 		return nil, err

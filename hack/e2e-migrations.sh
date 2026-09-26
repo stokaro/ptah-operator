@@ -135,6 +135,14 @@ STATUS_FILE=$WORK_DIR/migration-status.json
 # next in this namespace, and a policy left behind would isolate its Pods.
 EGRESS_POLICIES_APPLIED=0
 
+# The node label a proof gates an Apply Pod on: the Pods of a resource whose
+# nodeSelector names it schedule only while the label is on the nodes. It exists
+# only while a proof lets them schedule, and cleanup removes it however the
+# phase ends: a label left behind would let the next run's gated Pod schedule at
+# once, and that proof would pass without ever having held it.
+APPLY_GATE_LABEL=operator.ptah.run/e2e-apply-gate
+APPLY_GATE_OPEN=0
+
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
@@ -143,6 +151,10 @@ cleanup() {
 		k -n "$TEST_NAMESPACE" delete networkpolicy -l operator.ptah.run/e2e-proof=egress \
 			--ignore-not-found >/dev/null 2>&1 || true
 		EGRESS_POLICIES_APPLIED=0
+	fi
+	if [ "${APPLY_GATE_OPEN:-0}" -eq 1 ]; then
+		k label nodes --all "${APPLY_GATE_LABEL}-" >/dev/null 2>&1 || true
+		APPLY_GATE_OPEN=0
 	fi
 	# The scenario that was open is the one this phase died in. The call is
 	# observational and returns the status it was given, so $status below is
@@ -319,6 +331,11 @@ select_engine() {
 	EGRESS_MIGRATION="e2e-egress-${ENGINE}"
 	EGRESS_COORDINATION_KEY="e2e/egress/${ENGINE}"
 	EGRESS_DB_URL_FILE="$WORK_DIR/${ENGINE}-egress-db-url"
+	LATE_DATABASE=ptah_e2e_late_dispatch
+	LATE_DB_SECRET="e2e-${ENGINE}-late-dispatch-db"
+	LATE_MIGRATION="e2e-late-dispatch-${ENGINE}"
+	LATE_COORDINATION_KEY="e2e/late-dispatch/${ENGINE}"
+	LATE_DB_URL_FILE="$WORK_DIR/${ENGINE}-late-dispatch-db-url"
 	DELETION_DATABASE=ptah_e2e_deletion
 	DELETION_DB_SECRET="e2e-${ENGINE}-deletion-db"
 	DELETION_MIGRATION="e2e-deletion-${ENGINE}"
@@ -2759,6 +2776,407 @@ wait_for_uncertain_phase() {
 	fail "$UNCERTAIN_MIGRATION did not reach $uncertain_phase within ${TIMEOUT_SECONDS}s; it is in ${uncertain_observed:-<none>}"
 }
 
+# The absolute window an Apply carries is not the Job's own deadline, and this
+# is the scenario that tells them apart.
+#
+# status.activeOperation.dispatchNotAfter is stamped when the claim is made, and
+# the Job's relative deadline runs from its own start. Built from the same
+# number, the two ended within a few hundred milliseconds of each other: a Pod
+# merely held Pending was failed by Kubernetes at very nearly the instant the
+# runner would have refused it, and a proof built that way would pass against a
+# runner that read neither deadline. Suspending the Job to restart its clock does
+# not work either -- Kubernetes keeps .status.startTime while the gated Pod is
+# still counted active (run 35669776999).
+#
+# workload.JobDeadlineGrace is what separates them now. The Job outlives the
+# window by that grace, so a Pod held until the window has closed and released
+# inside the grace starts in a Job that is still alive, and the only thing left
+# to stop it is the runner reading the absolute deadline.
+#
+# The nodeSelector is what removes the race. Without it the Apply Pod could
+# finish its SQL before the window closed, and the proof would be measuring how
+# fast the scheduler is.
+create_late_dispatch_database() {
+	create_database "$LATE_DATABASE"
+	database_url "$LATE_DATABASE" >"$LATE_DB_URL_FILE"
+	chmod 600 "$LATE_DB_URL_FILE"
+	{
+		cat "$LATE_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$LATE_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$LATE_DATABASE" \
+		--rawfile url "$LATE_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+# OnApproval, because the approval is what lets this proof choose the moment the
+# Apply is claimed. The nodeSelector reaches every operation Job, not only the
+# Apply -- internal/workload/migration_builder.go copies it into each Pod
+# template -- so a gate closed from the start strands the Resolve that comes
+# first and the resource never reaches an Apply at all. The read-only chain runs
+# with the gate open, and the gate closes between the plan and the approval.
+#
+# The active deadline is three hundred seconds because it is not the Apply's
+# alone: internal/workload/migration_builder.go builds one deadline and puts it
+# on every operation Job, so the Resolve, Verify and History that come first are
+# bounded by it too. Every other migration fixture in this phase uses three
+# hundred, and a shorter one kills the read-only chain before it can publish a
+# plan -- which is the same mistake as assuming the nodeSelector reached only
+# the Apply Pod.
+#
+# The window this proof waits out is that same number, so the hold is five
+# minutes. The margin afterwards does not depend on it: the Lease outlives the
+# window by migrationApplyLeaseGrace whatever the deadline is, so a longer
+# deadline buys nothing and a shorter one only shortens the hold.
+#
+# An hour of interval because nothing here wants a refresh landing between the
+# gate closing and the Apply being claimed.
+create_late_dispatch_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$LATE_MIGRATION" \
+		--arg secret "$LATE_DB_SECRET" \
+		--arg reference "$MIGRATION_REFERENCE" \
+		--arg coordinationKey "$LATE_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg gate "$APPLY_GATE_LABEL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "OnApproval", lockTimeout: "30s"},
+        interval: "1h",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s",
+          nodeSelector: ($gate | {(.): "open"})
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+# The gate is a node label the Apply Pod's nodeSelector needs. Open means every
+# node carries it and a Pod schedules at once; closed means no node does and a
+# Pod stays Pending however long it is left.
+open_apply_gate() {
+	k label nodes --all "${APPLY_GATE_LABEL}=open" --overwrite >/dev/null ||
+		fail "the apply gate could not be opened"
+	APPLY_GATE_OPEN=1
+}
+
+# Closing is what the rest of the proof rests on, so a masked failure here
+# would leave the gate open and every step after it measuring nothing. The
+# scheduler reads the node labels rather than this command's exit status, so
+# the check is that no node carries the label any more.
+close_apply_gate() {
+	k label nodes --all "${APPLY_GATE_LABEL}-" >/dev/null ||
+		fail "the apply gate could not be closed"
+	APPLY_GATE_OPEN=0
+	still_open=$(k get nodes -l "$APPLY_GATE_LABEL" -o name) ||
+		fail "the nodes carrying the apply gate could not be listed"
+	[ -z "$still_open" ] ||
+		fail "the apply gate is still open on: $(printf '%s' "$still_open" | tr '\n' ' ')"
+}
+
+# What the resource and its Jobs were doing when a wait ran out. A row in this
+# phase that times out prints only its own message, and the run's log is not
+# readable until every job in it finishes, so a failure here otherwise costs a
+# full matrix before anyone learns which state it was stuck in.
+report_late_dispatch_state() {
+	printf 'e2e migrations: %s state when the wait ended:\n' "$LATE_MIGRATION" >&2
+	if k -n "$TEST_NAMESPACE" get ptahmigration "$LATE_MIGRATION" -o json >"$STATUS_FILE" 2>/dev/null; then
+		jq -r '
+          .status as $s |
+          "  phase=\($s.phase // "<none>") observedGeneration=\($s.observedGeneration // "<none>")",
+          "  activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.jobName // "<none>") attempt=\(.attempt // "<none>") dispatchNotAfter=\(.dispatchNotAfter // "<none>")")",
+          "  plan=\(($s.plan // {}).name // "<none>") unresolvedRun=\(($s.unresolvedRun // null) != null)",
+          (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason) message=\(.message[0:160])")
+        ' "$STATUS_FILE" >&2 2>/dev/null || true
+	else
+		printf '  the resource could not be read\n' >&2
+	fi
+	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/migration=${LATE_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  job \(.metadata.name) operation=\(.metadata.labels["operator.ptah.run/operation"] // "<none>") " +
+      "suspend=\(.spec.suspend) active=\(.status.active // 0) failed=\(.status.failed // 0) " +
+      "succeeded=\(.status.succeeded // 0) startTime=\(.status.startTime // "<none>") " +
+      "conditions=\([(.status.conditions // [])[] | "\(.type)=\(.status)(\(.reason // ""))"] | join(","))"
+    ' >&2 2>/dev/null || true
+	k -n "$TEST_NAMESPACE" get pods -l "operator.ptah.run/migration=${LATE_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  pod \(.metadata.name) phase=\(.status.phase) node=\(.spec.nodeName // "<unscheduled>") " +
+      "reasons=\([(.status.conditions // [])[] | select(.status != "True") | "\(.type):\(.reason // "")"] | join(","))"
+    ' >&2 2>/dev/null || true
+	k get nodes -l "$APPLY_GATE_LABEL" -o name 2>/dev/null |
+		sed 's/^/  gate open on /' >&2 || true
+}
+
+late_dispatch_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$LATE_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$LATE_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$LATE_MIGRATION status"
+}
+
+# The read-only chain has to finish before there is an Apply to delay, so this
+# waits for the plan with the gate still open.
+wait_for_late_dispatch_plan() {
+	plan_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$plan_deadline" ]; do
+		late_dispatch_status
+		if jq -e '
+          .status.phase == "AwaitingApproval" and
+          ((.status.plan.name // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			LATE_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 5
+	done
+	report_late_dispatch_state
+	fail "$LATE_MIGRATION did not publish a plan to approve within ${TIMEOUT_SECONDS}s"
+}
+
+# Approving is what claims the Apply, and the gate is already closed when it
+# happens, so the Job this creates is the one whose Pod cannot start.
+approve_late_dispatch_plan() {
+	late_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$LATE_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	late_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$LATE_PLAN" \
+		-o jsonpath='{.metadata.uid}')
+	late_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$LATE_PLAN" \
+		-o jsonpath='{.spec.fingerprint}')
+	[ -n "$late_migration_uid" ] && [ -n "$late_plan_uid" ] && [ -n "$late_plan_fingerprint" ] ||
+		fail "$LATE_MIGRATION or its plan $LATE_PLAN carries no identity to approve"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "${LATE_MIGRATION}-approval" \
+		--arg migration "$LATE_MIGRATION" \
+		--arg migrationUID "$late_migration_uid" \
+		--arg plan "$LATE_PLAN" \
+		--arg planUID "$late_plan_uid" \
+		--arg fingerprint "$late_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the $ENGINE late-dispatch approval could not be created"
+}
+
+# The gate has to be seen holding a Pod before the window is waited out. A Job
+# whose Pod has not been created yet reads exactly like one whose Pod cannot be
+# placed, and holding on that reading would carry the claim past its window for
+# a reason that has nothing to do with the gate -- the row would pass with the
+# selector no longer reaching the Pod at all. testdata/e2e/gated-apply-pod.jq is the reading, and
+# hack/migration-refusal-filter-selftest.sh is where it is shown to refuse both
+# an empty list and a Pod that reached a node.
+wait_for_the_late_dispatch_pod_to_be_gated() {
+	gated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$gated_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get pods -l "job-name=${LATE_APPLY_JOB}" -o json \
+			>"$WORK_DIR/late-pods.json" ||
+			fail "the $ENGINE Apply Pods could not be read while the gate was closed"
+		if jq -e --arg gate "$APPLY_GATE_LABEL" \
+			-f "$ROOT_DIR/testdata/e2e/gated-apply-pod.jq" \
+			"$WORK_DIR/late-pods.json" >/dev/null; then
+			return 0
+		fi
+		# A Pod that reached a node is not something waiting longer fixes.
+		if jq -e '
+          any(.items[]?; ((.spec.nodeName // "") | length) > 0)
+        ' "$WORK_DIR/late-pods.json" >/dev/null; then
+			fail "the $ENGINE Apply Pod reached a node while the gate was closed, so the gate is not what held it"
+		fi
+		sleep 2
+	done
+	report_late_dispatch_state
+	fail "the $ENGINE Apply never produced a Pod held off every node, so nothing here shows the gate is what delayed it"
+}
+
+# The Job to hold is the one the resource says it dispatched, by name and by
+# UID, and the window to wait out is the one the resource persisted beside it.
+# Both are read from the same document, so neither can belong to another claim.
+wait_for_late_dispatch_apply() {
+	late_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$late_deadline" ]; do
+		late_dispatch_status
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0 and
+          ((.status.activeOperation.dispatchNotAfter // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			LATE_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
+			LATE_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			LATE_DISPATCH_NOT_AFTER=$(jq -er '.status.activeOperation.dispatchNotAfter' "$STATUS_FILE")
+			LATE_WINDOW_END=$(jq -er '
+              .status.activeOperation.dispatchNotAfter | fromdateiso8601' "$STATUS_FILE") ||
+				fail "$LATE_MIGRATION carries no readable Apply window"
+			return 0
+		fi
+		sleep 1
+	done
+	report_late_dispatch_state
+	fail "$LATE_MIGRATION did not claim an Apply with an absolute window within ${TIMEOUT_SECONDS}s"
+}
+
+# Waiting is derived from the deadline the resource persisted rather than from
+# a fixed sleep: a window the operator computes differently, or one the Lease
+# changes, moves this hold with it, and a fixed sleep would either pass before
+# the window closed or eat the grace the Pod still has to run in.
+hold_past_the_late_dispatch_window() {
+	[ "$LATE_WINDOW_END" -gt "$(date -u +%s)" ] ||
+		fail "the $ENGINE Apply window had already closed when it was claimed, so this row would hold nothing"
+	printf 'e2e migrations: holding the %s Apply Pod until its window closes at %s\n' \
+		"$ENGINE_KIND" "$LATE_DISPATCH_NOT_AFTER" >&2
+	# One second past it, so what follows is on the far side of a boundary the
+	# runner treats as exclusive.
+	while [ "$(date -u +%s)" -le "$LATE_WINDOW_END" ]; do
+		sleep 2
+	done
+}
+
+assert_late_dispatch_never_reaches_the_database() {
+	# The refusal is the runner's, and the message it produced is what says so.
+	# Blocked alone would be satisfied by a realm conflict, a dirty history or
+	# a Job that merely failed, none of which is this.
+	late_deadline=$(deadline_from_now)
+	late_refused=no
+	while [ "$(date +%s)" -lt "$late_deadline" ]; do
+		late_dispatch_status
+		if jq -e --arg uid "$LATE_APPLY_JOB_UID" '
+          .status.unresolvedRun as $run |
+          $run != null and $run.jobUID == $uid and
+          any(.status.conditions[]?;
+            .type == "Blocked" and .status == "True" and
+            .reason == "ApplyOutcomeUnknown" and
+            (.message | test("dispatch_deadline_expired")))
+        ' "$STATUS_FILE" >/dev/null; then
+			late_refused=yes
+			break
+		fi
+		sleep 5
+	done
+	if [ "$late_refused" != yes ]; then
+		report_late_dispatch_state
+		fail "$LATE_MIGRATION never reported that its Apply was refused for an expired dispatch window"
+	fi
+
+	# What the refusal is for. The runner stopped before it opened the
+	# database, so the sequence this artifact carries is still entirely
+	# unapplied -- the same reading as before the Apply Pod ever ran.
+	case "$ENGINE" in
+	postgresql) migrated_schema="table_schema='public'" ;;
+	mysql) migrated_schema="table_schema=DATABASE()" ;;
+	esac
+	applied_rows=$(migration_query \
+		"SELECT count(*) FROM information_schema.tables WHERE ${migrated_schema} AND table_name='schema_migrations'" \
+		"$LATE_DATABASE")
+	if [ "$applied_rows" != 0 ]; then
+		late_versions=$(migration_query "SELECT count(*) FROM schema_migrations" "$LATE_DATABASE")
+		[ "$late_versions" = 0 ] ||
+			fail "the $ENGINE Apply that ran past its window recorded $late_versions migrations"
+	fi
+	widget_tables=$(migration_query \
+		"SELECT count(*) FROM information_schema.tables WHERE ${migrated_schema} AND table_name='e2e_migration_widgets'" \
+		"$LATE_DATABASE")
+	[ "$widget_tables" = 0 ] ||
+		fail "the $ENGINE Apply that ran past its window created the table its first migration creates"
+
+	# And nothing replaced it. An Apply refused for its window is refused for
+	# the window of the claim that made it, so a replacement would have to be a
+	# new claim -- which is the replay the unresolved record exists to prevent.
+	# The baseline is the one Job this proof refused, written from the UID the
+	# resource named rather than from a listing taken afterwards. A listing
+	# taken now would already contain any replacement, and comparing it with
+	# itself is an assertion that cannot fail.
+	printf '%s\n' "$LATE_APPLY_JOB_UID" >"$WORK_DIR/late-applies.txt"
+	assert_no_new_apply_job "$WORK_DIR/late-applies.txt" \
+		"after its window closed" "$LATE_MIGRATION"
+}
+
+# The grace is the whole premise, so its absence is reported as itself rather
+# than as a refusal that never arrived. Past the window and before the gate
+# opens, the Job has to be alive: a Job Kubernetes already failed would leave the
+# Pod unstarted, and the assertion that follows would then be timing out on a
+# frame nothing was ever going to write.
+assert_the_late_dispatch_job_is_still_alive() {
+	k -n "$TEST_NAMESPACE" get job "$LATE_APPLY_JOB" -o json >"$WORK_DIR/late-job.json" ||
+		fail "the $ENGINE Apply Job could not be read after its window closed"
+	if jq -e '
+      any(.status.conditions[]?;
+        .status == "True" and (.type == "Complete" or .type == "Failed"))
+    ' "$WORK_DIR/late-job.json" >/dev/null; then
+		report_late_dispatch_state
+		fail "the $ENGINE Apply Job had already ended when its window closed, so it does not outlive the window by workload.JobDeadlineGrace"
+	fi
+}
+
+run_late_dispatch_proof() {
+	create_late_dispatch_database
+	# Open first. The selector reaches the Resolve, Verify and History Jobs as
+	# well, so a gate that is closed here strands the first of them and no Apply
+	# is ever claimed to delay.
+	open_apply_gate
+	create_late_dispatch_migration_resource
+	wait_for_late_dispatch_plan
+	printf 'e2e migrations: closing the gate before approving the %s plan\n' \
+		"$ENGINE_KIND" >&2
+	close_apply_gate
+	approve_late_dispatch_plan
+	wait_for_late_dispatch_apply
+	late_live_uid=$(k -n "$TEST_NAMESPACE" get job "$LATE_APPLY_JOB" \
+		-o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+	[ "$late_live_uid" = "$LATE_APPLY_JOB_UID" ] ||
+		fail "the $ENGINE Apply Job under that name is not the one the resource dispatched"
+	wait_for_the_late_dispatch_pod_to_be_gated
+	hold_past_the_late_dispatch_window
+	assert_the_late_dispatch_job_is_still_alive
+	printf 'e2e migrations: opening the gate on the %s Apply Pod after its window closed\n' \
+		"$ENGINE_KIND" >&2
+	open_apply_gate
+	assert_late_dispatch_never_reaches_the_database
+	close_apply_gate
+	printf 'e2e migrations: PASS %s refused an Apply Pod that started after its window closed\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_uncertain_apply_proof() {
 	create_uncertain_database
 	publish_migrations "uncertain" "$UNCERTAIN_FIXTURE_DIR" "$UNCERTAIN_REFERENCE"
@@ -3776,6 +4194,7 @@ run_engine_migrations() {
 	run_existing_schema_adoption_proof
 	run_checkpoint_bootstrap_proof
 	run_uncertain_apply_proof
+	run_late_dispatch_proof
 	run_deletion_during_apply_proof
 	run_retry_interval_proof
 	run_unknown_layer_proof
@@ -3975,6 +4394,11 @@ reset_after_an_earlier_run() {
 	[ -n "$PHASE_RERUN" ] || return 0
 	printf 'e2e migrations: rerun %s: removing what an earlier run of this phase left behind\n' \
 		"$PHASE_RERUN" >&2
+	# A run that died with the apply gate closed left an Apply Pod
+	# waiting for a node, and its resource keeps its finalizer until that Job
+	# ends. Opening the gate lets the Pod start and be refused for its window
+	# instead of waiting out the Job's deadline here; the label is removed below.
+	k label nodes --all "${APPLY_GATE_LABEL}=open" --overwrite >/dev/null 2>&1 || true
 	k -n "$TEST_NAMESPACE" delete ptahmigration --all \
 		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "the PtahMigrations an earlier run left behind were not removed"
@@ -3988,7 +4412,7 @@ reset_after_an_earlier_run() {
 	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
 		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
 		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" \
-		"$EGRESS_DB_SECRET" >/dev/null ||
+		"$EGRESS_DB_SECRET" "$LATE_DB_SECRET" >/dev/null ||
 		fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
 	# The publisher objects carry the version they published in their names,
 	# and the versions are spread through the proofs, so they are found by the
@@ -4004,7 +4428,8 @@ reset_after_an_earlier_run() {
 	done <"$RESOURCE_FILE"
 	for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
 		"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
-		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE" "$EGRESS_DATABASE"; do
+		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE" "$EGRESS_DATABASE" \
+		"$LATE_DATABASE"; do
 		drop_database "$reset_database"
 	done
 	# An earlier run that died inside the egress proof may have left its
@@ -4016,6 +4441,9 @@ reset_after_an_earlier_run() {
 	k -n "$TEST_NAMESPACE" delete pods -l operator.ptah.run/e2e-probe=egress \
 		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "the egress probes an earlier run left behind were not removed"
+	# A gate left open would let the next gated Pod schedule at once, and the
+	# late-dispatch proof would pass without having held anything.
+	k label nodes --all "${APPLY_GATE_LABEL}-" >/dev/null 2>&1 || true
 }
 
 reset_after_an_earlier_run

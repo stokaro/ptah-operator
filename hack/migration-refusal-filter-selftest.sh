@@ -45,6 +45,7 @@ accepts() {
 	cat >"$WORK_DIR/document.json"
 	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
+		--arg gate operator.ptah.run/e2e-apply-gate \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null ||
 		fail "$filter refused a reading it has to accept: $description"
@@ -56,6 +57,7 @@ refuses() {
 	cat >"$WORK_DIR/document.json"
 	if jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
+		--arg gate operator.ptah.run/e2e-apply-gate \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null 2>&1; then
 		fail "$filter accepted a reading it has to refuse: $description"
@@ -105,6 +107,7 @@ accepts_file() {
 	reading=$3
 	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
+		--arg gate operator.ptah.run/e2e-apply-gate \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$ROOT_DIR/testdata/e2e/readings/$reading" >/dev/null ||
 		fail "$filter refused a reading the operator produced: $description"
@@ -245,6 +248,47 @@ refuses migration-untouched-database.jq 'it reached the approval gate' <<'JSON'
 JSON
 refuses migration-untouched-database.jq 'something was applied' <<'JSON'
 {"status":{"phase":"Reading","history":{"appliedCount":1}}}
+JSON
+
+# The Apply Pod a closed scheduling gate is holding. Both refusals below are
+# mistakes this filter actually made: it read the phase alone, and it was
+# written with any(), which is false for an empty list and so accepted a Job
+# whose Pod did not exist yet. Either one lets the proof wait out a window
+# nothing was holding, and pass with the node selector no longer reaching the
+# Pod.
+accepts gated-apply-pod.jq 'one Pod the gate is holding' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeSelector":{"operator.ptah.run/e2e-apply-gate":"open"}},
+ "status":{"phase":"Pending"}}]}
+JSON
+refuses gated-apply-pod.jq 'a Pod carrying no selector, between creation and scheduling' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},"spec":{},"status":{"phase":"Pending"}}]}
+JSON
+refuses gated-apply-pod.jq 'a selector for some other gate' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeSelector":{"kubernetes.io/os":"linux"}},
+ "status":{"phase":"Pending"}}]}
+JSON
+refuses gated-apply-pod.jq 'the Job has not created a Pod yet' <<'JSON'
+{"items":[]}
+JSON
+refuses gated-apply-pod.jq 'Pending, and already bound to a node' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeName":"kind-worker","nodeSelector":{"operator.ptah.run/e2e-apply-gate":"open"}},
+ "status":{"phase":"Pending"}}]}
+JSON
+refuses gated-apply-pod.jq 'the runner is already going' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeName":"kind-worker","nodeSelector":{"operator.ptah.run/e2e-apply-gate":"open"}},
+ "status":{"phase":"Running"}}]}
+JSON
+refuses gated-apply-pod.jq 'one held and one placed' <<'JSON'
+{"items":[{"metadata":{"name":"apply-abc"},
+ "spec":{"nodeSelector":{"operator.ptah.run/e2e-apply-gate":"open"}},
+ "status":{"phase":"Pending"}},
+ {"metadata":{"name":"apply-def"},
+ "spec":{"nodeName":"kind-worker","nodeSelector":{"operator.ptah.run/e2e-apply-gate":"open"}},
+ "status":{"phase":"Pending"}}]}
 JSON
 
 printf 'migration refusal filter self-test: PASS\n'
