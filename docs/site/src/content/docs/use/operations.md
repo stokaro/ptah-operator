@@ -1437,7 +1437,7 @@ while `ptah_operator_unresolved_view_synced` reads 0.
 | `ptah_operator_resources{family,phase}` | Resources by the phase their status reports; `Unset` before the first reconciliation |
 | `ptah_operator_overdue_resources{family}` | Resources, not suspended, past their own `status.nextReconciliationTime` |
 | `ptah_operator_overdue_seconds{family}` | How far past it the latest one is. Absent where none is overdue |
-| `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type |
+| `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type. A failed attempt waiting for its retry is not in flight |
 | `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
 | `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
 | `ptah_operator_webhook_certificate_expiry_timestamp_seconds{}` | When the admission certificate this replica presents expires; every replica publishes it |

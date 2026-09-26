@@ -114,6 +114,12 @@ func TestTheStateGaugesReportTheFleetAsItIs(t *testing.T) {
 		},
 		// Never reconciled: no phase yet.
 		{},
+		// A Resolve that failed an hour ago and waits for its retry. The claim
+		// stays in status and is not an operation in flight.
+		{Status: operatorv1alpha1.PtahSchemaStatus{
+			Phase:           "Failed",
+			ActiveOperation: &operatorv1alpha1.ActiveOperationStatus{Type: "Resolve", StartedAt: *minutesBefore(60)},
+		}},
 	}
 	migrations := []operatorv1alpha1.PtahMigration{
 		{Status: operatorv1alpha1.PtahMigrationStatus{
@@ -132,6 +138,7 @@ func TestTheStateGaugesReportTheFleetAsItIs(t *testing.T) {
 		"ptah_operator_resources{family=schema}{phase=Observing} 1",
 		"ptah_operator_resources{family=schema}{phase=Suspended} 1",
 		"ptah_operator_resources{family=schema}{phase=Unset} 1",
+		"ptah_operator_resources{family=schema}{phase=Failed} 1",
 		"ptah_operator_resources{family=migration}{phase=Applying} 2",
 		"ptah_operator_overdue_resources{family=schema} 1",
 		"ptah_operator_overdue_seconds{family=schema} 420",
@@ -146,6 +153,9 @@ func TestTheStateGaugesReportTheFleetAsItIs(t *testing.T) {
 		if !strings.Contains(out, want+"\n") {
 			t.Errorf("the scrape does not carry %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "{operation=Resolve}") {
+		t.Errorf("a failed attempt waiting for its retry was published as in flight:\n%s", out)
 	}
 	// No overdue migration, so no age for one: zero would read as "one is due
 	// this instant".

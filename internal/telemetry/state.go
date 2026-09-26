@@ -68,7 +68,7 @@ func NewStateCollector(registerer prometheus.Registerer, view StateView, now fun
 			[]string{"family"}, nil),
 		active: prometheus.NewDesc(
 			"ptah_operator_active_operations",
-			"Resources with an operation in flight, by family and operation type.",
+			"Resources with an operation in flight, by family and operation type. A failed attempt waiting for its retry is not in flight.",
 			[]string{"family", "operation"}, nil),
 		activeSeconds: prometheus.NewDesc(
 			"ptah_operator_active_operation_seconds",
@@ -96,7 +96,12 @@ func (c *StateCollector) Describe(into chan<- *prometheus.Desc) {
 
 // resourceState is what the gauges need from one resource of either family.
 type resourceState struct {
-	phase            string
+	phase string
+	// failed is a resource whose last attempt failed. A schema keeps that
+	// attempt's claim in status.activeOperation until its retry, so the claim
+	// alone would count an ended operation as one still running and page as
+	// stalled for the whole failureRetryInterval.
+	failed           bool
 	suspended        bool
 	nextReconcile    *time.Time
 	operation        string
@@ -135,7 +140,7 @@ func (c *StateCollector) emit(into chan<- prometheus.Metric, now time.Time, fami
 		if state.owesLockRelease {
 			lockReleases++
 		}
-		if state.operation != "" {
+		if state.operation != "" && !state.failed {
 			operations[state.operation]++
 			if oldest, seen := oldestOperation[state.operation]; !seen || state.operationStarted.Before(oldest) {
 				oldestOperation[state.operation] = state.operationStarted
@@ -177,6 +182,7 @@ func schemaStates(schemas []operatorv1alpha1.PtahSchema) []resourceState {
 	for _, schema := range schemas {
 		state := resourceState{
 			phase:           phaseLabel(string(schema.Status.Phase)),
+			failed:          schema.Status.Phase == operatorv1alpha1.PhaseFailed,
 			suspended:       schema.Spec.Suspend,
 			owesLockRelease: schema.Status.PendingLockRelease != nil,
 		}
@@ -198,6 +204,7 @@ func migrationStates(migrations []operatorv1alpha1.PtahMigration) []resourceStat
 	for _, migration := range migrations {
 		state := resourceState{
 			phase:           phaseLabel(string(migration.Status.Phase)),
+			failed:          migration.Status.Phase == operatorv1alpha1.MigrationPhaseFailed,
 			suspended:       migration.Spec.Suspend,
 			owesLockRelease: migration.Status.PendingLockRelease != nil,
 		}
