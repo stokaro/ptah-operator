@@ -49,6 +49,7 @@ const (
 	e2eHarnessPath                 = "hack/e2e-kind.sh"
 	e2eSupportImageResolverPath    = "hack/e2e-kubernetes-support-image.sh"
 	e2eKindConfigPath              = "testdata/e2e/kind.yaml.tmpl"
+	e2eKindIsolationWorkerPath     = "testdata/e2e/kind-isolation-worker.yaml.tmpl"
 	apiServerEndpointFilterPath    = "hack/api-server-endpoint-inventory.jq"
 	e2eStaticPath                  = "hack/e2e-static.sh"
 	e2eDataPlanePath               = "hack/e2e-dataplane.sh"
@@ -174,6 +175,9 @@ func main() {
 	if err := verifyE2ESuiteCoverage(suites, e2eHarnessPath); err != nil {
 		fatal(err)
 	}
+	if err := verifyE2ESuiteIsolationWorker(suites); err != nil {
+		fatal(err)
+	}
 	manifest, parsed, err := loadAndValidateManifest(manifestPath, now)
 	if err != nil {
 		fatal(err)
@@ -212,6 +216,7 @@ func main() {
 		harness:                    e2eHarnessPath,
 		supportImageResolver:       e2eSupportImageResolverPath,
 		kindConfig:                 e2eKindConfigPath,
+		kindIsolationWorker:        e2eKindIsolationWorkerPath,
 		apiServerEndpointFilter:    apiServerEndpointFilterPath,
 		staticChecks:               e2eStaticPath,
 		dataPlane:                  e2eDataPlanePath,
@@ -1863,6 +1868,7 @@ type e2eWiringFiles struct {
 	harness                    string
 	supportImageResolver       string
 	kindConfig                 string
+	kindIsolationWorker        string
 	apiServerEndpointFilter    string
 	staticChecks               string
 	dataPlane                  string
@@ -2083,6 +2089,11 @@ const kindHATopologyContract = `assert_kind_ha_topology() {
 	# does not, which is why this list carries one more name than the node
 	# inventory asserted below. Measured on kind v0.31: "kind get nodes" on
 	# a two-control-plane cluster returns the balancer as a third line.
+	#
+	# The isolation worker is in both inventories exactly when this run
+	# declared it. A cluster without it cannot run the row that isolates it,
+	# and one that has it where nothing asked is not the cluster the other
+	# suites are measured on.
 	if ! {
 		printf '%s\n' \
 			"${CLUSTER_NAME}-control-plane" \
@@ -2090,22 +2101,41 @@ const kindHATopologyContract = `assert_kind_ha_topology() {
 			"${CLUSTER_NAME}-control-plane3" \
 			"${CLUSTER_NAME}-worker" \
 			"${CLUSTER_NAME}-external-load-balancer"
+		if [ "$ISOLATION_WORKER" = true ]; then
+			printf '%s\n' "${CLUSTER_NAME}-worker2"
+		fi
 	} | LC_ALL=C sort | cmp -s - "$KIND_NODE_INVENTORY_FILE"; then
-		fail "kind cluster does not have the exact three-control-plane, one-worker, one-load-balancer topology"
+		fail "kind cluster does not have the exact three-control-plane, one-worker, one-load-balancer topology $KIND_ISOLATION_TOPOLOGY"
 	fi
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		get nodes -o json >"$NODE_READINESS_FILE"
-	jq -e --arg cluster "$CLUSTER_NAME" '
-      ([.items[].metadata.name] | sort) == ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3", $cluster + "-worker"] | sort) and
+	# Only the isolation worker carries the isolation key, as a label and as
+	# the one taint that keeps everything else off it; every other node
+	# carries neither, or a Pod that selects the label could land beside the
+	# manager and a Pod that tolerates the taint could land anywhere.
+	jq -e --arg cluster "$CLUSTER_NAME" --argjson isolation "$ISOLATION_WORKER" \
+		--arg key "$ISOLATION_NODE_KEY" '
+      (if $isolation then [$cluster + "-worker2"] else [] end) as $isolated |
+      ([.items[].metadata.name] | sort) == ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3", $cluster + "-worker"] + $isolated | sort) and
       ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] != null)] | length) == 3 and
-      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] == null)] | length) == 1 and
+      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] == null)] | length) == 1 + ($isolated | length) and
       all(.items[];
         any((.status.conditions // [])[];
           .type == "Ready" and .status == "True"
         )
+      ) and
+      all(.items[];
+        .metadata.name as $name |
+        (.metadata.labels // {})[$key] as $label |
+        [(.spec.taints // [])[] | select(.key == $key)] as $taints |
+        if any($isolated[]; . == $name) then
+          $label == "true" and $taints == [{key: $key, value: "true", effect: "NoSchedule"}]
+        else
+          $label == null and $taints == []
+        end
       )
     ' "$NODE_READINESS_FILE" >/dev/null ||
-		fail "Kubernetes node inventory does not match the ready HA kind topology"
+		fail "Kubernetes node inventory does not match the ready HA kind topology $KIND_ISOLATION_TOPOLOGY"
 }`
 
 const apiServerEndpointInventoryContract = `assert_api_server_endpoint_inventory() {
@@ -2197,7 +2227,13 @@ const registryHostsOnKindNodesContract = `configure_registry_hosts_on_kind_nodes
 		"${CLUSTER_NAME}-control-plane" \
 		"${CLUSTER_NAME}-control-plane2" \
 		"${CLUSTER_NAME}-control-plane3" \
-		"${CLUSTER_NAME}-worker"; do
+		"${CLUSTER_NAME}-worker" \
+		"${CLUSTER_NAME}-worker2"; do
+		# The isolation worker pulls the executor for the Pods placed on it,
+		# and exists only where this run declared it.
+		if [ "$kind_node_container" = "${CLUSTER_NAME}-worker2" ] && [ "$ISOLATION_WORKER" != true ]; then
+			continue
+		fi
 		registry_dns_deadline=$(($(date +%s) + 30))
 		registry_dns_ready=0
 		while [ "$(date +%s)" -lt "$registry_dns_deadline" ]; do
@@ -2566,7 +2602,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyAPIServerEndpointInventoryFilter(files.apiServerEndpointFilter); err != nil {
 		return err
 	}
-	if err := verifyKindHAConfig(files.kindConfig); err != nil {
+	if err := verifyKindHAConfig(files.kindConfig, files.kindIsolationWorker); err != nil {
 		return err
 	}
 
@@ -2583,6 +2619,32 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	}
 	harnessContract := []sourceContractStep{
 		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("isolation worker key", isolationNodeKeyDeclaration),
+		exactSourceLineSequence("isolation worker declared by the suite catalog", []string{
+			`suite_isolation_worker() {`,
+			`if [ "$E2E_STOP_AFTER" = bootstrap ]; then`,
+			`printf '%s\n' false`,
+			`elif [ "$E2E_SUITE" = all ]; then`,
+			`jq -r 'any(.suites[]; .isolationWorker == true)' "$SUITE_CATALOG"`,
+			`else`,
+			`jq -r --arg suite "$E2E_SUITE" \`,
+			`'any(.suites[]; .name == $suite and .isolationWorker == true)' "$SUITE_CATALOG"`,
+			`fi`,
+			`}`,
+			`ISOLATION_WORKER=$(suite_isolation_worker) ||`,
+			`fail "the acceptance suite catalog could not say whether $E2E_SUITE needs the isolation worker"`,
+			`case "$ISOLATION_WORKER" in`,
+			`true)`,
+			`KIND_NODE_COUNT=5`,
+			`KIND_ISOLATION_TOPOLOGY='and the isolation worker'`,
+			`;;`,
+			`false)`,
+			`KIND_NODE_COUNT=4`,
+			`KIND_ISOLATION_TOPOLOGY='and no isolation worker'`,
+			`;;`,
+			`*) fail "the acceptance suite catalog answered $ISOLATION_WORKER for whether $E2E_SUITE needs the isolation worker" ;;`,
+			`esac`,
+		}),
 		exactSourceLine("required Kubernetes version", `[ -n "$K8S_VERSION" ] || fail "K8S_VERSION is required (for example, 1.37.0)"`),
 		exactSourceLine("exact Kubernetes version syntax", `printf '%s\n' "$K8S_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||`),
 		exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
@@ -2724,7 +2786,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`collect_node_readiness_diagnostics "$node_readiness_context"`,
 			`return 1`,
 			`fi`,
-			`if ! jq -e '.items | length == 4' "$NODE_READINESS_FILE" >/dev/null; then`,
+			`if ! jq -e --argjson count "$KIND_NODE_COUNT" '.items | length == $count' "$NODE_READINESS_FILE" >/dev/null; then`,
 			`collect_node_readiness_diagnostics "$node_readiness_context"`,
 			`return 1`,
 			`fi`,
@@ -2739,8 +2801,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`nodes_ready_now() {`,
 			`kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \`,
 			`get nodes -o json >"$NODE_READINESS_FILE" &&`,
-			`jq -e '`,
-			`((.items | length) == 4) and`,
+			`jq -e --argjson count "$KIND_NODE_COUNT" '`,
+			`((.items | length) == $count) and`,
 			`all(.items[];`,
 			`any((.status.conditions // [])[];`,
 			`.type == "Ready" and .status == "True"`,
@@ -2776,6 +2838,19 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("task claim before collision checks", `acquire_task_claim`),
 		exactSourceLine("post-claim cluster inventory", `if ! existing_clusters=$(kind get clusters); then`),
 		exactSourceLine("post-claim cluster collision refusal", `if printf '%s\n' "$existing_clusters" | grep -Fx "$CLUSTER_NAME" >/dev/null; then`),
+		exactSourceLineSequence("kind template rendered", []string{
+			`sed "s/__API_SERVER_PORT__/${E2E_API_SERVER_PORT}/g" \`,
+			`"$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >"$KIND_CONFIG"`,
+		}),
+		// Appended while the node list is still the last thing in the file, and
+		// only where the suite declared it: the topology proof after creation
+		// refuses a cluster that has it anywhere else.
+		exactSourceLineSequence("isolation worker appended to the node list", []string{
+			`if [ "$ISOLATION_WORKER" = true ]; then`,
+			`cat "$ROOT_DIR/testdata/e2e/kind-isolation-worker.yaml.tmpl" >>"$KIND_CONFIG"`,
+			`fi`,
+			`EXPECTED_API_SERVER_FEATURE_GATES=`,
+		}),
 		exactSourceLine("API-server feature gate patch implementation", `append_api_server_feature_gate_patch() {`),
 		exactSourceLine("API-server feature gate patch call", `append_api_server_feature_gate_patch "$K8S_MAJOR_MINOR" "$KIND_CONFIG"`),
 		exactSourceLineSequence("operator image audit by captured ID", []string{
@@ -2998,6 +3073,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"probe_api_server_endpoints",
 		"configure_registry_hosts_on_kind_nodes",
 		"require_ready_nodes",
+		"suite_isolation_worker",
 		"append_api_server_feature_gate_patch",
 		"assert_api_server_feature_gate_scope",
 		"wait_for_control_plane_component_shape",
@@ -4240,8 +4316,9 @@ type kindClusterTemplate struct {
 }
 
 type kindNodeTemplate struct {
-	Role                 string   `yaml:"role"`
-	KubeadmConfigPatches []string `yaml:"kubeadmConfigPatches"`
+	Role                 string            `yaml:"role"`
+	Labels               map[string]string `yaml:"labels"`
+	KubeadmConfigPatches []string          `yaml:"kubeadmConfigPatches"`
 }
 
 func verifyAPIServerEndpointInventoryFilter(path string) error {
@@ -4255,23 +4332,57 @@ func verifyAPIServerEndpointInventoryFilter(path string) error {
 	return nil
 }
 
-func verifyKindHAConfig(path string) error {
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
+// isolationNodeKeyDeclaration names the key the isolation worker is labelled
+// and tainted with. The driver provisions the worker under it and a phase that
+// isolates the worker selects and tolerates it, so both carry this one line,
+// and a phase script that carries it is a phase that isolates a node.
+const isolationNodeKeyDeclaration = "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation"
+
+const kindKubeletPatch = `kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+featureGates:
+  KubeletInUserNamespace: true`
+
+// kindIsolationJoinPatch is the one taint the isolation worker registers with.
+// NoSchedule keeps everything off it that does not tolerate the key, and
+// nothing that is already running is evicted by it.
+const kindIsolationJoinPatch = `kind: JoinConfiguration
+nodeRegistration:
+  taints:
+    - key: operator.ptah.run/e2e-isolation
+      value: "true"
+      effect: NoSchedule`
+
+func decodeKindClusterTemplate(path string, contents []byte) (kindClusterTemplate, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(contents))
 	decoder.KnownFields(true)
 	var config kindClusterTemplate
 	if err := decoder.Decode(&config); err != nil {
-		return fmt.Errorf("decode %s: %w", path, err)
+		return kindClusterTemplate{}, fmt.Errorf("decode %s: %w", path, err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return fmt.Errorf("%s: multiple YAML documents are forbidden", path)
+			return kindClusterTemplate{}, fmt.Errorf("%s: multiple YAML documents are forbidden", path)
 		}
-		return fmt.Errorf("decode trailing %s document: %w", path, err)
+		return kindClusterTemplate{}, fmt.Errorf("decode trailing %s document: %w", path, err)
+	}
+	return config, nil
+}
+
+// verifyKindHAConfig audits the cluster twice: as the template renders it, and
+// with the isolation worker appended the way hack/e2e-kind.sh appends it for a
+// suite that declares one. Both are the same three control planes and one
+// worker; the second has one more worker, carrying the isolation label and the
+// isolation taint and nothing else, and no other node carries either.
+func verifyKindHAConfig(path, isolationPath string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	config, err := decodeKindClusterTemplate(path, contents)
+	if err != nil {
+		return err
 	}
 	if config.Kind != "Cluster" || config.APIVersion != "kind.x-k8s.io/v1alpha4" {
 		return fmt.Errorf("%s: kind cluster apiVersion/kind is invalid", path)
@@ -4284,16 +4395,51 @@ func verifyKindHAConfig(path string) error {
 	if len(config.Nodes) != len(wantRoles) {
 		return fmt.Errorf("%s: kind topology has %d nodes, want exactly four", path, len(config.Nodes))
 	}
-	const kubeletPatch = `kind: KubeletConfiguration
-apiVersion: kubelet.config.k8s.io/v1beta1
-featureGates:
-  KubeletInUserNamespace: true`
-	for index, node := range config.Nodes {
+	if err := verifyKindHANodes(path, config.Nodes, wantRoles); err != nil {
+		return err
+	}
+
+	isolation, err := os.ReadFile(isolationPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", isolationPath, err)
+	}
+	combined := append(append([]byte(nil), contents...), isolation...)
+	withWorker, err := decodeKindClusterTemplate(isolationPath+" appended to "+path, combined)
+	if err != nil {
+		return err
+	}
+	if len(withWorker.Nodes) != len(wantRoles)+1 {
+		return fmt.Errorf("%s: appended to %s it makes %d nodes, want exactly five", isolationPath, path, len(withWorker.Nodes))
+	}
+	if err := verifyKindHANodes(path, withWorker.Nodes[:len(wantRoles)], wantRoles); err != nil {
+		return err
+	}
+	worker := withWorker.Nodes[len(wantRoles)]
+	if worker.Role != "worker" {
+		return fmt.Errorf("%s: the isolation worker's role is %q, want \"worker\"", isolationPath, worker.Role)
+	}
+	key := strings.TrimPrefix(isolationNodeKeyDeclaration, "ISOLATION_NODE_KEY=")
+	if len(worker.Labels) != 1 || worker.Labels[key] != "true" {
+		return fmt.Errorf("%s: the isolation worker must carry exactly the label %s=true", isolationPath, key)
+	}
+	if len(worker.KubeadmConfigPatches) != 2 ||
+		strings.TrimSpace(worker.KubeadmConfigPatches[0]) != kindKubeletPatch ||
+		strings.TrimSpace(worker.KubeadmConfigPatches[1]) != kindIsolationJoinPatch {
+		return fmt.Errorf("%s: the isolation worker must carry the kubelet feature-gate patch and exactly the isolation taint", isolationPath)
+	}
+	return nil
+}
+
+func verifyKindHANodes(path string, nodes []kindNodeTemplate, wantRoles []string) error {
+	for index, node := range nodes {
 		if node.Role != wantRoles[index] {
 			return fmt.Errorf("%s: kind node %d role is %q, want %q", path, index, node.Role, wantRoles[index])
 		}
-		if len(node.KubeadmConfigPatches) != 1 || strings.TrimSpace(node.KubeadmConfigPatches[0]) != kubeletPatch {
+		if len(node.KubeadmConfigPatches) != 1 || strings.TrimSpace(node.KubeadmConfigPatches[0]) != kindKubeletPatch {
 			return fmt.Errorf("%s: kind node %d does not have the exact kubelet feature-gate patch", path, index)
+		}
+		if len(node.Labels) != 0 {
+			return fmt.Errorf("%s: kind node %d carries labels, and only the isolation worker is labelled", path, index)
 		}
 	}
 	return nil
@@ -5629,6 +5775,11 @@ type phaseEnvironmentContract struct {
 	phase    string
 	script   string
 	bindings []phaseEnvironmentBinding
+	// isolatesNode says the phase cuts the isolation worker off from the API
+	// server. Its script carries the key the worker is labelled and tainted
+	// with, no other phase's script does, and only a suite that declares the
+	// worker may run it.
+	isolatesNode bool
 }
 
 func phaseEnvironmentContracts() []phaseEnvironmentContract {
@@ -5751,11 +5902,16 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
 				{name: "E2E_REGISTRY_HOST_ADDRESS", value: `$REMOTE_REGISTRY`},
 				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+				// The isolation worker's node container, which the phase cuts
+				// off from the API server.
+				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
+				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
 				// One engine per phase: the suite that ran both was the longest
 				// stage of the matrix, and a phase with no engine named refuses
 				// to run rather than quietly covering one of the two.
 				{name: "E2E_ENGINE", value: `postgresql`},
 			},
+			isolatesNode: true,
 		},
 		{
 			phase:  "migrations-mysql",
@@ -5771,11 +5927,16 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
 				{name: "E2E_REGISTRY_HOST_ADDRESS", value: `$REMOTE_REGISTRY`},
 				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+				// The isolation worker's node container, which the phase cuts
+				// off from the API server.
+				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
+				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
 				// One engine per phase: the suite that ran both was the longest
 				// stage of the matrix, and a phase with no engine named refuses
 				// to run rather than quietly covering one of the two.
 				{name: "E2E_ENGINE", value: `mysql`},
 			},
+			isolatesNode: true,
 		},
 		{
 			phase:  "reference-data-postgresql",
@@ -6049,6 +6210,14 @@ func verifyPhaseScriptInputs(files e2eWiringFiles, contract phaseEnvironmentCont
 	script, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", scriptPath, err)
+	}
+	if declares := sourceLinePattern(isolationNodeKeyDeclaration).Match(script); declares != contract.isolatesNode {
+		if contract.isolatesNode {
+			return fmt.Errorf("%s: the %s phase isolates a node, and %s does not declare %s",
+				files.harness, contract.phase, contract.script, isolationNodeKeyDeclaration)
+		}
+		return fmt.Errorf("%s: %s declares %s, and the %s phase is not one that isolates a node",
+			files.harness, contract.script, isolationNodeKeyDeclaration, contract.phase)
 	}
 	required, accepted := e2eVariablesUsedByPhase(script)
 	bound := map[string]bool{}
@@ -6811,6 +6980,10 @@ type e2eSuite struct {
 	Summary string   `json:"summary"`
 	Phases  []string `json:"phases"`
 	Prepare []string `json:"prepare"`
+	// IsolationWorker gives the suite's cluster the second, tainted worker a
+	// phase cuts off from the API server. verifyE2ESuiteIsolationWorker holds
+	// it to the phases the suite runs.
+	IsolationWorker bool `json:"isolationWorker"`
 }
 
 type e2eSuiteCatalog struct {
@@ -6947,6 +7120,44 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
 		return fmt.Errorf("%s: claims phases the driver does not run: %s", e2eSuitesPath, strings.Join(unknown, ", "))
+	}
+	return nil
+}
+
+// verifyE2ESuiteIsolationWorker refuses a suite whose cluster disagrees with
+// what its phases need. A phase that isolates a node, run in a suite with no
+// isolation worker, fails on a node that does not exist. A suite that declares
+// the worker and runs no such phase pays for a node nothing uses, on a cluster
+// that is no longer the one its phases were measured on. Which phases isolate a
+// node is the phase environment contracts' to say, and
+// verifyPhaseEnvironmentContracts holds each of them to its script.
+func verifyE2ESuiteIsolationWorker(catalog e2eSuiteCatalog) error {
+	isolating := map[string]bool{}
+	for _, contract := range phaseEnvironmentContracts() {
+		if contract.isolatesNode {
+			isolating[contract.phase] = true
+		}
+	}
+	if len(isolating) == 0 {
+		return errors.New("no phase environment contract isolates a node, so the isolation worker cannot be checked against anything")
+	}
+	for _, suite := range catalog.Suites {
+		var needs []string
+		for _, phase := range append(append([]string(nil), suite.Phases...), suite.Prepare...) {
+			if isolating[phase] {
+				needs = append(needs, phase)
+			}
+		}
+		switch {
+		case len(needs) > 0 && !suite.IsolationWorker:
+			return fmt.Errorf(
+				"%s: suite %q runs %s, which isolates a node, and does not declare isolationWorker, so its cluster has no node to isolate",
+				e2eSuitesPath, suite.Name, strings.Join(needs, ", "))
+		case len(needs) == 0 && suite.IsolationWorker:
+			return fmt.Errorf(
+				"%s: suite %q declares isolationWorker and runs no phase that isolates a node",
+				e2eSuitesPath, suite.Name)
+		}
 	}
 	return nil
 }

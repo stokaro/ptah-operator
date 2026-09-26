@@ -46,6 +46,7 @@ accepts() {
 	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		--arg gate operator.ptah.run/e2e-apply-gate \
+		--arg job u-isolated-apply --arg epoch v1-isolated-epoch \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null ||
 		fail "$filter refused a reading it has to accept: $description"
@@ -58,6 +59,7 @@ refuses() {
 	if jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		--arg gate operator.ptah.run/e2e-apply-gate \
+		--arg job u-isolated-apply --arg epoch v1-isolated-epoch \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null 2>&1; then
 		fail "$filter accepted a reading it has to refuse: $description"
@@ -108,6 +110,7 @@ accepts_file() {
 	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		--arg gate operator.ptah.run/e2e-apply-gate \
+		--arg job u-isolated-apply --arg epoch v1-isolated-epoch \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$ROOT_DIR/testdata/e2e/readings/$reading" >/dev/null ||
 		fail "$filter refused a reading the operator produced: $description"
@@ -289,6 +292,165 @@ refuses gated-apply-pod.jq 'one held and one placed' <<'JSON'
  {"metadata":{"name":"apply-def"},
  "spec":{"nodeName":"kind-worker","nodeSelector":{"operator.ptah.run/e2e-apply-gate":"open"}},
  "status":{"phase":"Pending"}}]}
+JSON
+
+# An Apply whose node the API server lost, still held by its resource. The
+# accepted reading is the claim as the controller leaves it on every pass of
+# the hold. Each refused one is a way of letting go of a run that may still be
+# writing, which is what the row exists to catch.
+accepts isolated-apply-held.jq 'the claim, renewed and waiting on its Job' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"phase":"Applying",
+ "activeOperation":{"type":"Apply","jobName":"ptah-m-apply-a","jobUID":"u-isolated-apply",
+  "startedAt":"2026-09-26T10:00:00Z","leaseEpoch":"v1-isolated-epoch","leaseDurationSeconds":300,
+  "dispatchStarted":true},
+ "lastRun":{"outcome":"UpToDate","jobUID":"u-earlier"},
+ "conditions":[{"type":"Progressing","status":"True","reason":"ApprovedPlan"}]}}
+JSON
+refuses isolated-apply-held.jq 'the claim retired and the run recorded' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"phase":"Blocked",
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"}}}
+JSON
+refuses isolated-apply-held.jq 'a claim naming a second Job' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"activeOperation":{"type":"Apply","jobUID":"u-replacement","leaseEpoch":"v1-isolated-epoch"}}}
+JSON
+refuses isolated-apply-held.jq 'a claim of another operation' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"activeOperation":{"type":"Resolve","jobUID":"u-isolated-apply","leaseEpoch":"v1-isolated-epoch"}}}
+JSON
+refuses isolated-apply-held.jq 'the realm taken again under another epoch' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply","leaseEpoch":"v1-another-epoch"}}}
+JSON
+refuses isolated-apply-held.jq 'continuity lost under the claim' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply","leaseEpoch":"v1-isolated-epoch",
+  "leaseContinuityLost":true}}}
+JSON
+refuses isolated-apply-held.jq 'a release owed while the claim stands' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply","leaseEpoch":"v1-isolated-epoch"},
+ "pendingLockRelease":{"leaseEpoch":"v1-isolated-epoch"}}}
+JSON
+refuses isolated-apply-held.jq 'the run recorded while the claim stands' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply","leaseEpoch":"v1-isolated-epoch"},
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"}}}
+JSON
+refuses isolated-apply-held.jq 'an unresolved record written early' <<'JSON'
+{"metadata":{"finalizers":["operator.ptah.run/migration-operation"]},
+ "status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply","leaseEpoch":"v1-isolated-epoch"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"}}}
+JSON
+refuses isolated-apply-held.jq 'the finalizer released' <<'JSON'
+{"metadata":{"finalizers":[]},
+ "status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply","leaseEpoch":"v1-isolated-epoch"}}}
+JSON
+
+# The first reading once the node is back. The refused Applied is the other
+# path through the code, taken only if the Pod's log could still be read, and
+# the row is built on the log being gone.
+accepts isolated-run-unknown.jq 'recorded unknown against its own Job' <<'JSON'
+{"status":{"phase":"Blocked",
+ "lastRun":{"outcome":"Unknown","jobName":"ptah-m-apply-a","jobUID":"u-isolated-apply",
+  "finishedAt":"2026-09-26T10:06:00Z","message":"read the Apply result: ptah runner result frame not found"},
+ "unresolvedRun":{"outcome":"Unknown","jobName":"ptah-m-apply-a","jobUID":"u-isolated-apply",
+  "recordedAt":"2026-09-26T10:06:00Z"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"},
+               {"type":"Ready","status":"False","reason":"ApplyOutcomeUnknown"}]}}
+JSON
+refuses isolated-run-unknown.jq 'read as applied' <<'JSON'
+{"status":{"phase":"VerifyingHistory",
+ "lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply"},
+ "conditions":[{"type":"Progressing","status":"True","reason":"VerifyingConvergence"}]}}
+JSON
+refuses isolated-run-unknown.jq 'the run recorded partial' <<'JSON'
+{"status":{"lastRun":{"outcome":"Partial","jobUID":"u-isolated-apply"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"}]}}
+JSON
+refuses isolated-run-unknown.jq 'the record naming another outcome' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "unresolvedRun":{"outcome":"Partial","jobUID":"u-isolated-apply"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"}]}}
+JSON
+refuses isolated-run-unknown.jq 'the last run naming another Job' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-replacement"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"}]}}
+JSON
+refuses isolated-run-unknown.jq 'the record already gone' <<'JSON'
+{"status":{"phase":"InSync",
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "conditions":[{"type":"Blocked","status":"False","reason":"HistoryMatched"}]}}
+JSON
+refuses isolated-run-unknown.jq 'a record of some other run' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-earlier"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"}]}}
+JSON
+refuses isolated-run-unknown.jq 'the run of another Job' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-replacement"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-replacement"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"}]}}
+JSON
+refuses isolated-run-unknown.jq 'a claim still standing' <<'JSON'
+{"status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply"},
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"}]}}
+JSON
+refuses isolated-run-unknown.jq 'blocked for another reason' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "conditions":[{"type":"Blocked","status":"True","reason":"RealmConflict"}]}}
+JSON
+
+# The record settled by a reading. Each refused reading is one a replay could
+# have come through: the record dropped by a reading that did not follow the
+# run, work still pending, or a later run recorded over this one.
+accepts isolated-run-settled.jq 'settled by a later reading with nothing pending' <<'JSON'
+{"status":{"phase":"InSync",
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00Z"},
+ "history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0,"appliedCount":3},
+ "conditions":[{"type":"Ready","status":"True","reason":"HistoryMatched"}]}}
+JSON
+accepts isolated-run-settled.jq 'timestamps written with fractions' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00.250Z"},
+ "history":{"observedAt":"2026-09-26T10:06:01.100Z","pendingCount":0}}}
+JSON
+refuses isolated-run-settled.jq 'the record still standing' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00Z"},
+ "unresolvedRun":{"outcome":"Unknown","jobUID":"u-isolated-apply"},
+ "history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0}}}
+JSON
+refuses isolated-run-settled.jq 'a reading taken before the run finished' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00Z"},
+ "history":{"observedAt":"2026-09-26T09:59:00Z","pendingCount":0}}}
+JSON
+refuses isolated-run-settled.jq 'a reading stamped with the run' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00Z"},
+ "history":{"observedAt":"2026-09-26T10:06:00Z","pendingCount":0}}}
+JSON
+refuses isolated-run-settled.jq 'work still pending' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00Z"},
+ "history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":1}}}
+JSON
+refuses isolated-run-settled.jq 'a later run recorded over this one' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-replacement","finishedAt":"2026-09-26T10:09:00Z"},
+ "history":{"observedAt":"2026-09-26T10:10:00Z","pendingCount":0}}}
+JSON
+refuses isolated-run-settled.jq 'the run rewritten as applied' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00Z"},
+ "history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0}}}
+JSON
+refuses isolated-run-settled.jq 'a new claim taken' <<'JSON'
+{"status":{"activeOperation":{"type":"Apply","jobUID":"u-replacement"},
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","finishedAt":"2026-09-26T10:06:00Z"},
+ "history":{"observedAt":"2026-09-26T10:08:31Z","pendingCount":0}}}
 JSON
 
 printf 'migration refusal filter self-test: PASS\n'

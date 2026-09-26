@@ -325,6 +325,43 @@ suite_runs_phase() {
 	return 1
 }
 
+# The isolation worker is a second worker node whose label and NoSchedule taint
+# share this key, so it runs nothing but the Pods a proof places on it. The
+# migration phase cuts it off from the API server during an Apply; the worker
+# everything else runs on carries the manager, the databases and the registry,
+# and cutting that one off would take all of them with it.
+ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation
+
+# suite_isolation_worker prints true when the cluster this run creates carries
+# the isolation worker and false when it must not. A suite declares it in the
+# catalog; running every phase in one cluster needs it whenever any suite does.
+# A bootstrap that stops before its phases runs no row that isolates a node, so
+# the lab it leaves is the four-node cluster the documentation describes.
+suite_isolation_worker() {
+	if [ "$E2E_STOP_AFTER" = bootstrap ]; then
+		printf '%s\n' false
+	elif [ "$E2E_SUITE" = all ]; then
+		jq -r 'any(.suites[]; .isolationWorker == true)' "$SUITE_CATALOG"
+	else
+		jq -r --arg suite "$E2E_SUITE" \
+			'any(.suites[]; .name == $suite and .isolationWorker == true)' "$SUITE_CATALOG"
+	fi
+}
+ISOLATION_WORKER=$(suite_isolation_worker) ||
+	fail "the acceptance suite catalog could not say whether $E2E_SUITE needs the isolation worker"
+case "$ISOLATION_WORKER" in
+	true)
+		KIND_NODE_COUNT=5
+		KIND_ISOLATION_TOPOLOGY='and the isolation worker'
+		;;
+	false)
+		KIND_NODE_COUNT=4
+		KIND_ISOLATION_TOPOLOGY='and no isolation worker'
+		;;
+	*) fail "the acceptance suite catalog answered $ISOLATION_WORKER for whether $E2E_SUITE needs the isolation worker" ;;
+esac
+printf 'e2e: the cluster has %s nodes, %s\n' "$KIND_NODE_COUNT" "$KIND_ISOLATION_TOPOLOGY"
+
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
 	fail "sha256sum or shasum is required"
 fi
@@ -1207,7 +1244,7 @@ wait_for_ready_nodes() {
 		collect_node_readiness_diagnostics "$node_readiness_context"
 		return 1
 	fi
-	if ! jq -e '.items | length == 4' "$NODE_READINESS_FILE" >/dev/null; then
+	if ! jq -e --argjson count "$KIND_NODE_COUNT" '.items | length == $count' "$NODE_READINESS_FILE" >/dev/null; then
 		collect_node_readiness_diagnostics "$node_readiness_context"
 		return 1
 	fi
@@ -1221,8 +1258,8 @@ wait_for_ready_nodes() {
 nodes_ready_now() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		get nodes -o json >"$NODE_READINESS_FILE" &&
-		jq -e '
-	  ((.items | length) == 4) and
+		jq -e --argjson count "$KIND_NODE_COUNT" '
+	  ((.items | length) == $count) and
 	  all(.items[];
         any((.status.conditions // [])[];
           .type == "Ready" and .status == "True"
@@ -1237,6 +1274,11 @@ assert_kind_ha_topology() {
 	# does not, which is why this list carries one more name than the node
 	# inventory asserted below. Measured on kind v0.31: "kind get nodes" on
 	# a two-control-plane cluster returns the balancer as a third line.
+	#
+	# The isolation worker is in both inventories exactly when this run
+	# declared it. A cluster without it cannot run the row that isolates it,
+	# and one that has it where nothing asked is not the cluster the other
+	# suites are measured on.
 	if ! {
 		printf '%s\n' \
 			"${CLUSTER_NAME}-control-plane" \
@@ -1244,22 +1286,41 @@ assert_kind_ha_topology() {
 			"${CLUSTER_NAME}-control-plane3" \
 			"${CLUSTER_NAME}-worker" \
 			"${CLUSTER_NAME}-external-load-balancer"
+		if [ "$ISOLATION_WORKER" = true ]; then
+			printf '%s\n' "${CLUSTER_NAME}-worker2"
+		fi
 	} | LC_ALL=C sort | cmp -s - "$KIND_NODE_INVENTORY_FILE"; then
-		fail "kind cluster does not have the exact three-control-plane, one-worker, one-load-balancer topology"
+		fail "kind cluster does not have the exact three-control-plane, one-worker, one-load-balancer topology $KIND_ISOLATION_TOPOLOGY"
 	fi
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		get nodes -o json >"$NODE_READINESS_FILE"
-	jq -e --arg cluster "$CLUSTER_NAME" '
-      ([.items[].metadata.name] | sort) == ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3", $cluster + "-worker"] | sort) and
+	# Only the isolation worker carries the isolation key, as a label and as
+	# the one taint that keeps everything else off it; every other node
+	# carries neither, or a Pod that selects the label could land beside the
+	# manager and a Pod that tolerates the taint could land anywhere.
+	jq -e --arg cluster "$CLUSTER_NAME" --argjson isolation "$ISOLATION_WORKER" \
+		--arg key "$ISOLATION_NODE_KEY" '
+      (if $isolation then [$cluster + "-worker2"] else [] end) as $isolated |
+      ([.items[].metadata.name] | sort) == ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3", $cluster + "-worker"] + $isolated | sort) and
       ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] != null)] | length) == 3 and
-      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] == null)] | length) == 1 and
+      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] == null)] | length) == 1 + ($isolated | length) and
       all(.items[];
         any((.status.conditions // [])[];
           .type == "Ready" and .status == "True"
         )
+      ) and
+      all(.items[];
+        .metadata.name as $name |
+        (.metadata.labels // {})[$key] as $label |
+        [(.spec.taints // [])[] | select(.key == $key)] as $taints |
+        if any($isolated[]; . == $name) then
+          $label == "true" and $taints == [{key: $key, value: "true", effect: "NoSchedule"}]
+        else
+          $label == null and $taints == []
+        end
       )
     ' "$NODE_READINESS_FILE" >/dev/null ||
-		fail "Kubernetes node inventory does not match the ready HA kind topology"
+		fail "Kubernetes node inventory does not match the ready HA kind topology $KIND_ISOLATION_TOPOLOGY"
 }
 
 assert_api_server_endpoint_inventory() {
@@ -1309,7 +1370,13 @@ configure_registry_hosts_on_kind_nodes() {
 		"${CLUSTER_NAME}-control-plane" \
 		"${CLUSTER_NAME}-control-plane2" \
 		"${CLUSTER_NAME}-control-plane3" \
-		"${CLUSTER_NAME}-worker"; do
+		"${CLUSTER_NAME}-worker" \
+		"${CLUSTER_NAME}-worker2"; do
+		# The isolation worker pulls the executor for the Pods placed on it,
+		# and exists only where this run declared it.
+		if [ "$kind_node_container" = "${CLUSTER_NAME}-worker2" ] && [ "$ISOLATION_WORKER" != true ]; then
+			continue
+		fi
 		registry_dns_deadline=$(($(date +%s) + 30))
 		registry_dns_ready=0
 		while [ "$(date +%s)" -lt "$registry_dns_deadline" ]; do
@@ -2159,6 +2226,11 @@ mirror_task_image() {
 
 sed "s/__API_SERVER_PORT__/${E2E_API_SERVER_PORT}/g" \
 	"$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >"$KIND_CONFIG"
+# The template ends with its node list, so the isolation worker is appended
+# before the patches that follow that list.
+if [ "$ISOLATION_WORKER" = true ]; then
+	cat "$ROOT_DIR/testdata/e2e/kind-isolation-worker.yaml.tmpl" >>"$KIND_CONFIG"
+fi
 EXPECTED_API_SERVER_FEATURE_GATES=
 append_api_server_feature_gate_patch() {
 	feature_gate_minor=$1
@@ -2875,6 +2947,9 @@ E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 # matrix by a wide margin. A suite runs one engine's phases against a cluster of
 # its own, so the two halves run at once and neither waits for the other's
 # databases.
+#
+# The Docker context and the cluster name reach the isolation worker's node
+# container, which is where the phase cuts that node off from the API server.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
@@ -2885,6 +2960,8 @@ E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=postgresql \
 	run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"
 
@@ -2898,6 +2975,8 @@ E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=mysql \
 	run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"
 

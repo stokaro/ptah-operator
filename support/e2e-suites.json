@@ -37,7 +37,15 @@
     "and its admission fixtures -- so that phase runs in preparation mode there,",
     "which creates those prerequisites and executes no operation under test.",
     "Preparation is not coverage: a phase is covered only where it is listed in",
-    "phases, and the completeness check counts it there and nowhere else."
+    "phases, and the completeness check counts it there and nowhere else.",
+    "",
+    "isolationWorker gives a suite's cluster a second worker node, labelled and",
+    "tainted so that only the Pods a proof places there run on it. The migration",
+    "phases cut that node off from the API server in the middle of an Apply, and",
+    "cutting off the worker everything else runs on would take the manager, the",
+    "databases and the registry down with it. A suite declares it exactly when",
+    "it runs a phase that isolates a node, and make e2e with no suite named gets",
+    "it whenever any suite does."
   ],
   "suites": [
     {
@@ -66,14 +74,16 @@
       "slug": "migrations-postgresql",
       "summary": "The versioned migration rows, the declared reference data, and the alerting path, on PostgreSQL",
       "phases": ["migrations-postgresql", "reference-data-postgresql", "alerting"],
-      "prepare": ["dataplane"]
+      "prepare": ["dataplane"],
+      "isolationWorker": true
     },
     {
       "name": "migrations-mysql",
       "slug": "migrations-mysql",
       "summary": "The versioned migration rows and the declared reference data, on MySQL",
       "phases": ["migrations-mysql", "reference-data-mysql"],
-      "prepare": ["dataplane"]
+      "prepare": ["dataplane"],
+      "isolationWorker": true
     }
   ]
 }

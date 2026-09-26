@@ -1338,6 +1338,16 @@ for migration_marker in \
 	'did not leave the rows its first migration inserted' \
 	'after one whose evidence it could not read' \
 	'were doubled, so a run was replayed over what it had already committed' \
+	'run_isolated_node_proof' \
+	'testdata/e2e/isolated-apply-held.jq' \
+	'let go of an Apply whose node is cut off, while its Pod may still be writing' \
+	'while the one it dispatched may still be writing' \
+	'realm Lease left the claim while its Apply may still be writing' \
+	'so a migration ran twice' \
+	'testdata/e2e/isolated-run-unknown.jq' \
+	'realm Lease was handed back while a Pod of the isolated Apply still exists' \
+	'testdata/e2e/isolated-run-settled.jq' \
+	'not migrations 1 to 3 once each' \
 	'run_checkpoint_bootstrap_proof' \
 	'assert_checkpoint_gate' \
 	'did not hold a checkpoint bootstrap at the approval gate' \

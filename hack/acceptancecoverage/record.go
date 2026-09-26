@@ -69,8 +69,10 @@ var requirements = []requirement{
 			"`run_uncertain_apply_proof`, `run_late_dispatch_proof` and `run_deletion_during_apply_proof`, " +
 			"an Apply held across an upgrade by `assert_predecessor_apply_remains_exclusive_while_running`, " +
 			"one realm claimed from two namespaces in `assert_second_claimant_blocks_the_realm`, " +
-			"and a migration suspended inside its Apply in `run_suspension_during_apply_proof`",
-		"an isolated node, and a fault during lock release"},
+			"a migration suspended inside its Apply in `run_suspension_during_apply_proof`, " +
+			"a refused realm release in `run_lock_release_fault_proof`, " +
+			"and an Apply held across its node's isolation from the API server in `run_isolated_node_proof`",
+		""},
 	{"PA-04", "Make progress and refusal states actionable",
 		"a measured progress target, dependency recovery inside it, and no hot loop on a permanent refusal",
 		"`run_retry_interval_proof`, the bounded refresh count under a standing refusal in `assert_destructive_gate`, " +

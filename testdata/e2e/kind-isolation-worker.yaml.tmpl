@@ -1,0 +1,23 @@
+  # The isolation worker, appended to the node list by hack/e2e-kind.sh when the
+  # run's suite declares it in support/e2e-suites.json. Its label and its
+  # NoSchedule taint share one key, so nothing lands here except the operation
+  # Pods of a resource that selects the label and tolerates the taint. A proof
+  # can then cut this node off from the API server and take away nothing but
+  # the Apply it placed on it: the manager, the databases and the registry run
+  # on the other worker.
+  - role: worker
+    labels:
+      operator.ptah.run/e2e-isolation: "true"
+    kubeadmConfigPatches:
+      - |
+        kind: KubeletConfiguration
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        featureGates:
+          KubeletInUserNamespace: true
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: operator.ptah.run/e2e-isolation
+              value: "true"
+              effect: NoSchedule
