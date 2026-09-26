@@ -165,6 +165,12 @@ cleanup() {
 			--ignore-not-found >/dev/null 2>&1 || true
 		GUARD_APPLIED=0
 	fi
+	# A leftover fault would refuse every later release of that Lease.
+	if [ "${RELEASE_FAULT_APPLIED:-0}" -eq 1 ]; then
+		k delete validatingadmissionpolicybinding,validatingadmissionpolicy "$RELEASE_FAULT_POLICY" \
+			--ignore-not-found >/dev/null 2>&1 || true
+		RELEASE_FAULT_APPLIED=0
+	fi
 	if [ "${RIVAL_NAMESPACE_CREATED:-0}" -eq 1 ]; then
 		k delete namespace "$MIGRATION_RIVAL_NAMESPACE" --ignore-not-found \
 			--wait=false >/dev/null 2>&1 || true
@@ -311,6 +317,12 @@ select_engine() {
 	GUARD_AUTHOR_GROUP="e2e:desired-state-authors-${ENGINE}"
 	GUARD_APPROVER="e2e-approver-${ENGINE}"
 	GUARD_APPROVER_GROUP="e2e:migration-approvers-${ENGINE}"
+	RELEASE_FAULT_DATABASE=ptah_e2e_release_fault
+	RELEASE_FAULT_DB_SECRET="e2e-${ENGINE}-release-fault-db"
+	RELEASE_FAULT_MIGRATION="e2e-release-fault-${ENGINE}"
+	RELEASE_FAULT_COORDINATION_KEY="e2e/release-fault/${ENGINE}"
+	RELEASE_FAULT_DB_URL_FILE="$WORK_DIR/${ENGINE}-release-fault-db-url"
+	RELEASE_FAULT_POLICY="ptah-e2e-release-fault-${ENGINE}"
 	MIGRATION_PARTIAL_APPROVAL="e2e-migrations-${ENGINE}-partial-approval"
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}:stable"
@@ -4626,6 +4638,293 @@ wait_for_deletion_apply_dispatch() {
 	fail "$DELETION_MIGRATION did not dispatch an Apply bound to its own Job within ${TIMEOUT_SECONDS}s"
 }
 
+# A fault while the realm is handed back.
+#
+# #242's PA-03 injects a fault during lock release and asks for no premature
+# release and no overlap. The release is one write: the manager empties the
+# holder of the realm's Lease. PendingLockRelease is recorded in the same status
+# patch that ends the claim and removed only after that write succeeds, so a
+# manager that cannot make it keeps owing the realm instead of forgetting it.
+#
+# The fault is admission refusing exactly that write, and only that one: a
+# ValidatingAdmissionPolicy scoped to this row's Lease and to the manager's own
+# service account, refusing an update that empties a holder. Acquiring and
+# renewing still pass, so the fault is the release failing and nothing else.
+# It goes in while the uncertain artifact's slow third migration runs, so the
+# claim was taken before it and the release is attempted after it.
+run_lock_release_fault_proof() {
+	create_release_fault_database
+	create_release_fault_migration_resource
+	wait_for_release_fault_claim
+	find_release_fault_lease
+	apply_release_fault
+	wait_for_release_fault_in_force
+
+	wait_for_release_owed
+	release_fault_jobs=$(release_fault_job_uids)
+	# Owed and held for a minute: the record stays, the Lease still names the
+	# run's holder, and the resource claims no new work while it owes the realm.
+	release_hold_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$release_hold_deadline" ]; do
+		release_fault_status
+		jq -e --arg epoch "$RELEASE_FAULT_EPOCH" '
+          .status.pendingLockRelease.leaseEpoch == $epoch and
+          (.status.activeOperation // null) == null
+        ' "$STATUS_FILE" >/dev/null || {
+			report_release_fault_state
+			fail "$RELEASE_FAULT_MIGRATION stopped owing the realm, or claimed new work, while its release was refused"
+		}
+		[ "$(release_fault_holder)" = "$RELEASE_FAULT_HOLDER" ] || {
+			report_release_fault_state
+			fail "the $ENGINE realm Lease changed holder while its release was refused"
+		}
+		# Only an addition counts: the cleanup TTL may remove a finished Job.
+		[ "$(release_fault_job_uids | jq --argjson before "$release_fault_jobs" '. - $before | length')" -eq 0 ] || {
+			report_release_fault_state
+			fail "$RELEASE_FAULT_MIGRATION created a Job while it still owed the realm"
+		}
+		sleep 10
+	done
+
+	printf 'e2e migrations: lifting the release fault on the %s realm Lease\n' "$ENGINE_KIND" >&2
+	k delete validatingadmissionpolicybinding,validatingadmissionpolicy "$RELEASE_FAULT_POLICY" >/dev/null ||
+		fail "the release fault could not be removed"
+	RELEASE_FAULT_APPLIED=0
+	release_done_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$release_done_deadline" ]; do
+		release_fault_status
+		if jq -e '.status.pendingLockRelease == null' "$STATUS_FILE" >/dev/null &&
+			[ -z "$(release_fault_holder)" ]; then
+			k -n "$TEST_NAMESPACE" delete ptahmigration "$RELEASE_FAULT_MIGRATION" \
+				--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+				fail "$RELEASE_FAULT_MIGRATION was not removed"
+			printf 'e2e migrations: PASS %s kept owing a refused realm release and handed it back once it could\n' \
+				"$ENGINE_KIND" >&2
+			return 0
+		fi
+		sleep 5
+	done
+	report_release_fault_state
+	fail "$RELEASE_FAULT_MIGRATION did not hand the realm back once its release was allowed"
+}
+
+release_fault_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$RELEASE_FAULT_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$RELEASE_FAULT_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$RELEASE_FAULT_MIGRATION status"
+}
+
+release_fault_job_uids() {
+	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/migration=${RELEASE_FAULT_MIGRATION}" -o json |
+		jq -c '[.items[].metadata.uid] | sort' ||
+		fail "the Jobs of $RELEASE_FAULT_MIGRATION could not be listed"
+}
+
+# The Lease's holder now: empty once released, and empty too if the Lease is
+# gone, which a release also allows.
+release_fault_holder() {
+	k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get lease "$RELEASE_FAULT_LEASE" -o json 2>/dev/null |
+		jq -r '.spec.holderIdentity // ""'
+}
+
+report_release_fault_state() {
+	printf 'e2e migrations: %s state when the check failed:\n' "$RELEASE_FAULT_MIGRATION" >&2
+	jq -r '
+      .status as $s |
+      "  phase=\($s.phase // "<none>") activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.leaseEpoch // "<none>")")",
+      "  pendingLockRelease=\(($s.pendingLockRelease // {}).leaseEpoch // "<none>") lastRun=\(($s.lastRun // {}).outcome // "<none>")",
+      (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason)")
+    ' "$STATUS_FILE" >&2 2>/dev/null || true
+	printf '  lease %s/%s holder=%s\n' "$RELEASE_FAULT_LEASE_NAMESPACE" "$RELEASE_FAULT_LEASE" \
+		"$(release_fault_holder)" >&2
+}
+
+create_release_fault_database() {
+	create_database "$RELEASE_FAULT_DATABASE"
+	database_url "$RELEASE_FAULT_DATABASE" >"$RELEASE_FAULT_DB_URL_FILE"
+	chmod 600 "$RELEASE_FAULT_DB_URL_FILE"
+	{
+		cat "$RELEASE_FAULT_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RELEASE_FAULT_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$RELEASE_FAULT_DATABASE" \
+		--rawfile url "$RELEASE_FAULT_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# The uncertain row's artifact, for its slow third migration: the fault has to
+# be in force after the claim took the Lease and before the run ends.
+create_release_fault_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RELEASE_FAULT_MIGRATION" \
+		--arg secret "$RELEASE_FAULT_DB_SECRET" \
+		--arg reference "$UNCERTAIN_REFERENCE" \
+		--arg coordinationKey "$RELEASE_FAULT_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "30s",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_release_fault_claim() {
+	release_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$release_deadline" ]; do
+		release_fault_status
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobUID // "") | length) > 0 and
+          ((.status.activeOperation.leaseEpoch // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			RELEASE_FAULT_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			RELEASE_FAULT_EPOCH=$(jq -er '.status.activeOperation.leaseEpoch' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 2
+	done
+	report_release_fault_state
+	fail "$RELEASE_FAULT_MIGRATION did not claim an Apply under a realm Lease within ${TIMEOUT_SECONDS}s"
+}
+
+# The Lease the claim took, found by the epoch the claim recorded rather than
+# by a name worked out here, and the service account the manager writes it as.
+find_release_fault_lease() {
+	k get leases -A -o json >"$WORK_DIR/release-fault-leases.json" ||
+		fail "the Leases could not be listed"
+	jq -r --arg epoch "$RELEASE_FAULT_EPOCH" '
+      [.items[] | select(.metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch)] |
+      if length == 1 then .[0] | "\(.metadata.namespace) \(.metadata.name) \(.spec.holderIdentity // "")"
+      else error("expected exactly one realm Lease for the epoch of the claim") end
+    ' "$WORK_DIR/release-fault-leases.json" >"$WORK_DIR/release-fault-lease.txt" ||
+		fail "no single realm Lease carries the epoch $RELEASE_FAULT_MIGRATION claimed under"
+	read -r RELEASE_FAULT_LEASE_NAMESPACE RELEASE_FAULT_LEASE RELEASE_FAULT_HOLDER <"$WORK_DIR/release-fault-lease.txt"
+	[ -n "$RELEASE_FAULT_HOLDER" ] ||
+		fail "the realm Lease under $RELEASE_FAULT_MIGRATION's running Apply names no holder"
+	RELEASE_FAULT_MANAGER=$(k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get pods \
+		-l app.kubernetes.io/component=controller -o json |
+		jq -er '[.items[].spec.serviceAccountName] | unique |
+          if length == 1 then "system:serviceaccount:" + $namespace + ":" + .[0]
+          else error("the manager Pods do not share one service account") end' \
+			--arg namespace "$RELEASE_FAULT_LEASE_NAMESPACE") ||
+		fail "the manager's service account could not be read beside its Leases"
+}
+
+apply_release_fault() {
+	# CEL quotes its strings with the character this shell quotes jq with, so
+	# jq is handed it as a value.
+	jq -n --arg name "$RELEASE_FAULT_POLICY" --arg lease "$RELEASE_FAULT_LEASE" \
+		--arg namespace "$RELEASE_FAULT_LEASE_NAMESPACE" --arg manager "$RELEASE_FAULT_MANAGER" \
+		--arg q "'" '
+      {apiVersion: "v1", kind: "List", items: [
+        {apiVersion: "admissionregistration.k8s.io/v1", kind: "ValidatingAdmissionPolicy",
+         metadata: {name: $name},
+         spec: {
+           failurePolicy: "Fail",
+           matchConstraints: {resourceRules: [{
+             apiGroups: ["coordination.k8s.io"], apiVersions: ["v1"],
+             operations: ["UPDATE"], resources: ["leases"]}]},
+           matchConditions: [
+             {name: "this-realm-lease", expression: ("object.metadata.name == " + $q + $lease + $q + " && object.metadata.namespace == " + $q + $namespace + $q)},
+             {name: "written-by-the-manager", expression: ("request.userInfo.username == " + $q + $manager + $q)}
+           ],
+           validations: [{
+             expression: ("!(has(oldObject.spec.holderIdentity) && oldObject.spec.holderIdentity != " + $q + $q + " && (!has(object.spec.holderIdentity) || object.spec.holderIdentity == " + $q + $q + "))"),
+             message: "e2e fault: this realm Lease may not be released",
+             reason: "Forbidden"
+           }]
+         }},
+        {apiVersion: "admissionregistration.k8s.io/v1", kind: "ValidatingAdmissionPolicyBinding",
+         metadata: {name: $name},
+         spec: {policyName: $name, validationActions: ["Deny"]}}
+      ]}' >"$WORK_DIR/release-fault.json"
+	RELEASE_FAULT_APPLIED=1
+	k apply -f "$WORK_DIR/release-fault.json" >/dev/null ||
+		fail "the release fault could not be installed"
+}
+
+# In force once a server-side dry run of the release, written as the manager,
+# is refused. The dry run changes nothing if it is still let through. It is an
+# update, the verb the manager holds on Leases and the one a release uses.
+wait_for_release_fault_in_force() {
+	release_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$release_deadline" ]; do
+		k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get lease "$RELEASE_FAULT_LEASE" -o json |
+			jq '.spec.holderIdentity = ""' >"$WORK_DIR/release-fault-dry-run.json" ||
+			fail "the $ENGINE realm Lease could not be read for the dry run"
+		if ! k --as "$RELEASE_FAULT_MANAGER" replace --dry-run=server \
+			-f "$WORK_DIR/release-fault-dry-run.json" >"$ADMISSION_ERROR_FILE" 2>&1 &&
+			grep -q 'may not be released' "$ADMISSION_ERROR_FILE"; then
+			release_fault_status
+			jq -e '.status.activeOperation.type == "Apply"' "$STATUS_FILE" >/dev/null || {
+				report_release_fault_state
+				fail "the $ENGINE Apply ended before the release fault was in force, so the release was never refused"
+			}
+			return 0
+		fi
+		sleep 2
+	done
+	cat "$ADMISSION_ERROR_FILE" >&2
+	fail "the release fault never refused the manager's release of the $ENGINE realm Lease"
+}
+
+# The run ended and was recorded, and the release it owes is the one for the
+# claim's own epoch.
+wait_for_release_owed() {
+	release_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$release_deadline" ]; do
+		release_fault_status
+		if jq -e --arg uid "$RELEASE_FAULT_APPLY_JOB_UID" --arg epoch "$RELEASE_FAULT_EPOCH" '
+          (.status.activeOperation // null) == null and
+          .status.lastRun.jobUID == $uid and .status.lastRun.outcome == "Applied" and
+          .status.pendingLockRelease.leaseEpoch == $epoch
+        ' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	report_release_fault_state
+	fail "$RELEASE_FAULT_MIGRATION did not record its run and owe the refused release within ${TIMEOUT_SECONDS}s"
+}
+
 # Suspension while an Apply is running.
 #
 # #242 asks that suspension issue no cleanup SQL and leave an operation that may
@@ -5807,6 +6106,7 @@ run_engine_migrations() {
 	run_deletion_during_apply_proof
 	run_retry_interval_proof
 	run_suspension_during_apply_proof
+	run_lock_release_fault_proof
 	run_unknown_layer_proof
 	run_egress_policy_proof
 	run_retarget_before_dispatch_proof
