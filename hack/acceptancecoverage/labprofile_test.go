@@ -104,10 +104,13 @@ func expectedLabTargets(t *testing.T, r labReading) string {
 	_, steadyP95 := r.scenario(t, "steady state")
 	return r.scope() + " " + fmt.Sprintf(
 		"Converged from a cold start in %s. Operation Jobs finished within %gs at p95 in the steady state. "+
-			"A change to %s resources converged in %s. Manager memory peaked at %d MiB.",
+			"A change to %s resources converged in %s. Manager memory peaked at %d MiB. "+
+			"Progress target (PA-04): once a dependency is back, eligible work resumes and the workload "+
+			"reconverges within %s of a %s registry outage ending, and within %s of every manager being replaced.",
 		r.outcome(t, "cold start", "converged"), steadyP95,
 		r.outcome(t, "change batch", "moved"), r.outcome(t, "change batch", "converged"),
-		r.peakRSSMiB())
+		r.peakRSSMiB(),
+		r.outcome(t, "recovery", "converged"), short(r.Workload.Outage), r.outcome(t, "restart burst", "converged"))
 }
 
 func expectedLabRecovery(t *testing.T, r labReading) string {
@@ -148,6 +151,17 @@ func TestTheLabProfileIsTheReadingItNames(t *testing.T) {
 		if verdict.Disposition != dispositionNotAssessed {
 			t.Errorf("the lab profile disposes of %s as %q from a lab reading", id, verdict.Disposition)
 		}
+	}
+	// The owner excluded two requirements from the lab profile, and only
+	// those two: the database's own restore (PA-07) and capacity limits
+	// (PA-08). readProfile has already held each to an owner, a review date
+	// and a detection.
+	var excluded []string
+	for _, entry := range declared.Exclusions {
+		excluded = append(excluded, entry.Requirement)
+	}
+	if strings.Join(excluded, ",") != "PA-07,PA-08" {
+		t.Errorf("the lab profile excludes %v; the owner's decision excludes PA-07 and PA-08", excluded)
 	}
 	if !strings.Contains(declared.RunEvidence, "capacity") || !strings.Contains(declared.InstallationValues, "lab") {
 		t.Error("the lab profile no longer says its evidence and its values are the lab's")
