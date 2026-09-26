@@ -4,10 +4,25 @@
   "executorImageDigest": "",
   "chartDigest": "",
   "installationValues": "The lab's: the acceptance harness installs the chart with two manager replicas at the chart's resource defaults (hack/e2e-kind.sh, hack/capacity.sh).",
-  "operatingTargets": "Lab-scoped: measured once by the lab-20 reading (2026-09-26T00:47:17Z) on one GitHub-hosted runner, Kubernetes v1.37.0, 2 manager replicas with the chart's resource defaults (50m CPU request, 256Mi memory limit), with 10 PtahSchemas and 10 PtahMigrations on a database each at a 2m interval. It describes that lab and is not a target for any installation. Converged from a cold start in 1m52s. Operation Jobs finished within 10s at p95 in the steady state. A change to 10 resources converged in 2m22s. Manager memory peaked at 81 MiB.",
+  "operatingTargets": "Lab-scoped: measured once by the lab-20 reading (2026-09-26T00:47:17Z) on one GitHub-hosted runner, Kubernetes v1.37.0, 2 manager replicas with the chart's resource defaults (50m CPU request, 256Mi memory limit), with 10 PtahSchemas and 10 PtahMigrations on a database each at a 2m interval. It describes that lab and is not a target for any installation. Converged from a cold start in 1m52s. Operation Jobs finished within 10s at p95 in the steady state. A change to 10 resources converged in 2m22s. Manager memory peaked at 81 MiB. Progress target (PA-04): once a dependency is back, eligible work resumes and the workload reconverges within 55s of a 3m registry outage ending, and within 1m59s of every manager being replaced.",
   "recoveryObjectives": "Lab-scoped: measured once by the lab-20 reading (2026-09-26T00:47:17Z) on one GitHub-hosted runner, Kubernetes v1.37.0, 2 manager replicas with the chart's resource defaults (50m CPU request, 256Mi memory limit), with 10 PtahSchemas and 10 PtahMigrations on a database each at a 2m interval. It describes that lab and is not a target for any installation. Operator process: with every manager replaced at once the workload reconverged in 1m59s, and after a 3m registry outage it reconverged in 55s. Operator state: a rebuild from backed-up specs runs nothing a lost approval authorized (run_rebuild_drill); status and run evidence newer than the backup are lost, so its recovery point is the age of the backup, and no recovery time is measured. Database: none is claimed. The lab restores no database, and its recovery point and recovery time belong to the deployment's own backup system.",
   "runEvidence": "The lab-20 reading comes from the capacity workflow, run 36204346798 attempt 1. Evidence about a candidate comes from the release candidate's own runs, which do not exist yet.",
   "requirements": {},
-  "exclusions": [],
+  "exclusions": [
+    {
+      "requirement": "PA-07",
+      "scope": "Restoring the database and measuring its recovery time. The operator's own state is covered: a rebuild from backed-up specs runs nothing a lost approval authorized (run_rebuild_drill). The database's backups, its restore and its recovery point and time belong to the deployment's backup system.",
+      "owner": "Operator maintainers",
+      "reviewBy": "2026-12-31",
+      "detection": "A database restored behind the operator is detected rather than trusted: the next history read differs from the one the plan was computed against, and Ptah refuses to run an approved sequence the restored history no longer selects (run_restored_history_proof). The recovery page names the deployment's backup as the owner of the database's restore."
+    },
+    {
+      "requirement": "PA-08",
+      "scope": "Capacity limits and a soak. The lab publishes readings under support/capacity/readings and claims no limit; a deployment measures its own workload with hack/capacity before relying on one.",
+      "owner": "Operator maintainers",
+      "reviewBy": "2026-12-31",
+      "detection": "The capacity page says no envelope has been measured, and hack/capacity_page_test.go refuses a capacity claim on it. The weekly Capacity workflow publishes each new reading, so a regression shows in the next report."
+    }
+  ],
   "decision": "Not assessed"
 }

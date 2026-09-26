@@ -74,8 +74,9 @@ var requirements = []requirement{
 	{"PA-04", "Make progress and refusal states actionable",
 		"a measured progress target, dependency recovery inside it, and no hot loop on a permanent refusal",
 		"`run_retry_interval_proof`, the bounded refresh count under a standing refusal in `assert_destructive_gate`, " +
-			"`assert_registry_outage_and_recovery`, and `assert_partial_run_blocks_and_recovers`",
-		"a declared progress target to measure recovery against, and a result read that hangs"},
+			"`assert_registry_outage_and_recovery`, `assert_partial_run_blocks_and_recovers`, " +
+			"and the recovery scenarios of `hack/capacity` that the lab profile's progress target is read from",
+		"a result read that hangs"},
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
 		"the CRD schema history gates, the admission rows in `hack/e2e-assert.sh`, " +
@@ -115,9 +116,10 @@ var requirements = []requirement{
 		"the documented install run on a fresh cluster, and a PtahSchema on MySQL among the examples"},
 	{"PA-11", "Verify the artifacts that will be installed",
 		"checksums, signatures, provenance and a vulnerability scan against the published digests",
-		"the provenance, SBOM, signature and read-back steps of `.github/workflows/release.yml`, " +
+		"the provenance, SBOM, signature and read-back steps of `.github/workflows/release.yml` for the operator and the executor, " +
+			"which is built from `Dockerfile.executor` at the pinned Ptah commit, " +
 			"the reproducible chart, the checksum file, and a govulncheck scan of the source",
-		"the Ptah executor image, which the release neither builds nor signs; the lifecycle run against the published digests; " +
+		"a release run of the publication path, which no tag has exercised yet; the lifecycle run against the published digests; " +
 			"a scan of the shipped images and binaries; and an interrupted publication"},
 	{"PA-12", "Retain evidence and make a bounded decision",
 		"the retained evidence of every executed requirement and a recorded decision for the stated profile",

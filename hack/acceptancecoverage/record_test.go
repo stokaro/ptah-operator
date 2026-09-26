@@ -121,7 +121,9 @@ func TestEveryProofTheRecordNamesExists(t *testing.T) {
 		for _, match := range quoted.FindAllStringSubmatch(entry.repository, -1) {
 			name := match[1]
 			switch {
-			case strings.Contains(name, "/"):
+			// A shell function never carries a slash or a dot, and a file at
+			// the repository root carries a dot but no slash.
+			case strings.ContainsAny(name, "/."):
 				if _, err := os.Stat(filepath.Join("../..", name)); err != nil {
 					t.Errorf("%s names %s, which the tree does not have", entry.id, name)
 					continue
