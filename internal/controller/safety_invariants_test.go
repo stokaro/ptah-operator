@@ -238,6 +238,7 @@ func bindCurrentApplyJob(
 		workload.AnnotationPlanContentDigest:       plan.ContentDigest,
 		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
 	}
+	workload.MarkMutatingOperation(annotations)
 	job.Labels = labels
 	job.Annotations = annotations
 	job.Spec.Template.Labels = map[string]string{}
@@ -4831,6 +4832,7 @@ func predecessorApplyCleanupMatchFixture(t *testing.T) (*operatorv1alpha1.PtahSc
 		workload.AnnotationPlanFingerprint:        testDigest,
 		workload.AnnotationPlanContentDigest:      safetyOtherDigest,
 	}
+	workload.MarkMutatingOperation(annotations)
 	templateAnnotations := make(map[string]string, len(annotations)+1)
 	for key, value := range annotations {
 		templateAnnotations[key] = value

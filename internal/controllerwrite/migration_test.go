@@ -151,6 +151,50 @@ func TestValidationHandlerAllowsOnlyTheMigrationCleanupTTL(t *testing.T) {
 	}
 }
 
+// The cleanup check holds a terminal Job to an exact annotation set without
+// rebuilding it, so it has to name every key the builder writes. An Apply Job
+// carries keys the read-only ones do not; when the check fell behind the
+// builder, every finished Apply was refused its cleanup TTL, the controller
+// could not record the run, and the migration stayed in Applying.
+func TestValidationHandlerAllowsTheCleanupTTLOnEveryMigrationJobTheBuilderWrites(t *testing.T) {
+	t.Parallel()
+
+	for _, operationType := range []operatorv1alpha1.MigrationOperationType{
+		operatorv1alpha1.MigrationOperationResolve,
+		operatorv1alpha1.MigrationOperationVerify,
+		operatorv1alpha1.MigrationOperationHistory,
+		operatorv1alpha1.MigrationOperationApply,
+	} {
+		t.Run(string(operationType), func(t *testing.T) {
+			t.Parallel()
+
+			var migration *operatorv1alpha1.PtahMigration
+			var job *batchv1.Job
+			objects := []client.Object{}
+			if operationType == operatorv1alpha1.MigrationOperationApply {
+				var plan *operatorv1alpha1.PtahMigrationPlan
+				migration, plan, job = migrationApplyJobFixture(t)
+				objects = append(objects, plan)
+			} else {
+				migration, job = migrationJobFixture(t, operationType)
+			}
+			terminal := withGeneratedJobIdentity(job)
+			terminal.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+			migration.Status.ActiveOperation.JobUID = terminal.UID
+			handler := migrationHandlerFixture(t, migration, append(objects, terminal)...)
+
+			cleaned := terminal.DeepCopy()
+			ttl := int32(300)
+			cleaned.Spec.TTLSecondsAfterFinished = &ttl
+			response := handler.Handle(context.Background(), migrationUpdateRequest(t, terminal, cleaned))
+			if !response.Allowed {
+				t.Fatalf("the cleanup TTL on the %s Job the builder wrote was denied: %s",
+					operationType, responseMessage(response))
+			}
+		})
+	}
+}
+
 // responseMessage is the denial text an admission response carries.
 func responseMessage(response cradmission.Response) string {
 	if response.Result == nil {

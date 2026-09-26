@@ -141,6 +141,14 @@ type Builder struct {
 // starts accepting reconciliation work.
 func (b Builder) Validate() error { return b.validate() }
 
+// MarkMutatingOperation adds what a mutating operation Job and its Pod carry
+// beyond the operation envelope. The builder writes the marks through it, and
+// every check that holds a Job to an exact annotation set adds them through it
+// too, so no check can fall behind the builder on which keys an Apply Job has.
+func MarkMutatingOperation(annotations map[string]string) {
+	annotations[AnnotationSafeToEvict] = "false"
+}
+
 // NameFor delegates to the package-level deterministic naming contract.
 func (b Builder) NameFor(
 	schema *operatorv1alpha1.PtahSchema,

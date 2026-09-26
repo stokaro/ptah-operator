@@ -186,6 +186,9 @@ func validateClaimBoundMigrationJobCleanup(
 		workload.AnnotationControllerStateVersion:  job.Annotations[workload.AnnotationControllerStateVersion],
 		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
 	}
+	if operation.Type == operatorv1alpha1.MigrationOperationApply {
+		workload.MarkMutatingOperation(wantAnnotations)
+	}
 	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
 		return errors.New("Job annotations are not the exact current operation envelope")
 	}
