@@ -176,7 +176,7 @@ jobs:
           # A CI run can last 245 minutes with every job at its limit: the
           # support matrix and the shared images (55), E2E (180), then the
           # published lifecycle timings (10), which end after the gate (5).
-          # The race detector (25) runs beside E2E. Five more cover queue/API
+          # The race detector (20) runs beside E2E. Five more cover queue/API
           # delay.
           SUPPORT_POLL_TIMEOUT_MINUTES: "250"
         shell: bash

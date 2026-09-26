@@ -25,6 +25,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,33 +77,22 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "6233571067ebdb52a478ced9f73e3224789afef4f9214f38607c2042cac755f4"
+	ciWorkflowSHA256                = "7132b7ed6d68bde38b9b171dd8e4e71dac073fe66cb893c10e20f192b75c5031"
 	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
 	controllerSchemaSHA256          = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
-	raceValidationRuleSHA256        = "41883b775532ad9be0035521d4363052137a8debb4f4a4185ec6a0f3c4a97ae9"
-	raceBaseRuleSHA256              = "53a29b937246901f0b2f285964ea3a2b7580e016ab447ff2b9cb10189df83b49"
-	raceMutationRuleSHA256          = "1b9d7a915e91728ce653c78534382d5d59935bdf09ceec8cba3470900c3fc2dc"
-	raceAggregateSHA256             = "c4ebaf33f633432020b25919b04b70b8715ab64ef63118fbe47dee45553915f1"
+	raceRuleSHA256                  = "6048d2e7677bc691e71b255a96abff0f91bead4d957ce80d4160c82a483b77cc"
 
 	// The Helm the chart-rendering jobs install. One pin, so what CI renders
 	// and what a release renders are the same program.
 	helmSetupAction = "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4"
 	helmVersion     = "v4.3.0"
 
-	ciSupportMatrixTimeoutMinutes = 10
-	ciVerifyTimeoutMinutes        = 20
-	// The race detector's base pass and its mutation shards run at once, and
-	// the job the gate reads waits for the slower of them before it runs.
-	ciRaceBaseTimeoutMinutes      = 20
-	ciRaceMutationTimeoutMinutes  = 20
-	ciRaceAggregateTimeoutMinutes = 5
-	ciRaceTimeoutMinutes          = max(ciRaceBaseTimeoutMinutes, ciRaceMutationTimeoutMinutes) + ciRaceAggregateTimeoutMinutes
-	// raceMutationShards is RACE_MUTATION_SHARDS in the Makefile and the
-	// length of the shard matrix in ci.yml, held to one number.
-	raceMutationShards                = 8
+	ciSupportMatrixTimeoutMinutes     = 10
+	ciVerifyTimeoutMinutes            = 20
+	ciRaceTimeoutMinutes              = 20
 	ciKubernetesE2ETimeoutMinutes     = 180
 	ciPrepareImagesTimeoutMinutes     = 45
 	ciKubernetesSupportTimeoutMinutes = 5
@@ -653,8 +643,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		"CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE: \"true\"",
 		"run: make verify-source",
-		"run: make test-race-base",
-		"run: make test-race-mutation",
+		"run: make test-race",
 		"DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}",
 		"E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
 		"KIND_NODE_IMAGE: ${{ matrix.node_image }}",
@@ -674,7 +663,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		return fmt.Errorf("%s: workflow environment must contain only the audited GOFLAGS value", path)
 	}
 	for _, jobName := range []string{
-		"support-matrix", "verify", "race-base", "race-mutation", "race", "kubernetes-e2e", "kubernetes-support-gate",
+		"support-matrix", "verify", "race", "kubernetes-e2e", "kubernetes-support-gate",
 	} {
 		job, err := requireWorkflowJob(path, workflow, jobName)
 		if err != nil {
@@ -915,7 +904,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline and require promtool", path)
 	}
 
-	if err := verifyRaceJobs(path, workflow); err != nil {
+	if err := verifyRaceJob(path, workflow); err != nil {
 		return err
 	}
 
@@ -1128,145 +1117,41 @@ done
 	return nil
 }
 
-// wantRaceAggregateRun is the step that makes the race detector's jobs one
-// verdict. A pull request runs the base pass alone, so there the shards must
-// have been skipped; every other event needs every shard to have passed.
-const wantRaceAggregateRun = `set -euo pipefail
-# A pull request runs the base pass alone, so its shards are skipped
-# rather than passed. Every other event requires all of them.
-expected_mutation=success
-if [[ "$EVENT_NAME" == pull_request ]]; then
-  expected_mutation=skipped
-fi
-if [[ "$RACE_BASE_RESULT" != success ]]; then
-  echo "race base pass concluded: $RACE_BASE_RESULT" >&2
-  exit 1
-fi
-if [[ "$RACE_MUTATION_RESULT" != "$expected_mutation" ]]; then
-  echo "race mutation shards concluded: $RACE_MUTATION_RESULT, expected $expected_mutation" >&2
-  exit 1
-fi
-`
-
-// verifyRaceJobs holds the race detector to its three jobs: the base pass, one
-// job per mutation shard, and the job named Race detector, which the support
-// gate needs and a release requires by name. That last one is the only verdict
-// anything reads, so it has to need both of the others and fail unless each
-// concluded as the event requires.
-func verifyRaceJobs(path string, workflow workflowDocument) error {
-	base := workflow.Jobs["race-base"]
-	if base.Name != "Race detector base pass" || base.If != "" || len(base.Needs) != 0 ||
-		base.RunsOn != "ubuntu-latest" || base.TimeoutMinutes != ciRaceBaseTimeoutMinutes ||
-		len(base.Permissions) != 0 || base.Environment != "" || base.Strategy.FailFast != nil ||
-		len(base.Strategy.Matrix) != 0 {
-		return fmt.Errorf("%s: race-base must be an unconditional isolated ubuntu-latest job with a %d-minute timeout", path, ciRaceBaseTimeoutMinutes)
-	}
-	baseSteps, err := requireWorkflowStepOrder(path, "race-base", base, []string{
-		"race-checkout", "race-setup-go", "race-helm", "race-build-cache", "project-race-base",
-	})
-	if err != nil {
-		return err
-	}
-	if err := verifyRaceSetupSteps(path, "race-base", baseSteps[0], baseSteps[1]); err != nil {
-		return err
-	}
-	if err := verifyHelmSetupStep(path, "race-base", baseSteps[2]); err != nil {
-		return err
-	}
-	if err := verifyGoBuildCacheStep(path, "race-base", baseSteps[3], "race"); err != nil {
-		return err
-	}
-	if baseSteps[4].Name != "Run race coverage without the shell mutation suites" ||
-		baseSteps[4].If != "" || baseSteps[4].Uses != "" || baseSteps[4].Run != "make test-race-base" ||
-		baseSteps[4].Shell != "bash" || baseSteps[4].WorkingDirectory != "" ||
-		len(baseSteps[4].With) != 0 || len(baseSteps[4].Env) != 0 {
-		return fmt.Errorf("%s: the race base pass must be the unconditional audited make test-race-base invocation", path)
-	}
-
-	mutation := workflow.Jobs["race-mutation"]
-	if mutation.Name != "Race detector mutation shard ${{ matrix.shard }}" || len(mutation.Needs) != 0 ||
-		mutation.RunsOn != "ubuntu-latest" || mutation.TimeoutMinutes != ciRaceMutationTimeoutMinutes ||
-		len(mutation.Permissions) != 0 || mutation.Environment != "" {
-		return fmt.Errorf("%s: race-mutation must be an isolated ubuntu-latest job with a %d-minute timeout", path, ciRaceMutationTimeoutMinutes)
-	}
-	// The condition names the event and nothing else, so the shards run or
-	// are skipped together: a job-level condition cannot read the matrix.
-	if mutation.If != "github.event_name != 'pull_request'" {
-		return fmt.Errorf("%s: race-mutation must run on every event but a pull request", path)
-	}
-	if mutation.Strategy.FailFast == nil || *mutation.Strategy.FailFast {
-		return fmt.Errorf("%s: race-mutation must let every shard reach its own verdict, with fail-fast disabled", path)
-	}
-	if err := verifyRaceMutationMatrix(path, mutation.Strategy.Matrix); err != nil {
-		return err
-	}
-	mutationSteps, err := requireWorkflowStepOrder(path, "race-mutation", mutation, []string{
-		"race-mutation-checkout", "race-mutation-setup-go", "race-mutation-build-cache", "project-race-mutation",
-	})
-	if err != nil {
-		return err
-	}
-	if err := verifyRaceSetupSteps(path, "race-mutation", mutationSteps[0], mutationSteps[1]); err != nil {
-		return err
-	}
-	// The shards read the base pass's cache and save none: eight jobs saving
-	// one key would race, and a shard that won would replace the complete
-	// cache with the part of it one package needs.
-	if mutationSteps[2].Name != "Restore the race build output" {
-		return fmt.Errorf("%s: job %q build cache step has unexpected name %q", path, "race-mutation", mutationSteps[2].Name)
-	}
-	if err := verifyUpdaterActionStep(
-		path,
-		"race-mutation",
-		mutationSteps[2],
-		"actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
-		goBuildCacheInputs("race"),
-	); err != nil {
-		return err
-	}
-	// RACE_MUTATION_SHARDS stays the Makefile's, so the shard index is the
-	// only input: an override here would split the tables differently from
-	// the matrix that is meant to cover them.
-	if mutationSteps[3].Name != "Run one race mutation shard" ||
-		mutationSteps[3].If != "" || mutationSteps[3].Uses != "" || mutationSteps[3].Run != "make test-race-mutation" ||
-		mutationSteps[3].Shell != "bash" || mutationSteps[3].WorkingDirectory != "" || len(mutationSteps[3].With) != 0 ||
-		!equalStringMap(mutationSteps[3].Env, map[string]string{"RACE_MUTATION_SHARD": "${{ matrix.shard }}"}) {
-		return fmt.Errorf("%s: a race mutation shard must be the audited make test-race-mutation invocation, bound to its matrix index and nothing else", path)
-	}
-
+// verifyRaceJob holds the race detector to one unconditional job under the name
+// the support gate reads and a release requires. It runs make test-race, which
+// verifyMakeRaceTargets holds to every package but the shell mutation suites:
+// the verify job runs those without the detector.
+func verifyRaceJob(path string, workflow workflowDocument) error {
 	race := workflow.Jobs["race"]
 	if race.Name != "Race detector" {
 		return fmt.Errorf("%s: the job the support gate needs and a release requires must be named %q", path, "Race detector")
 	}
-	if race.If != "${{ !cancelled() }}" {
-		return fmt.Errorf("%s: Race detector must run after an unsuccessful shard and stop on cancellation with if: !cancelled()", path)
-	}
-	if !equalStringSet(race.Needs, []string{"race-base", "race-mutation"}) {
-		return fmt.Errorf("%s: Race detector must need the base pass and every mutation shard, and it needs %v", path, race.Needs)
-	}
-	if race.RunsOn != "ubuntu-latest" || race.TimeoutMinutes != ciRaceAggregateTimeoutMinutes ||
+	if race.If != "" || len(race.Needs) != 0 ||
+		race.RunsOn != "ubuntu-latest" || race.TimeoutMinutes != ciRaceTimeoutMinutes ||
 		len(race.Permissions) != 0 || race.Environment != "" || race.Strategy.FailFast != nil ||
 		len(race.Strategy.Matrix) != 0 {
-		return fmt.Errorf("%s: Race detector must be an isolated ubuntu-latest job with a %d-minute timeout", path, ciRaceAggregateTimeoutMinutes)
+		return fmt.Errorf("%s: race must be an unconditional isolated ubuntu-latest job with a %d-minute timeout", path, ciRaceTimeoutMinutes)
 	}
-	raceSteps, err := requireWorkflowStepOrder(path, "race", race, []string{"require-race-results"})
+	raceSteps, err := requireWorkflowStepOrder(path, "race", race, []string{
+		"race-checkout", "race-setup-go", "race-helm", "race-build-cache", "project-race",
+	})
 	if err != nil {
 		return err
 	}
-	if raceSteps[0].Name != "Require the base pass and every mutation shard" ||
-		raceSteps[0].If != "" || raceSteps[0].Uses != "" || raceSteps[0].Shell != "bash" ||
-		raceSteps[0].WorkingDirectory != "" || len(raceSteps[0].With) != 0 {
-		return fmt.Errorf("%s: Race detector must decide in the audited bash step", path)
+	if err := verifyRaceSetupSteps(path, "race", raceSteps[0], raceSteps[1]); err != nil {
+		return err
 	}
-	if !equalStringMap(raceSteps[0].Env, map[string]string{
-		"EVENT_NAME":           "${{ github.event_name }}",
-		"RACE_BASE_RESULT":     "${{ needs.race-base.result }}",
-		"RACE_MUTATION_RESULT": "${{ needs.race-mutation.result }}",
-	}) {
-		return fmt.Errorf("%s: Race detector result bindings do not match its dependencies", path)
+	if err := verifyHelmSetupStep(path, "race", raceSteps[2]); err != nil {
+		return err
 	}
-	if raceSteps[0].Run != wantRaceAggregateRun {
-		return fmt.Errorf("%s: Race detector must fail explicitly unless the base pass and every shard concluded as the event requires", path)
+	if err := verifyGoBuildCacheStep(path, "race", raceSteps[3], "race"); err != nil {
+		return err
+	}
+	if raceSteps[4].Name != "Run race coverage without the shell mutation suites" ||
+		raceSteps[4].If != "" || raceSteps[4].Uses != "" || raceSteps[4].Run != "make test-race" ||
+		raceSteps[4].Shell != "bash" || raceSteps[4].WorkingDirectory != "" ||
+		len(raceSteps[4].With) != 0 || len(raceSteps[4].Env) != 0 {
+		return fmt.Errorf("%s: race coverage must be the unconditional audited make test-race invocation", path)
 	}
 	return nil
 }
@@ -1294,28 +1179,6 @@ func verifyRaceSetupSteps(path, jobName string, checkout, setupGo workflowStep) 
 		"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 		map[string]string{"go-version-file": "go.mod", "cache-dependency-path": "go.sum"},
 	)
-}
-
-// verifyRaceMutationMatrix holds the shard matrix to the Makefile's count:
-// every index from 0 to RACE_MUTATION_SHARDS-1, once and in order. A missing
-// index leaves a slice of every mutation table unrun while the matrix passes,
-// and an extra one fails in make rather than here.
-func verifyRaceMutationMatrix(path string, matrix map[string]yaml.Node) error {
-	shards, ok := matrix["shard"]
-	if len(matrix) != 1 || !ok || shards.Kind != yaml.SequenceNode {
-		return fmt.Errorf("%s: race-mutation's matrix must be the list of shard indexes and nothing else", path)
-	}
-	if len(shards.Content) != raceMutationShards {
-		return fmt.Errorf("%s: race-mutation runs %d shards, and the Makefile's RACE_MUTATION_SHARDS is %d",
-			path, len(shards.Content), raceMutationShards)
-	}
-	for index, shard := range shards.Content {
-		if shard.Kind != yaml.ScalarNode || shard.Tag != "!!int" || shard.Value != strconv.Itoa(index) {
-			return fmt.Errorf("%s: race-mutation shard %d is %q; every index from 0 to %d must appear once, in order",
-				path, index, shard.Value, raceMutationShards-1)
-		}
-	}
-	return nil
 }
 
 // githubJobTimeoutMinutes is what GitHub allows a job that sets no
@@ -2170,6 +2033,14 @@ func verifyHelmSetupStep(path, jobName string, step workflowStep) error {
 }
 
 func verifyGoBuildCacheStep(path, jobName string, step workflowStep, scope string) error {
+	key := fmt.Sprintf(
+		"go-build-${{ runner.os }}-%s-${{ hashFiles('go.sum') }}-${{ github.sha }}",
+		scope,
+	)
+	restore := fmt.Sprintf(
+		"go-build-${{ runner.os }}-%[1]s-${{ hashFiles('go.sum') }}-\ngo-build-${{ runner.os }}-%[1]s-\n",
+		scope,
+	)
 	if step.Name != "Cache the Go build output" {
 		return fmt.Errorf("%s: job %q build cache step has unexpected name %q", path, jobName, step.Name)
 	}
@@ -2178,24 +2049,12 @@ func verifyGoBuildCacheStep(path, jobName string, step workflowStep, scope strin
 		jobName,
 		step,
 		"actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
-		goBuildCacheInputs(scope),
+		map[string]string{
+			"path":         "~/.cache/go-build",
+			"key":          key,
+			"restore-keys": restore,
+		},
 	)
-}
-
-// goBuildCacheInputs are the rolling build cache's inputs for one scope: the
-// key ends in the commit and falls back to the nearest earlier one.
-func goBuildCacheInputs(scope string) map[string]string {
-	return map[string]string{
-		"path": "~/.cache/go-build",
-		"key": fmt.Sprintf(
-			"go-build-${{ runner.os }}-%s-${{ hashFiles('go.sum') }}-${{ github.sha }}",
-			scope,
-		),
-		"restore-keys": fmt.Sprintf(
-			"go-build-${{ runner.os }}-%[1]s-${{ hashFiles('go.sum') }}-\ngo-build-${{ runner.os }}-%[1]s-\n",
-			scope,
-		),
-	}
 }
 
 func verifyUpdaterActionStep(
@@ -5813,48 +5672,53 @@ func verifyMakeE2ETarget(path string) error {
 	return nil
 }
 
+// verifyMakeRaceTargets holds the race pass to its audited rule, and the tests
+// it skips to the shell mutation suites and nothing else. Those suites run only
+// in the test target, so that target has to stay every package with nothing
+// skipped, and verify-source, which the verify job runs, has to run it.
 func verifyMakeRaceTargets(path string) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	for assignment, expected := range map[string]string{
-		"RACE_MUTATION_SHARDS": fmt.Sprintf("RACE_MUTATION_SHARDS ?= %d", raceMutationShards),
-		"RACE_MUTATION_SHARD":  "RACE_MUTATION_SHARD ?=",
-		"RACE_MUTATION_TESTS": "override RACE_MUTATION_TESTS := " +
-			"TestVerifyE2EHarnessRejectsCriticalMutations|" +
-			"TestVerifyE2EDataPlaneRejectsCriticalMutations|" +
-			"TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|" +
-			"TestVerifyE2EChildScriptsRejectCriticalMutations",
-	} {
-		pattern := regexp.MustCompile(`(?m)^(?:override[ \t]+)?` + regexp.QuoteMeta(assignment) + `[ \t]*[:+?!]?=[^\r\n]*$`)
-		matches := pattern.FindAll(contents, -1)
-		if len(matches) != 1 || string(matches[0]) != expected {
-			return fmt.Errorf("%s: %s must have the exact audited race-shard assignment", path, assignment)
-		}
+	const skipped = "override RACE_MUTATION_TESTS := " +
+		"TestVerifyE2EHarnessRejectsCriticalMutations|" +
+		"TestVerifyE2EDataPlaneRejectsCriticalMutations|" +
+		"TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|" +
+		"TestVerifyE2EChildScriptsRejectCriticalMutations"
+	assignments := regexp.MustCompile(`(?m)^(?:override[ \t]+)?RACE_MUTATION_TESTS[ \t]*[:+?!]?=[^\r\n]*$`).FindAll(contents, -1)
+	if len(assignments) != 1 || string(assignments[0]) != skipped {
+		return fmt.Errorf("%s: RACE_MUTATION_TESTS must be the exact audited list of suites the race pass skips", path)
 	}
 	parsed, err := parseAuditedMakefile(path, contents)
 	if err != nil {
 		return err
 	}
-	for target, contract := range map[string]struct {
-		header string
-		digest string
-	}{
-		"validate-race-shards": {header: "validate-race-shards:", digest: raceValidationRuleSHA256},
-		"test-race-base":       {header: "test-race-base: validate-race-shards", digest: raceBaseRuleSHA256},
-		"test-race-mutation":   {header: "test-race-mutation: validate-race-shards", digest: raceMutationRuleSHA256},
-		"test-race":            {header: "test-race: validate-race-shards test-race-base", digest: raceAggregateSHA256},
-	} {
-		rule, ruleErr := parsed.requireTarget(path, target, contract.header)
-		if ruleErr != nil {
-			return ruleErr
-		}
-		ruleSource := exactMakeRule(parsed.lines, rule.line)
-		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(ruleSource)))
-		if digest != contract.digest {
-			return fmt.Errorf("%s: %s differs from the audited complete race-shard contract", path, target)
-		}
+	race, err := parsed.requireTarget(path, "test-race", "test-race:")
+	if err != nil {
+		return err
+	}
+	raceRule := exactMakeRule(parsed.lines, race.line)
+	if digest := fmt.Sprintf("%x", sha256.Sum256([]byte(raceRule))); digest != raceRuleSHA256 {
+		return fmt.Errorf("%s: test-race differs from the audited race pass", path)
+	}
+	test, err := parsed.requireTarget(path, "test", "test:")
+	if err != nil {
+		return err
+	}
+	if exactMakeRule(parsed.lines, test.line) != "test:\n\t$(GO) test ./..." {
+		return fmt.Errorf("%s: test must run every package with nothing skipped, because it is the only run of the shell mutation suites", path)
+	}
+	sources := parsed.rules["verify-source"]
+	if len(sources) != 1 || sources[0].operator != ":" || sources[0].conditionalDepth != 0 {
+		return fmt.Errorf("%s: verify-source target must be declared exactly once, unconditionally", path)
+	}
+	_, prerequisites, _ := strings.Cut(sources[0].raw, ":")
+	if comment := strings.IndexByte(prerequisites, '#'); comment >= 0 {
+		prerequisites = prerequisites[:comment]
+	}
+	if !slices.Contains(strings.Fields(prerequisites), "test") {
+		return fmt.Errorf("%s: verify-source must run the test target, the only run of the shell mutation suites", path)
 	}
 	return nil
 }
