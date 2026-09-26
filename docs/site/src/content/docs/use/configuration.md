@@ -129,7 +129,7 @@ reader of a converged schema can see exactly what produced it.
 | `certificateRotation.resources.requests.memory` | `32Mi` | Memory request for the rotator container. |
 | `certificateRotation.resources.limits` |  | The ceiling, memory only, for the same reason as the manager. |
 | `certificateRotation.resources.limits.memory` | `64Mi` | Memory limit for the rotator container. |
-| `approverClusterRole` |  | A ClusterRole for the people who approve changes: read schemas, plans and approvals, and create an approval. Bind it yourself; the chart binds nobody. |
+| `approverClusterRole` |  | A ClusterRole for the people who approve changes: read schemas, migrations, their plans and approvals, and create an approval of either kind. It reads no plan chunk and no Pod log. Bind it yourself; the chart binds nobody. |
 | `approverClusterRole.create` | `true` | Whether to create that ClusterRole. |
 | `podDisruptionBudget` |  | A PodDisruptionBudget for the manager, so a drain cannot take every replica at once. |
 | `podDisruptionBudget.enabled` | `true` | Whether to create the PodDisruptionBudget. |

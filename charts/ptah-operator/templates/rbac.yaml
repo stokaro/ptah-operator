@@ -259,10 +259,13 @@ metadata:
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 rules:
+  # Both families. An approval names a resource and its plan, so an approver
+  # reads both, and the approvals already made. No ConfigMap and no Pod log:
+  # either one is the plan itself, granted per namespace to whoever reviews it.
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemaapprovals"]
+    resources: ["ptahschemaapprovals", "ptahmigrationapprovals"]
     verbs: ["create"]
 {{- end }}

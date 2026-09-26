@@ -74,8 +74,9 @@ approval already owns that decision. Concurrent duplicates are retired, and
 the accepted approval is consumed only at the persisted Apply dispatch
 boundary. Updates cannot change `spec`; create a new approval for a new plan.
 
-The chart's optional approver ClusterRole grants read access to schemas and
-plan metadata plus create access to approvals, but it has no binding and no
-ConfigMap permission. Bind approval permission only to authenticated identities
-that are independent from routine desired-state writers, and grant plan-chunk
-access separately in each application namespace.
+The chart's optional approver ClusterRole grants read access to schemas,
+migrations, their plan metadata and approvals, plus create access to
+`PtahSchemaApproval` and `PtahMigrationApproval`. It has no binding, no
+ConfigMap permission and no Pod log permission. Bind approval permission only
+to authenticated identities that are independent from routine desired-state
+writers, and grant plan-chunk access separately in each application namespace.

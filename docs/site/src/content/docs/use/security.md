@@ -13,8 +13,9 @@ The operator separates four authorities:
    selecting `Always` applies non-destructive plans with no approval at all.
    RBAC cannot close that, because the bypass is not an approval. See
    [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off).
-2. An approver may read schemas and plans and create immutable approvals. The
-   chart creates an optional ClusterRole but never binds it automatically.
+2. An approver may read schemas, migrations and their plans, and create
+   immutable approvals for either family. The chart creates an optional
+   ClusterRole but never binds it automatically.
 3. The controller may manage plans, Jobs, ConfigMaps, Leases, status, and
    Events. Its shipped ClusterRole contains no Secret permission. Retained,
    typed admission policies constrain its main-resource writes to structural
