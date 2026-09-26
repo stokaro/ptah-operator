@@ -1,18 +1,22 @@
 ---
 title: Capacity
-description: What the operator costs per resource, what the defaults are, and what has not been measured.
+description: What the operator costs per resource, what the defaults are, what one lab workload read, and what has not been measured.
 ---
 
-No capacity envelope has been measured. This page is the arithmetic a
+No capacity envelope has been measured. One workload has been, on a
+GitHub-hosted runner, and [what it read](#lab-20) is below: it describes that
+runner and not an installation. The rest of this page is the arithmetic a
 deployment can do before it runs anything, and the defaults it would be running
-with. Neither is a throughput claim, and both are here because the alternative
-is a reader assuming the defaults fit their scale.
+with. None of it is a throughput claim, and all of it is here because the
+alternative is a reader assuming the defaults fit their scale.
 
-What an installation needs before it can size itself is on
-[issue #224](https://github.com/stokaro/ptah-operator/issues/224): measured
-latency, queue delay, API demand, CPU, memory, Pod count and retained growth,
-against a declared workload. Until that exists, treat what follows as the
-lower bound on cost rather than as a limit.
+What an installation needs before it can size itself is the same measurement
+against its own workload and nodes: latency, queue delay, API demand, CPU,
+memory, Pod count and retained growth, which is what
+[issue #224](https://github.com/stokaro/ptah-operator/issues/224) asked for.
+[How to measure it](#how-to-measure-it) is the tool for that. Until an
+installation has run it, treat what follows as the lower bound on cost rather
+than as a limit.
 
 ## What a resource costs while nothing changes
 
@@ -128,9 +132,51 @@ installation. The Capacity workflow runs the same thing on a schedule, on
 request, and on any change to the measurement itself, and publishes the report
 as an artifact of the run.
 
+## The first reading {#lab-20}
+
+The Capacity workflow ran the `lab-20` workload on 2026-09-26, run
+[36204346798](https://github.com/stokaro/ptah-operator/actions/runs/36204346798):
+ten `PtahSchema` and ten `PtahMigration` resources, each on a database of its
+own, at an interval of two minutes. The report is kept in full in
+[`support/capacity/readings/lab-20-2026-09-26.json`](https://github.com/stokaro/ptah-operator/blob/master/support/capacity/readings/lab-20-2026-09-26.json).
+
+It ran on Kubernetes v1.37.0 in kind, with two manager replicas requesting 50m
+of CPU and limited to 256 MiB. The report records 16 allocatable CPUs and
+62 GiB across four nodes, which is one 4-CPU, 16 GiB runner counted four times:
+every kind node reports the machine it runs on.
+
+| Scenario | Seconds | Jobs/min avg (peak) | Job done p50/p95 s | Pending Pods max | Oldest reading s | Overdue s | Manager RSS MiB | Manager cores | Queue wait p95 s | Throttled s | Admission p95 s | Outcome |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| cold start | 113 | 63.9 (64) | 11 / 19 | 12 | 50 | 0 | 64 | 0.16 | <= 10 | 0.0 | <= 0.5 | converged in 1m52s |
+| steady state | 900 | 27.9 (52) | 6 / 10 | 7 | 154 | 0 | 77 | 0.06 | <= 1 | 0.0 | <= 0.1 | |
+| restart burst | 146 | 26.0 (42) | 6 / 11 | 5 | 170 | 10 | 77 | 0.06 | <= 1 | 0.0 | <= 0.5 | approval admitted in 22s, dispatched in 26s, converged in 1m59s |
+| change batch | 142 | 41.4 (59) | 8 / 17 | 10 | 154 | 0 | 81 | 0.12 | <= 1 | 0.0 | <= 0.5 | 10 resources moved, converged in 2m22s |
+| registry outage | 180 | 15.3 (25) | 65 / 71 | 2 | 268 | 42 | 75 | 0.03 | <= 0.1 | 0.0 | <= 0.1 | |
+| recovery | 55 | 50.1 (44) | 14 / 24 | 17 | 313 | 2 | 75 | 0.13 | <= 1 | 0.0 | <= 0.5 | converged in 55s |
+
+Across the run the plan store grew from nothing to 31 plans and 15 chunk
+ConfigMaps holding 11,330 bytes of plan: small schemas make small plans, and a
+real schema's plans are larger by as much as its SQL is.
+
+What it shows is the shape of each figure and how the tool reads it. The
+steady state ran about 28 Jobs a minute for twenty resources at two minutes,
+below the 35 that four and three operations every two minutes would give, so
+the cadence arithmetic above is an upper bound rather than a prediction. A
+restart of both managers put
+nothing behind by more than ten seconds and admitted an approval in the middle
+of it within 22. The registry outage is the one scenario that slowed anything,
+and it slowed the operations that need the registry, which is what it is for.
+Nothing waited on client throttling.
+
+What it does not show is any installation's limit. Twenty resources on one
+runner measure the operator well inside what the machine could give it; the
+figures that decide a budget are where these curves bend, and this workload
+never reached one.
+
 ## What has not been measured
 
-Everything that decides whether an installation is inside its budget:
+Everything that decides whether an installation is inside its budget, at that
+installation's scale:
 
 - reconciliation lag and queue delay at a given resource count;
 - Job creation rate and completion latency under a simultaneous refresh after a
@@ -141,5 +187,6 @@ Everything that decides whether an installation is inside its budget:
   safety-critical work while ordinary work is queued;
 - behavior beyond the admitted limits: whether it degrades or refuses.
 
-An installation that needs a number for any of those has to measure it. Saying
-so is more useful than a figure nobody produced.
+The reading above is one workload on one runner; it bounds none of these for
+anyone else. An installation that needs a number for any of them has to measure
+it. Saying so is more useful than a figure nobody produced.
