@@ -778,6 +778,17 @@ only means the rotator's clock runs behind the one that issued it, and does not
 shorten the delay. Renewing the serving certificate under an unchanged CA needs
 no delay either: the new certificate needs exactly the trust the old one had.
 
+The install's bootstrap material does not wait either. The chart renders a
+two-day CA, which is inside the renewal threshold from the start, and the
+rotator replaces any CA issued inside the threshold in its first pass, before
+it reports ready. `helm install --wait` therefore returns with the transition
+finished. Otherwise the rotator's last bundle write would land a delay later,
+and if a `helm upgrade` were running then, between rendering the webhook
+configurations and applying them after its pre-upgrade hooks, the upgrade
+would fail with a server-side apply conflict on `caBundle`. The same conflict
+remains possible when a planned renewal or a recovery writes the bundles
+during an upgrade; rerunning the upgrade renders the new bundles and succeeds.
+
 If the rotator stops between steps, its replacement validates and reloads the
 same byte-exact pending material, classifies the primary Secret against the
 stored source UID and digest, and continues from the recorded step. A primary

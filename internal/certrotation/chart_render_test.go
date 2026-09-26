@@ -72,6 +72,13 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	serving := mustCertificateFromSecret(t, secret, "tls.crt")
 	assertBootstrapCertificateExpiry(t, ca, renderStarted, renderFinished, 2*24*time.Hour)
 	assertBootstrapCertificateExpiry(t, serving, renderStarted, renderFinished, 24*time.Hour)
+	// The rotator replaces a CA that was issued already inside the renewal
+	// threshold in its first pass rather than after the switch delay, so that
+	// the install's `helm install --wait` covers the whole transition. That
+	// holds only while the bootstrap CA lives no longer than the threshold.
+	if lifetime, threshold := ca.NotAfter.Sub(ca.NotBefore), 720*time.Hour; lifetime > threshold {
+		t.Fatalf("bootstrap CA lives %s, longer than the default renewal threshold %s", lifetime, threshold)
+	}
 	if !serving.NotAfter.Before(ca.NotAfter) {
 		t.Fatalf("bootstrap serving certificate expires at %s, CA expires at %s", serving.NotAfter, ca.NotAfter)
 	}
