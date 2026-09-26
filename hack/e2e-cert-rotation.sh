@@ -102,24 +102,27 @@ webhook_bundle() {
 		'
 }
 
+# uniform_service_bundle prints the one caBundle every entry targeting the
+# webhook Service carries, and nothing unless those entries are exactly the
+# rotator's managed inventory. The two dormant certificate-rotation canary
+# entries target another Service; the rotator no longer maintains them, so
+# they are outside this check.
 uniform_service_bundle() {
 	kind=$1
 	configuration=$2
 	kubectl --kubeconfig "$KUBECONFIG_FILE" get "$kind" "$configuration" -o json |
-		jq -r --arg kind "$kind" --arg service "$SERVICE" \
-			--arg candidate "$CANDIDATE_SERVICE" --arg namespace "$OPERATOR_NAMESPACE" '
+		jq -r --arg kind "$kind" --arg service "$SERVICE" --arg namespace "$OPERATOR_NAMESPACE" '
           (if $kind == "mutatingwebhookconfiguration" then {
             "mapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
-            "mmigrationapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
-            "certificate-rotation-canary-mutate.operator.ptah.run": [$candidate, "/candidate/mutate"]
+            "mmigrationapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"]
           } else {
             "vapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
             "vmigrationapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
             "vpodintent.operator.ptah.run": [$service, "/validate-v1-pod-ptah-operation-intent"],
-            "vcontrollerwrite.operator.ptah.run": [$service, "/validate-operator-controller-write"],
-            "certificate-rotation-canary-validate.operator.ptah.run": [$candidate, "/candidate/validate"]
+            "vcontrollerwrite.operator.ptah.run": [$service, "/validate-operator-controller-write"]
           } end) as $expected |
-          .webhooks as $webhooks | [$webhooks[].clientConfig.caBundle] as $bundles |
+          [.webhooks[] | select(.clientConfig.service.name == $service)] as $webhooks |
+          [$webhooks[].clientConfig.caBundle] as $bundles |
           if ([$webhooks[].name] | sort) == ($expected | keys) and
              ($webhooks | all(.[];
                .clientConfig.url == null and
@@ -155,6 +158,139 @@ rotation_transition_complete() {
 			} and
 			(.data // {}) == {}
 		' >/dev/null
+}
+
+# ca_switch_delay_seconds prints the rotator's --ca-switch-delay in seconds.
+# The ordering proofs measure the switch against it, so a value this harness
+# cannot read as whole seconds fails rather than being guessed at.
+ca_switch_delay_seconds() {
+	switch_delay=$(printf '%s' "$ROTATOR_DEPLOYMENT_JSON" |
+		jq -r '[.spec.template.spec.containers[] | select(.name == "certificate-rotator") |
+			.args[] | select(startswith("--ca-switch-delay=")) | ltrimstr("--ca-switch-delay=")] |
+			if length == 1 then .[0] else empty end')
+	printf '%s\n' "$switch_delay" | grep -Eq '^[1-9][0-9]*s$' ||
+		fail "the rotator's --ca-switch-delay is not one whole number of seconds: ${switch_delay:-absent}"
+	printf '%s\n' "${switch_delay%s}"
+}
+
+# expanded_transition_time prints the expansion time from a staging Secret
+# whose record is in its expanded phase, and fails for any other staging
+# state. It reads the record's public fields only.
+expanded_transition_time() {
+	jq -e -r --arg name "$STAGING_SECRET_NAME" --arg namespace "$OPERATOR_NAMESPACE" '
+		select(.kind == "Secret" and .metadata.name == $name and .metadata.namespace == $namespace) |
+		(.data // {}) as $data |
+		select((($data.format // "") | @base64d) == "v3" and (($data.phase // "") | @base64d) == "expanded") |
+		(($data["expanded-at"] // "") | @base64d) |
+		select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+	' "$1"
+}
+
+# rotator_certificate_write_time prints when the rotator last changed the
+# generated Secret's serving certificate. The time comes from the Secret's own
+# field management, not from when this harness looked.
+rotator_certificate_write_time() {
+	jq -e -r '
+		[.metadata.managedFields[]? |
+			select(.manager == "ptah-cert-rotator" and .operation == "Update" and
+				(.subresource // "") == "" and
+				(((.fieldsV1 // {})["f:data"] // {}) | has("f:tls.crt")))] |
+		if length == 1 then .[0].time else empty end
+	' "$1"
+}
+
+# switched_after_delay succeeds when the switch instant lies at least the
+# delay, in seconds, after the expansion instant.
+switched_after_delay() {
+	jq -n -e --arg switched "$1" --arg expanded "$2" --argjson delay "$3" '
+		($switched | fromdateiso8601) >= ($expanded | fromdateiso8601) + $delay
+	' >/dev/null
+}
+
+# primary_secret_state prints the generated Secret's ca.crt and
+# resourceVersion, or "absent" when the Secret does not exist.
+primary_secret_state() {
+	if kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+		get secret "$SECRET_NAME" -o json >"$PRIMARY_OBSERVATION" 2>"$PRIMARY_OBSERVATION_ERROR"; then
+		jq -r '(.data["ca.crt"] // "") + " " + .metadata.resourceVersion' "$PRIMARY_OBSERVATION"
+		return 0
+	fi
+	if grep -Fq '(NotFound)' "$PRIMARY_OBSERVATION_ERROR"; then
+		printf '%s\n' absent
+		return 0
+	fi
+	fail "could not read the generated Secret: $(cat "$PRIMARY_OBSERVATION_ERROR")"
+}
+
+# assert_entry_trusts fails unless the entry's caBundle verifies every given
+# certificate file.
+assert_entry_trusts() {
+	trust_kind=$1
+	trust_configuration=$2
+	trust_webhook=$3
+	shift 3
+	trust_bundle=$(webhook_bundle "$trust_kind" "$trust_configuration" "$trust_webhook")
+	[ -n "$trust_bundle" ] || fail "could not read caBundle for ${trust_webhook}"
+	trust_file=$UPGRADE_WORK_DIR/trust-${trust_webhook}.pem
+	printf '%s' "$trust_bundle" | openssl base64 -d -A >"$trust_file" ||
+		fail "caBundle for ${trust_webhook} is not valid base64"
+	for trusted_certificate in "$@"; do
+		openssl verify -CAfile "$trust_file" "$trusted_certificate" >/dev/null 2>&1 ||
+			fail "caBundle for ${trust_webhook} does not trust ${trusted_certificate##*/} while the switch waits"
+	done
+}
+
+# observe_expanded_trust waits for the rotator to record its expansion, then
+# proves that every managed entry trusted both the CA behind the certificate
+# being served and the staged CA while the generated Secret still held its
+# pre-switch state. Reading the Secret before and after the entries brackets
+# that read: the old CA leaves an entry only after the Secret switches. It
+# sets EXPANDED_AT and writes the staged CA to STAGED_CA_FILE.
+observe_expanded_trust() {
+	observed_stage=$1
+	serving_ca_file=$2
+	pre_switch_ca=$3
+	observe_deadline=$(($(date +%s) + 120))
+	EXPANDED_AT=
+	while [ "$(date +%s)" -lt "$observe_deadline" ]; do
+		kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+			get secret "$STAGING_SECRET_NAME" -o json >"$STAGING_OBSERVATION" ||
+			fail "${observed_stage}: could not read the staging Secret"
+		if EXPANDED_AT=$(expanded_transition_time "$STAGING_OBSERVATION"); then
+			break
+		fi
+		EXPANDED_AT=
+		sleep 1
+	done
+	[ -n "$EXPANDED_AT" ] ||
+		fail "${observed_stage}: the staging Secret held no expanded CA transition within 120 seconds"
+	jq -r '.data["candidate.ca.crt"] | @base64d' "$STAGING_OBSERVATION" >"$STAGED_CA_FILE" ||
+		fail "${observed_stage}: could not read the staged CA"
+	openssl verify -CAfile "$STAGED_CA_FILE" "$STAGED_CA_FILE" >/dev/null 2>&1 ||
+		fail "${observed_stage}: the staged CA is not a valid self-signed root"
+
+	before_state=$(primary_secret_state)
+	if [ "$pre_switch_ca" = absent ]; then
+		[ "$before_state" = absent ] ||
+			fail "${observed_stage}: the generated Secret existed before the switch was due"
+	else
+		[ "${before_state%% *}" = "$pre_switch_ca" ] ||
+			fail "${observed_stage}: the generated Secret switched before its expansion could be read"
+	fi
+	while read -r entry_kind entry_configuration entry_name; do
+		assert_entry_trusts "$entry_kind" "$entry_configuration" "$entry_name" \
+			"$serving_ca_file" "$STAGED_CA_FILE"
+	done <<EOF
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mapproval.operator.ptah.run
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationapproval.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vapproval.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vmigrationapproval.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vpodintent.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vcontrollerwrite.operator.ptah.run
+EOF
+	after_state=$(primary_secret_state)
+	[ "$after_state" = "$before_state" ] ||
+		fail "${observed_stage}: the generated Secret switched while the expanded trust was read, so the read proves nothing"
 }
 
 generate_upgrade_ca() {
@@ -303,7 +439,6 @@ DEPLOYMENT=$(resource_name deployment controller)
 ROTATOR_DEPLOYMENT=$(resource_name deployment certificate-rotation)
 ROTATOR_DEPLOYMENT_JSON=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get deployment "$ROTATOR_DEPLOYMENT" -o json)
-CANDIDATE_SERVICE=$(resource_name service certificate-rotation)
 STAGING_SECRET_NAME=$(printf '%s' "$ROTATOR_DEPLOYMENT_JSON" |
 	jq -r '[.spec.template.spec.containers[] | select(.name == "certificate-rotator") |
 		.args[] | select(startswith("--staging-secret-name=")) | ltrimstr("--staging-secret-name=")] |
@@ -522,6 +657,16 @@ assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
 	vcontrollerwrite.operator.ptah.run "$CONTROLLER_WRITE_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
 assert_approval_admission_callable "after the Helm upgrade"
 
+# A CA transition publishes the old and the new CA in every managed entry,
+# records when, and switches the generated Secret no earlier than the
+# configured delay after that. The rows below prove that order from the
+# objects' own timestamps.
+CA_SWITCH_DELAY_SECONDS=$(ca_switch_delay_seconds)
+STAGING_OBSERVATION=$UPGRADE_WORK_DIR/staging-observation.json
+PRIMARY_OBSERVATION=$UPGRADE_WORK_DIR/primary-observation.json
+PRIMARY_OBSERVATION_ERROR=$UPGRADE_WORK_DIR/primary-observation.err
+STAGED_CA_FILE=$UPGRADE_WORK_DIR/staged-ca.pem
+
 # Corrupt ca.crt while leaving the serving leaf and key intact. One malformed
 # webhook entry proves that recovery filters candidates independently and can
 # authenticate the live leaf from the remaining exact entries.
@@ -552,6 +697,7 @@ NEW_ROTATOR_POD=$(live_pod_name certificate-rotation)
 NEW_ROTATOR_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$NEW_ROTATOR_POD" -o jsonpath='{.metadata.uid}')
 [ "$NEW_ROTATOR_UID" != "$OLD_ROTATOR_UID" ] || fail "certificate rotator Pod was not replaced"
+observe_expanded_trust "corrupt-CA recovery" "$CURRENT_CA_FILE" "$BROKEN_CA_BUNDLE"
 
 rotation_deadline=$(($(date +%s) + 660))
 rotation_ready=0
@@ -567,7 +713,16 @@ while [ "$(date +%s)" -lt "$rotation_deadline" ]; do
 	fi
 	sleep 2
 done
-[ "$rotation_ready" -eq 1 ] || fail "certificate rotation did not complete trust contraction and canary parking"
+[ "$rotation_ready" -eq 1 ] || fail "certificate rotation did not switch to the new CA and retire the old one"
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	get secret "$SECRET_NAME" --show-managed-fields -o json >"$PRIMARY_OBSERVATION" ||
+	fail "could not read the switched generated Secret"
+printf '%s' "$NEW_CA" | openssl base64 -d -A | cmp -s - "$STAGED_CA_FILE" ||
+	fail "the switch installed a CA other than the one staged at ${EXPANDED_AT}"
+SWITCHED_AT=$(rotator_certificate_write_time "$PRIMARY_OBSERVATION") ||
+	fail "the generated Secret does not record exactly one rotator write of its serving certificate"
+switched_after_delay "$SWITCHED_AT" "$EXPANDED_AT" "$CA_SWITCH_DELAY_SECONDS" ||
+	fail "the rotator switched the generated Secret at ${SWITCHED_AT}, less than ${CA_SWITCH_DELAY_SECONDS}s after the expansion it recorded at ${EXPANDED_AT}"
 if ! ROTATION_LOGS=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	logs "$NEW_ROTATOR_POD" 2>/dev/null); then
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" describe \
@@ -616,6 +771,12 @@ ROTATOR_UID_AFTER_RECREATE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERAT
 	get pod "$ROTATOR_POD_AFTER_RECREATE" -o jsonpath='{.metadata.uid}')
 [ "$ROTATOR_UID_AFTER_RECREATE" != "$ROTATOR_UID_BEFORE_RECREATE" ] ||
 	fail "certificate rotator Pod was not replaced for missing-Secret recovery"
+# Running manager Pods keep serving the certificate the previous row issued,
+# so the recreated Secret waits out the switch delay as well.
+RECOVERED_CA_FILE=$UPGRADE_WORK_DIR/recovered-ca.pem
+printf '%s' "$NEW_CA" | openssl base64 -d -A >"$RECOVERED_CA_FILE" ||
+	fail "the recovered CA is not valid base64"
+observe_expanded_trust "missing-Secret recovery" "$RECOVERED_CA_FILE" absent
 
 recreate_deadline=$(($(date +%s) + 660))
 RECREATED_SECRET_JSON=
@@ -653,6 +814,11 @@ while [ "$(date +%s)" -lt "$recreate_deadline" ]; do
 done
 [ "$recreate_ready" -eq 1 ] ||
 	fail "certificate rotator did not recreate the deleted Secret with the exact recovery contract"
+printf '%s' "$RECREATED_CA" | openssl base64 -d -A | cmp -s - "$STAGED_CA_FILE" ||
+	fail "the recreated Secret carries a CA other than the one staged at ${EXPANDED_AT}"
+RECREATED_AT=$(printf '%s' "$RECREATED_SECRET_JSON" | jq -r '.metadata.creationTimestamp')
+switched_after_delay "$RECREATED_AT" "$EXPANDED_AT" "$CA_SWITCH_DELAY_SECONDS" ||
+	fail "the rotator recreated the generated Secret at ${RECREATED_AT}, less than ${CA_SWITCH_DELAY_SECONDS}s after the expansion it recorded at ${EXPANDED_AT}"
 
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$DEPLOYMENT" --timeout=5m >/dev/null ||

@@ -1,12 +1,20 @@
 package certrotation
 
+// These white-box tests drive one CA transition through its three durable
+// steps -- expand, switch, retire -- with a fresh Rotator for every pass, the
+// way a restarted rotator Pod would meet it, and at the instants where the
+// schedule can go wrong.
+
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
+	"crypto/x509"
 	"errors"
-	"reflect"
+	"fmt"
+	"maps"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,498 +25,616 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-func TestPendingCATransitionUsesEvidenceOrderedProtocol(t *testing.T) {
+func TestCATransitionExpandsSwitchesAndRetiresAcrossRestarts(t *testing.T) {
 	t.Parallel()
-
 	fixture := newCATransitionFixture(t)
-	trace := &caTransitionTrace{}
-	sink := &caTransitionCandidateSink{pending: fixture.pending, trace: trace}
-	canary := newCATransitionCanary(t, fixture.original.caPEM, fixture.pending, trace, "")
-	prober := &caTransitionProber{pending: fixture.pending, trace: trace}
-	recordCATransitionSecretWrites(t, fixture, trace)
-	rotator := newCATransitionRotator(t, fixture, sink, canary, prober)
+	start := fixture.start
+	delay := fixture.config.CASwitchDelay
 
-	if err := rotator.runPendingCATransition(
-		context.Background(),
-		fixture.staging,
-		fixture.pending,
-		fixture.original.caPEM,
-	); err != nil {
-		t.Fatalf("runPendingCATransition() error = %v", err)
+	// Expand: both CAs in every entry, the Secret untouched, the switch due
+	// one delay later.
+	fixture.mustPass(t, start, delay)
+	staged := fixture.staged(t)
+	if staged.phase != stagingPhaseExpanded || !staged.expandedAt.Equal(start) {
+		t.Fatalf("staged record = phase %q expanded at %s, want %q at %s", staged.phase, staged.expandedAt, stagingPhaseExpanded, start)
+	}
+	fixture.assertSourceUnchanged(t)
+	fixture.assertEveryEntryTrusts(t, fixture.original.caPEM, staged.material.caPEM)
+
+	// A restart anywhere inside the delay changes nothing and comes back at
+	// the recorded switch time, not a full delay after the restart.
+	for _, at := range []time.Time{start.Add(delay / 2), start.Add(delay - time.Nanosecond)} {
+		writes := fixture.writesSince(len(fixture.client.Actions()))
+		fixture.mustPass(t, at, start.Add(delay).Sub(at))
+		if got := writes(); len(got) != 0 {
+			t.Fatalf("pass at %s inside the delay wrote %v", at, got)
+		}
+		fixture.assertSourceUnchanged(t)
+		if again := fixture.staged(t); again.transitionDigest != staged.transitionDigest || !again.expandedAt.Equal(start) {
+			t.Fatalf("pass at %s changed the staged transition", at)
+		}
 	}
 
+	// Switch and retire, in that order, at the recorded time.
+	trace := fixture.traceWrites()
+	fixture.mustPass(t, start.Add(delay), 0)
+	if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), staged.material) {
+		t.Fatal("the switch did not install the staged material")
+	}
+	assertFinalBundles(t, fixture.client, fixture.config, staged.material.caPEM)
+	if len(mustGetStagingSecret(t, fixture.client, fixture.config).Data) != 0 {
+		t.Fatal("the finished transition kept its staging record")
+	}
 	want := []string{
-		"sink:new",
-		"canary:expansion:mutating",
-		"phase:" + string(stagingPhaseExpansionMutatingStored),
-		"canary:expansion:validating",
-		"phase:" + string(stagingPhaseExpansionBothStored),
-		"canary:expansion:wait",
-		"phase:" + string(stagingPhaseExpansionProven),
-		"primary:write",
-		"phase:" + string(stagingPhasePrimaryWritten),
-		"primary:probe",
-		"phase:" + string(stagingPhasePrimaryServed),
-		"sink:proof",
-		"canary:contraction:mutating",
-		"phase:" + string(stagingPhaseContractionMutatingStored),
-		"canary:contraction:validating",
-		"phase:" + string(stagingPhaseContractionBothStored),
-		"canary:contraction:wait",
-		"phase:" + string(stagingPhaseContractionProven),
-		"sink:new",
-		"canary:parked:mutating",
-		"phase:" + string(stagingPhaseMutatingParked),
-		"canary:parked:validating",
-		"canary:parked:wait",
-		"phase:" + string(stagingPhaseBothParked),
-		"staging:clear",
-		"sink:clear",
+		"update secrets/" + fixture.config.SecretName,
+		"update mutatingwebhookconfigurations/" + fixture.config.MutatingWebhookConfiguration,
+		"update validatingwebhookconfigurations/" + fixture.config.ValidatingWebhookConfiguration,
+		"update secrets/" + fixture.config.StagingSecretName,
 	}
-	if got := trace.snapshot(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("transition trace mismatch\n got: %s\nwant: %s", strings.Join(got, " -> "), strings.Join(want, " -> "))
+	if got := trace.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("switch pass writes = %v, want %v", got, want)
 	}
-	if data := mustGetStagingSecret(t, fixture.client, fixture.config).Data; len(data) != 0 {
-		t.Fatalf("completed staging Secret has %d fields, want none", len(data))
+	requests := fixture.prober.probeRequests()
+	if len(requests) == 0 {
+		t.Fatal("the switch pass retired the old CA without probing an endpoint")
 	}
-	if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), fixture.pending.material) {
-		t.Fatal("completed primary Secret does not contain the durable candidate material")
+	for _, request := range requests {
+		if request.IdentityOnly || !caBundlesEqual(request.CACertificatePEM, staged.material.caPEM) ||
+			!certificateRawEqual(request.LeafCertificate, staged.material.leaf) {
+			t.Fatal("an endpoint probe did not require the new leaf verified by the new CA")
+		}
 	}
 }
 
-func TestPendingCATransitionFailurePreservesDurableStateAndRecoveryReplaysEvidence(t *testing.T) {
+func TestCATransitionResumesFromEveryInterruptedStep(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name      string
-		failAt    string
-		wantPhase stagingPhase
+		name string
+		// arm injects the failure that interrupts the transition. It runs
+		// before the first pass and may change the prober of that pass.
+		arm func(*testing.T, *caTransitionFixture) *recordingProber
+		// failAtSwitch is set when the failure hits the switch pass rather
+		// than the expansion pass.
+		failAtSwitch bool
 	}{
 		{
-			name:      "expansion mutating publication",
-			failAt:    "canary:expansion:mutating",
-			wantPhase: stagingPhasePrepared,
+			name: "record staged, trust publication failed",
+			arm: func(_ *testing.T, fixture *caTransitionFixture) *recordingProber {
+				fixture.failOnce("update", "mutatingwebhookconfigurations", nil)
+				return fixture.prober
+			},
 		},
 		{
-			name:      "expansion validating publication",
-			failAt:    "canary:expansion:validating",
-			wantPhase: stagingPhaseExpansionMutatingStored,
+			name: "trust published, expansion record lost",
+			arm: func(_ *testing.T, fixture *caTransitionFixture) *recordingProber {
+				fixture.failOnce("update", "secrets", func(secret *corev1.Secret) bool {
+					return secret.Name == fixture.config.StagingSecretName &&
+						string(secret.Data[stagingPhaseKey]) == string(stagingPhaseExpanded)
+				})
+				return fixture.prober
+			},
 		},
 		{
-			name:      "expansion convergence proof",
-			failAt:    "canary:expansion:wait",
-			wantPhase: stagingPhaseExpansionBothStored,
+			name:         "Secret switched, new certificate not yet served",
+			failAtSwitch: true,
+			arm: func(*testing.T, *caTransitionFixture) *recordingProber {
+				return &recordingProber{err: errors.New("projection pending")}
+			},
 		},
 		{
-			name:      "primary serving proof",
-			failAt:    "primary:probe",
-			wantPhase: stagingPhasePrimaryWritten,
-		},
-		{
-			name:      "contraction mutating publication",
-			failAt:    "canary:contraction:mutating",
-			wantPhase: stagingPhasePrimaryServed,
-		},
-		{
-			name:      "contraction validating publication",
-			failAt:    "canary:contraction:validating",
-			wantPhase: stagingPhaseContractionMutatingStored,
-		},
-		{
-			name:      "contraction convergence proof",
-			failAt:    "canary:contraction:wait",
-			wantPhase: stagingPhaseContractionBothStored,
-		},
-		{
-			name:      "parked mutating publication",
-			failAt:    "canary:parked:mutating",
-			wantPhase: stagingPhaseContractionProven,
-		},
-		{
-			name:      "parked validating publication",
-			failAt:    "canary:parked:validating",
-			wantPhase: stagingPhaseMutatingParked,
-		},
-		{
-			name:      "parked convergence proof",
-			failAt:    "canary:parked:wait",
-			wantPhase: stagingPhaseMutatingParked,
+			name:         "old CA retired, record not cleared",
+			failAtSwitch: true,
+			arm: func(_ *testing.T, fixture *caTransitionFixture) *recordingProber {
+				fixture.failOnce("update", "secrets", func(secret *corev1.Secret) bool {
+					return secret.Name == fixture.config.StagingSecretName && len(secret.Data) == 0
+				})
+				return fixture.prober
+			},
 		},
 	}
-
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-
 			fixture := newCATransitionFixture(t)
-			originalStagingData := cloneBytesMap(fixture.staging.Data)
-			firstTrace := &caTransitionTrace{}
-			firstSink := &caTransitionCandidateSink{pending: fixture.pending, trace: firstTrace}
-			firstCanary := newCATransitionCanary(
-				t,
-				fixture.original.caPEM,
-				fixture.pending,
-				firstTrace,
-				test.failAt,
-			)
-			firstProber := &caTransitionProber{
-				pending: fixture.pending,
-				trace:   firstTrace,
-				fail:    test.failAt == "primary:probe",
-			}
-			if firstProber.fail {
-				fixture.config.ProbeTimeout = 2 * time.Millisecond
-				fixture.config.ProbeInterval = time.Millisecond
-			}
-			first := newCATransitionRotator(t, fixture, firstSink, firstCanary, firstProber)
+			fixture.config.ProbeTimeout = 15 * time.Millisecond
+			start := fixture.start
+			delay := fixture.config.CASwitchDelay
+			failingProber := test.arm(t, fixture)
 
-			err := first.runPendingCATransition(
-				context.Background(),
-				fixture.staging,
-				fixture.pending,
-				fixture.original.caPEM,
-			)
-			if err == nil || !strings.Contains(err.Error(), caTransitionInjectedFailure.Error()) {
-				t.Fatalf("first run error = %v, want injected failure", err)
+			resumeAt := start.Add(time.Minute)
+			if test.failAtSwitch {
+				fixture.mustPass(t, start, delay)
+				if _, err := fixture.pass(start.Add(delay), failingProber); err == nil {
+					t.Fatal("interrupted switch pass succeeded")
+				}
+				resumeAt = start.Add(delay + time.Minute)
+			} else {
+				if _, err := fixture.pass(start, failingProber); err == nil {
+					t.Fatal("interrupted expansion pass succeeded")
+				}
+				fixture.assertSourceUnchanged(t)
 			}
+			staged := fixture.staged(t)
 
-			stagingAfterFailure := mustGetStagingSecret(t, fixture.client, fixture.config)
-			if len(stagingAfterFailure.Data) == 0 {
-				t.Fatal("failed transition cleared its durable staging record")
+			// The replacement resumes the same transition. If the switch has not
+			// happened, it waits a full delay from the expansion it can vouch for.
+			fixture.config.ProbeTimeout = time.Second
+			if !test.failAtSwitch {
+				fixture.mustPass(t, resumeAt, delay)
+				fixture.assertSourceUnchanged(t)
+				if _, err := fixture.pass(resumeAt.Add(delay-time.Nanosecond), fixture.prober); err != nil {
+					t.Fatalf("pass just before the switch: %v", err)
+				}
+				fixture.assertSourceUnchanged(t)
+				resumeAt = resumeAt.Add(delay)
 			}
-			pendingAfterFailure, err := decodePendingCandidate(
-				stagingAfterFailure.Data,
-				fixture.config,
-			)
-			if err != nil {
-				t.Fatalf("decode pending candidate after failure: %v", err)
-			}
-			if pendingAfterFailure.phase != test.wantPhase {
-				t.Fatalf("phase after failed evidence = %q, want %q", pendingAfterFailure.phase, test.wantPhase)
-			}
-			assertCATransitionStagingMaterialUnchanged(t, originalStagingData, stagingAfterFailure.Data)
+			fixture.mustPass(t, resumeAt, 0)
 
-			recoveryTrace := &caTransitionTrace{}
-			recoverySink := &caTransitionCandidateSink{pending: pendingAfterFailure, trace: recoveryTrace}
-			recoveryCanary := newCATransitionCanary(
-				t,
-				fixture.original.caPEM,
-				pendingAfterFailure,
-				recoveryTrace,
-				"",
-			)
-			recoveryProber := &caTransitionProber{pending: pendingAfterFailure, trace: recoveryTrace}
-			recovery := newCATransitionRotator(t, fixture, recoverySink, recoveryCanary, recoveryProber)
-			rejectingRandom := &caTransitionRejectingReader{}
-			recovery.random = rejectingRandom
-
-			if err := recovery.reconcile(context.Background()); err != nil {
-				t.Fatalf("recovery reconcile() error = %v", err)
+			if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), staged.material) {
+				t.Fatal("recovery installed material other than the first staged candidate")
 			}
-			if rejectingRandom.calls != 0 {
-				t.Fatalf("recovery requested %d bytes of new randomness, want none", rejectingRandom.calls)
-			}
-			wantRecoveryTrace := []string{
-				"sink:new",
-				"canary:expansion:mutating",
-				"canary:expansion:validating",
-				"canary:expansion:wait",
-				"primary:probe",
-				"sink:proof",
-				"canary:contraction:mutating",
-				"canary:contraction:validating",
-				"canary:contraction:wait",
-				"sink:new",
-				"canary:parked:mutating",
-				"canary:parked:validating",
-				"canary:parked:wait",
-				"sink:clear",
-			}
-			if got := recoveryTrace.snapshot(); !reflect.DeepEqual(got, wantRecoveryTrace) {
-				t.Fatalf(
-					"recovery did not replay the complete live-evidence protocol\n got: %s\nwant: %s",
-					strings.Join(got, " -> "),
-					strings.Join(wantRecoveryTrace, " -> "),
-				)
-			}
-			if data := mustGetStagingSecret(t, fixture.client, fixture.config).Data; len(data) != 0 {
-				t.Fatalf("recovery left %d staging fields, want none", len(data))
-			}
-			if !secretContainsMaterial(
-				mustGetSecret(t, fixture.client, fixture.config),
-				pendingAfterFailure.material,
-			) {
-				t.Fatal("recovery replaced or failed to install the durable candidate material")
+			assertFinalBundles(t, fixture.client, fixture.config, staged.material.caPEM)
+			if len(mustGetStagingSecret(t, fixture.client, fixture.config).Data) != 0 {
+				t.Fatal("recovery kept the staging record")
 			}
 		})
 	}
 }
 
-var caTransitionInjectedFailure = errors.New("injected CA transition failure")
+func TestCATransitionContinuesWhenAThresholdIsReachedDuringIt(t *testing.T) {
+	t.Parallel()
 
-type caTransitionFixture struct {
-	config   Config
-	now      time.Time
-	original certificateMaterial
-	client   *fake.Clientset
-	staging  *corev1.Secret
-	pending  *pendingCandidate
+	t.Run("serving certificate enters its renewal threshold while the switch waits", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		// Three hours before the serving certificate enters its renewal
+		// threshold, so it crosses it in the middle of the delay.
+		start := fixture.original.leaf.NotAfter.Add(-fixture.config.RenewalThreshold - 3*time.Hour).Truncate(time.Second)
+		delay := fixture.config.CASwitchDelay
+		fixture.mustPass(t, start, delay)
+		staged := fixture.staged(t)
+
+		inside := start.Add(4 * time.Hour)
+		state, err := inspectSecret(mustGetSecret(t, fixture.client, fixture.config), fixture.config, inside)
+		if err != nil || !state.rotateServing {
+			t.Fatalf("test precondition: serving certificate is not inside its threshold at %s (%v)", inside, err)
+		}
+		writes := fixture.writesSince(len(fixture.client.Actions()))
+		fixture.mustPass(t, inside, start.Add(delay).Sub(inside))
+		if got := writes(); len(got) != 0 {
+			t.Fatalf("the threshold reached during the delay caused writes %v", got)
+		}
+		if again := fixture.staged(t); again.transitionDigest != staged.transitionDigest {
+			t.Fatal("the threshold reached during the delay replaced the staged candidate")
+		}
+		fixture.mustPass(t, start.Add(delay), 0)
+		if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), staged.material) {
+			t.Fatal("the transition did not finish with its own candidate")
+		}
+	})
+
+	t.Run("serving certificate expires while the switch waits", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		start := fixture.original.leaf.NotAfter.Add(-3 * time.Hour).Truncate(time.Second)
+		delay := fixture.config.CASwitchDelay
+		fixture.mustPass(t, start, delay)
+		staged := fixture.staged(t)
+
+		// Once nothing verifies the old certificate, admission through it has
+		// stopped, and waiting out the rest of the delay only prolongs that.
+		expired := fixture.original.leaf.NotAfter.Add(time.Second)
+		fixture.mustPass(t, expired, 0)
+		if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), staged.material) {
+			t.Fatal("the switch did not happen once the old certificate expired")
+		}
+		if !expired.Before(start.Add(delay)) {
+			t.Fatal("test precondition: the old certificate expired after the switch was due anyway")
+		}
+	})
+
+	t.Run("the transition's own certificate enters the threshold before its switch", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		start := fixture.start
+		fixture.mustPass(t, start, fixture.config.CASwitchDelay)
+		staged := fixture.staged(t)
+
+		// The rotator was away until the staged certificate itself needs
+		// renewal. The transition still finishes first, and says so.
+		late := staged.material.leaf.NotAfter.Add(-fixture.config.RenewalThreshold + time.Hour).Truncate(time.Second)
+		if _, err := fixture.pass(late, fixture.prober); err == nil ||
+			!strings.Contains(err.Error(), "requires immediate renewal") {
+			t.Fatalf("late switch pass error = %v, want the immediate-renewal request", err)
+		}
+		if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), staged.material) {
+			t.Fatal("the late pass did not finish the staged transition")
+		}
+		fixture.mustPass(t, late, 0)
+		renewed := mustGetSecret(t, fixture.client, fixture.config)
+		if !bytes.Equal(renewed.Data[CACertificateKey], staged.material.caPEM) ||
+			bytes.Equal(renewed.Data[corev1.TLSCertKey], staged.material.certPEM) {
+			t.Fatal("the renewal after the transition did not replace only the serving certificate")
+		}
+	})
 }
 
-func newCATransitionFixture(t *testing.T) caTransitionFixture {
-	t.Helper()
+func TestCATransitionSwitchTimeAtClockEdges(t *testing.T) {
+	t.Parallel()
 
+	t.Run("switch due to the nanosecond", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		delay := fixture.config.CASwitchDelay
+		fixture.mustPass(t, fixture.start, delay)
+		fixture.mustPass(t, fixture.start.Add(delay-time.Nanosecond), time.Nanosecond)
+		fixture.assertSourceUnchanged(t)
+		fixture.mustPass(t, fixture.start.Add(delay), 0)
+		if len(mustGetStagingSecret(t, fixture.client, fixture.config).Data) != 0 {
+			t.Fatal("the transition did not finish at its switch time")
+		}
+	})
+
+	t.Run("expansion between whole seconds is dated at the next one", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		delay := fixture.config.CASwitchDelay
+		started := fixture.start.Add(300 * time.Millisecond)
+		recorded := fixture.start.Add(time.Second)
+		fixture.mustPass(t, started, delay+700*time.Millisecond)
+		if staged := fixture.staged(t); !staged.expandedAt.Equal(recorded) {
+			t.Fatalf("expanded at %s, want %s", staged.expandedAt, recorded)
+		}
+		fixture.mustPass(t, recorded.Add(delay-time.Nanosecond), time.Nanosecond)
+		fixture.assertSourceUnchanged(t)
+		fixture.mustPass(t, recorded.Add(delay), 0)
+	})
+
+	t.Run("clock moved back after the expansion", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		delay := fixture.config.CASwitchDelay
+		fixture.mustPass(t, fixture.start, delay)
+		staged := fixture.staged(t)
+
+		// The recorded instant now lies in the future. The dwell restarts from
+		// the clock the rotator has, so it cannot stretch without limit.
+		back := fixture.start.Add(-2 * time.Minute)
+		fixture.mustPass(t, back, delay)
+		reanchored := fixture.staged(t)
+		if !reanchored.expandedAt.Equal(back) || reanchored.transitionDigest != staged.transitionDigest {
+			t.Fatalf("clock moved back: staged expansion at %s, want the same transition re-dated to %s", reanchored.expandedAt, back)
+		}
+		fixture.mustPass(t, back.Add(delay-time.Second), time.Second)
+		fixture.assertSourceUnchanged(t)
+		fixture.mustPass(t, back.Add(delay), 0)
+	})
+
+	t.Run("clock moved back before the staged certificates", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		delay := fixture.config.CASwitchDelay
+		fixture.mustPass(t, fixture.start, delay)
+		staged := fixture.staged(t)
+
+		// Staged certificates that are not yet valid cannot be switched to.
+		// The record is cleared and the next pass stages afresh, so the new
+		// candidate waits a full delay of its own.
+		back := fixture.start.Add(-time.Hour)
+		if _, err := fixture.pass(back, fixture.prober); err == nil ||
+			!strings.Contains(err.Error(), "retry reconciliation from authoritative primary state") {
+			t.Fatalf("pass before the staged certificates error = %v, want the record retired", err)
+		}
+		if len(mustGetStagingSecret(t, fixture.client, fixture.config).Data) != 0 {
+			t.Fatal("the unusable record stayed staged")
+		}
+		fixture.mustPass(t, back, delay)
+		restaged := fixture.staged(t)
+		if restaged.transitionDigest == staged.transitionDigest || !restaged.expandedAt.Equal(back) {
+			t.Fatal("the next pass did not stage and date a new transition")
+		}
+		fixture.assertSourceUnchanged(t)
+		fixture.mustPass(t, back.Add(delay), 0)
+		if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), restaged.material) {
+			t.Fatal("the switch did not install the new candidate")
+		}
+	})
+
+	t.Run("clock jumped past the staged certificates", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		fixture.mustPass(t, fixture.start, fixture.config.CASwitchDelay)
+		staged := fixture.staged(t)
+		after := staged.material.leaf.NotAfter.Add(time.Second)
+		if _, err := fixture.pass(after, fixture.prober); err == nil ||
+			!strings.Contains(err.Error(), "retry reconciliation from authoritative primary state") {
+			t.Fatalf("pass after the staged certificates error = %v, want the record retired", err)
+		}
+		fixture.assertSourceUnchanged(t)
+	})
+}
+
+func TestCATransitionRestartsTheDelayWhenAnEntryLostTheNewCA(t *testing.T) {
+	t.Parallel()
+	fixture := newCATransitionFixture(t)
+	delay := fixture.config.CASwitchDelay
+	fixture.mustPass(t, fixture.start, delay)
+	staged := fixture.staged(t)
+
+	// Something rewrote one entry to the old CA alone during the delay. Some
+	// API server may have seen that entry without the new CA, so its dwell
+	// starts again when the rotator puts the new CA back.
+	setManagedBundles(t, fixture.client, fixture.config, mutatingBundle(t, fixture.client, fixture.config),
+		[][]byte{fixture.original.caPEM, validatingEntryBundle(t, fixture, 1)})
+	lost := fixture.start.Add(4 * time.Hour)
+	fixture.mustPass(t, lost, delay)
+	if restaged := fixture.staged(t); !restaged.expandedAt.Equal(lost) || restaged.transitionDigest != staged.transitionDigest {
+		t.Fatalf("staged expansion at %s, want the same transition re-dated to %s", restaged.expandedAt, lost)
+	}
+	fixture.assertEveryEntryTrusts(t, fixture.original.caPEM, staged.material.caPEM)
+
+	fixture.mustPass(t, fixture.start.Add(delay), lost.Add(delay).Sub(fixture.start.Add(delay)))
+	fixture.assertSourceUnchanged(t)
+	fixture.mustPass(t, lost.Add(delay), 0)
+	assertFinalBundles(t, fixture.client, fixture.config, staged.material.caPEM)
+}
+
+func TestCATransitionSwitchesWithoutDelayWhenNothingVerifiesTheCurrentCertificate(t *testing.T) {
+	t.Parallel()
 	config := testConfig()
-	now := time.Date(2026, time.September, 5, 18, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, now, config)
-	primary := secretForMaterial(config, original)
-	pending, err := generatePendingCandidate(rand.Reader, now, config, primary)
-	if err != nil {
-		t.Fatalf("generate pending CA transition: %v", err)
+	foreign := mustGenerateMaterial(t, now, config)
+	secret := secretForMaterial(config, original)
+	secret.Data[CACertificateKey] = []byte("not a certificate")
+	// No managed entry holds the CA that issued the serving certificate, so
+	// no API server can verify it now and the switch has nothing to protect.
+	client := newTestClient(config, secret, foreign.caPEM, twoReadyEndpoints(config))
+	prober := &recordingProber{}
+
+	result, err := mustNewTestRotator(t, client, config, now, prober).Run(context.Background())
+	if err != nil || result.RequeueAfter != 0 {
+		t.Fatalf("Run() = %+v, %v; want the transition finished in one pass", result, err)
 	}
-	endpoints := endpointSlice(config, readyEndpoint("10.0.0.10", "pod-a", "uid-a", config.Namespace))
-	client := newTestClient(config, primary, original.caPEM, endpoints)
-	staging := mustGetStagingSecret(t, client, config)
-	staging.Data = encodePendingCandidate(pending)
-	staging, err = client.CoreV1().Secrets(config.Namespace).Update(
-		context.Background(),
-		staging,
-		metav1.UpdateOptions{},
-	)
-	if err != nil {
-		t.Fatalf("install pending CA transition fixture: %v", err)
+	updated := mustGetSecret(t, client, config)
+	if bytes.Equal(updated.Data[corev1.TLSCertKey], original.certPEM) {
+		t.Fatal("the serving certificate was not replaced")
 	}
-	return caTransitionFixture{
-		config:   config,
-		now:      now,
-		original: original,
-		client:   client,
-		staging:  staging,
-		pending:  pending,
+	assertFinalBundles(t, client, config, updated.Data[CACertificateKey])
+	for _, request := range prober.probeRequests() {
+		if request.IdentityOnly {
+			t.Fatal("the rotator proved a CA it could not have recovered")
+		}
 	}
 }
 
-func newCATransitionRotator(
-	t *testing.T,
-	fixture caTransitionFixture,
-	sink CandidateCertificateSink,
-	canary admissionCanaryController,
-	prober certificateProber,
-) *Rotator {
-	t.Helper()
-
-	rotator, err := newRotator(fixture.client, fixture.config, sink, canary)
-	if err != nil {
-		t.Fatalf("newRotator() error = %v", err)
+func TestStillServingCountsOnlyExpiry(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	material := mustGenerateMaterial(t, now, config)
+	// stillServing takes the leaf and bundle as already proved to belong
+	// together, so an unrelated short-lived CA stands in for one that expires
+	// before the leaf does.
+	shortLived := config
+	shortLived.ServingCertificateValidity = time.Hour
+	shortLived.CACertificateValidity = 2 * time.Hour
+	short := mustGenerateMaterial(t, now, shortLived)
+	afterShort := now.Add(3 * time.Hour)
+	tests := []struct {
+		name   string
+		leaf   *certificateMaterial
+		bundle []byte
+		at     time.Time
+		want   bool
+	}{
+		{name: "valid leaf and CA", leaf: &material, bundle: material.caPEM, at: now, want: true},
+		{name: "only CA expired", leaf: &material, bundle: short.caPEM, at: afterShort},
+		{name: "one CA of several still valid", leaf: &material, bundle: mustCombine(t, short.caPEM, material.caPEM), at: afterShort, want: true},
+		{name: "leaf expired", leaf: &material, bundle: material.caPEM, at: material.leaf.NotAfter},
+		{name: "leaf one nanosecond from expiry", leaf: &material, bundle: material.caPEM, at: material.leaf.NotAfter.Add(-time.Nanosecond), want: true},
+		// A leaf that looks not yet valid means this clock runs behind the one
+		// that issued it; that must not shorten the delay.
+		{name: "leaf not yet valid by this clock", leaf: &material, bundle: material.caPEM, at: material.leaf.NotBefore.Add(-time.Hour), want: true},
+		{name: "no CA known", leaf: &material, at: now},
+		{name: "no leaf", bundle: material.caPEM, at: now},
 	}
-	rotator.now = func() time.Time { return fixture.now }
-	rotator.probe = prober
-	return rotator
-}
-
-func recordCATransitionSecretWrites(t *testing.T, fixture caTransitionFixture, trace *caTransitionTrace) {
-	t.Helper()
-
-	fixture.client.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		secret := action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret)
-		switch secret.Name {
-		case fixture.config.SecretName:
-			if !secretContainsMaterial(secret, fixture.pending.material) {
-				t.Error("primary write did not contain the durable candidate material")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var leaf *x509.Certificate
+			if test.leaf != nil {
+				leaf = test.leaf.leaf
 			}
-			trace.add("primary:write")
-		case fixture.config.StagingSecretName:
-			if len(secret.Data) == 0 {
-				trace.add("staging:clear")
-				break
-			}
-			pending, err := decodePendingCandidate(secret.Data, fixture.config)
+			got, err := stillServing(leaf, test.bundle, test.at)
 			if err != nil {
-				t.Errorf("decode phase write: %v", err)
-				break
+				t.Fatalf("stillServing() error = %v", err)
 			}
-			trace.add("phase:" + string(pending.phase))
+			if got != test.want {
+				t.Fatalf("stillServing() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+// caTransitionFixture holds a generated Secret whose CA private key is gone:
+// a state that starts a CA transition while the serving certificate still
+// verifies, so the switch has to wait out the delay.
+type caTransitionFixture struct {
+	client     *fake.Clientset
+	config     Config
+	original   certificateMaterial
+	sourceData map[string][]byte
+	start      time.Time
+	prober     *recordingProber
+}
+
+func newCATransitionFixture(t *testing.T) *caTransitionFixture {
+	t.Helper()
+	config := testConfig()
+	start := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	original := mustGenerateMaterial(t, start, config)
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	return &caTransitionFixture{
+		client:     newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config)),
+		config:     config,
+		original:   original,
+		sourceData: cloneBytesMap(keyless.Data),
+		start:      start,
+		prober:     &recordingProber{},
+	}
+}
+
+// pass runs one reconciliation at now with a fresh Rotator.
+func (fixture *caTransitionFixture) pass(now time.Time, prober *recordingProber) (Result, error) {
+	rotator, err := New(fixture.client, fixture.config)
+	if err != nil {
+		return Result{}, err
+	}
+	rotator.now = func() time.Time { return now }
+	rotator.probe = prober
+	return rotator.Run(context.Background())
+}
+
+// mustPass runs one successful pass at now and requires it to ask for the
+// next one after exactly requeue (zero when nothing waits).
+func (fixture *caTransitionFixture) mustPass(t *testing.T, now time.Time, requeue time.Duration) {
+	t.Helper()
+	result, err := fixture.pass(now, fixture.prober)
+	if err != nil {
+		t.Fatalf("pass at %s error = %v", now, err)
+	}
+	if result.RequeueAfter != requeue {
+		t.Fatalf("pass at %s RequeueAfter = %s, want %s", now, result.RequeueAfter, requeue)
+	}
+}
+
+func (fixture *caTransitionFixture) staged(t *testing.T) *pendingCandidate {
+	t.Helper()
+	pending, err := decodePendingCandidate(mustGetStagingSecret(t, fixture.client, fixture.config).Data, fixture.config)
+	if err != nil {
+		t.Fatalf("decode the staged transition: %v", err)
+	}
+	return pending
+}
+
+func (fixture *caTransitionFixture) assertSourceUnchanged(t *testing.T) {
+	t.Helper()
+	if !maps.EqualFunc(mustGetSecret(t, fixture.client, fixture.config).Data, fixture.sourceData, bytes.Equal) {
+		t.Fatal("the generated Secret switched before the switch time")
+	}
+}
+
+func (fixture *caTransitionFixture) assertEveryEntryTrusts(t *testing.T, certificates ...[]byte) {
+	t.Helper()
+	entries := managedEntryBundles(t, fixture.client, fixture.config)
+	if len(entries) == 0 {
+		t.Fatal("no managed webhook entry was read")
+	}
+	for index, bundle := range entries {
+		for _, certificate := range certificates {
+			if !caBundleContainsCertificate(bundle, certificate) {
+				t.Fatalf("managed entry %d lacks a CA it must trust during the delay", index)
+			}
+		}
+		assertBundleCertificateCount(t, bundle, len(certificates))
+	}
+}
+
+// writesSince returns a function listing every write after the given action
+// index, the Lease's own renewals aside.
+func (fixture *caTransitionFixture) writesSince(index int) func() []string {
+	return func() []string {
+		var writes []string
+		for _, action := range fixture.client.Actions()[index:] {
+			verb := action.GetVerb()
+			if (verb != "update" && verb != "create" && verb != "patch" && verb != "delete") ||
+				action.GetResource().Resource == "leases" {
+				continue
+			}
+			writes = append(writes, verb+" "+action.GetResource().Resource)
+		}
+		return writes
+	}
+}
+
+// failOnce makes the first matching write fail as a lost request would.
+func (fixture *caTransitionFixture) failOnce(verb, resource string, match func(*corev1.Secret) bool) {
+	var once sync.Once
+	fixture.client.PrependReactor(verb, resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if match != nil {
+			secret, ok := action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret)
+			if !ok || !match(secret) {
+				return false, nil, nil
+			}
+		}
+		failed := false
+		once.Do(func() { failed = true })
+		if failed {
+			return true, nil, fmt.Errorf("injected %s %s failure", verb, resource)
 		}
 		return false, nil, nil
 	})
 }
 
-type caTransitionTrace struct {
-	events []string
+type writeTrace struct {
+	mu     sync.Mutex
+	writes []string
 }
 
-func (trace *caTransitionTrace) add(event string) {
-	trace.events = append(trace.events, event)
+func (trace *writeTrace) snapshot() []string {
+	trace.mu.Lock()
+	defer trace.mu.Unlock()
+	return slices.Clone(trace.writes)
 }
 
-func (trace *caTransitionTrace) snapshot() []string {
-	return append([]string(nil), trace.events...)
-}
-
-type caTransitionCandidateSink struct {
-	pending *pendingCandidate
-	trace   *caTransitionTrace
-}
-
-func (sink *caTransitionCandidateSink) StoreCandidateCertificate(certificatePEM, privateKeyPEM []byte) error {
-	switch {
-	case bytes.Equal(certificatePEM, sink.pending.listenerCertPEM) &&
-		bytes.Equal(privateKeyPEM, sink.pending.listenerKeyPEM):
-		sink.trace.add("sink:new")
-	case bytes.Equal(certificatePEM, sink.pending.proofListenerCertPEM) &&
-		bytes.Equal(privateKeyPEM, sink.pending.proofListenerKeyPEM):
-		sink.trace.add("sink:proof")
-	default:
-		return errors.New("candidate sink received material outside the durable transition")
+// traceWrites records every later write to the Secrets and webhook
+// configurations, in order, by resource and name.
+func (fixture *caTransitionFixture) traceWrites() *writeTrace {
+	trace := &writeTrace{}
+	for _, resource := range []string{"secrets", "mutatingwebhookconfigurations", "validatingwebhookconfigurations"} {
+		fixture.client.PrependReactor("*", resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+			if verb := action.GetVerb(); verb != "update" && verb != "create" {
+				return false, nil, nil
+			}
+			written, ok := action.(interface{ GetObject() runtime.Object })
+			if !ok {
+				return false, nil, nil
+			}
+			name := written.GetObject().(metav1.Object).GetName()
+			trace.mu.Lock()
+			trace.writes = append(trace.writes, action.GetVerb()+" "+resource+"/"+name)
+			trace.mu.Unlock()
+			return false, nil, nil
+		})
 	}
-	return nil
+	return trace
 }
 
-func (sink *caTransitionCandidateSink) ClearCandidateCertificate() {
-	sink.trace.add("sink:clear")
-}
-
-type caTransitionCanary struct {
-	expansions  []AdmissionCanaryDesiredState
-	contraction AdmissionCanaryDesiredState
-	parked      AdmissionCanaryDesiredState
-	trace       *caTransitionTrace
-	failAt      string
-}
-
-func newCATransitionCanary(
-	t *testing.T,
-	oldCA []byte,
-	pending *pendingCandidate,
-	trace *caTransitionTrace,
-	failAt string,
-) *caTransitionCanary {
+func validatingEntryBundle(t *testing.T, fixture *caTransitionFixture, index int) []byte {
 	t.Helper()
-
-	expansion, err := NewAdmissionCanaryExpansion(oldCA, pending.material.caPEM)
+	configuration, err := fixture.client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
+		context.Background(), fixture.config.ValidatingWebhookConfiguration, metav1.GetOptions{},
+	)
 	if err != nil {
-		t.Fatalf("build expected expansion state: %v", err)
+		t.Fatalf("get ValidatingWebhookConfiguration: %v", err)
 	}
-	recoveryExpansion, err := NewAdmissionCanaryExpansion(nil, pending.material.caPEM)
-	if err != nil {
-		t.Fatalf("build expected post-write expansion state: %v", err)
-	}
-	contraction, err := NewAdmissionCanaryContraction(pending.material.caPEM, pending.proofCACertPEM)
-	if err != nil {
-		t.Fatalf("build expected contraction state: %v", err)
-	}
-	parked, err := NewAdmissionCanaryParked(pending.material.caPEM)
-	if err != nil {
-		t.Fatalf("build expected parked state: %v", err)
-	}
-	return &caTransitionCanary{
-		expansions:  []AdmissionCanaryDesiredState{expansion, recoveryExpansion},
-		contraction: contraction,
-		parked:      parked,
-		trace:       trace,
-		failAt:      failAt,
-	}
-}
-
-func (canary *caTransitionCanary) PublishMutating(
-	_ context.Context,
-	desired AdmissionCanaryDesiredState,
-) error {
-	return canary.record("mutating", desired)
-}
-
-func (canary *caTransitionCanary) PublishValidating(
-	_ context.Context,
-	desired AdmissionCanaryDesiredState,
-) error {
-	return canary.record("validating", desired)
-}
-
-func (canary *caTransitionCanary) Wait(_ context.Context, desired AdmissionCanaryDesiredState) error {
-	return canary.record("wait", desired)
-}
-
-func (canary *caTransitionCanary) record(operation string, desired AdmissionCanaryDesiredState) error {
-	state, err := canary.stateName(desired)
-	if err != nil {
-		return err
-	}
-	event := "canary:" + state + ":" + operation
-	canary.trace.add(event)
-	if event == canary.failAt {
-		return caTransitionInjectedFailure
-	}
-	return nil
-}
-
-func (canary *caTransitionCanary) stateName(desired AdmissionCanaryDesiredState) (string, error) {
-	for _, expansion := range canary.expansions {
-		if equalAdmissionCanaryDesiredState(desired, expansion) {
-			return "expansion", nil
+	name := fixture.config.ValidatingWebhookNames[index]
+	for _, webhook := range configuration.Webhooks {
+		if webhook.Name == name {
+			return webhook.ClientConfig.CABundle
 		}
 	}
-	if equalAdmissionCanaryDesiredState(desired, canary.contraction) {
-		return "contraction", nil
-	}
-	if equalAdmissionCanaryDesiredState(desired, canary.parked) {
-		return "parked", nil
-	}
-	return "", errors.New("admission canary received an unexpected desired state")
-}
-
-func equalAdmissionCanaryDesiredState(left, right AdmissionCanaryDesiredState) bool {
-	return left.productionMode == right.productionMode &&
-		bytes.Equal(left.productionBundle, right.productionBundle) &&
-		bytes.Equal(left.canaryBundle, right.canaryBundle)
-}
-
-type caTransitionProber struct {
-	pending *pendingCandidate
-	trace   *caTransitionTrace
-	fail    bool
-}
-
-func (prober *caTransitionProber) Probe(_ context.Context, request probeRequest) error {
-	if request.IdentityOnly ||
-		!bytes.Equal(request.CACertificatePEM, prober.pending.material.caPEM) ||
-		!certificateRawEqual(request.LeafCertificate, prober.pending.material.leaf) {
-		return errors.New("primary probe did not request the exact durable candidate identity")
-	}
-	prober.trace.add("primary:probe")
-	if prober.fail {
-		return caTransitionInjectedFailure
-	}
+	t.Fatalf("validating webhook %q not found", name)
 	return nil
 }
 
-type caTransitionRejectingReader struct {
-	calls int
-}
-
-func (reader *caTransitionRejectingReader) Read(buffer []byte) (int, error) {
-	reader.calls += len(buffer)
-	return 0, errors.New("recovery attempted to generate replacement material")
-}
-
-func assertCATransitionStagingMaterialUnchanged(t *testing.T, before, after map[string][]byte) {
+func mustCombine(t *testing.T, bundles ...[]byte) []byte {
 	t.Helper()
-
-	if len(after) != len(before) {
-		t.Fatalf("staging field count after failure = %d, want %d", len(after), len(before))
+	combined, err := combineCABundles(bundles...)
+	if err != nil {
+		t.Fatalf("combine CA bundles: %v", err)
 	}
-	for key, want := range before {
-		if key == stagingPhaseKey {
-			continue
-		}
-		got, found := after[key]
-		if !found {
-			t.Fatalf("staging field %q disappeared after failure", key)
-		}
-		if !bytes.Equal(got, want) {
-			t.Fatalf("staging field %q changed after failure", key)
-		}
-	}
-	if got, want := string(after[stagingTransitionDigestKey]), string(before[stagingTransitionDigestKey]); got != want {
-		t.Fatalf("transition digest after failure = %q, want %q", got, want)
-	}
+	return combined
 }

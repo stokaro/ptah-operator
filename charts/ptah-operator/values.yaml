@@ -232,6 +232,9 @@ certificateRotation:
   recreateMissingSecret: false
   # How long the rotator waits after a reconciliation that changed nothing.
   interval: "6h"
+  # How long every webhook entry trusts both the old and the new CA before the
+  # serving certificate moves to the new one. Empty means the interval.
+  caSwitchDelay: ""
   # Ceiling on one reconciliation, including the probes that prove every
   # endpoint serves the new certificate.
   operationTimeout: "15m"
@@ -241,17 +244,16 @@ certificateRotation:
   retryMax: "5m"
   # Port the rotator serves its own health and readiness probes on.
   healthPort: 8081
-  # Port the rotator serves candidate admission TLS on while it proves a new
-  # certificate before adopting it.
+  # Unused. The rotator no longer runs the candidate listener; the release
+  # guards still require the port until they drop the admission canary.
   candidatePort: 9444
-  # A transition is accepted only after every directly addressed API server
-  # observes both canary webhooks continuously for this stability window.
+  # Unused, and kept for the same reason as candidatePort.
   admissionConvergence:
-    # How long the candidate must be observed continuously, unbroken.
+    # Unused.
     stabilityDuration: "10s"
-    # How often the rotator asks each API-server endpoint during that window.
+    # Unused.
     pollInterval: "1s"
-    # Bounds one endpoint observation: marker GET plus both denial probes.
+    # Unused.
     requestTimeout: "5s"
   # Rotate a certificate once no more than this much validity remains.
   renewalThreshold: "720h"

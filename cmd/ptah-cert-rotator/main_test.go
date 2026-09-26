@@ -70,96 +70,67 @@ func TestStopHTTPServersHonorsShutdownDeadline(t *testing.T) {
 	}
 }
 
-func TestCandidateRuntimeRelationshipValidation(t *testing.T) {
+func TestParseFlagsTiesTheCASwitchDelayToTheRunInterval(t *testing.T) {
 	t.Parallel()
 
-	valid := func() error {
-		return validateCandidateRuntimeRelationships(
-			15*time.Minute,
-			30*time.Second,
-			5*time.Minute,
-			10*time.Second,
-			time.Second,
-			5*time.Second,
-		)
-	}
-	if err := valid(); err != nil {
-		t.Fatalf("valid candidate timing error = %v", err)
-	}
 	for _, test := range []struct {
 		name string
-		call func() error
-		want string
+		args []string
+		want time.Duration
 	}{
-		{name: "stability", call: func() error {
-			return validateCandidateRuntimeRelationships(time.Minute, time.Second, time.Second, 0, time.Second, time.Second)
-		}, want: "timing values must be positive"},
-		{name: "poll", call: func() error {
-			return validateCandidateRuntimeRelationships(time.Minute, time.Second, time.Second, time.Second, 0, time.Second)
-		}, want: "timing values must be positive"},
-		{name: "request", call: func() error {
-			return validateCandidateRuntimeRelationships(time.Minute, time.Second, time.Second, time.Second, time.Second, 0)
-		}, want: "timing values must be positive"},
-		{name: "request operation bound", call: func() error {
-			return validateCandidateRuntimeRelationships(time.Second, time.Second, time.Second, time.Second, time.Second, time.Second)
-		}, want: "shorter than the operation timeout"},
-		{name: "stability operation bound", call: func() error {
-			return validateCandidateRuntimeRelationships(10*time.Second, time.Second, time.Second, 10*time.Second, time.Second, time.Second)
-		}, want: "three candidate admission stability barriers"},
-		{name: "poll operation bound", call: func() error {
-			return validateCandidateRuntimeRelationships(10*time.Second, time.Second, time.Second, time.Second, 10*time.Second, time.Second)
-		}, want: "three candidate admission stability barriers"},
-		{name: "complete operation budget", call: func() error {
-			return validateCandidateRuntimeRelationships(36*time.Second, time.Second, 10*time.Second, 5*time.Second, 5*time.Second, time.Second)
-		}, want: "three candidate admission stability barriers"},
-		{name: "barrier overflow", call: func() error {
-			return validateCandidateRuntimeRelationships(
-				time.Duration(1<<63-1),
-				time.Second,
-				time.Second,
-				time.Duration(1<<63-2),
-				time.Duration(1<<62),
-				time.Second,
-			)
-		}, want: "stability barrier exceeds"},
-		{name: "budget overflow", call: func() error {
-			return validateCandidateRuntimeRelationships(
-				time.Duration(1<<63-1),
-				time.Duration(1<<62),
-				time.Duration(1<<62),
-				time.Second,
-				time.Second,
-				time.Second,
-			)
-		}, want: "operation budget exceeds"},
+		{name: "unset follows the run interval", args: []string{"--run-interval=3h"}, want: 3 * time.Hour},
+		{name: "default run interval", want: 6 * time.Hour},
+		{name: "explicit delay", args: []string{"--run-interval=168h", "--ca-switch-delay=30s"}, want: 30 * time.Second},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if err := test.call(); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("validation error = %v, want containing %q", err, test.want)
+			config, supervisor, _, err := parseFlags(append(testRotatorArgs(), test.args...))
+			if err != nil {
+				t.Fatalf("parseFlags() error = %v", err)
+			}
+			if config.CASwitchDelay != test.want {
+				t.Fatalf("CA switch delay = %s, want %s (run interval %s)", config.CASwitchDelay, test.want, supervisor.RunInterval)
 			}
 		})
 	}
 }
 
-func TestCandidateAdmissionBarrierFloorRoundsToPollBoundary(t *testing.T) {
+func TestParseFlagsAcceptsTheDormantCanaryArgumentsTheChartPasses(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		name      string
-		stability time.Duration
-		poll      time.Duration
-		want      time.Duration
-	}{
-		{name: "exact", stability: 10 * time.Second, poll: 5 * time.Second, want: 10 * time.Second},
-		{name: "rounded", stability: 11 * time.Second, poll: 5 * time.Second, want: 15 * time.Second},
-		{name: "first retry", stability: time.Second, poll: 10 * time.Second, want: 10 * time.Second},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := candidateAdmissionBarrierFloor(test.stability, test.poll)
-			if err != nil || got != test.want {
-				t.Fatalf("candidateAdmissionBarrierFloor(%s, %s) = %s, %v; want %s", test.stability, test.poll, got, err, test.want)
-			}
-		})
+
+	args := append(testRotatorArgs(),
+		"--candidate-service-name=ptah-cert-transition",
+		"--candidate-bind-address=:9444",
+		"--candidate-probe-config-map-name=ptah-cert-canary",
+		"--candidate-probe-username=system:serviceaccount:ptah-system:ptah-cert-rotator",
+		"--candidate-mutating-field-manager=ptah-certificate-rotation-canary-mutate-v1",
+		"--candidate-validating-field-manager=ptah-certificate-rotation-canary-validate-v1",
+		"--candidate-stability-duration=10s",
+		"--candidate-poll-interval=1s",
+		"--candidate-request-timeout=5s",
+	)
+	if len(args)-len(testRotatorArgs()) != len(dormantCanaryFlags) {
+		t.Fatalf("test passes %d dormant arguments, want all %d", len(args)-len(testRotatorArgs()), len(dormantCanaryFlags))
 	}
+	if _, _, _, err := parseFlags(args); err != nil {
+		t.Fatalf("parseFlags() rejected the chart's dormant canary arguments: %v", err)
+	}
+	if _, _, _, err := parseFlags(append(testRotatorArgs(), "--candidate-unknown=1")); err == nil {
+		t.Fatal("parseFlags() accepted a flag outside the dormant set")
+	}
+}
+
+func TestParseFlagsRejectsASwitchThatCannotFitTheRenewalThreshold(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, err := parseFlags(append(testRotatorArgs(), "--renewal-threshold=720h", "--ca-switch-delay=714h"))
+	if err == nil || !strings.Contains(err.Error(), "CA switch delay") {
+		t.Fatalf("parseFlags() error = %v, want the CA switch delay refused", err)
+	}
+}
+
+// testRotatorArgs are the non-default arguments every rotator needs; parseFlags
+// validates timing relationships but leaves names to certrotation.New.
+func testRotatorArgs() []string {
+	return []string{"--namespace=ptah-system"}
 }

@@ -50,8 +50,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	}
 	secretName := releaseName + "-ptah-operator-webhook-cert"
 	stagingSecretName := releaseName + "-ptah-operator-cert-rotation-stage"
-	candidateServiceName := releaseName + "-ptah-operator-cert-transition"
-	canaryConfigMapName := releaseName + "-ptah-operator-cert-canary"
 	leaseName := releaseName + "-ptah-operator-cert-rotation"
 	configurationName := "ptah-operator-admission"
 
@@ -102,44 +100,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	if immutable, found, err := unstructured.NestedBool(stagingSecret.Object, "immutable"); err != nil || found || immutable {
 		t.Fatalf("chart sets staging Secret immutable: found=%v value=%v err=%v", found, immutable, err)
 	}
-	canary := mustObject(t, objects, "ConfigMap", canaryConfigMapName)
-	wantMarker := certrotation.AdmissionCanaryMarker(releaseNamespace, canaryConfigMapName, releaseName)
-	if !maps.Equal(canary.GetLabels(), wantMarker.Labels) {
-		t.Fatalf("certificate canary labels = %v, want exact Helm-owned marker labels", canary.GetLabels())
-	}
-	if !maps.Equal(canary.GetAnnotations(), wantMarker.Annotations) || len(canary.GetOwnerReferences()) != 0 || len(canary.GetFinalizers()) != 0 {
-		t.Fatalf("certificate canary contains unsupported metadata: %#v", canary.Object["metadata"])
-	}
-	if immutable, found, err := unstructured.NestedBool(canary.Object, "immutable"); err != nil || !found || !immutable {
-		t.Fatalf("certificate canary immutable = found=%v value=%v err=%v, want true", found, immutable, err)
-	}
-	for _, field := range []string{"data", "binaryData"} {
-		if value, found, err := unstructured.NestedMap(canary.Object, field); err != nil || found || len(value) != 0 {
-			t.Fatalf("certificate canary owns %s: found=%v value=%v err=%v", field, found, value, err)
-		}
-	}
-	candidateService := mustObject(t, objects, "Service", candidateServiceName)
-	if publish, found, err := unstructured.NestedBool(candidateService.Object, "spec", "publishNotReadyAddresses"); err != nil || !found || !publish {
-		t.Fatalf("candidate Service publishNotReadyAddresses = found=%v value=%v err=%v, want true", found, publish, err)
-	}
-	selector, found, err := unstructured.NestedStringMap(candidateService.Object, "spec", "selector")
-	if err != nil || !found || !maps.Equal(selector, map[string]string{
-		"app.kubernetes.io/name":      "ptah-operator",
-		"app.kubernetes.io/instance":  releaseName,
-		"app.kubernetes.io/component": "certificate-rotation",
-	}) {
-		t.Fatalf("candidate Service selector = %v, found=%v err=%v", selector, found, err)
-	}
-	servicePorts, found, err := unstructured.NestedSlice(candidateService.Object, "spec", "ports")
-	if err != nil || !found || len(servicePorts) != 1 {
-		t.Fatalf("candidate Service ports = %#v, found=%v err=%v", servicePorts, found, err)
-	}
-	servicePort := servicePorts[0].(map[string]any)
-	if servicePort["name"] != "https" || servicePort["port"] != int64(443) ||
-		servicePort["protocol"] != "TCP" || servicePort["targetPort"] != "candidate" {
-		t.Fatalf("candidate Service port = %#v", servicePort)
-	}
-
 	managerRole := mustObject(t, objects, "ClusterRole", managerName)
 	for _, rule := range objectRules(t, managerRole) {
 		if slices.Contains(stringSlice(rule["resources"]), "secrets") {
@@ -151,7 +111,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	assertExactRule(t, role, "", "secrets", []string{secretName, stagingSecretName}, []string{"get", "update"})
 	assertNoResourceVerb(t, role, "", "secrets", "create")
 	assertExactRule(t, role, "coordination.k8s.io", "leases", []string{leaseName}, []string{"get", "update"})
-	assertExactRule(t, role, "", "configmaps", []string{canaryConfigMapName}, []string{"get", "update"})
 	assertExactRule(t, role, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
 	defaultDiscoveryRole := mustNamespacedObject(t, objects, "Role", "default", discoveryRoleName)
 	assertExactRule(t, defaultDiscoveryRole, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
@@ -219,18 +178,10 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	for _, want := range []string{
 		"--release-name=" + releaseName,
 		"--staging-secret-name=" + stagingSecretName,
-		"--candidate-service-name=" + candidateServiceName,
-		"--candidate-bind-address=:9444",
-		"--candidate-probe-config-map-name=" + canaryConfigMapName,
-		"--candidate-probe-username=system:serviceaccount:" + releaseNamespace + ":" + rotatorName,
-		"--candidate-mutating-field-manager=ptah-certificate-rotation-canary-mutate-v1",
-		"--candidate-validating-field-manager=ptah-certificate-rotation-canary-validate-v1",
-		"--candidate-stability-duration=10s",
-		"--candidate-poll-interval=1s",
-		"--candidate-request-timeout=5s",
 		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run",
 		"--validating-webhook-names=vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
 		"--run-interval=6h",
+		"--ca-switch-delay=6h",
 		"--operation-timeout=15m",
 		"--retry-initial=5s",
 		"--retry-max=5m",
@@ -256,18 +207,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	}; !slices.Equal(got, want) {
 		t.Fatalf("rotator validating production webhook inventory = %v, want %v", got, want)
 	}
-	wantMutatingCanary, wantValidatingCanary := certrotation.AdmissionCanaryStaticContractForTest(
-		certrotation.AdmissionCanaryConfig{
-			ReleaseName:          releaseName,
-			MarkerNamespace:      releaseNamespace,
-			MarkerName:           canaryConfigMapName,
-			ServiceAccountName:   rotatorName,
-			CandidateServiceName: candidateServiceName,
-			ServiceNamespace:     releaseNamespace,
-		},
-	)
-	assertMutatingCanaryStaticWebhookContract(t, mutatingConfiguration, wantMutatingCanary)
-	assertValidatingCanaryStaticWebhookContract(t, validatingConfiguration, wantValidatingCanary)
 	for _, forbiddenPrefix := range []string{
 		"--recreate-missing-secret",
 		"--secret-create-policy-name=",
@@ -278,6 +217,8 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 			t.Errorf("rotator args unexpectedly contain %q: %v", forbiddenPrefix, args)
 		}
 	}
+	// The rotator no longer listens on the candidate port, but the release
+	// guards still require the container to declare it.
 	ports := container["ports"].([]any)
 	if len(ports) != 2 {
 		t.Fatalf("rotator ports = %d, want 2", len(ports))
@@ -559,6 +500,40 @@ func TestLongFullnameKeepsGeneratedNamesValid(t *testing.T) {
 	}
 }
 
+func TestCASwitchDelayRendersFromTheIntervalUnlessSet(t *testing.T) {
+	t.Parallel()
+	rotatorName := releaseName + "-ptah-operator-cert-rotator"
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default", want: "--ca-switch-delay=6h"},
+		{name: "interval only", args: []string{"--set-string", "certificateRotation.interval=3h"}, want: "--ca-switch-delay=3h"},
+		{name: "explicit delay", args: []string{"--set-string", "certificateRotation.caSwitchDelay=30s"}, want: "--ca-switch-delay=30s"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			objects := renderChart(t, test.args...)
+			rotatorDeployment := mustObject(t, objects, "Deployment", rotatorName)
+			containers, _, err := unstructured.NestedSlice(rotatorDeployment.Object, "spec", "template", "spec", "containers")
+			if err != nil || len(containers) != 1 {
+				t.Fatalf("rotator Deployment containers = %d, want 1", len(containers))
+			}
+			args := stringSlice(containers[0].(map[string]any)["args"])
+			var delays []string
+			for _, arg := range args {
+				if strings.HasPrefix(arg, "--ca-switch-delay=") {
+					delays = append(delays, arg)
+				}
+			}
+			if !slices.Equal(delays, []string{test.want}) {
+				t.Fatalf("rotator CA switch delay arguments = %v, want exactly %q", delays, test.want)
+			}
+		})
+	}
+}
+
 func TestCertificateRotationValueValidation(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -567,6 +542,8 @@ func TestCertificateRotationValueValidation(t *testing.T) {
 	}{
 		{flag: "--set-string", setting: "certificateRotation.probeTimeout=0s"},
 		{flag: "--set-string", setting: "certificateRotation.interval=0s"},
+		{flag: "--set-string", setting: "certificateRotation.caSwitchDelay=0s"},
+		{flag: "--set-string", setting: "certificateRotation.caSwitchDelay=soon"},
 		{flag: "--set-string", setting: "certificateRotation.operationTimeout=0s"},
 		{flag: "--set-string", setting: "certificateRotation.retryInitial=0s"},
 		{flag: "--set-string", setting: "certificateRotation.retryMax=0s"},
@@ -1091,67 +1068,4 @@ func requiredArgumentValue(t *testing.T, args []string, prefix string) string {
 		t.Fatalf("rotator args do not contain a nonempty %q argument: %v", prefix, args)
 	}
 	return value
-}
-
-func assertMutatingCanaryStaticWebhookContract(
-	t *testing.T,
-	configuration *unstructured.Unstructured,
-	want admissionregistrationv1.MutatingWebhook,
-) {
-	t.Helper()
-	raw := exactRenderedWebhook(t, configuration, want.Name)
-	var got admissionregistrationv1.MutatingWebhook
-	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(raw, &got); err != nil {
-		t.Fatalf("decode rendered mutating canary webhook %q: %v", want.Name, err)
-	}
-	got.ClientConfig.CABundle = nil
-	want.ClientConfig.CABundle = nil
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("rendered mutating canary webhook %q differs from compiled static contract:\n got: %#v\nwant: %#v", want.Name, got, want)
-	}
-}
-
-func assertValidatingCanaryStaticWebhookContract(
-	t *testing.T,
-	configuration *unstructured.Unstructured,
-	want admissionregistrationv1.ValidatingWebhook,
-) {
-	t.Helper()
-	raw := exactRenderedWebhook(t, configuration, want.Name)
-	var got admissionregistrationv1.ValidatingWebhook
-	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(raw, &got); err != nil {
-		t.Fatalf("decode rendered validating canary webhook %q: %v", want.Name, err)
-	}
-	got.ClientConfig.CABundle = nil
-	want.ClientConfig.CABundle = nil
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("rendered validating canary webhook %q differs from compiled static contract:\n got: %#v\nwant: %#v", want.Name, got, want)
-	}
-}
-
-func exactRenderedWebhook(
-	t *testing.T,
-	configuration *unstructured.Unstructured,
-	name string,
-) map[string]any {
-	t.Helper()
-	rawWebhooks, found, err := unstructured.NestedSlice(configuration.Object, "webhooks")
-	if err != nil || !found {
-		t.Fatalf("%s/%s webhooks: found=%v err=%v", configuration.GetKind(), configuration.GetName(), found, err)
-	}
-	var result map[string]any
-	for _, rawWebhook := range rawWebhooks {
-		webhook, ok := rawWebhook.(map[string]any)
-		if !ok || webhook["name"] != name {
-			continue
-		}
-		if result != nil {
-			t.Fatalf("canary webhook %q appears more than once in %s/%s", name, configuration.GetKind(), configuration.GetName())
-		}
-		result = webhook
-	}
-	if result == nil {
-		t.Fatalf("canary webhook %q is absent from %s/%s", name, configuration.GetKind(), configuration.GetName())
-	}
-	return result
 }

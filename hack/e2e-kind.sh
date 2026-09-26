@@ -2675,6 +2675,7 @@ render_release_values() {
         },
         certificateRotation: {
           interval: "168h",
+          caSwitchDelay: "60s",
           recreateMissingSecret: true
         },
         replicaCount: 2,
