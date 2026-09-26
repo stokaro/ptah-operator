@@ -23,10 +23,14 @@ advisory is published with it.
 
 ## What is in scope
 
-The operator's job is to hold four authorities apart -- who writes desired
-state, who approves a plan, what the controller may write, and what credentials
-a Job receives -- and to bind evidence to the exact artifact it was produced
-from. A way to cross one of those boundaries is what this policy is for:
+The boundary this policy covers lies between the operator and the application
+namespaces it serves: the people who write `PtahSchema`, `PtahMigration` and
+approval resources there, the database credentials those namespaces hold, and
+the operation Pods that run with them. The operator's job at that boundary is
+to hold four authorities apart -- who writes desired state, who approves a
+plan, what the controller may write, and what credentials a Job receives --
+and to bind evidence to the exact artifact it was produced from. A way to
+cross one of those boundaries is what this policy is for:
 
 - running SQL a plan does not contain, or applying a plan nobody approved;
 - reaching a credential from a resource or a Job that should not have it;
@@ -36,11 +40,27 @@ from. A way to cross one of those boundaries is what this policy is for:
 - making the operator report an Apply as settled when it is not, or lose the
   record that it is unresolved.
 
+So is a way past the checks that keep a stale or buggy previous release from
+doing harm: one that narrows a newer CRD schema, starts over state a newer
+controller wrote, runs beside the current manager, or writes an object outside
+the shape admission allows the controller.
+
 [Security model](https://operator.ptah.run/edge/use/security/) says how those
 boundaries are drawn and which component holds each one.
 
 ## What is not
 
+- Anything that starts from the release namespace, or from
+  `coordination.namespace` when it is a separate one. Both are part of the
+  operator's trusted computing base: Kubernetes lets whoever can create a Pod
+  in a namespace run it as any ServiceAccount there, so a principal that can
+  create or modify workloads, exec into Pods, request ServiceAccount tokens or
+  write Leases in either namespace is a Ptah administrator. What it does there
+  is administration. That includes a previous release that was tampered with
+  rather than merely stale.
+  [The release namespace contract](https://operator.ptah.run/edge/use/security/#release-namespace)
+  says so, and it is a deployment's job to keep both namespaces to Ptah
+  administrators.
 - A cluster where the reporter already holds the privileges in question. An
   account that may edit a `PtahSchema` may select `spec.policy.apply: Always`,
   and that is the resource's own field rather than a bypass; an account that
@@ -51,8 +71,7 @@ boundaries are drawn and which component holds each one.
   [security model](https://operator.ptah.run/edge/use/security/) asks you not
   to make.
 - The deployment responsibilities that page lists as yours: NetworkPolicies,
-  image pinning, protecting the shared target-lock namespace, one release per
-  cluster.
+  image pinning, one release per cluster.
 - Ptah itself. Schema rendering, migration files, and dialect support belong in
   [stokaro/ptah](https://github.com/stokaro/ptah/security).
 

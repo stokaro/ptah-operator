@@ -73,24 +73,28 @@ a values file that still names either fails schema validation, and a render
 that skips schema validation refuses them by name. Manager Pods, hooks and
 controller identity all use the same `image.repository@image.digest` reference.
 
-Hold exclusive administrative control of the release namespace until the first
-installation reports success. Before the retained hook-progress admission
-policies have reached every API server, no in-chart workload can prove its own
-Job or Pod status and deletion integrity against a principal that already has
-write access to those resources in the namespace, so no untrusted principal may
-create, update or delete hook Jobs or Pods, or update their status
-subresources, for the duration. A dedicated release namespace is how to satisfy
-that. The boundary ends once those policies and their direct per-API-server
-proofs have converged. Every release retains them, so upgrades and uninstalls
-protect hook creation, status and deletion without relying on namespace-writer
-exclusion. That protection rests on the hooks' proofs reaching every API
-server, which they do where each address the `default/kubernetes` Service
-publishes is one API server. Where a managed control plane publishes one
-address in front of several, keep the exclusion for every upgrade and uninstall
-as well;
+Install into a dedicated namespace and keep it, for the life of the release,
+to principals you trust to administer Ptah. The release namespace, and
+`coordination.namespace` when it names another one, is a privileged
+administrative boundary: Kubernetes lets whoever can create a Pod in a
+namespace run it as any ServiceAccount there, so anyone who can create or
+modify workloads, exec into Pods or request ServiceAccount tokens in it can act
+as the operator, and is a Ptah administrator. Deploy no application workloads
+there, and grant no namespace-admin, `edit` or workload-creation access to
+anyone else. [Security model](../security/#release-namespace) is the contract,
+and it holds for installs, upgrades and uninstalls alike. Cluster
+administrators and principals that can change admission policy are inside the
+same boundary.
+
+The hook-progress admission policies the first installation creates guard the
+install hooks against a concurrent writer in the namespace once they have
+converged on every API server, and every release retains them. The hooks can
+prove that convergence only where each address the `default/kubernetes`
+Service publishes is one API server;
 [One address per API server](../../reference/release-lifecycle/#one-address-per-api-server)
-says how to tell. Cluster administrators and principals that can change
-admission policy remain inside the trust boundary.
+says how to tell. Either way the policies are hardening beyond the contract
+rather than a replacement for it, and they cover only the hooks' own Jobs and
+Pods.
 
 With `serviceAccount.create=false`, `serviceAccount.name` is an identity base
 rather than a complete Kubernetes object name. Create the dedicated

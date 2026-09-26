@@ -1,7 +1,103 @@
 ---
 title: Security model
-description: Trust boundaries, artifact integrity, and what a deployment still owes.
+description: The trusted release namespace, the boundaries the operator holds, artifact integrity, and what a deployment still owes.
 ---
+
+## The release namespace is part of the control plane {#release-namespace}
+
+The namespace the chart is installed into is a privileged administrative
+boundary and part of the operator's trusted computing base. So is
+`coordination.namespace` when it names a different namespace. Everything else
+on this page assumes that only Ptah administrators can act in either one, and
+nothing the operator does replaces that assumption.
+
+This follows from a Kubernetes rule, not from a choice this operator made.
+Whoever can create a Pod in a namespace can run it as any ServiceAccount in
+that namespace and mount any Secret there, so the right to create workloads in
+a namespace carries every permission its ServiceAccounts hold. Kubernetes says
+so in its
+[RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation),
+and adds that boundaries inside a namespace should be considered weak. The
+release namespace holds the ServiceAccounts of the manager, the certificate
+rotator and the install hooks, and the Secret with the webhook's TLS key.
+A principal that can create or modify Pods, Deployments, Jobs or any other
+workload there, exec into a Pod, or request a ServiceAccount token, can act as
+the controller. That principal is a Ptah administrator, whatever its Role is
+called. The coordination namespace holds the Lease that elects the active
+manager and the Leases that serialize every operation on a database, so a
+principal that can write Leases there can stop reconciliation or take a
+database's turn.
+
+What that means for a deployment:
+
+- Do not deploy application workloads into the release namespace or the
+  coordination namespace.
+- Do not grant namespace-admin, `edit`, or any right to create or modify
+  workloads there to a principal you would not trust to administer Ptah. The
+  same applies to `pods/exec`, `serviceaccounts/token` and Lease writes.
+- Do not rely on a narrower Role inside either namespace as a security
+  boundary. Kubernetes does not treat one as such, and neither does this
+  operator.
+
+A finding that starts from write access to either namespace describes an
+administrator doing administration, and the
+[security policy](https://github.com/stokaro/ptah-operator/blob/master/SECURITY.md)
+lists it as out of scope.
+
+### Where the product boundary is {#product-boundary}
+
+The boundary the operator is built to hold lies between it and the application
+namespaces: the people who write `PtahSchema`, `PtahMigration` and approval
+resources there, the database credentials those namespaces hold, and the
+operation Pods that run there with those credentials. The four authorities in
+[Trust boundaries](#trust-boundaries) are that boundary, and the rest of this
+page says how each is held. The open work that hardens it:
+
+- [#445](https://github.com/stokaro/ptah-operator/issues/445): authorize
+  membership of a database realm instead of letting any resource claim a
+  coordination key.
+- [#446](https://github.com/stokaro/ptah-operator/issues/446): keep status
+  writable only by the manager, and resolve an unaccounted run through an
+  identity-stamped acknowledgment.
+- [#447](https://github.com/stokaro/ptah-operator/issues/447): let operation
+  Pods carry bounded metadata for third-party mutating admission.
+- [#449](https://github.com/stokaro/ptah-operator/issues/449): keep plan bytes
+  out of Pod logs, which [Pod logs carry plans](#pod-logs-carry-plans)
+  explains.
+- [#450](https://github.com/stokaro/ptah-operator/issues/450): close the gaps
+  at the human authority boundary.
+
+### What the operator still checks about its own releases {#stale-predecessor}
+
+Trusting the release namespace means trusting the people who administer it,
+not every binary that has run there. A previous release that is stale or buggy
+is an ordinary failure, and these checks exist for it:
+
+- CRD schema identity. The CRD hook refuses a live schema version newer than
+  the candidate's, and two digests under one version, so an older image cannot
+  narrow a newer schema. See
+  [Schema identity on a CRD](../../reference/release-lifecycle/#schema-identity-on-a-crd).
+- The downgrade preflight. A manager does not start over stored state that a
+  newer controller wrote. See
+  [The downgrade preflight](../../reference/release-lifecycle/#the-downgrade-preflight).
+- The admission singleton. One release per cluster, checked when the chart
+  renders and again by the runtime verifier before a manager starts. See
+  [What the runtime verifier requires](../../reference/release-lifecycle/#what-the-runtime-verifier-requires).
+- `Recreate` and leader election. An old and a new manager never serve
+  admission side by side, and only one of them reconciles. See
+  [Install the operator](../operations/#install-before).
+- The controller-write guards. Typed admission policies and a webhook that
+  rebuilds the expected object bound what the manager itself may write, so a
+  bug cannot create a Job, a plan or a chunk outside its shape. See
+  [Admission](../../reference/credentials-and-admission/#admission).
+
+None of these is a defense against an administrator acting in bad faith. The
+release machinery also carries mechanisms that assume a hostile writer inside
+the release namespace: the hook-progress policies, the uninstall fences, the
+per-release ServiceAccounts and the credential grace windows that
+[Release lifecycle](../../reference/release-lifecycle/) describes. They sit
+outside this contract, and
+[#443](https://github.com/stokaro/ptah-operator/issues/443) removes them.
 
 ## Trust boundaries
 
@@ -328,7 +424,9 @@ native SQL output.
   and do not use a cluster-wide administrative account.
 - Pin manager, runner, and executor images by digest and verify their release
   provenance before installation.
-- Protect the shared target-lock namespace from untrusted Lease writers.
+- Keep the release namespace and the coordination namespace, which holds the
+  shared target locks, to Ptah administrators, as
+  [the release namespace contract](#release-namespace) says.
 - Install exactly one operator Helm release per cluster. Scale replicas within
   that release for high availability; the singleton admission configuration
   intentionally prevents ordinary independent-release ownership.

@@ -77,14 +77,16 @@ helm upgrade --install ptah-operator ./charts/ptah-operator \
   --set-string execution.ptahVersion=<ptah-version>
 ```
 
-Use a dedicated release namespace and keep its first installation under
-exclusive administrative control until Helm reports success. Before the
-hook-progress policies that installation creates have converged on every API
-server, Kubernetes cannot let an in-chart Job prove its own status and deletion
-integrity against an already-authorized concurrent namespace writer. Every
-release retains those policies, so later upgrades and uninstalls do not rely on
-that assumption. The exact trust boundary is documented in
-[Operations](../../use/operations/#install-before).
+Install into a namespace of its own, and treat it as part of the cluster's
+control plane for as long as the release exists. Whoever can create or modify
+a workload in a namespace can run it as any ServiceAccount there, including the
+operator's, so every principal with that right in the release namespace is a
+Ptah administrator. Keep application workloads out of it, and grant
+namespace-admin or workload-creation access there only to people you trust to
+administer Ptah. A separate `coordination.namespace` is held the same way.
+[Security model](../../use/security/#release-namespace) states the contract,
+and [Operations](../../use/operations/#install-before) lists what else an
+installation has to satisfy.
 
 The supplied version is recorded in plans, approvals, Jobs, and applied status
 alongside the executor digest. Verify both values from the executor's release
