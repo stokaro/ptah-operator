@@ -43,7 +43,7 @@
  * script has not shown yet is drawn anyway: Replay stood beside Play before
  * anything had played, and with JavaScript off every session offered controls
  * that do nothing. The attribute wins inside the demonstration, which is where
- * these rules apply; the rest of the page keeps Starlight's own behaviour. */
+ * these rules apply; the rest of the page keeps Starlight's own behavior. */
 .demo [hidden],
 .tiles [hidden] {
 	display: none !important;

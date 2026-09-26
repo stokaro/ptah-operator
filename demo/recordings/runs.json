@@ -1,26 +1,475 @@
 {
-  "recordedAt": "2026-09-17T12:16:06Z",
+  "recordedAt": "2026-09-26T00:39:17Z",
   "lab": {
-    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo145-b2826536a0.svc.cluster.local:5000/ptah-operator@sha256:04293ec4e155b4834e86c633b4d5630af9a8062c4d0383729bb6f42f62860c2c",
-    "CONTROLLER_REVISION": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo145-b2826536a0.svc.cluster.local:5000/ptah-executor@sha256:91ec0a6fa27fab4d8ad52c77ea332dc3984def59a9c63891e120304d07edaf6f",
-    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo145-b2826536a0",
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36201791957-1-5b26f2f1a8.svc.cluster.local:5000/ptah-operator@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273",
+    "CONTROLLER_REVISION": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36201791957-1-5b26f2f1a8.svc.cluster.local:5000/ptah-executor@sha256:df4f1977e574ed676809606de15f5dcf53a17b2e8009a0700a1d9f8762e8e0a2",
+    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-36201791-5b26f2f1a8",
     "KUBERNETES_VERSION": "1.37.0",
-    "PTAH_REVISION": "4eed6118458c339940433ede7e3eddd141241de7",
-    "PTAH_VERSION": "v0.6.0",
-    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo145-b2826536a0.svc.cluster.local:5000/ptah-runner@sha256:04293ec4e155b4834e86c633b4d5630af9a8062c4d0383729bb6f42f62860c2c"
+    "PTAH_REVISION": "127aa247772027f9ac8f5b16107552a7e1b541ed",
+    "PTAH_VERSION": "127aa24",
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36201791957-1-5b26f2f1a8.svc.cluster.local:5000/ptah-runner@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273"
   },
   "source": {
-    "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-    "describe": "8c7fe18"
+    "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+    "describe": "5f4a991"
   },
   "scenarios": [
     {
+      "id": "adopt-existing-database",
+      "source": {
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
+      },
+      "definitionDigest": "sha256:064fa6a9111045e5df4049f1c43f21fd32037ea6c55aa0c797c06ef691093537",
+      "title": "Adopt a database that already has a schema",
+      "tagline": "Record the history a database already earned, and let the operator carry on from there.",
+      "learn": "How baseline proves a database matches its migrations before recording anything, and what it refuses.",
+      "tags": [
+        "Lifecycle"
+      ],
+      "commands": 11,
+      "lines": 81,
+      "events": [
+        [
+          "note",
+          "# This database already has a shipments table and three rows. An application put them there."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"SELECT * FROM shipments ORDER BY id\""
+        ],
+        [
+          "out",
+          " id | reference"
+        ],
+        [
+          "out",
+          "----+-----------"
+        ],
+        [
+          "out",
+          "  1 | EU-1001"
+        ],
+        [
+          "out",
+          "  2 | US-2002"
+        ],
+        [
+          "out",
+          "  3 | EU-1003"
+        ],
+        [
+          "out",
+          "(3 rows)"
+        ],
+        [
+          "note",
+          "# It has no Ptah history. There is no revision table at all."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
+        ],
+        [
+          "out",
+          "             List of relations"
+        ],
+        [
+          "out",
+          " Schema |   Name    | Type  |     Owner"
+        ],
+        [
+          "out",
+          "--------+-----------+-------+---------------"
+        ],
+        [
+          "out",
+          " public | shipments | table | ptah_external"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ],
+        [
+          "note",
+          "# The artifact the operator will run holds two migrations, published from these files."
+        ],
+        [
+          "cmd",
+          "ls demo/migrations"
+        ],
+        [
+          "out",
+          "0000000001_create_shipments.down.sql"
+        ],
+        [
+          "out",
+          "0000000001_create_shipments.up.sql"
+        ],
+        [
+          "out",
+          "0000000002_add_carrier.down.sql"
+        ],
+        [
+          "out",
+          "0000000002_add_carrier.up.sql"
+        ],
+        [
+          "sync",
+          "baseline"
+        ],
+        [
+          "note",
+          "# Baseline reads the same files. Hand them to the cluster, where it runs with the executor."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" create configmap adopt-migrations --from-file=demo/migrations"
+        ],
+        [
+          "out",
+          "configmap/adopt-migrations created"
+        ],
+        [
+          "note",
+          "# Baseline through version 2 is refused. The shadow has a carrier column this database lacks."
+        ],
+        [
+          "cmd",
+          "BASELINE_VERSION=2 demo/bin/lab manifest adopt-baseline \"$(cat demo/.lab/adopt-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" wait --for=condition=Failed job/adopt-baseline-v2 --timeout=180s"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" logs job/adopt-baseline-v2 | tail -n 1"
+        ],
+        [
+          "out",
+          "job.batch/adopt-baseline-v2 created"
+        ],
+        [
+          "out",
+          "job.batch/adopt-baseline-v2 condition met"
+        ],
+        [
+          "out",
+          "error: baseline shadow check failed: missing column shipments.carrier"
+        ],
+        [
+          "note",
+          "# A refused baseline records nothing. There is still no revision table."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
+        ],
+        [
+          "out",
+          "             List of relations"
+        ],
+        [
+          "out",
+          " Schema |   Name    | Type  |     Owner"
+        ],
+        [
+          "out",
+          "--------+-----------+-------+---------------"
+        ],
+        [
+          "out",
+          " public | shipments | table | ptah_external"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ],
+        [
+          "sync",
+          "baselined"
+        ],
+        [
+          "note",
+          "# This database is at release 1, so baseline through version 1."
+        ],
+        [
+          "cmd",
+          "BASELINE_VERSION=1 demo/bin/lab manifest adopt-baseline \"$(cat demo/.lab/adopt-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" wait --for=condition=Complete job/adopt-baseline-v1 --timeout=180s"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" logs job/adopt-baseline-v1 | tail -n 1"
+        ],
+        [
+          "out",
+          "job.batch/adopt-baseline-v1 created"
+        ],
+        [
+          "out",
+          "job.batch/adopt-baseline-v1 condition met"
+        ],
+        [
+          "out",
+          "Baselined 1 migration(s) through version 1 in \"schema_migrations\""
+        ],
+        [
+          "note",
+          "# The history records version 1, and the rows are the rows it had."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -tAc \"SELECT version, state FROM schema_migrations\""
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -tAc \"SELECT id, reference FROM shipments ORDER BY id\""
+        ],
+        [
+          "out",
+          "1|applied"
+        ],
+        [
+          "out",
+          "1|EU-1001"
+        ],
+        [
+          "out",
+          "2|US-2002"
+        ],
+        [
+          "out",
+          "3|EU-1003"
+        ],
+        [
+          "sync",
+          "adopted"
+        ],
+        [
+          "note",
+          "# Now the resource. It reads that history, and plans version 2 alone."
+        ],
+        [
+          "cmd",
+          "APPLY=OnApproval demo/bin/lab manifest shipments \"$(cat demo/.lab/adopt-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/shipments created"
+        ],
+        [
+          "sync",
+          "approved"
+        ],
+        [
+          "note",
+          "# Version 1 is history, so it is not offered. Approve the plan for version 2."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration shipments -o json \u003e demo/.lab/migration.json"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get ptahmigrationplan \\"
+        ],
+        [
+          "cont",
+          "  \"$(jq -r .status.plan.name demo/.lab/migration.json)\" -o json \u003e demo/.lab/migration-plan.json"
+        ],
+        [
+          "cont",
+          "jq -r '.spec.migrations[] | \"planned: \\(.version) \\(.description)\"' demo/.lab/migration-plan.json"
+        ],
+        [
+          "cont",
+          "jq -n --slurpfile migration demo/.lab/migration.json --slurpfile plan demo/.lab/migration-plan.json '"
+        ],
+        [
+          "cont",
+          "  {"
+        ],
+        [
+          "cont",
+          "    apiVersion: \"operator.ptah.run/v1alpha1\", kind: \"PtahMigrationApproval\","
+        ],
+        [
+          "cont",
+          "    metadata: {name: \"shipments-adopted\"},"
+        ],
+        [
+          "cont",
+          "    spec: {"
+        ],
+        [
+          "cont",
+          "      migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planFingerprint: $plan[0].spec.fingerprint"
+        ],
+        [
+          "cont",
+          "    }"
+        ],
+        [
+          "cont",
+          "  }' | kubectl -n \"$NAMESPACE\" create -f -"
+        ],
+        [
+          "out",
+          "planned: 2 Add Carrier"
+        ],
+        [
+          "out",
+          "ptahmigrationapproval.operator.ptah.run/shipments-adopted created"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Version 2 ran on the rows the application wrote, and the history carries on from there."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -tAc \"SELECT version, state FROM schema_migrations ORDER BY version\""
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -tAc \\"
+        ],
+        [
+          "cont",
+          "  \"SELECT id || ' ' || reference || ' ' || carrier FROM shipments ORDER BY id\""
+        ],
+        [
+          "out",
+          "1|applied"
+        ],
+        [
+          "out",
+          "2|applied"
+        ],
+        [
+          "out",
+          "1 EU-1001 dhl"
+        ],
+        [
+          "out",
+          "2 US-2002 ups"
+        ],
+        [
+          "out",
+          "3 EU-1003 dhl"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "adopt-existing-database",
+          "step": 1,
+          "claim": "exits 0, prints \"EU-1001\", prints \"US-2002\", prints \"EU-1003\", prints \"(3 rows)\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 2,
+          "claim": "exits 0, prints \"shipments\", never prints \"schema_migrations\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 3,
+          "claim": "exits 0, prints \"0000000001_create_shipments.up.sql\", prints \"0000000002_add_carrier.up.sql\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 4,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 5,
+          "claim": "exits 0, prints \"baseline shadow check failed\", prints \"missing column\", prints \"carrier\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 6,
+          "claim": "exits 0, never prints \"schema_migrations\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 7,
+          "claim": "exits 0, prints \"Baselined 1 migration(s) through version 1\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 8,
+          "claim": "exits 0, prints \"1|applied\", prints \"1|EU-1001\", prints \"2|US-2002\", prints \"3|EU-1003\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 9,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 10,
+          "claim": "ptahmigration/shipments: ApprovalRequired=True (AwaitingApproval)",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 10,
+          "claim": "exits 0, prints \"planned: 2 Add Carrier\", prints \"created\", never prints \"planned: 1\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 11,
+          "claim": "ptahmigration/shipments: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 11,
+          "claim": "exits 0, prints \"2|applied\", prints \"1 EU-1001 dhl\", prints \"2 US-2002 ups\", prints \"3 EU-1003 dhl\"",
+          "passed": true
+        },
+        {
+          "scenario": "adopt-existing-database",
+          "step": 11,
+          "claim": "ptahmigration/shipments: status.lastRun.outcome=Applied",
+          "passed": true
+        }
+      ]
+    },
+    {
       "id": "checkpoint-bootstrap",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:f80b8faacab970b5cab95bdc88a81c1797f1f28f3ccc48d076316404ad866cd0",
       "title": "Start a new database from a checkpoint",
       "tagline": "A fresh database runs the snapshot and what came after it, and ends up where the long way ends.",
       "learn": "What a checkpoint replaces, who selects it, and how the operator proves the shortcut arrived at the same place.",
@@ -144,7 +593,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:0035a6c8483da1344028cd273536c9e11a47174f80e3736bf7fcf9fbccd00c9d"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:129b985815a3cb877da8c9bec4e0c724b8f7161a43b448d13ef3ef17dd48f4d2"
         ],
         [
           "out",
@@ -264,7 +713,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:0035a6c8483da1344028cd273536c9e11a47174f80e3736bf7fcf9fbccd00c9d"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:129b985815a3cb877da8c9bec4e0c724b8f7161a43b448d13ef3ef17dd48f4d2"
         ],
         [
           "out",
@@ -437,9 +886,10 @@
     {
       "id": "destructive-block",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:9d6621c903714e4f5f1a3b644948a54d62c87fbb6abcd265646e8d63f5fc2395",
       "title": "Refuse a destructive change",
       "tagline": "The third revision drops a column. The policy says no, and says so before anything runs.",
       "learn": "How a policy stops a plan, and where to read what it stopped.",
@@ -495,11 +945,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v2.sql\t2026-09-17 13:40:07.292461477 +0200"
+          "--- demo/schemas/v2.sql\t2026-09-26 00:24:23.462956405 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v3.sql\t2026-09-17 13:40:07.292516852 +0200"
+          "+++ demo/schemas/v3.sql\t2026-09-26 00:24:23.462956405 +0000"
         ],
         [
           "out",
@@ -615,11 +1065,11 @@
         ],
         [
           "out",
-          "ptah-plan-5fd78947ca55a03c6e35dc35   storefront   sha256:5fd78947ca55a03c6e35dc3590a971d344ceaa28e4a36cc806617a1a9d0a113a   2            true          1s"
+          "ptah-plan-67fb5a0a5f776d4655765e7a   storefront   sha256:67fb5a0a5f776d4655765e7a5d6485f10702aacbf6a0d37978364d1cb45c45a5   2            true          2s"
         ],
         [
           "out",
-          "ptah-plan-df827928f4bd415c374288a1   storefront   sha256:df827928f4bd415c374288a1cbb8f39806965c7d15e28f547b9464690903a05b   3            false         45s"
+          "ptah-plan-a1a8d111bb1bfef2613f8eb4   storefront   sha256:a1a8d111bb1bfef2613f8eb460c27af1221c42f8044199b74e176c83526d1b00   3            false         42s"
         ],
         [
           "note",
@@ -740,9 +1190,10 @@
     {
       "id": "drift",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:e5525b347bb5076e23c2f8fd35468516e8948c7a8d25a6da88aab3b8fb1b79d3",
       "title": "Close the drift",
       "tagline": "Someone changes the database by hand. The operator notices and puts it back.",
       "learn": "What drift detection reads, and what it does about what it finds.",
@@ -902,11 +1353,11 @@
         ],
         [
           "out",
-          "ptah-plan-5b18ea4a0dba32b2f833e785   storefront   sha256:5b18ea4a0dba32b2f833e785a430f249a6cc92d18511d53da5831c9045b46f90   3            false         2m5s"
+          "ptah-plan-0d69f09b27b0800fbcd2ad68   storefront   sha256:0d69f09b27b0800fbcd2ad688e367947b5ac5f69c2aa0070c2e5c22b7e7f8c86   3            false         117s"
         ],
         [
           "out",
-          "ptah-plan-ea24297faf3b1dd3895f4e14   storefront   sha256:ea24297faf3b1dd3895f4e140a2a1675e4eb272ff27be536042561abf34deda0   1            false         23s"
+          "ptah-plan-425551340010b1eb20e6dbdf   storefront   sha256:425551340010b1eb20e6dbdfaff8aae796871cc6db40df10a82fff3c1e6c2282   1            false         18s"
         ]
       ],
       "checks": [
@@ -951,9 +1402,10 @@
     {
       "id": "failure-recovery",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:8ffccfb6b4a23d93d1dab81521535882f0b1184920bb3d02e4353513600f35c6",
       "title": "Fail, then recover",
       "tagline": "Point it at a database that is not there. It says so, keeps trying, and converges when it is.",
       "learn": "What a failure looks like in the status, and that recovery needs no intervention beyond the fix.",
@@ -961,7 +1413,7 @@
         "Operations"
       ],
       "commands": 6,
-      "lines": 31,
+      "lines": 44,
       "events": [
         [
           "sync",
@@ -1021,19 +1473,19 @@
         ],
         [
           "out",
-          "12s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
+          "11s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
         ],
         [
           "out",
-          "11s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-71fd1b934301ac75 started"
+          "11s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-d449750248781d89 started"
         ],
         [
           "out",
-          "7s          Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
+          "8s          Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
         ],
         [
           "out",
-          "6s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-e4d00056326601d7 started"
+          "8s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-7fe7c217070629ee started"
         ],
         [
           "out",
@@ -1041,15 +1493,67 @@
         ],
         [
           "note",
-          "# No credential in any of it. This is the whole status the operator wrote."
+          "# No credential in any of it, and the check reads all of it."
         ],
         [
           "cmd",
-          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json | jq -r '.status | tostring' | head -c 400"
+          "status=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json | jq -c '.status')"
+        ],
+        [
+          "cont",
+          "for planted in 'nobody:nobody' 'no-such-database.demo.svc.cluster.local'; do"
+        ],
+        [
+          "cont",
+          "  if printf '%s' \"$status\" | grep -qF \"$planted\"; then"
+        ],
+        [
+          "cont",
+          "    printf 'the status carries the credential this scenario planted\\n' \u003e\u00262"
+        ],
+        [
+          "cont",
+          "    exit 1"
+        ],
+        [
+          "cont",
+          "  fi"
+        ],
+        [
+          "cont",
+          "done"
+        ],
+        [
+          "cont",
+          "printf 'checked the whole status, %s bytes, no credential in it\\n' \\"
+        ],
+        [
+          "cont",
+          "  \"$(printf '%s' \"$status\" | wc -c | tr -d ' ')\""
+        ],
+        [
+          "cont",
+          "printf '%s' \"$status\" | jq -r '"
+        ],
+        [
+          "cont",
+          "  \"phase   \" + .phase,"
+        ],
+        [
+          "cont",
+          "  \"reason  \" + (.conditions[] | select(.type == \"ReconciliationFailed\") | .reason)'"
         ],
         [
           "out",
-          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-b50602bd8c7b04187031ee43aee0f6eb\",\"id\":\"sha256:81dabcf8d2a725da080ba4e18858d7cdcfd5559b6c869f5a045a6a0e37461234\",\"inputFingerprint\":\"sha256:4aac580d2872b7e2b6763643e8a9bff7b55ae361030a2c5e7d6776c6ef6ca587\",\"jobName\":\"ptah-observe-storefront-ea3c44d"
+          "checked the whole status, 3909 bytes, no credential in it"
+        ],
+        [
+          "out",
+          "phase   Failed"
+        ],
+        [
+          "out",
+          "reason  OperationFailed"
         ],
         [
           "sync",
@@ -1132,7 +1636,7 @@
         {
           "scenario": "failure-recovery",
           "step": 4,
-          "claim": "exits 0, never prints \"nobody:nobody\"",
+          "claim": "exits 0, prints \"checked the whole status\", prints \"no credential in it\", prints \"OperationFailed\", never prints \"nobody:nobody\"",
           "passed": true
         },
         {
@@ -1164,9 +1668,10 @@
     {
       "id": "first-apply",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:4172d067edc163f1eb94ef7c8c420bb660d79c9083f5376ebca8cdb67646cc69",
       "title": "Apply a schema",
       "tagline": "Publish a schema as an artifact, point the operator at it, and watch it converge.",
       "learn": "What the operator does between a desired state and a database, and how it says it is done.",
@@ -1226,7 +1731,7 @@
         ],
         [
           "out",
-          "registry: 127.0.0.1:24793"
+          "registry: 127.0.0.1:27188"
         ],
         [
           "note",
@@ -1254,11 +1759,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:24793/schemas/demo:v1-26729"
+          "Pushed schema as oci://127.0.0.1:27188/schemas/demo:v1-97921"
         ],
         [
           "err",
-          "Digest: sha256:3f784583308b8fb02d2fac3fe06e8cf21fd2adf66bc52e2f6879aec25b11df6c"
+          "Digest: sha256:9e58cef68700ac65a34498b5926904a8130fbdf211451bd4883b9a04351614ca"
         ],
         [
           "err",
@@ -1266,7 +1771,7 @@
         ],
         [
           "err",
-          "Tags: [v1-26729]"
+          "Tags: [v1-97921]"
         ],
         [
           "sync",
@@ -1374,7 +1879,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:3f784583308b8fb02d2fac3fe06e8cf21fd2adf66bc52e2f6879aec25b11df6c"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:9e58cef68700ac65a34498b5926904a8130fbdf211451bd4883b9a04351614ca"
         ],
         [
           "out",
@@ -1570,7 +2075,7 @@
         ],
         [
           "out",
-          "ptah-plan-8231b2ce17ff7360ab2536de   storefront   sha256:8231b2ce17ff7360ab2536de2a04972e2e7998d2a7489ce6ecf79e51009b8989   1            false         21s"
+          "ptah-plan-c7bc2277b623495feb286466   storefront   sha256:c7bc2277b623495feb2864662bf966142be40ef11645fa75a5cd8fb08bff8d98   1            false         19s"
         ],
         [
           "note",
@@ -1721,9 +2226,10 @@
     {
       "id": "lab-setup",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:be13eed696e35722fe8a0da930c025079f585e60664097e494a373e8a2196c61",
       "title": "Stand up the lab",
       "tagline": "A four-node kind cluster, the chart from a package, and every image pinned by digest.",
       "learn": "What the other runs are against, and how to tell an install that finished from one that started.",
@@ -1731,7 +2237,7 @@
         "Lab"
       ],
       "commands": 5,
-      "lines": 36,
+      "lines": 39,
       "events": [
         [
           "sync",
@@ -1755,15 +2261,15 @@
         ],
         [
           "out",
-          "operator    8c7fe187707f6ea7af916d6005bc237291a35e18"
+          "operator    5f4a9917505738337bf42c9d9e48f471c54e09f4"
         ],
         [
           "out",
-          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:91ec0a6fa27fab4d8ad52c77ea332dc3984def59a9c63891e120304d07edaf6f"
+          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:df4f1977e574ed676809606de15f5dcf53a17b2e8009a0700a1d9f8762e8e0a2"
         ],
         [
           "out",
-          "ptah        v0.6.0"
+          "ptah        127aa24"
         ],
         [
           "note",
@@ -1779,11 +2285,11 @@
         ],
         [
           "out",
-          "ptah-operator-cert-rotator                                     1/1     1            1           24m"
+          "ptah-operator-cert-rotator                                     1/1     1            1           10m"
         ],
         [
           "out",
-          "ptah-operator                                                  2/2     2            2           24m"
+          "ptah-operator                                                  2/2     2            2           10m"
         ],
         [
           "note",
@@ -1799,11 +2305,11 @@
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:04293ec4e155b4834e86c633b4d5630af9a8062c4d0383729bb6f42f62860c2c"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273"
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:04293ec4e155b4834e86c633b4d5630af9a8062c4d0383729bb6f42f62860c2c"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273"
         ],
         [
           "note",
@@ -1847,19 +2353,27 @@
         ],
         [
           "out",
-          "secret/demo-database          Opaque                           6      21m"
+          "secret/demo-database          Opaque                           6      8m37s"
         ],
         [
           "out",
-          "secret/demo-database-broken   Opaque                           1      2m"
+          "secret/demo-database-broken   Opaque                           1      104s"
         ],
         [
           "out",
-          "secret/demo-registry          Opaque                           4      21m"
+          "secret/demo-mysql-database    Opaque                           5      8m35s"
         ],
         [
           "out",
-          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      21m"
+          "secret/demo-registry          Opaque                           4      8m37s"
+        ],
+        [
+          "out",
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      8m37s"
+        ],
+        [
+          "out",
+          "secret/demo-shadow-database   Opaque                           2      8m16s"
         ],
         [
           "blank",
@@ -1871,15 +2385,19 @@
         ],
         [
           "out",
-          "configmap/demo-migration-verification-policy   1      21m"
+          "configmap/demo-migration-verification-policy   1      8m13s"
         ],
         [
           "out",
-          "configmap/demo-verification-policy             1      21m"
+          "configmap/demo-verification-policy             1      8m13s"
         ],
         [
           "out",
-          "configmap/kube-root-ca.crt                     1      21m"
+          "configmap/e2e-verification-policy              1      11m"
+        ],
+        [
+          "out",
+          "configmap/kube-root-ca.crt                     1      11m"
         ]
       ],
       "checks": [
@@ -1924,9 +2442,10 @@
     {
       "id": "manual-approval",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:5d0a4918907a2dc44664b565a91df5bc85d2d97c3bb6b09c7fc630fc70c5279b",
       "title": "Approve a plan",
       "tagline": "With apply set to OnApproval, nothing runs until a person approves that exact plan.",
       "learn": "What an approval is bound to, and how much of that binding you never type.",
@@ -2042,7 +2561,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:d2a387e8b8dd6963a00790c3318251d528da5dc6ffb16a70486dda2b1c42be2a"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:f4a1f46277012efe4c8d62a4f4490b950c2105dabc5a98cb680570043715031f"
         ],
         [
           "out",
@@ -2266,7 +2785,7 @@
         ],
         [
           "out",
-          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-d4a5c0efab2947c8c110ed9a\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:d4a5c0efab2947c8c110ed9a58bd9fd6d0d6bed03d30be54c06f936798c5239b\"}"
+          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-c0f1a6e9db104ab881b9f564\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:c0f1a6e9db104ab881b9f564c4ea784916f6c60ee0adc102d0ddf763b031212d\"}"
         ],
         [
           "sync",
@@ -2306,19 +2825,19 @@
         ],
         [
           "out",
-          "  \"ptahVersion\": \"v0.6.0\","
+          "  \"ptahVersion\": \"127aa24\","
         ],
         [
           "out",
-          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:91ec0a6fa27fab4d8ad52c77ea332dc3984def59a9c63891e120304d07edaf6f\","
+          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:df4f1977e574ed676809606de15f5dcf53a17b2e8009a0700a1d9f8762e8e0a2\","
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:d2a387e8b8dd6963a00790c3318251d528da5dc6ffb16a70486dda2b1c42be2a\","
+          "  \"artifactDigest\": \"sha256:f4a1f46277012efe4c8d62a4f4490b950c2105dabc5a98cb680570043715031f\","
         ],
         [
           "out",
-          "  \"executionBindingID\": \"v1-c073a1306a04f57276592f5b4238e4e9\""
+          "  \"executionBindingID\": \"v1-f2745c75876e38e3a49f2712ee82592a\""
         ],
         [
           "out",
@@ -2469,11 +2988,574 @@
       ]
     },
     {
+      "id": "mysql-partial-failure",
+      "source": {
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
+      },
+      "definitionDigest": "sha256:60303ec3910cfd37679ee0123cbbb0b24d37a4c7b843832858834eddf419c312",
+      "title": "Recover a MySQL migration that stopped halfway",
+      "tagline": "DDL that committed, a run nobody can retry, and a repair decided by what the database holds.",
+      "learn": "How to find out what a partial MySQL migration left behind before choosing how to repair it.",
+      "tags": [
+        "Operations"
+      ],
+      "commands": 14,
+      "lines": 95,
+      "events": [
+        [
+          "sync",
+          "release 1"
+        ],
+        [
+          "note",
+          "# Release 1 creates the table on the lab's MySQL, and this resource applies it on its own."
+        ],
+        [
+          "cmd",
+          "APPLY=Always demo/bin/lab manifest deliveries \"$(cat demo/.lab/deliveries-1-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/deliveries created"
+        ],
+        [
+          "note",
+          "# Three deliveries arrive. The next release has to keep them."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-mysql-client -- mysql demo -e \\"
+        ],
+        [
+          "cont",
+          "  \"INSERT INTO deliveries VALUES (1, 'D-100'), (2, 'D-200'), (3, 'D-300'); SELECT * FROM deliveries\""
+        ],
+        [
+          "out",
+          "id\treference"
+        ],
+        [
+          "out",
+          "1\tD-100"
+        ],
+        [
+          "out",
+          "2\tD-200"
+        ],
+        [
+          "out",
+          "3\tD-300"
+        ],
+        [
+          "note",
+          "# Release 2 adds a status, fills it, then constrains it, naming a column that is not there."
+        ],
+        [
+          "cmd",
+          "cat demo/mysql/release-2/0000000002_add_status.up.sql"
+        ],
+        [
+          "out",
+          "-- Adds a status, fills it, and then constrains it. The constraint names a"
+        ],
+        [
+          "out",
+          "-- column that does not exist, so the third statement fails after the first two"
+        ],
+        [
+          "out",
+          "-- have committed: MySQL commits each DDL statement on its own."
+        ],
+        [
+          "out",
+          "-- +ptah no_transaction"
+        ],
+        [
+          "sql",
+          "ALTER TABLE deliveries ADD COLUMN status VARCHAR(16);"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "sql",
+          "UPDATE deliveries SET status = 'open';"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "sql",
+          "ALTER TABLE deliveries ADD CONSTRAINT deliveries_status_known CHECK (statuz IN ('open', 'closed'));"
+        ],
+        [
+          "sync",
+          "release 2"
+        ],
+        [
+          "note",
+          "# Point the resource at release 2, and approve the plan it publishes."
+        ],
+        [
+          "cmd",
+          "APPLY=OnApproval demo/bin/lab manifest deliveries \"$(cat demo/.lab/deliveries-2-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/deliveries configured"
+        ],
+        [
+          "sync",
+          "approved"
+        ],
+        [
+          "note",
+          "# The plan holds version 2 alone. Approve it by name, UID and fingerprint."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration deliveries -o json \u003e demo/.lab/deliveries.json"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get ptahmigrationplan \\"
+        ],
+        [
+          "cont",
+          "  \"$(jq -r .status.plan.name demo/.lab/deliveries.json)\" -o json \u003e demo/.lab/deliveries-plan.json"
+        ],
+        [
+          "cont",
+          "jq -r '.spec.migrations[] | \"planned: \\(.version) \\(.description)\"' demo/.lab/deliveries-plan.json"
+        ],
+        [
+          "cont",
+          "jq -n --slurpfile migration demo/.lab/deliveries.json --slurpfile plan demo/.lab/deliveries-plan.json '"
+        ],
+        [
+          "cont",
+          "  {"
+        ],
+        [
+          "cont",
+          "    apiVersion: \"operator.ptah.run/v1alpha1\", kind: \"PtahMigrationApproval\","
+        ],
+        [
+          "cont",
+          "    metadata: {name: \"deliveries-release-2\"},"
+        ],
+        [
+          "cont",
+          "    spec: {"
+        ],
+        [
+          "cont",
+          "      migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planFingerprint: $plan[0].spec.fingerprint"
+        ],
+        [
+          "cont",
+          "    }"
+        ],
+        [
+          "cont",
+          "  }' | kubectl -n \"$NAMESPACE\" create -f -"
+        ],
+        [
+          "out",
+          "planned: 2 Add Status"
+        ],
+        [
+          "out",
+          "ptahmigrationapproval.operator.ptah.run/deliveries-release-2 created"
+        ],
+        [
+          "sync",
+          "stopped"
+        ],
+        [
+          "note",
+          "# The run stopped partway. The resource records it and will not run anything until it is settled."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration deliveries -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '\"last run: \\(.status.lastRun.outcome)\", \"unresolved: \\(.status.unresolvedRun.outcome // \"none\")\"'"
+        ],
+        [
+          "out",
+          "last run: Partial"
+        ],
+        [
+          "out",
+          "unresolved: Partial"
+        ],
+        [
+          "note",
+          "# First, what committed. The column exists and every row was filled."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-mysql-client -- mysql demo -e \\"
+        ],
+        [
+          "cont",
+          "  \"SELECT id, reference, status FROM deliveries\""
+        ],
+        [
+          "out",
+          "id\treference\tstatus"
+        ],
+        [
+          "out",
+          "1\tD-100\topen"
+        ],
+        [
+          "out",
+          "2\tD-200\topen"
+        ],
+        [
+          "out",
+          "3\tD-300\topen"
+        ],
+        [
+          "note",
+          "# The revision table agrees. Version 2 stopped after two of its three statements."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-mysql-client -- mysql demo -N -e \\"
+        ],
+        [
+          "cont",
+          "  \"SELECT CONCAT('version ', version, ': ', applied, ' of ', total, ' statements, ', state) FROM schema_migrations ORDER BY version\""
+        ],
+        [
+          "out",
+          "version 1: 1 of 1 statements, applied"
+        ],
+        [
+          "out",
+          "version 2: 2 of 3 statements, failed"
+        ],
+        [
+          "sync",
+          "repaired"
+        ],
+        [
+          "note",
+          "# This database is disposable, so undo both statements. A real one needs its changes judged first."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-mysql-client -- mysql demo -e \\"
+        ],
+        [
+          "cont",
+          "  \"ALTER TABLE deliveries DROP COLUMN status; DELETE FROM schema_migrations WHERE version = 2\""
+        ],
+        [
+          "note",
+          "# Point the resource at release 1, which ends before the migration that failed."
+        ],
+        [
+          "cmd",
+          "APPLY=OnApproval demo/bin/lab manifest deliveries \"$(cat demo/.lab/deliveries-1-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/deliveries configured"
+        ],
+        [
+          "sync",
+          "cleared"
+        ],
+        [
+          "note",
+          "# Its next reading finds nothing to apply, and that reading is what clears the record."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration deliveries -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '\"unresolved: \\(.status.unresolvedRun.outcome // \"none\")\"'"
+        ],
+        [
+          "out",
+          "unresolved: none"
+        ],
+        [
+          "sync",
+          "release 3"
+        ],
+        [
+          "note",
+          "# Release 3 carries the corrected migration. Point the resource at it."
+        ],
+        [
+          "cmd",
+          "APPLY=OnApproval demo/bin/lab manifest deliveries \"$(cat demo/.lab/deliveries-3-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/deliveries configured"
+        ],
+        [
+          "sync",
+          "approved"
+        ],
+        [
+          "note",
+          "# Its plan holds the corrected version 2. Approve it the same way."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration deliveries -o json \u003e demo/.lab/deliveries.json"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get ptahmigrationplan \\"
+        ],
+        [
+          "cont",
+          "  \"$(jq -r .status.plan.name demo/.lab/deliveries.json)\" -o json \u003e demo/.lab/deliveries-plan.json"
+        ],
+        [
+          "cont",
+          "jq -n --slurpfile migration demo/.lab/deliveries.json --slurpfile plan demo/.lab/deliveries-plan.json '"
+        ],
+        [
+          "cont",
+          "  {"
+        ],
+        [
+          "cont",
+          "    apiVersion: \"operator.ptah.run/v1alpha1\", kind: \"PtahMigrationApproval\","
+        ],
+        [
+          "cont",
+          "    metadata: {name: \"deliveries-release-3\"},"
+        ],
+        [
+          "cont",
+          "    spec: {"
+        ],
+        [
+          "cont",
+          "      migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planFingerprint: $plan[0].spec.fingerprint"
+        ],
+        [
+          "cont",
+          "    }"
+        ],
+        [
+          "cont",
+          "  }' | kubectl -n \"$NAMESPACE\" create -f -"
+        ],
+        [
+          "out",
+          "ptahmigrationapproval.operator.ptah.run/deliveries-release-3 created"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# All three statements ran this time, and the three deliveries are still there."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-mysql-client -- mysql demo -N -e \\"
+        ],
+        [
+          "cont",
+          "  \"SELECT CONCAT('version ', version, ': ', applied, ' of ', total, ' statements, ', state) FROM schema_migrations ORDER BY version;"
+        ],
+        [
+          "cont",
+          "   SELECT CONCAT(id, ' ', reference, ' ', status) FROM deliveries ORDER BY id\""
+        ],
+        [
+          "out",
+          "version 1: 1 of 1 statements, applied"
+        ],
+        [
+          "out",
+          "version 2: 3 of 3 statements, applied"
+        ],
+        [
+          "out",
+          "1 D-100 open"
+        ],
+        [
+          "out",
+          "2 D-200 open"
+        ],
+        [
+          "out",
+          "3 D-300 open"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 1,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 2,
+          "claim": "ptahmigration/deliveries: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 2,
+          "claim": "exits 0, prints \"D-100\", prints \"D-200\", prints \"D-300\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 3,
+          "claim": "exits 0, prints \"ADD COLUMN status\", prints \"UPDATE deliveries\", prints \"CHECK (statuz\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 4,
+          "claim": "exits 0, prints \"configured\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 5,
+          "claim": "ptahmigration/deliveries: ApprovalRequired=True (AwaitingApproval)",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 5,
+          "claim": "exits 0, prints \"planned: 2 Add Status\", prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 6,
+          "claim": "exits 0, prints \"last run: Partial\", prints \"unresolved: Partial\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 6,
+          "claim": "ptahmigration/deliveries: Blocked=True (ApplyOutcomeUnknown)",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 7,
+          "claim": "exits 0, prints \"status\", prints \"open\", prints \"D-100\", prints \"D-300\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 8,
+          "claim": "exits 0, prints \"version 1: 1 of 1 statements\", prints \"version 2: 2 of 3 statements\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 9,
+          "claim": "exits 0",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 10,
+          "claim": "exits 0, prints \"configured\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 11,
+          "claim": "ptahmigration/deliveries: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 11,
+          "claim": "exits 0, prints \"unresolved: none\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 12,
+          "claim": "exits 0, prints \"configured\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 13,
+          "claim": "ptahmigration/deliveries: ApprovalRequired=True (AwaitingApproval)",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 13,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 14,
+          "claim": "ptahmigration/deliveries: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 14,
+          "claim": "exits 0, prints \"version 2: 3 of 3 statements\", prints \"1 D-100 open\", prints \"2 D-200 open\", prints \"3 D-300 open\"",
+          "passed": true
+        },
+        {
+          "scenario": "mysql-partial-failure",
+          "step": 14,
+          "claim": "ptahmigration/deliveries: status.lastRun.outcome=Applied",
+          "passed": true
+        }
+      ]
+    },
+    {
       "id": "reference-data",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:a5646184d99358962a58f2dcc1deccf8afb96a0e0c7d4c3e9c118cb9e628e254",
       "title": "Manage reference data",
       "tagline": "Rows declared beside the tables that hold them, reconciled through the same plan.",
       "learn": "What a declared row set owns, how a change to rows alone reaches the database, and why removing a declaration is not a delete.",
@@ -2621,11 +3703,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v1/catalog.go\t2026-09-17 13:40:07.290327094 +0200"
+          "--- demo/reference/v1/catalog.go\t2026-09-26 00:24:23.461623159 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v2/catalog.go\t2026-09-17 13:40:07.290500137 +0200"
+          "+++ demo/reference/v2/catalog.go\t2026-09-26 00:24:23.461706585 +0000"
         ],
         [
           "out",
@@ -2773,11 +3855,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v2/catalog.go\t2026-09-17 13:40:07.290500137 +0200"
+          "--- demo/reference/v2/catalog.go\t2026-09-26 00:24:23.461706585 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v3/catalog.go\t2026-09-17 13:40:07.290753846 +0200"
+          "+++ demo/reference/v3/catalog.go\t2026-09-26 00:24:23.461794429 +0000"
         ],
         [
           "out",
@@ -3060,9 +4142,10 @@
     {
       "id": "schema-update",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:1c22d4b2f9b952ea1f675ec8615a9511a353e632ee31e885a44c01f856484a7d",
       "title": "Change the schema",
       "tagline": "A second revision, a new digest, and the difference applied as one plan.",
       "learn": "How a change reaches a database, and why the plan is the thing to review.",
@@ -3114,11 +4197,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v1.sql\t2026-09-17 13:40:07.292405935 +0200"
+          "--- demo/schemas/v1.sql\t2026-09-26 00:24:23.462956405 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v2.sql\t2026-09-17 13:40:07.292461477 +0200"
+          "+++ demo/schemas/v2.sql\t2026-09-26 00:24:23.462956405 +0000"
         ],
         [
           "out",
@@ -3202,11 +4285,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:24793/schemas/demo:v2-28280"
+          "Pushed schema as oci://127.0.0.1:27188/schemas/demo:v2-128433"
         ],
         [
           "err",
-          "Digest: sha256:7a5811202614f1ef56a4875bb023db943c6c6ae1e94b72469f5bc608811196ec"
+          "Digest: sha256:185569293dbe766d402512d9612c7372ce01c7a146c89f776c81358d0caebaa6"
         ],
         [
           "err",
@@ -3214,7 +4297,7 @@
         ],
         [
           "err",
-          "Tags: [v2-28280]"
+          "Tags: [v2-128433]"
         ],
         [
           "sync",
@@ -3254,11 +4337,11 @@
         ],
         [
           "out",
-          "ptah-plan-796c655f8407b565b8425f31   storefront   sha256:796c655f8407b565b8425f31eb3efca67d23c76f1392983681345fb7fc802f15   1            false         64s"
+          "ptah-plan-b6d501a1e2ba08af8e07252e   storefront   sha256:b6d501a1e2ba08af8e07252e04e1cac9b0855e8e7cceacb80673caa38c68c715   1            false         60s"
         ],
         [
           "out",
-          "ptah-plan-8f02a03d479b50aaac989947   storefront   sha256:8f02a03d479b50aaac9899476a70357d077e1b4466a067b204afba88e485784a   3            false         21s"
+          "ptah-plan-bbbe6e730ab74ade2ad72d8d   storefront   sha256:bbbe6e730ab74ade2ad72d8d5bde0c574c4c81780f672fcd322f7cc4f5a9b1ee   3            false         20s"
         ],
         [
           "note",
@@ -3419,11 +4502,510 @@
       ]
     },
     {
+      "id": "second-release",
+      "source": {
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
+      },
+      "definitionDigest": "sha256:325815cdbf4deb51ec49f736f3a35ec6b425974b2412eb7e29e33d7180db9e31",
+      "title": "Ship a second release onto rows that already exist",
+      "tagline": "A backfill that runs against real data, and a history that says it ran once.",
+      "learn": "What a release adds when the database already has a history, and how to tell it did not run twice.",
+      "tags": [
+        "Lifecycle"
+      ],
+      "commands": 11,
+      "lines": 92,
+      "events": [
+        [
+          "sync",
+          "first release"
+        ],
+        [
+          "note",
+          "# The first release carries one migration, and this resource applies it on its own."
+        ],
+        [
+          "cmd",
+          "APPLY=Always demo/bin/lab manifest shipments \"$(cat demo/.lab/release-1-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/shipments created"
+        ],
+        [
+          "note",
+          "# The table exists and the history records version 1."
+        ],
+        [
+          "cmd",
+          "kubectl ptah migration shipments -n \"$NAMESPACE\""
+        ],
+        [
+          "out",
+          "Migration:      demo/shipments"
+        ],
+        [
+          "out",
+          "Phase:          InSync"
+        ],
+        [
+          "out",
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:8fe5744919df16d5e4fe97cab880a8d0db22b870db524f4155423135a8f28f86"
+        ],
+        [
+          "out",
+          "History read:   \u003ctime\u003e"
+        ],
+        [
+          "out",
+          "Current version:1"
+        ],
+        [
+          "out",
+          "Applied:        1"
+        ],
+        [
+          "out",
+          "Pending:        0"
+        ],
+        [
+          "out",
+          "Last run:       Applied at \u003ctime\u003e"
+        ],
+        [
+          "out",
+          "Run applied:    1"
+        ],
+        [
+          "out",
+          "Run message:    1 migrations are recorded applied"
+        ],
+        [
+          "out",
+          "ArtifactVerified:True (PolicySatisfied)"
+        ],
+        [
+          "out",
+          "Ready:          True (HistoryMatched)"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "No plan is published."
+        ],
+        [
+          "note",
+          "# The application writes rows. These are what the next release has to keep."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \\"
+        ],
+        [
+          "cont",
+          "  \"INSERT INTO shipments (id, reference) VALUES (1, 'EU-1001'), (2, 'US-2002'), (3, 'EU-1003')\""
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"SELECT * FROM shipments ORDER BY id\""
+        ],
+        [
+          "sql",
+          "INSERT 0 3"
+        ],
+        [
+          "sql",
+          " id | reference"
+        ],
+        [
+          "sql",
+          "----+-----------"
+        ],
+        [
+          "sql",
+          "  1 | EU-1001"
+        ],
+        [
+          "sql",
+          "  2 | US-2002"
+        ],
+        [
+          "sql",
+          "  3 | EU-1003"
+        ],
+        [
+          "sql",
+          "(3 rows)"
+        ],
+        [
+          "note",
+          "# The second release keeps migration 1 and adds 2, which fills the new column from each row."
+        ],
+        [
+          "cmd",
+          "cat demo/migrations/0000000002_add_carrier.up.sql"
+        ],
+        [
+          "sql",
+          "ALTER TABLE shipments ADD COLUMN carrier TEXT;"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "sql",
+          "UPDATE shipments"
+        ],
+        [
+          "sql",
+          "   SET carrier = CASE WHEN reference LIKE 'EU-%' THEN 'dhl' ELSE 'ups' END;"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "sql",
+          "ALTER TABLE shipments ALTER COLUMN carrier SET NOT NULL;"
+        ],
+        [
+          "sync",
+          "second release"
+        ],
+        [
+          "note",
+          "# Point the resource at the second release, and ask for a decision this time."
+        ],
+        [
+          "cmd",
+          "APPLY=OnApproval demo/bin/lab manifest shipments \"$(cat demo/.lab/release-2-digest)\" \\"
+        ],
+        [
+          "cont",
+          "  | tee demo/.lab/shipments.yaml | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/shipments configured"
+        ],
+        [
+          "sync",
+          "awaiting approval"
+        ],
+        [
+          "note",
+          "# The plan holds only version 2. Version 1 is in the history, so it is not offered again."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigrationplan \\"
+        ],
+        [
+          "cont",
+          "  \"$(kubectl -n \"$NAMESPACE\" get ptahmigration shipments -o jsonpath='{.status.plan.name}')\" -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.spec.migrations[] | \"planned: \\(.version) \\(.description)\"'"
+        ],
+        [
+          "out",
+          "planned: 2 Add Carrier"
+        ],
+        [
+          "sync",
+          "approved"
+        ],
+        [
+          "note",
+          "# Approve that plan by name, UID and fingerprint."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration shipments -o json \u003e demo/.lab/migration.json"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get ptahmigrationplan \\"
+        ],
+        [
+          "cont",
+          "  \"$(jq -r .status.plan.name demo/.lab/migration.json)\" -o json \u003e demo/.lab/migration-plan.json"
+        ],
+        [
+          "cont",
+          "jq -n --slurpfile migration demo/.lab/migration.json --slurpfile plan demo/.lab/migration-plan.json '"
+        ],
+        [
+          "cont",
+          "  {"
+        ],
+        [
+          "cont",
+          "    apiVersion: \"operator.ptah.run/v1alpha1\", kind: \"PtahMigrationApproval\","
+        ],
+        [
+          "cont",
+          "    metadata: {name: \"shipments-release-2\"},"
+        ],
+        [
+          "cont",
+          "    spec: {"
+        ],
+        [
+          "cont",
+          "      migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planFingerprint: $plan[0].spec.fingerprint"
+        ],
+        [
+          "cont",
+          "    }"
+        ],
+        [
+          "cont",
+          "  }' | kubectl -n \"$NAMESPACE\" create -f -"
+        ],
+        [
+          "out",
+          "ptahmigrationapproval.operator.ptah.run/shipments-release-2 created"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# The same three rows, each with a carrier its reference decided."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"SELECT * FROM shipments ORDER BY id\""
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -tAc \\"
+        ],
+        [
+          "cont",
+          "  \"SELECT id || ' ' || reference || ' ' || carrier FROM shipments ORDER BY id\""
+        ],
+        [
+          "out",
+          " id | reference | carrier"
+        ],
+        [
+          "out",
+          "----+-----------+---------"
+        ],
+        [
+          "out",
+          "  1 | EU-1001   | dhl"
+        ],
+        [
+          "out",
+          "  2 | US-2002   | ups"
+        ],
+        [
+          "out",
+          "  3 | EU-1003   | dhl"
+        ],
+        [
+          "out",
+          "(3 rows)"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "1 EU-1001 dhl"
+        ],
+        [
+          "out",
+          "2 US-2002 ups"
+        ],
+        [
+          "out",
+          "3 EU-1003 dhl"
+        ],
+        [
+          "note",
+          "# The run applied version 2 alone. Keep its Job's UID, to compare after the next pass."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration shipments -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '\"applied: \\(.status.lastRun.appliedVersions | join(\",\"))\", \"job: \\(.status.lastRun.jobUID)\"' \\"
+        ],
+        [
+          "cont",
+          "  | tee demo/.lab/release-2-run"
+        ],
+        [
+          "out",
+          "applied: 2"
+        ],
+        [
+          "out",
+          "job: \u003cuid\u003e"
+        ],
+        [
+          "note",
+          "# Change only the interval. The operator has to read the history again to settle it."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" patch ptahmigration shipments --type merge -p '{\"spec\":{\"interval\":\"2m\"}}'"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/shipments patched"
+        ],
+        [
+          "note",
+          "# That pass found nothing pending, and the last run is still the one kept above."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration shipments -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '\"applied: \\(.status.lastRun.appliedVersions | join(\",\"))\", \"job: \\(.status.lastRun.jobUID)\"' \\"
+        ],
+        [
+          "cont",
+          "  | diff demo/.lab/release-2-run - \u0026\u0026 echo \"the same run, and no other\""
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -tAc \"SELECT count(*) FROM shipments\""
+        ],
+        [
+          "out",
+          "the same run, and no other"
+        ],
+        [
+          "out",
+          "3"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "second-release",
+          "step": 1,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 2,
+          "claim": "ptahmigration/shipments: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 2,
+          "claim": "exits 0, prints \"InSync\", prints \"Current version:1\", prints \"Last run:       Applied\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 3,
+          "claim": "exits 0, prints \"INSERT 0 3\", prints \"EU-1001\", prints \"US-2002\", prints \"EU-1003\", prints \"(3 rows)\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 4,
+          "claim": "exits 0, prints \"ADD COLUMN carrier\", prints \"UPDATE shipments\", prints \"LIKE 'EU-%'\", prints \"SET NOT NULL\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 5,
+          "claim": "exits 0, prints \"configured\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 6,
+          "claim": "ptahmigration/shipments: ApprovalRequired=True (AwaitingApproval)",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 6,
+          "claim": "exits 0, prints \"planned: 2 Add Carrier\", never prints \"planned: 1\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 7,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 8,
+          "claim": "exits 0, prints \"(3 rows)\", prints \"1 EU-1001 dhl\", prints \"2 US-2002 ups\", prints \"3 EU-1003 dhl\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 9,
+          "claim": "ptahmigration/shipments: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 9,
+          "claim": "exits 0, prints \"applied: 2\", prints \"job: \"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 10,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 11,
+          "claim": "ptahmigration/shipments: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "second-release",
+          "step": 11,
+          "claim": "exits 0, prints \"the same run, and no other\", prints \"3\"",
+          "passed": true
+        }
+      ]
+    },
+    {
       "id": "stale-approval",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:dafd81756f2133d7d05b6376b82df2ada901a788bcf06f683a10f2f2f6f1ed7f",
       "title": "Retire a used approval",
       "tagline": "An approval describes one plan against one observed state. Applying it moves that state.",
       "learn": "Why a signature cannot authorize twice, and what the operator does with one that no longer fits.",
@@ -3451,7 +5033,7 @@
         ],
         [
           "out",
-          "sha256:e0e49e6a7aa846f8a5d5957aca886d4df47e957b821668d1641e9c141643a12d"
+          "sha256:0ef1e1216328b20cd2cc6f1397c6179caf9cbe8efddd3416a715098607e25997"
         ],
         [
           "sync",
@@ -3627,7 +5209,7 @@
         ],
         [
           "out",
-          "sha256:e1d07a487ad0a0d9ce0db115abfffed361a6e629a7c48195a75b4c374f3a8252"
+          "sha256:b251dab6be39ca365351c35f1e73a015b458e8382098cb0a650b7242f3d53db1"
         ],
         [
           "note",
@@ -3738,9 +5320,10 @@
     {
       "id": "suspend-resume",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:e8472ad4b441e937c22b31b73035825f4c979bdb9c58fd4618a7883c0f3e2de4",
       "title": "Suspend and resume",
       "tagline": "One field stops reconciliation without deleting anything, and resuming picks up where it stopped.",
       "learn": "How to take a database out of the operator's hands during an incident, and give it back.",
@@ -3981,9 +5564,10 @@
     {
       "id": "versioned-migration",
       "source": {
-        "commit": "8c7fe187707f6ea7af916d6005bc237291a35e18",
-        "describe": "8c7fe18"
+        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
+        "describe": "5f4a991"
       },
+      "definitionDigest": "sha256:4c2c169c1cda2156dc2252dd79eec097ccb318d8ff7e975250dd94fb7395ff96",
       "title": "Run a prepared migration sequence",
       "tagline": "Numbered SQL files in an artifact, matched against the database's own record of what has run.",
       "learn": "How the versioned workflow differs from the declarative one, and what the database is asked before anything executes.",
@@ -3991,7 +5575,7 @@
         "Lifecycle"
       ],
       "commands": 12,
-      "lines": 152,
+      "lines": 153,
       "events": [
         [
           "note",
@@ -4035,7 +5619,11 @@
         ],
         [
           "sql",
-          "UPDATE shipments SET carrier = 'unassigned';"
+          "UPDATE shipments"
+        ],
+        [
+          "sql",
+          "   SET carrier = CASE WHEN reference LIKE 'EU-%' THEN 'dhl' ELSE 'ups' END;"
         ],
         [
           "blank",
@@ -4159,7 +5747,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:2025a6e917e4c139035fcc93d16872d5b9e0b69dd0dc6c4251cbfca3f288fc87"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5"
         ],
         [
           "out",
@@ -4299,7 +5887,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:2025a6e917e4c139035fcc93d16872d5b9e0b69dd0dc6c4251cbfca3f288fc87"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5"
         ],
         [
           "out",
@@ -4335,7 +5923,7 @@
         ],
         [
           "out",
-          "Plan ptah-mplan-899d4dc9634adb3f0bc5cbe4, 2 migrations from version 0:"
+          "Plan ptah-mplan-4fd3bca950f6ef41c3e29e85, 2 migrations from version 0:"
         ],
         [
           "out",
@@ -4431,7 +6019,7 @@
         ],
         [
           "out",
-          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-899d4dc9634adb3f0bc5cbe4\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:899d4dc9634adb3f0bc5cbe48730681b95cc6e2b6d902798473ee6b387efa0d8\"}"
+          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-4fd3bca950f6ef41c3e29e85\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:4fd3bca950f6ef41c3e29e85ab9d376913fbe8cf3d684c037a47fb9f0d410883\"}"
         ],
         [
           "sync",
@@ -4471,15 +6059,15 @@
         ],
         [
           "out",
-          "  \"historyFingerprint\": \"sha256:20b3ad19836a0f62c12dd81f9d0c3599bce9935fca0f2070716936e22da499a2\","
+          "  \"historyFingerprint\": \"sha256:999adb060839cde5198cc02242dd3a82cab03b0ca183211f24cbc47eed7789f6\","
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:2025a6e917e4c139035fcc93d16872d5b9e0b69dd0dc6c4251cbfca3f288fc87\","
+          "  \"artifactDigest\": \"sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5\","
         ],
         [
           "out",
-          "  \"ptahVersion\": \"v0.6.0\""
+          "  \"ptahVersion\": \"127aa24\""
         ],
         [
           "out",
@@ -4547,7 +6135,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:2025a6e917e4c139035fcc93d16872d5b9e0b69dd0dc6c4251cbfca3f288fc87"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5"
         ],
         [
           "out",

@@ -29,7 +29,8 @@ read_environment() {
 	. "$LAB_ENVIRONMENT"
 	set +a
 	LAB_POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
-	export LAB_POSTGRES_IMAGE
+	LAB_MYSQL_IMAGE=${E2E_MYSQL_IMAGE:-}
+	export LAB_POSTGRES_IMAGE LAB_MYSQL_IMAGE
 	export DOCKER_CONFIG="${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}"
 	# kind takes its daemon from the environment, not from a Docker context, so
 	# without these it looks at a local daemon and reports no such cluster --

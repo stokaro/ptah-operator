@@ -52,6 +52,12 @@ scenario can look at the database with `kubectl exec` instead of through a
 helper of ours; standing it up is the environment's job, and reading a table is
 the reader's.
 
+It also stands up a MySQL server in the namespace, from the image the
+acceptance suite mirrors, with its credentials in `demo-mysql-database` and a
+`demo-mysql-client` Deployment that reads them. The MySQL scenarios read it the
+same way: `kubectl exec deploy/demo-mysql-client -- mysql demo -e "<statement>"`,
+with nothing secret on the command line.
+
 The script has two duties and no third. It stands the environment up, and it
 composes a manifest out of values a caller states. It decides nothing a
 scenario shows: `lab manifest` refuses to run without `APPLY=`, because the

@@ -1,0 +1,44 @@
+# A prepared sequence of migrations against MySQL.
+#
+# The same resource as shipments.yaml, pointed at the lab's MySQL. What differs
+# is what a failure leaves behind: MySQL commits each DDL statement on its own,
+# so a migration that fails halfway has already changed the schema, and no
+# transaction mode takes that back.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: deliveries
+  namespace: ${NAMESPACE}
+spec:
+  target:
+    engine: MySQL
+    # A database of its own, so this key is its own realm.
+    coordinationKey: demo/deliveries/mysql
+    urlFrom:
+      name: demo-mysql-database
+      key: url
+  artifact:
+    ociRef: oci://${REGISTRY}/migrations/deliveries@${DIGEST}
+    registryAuthFrom:
+      name: demo-registry
+      mode: Environment
+      usernameKey: username
+      passwordKey: password
+      registryKey: registry
+    verificationPolicyFrom:
+      name: demo-migration-verification-policy
+      key: policy.yaml
+    transport:
+      plainHTTP: true
+  policy:
+    apply: ${APPLY}
+    lockTimeout: 30s
+    # Each statement commits as it runs. On MySQL that is what DDL does anyway;
+    # saying so makes the resource mean what the database does.
+    transactionMode: none
+  interval: ${INTERVAL}
+  suspend: ${SUSPEND}
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s

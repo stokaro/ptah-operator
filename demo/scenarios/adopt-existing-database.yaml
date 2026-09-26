@@ -1,0 +1,145 @@
+id: adopt-existing-database
+title: Adopt a database that already has a schema
+tagline: Record the history a database already earned, and let the operator carry on from there.
+learn: How baseline proves a database matches its migrations before recording anything, and what it refuses.
+tags: [Lifecycle]
+
+reset:
+  - demo/bin/lab reset
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:adopt-$$" \
+      --migrations-dir demo/migrations --dir-format ptah --version "adopt-$$" --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/adopt-digest
+  # The application created this table and these rows before Ptah was in the
+  # picture: the state migration 1 produces, with nothing recording that it ran.
+  - |
+    kubectl -n "$(demo/bin/lab namespace)" exec deploy/demo-psql -- psql -qc \
+      "CREATE TABLE shipments (id INTEGER PRIMARY KEY, reference TEXT NOT NULL);
+       INSERT INTO shipments VALUES (1, 'EU-1001'), (2, 'US-2002'), (3, 'EU-1003')"
+
+steps:
+  - note: This database already has a shipments table and three rows. An application put them there.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "SELECT * FROM shipments ORDER BY id"
+    expect:
+      exit: 0
+      stdout_contains: [EU-1001, US-2002, EU-1003, "(3 rows)"]
+
+  - note: It has no Ptah history. There is no revision table at all.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    expect:
+      exit: 0
+      stdout_contains: [shipments]
+      stdout_absent: [schema_migrations]
+
+  - note: The artifact the operator will run holds two migrations, published from these files.
+    run: ls demo/migrations
+    expect:
+      exit: 0
+      stdout_contains: [0000000001_create_shipments.up.sql, 0000000002_add_carrier.up.sql]
+
+  - note: Baseline reads the same files. Hand them to the cluster, where it runs with the executor.
+    run: kubectl -n "$NAMESPACE" create configmap adopt-migrations --from-file=demo/migrations
+    sync: baseline
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: Baseline through version 2 is refused. The shadow has a carrier column this database lacks.
+    run: |
+      BASELINE_VERSION=2 demo/bin/lab manifest adopt-baseline "$(cat demo/.lab/adopt-digest)" | kubectl apply -f -
+      kubectl -n "$NAMESPACE" wait --for=condition=Failed job/adopt-baseline-v2 --timeout=180s
+      kubectl -n "$NAMESPACE" logs job/adopt-baseline-v2 | tail -n 1
+    expect:
+      exit: 0
+      # The engine names the column; the check and the column are what the
+      # step is about.
+      stdout_contains: ["baseline shadow check failed", "missing column", "carrier"]
+
+  - note: A refused baseline records nothing. There is still no revision table.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    expect:
+      exit: 0
+      stdout_absent: [schema_migrations]
+
+  - note: This database is at release 1, so baseline through version 1.
+    run: |
+      BASELINE_VERSION=1 demo/bin/lab manifest adopt-baseline "$(cat demo/.lab/adopt-digest)" | kubectl apply -f -
+      kubectl -n "$NAMESPACE" wait --for=condition=Complete job/adopt-baseline-v1 --timeout=180s
+      kubectl -n "$NAMESPACE" logs job/adopt-baseline-v1 | tail -n 1
+    sync: baselined
+    expect:
+      exit: 0
+      stdout_contains: ["Baselined 1 migration(s) through version 1"]
+
+  - note: The history records version 1, and the rows are the rows it had.
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc "SELECT version, state FROM schema_migrations"
+      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc "SELECT id, reference FROM shipments ORDER BY id"
+    expect:
+      exit: 0
+      stdout_contains: ["1|applied", "1|EU-1001", "2|US-2002", "3|EU-1003"]
+
+  - note: Now the resource. It reads that history, and plans version 2 alone.
+    run: APPLY=OnApproval demo/bin/lab manifest shipments "$(cat demo/.lab/adopt-digest)" | kubectl apply -f -
+    sync: adopted
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: Version 1 is history, so it is not offered. Approve the plan for version 2.
+    await:
+      kind: ptahmigration
+      name: shipments
+      timeout: 6m
+      generation: current
+      condition:
+        type: ApprovalRequired
+        status: "True"
+        reason: AwaitingApproval
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json > demo/.lab/migration.json
+      kubectl -n "$NAMESPACE" get ptahmigrationplan \
+        "$(jq -r .status.plan.name demo/.lab/migration.json)" -o json > demo/.lab/migration-plan.json
+      jq -r '.spec.migrations[] | "planned: \(.version) \(.description)"' demo/.lab/migration-plan.json
+      jq -n --slurpfile migration demo/.lab/migration.json --slurpfile plan demo/.lab/migration-plan.json '
+        {
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+          metadata: {name: "shipments-adopted"},
+          spec: {
+            migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},
+            planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},
+            planFingerprint: $plan[0].spec.fingerprint
+          }
+        }' | kubectl -n "$NAMESPACE" create -f -
+    sync: approved
+    expect:
+      exit: 0
+      stdout_contains: ["planned: 2 Add Carrier", created]
+      stdout_absent: ["planned: 1"]
+
+  - note: Version 2 ran on the rows the application wrote, and the history carries on from there.
+    await:
+      kind: ptahmigration
+      name: shipments
+      timeout: 6m
+      generation: current
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
+    run: |
+      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc "SELECT version, state FROM schema_migrations ORDER BY version"
+      kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -tAc \
+        "SELECT id || ' ' || reference || ' ' || carrier FROM shipments ORDER BY id"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: ["2|applied", "1 EU-1001 dhl", "2 US-2002 ups", "3 EU-1003 dhl"]
+      resource:
+        kind: ptahmigration
+        name: shipments
+        fields:
+          - path: status.lastRun.outcome
+            equals: Applied

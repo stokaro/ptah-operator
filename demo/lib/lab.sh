@@ -147,12 +147,165 @@ lab_prepare() {
     }' | k apply -f - >/dev/null
 	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-psql --timeout=180s >/dev/null
 
+	lab_prepare_mysql
+	lab_prepare_shadow
+
 	# The policy ConfigMap is immutable, and the operator refuses one that is
 	# not: a policy that could be edited after an artifact was verified against
 	# it is a policy that decided nothing. Immutable also means it cannot be
 	# applied over, so a changed policy is replaced rather than patched.
 	lab_apply_policy demo-verification-policy verification-policy.yaml
 	lab_apply_policy demo-migration-verification-policy migration-verification-policy.yaml
+}
+
+# lab_prepare_mysql stands up the MySQL the engine-specific scenarios run
+# against: a server in the namespace, its credentials as a Secret the operator
+# reads by the same `url` key, and a client that reads the same Secret.
+#
+# In the cluster rather than beside it, because nothing about a partially
+# committed MySQL migration depends on where the server runs, and a server here
+# is one Deployment instead of a second container the bootstrap would have to
+# route to. The image is the one the bootstrap mirrored for the acceptance
+# suite, so it is the MySQL version this repository supports.
+lab_prepare_mysql() {
+	lab_require LAB_MYSQL_IMAGE
+	mkdir -p "$LAB_WORK"
+	[ -s "$LAB_WORK/mysql-password" ] ||
+		head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' >"$LAB_WORK/mysql-password"
+	lab_mysql_password=$(cat "$LAB_WORK/mysql-password")
+	lab_mysql_host="demo-mysql.${E2E_TEST_NAMESPACE}.svc.cluster.local"
+	k -n "$E2E_TEST_NAMESPACE" create secret generic demo-mysql-database \
+		--from-literal=url="mysql://demo:${lab_mysql_password}@tcp(${lab_mysql_host}:3306)/demo" \
+		--from-literal=host="$lab_mysql_host" \
+		--from-literal=username=demo \
+		--from-literal=password="$lab_mysql_password" \
+		--from-literal=database=demo \
+		--dry-run=client -o yaml | k apply -f - >/dev/null
+	# The mysql client takes its password from MYSQL_PWD and its user from
+	# USER, so what a scenario prints is `mysql demo -e "<statement>"` with
+	# nothing secret on the command line.
+	jq -n \
+		--arg namespace "$E2E_TEST_NAMESPACE" \
+		--arg image "$LAB_MYSQL_IMAGE" '
+    def secret($key): {valueFrom: {secretKeyRef: {name: "demo-mysql-database", key: $key}}};
+    def labels($name): {"app.kubernetes.io/name": $name};
+    {
+      apiVersion: "v1", kind: "List",
+      items: [
+        {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: {namespace: $namespace, name: "demo-mysql"},
+          spec: {
+            replicas: 1,
+            selector: {matchLabels: labels("demo-mysql")},
+            template: {
+              metadata: {labels: labels("demo-mysql")},
+              spec: {
+                automountServiceAccountToken: false,
+                containers: [{
+                  name: "mysql", image: $image, imagePullPolicy: "IfNotPresent",
+                  ports: [{name: "mysql", containerPort: 3306}],
+                  env: [
+                    ({name: "MYSQL_ROOT_PASSWORD"} + secret("password")),
+                    ({name: "MYSQL_PASSWORD"} + secret("password")),
+                    {name: "MYSQL_USER", value: "demo"},
+                    {name: "MYSQL_DATABASE", value: "demo"}
+                  ],
+                  readinessProbe: {
+                    exec: {command: ["sh", "-c", "MYSQL_PWD=\"$MYSQL_PASSWORD\" mysqladmin -h 127.0.0.1 -u demo ping"]},
+                    periodSeconds: 5
+                  }
+                }]
+              }
+            }
+          }
+        },
+        {
+          apiVersion: "v1", kind: "Service",
+          metadata: {namespace: $namespace, name: "demo-mysql"},
+          spec: {selector: labels("demo-mysql"), ports: [{name: "mysql", port: 3306, targetPort: "mysql"}]}
+        },
+        {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: {namespace: $namespace, name: "demo-mysql-client"},
+          spec: {
+            replicas: 1,
+            selector: {matchLabels: labels("demo-mysql-client")},
+            template: {
+              metadata: {labels: labels("demo-mysql-client")},
+              spec: {
+                automountServiceAccountToken: false,
+                containers: [{
+                  name: "mysql", image: $image, imagePullPolicy: "IfNotPresent",
+                  command: ["sleep", "infinity"],
+                  env: [
+                    ({name: "MYSQL_HOST"} + secret("host")),
+                    ({name: "MYSQL_PWD"} + secret("password")),
+                    ({name: "USER"} + secret("username"))
+                  ]
+                }]
+              }
+            }
+          }
+        }
+      ]
+    }' | k apply -f - >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-mysql --timeout=300s >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-mysql-client --timeout=180s >/dev/null
+}
+
+# lab_prepare_shadow stands up the disposable PostgreSQL the adoption scenario
+# baselines against. It holds nothing else, which is the condition the adoption
+# procedure sets for a shadow: baseline replays every migration into it and
+# empties it afterwards.
+lab_prepare_shadow() {
+	lab_require LAB_POSTGRES_IMAGE
+	mkdir -p "$LAB_WORK"
+	[ -s "$LAB_WORK/shadow-password" ] ||
+		head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' >"$LAB_WORK/shadow-password"
+	lab_shadow_password=$(cat "$LAB_WORK/shadow-password")
+	k -n "$E2E_TEST_NAMESPACE" create secret generic demo-shadow-database \
+		--from-literal=url="postgres://postgres:${lab_shadow_password}@demo-shadow.${E2E_TEST_NAMESPACE}.svc.cluster.local:5432/shadow?sslmode=disable" \
+		--from-literal=password="$lab_shadow_password" \
+		--dry-run=client -o yaml | k apply -f - >/dev/null
+	jq -n \
+		--arg namespace "$E2E_TEST_NAMESPACE" \
+		--arg image "$LAB_POSTGRES_IMAGE" '
+    def labels: {"app.kubernetes.io/name": "demo-shadow"};
+    {
+      apiVersion: "v1", kind: "List",
+      items: [
+        {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: {namespace: $namespace, name: "demo-shadow"},
+          spec: {
+            replicas: 1,
+            selector: {matchLabels: labels},
+            template: {
+              metadata: {labels: labels},
+              spec: {
+                automountServiceAccountToken: false,
+                containers: [{
+                  name: "postgres", image: $image, imagePullPolicy: "IfNotPresent",
+                  env: [
+                    {name: "POSTGRES_PASSWORD", valueFrom: {secretKeyRef: {name: "demo-shadow-database", key: "password"}}},
+                    {name: "POSTGRES_DB", value: "shadow"}
+                  ],
+                  ports: [{name: "postgresql", containerPort: 5432}],
+                  readinessProbe: {exec: {command: ["pg_isready", "-U", "postgres"]}, periodSeconds: 3}
+                }]
+              }
+            }
+          }
+        },
+        {
+          apiVersion: "v1", kind: "Service",
+          metadata: {namespace: $namespace, name: "demo-shadow"},
+          spec: {selector: labels, ports: [{name: "postgresql", port: 5432, targetPort: "postgresql"}]}
+        }
+      ]
+    }' | k apply -f - >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" rollout status deployment/demo-shadow --timeout=180s >/dev/null
 }
 
 # lab_apply_policy writes one immutable verification policy ConfigMap.
@@ -229,6 +382,19 @@ lab_reset() {
 		              DROP TABLE IF EXISTS schema_migrations CASCADE;
 		              DROP SCHEMA IF EXISTS atlas_schema_revisions CASCADE" >/dev/null ||
 		lab_fail "could not empty the demonstration database"
+	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-mysql-client -- \
+		mysql demo -e "DROP TABLE IF EXISTS deliveries, schema_migrations" >/dev/null ||
+		lab_fail "could not empty the demonstration MySQL database"
+	# The shadow starts every scenario empty, the way baseline expects one.
+	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-shadow -- \
+		psql -U postgres -qc "DROP DATABASE IF EXISTS shadow WITH (FORCE)" -c "CREATE DATABASE shadow" >/dev/null ||
+		lab_fail "could not empty the shadow database"
+	k -n "$E2E_TEST_NAMESPACE" delete job -l app.kubernetes.io/name=demo-adopt \
+		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
+		lab_fail "could not remove an earlier adoption's baseline Jobs"
+	k -n "$E2E_TEST_NAMESPACE" delete configmap adopt-migrations \
+		--ignore-not-found --wait=true --timeout=60s >/dev/null ||
+		lab_fail "could not remove an earlier adoption's migration files"
 }
 
 # lab_manifest renders one manifest template.
@@ -245,17 +411,6 @@ lab_reset() {
 # themselves -- and the manifest it printed would not be the manifest the API
 # would have produced from the same intent.
 lab_manifest() {
-	[ -n "${APPLY:-}" ] || {
-		printf 'lab: set APPLY to the policy this scenario is about (Never, OnApproval or Always)\n' >&2
-		exit 1
-	}
-	case "${APPLY}" in
-	Never | OnApproval | Always) ;;
-	*)
-		printf 'lab: APPLY=%s is not a policy the API accepts\n' "$APPLY" >&2
-		exit 1
-		;;
-	esac
 	lab_manifest_name=$1
 	lab_manifest_digest=$2
 	lab_manifest_file="$LAB_ROOT/demo/manifests/${lab_manifest_name}.yaml"
@@ -263,15 +418,34 @@ lab_manifest() {
 		printf 'lab: no manifest template at %s\n' "$lab_manifest_file" >&2
 		exit 1
 	}
+	# A resource's apply policy is the reader's choice, so a template that has
+	# one refuses to render without it. A template with none -- a Job -- has
+	# nothing to choose.
+	# shellcheck disable=SC2016 # The placeholder is matched as written.
+	if grep -q '${APPLY}' "$lab_manifest_file"; then
+		[ -n "${APPLY:-}" ] || {
+			printf 'lab: set APPLY to the policy this scenario is about (Never, OnApproval or Always)\n' >&2
+			exit 1
+		}
+		case "${APPLY}" in
+		Never | OnApproval | Always) ;;
+		*)
+			printf 'lab: APPLY=%s is not a policy the API accepts\n' "$APPLY" >&2
+			exit 1
+			;;
+		esac
+	fi
 	lab_require E2E_TEST_NAMESPACE E2E_REGISTRY_HOST
 	sed \
 		-e "s|\${NAMESPACE}|$E2E_TEST_NAMESPACE|g" \
 		-e "s|\${REGISTRY}|$E2E_REGISTRY_HOST|g" \
 		-e "s|\${DIGEST}|$lab_manifest_digest|g" \
-		-e "s|\${APPLY}|${APPLY}|g" \
+		-e "s|\${APPLY}|${APPLY:-}|g" \
 		-e "s|\${ALLOW_DESTRUCTIVE}|${ALLOW_DESTRUCTIVE:-false}|g" \
 		-e "s|\${INTERVAL}|${INTERVAL:-1m}|g" \
 		-e "s|\${SUSPEND}|${SUSPEND:-false}|g" \
+		-e "s|\${EXECUTOR_IMAGE}|${E2E_EXECUTOR_IMAGE:-}|g" \
+		-e "s|\${BASELINE_VERSION}|${BASELINE_VERSION:-}|g" \
 		"$lab_manifest_file"
 }
 
