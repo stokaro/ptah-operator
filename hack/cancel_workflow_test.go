@@ -17,10 +17,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -182,6 +184,8 @@ func TestVerifyCancelWorkflowDigestRejectsSemanticNoOp(t *testing.T) {
 // answers every listing with runs the API filters would already have dropped,
 // so what reaches the cancel request is decided by the command's own filter,
 // and each run it must not cancel is one a real mistake would have canceled.
+// The stub prints a listing the way gh api does: the first page alone, or
+// with --paginate every page, each a JSON object of its own, back to back.
 func TestCancelWorkflowCancelsOnlyTheClosedPullRequestsRuns(t *testing.T) {
 	t.Parallel()
 
@@ -205,7 +209,9 @@ func TestCancelWorkflowCancelsOnlyTheClosedPullRequestsRuns(t *testing.T) {
 		branch     = "feature"
 		self       = 900
 	)
-	listing := func(runs ...run) string {
+	// page is one response of the listing, carrying the total_count the API
+	// reported with it.
+	page := func(total int, runs ...run) string {
 		type headRepository struct {
 			FullName string `json:"full_name"`
 		}
@@ -215,24 +221,36 @@ func TestCancelWorkflowCancelsOnlyTheClosedPullRequestsRuns(t *testing.T) {
 			HeadBranch     string         `json:"head_branch"`
 			HeadRepository headRepository `json:"head_repository"`
 		}
-		page := struct {
+		response := struct {
 			TotalCount   int           `json:"total_count"`
 			WorkflowRuns []workflowRun `json:"workflow_runs"`
-		}{TotalCount: len(runs), WorkflowRuns: []workflowRun{}}
+		}{TotalCount: total, WorkflowRuns: []workflowRun{}}
 		for _, item := range runs {
-			page.WorkflowRuns = append(page.WorkflowRuns, workflowRun{
+			response.WorkflowRuns = append(response.WorkflowRuns, workflowRun{
 				ID: item.ID, Event: item.Event, HeadBranch: item.HeadBranch,
 				HeadRepository: headRepository{FullName: item.Repository},
 			})
 		}
-		encoded, err := json.Marshal(page)
+		encoded, err := json.Marshal(response)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return string(encoded)
 	}
+	// listing is the pages the API serves at per_page=100. A listing with no
+	// runs is still one page.
+	listing := func(runs ...run) []string {
+		var pages []string
+		for chunk := range slices.Chunk(runs, 100) {
+			pages = append(pages, page(len(runs), chunk...))
+		}
+		if len(pages) == 0 {
+			pages = append(pages, page(0))
+		}
+		return pages
+	}
 	statuses := []string{"requested", "queued", "pending", "waiting", "in_progress"}
-	standard := map[string]string{
+	standard := map[string][]string{
 		"requested": listing(),
 		"queued": listing(
 			run{ID: 105, Event: "pull_request", HeadBranch: branch, Repository: repository},
@@ -259,7 +277,7 @@ func TestCancelWorkflowCancelsOnlyTheClosedPullRequestsRuns(t *testing.T) {
 		output   string
 		exitCode int
 	}
-	execute := func(t *testing.T, pages map[string]string, refused map[string]string) outcome {
+	execute := func(t *testing.T, listings map[string][]string, refused map[string]string) outcome {
 		t.Helper()
 		directory := t.TempDir()
 		fixtures := filepath.Join(directory, "fixtures")
@@ -269,9 +287,12 @@ func TestCancelWorkflowCancelsOnlyTheClosedPullRequestsRuns(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		for status, page := range pages {
-			if err := os.WriteFile(filepath.Join(fixtures, "runs-"+status+".json"), []byte(page), 0o600); err != nil {
-				t.Fatal(err)
+		for status, pages := range listings {
+			for index, page := range pages {
+				name := "runs-" + status + "-" + strconv.Itoa(index+1) + ".json"
+				if err := os.WriteFile(filepath.Join(fixtures, name), []byte(page), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 		// A refused cancel is GitHub's 409; the file holds the status the
@@ -285,19 +306,36 @@ func TestCancelWorkflowCancelsOnlyTheClosedPullRequestsRuns(t *testing.T) {
 method=GET
 path=
 status=
+paginate=
+filter=
 previous=
 for argument in "$@"; do
   [ "$previous" = --method ] && method=$argument
   case "$argument" in
     repos/*) path=$argument ;;
     status=*) status=${argument#status=} ;;
+    --paginate) paginate=1 ;;
+    --jq|-q|--slurp|--template|-t) filter=$argument ;;
   esac
   previous=$argument
 done
 case "$method $path" in
   "GET repos/stokaro/ptah-operator/actions/runs")
     printf '%s\n' "$*" >> "$STUB_DIR/listings"
-    cat "$STUB_DIR/fixtures/runs-$status.json"
+    if [ -n "$filter" ]; then
+      echo "the stub prints a listing only as gh does without $filter" >&2
+      exit 2
+    fi
+    if [ ! -e "$STUB_DIR/fixtures/runs-$status-1.json" ]; then
+      echo "the stub has no $status listing" >&2
+      exit 2
+    fi
+    page=1
+    while [ -e "$STUB_DIR/fixtures/runs-$status-$page.json" ]; do
+      cat "$STUB_DIR/fixtures/runs-$status-$page.json"
+      [ -n "$paginate" ] || break
+      page=$((page + 1))
+    done
     ;;
   "POST repos/stokaro/ptah-operator/actions/runs/"*/cancel)
     id=${path#repos/stokaro/ptah-operator/actions/runs/}
@@ -395,21 +433,55 @@ esac
 			t.Fatalf("the cancellation exited %d, want 1 naming run 107:\n%s", got.exitCode, got.output)
 		}
 	})
-	t.Run("a partial page", func(t *testing.T) {
+	// A page holds at most 100 runs, so the 101st is on a second page.
+	t.Run("a listing longer than one page", func(t *testing.T) {
 		t.Parallel()
-		pages := map[string]string{}
-		for status, page := range standard {
-			pages[status] = page
+		var queued []run
+		for id := int64(1101); id > 1000; id-- {
+			queued = append(queued, run{ID: id, Event: "pull_request", HeadBranch: branch, Repository: repository})
 		}
-		pages["queued"] = strings.Replace(pages["queued"], `"total_count":2`, `"total_count":101`, 1)
-		got := execute(t, pages, nil)
-		if got.exitCode != 1 || !strings.Contains(got.output, "the queued run listing for feature is a partial page") {
-			t.Fatalf("the cancellation exited %d, want 1 on a partial page:\n%s", got.exitCode, got.output)
+		listings := maps.Clone(standard)
+		listings["queued"] = listing(queued...)
+		if len(listings["queued"]) != 2 {
+			t.Fatalf("the queued listing is %d pages, want 2", len(listings["queued"]))
 		}
-		if len(got.canceled) != 0 {
-			t.Fatalf("canceled %v from a partial listing", got.canceled)
+		got := execute(t, listings, map[string]string{"107": "completed"})
+		if got.exitCode != 0 {
+			t.Fatalf("the cancellation failed with %d:\n%s", got.exitCode, got.output)
+		}
+		secondPage := strconv.FormatInt(queued[len(queued)-1].ID, 10)
+		if !slices.Contains(got.canceled, secondPage) {
+			t.Fatalf("run %s, the one on the second page, was not canceled; %d runs were", secondPage, len(got.canceled))
+		}
+		want := []string{"101"}
+		for _, item := range queued {
+			want = append(want, strconv.FormatInt(item.ID, 10))
+		}
+		slices.Sort(want)
+		if canceled := slices.Sorted(slices.Values(got.canceled)); !slices.Equal(canceled, want) {
+			t.Fatalf("canceled %d runs, want %d:\n%s", len(canceled), len(want), got.output)
 		}
 	})
+	// Three runs of this workflow stopped on a queued listing whose
+	// total_count disagreed with its page, on branches with a handful of
+	// runs. The count is not read, whichever way it is off.
+	for _, total := range []int{1, 3} {
+		t.Run("a total_count of "+strconv.Itoa(total)+" over a page of two", func(t *testing.T) {
+			t.Parallel()
+			listings := maps.Clone(standard)
+			listings["queued"] = []string{page(total,
+				run{ID: 105, Event: "pull_request", HeadBranch: branch, Repository: repository},
+				run{ID: 106, Event: "schedule", HeadBranch: branch, Repository: repository},
+			)}
+			got := execute(t, listings, map[string]string{"107": "completed"})
+			if got.exitCode != 0 {
+				t.Fatalf("the cancellation failed with %d:\n%s", got.exitCode, got.output)
+			}
+			if want := []string{"101", "105"}; !slices.Equal(got.canceled, want) {
+				t.Fatalf("canceled %v, want %v\n%s", got.canceled, want, got.output)
+			}
+		})
+	}
 }
 
 func verifyCancelWorkflowSemanticsAtPath(path string) error {

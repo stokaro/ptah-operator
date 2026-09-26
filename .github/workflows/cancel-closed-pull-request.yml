@@ -40,18 +40,19 @@ jobs:
           # Every status a run can hold before it concludes. This run is itself
           # an unfinished pull_request run on the branch, and is left out.
           for status in requested queued pending waiting in_progress; do
+            # --paginate follows the Link header to the last page and prints
+            # each page as a JSON object of its own, which jq reads in turn.
+            # Nothing reads total_count: on a branch with a handful of runs, a
+            # status-filtered listing has returned one its page disagreed with.
             runs="$(gh api \
               --method GET \
+              --paginate \
               -H 'X-GitHub-Api-Version: 2026-03-10' \
               "repos/$GITHUB_REPOSITORY/actions/runs" \
               -f branch="$HEAD_BRANCH" \
               -f event=pull_request \
               -f status="$status" \
               -f per_page=100)"
-            if ! jq -e '(.workflow_runs | length) == .total_count' <<<"$runs" >/dev/null; then
-              echo "the $status run listing for $HEAD_BRANCH is a partial page" >&2
-              exit 1
-            fi
             jq -r \
               --arg branch "$HEAD_BRANCH" \
               --arg repository "$GITHUB_REPOSITORY" \
