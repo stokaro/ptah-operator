@@ -129,28 +129,51 @@ type PtahSchemaSpec struct {
 }
 
 // DatabaseTargetSpec identifies a supported engine, a namespaced Secret key,
-// and the stable coordination realm shared by every route to the same physical
-// database. There is deliberately no namespace field.
+// and the coordination realm of the physical database: a key this namespace
+// owns, or a PtahRealm an administrator admitted this namespace to. There is
+// deliberately no namespace field.
+// +kubebuilder:validation:XValidation:rule="has(self.coordinationKey) != has(self.realmRef)",message="set exactly one of coordinationKey and realmRef"
 type DatabaseTargetSpec struct {
 	// Engine is the database this target speaks. An engine outside the
 	// supported set is refused with a condition rather than attempted.
 	Engine DatabaseEngine `json:"engine"`
 
 	// CoordinationKey is a non-secret, stable identifier for the physical
-	// database realm. Every schema that can reach the same database through an
-	// alias, proxy, or different credential must use exactly the same key.
+	// database, scoped to this resource's namespace. Every resource in the
+	// namespace that can reach the same database through an alias, proxy, or
+	// different credential must use exactly the same key.
+	//
+	// The same key in another namespace is another realm: a resource elsewhere
+	// can neither block this one nor take turns with it by choosing the same
+	// string. A database more than one namespace manages is named with
+	// realmRef instead, which an administrator has to grant.
+	//
+	// Exactly one of coordinationKey and realmRef is set.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`
-	CoordinationKey string `json:"coordinationKey"`
+	CoordinationKey string `json:"coordinationKey,omitempty"`
+
+	// RealmRef names the cluster-scoped PtahRealm this database belongs to.
+	// The realm, not this resource, decides whether the claim is allowed: a
+	// resource whose namespace the realm does not list, or whose engine it
+	// does not name, is refused with reason RealmNotAuthorized and runs
+	// nothing, and it is not counted against the resources the realm does
+	// admit.
+	//
+	// Exactly one of coordinationKey and realmRef is set.
+	// +optional
+	RealmRef *PtahRealmReference `json:"realmRef,omitempty"`
 
 	// SharedRealm declares that this resource manages only part of the database
-	// its coordination key names, and that every other resource managing that
-	// database has declared the same.
+	// its realm names, and that every other resource managing that database
+	// has declared the same.
 	//
 	// It defaults to false. A realm more than one resource claims is refused
 	// while any claimant leaves it false -- including the resource that did
-	// declare it.
+	// declare it. A PtahRealm with sharing Exclusive refuses a second claimant
+	// whatever this says.
 	//
 	// Deleting a resource leaves the realm, and so does suspending it;
 	// resuming puts it back, and the conflict is refused then, before any Job.
@@ -1118,6 +1141,7 @@ const (
 	ReasonProtectedTable               ConditionReason = "ProtectedTable"
 	ReasonPublished                    ConditionReason = "Published"
 	ReasonRealmConflict                ConditionReason = "RealmConflict"
+	ReasonRealmNotAuthorized           ConditionReason = "RealmNotAuthorized"
 	ReasonRefreshFailed                ConditionReason = "RefreshFailed"
 	ReasonRefreshing                   ConditionReason = "Refreshing"
 	ReasonRefreshSuspended             ConditionReason = "RefreshSuspended"

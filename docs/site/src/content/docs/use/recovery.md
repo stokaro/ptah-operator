@@ -29,13 +29,17 @@ rather than interpreting it, at startup and on every reconciliation.
 | `PtahMigrationPlan` | `spec` |
 | `PtahMigrationApproval` | `spec` |
 
+A `PtahRealm` carries no controller state. It is an administrator's grant,
+written and read as `spec` alone.
+
 Some of what a recovery needs lives outside those objects:
 
 - A `PtahSchemaPlan` stores its SQL in ConfigMaps and records each one by name
   **and UID** in `status.publishedChunks`. A `PtahMigrationPlan` stores no SQL:
   it names versions and checksums, and the statements stay in the artifact.
 - The database lock is a Lease in the coordination namespace, one per
-  coordination digest -- the engine and the coordination key hashed together.
+  coordination digest -- the engine hashed together with either the namespace
+  and its coordination key, or the name of the `PtahRealm` a resource names.
   It is how two resources addressing one database take turns.
 - The release identity is a ConfigMap named `ptah-operator-release-activation`
   in the operator namespace, beside the admission singleton
@@ -83,8 +87,10 @@ database holds what it held before the loss.
 
 A backup that omits any of these turns a consistent restore into a rebuild.
 
-- All six kinds, **including status**. A backup that keeps only `spec` keeps
-  none of the record.
+- The six namespaced kinds, **including status**. A backup that keeps only
+  `spec` keeps none of the record.
+- Every `PtahRealm`. A realm has no status, but a restore without it refuses
+  every resource that names it.
 - The plan ConfigMaps a `PtahSchemaPlan` names in `status.publishedChunks`,
   with their UIDs.
 - The verification-policy ConfigMaps the plans and approvals bind by UID and
@@ -110,7 +116,8 @@ holder that no longer exists and makes it wait out an interval for nothing.
 2. Restore or reinstall the release: CRDs, the chart, the admission singleton,
    the certificate Secret, the release activation ConfigMap.
 3. Restore the Secrets and the verification-policy ConfigMaps.
-4. Restore the plan ConfigMaps, then the six kinds with their status.
+4. Restore the `PtahRealm` objects and the plan ConfigMaps, then the six
+   namespaced kinds with their status.
 5. Start the manager. It re-reads the database before it plans.
 
 Do not start the manager between steps. Its first reconciliation will act on

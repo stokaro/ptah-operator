@@ -163,6 +163,107 @@ func readRoleExample(t *testing.T, path string) (*rbacv1.Role, *rbacv1.RoleBindi
 	return role, binding
 }
 
+// readClusterRoleExample reads an example holding one ClusterRole and the one
+// ClusterRoleBinding that grants it.
+func readClusterRoleExample(t *testing.T, path string) (*rbacv1.ClusterRole, *rbacv1.ClusterRoleBinding) {
+	t.Helper()
+	var role *rbacv1.ClusterRole
+	var binding *rbacv1.ClusterRoleBinding
+	for _, raw := range exampleDocuments(t, path) {
+		var typeMeta metav1.TypeMeta
+		if err := json.Unmarshal(raw, &typeMeta); err != nil {
+			t.Fatal(err)
+		}
+		switch typeMeta.Kind {
+		case "ClusterRole":
+			if role != nil {
+				t.Fatal("example contains more than one ClusterRole")
+			}
+			role = &rbacv1.ClusterRole{}
+			if err := json.Unmarshal(raw, role); err != nil {
+				t.Fatal(err)
+			}
+		case "ClusterRoleBinding":
+			if binding != nil {
+				t.Fatal("example contains more than one ClusterRoleBinding")
+			}
+			binding = &rbacv1.ClusterRoleBinding{}
+			if err := json.Unmarshal(raw, binding); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("example contains unexpected kind %q", typeMeta.Kind)
+		}
+	}
+	if role == nil || binding == nil {
+		t.Fatalf("example must contain one ClusterRole and one ClusterRoleBinding: role=%v binding=%v", role != nil, binding != nil)
+	}
+	return role, binding
+}
+
+// readRoleRules returns the rules of every Role and ClusterRole in an example,
+// whatever else it holds.
+func readRoleRules(t *testing.T, path string) []rbacv1.PolicyRule {
+	t.Helper()
+	var rules []rbacv1.PolicyRule
+	for _, raw := range exampleDocuments(t, path) {
+		var typeMeta metav1.TypeMeta
+		if err := json.Unmarshal(raw, &typeMeta); err != nil {
+			t.Fatal(err)
+		}
+		if typeMeta.Kind != "Role" && typeMeta.Kind != "ClusterRole" {
+			continue
+		}
+		var role struct {
+			Rules []rbacv1.PolicyRule `json:"rules"`
+		}
+		if err := json.Unmarshal(raw, &role); err != nil {
+			t.Fatal(err)
+		}
+		rules = append(rules, role.Rules...)
+	}
+	if len(rules) == 0 {
+		t.Fatalf("%s holds no role rules, so there is nothing to check", path)
+	}
+	return rules
+}
+
+func exampleDocuments(t *testing.T, path string) []json.RawMessage {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(content))
+	var documents []json.RawMessage
+	for {
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatal(err)
+		}
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		documents = append(documents, raw)
+	}
+	return documents
+}
+
+func assertClusterGroupBinding(t *testing.T, role *rbacv1.ClusterRole, binding *rbacv1.ClusterRoleBinding, group string) {
+	t.Helper()
+	wantRef := rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: role.Name}
+	if !reflect.DeepEqual(binding.RoleRef, wantRef) {
+		t.Fatalf("ClusterRoleBinding roleRef = %#v, want %#v", binding.RoleRef, wantRef)
+	}
+	wantSubjects := []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: rbacv1.GroupKind, Name: group}}
+	if !reflect.DeepEqual(binding.Subjects, wantSubjects) {
+		t.Fatalf("ClusterRoleBinding subjects = %#v, want %#v", binding.Subjects, wantSubjects)
+	}
+}
+
 func assertGroupBinding(t *testing.T, role *rbacv1.Role, binding *rbacv1.RoleBinding, group string) {
 	t.Helper()
 	wantRef := rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: role.Name}

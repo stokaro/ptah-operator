@@ -1087,10 +1087,11 @@ func TestControllerRBACPredecessorAuthorizationProbeCoversExactPredecessorUnion(
 		probe.Subject.UID != string(fixture.guard.PreviousControllerServiceAccountUID) {
 		t.Fatalf("probe subject = %#v", probe.Subject)
 	}
-	if got, want := len(probe.Checks), 120; got != want {
+	if got, want := len(probe.Checks), 124; got != want {
 		t.Fatalf("predecessor authorization checks = %d, want complete %d-check union", got, want)
 	}
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "list", "operator.ptah.run", "ptahschemas", "", "")
+	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "watch", "operator.ptah.run", "ptahrealms", "", "")
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "watch", "batch", "jobs", "", "")
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "get", "", "pods", "log", "ptah-controller-rbac-revocation-probe")
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "update", "", "events", "", "ptah-controller-rbac-revocation-probe")

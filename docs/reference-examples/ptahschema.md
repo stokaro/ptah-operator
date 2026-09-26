@@ -20,8 +20,9 @@ metadata:
 spec:
   target:
     engine: PostgreSQL
-    # Every resource that can write to this physical database must use this
-    # exact key, whatever DNS alias, proxy or credential it reaches it through.
+    # Every resource in this namespace that can write to this physical
+    # database must use this exact key, whatever DNS alias, proxy or credential
+    # it reaches it through. The key reaches no further than the namespace.
     coordinationKey: production/application-primary
     urlFrom:
       name: application-database
@@ -79,8 +80,10 @@ spec:
 ### A database more than one resource manages
 
 `sharedRealm` is the declaration that taking turns is intended. Every claimant
-of the same `coordinationKey` has to set it: with one left `false`, all of them
-are refused rather than allowed to undo each other's work.
+of the same `coordinationKey` in this namespace has to set it: with one left
+`false`, all of them are refused rather than allowed to undo each other's work.
+When the other claimant lives in another namespace, the database is named by a
+[PtahRealm](../ptahrealm/) instead, and the realm has to allow the sharing too.
 
 `protectedTables` is a fence with no override. A plan that would touch one of
 these leaves the resource `Blocked` with reason `ProtectedTable`, and no

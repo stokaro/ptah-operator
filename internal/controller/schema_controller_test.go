@@ -3002,7 +3002,7 @@ func bindActiveInput(t *testing.T, schema *operatorv1alpha1.PtahSchema) {
 }
 
 func mustTestCoordinationDigest() string {
-	digest, err := fingerprint.DatabaseCoordinationDigest(string(operatorv1alpha1.DatabaseEnginePostgreSQL), testCoordinationKey)
+	digest, err := fingerprint.DatabaseCoordinationDigest(string(operatorv1alpha1.DatabaseEnginePostgreSQL), "team-a", testCoordinationKey)
 	if err != nil {
 		panic(err)
 	}

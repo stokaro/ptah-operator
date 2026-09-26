@@ -139,8 +139,8 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 	if len(configs) != 2 {
 		t.Fatalf("client factory calls = %d, want 2", len(configs))
 	}
-	if got := authorizationSweepSize(barrier); got != 77 {
-		t.Fatalf("authorization sweep size = %d, want 77 exact retired-subject plus current-credential probes", got)
+	if got := authorizationSweepSize(barrier); got != 78 {
+		t.Fatalf("authorization sweep size = %d, want 78 exact retired-subject plus current-credential probes", got)
 	}
 	for index, config := range configs {
 		if config == base {
@@ -834,7 +834,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		probeCounts[probe.Subject.Name] = len(probe.Checks)
 		probeChecks[probe.Subject.Name] = authorizationCheckNames(probe.Checks)
 	}
-	if want := map[string]int{"controller": 26, "certificate": 8, "hook-quiesce": 20}; !reflect.DeepEqual(probeCounts, want) {
+	if want := map[string]int{"controller": 26, "certificate": 8, "hook-quiesce": 21}; !reflect.DeepEqual(probeCounts, want) {
 		t.Fatalf("retired subject probe counts = %#v, want %#v", probeCounts, want)
 	}
 	for _, test := range []struct {
@@ -916,6 +916,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 	}
 	wantChecks := []string{
 		"update CRD ptahschemas.operator.ptah.run",
+		"update CRD ptahrealms.operator.ptah.run",
 		"update controller Deployment",
 		"create guarded Deployment",
 		"delete ClusterRoleBinding ptah-operator",
@@ -974,8 +975,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("check %q includes intentional residual RBAC deletion for %q", check.Name, attributes.Name)
 		}
 	}
-	if len(checks) != 73 || len(byName) != 73 {
-		t.Fatalf("authorization checks = %d total/%d unique, want 73/73", len(checks), len(byName))
+	if len(checks) != 74 || len(byName) != 74 {
+		t.Fatalf("authorization checks = %d total/%d unique, want 74/74", len(checks), len(byName))
 	}
 	for _, name := range wantChecks {
 		if byName[name] == nil {
@@ -1207,8 +1208,8 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 75 {
-		t.Fatalf("split-namespace authorization check count = %d, want 75", len(checks))
+	if len(checks) != 76 {
+		t.Fatalf("split-namespace authorization check count = %d, want 76", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
@@ -1241,7 +1242,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: metav1.NamespaceDefault,
 			wantSelfChecks:        18,
-			wantAllChecks:         67,
+			wantAllChecks:         68,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault},
 		},
 		{
@@ -1249,7 +1250,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: "ptah-coordination",
 			wantSelfChecks:        20,
-			wantAllChecks:         69,
+			wantAllChecks:         70,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination"},
 		},
 		{
@@ -1257,7 +1258,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      "ptah-system",
 			coordinationNamespace: metav1.NamespaceDefault,
 			wantSelfChecks:        23,
-			wantAllChecks:         73,
+			wantAllChecks:         74,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-system"},
 		},
 		{
@@ -1265,7 +1266,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      "ptah-system",
 			coordinationNamespace: "ptah-coordination",
 			wantSelfChecks:        25,
-			wantAllChecks:         75,
+			wantAllChecks:         76,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination", "ptah-system"},
 		},
 	} {
@@ -1339,7 +1340,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					// the finalizer update, and the two status verbs. Its plan
 					// adds one more, create: nothing writes a migration plan's
 					// status, so the controller is not granted that write.
-					wantCounts := map[string]int{"controller": 26, "hook-quiesce": 20}
+					wantCounts := map[string]int{"controller": 26, "hook-quiesce": 21}
 					if certificateEnabled {
 						wantCounts["certificate"] = 8
 					}
@@ -1371,8 +1372,10 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					// name, and there are three more names. 38 rose to 42 when the
 					// controller gained the four PtahMigration grants, and 47 fell
 					// to 45 when the migration plan's two status writes were
-					// revoked, nothing having ever made one.
-					wantUnion := 45 + wantSelfChecks
+					// revoked, nothing having ever made one. 45 rose to 46 when
+					// the realm kind joined the set, for its CRD update; the
+					// controller only reads realms, so it gained no probe.
+					wantUnion := 46 + wantSelfChecks
 					if certificateEnabled {
 						wantUnion += 5
 					}

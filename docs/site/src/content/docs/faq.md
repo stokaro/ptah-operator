@@ -255,7 +255,10 @@ Changing the spec back to a supported engine restarts the workflow at Resolve.
 
 Set one stable `coordinationKey` for every URL alias that reaches the same
 database. Coordination is keyed on that value, so distinct aliases without it
-look like distinct databases and lose their mutual exclusion.
+look like distinct databases and lose their mutual exclusion. The key is scoped
+to the namespace: when the two resources live in different namespaces, ask an
+administrator for a `PtahRealm` that lists both, and name it with
+`spec.target.realmRef` in each.
 
 - [Operations](../use/operations/#external-database-targets)
 

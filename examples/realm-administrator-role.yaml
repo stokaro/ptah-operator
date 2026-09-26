@@ -1,0 +1,33 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ptah-realm-administrator
+rules:
+  # A PtahRealm decides which namespaces may manage a database that more than
+  # one namespace reaches. It is an authorization, so it belongs to whoever
+  # administers the cluster and to nobody who writes desired state: an author
+  # who could edit a realm could list their own namespace in somebody else's
+  # database.
+  #
+  # Realms are cluster-scoped, so no namespaced Role can grant them. The
+  # desired-state author, approver and diagnostic roles beside this file grant
+  # none of it, and the operator's own manager reads realms and never writes
+  # them.
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahrealms"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ptah-realm-administrators
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ptah-realm-administrator
+subjects:
+  # Replace this placeholder with the group that administers the cluster's
+  # databases. Keep it apart from the desired-state author group.
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: <realm-administrator-group>

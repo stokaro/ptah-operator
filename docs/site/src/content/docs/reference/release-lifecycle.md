@@ -65,7 +65,7 @@ The hook never creates, deletes, or force-applies a CRD. A missing CRD, an API
 identity conflict, a stored version absent from the candidate, a rejected
 dry-run, or an incompatible schema identity introduced concurrently makes the
 Helm operation fail. The
-dedicated hook ServiceAccount can `get` and `update` only the six exact Ptah
+dedicated hook ServiceAccount can `get` and `update` only the seven exact Ptah
 CRD names. Separate read-only `list` grants for every kind that stores a
 controller-state version exist solely for the downgrade preflight. Kubernetes
 RBAC cannot restrict `create` by `resourceNames`, so the hook also receives a

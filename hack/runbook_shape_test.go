@@ -70,6 +70,7 @@ var runbookGroups = []runbookGroup{
 		},
 		reference: []string{
 			"One database, one manager",
+			"A database more than one namespace manages",
 			"Kubernetes admission configuration",
 		},
 	},

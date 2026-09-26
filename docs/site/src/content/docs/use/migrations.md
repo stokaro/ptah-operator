@@ -61,9 +61,13 @@ spec:
       key: policy.yaml
 ```
 
-`coordinationKey` names the physical database. Two resources that address the
-same database must use the same key, in any namespace: it is what makes them
-take turns rather than run at once.
+`coordinationKey` names the physical database within the namespace. Two
+resources in the namespace that address the same database must use the same
+key: it is what makes them take turns rather than run at once. The key reaches
+no further than the namespace, so a database that resources in another
+namespace manage too is named by a `PtahRealm` an administrator creates, and
+each resource names it with `spec.target.realmRef` instead. See
+[A database more than one namespace manages](../operations/#a-database-more-than-one-namespace-manages).
 
 Taking turns is not enough to share a database, though, and the operator does
 not pretend otherwise. A database claimed by more than one resource is refused

@@ -110,7 +110,7 @@ kubectl get crd -o json | jq -r '
   "\(.metadata.name)\t\([.status.conditions[]? | select(.type == "Established") | .status] | first // "unknown")"'
 ```
 
-Six CRDs, each `Established=True`, and the manager and certificate-rotator
+Seven CRDs, each `Established=True`, and the manager and certificate-rotator
 Deployments available. Until the webhook certificate has been issued and
 accepted the admission webhooks reject writes, so a `PtahSchema` created in the
 first seconds can be refused; the wait above is what settles it.

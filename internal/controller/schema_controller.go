@@ -36,6 +36,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
@@ -221,14 +222,12 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	// After suspension and before any claim: a suspended resource runs nothing
 	// and needs no verdict about the realm, and the durable mutation-safety
 	// boundaries above have already returned for anything in flight.
-	census, censusErr := takeRealmCensus(
-		ctx, r.Client, schema.Spec.Target.Engine, schema.Spec.Target.CoordinationKey,
-	)
+	verdict, censusErr := takeRealmCensus(ctx, r.Client, schema.Namespace, schema.Spec.Target)
 	if censusErr != nil {
 		return ctrl.Result{}, censusErr
 	}
-	if census.conflict() {
-		return r.schemaRealmBlocked(ctx, schema, census)
+	if refusal, refused := verdict.refusal(); refused {
+		return r.schemaRealmBlocked(ctx, schema, refusal)
 	}
 	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, operatorv1alpha1.ReasonActive, "Reconciliation is active")
 	if schema.Status.ObservedGeneration != schema.Generation {
@@ -274,17 +273,20 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 }
 
-// schemaRealmBlocked refuses a database more than one resource claims.
+// schemaRealmBlocked refuses a claim the realm census does not allow: a
+// database more than one resource claims, or a PtahRealm that does not admit
+// this resource.
 //
 // Blocked with ApprovalRequired false is the fence the approval webhook reads,
 // so no request beginning after this patch can authorize a plan. What ends the
-// refusal is another resource's spec change, and that resource's events do not
-// reach this one, so the verdict is re-taken on a bounded cadence rather than
-// waited on: the shorter of this resource's interval and a minute.
+// refusal is another object's change -- a peer's spec, or the realm's grant --
+// and a peer's events do not reach this one, so the verdict is re-taken on a
+// bounded cadence rather than waited on: the shorter of this resource's
+// interval and a minute.
 func (r *SchemaReconciler) schemaRealmBlocked(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
-	census realmCensus,
+	refusal realmRefusal,
 ) (ctrl.Result, error) {
 	now := r.now()
 	next := realmBlockDeadline(schema.Status.NextReconciliationTime, now, schema.Spec.Interval.Duration)
@@ -292,11 +294,10 @@ func (r *SchemaReconciler) schemaRealmBlocked(
 	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 	schema.Status.ObservedGeneration = schema.Generation
 	schema.Status.NextReconciliationTime = &next
-	message := census.message()
 	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, operatorv1alpha1.ReasonActive, "Reconciliation is active")
-	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, "No plan is approvable while the database realm is contested")
-	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, "No Apply operation is authorized while the database realm is contested")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, message)
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, refusal.Reason, refusal.Approval)
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, refusal.Reason, refusal.Apply)
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, refusal.Reason, refusal.Message)
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1832,7 +1833,7 @@ func (r *SchemaReconciler) consumeResult(
 			}
 		} else {
 			var err error
-			expectedCoordination, err = fingerprint.DatabaseCoordinationDigest(string(engine), schema.Spec.Target.CoordinationKey)
+			expectedCoordination, err = coordination.Digest(schema.Namespace, schema.Spec.Target)
 			if err != nil {
 				return r.retryOperation(ctx, schema, job, fmt.Errorf("derive database coordination digest: %w", err))
 			}
@@ -2250,7 +2251,7 @@ func (r *SchemaReconciler) claimAt(
 			active.ObservationConnectTimeout = pending.ConnectTimeout
 			active.ObservationLockTimeout = pending.LockTimeout
 		} else {
-			coordinationDigest, digestErr := fingerprint.DatabaseCoordinationDigest(string(schema.Spec.Target.Engine), schema.Spec.Target.CoordinationKey)
+			coordinationDigest, digestErr := coordination.Digest(schema.Namespace, schema.Spec.Target)
 			if digestErr != nil {
 				return r.operationFailure(ctx, schema, fmt.Errorf("derive observation coordination digest: %w", digestErr))
 			}
@@ -4449,6 +4450,11 @@ func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
 		Owns(&batchv1.Job{}).
 		Watches(&operatorv1alpha1.PtahSchemaApproval{}, mapApproval).
 		Watches(&corev1.ConfigMap{}, mapVerificationPolicy).
+		Watches(&operatorv1alpha1.PtahRealm{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, object client.Object) []reconcile.Request {
+				return realmClaimantRequests(ctx, r.Client,
+					func() client.ObjectList { return &operatorv1alpha1.PtahSchemaList{} }, object)
+			})).
 		Complete(r)
 }
 
@@ -4499,7 +4505,7 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["source_access"] = pending.Source
 		} else {
 			var err error
-			coordinationDigest, err = fingerprint.DatabaseCoordinationDigest(string(schema.Spec.Target.Engine), schema.Spec.Target.CoordinationKey)
+			coordinationDigest, err = coordination.Digest(schema.Namespace, schema.Spec.Target)
 			if err != nil {
 				return nil, fmt.Errorf("derive database coordination digest: %w", err)
 			}
@@ -4644,7 +4650,7 @@ func pendingMatchesCurrentSchema(schema *operatorv1alpha1.PtahSchema, pending *o
 		schema.Spec.Execution.ConnectTimeout != pending.ConnectTimeout || schema.Spec.Policy.LockTimeout != pending.LockTimeout {
 		return false
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(string(schema.Spec.Target.Engine), schema.Spec.Target.CoordinationKey)
+	coordinationDigest, err := coordination.Digest(schema.Namespace, schema.Spec.Target)
 	if err != nil || coordinationDigest != pending.CoordinationDigest {
 		return false
 	}

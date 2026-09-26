@@ -225,7 +225,7 @@ func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/team-a/app")
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-a", "prod/team-a/app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func readyFixture(
 	policyBytes := []byte("version: 1\n")
 	policyDigest := fingerprint.DigestBytes(policyBytes)
 	policyUID := types.UID("policy-v1-uid")
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/team-a/app")
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-a", "prod/team-a/app")
 	if err != nil {
 		t.Fatal(err)
 	}

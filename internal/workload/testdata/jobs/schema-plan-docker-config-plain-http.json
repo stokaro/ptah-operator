@@ -306,7 +306,7 @@
               },
               {
                 "name": "PTAH_COORDINATION_DIGEST",
-                "value": "sha256:e7842a5b8d1b2f6e0f1704421610b8d777032c9b31d893236683eb2df047acfe"
+                "value": "sha256:6f908ebab47c9631d890bee38ff295c50403e1a5e40b3d5760aa754e098d1fc2"
               },
               {
                 "name": "PTAH_DB_URL",

@@ -59,7 +59,8 @@ decision.
 | `ProofInputsChanged` | Post-Apply proof will restart from its durable immutable binding. |
 | `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. |
 | `Published` | Exact plan bytes were committed to immutable storage. |
-| `RealmConflict` | More than one resource claims this database and at least one has not set `spec.target.sharedRealm`. |
+| `RealmConflict` | More than one resource claims this database and at least one has not set `spec.target.sharedRealm`, or the `PtahRealm` they name admits one claimant at a time. |
+| `RealmNotAuthorized` | The `PtahRealm` in `spec.target.realmRef` does not admit this resource: it does not exist, does not list the resource's namespace, or names another engine. Nothing runs, and the resource is not counted against the ones the realm admits. |
 | `RefreshFailed` | A previously resolved source could not be refreshed. |
 | `Refreshing` | The requested source is being resolved again. |
 | `RefreshSuspended` | Source refresh stopped before dispatch because reconciliation was suspended. |

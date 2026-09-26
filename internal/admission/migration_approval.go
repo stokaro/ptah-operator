@@ -18,7 +18,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
-	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/policy"
 )
@@ -285,9 +285,7 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 		binding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
 		return fmt.Errorf("an execution component changed after the plan was generated")
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
-		string(migration.Spec.Target.Engine), migration.Spec.Target.CoordinationKey,
-	)
+	coordinationDigest, err := coordination.Digest(migration.Namespace, migration.Spec.Target)
 	if err != nil {
 		return fmt.Errorf("derive current database coordination digest: %w", err)
 	}

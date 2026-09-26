@@ -64,6 +64,7 @@ var referenceExampleKinds = []struct {
 	{Kind: "PtahMigration", CRD: "operator.ptah.run_ptahmigrations.yaml", AuthoredInFull: true},
 	{Kind: "PtahMigrationPlan", CRD: "operator.ptah.run_ptahmigrationplans.yaml"},
 	{Kind: "PtahMigrationApproval", CRD: "operator.ptah.run_ptahmigrationapprovals.yaml"},
+	{Kind: "PtahRealm", CRD: "operator.ptah.run_ptahrealms.yaml", AuthoredInFull: true},
 }
 
 func TestEveryReferenceExampleValidatesAgainstTheAPI(t *testing.T) {

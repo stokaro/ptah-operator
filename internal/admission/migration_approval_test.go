@@ -197,7 +197,7 @@ func migrationApprovalFixture(
 		Immutable:  &immutable,
 		Data:       map[string]string{"policy.yaml": string(policyBytes)},
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/team-a/app")
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-a", "prod/team-a/app")
 	if err != nil {
 		t.Fatal(err)
 	}

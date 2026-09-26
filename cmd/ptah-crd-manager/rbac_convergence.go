@@ -678,6 +678,7 @@ func buildTeardownAuthorizationChecks(
 		"ptahmigrationapprovals.operator.ptah.run",
 		"ptahmigrationplans.operator.ptah.run",
 		"ptahmigrations.operator.ptah.run",
+		"ptahrealms.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
 		"ptahschemas.operator.ptah.run",

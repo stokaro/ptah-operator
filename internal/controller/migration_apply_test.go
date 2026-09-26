@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
@@ -396,9 +397,7 @@ func publishedPlanFor(
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
-		string(migration.Spec.Target.Engine), migration.Spec.Target.CoordinationKey,
-	)
+	coordinationDigest, err := coordination.Digest(migration.Namespace, migration.Spec.Target)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,10 +32,10 @@ spec:
 
 ### Beside a PtahSchema, over one database
 
-Both resources name the same `coordinationKey` and both set `sharedRealm`, so
-they take turns under one lease rather than running at once. The operator
-checks that a person decided to share; it cannot check that the areas they
-write to are really disjoint.
+Both resources live in one namespace, name the same `coordinationKey` and set
+`sharedRealm`, so they take turns under one lease rather than running at once.
+The operator checks that a person decided to share; it cannot check that the
+areas they write to are really disjoint.
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
@@ -105,4 +105,35 @@ spec:
     apply: OnApproval
     transactionMode: none
   suspend: false
+```
+
+### A database another namespace manages too
+
+A key reaches no further than its namespace, so a database that resources in
+two namespaces manage is named by a [PtahRealm](../ptahrealm/) an
+administrator created instead. `realmRef` replaces `coordinationKey`; a target
+names one or the other. The realm has to list this resource's namespace, or the
+resource is refused with reason `RealmNotAuthorized` and runs nothing, and a
+realm that allows sharing still needs `sharedRealm` from every claimant.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: reporting-views
+  namespace: reporting
+spec:
+  target:
+    engine: PostgreSQL
+    realmRef:
+      name: production-application-primary
+    sharedRealm: true
+    urlFrom:
+      name: application-database-reporting
+      key: url
+  artifact:
+    ociRef: oci://ghcr.io/example/reporting-migrations:2.0.1
+    verificationPolicyFrom:
+      name: ptah-migration-verification-policy
+      key: policy.yaml
 ```

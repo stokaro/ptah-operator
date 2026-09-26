@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "19"
-    operator.ptah.run/crd-schema-digest: "sha256:f74ba6993fc6a02d63f6858fbe90747cf3b913045bf74b17b47d802726ef78a3"
+    operator.ptah.run/crd-schema-version: "20"
+    operator.ptah.run/crd-schema-digest: "sha256:8b4c00becca910729001863f138d3f3c703ed1265795ec1d9368d085046aacd0"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -722,6 +722,16 @@ spec:
                     minLength: 1
                     pattern: ^[A-Za-z][A-Za-z0-9._-]*$
                     type: string
+                  realmRef:
+                    properties:
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                    required:
+                    - name
+                    type: object
                   sharedRealm:
                     default: false
                     type: boolean
@@ -739,10 +749,12 @@ spec:
                     type: object
                     x-kubernetes-map-type: atomic
                 required:
-                - coordinationKey
                 - engine
                 - urlFrom
                 type: object
+                x-kubernetes-validations:
+                - message: set exactly one of coordinationKey and realmRef
+                  rule: has(self.coordinationKey) != has(self.realmRef)
             required:
             - artifact
             - target

@@ -24,6 +24,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/policy"
 )
@@ -316,10 +317,7 @@ func (h *ApprovalHandler) validateBinding(
 	if err := approvalMatchesPlan(approval.Spec, plan.Spec); err != nil {
 		return err
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
-		string(schema.Spec.Target.Engine),
-		schema.Spec.Target.CoordinationKey,
-	)
+	coordinationDigest, err := coordination.Digest(schema.Namespace, schema.Spec.Target)
 	if err != nil {
 		return fmt.Errorf("derive current database coordination digest: %w", err)
 	}

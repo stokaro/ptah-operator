@@ -1,0 +1,80 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    operator.ptah.run/controller-state-version: "2"
+    operator.ptah.run/crd-schema-version: "20"
+    operator.ptah.run/crd-schema-digest: "sha256:8c001146bf02b378911dae351760f511fc465d7dafcda94e849b14d5b329d2fa"
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: ptahrealms.operator.ptah.run
+spec:
+  group: operator.ptah.run
+  names:
+    kind: PtahRealm
+    listKind: PtahRealmList
+    plural: ptahrealms
+    shortNames:
+    - ptahr
+    singular: ptahrealm
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
+    - jsonPath: .spec.sharing
+      name: Sharing
+      type: string
+    - jsonPath: .spec.namespaces
+      name: Namespaces
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              engine:
+                maxLength: 63
+                minLength: 1
+                pattern: ^[A-Za-z][A-Za-z0-9._-]*$
+                type: string
+                x-kubernetes-validations:
+                - message: engine is immutable; a realm is one physical database
+                  rule: self == oldSelf
+              namespaces:
+                items:
+                  maxLength: 63
+                  minLength: 1
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 256
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              sharing:
+                enum:
+                - Exclusive
+                - Shared
+                type: string
+            required:
+            - engine
+            - namespaces
+            - sharing
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

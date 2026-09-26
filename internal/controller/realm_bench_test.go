@@ -31,10 +31,15 @@ func realmBenchObjects(count int, shared bool) []client.Object {
 		if !shared {
 			key = fmt.Sprintf("team/realm-%d", index)
 		}
-		objects = append(objects, realmSchemaFixture(fmt.Sprintf("schema-%d", index), key, shared))
+		objects = append(objects, realmSchemaFixture(realmBenchNamespace, fmt.Sprintf("schema-%d", index), key, shared))
 	}
 	return objects
 }
+
+// realmBenchNamespace holds every benchmark resource. A coordination key is
+// scoped to its namespace, so one namespace is what makes the shared shape one
+// realm.
+const realmBenchNamespace = "team-b"
 
 func realmBenchKey(shared bool) string {
 	if shared {
@@ -53,7 +58,7 @@ func realmBenchIndexer(objects []client.Object) toolscache.Indexer {
 			if !ok {
 				return nil, nil
 			}
-			return realmDigestIndexValue(schema.Spec.Target), nil
+			return realmDigestIndexValue(schema.Namespace, schema.Spec.Target), nil
 		},
 	})
 	for _, object := range objects {
@@ -89,7 +94,7 @@ func benchmarkRealmMembership(b *testing.B, count int, shared bool, indexed bool
 				if !ok {
 					continue
 				}
-				if claimsRealm(false, schema.Spec.Target, digest) {
+				if claimsRealm(false, schema.Namespace, schema.Spec.Target, digest) {
 					members++
 				}
 			}
@@ -103,7 +108,7 @@ func benchmarkRealmMembership(b *testing.B, count int, shared bool, indexed bool
 func realmBenchDigest(b *testing.B, shared bool) string {
 	b.Helper()
 
-	values := realmDigestIndexValue(operatorv1alpha1.DatabaseTargetSpec{
+	values := realmDigestIndexValue(realmBenchNamespace, operatorv1alpha1.DatabaseTargetSpec{
 		Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 		CoordinationKey: realmBenchKey(shared),
 	})
@@ -145,12 +150,15 @@ func BenchmarkRealmCensus(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				census, err := takeRealmCensus(context.Background(), api,
-					operatorv1alpha1.DatabaseEnginePostgreSQL, realmBenchKey(false))
+				verdict, err := takeRealmCensus(context.Background(), api, realmBenchNamespace,
+					operatorv1alpha1.DatabaseTargetSpec{
+						Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
+						CoordinationKey: realmBenchKey(false),
+					})
 				if err != nil {
 					b.Fatal(err)
 				}
-				if census.total() == 0 {
+				if verdict.Census.total() == 0 {
 					b.Fatal("the census found no claimant, so this measures the wrong thing")
 				}
 			}

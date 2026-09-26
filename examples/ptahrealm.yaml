@@ -1,0 +1,22 @@
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahRealm
+metadata:
+  # Cluster-scoped. The name is what a resource writes in
+  # spec.target.realmRef.name, so name the physical database rather than a
+  # team: the realm outlives any one namespace's use of it.
+  name: production-orders-primary
+spec:
+  # The database family. A resource that names this realm with another engine
+  # is refused, and the field cannot change.
+  engine: PostgreSQL
+  # The namespaces whose PtahSchema and PtahMigration resources may manage this
+  # database, by name. A resource in any other namespace that names the realm
+  # is refused with reason RealmNotAuthorized, and it is not counted against the
+  # resources listed here, so it cannot block them.
+  namespaces:
+    - application
+    - reporting
+  # Shared lets more than one resource manage the database at once, provided
+  # each of them also sets spec.target.sharedRealm. Exclusive admits one at a
+  # time, whatever the resources declare.
+  sharing: Shared

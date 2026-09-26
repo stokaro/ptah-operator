@@ -25,6 +25,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
@@ -976,10 +977,7 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 }
 
 func schemaCoordinationDigest(schema *operatorv1alpha1.PtahSchema) (string, error) {
-	digest, err := fingerprint.DatabaseCoordinationDigest(
-		string(schema.Spec.Target.Engine),
-		schema.Spec.Target.CoordinationKey,
-	)
+	digest, err := coordination.Digest(schema.Namespace, schema.Spec.Target)
 	if err != nil {
 		return "", fmt.Errorf("derive database coordination digest: %w", err)
 	}

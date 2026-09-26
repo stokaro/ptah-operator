@@ -149,7 +149,7 @@ is what you mean.
 Helm reporting success means its hooks completed, which is not the same as the
 manager serving.
 [Confirm it installed](../../start/install/#confirm-it-installed) carries the
-two readings that settle it: six CRDs at `Established=True`, and the manager
+two readings that settle it: seven CRDs at `Established=True`, and the manager
 and certificate-rotator Deployments available.
 
 #### Where to stop {#install-stop}
@@ -225,7 +225,7 @@ helm upgrade <release> <chart> --values <values>
 #### What proves it worked {#upgrade-evidence}
 
 The readings are the ones an install ends with, against the new digests:
-`Established=True` on six CRDs, both Deployments available, and manager Pods
+`Established=True` on seven CRDs, both Deployments available, and manager Pods
 whose image is the candidate's.
 
 An upgrade rerun against the release that is already active, the shape a GitOps
@@ -307,7 +307,7 @@ separates a retry from the no-op an already-active release produces.
 
 #### What proves it worked {#retry-evidence}
 
-The same readings an upgrade ends with: `Established=True` on six CRDs, both
+The same readings an upgrade ends with: `Established=True` on seven CRDs, both
 Deployments available, and manager Pods carrying the candidate image. The
 activation parameter back at `{active=T, phase=active}` is what says the
 credential phase completed rather than stalled.
@@ -413,7 +413,7 @@ its exact attributed denial on every API endpoint, deleted its own cleanup
 ServiceAccount, and watched every frozen endpoint answer `Unauthorized` for an
 uninterrupted five seconds.
 
-What remains afterwards is deliberate: the six CRDs with their custom
+What remains afterwards is deliberate: the seven CRDs with their custom
 resources, and one cluster-scoped pair named
 `ptah-operator-parameter-informer-anchor` that exists so the next install can
 run its own hooks. [Release lifecycle](../../reference/release-lifecycle/)
@@ -470,7 +470,7 @@ In this order:
 3. Place the databases in a maintenance window.
 4. Scale the manager and certificate-rotation Deployments to zero.
 5. Back up all Ptah custom resources.
-6. Uninstall the release, and verify that the six CRDs and their objects
+6. Uninstall the release, and verify that the seven CRDs and their objects
    remain.
 7. Install exactly one release of the first published version or newer, with
    the new invariant values where those are what is changing.
@@ -479,7 +479,7 @@ In this order:
 
 #### What proves it worked {#offline-evidence}
 
-The six CRDs and their objects present after the uninstall, before anything is
+The seven CRDs and their objects present after the uninstall, before anything is
 installed over them. Then the new release's admission annotations carrying its
 own identity, manager readiness, and both kinds converging again.
 
@@ -487,7 +487,7 @@ own identity, manager readiness, and both kinds converging again.
 
 Do not start with a migration still running: a migration left running is a
 writer this procedure does not stop. Do not install over the uninstalled
-release if the six CRDs or their objects did not survive it, and do not treat a
+release if the seven CRDs or their objects did not survive it, and do not treat a
 resource whose `status.unresolvedRun` went missing as one that has nothing
 outstanding.
 
@@ -496,20 +496,21 @@ outstanding.
 Nothing here is time-bounded, so a failed step is repeated rather than worked
 around: the databases are in maintenance and both kinds are suspended, which is
 the state the procedure is safe to sit in. Restore the backed-up custom
-resources into the six retained CRDs before resuming either kind.
+resources into the seven retained CRDs before resuming either kind.
 
 `coordination.namespace` contains the fixed manager leader-election Lease and
 the database target Leases. It defaults to the release namespace and may name
-a separately administered namespace for the same release. Within that
-namespace, every resource that can mutate one physical database must share the
-exact `spec.target.coordinationKey`, even when connection URLs use different
-aliases, proxies, or credentials.
+a separately administered namespace for the same release. Every resource that
+can mutate one physical database must claim the same realm, even when
+connection URLs use different aliases, proxies, or credentials: the same
+`spec.target.coordinationKey` when they all live in one namespace, or the same
+`PtahRealm` when they do not. See
+[A database more than one namespace manages](#a-database-more-than-one-namespace-manages).
 
 ### One database, one manager
 
-Serialization is not ownership. Two resources that share a coordination key
-never run at the same time, and they can still undo each other's work by taking
-turns: one converges the database to a declared schema, the other applies a
+Serialization is not ownership. Two resources that claim one realm never run
+at the same time, and they can still undo each other's work by taking turns: one converges the database to a declared schema, the other applies a
 migration that changes it back, and each reports success.
 
 So a database more than one resource claims is refused rather than queued.
@@ -545,6 +546,86 @@ A declaration on one claimant does not wake the others, so a contested realm is
 re-examined on a bounded cadence: the shorter of the resource's `spec.interval`
 and one minute. Every claimant leaves `Blocked` within a minute of the last one
 declaring, whatever interval it runs on.
+
+### A database more than one namespace manages
+
+A coordination key belongs to its namespace. The realm it names is the engine,
+the namespace and the key together, so the same key written in another
+namespace is another realm, with a census and a Lease of its own. A key is a
+string anybody who can create a resource may write, and if it reached across
+namespaces, one resource created elsewhere with the key a tenant uses would put
+every resource of that tenant in `RealmConflict`, behind a status that names
+counts and cannot say where the claimant is.
+
+A database that resources in more than one namespace manage is named by a
+`PtahRealm`, which a cluster administrator creates and which lists the
+namespaces it admits:
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahRealm
+metadata:
+  name: production-orders-primary
+spec:
+  engine: PostgreSQL
+  namespaces:
+    - application
+    - reporting
+  sharing: Shared
+```
+
+Each resource names it in place of a key:
+
+```yaml
+spec:
+  target:
+    engine: PostgreSQL
+    realmRef:
+      name: production-orders-primary
+    sharedRealm: true
+```
+
+The realm is the authorization. A resource that names it from a namespace it
+does not list, with another engine, or when no such realm exists goes
+`Blocked` with reason `RealmNotAuthorized` and runs no Job. It is also left out
+of the census of the resources the realm does list, so it blocks none of them.
+The refusal reads the same in all three cases, and names only the realm the
+resource asked for and its own namespace.
+
+Among the listed namespaces the rules above hold unchanged, and the realm adds
+one of its own. `sharing: Exclusive` admits one claimant at a time, whatever
+each declares; `sharing: Shared` admits several when every one of them sets
+`sharedRealm`. The administrator permits the sharing and each claimant states
+that it manages only part of the database, and neither statement stands in for
+the other.
+
+There is no default realm, and no realm is needed for a key. A key can reach
+only its own namespace, so it needs nobody's grant; a `realmRef` can reach any
+namespace, so it needs one. A resource that names a realm nobody created is
+refused rather than treated as a key, because falling back would make the
+realm's absence a way into a database that the realm, once created, would not
+admit.
+
+The census reads the realm from the manager's cache before every claim, and a
+change to a realm wakes the resources that name it. Removing a namespace does
+not stop an operation already running there: the resource is refused at its
+next claim, the same way a conflict is.
+
+Only an administrator should be able to write a realm. The chart grants the
+manager `get`, `list` and `watch` on `ptahrealms` and nothing more, and
+[`examples/realm-administrator-role.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/realm-administrator-role.yaml)
+is a ClusterRole for the people who decide realm membership. None of the
+author, approver or diagnostic examples reaches realms.
+
+A realm lists namespaces, so it is an administrator's object: the operator
+writes no status to it, and nothing a tenant reads names another namespace. An
+administrator finds the claimants of one realm with a cluster-wide read:
+
+```sh
+kubectl get ptahschemas,ptahmigrations -A -o json |
+  jq -r '.items[] | select(.spec.target.realmRef.name == "production-orders-primary")
+    | "\(.kind) \(.metadata.namespace)/\(.metadata.name) \(.status.phase)"'
+```
 
 The manager has exact `get`, `create`, and `update` access to Leases through
 one namespace Role in `coordination.namespace`. When that namespace differs
@@ -1533,7 +1614,8 @@ longer than its Job would take, and `PtahOperatorOperationStalled` covers a
 wait that does not end. The Lease names its holder:
 `kubectl -n <operator namespace> get leases -o wide`. Two resources claiming
 one realm without `spec.target.sharedRealm` is a refusal instead, and reads as
-`Blocked` with reason `RealmConflict`.
+`Blocked` with reason `RealmConflict`; a resource a `PtahRealm` does not admit
+reads as `Blocked` with reason `RealmNotAuthorized`.
 
 ### Finding a resource that has stopped converging
 
