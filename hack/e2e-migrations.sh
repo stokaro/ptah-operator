@@ -5687,12 +5687,21 @@ assert_the_isolated_run_settles() {
 #
 # #242 asks that suspension issue no cleanup SQL and leave an operation that may
 # have started SQL accounted for. The controller reads the claim before it reads
-# spec.suspend, so a dispatched Apply is carried to its result and only the work
+# spec.suspend, so a dispatched Apply is carried to its end and only the work
 # after it is withheld. The row suspends the resource inside the uncertain
 # artifact's slow third migration, when two migrations have committed and the
-# executor is still running, and holds three things apart: the claim and its Job
-# outlive the suspension, the run's result is recorded against that Job, and
-# nothing is dispatched once the resource reads Suspended.
+# executor is still running.
+#
+# What the run's end is recorded as is decided by the input fingerprint, and
+# the fingerprint carries the generation (migrationInputFingerprint in
+# internal/controller/migration_controller.go), which the API server bumps on
+# every spec edit, suspend included. So the harvest finds the inputs changed
+# and records the run as Unknown against its Job rather than reading its
+# result. That is the conservative answer and the row asserts it: the claim
+# and its Job outlive the suspension, the run is held unresolved rather than
+# retried, nothing is dispatched while the resource is suspended, and once it
+# is resumed a reading of the database settles the record without a second
+# Apply.
 run_suspension_during_apply_proof() {
 	create_suspend_database
 	create_suspend_migration_resource
@@ -5718,6 +5727,7 @@ run_suspension_during_apply_proof() {
 
 	wait_for_suspended_after_apply
 	# The run finished what it started, once, and suspension undid none of it.
+	# The database says so even though the resource does not yet know.
 	[ "$(suspend_applied_count 3)" = 3 ] ||
 		fail "the $ENGINE suspended run did not end with its three migrations applied once"
 	[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$SUSPEND_DATABASE")" = 3 ] ||
@@ -5739,7 +5749,8 @@ run_suspension_during_apply_proof() {
 		jq -e --arg uid "$SUSPEND_APPLY_JOB_UID" '
           .status.phase == "Suspended" and
           (.status.activeOperation // null) == null and
-          .status.lastRun.jobUID == $uid
+          .status.lastRun.jobUID == $uid and
+          .status.unresolvedRun.jobUID == $uid
         ' "$STATUS_FILE" >/dev/null || {
 			report_suspend_state
 			fail "$SUSPEND_MIGRATION claimed new work while it was suspended"
@@ -5752,10 +5763,40 @@ run_suspension_during_apply_proof() {
 		report_suspend_state
 		fail "$SUSPEND_MIGRATION created $suspend_late_jobs Job(s) after it read Suspended"
 	}
+
+	# Resumed, the resource reads the database, finds every migration the
+	# artifact carries, and that reading is the one transition that removes an
+	# unresolved record. The Apply is not run again to find out.
+	printf '%s\n' "$SUSPEND_APPLY_JOB_UID" >"$WORK_DIR/suspend-applies.txt"
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$SUSPEND_MIGRATION" --type=merge \
+		--patch '{"spec":{"suspend":false}}' >/dev/null ||
+		fail "$SUSPEND_MIGRATION could not be resumed"
+	suspend_settle_deadline=$(deadline_from_now)
+	suspend_settled=no
+	while [ "$(date +%s)" -lt "$suspend_settle_deadline" ]; do
+		suspend_status
+		assert_no_new_apply_job "$WORK_DIR/suspend-applies.txt" \
+			"after it was resumed from a suspended Apply" "$SUSPEND_MIGRATION"
+		if jq -e '
+          .status.phase == "InSync" and
+          (.status.unresolvedRun // null) == null and
+          .status.observedGeneration == .metadata.generation
+        ' "$STATUS_FILE" >/dev/null; then
+			suspend_settled=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$suspend_settled" = yes ] || {
+		report_suspend_state
+		fail "$SUSPEND_MIGRATION did not settle its unresolved run from the database once resumed"
+	}
+	[ "$(suspend_applied_count 3)" = 3 ] ||
+		fail "the $ENGINE migrations were not applied exactly once after $SUSPEND_MIGRATION settled"
 	k -n "$TEST_NAMESPACE" delete ptahmigration "$SUSPEND_MIGRATION" \
 		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "$SUSPEND_MIGRATION was not removed"
-	printf 'e2e migrations: PASS %s carried a suspended Apply to its result and dispatched nothing after\n' \
+	printf 'e2e migrations: PASS %s held a suspended Apply unresolved, ran nothing while suspended, and settled it from the database\n' \
 		"$ENGINE_KIND" >&2
 }
 
@@ -5816,9 +5857,10 @@ assert_suspension_retains_its_running_apply() {
 		fail "the $ENGINE Apply Pod stopped, so the retention above proved nothing"
 }
 
-# The result the resource records is the dispatched Job's, and the resource
-# settles as Suspended only after it. The Jobs that exist on the document that
-# matched are the ones the quiet window below is measured against.
+# The run the resource records is the dispatched Job's, as an unknown outcome
+# held unresolved, because the suspension changed the inputs the claim was
+# fingerprinted from. The Jobs that exist on the document that matched are the
+# ones the quiet window below is measured against.
 wait_for_suspended_after_apply() {
 	suspended_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$suspended_deadline" ]; do
@@ -5827,8 +5869,11 @@ wait_for_suspended_after_apply() {
           .status.phase == "Suspended" and
           (.status.activeOperation // null) == null and
           .status.lastRun.jobUID == $uid and
-          .status.lastRun.outcome == "Applied" and
-          any(.status.conditions[]?; .type == "Ready" and .status == "False" and .reason == "Suspended")
+          .status.lastRun.outcome == "Unknown" and
+          .status.unresolvedRun.jobUID == $uid and
+          any(.status.conditions[]?;
+            .type == "Blocked" and .status == "True" and .reason == "ApplyOutcomeUnknown" and
+            (.message | test("inputs changed")))
         ' "$STATUS_FILE" >/dev/null; then
 			SUSPENDED_JOB_UIDS=$(suspend_job_uids)
 			return 0
@@ -5836,7 +5881,7 @@ wait_for_suspended_after_apply() {
 		sleep 5
 	done
 	report_suspend_state
-	fail "$SUSPEND_MIGRATION did not record its Apply's result and settle as Suspended within ${TIMEOUT_SECONDS}s"
+	fail "$SUSPEND_MIGRATION did not hold its Apply unresolved and settle as Suspended within ${TIMEOUT_SECONDS}s"
 }
 
 create_suspend_database() {
