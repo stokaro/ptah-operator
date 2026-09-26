@@ -410,24 +410,13 @@ func TestMissingSecretIsRecreatedOnlyBehindEstablishedGuard(t *testing.T) {
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
 	installEstablishedSecretCreateGuard(t, client, config)
 	installSecretCreateAdmission(t, client, config)
-	first := mustNewTestRotator(t, client, config, now, &recordingProber{})
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 
-	result, err := first.Run(context.Background())
-	if err != nil || result.RequeueAfter != config.CASwitchDelay {
-		t.Fatalf("first pass = %+v, %v; want a wait of the CA switch delay", result, err)
-	}
-	if _, getErr := client.CoreV1().Secrets(config.Namespace).Get(context.Background(), config.SecretName, metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
-		t.Fatalf("the Secret was recreated before the switch delay passed: %v", getErr)
-	}
-	for _, bundle := range managedEntryBundles(t, client, config) {
-		if !caBundleContainsCertificate(bundle, old.caPEM) {
-			t.Fatal("expansion dropped the CA the running manager still serves")
-		}
-		assertBundleCertificateCount(t, bundle, 2)
-	}
-	now = now.Add(result.RequeueAfter)
-	if _, err := mustNewTestRotator(t, client, config, now, &recordingProber{}).Run(context.Background()); err != nil {
-		t.Fatalf("switch pass error = %v", err)
+	// A missing Secret is already broken, so it comes back in the same pass
+	// as the expansion instead of after the switch delay.
+	result, err := rotator.Run(context.Background())
+	if err != nil || result.RequeueAfter != 0 {
+		t.Fatalf("Run() = %+v, %v; want the Secret recreated in one pass", result, err)
 	}
 
 	created := mustGetSecret(t, client, config)
@@ -753,8 +742,7 @@ func TestMissingSecretCreateRaceNeverOverwritesDifferentMaterial(t *testing.T) {
 		}
 		return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: "secrets"}, config.SecretName)
 	})
-	switchAt := mustExpandCATransition(t, client, config, now, &recordingProber{})
-	rotator := mustNewTestRotator(t, client, config, switchAt, &recordingProber{})
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 	_, err := rotator.Run(context.Background())
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("different material")) {
 		t.Fatalf("Run() error = %v, want different-material race", err)

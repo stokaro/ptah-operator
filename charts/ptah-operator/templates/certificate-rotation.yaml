@@ -1,5 +1,6 @@
 {{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) }}
 {{- include "ptah-operator.validateCertificatePorts" . -}}
+{{- include "ptah-operator.validateCertificateRenewalThreshold" . -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- $discoveryRoleName := include "ptah-operator.certificateDiscoveryRoleName" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
