@@ -1,0 +1,293 @@
+{
+  "metadata": {
+    "name": "ptah-m-resolve-orders-e2410f81c5b6d9c4",
+    "namespace": "team-a",
+    "labels": {
+      "app.kubernetes.io/component": "migration-operation",
+      "app.kubernetes.io/managed-by": "ptah-operator",
+      "operator.ptah.run/migration": "orders",
+      "operator.ptah.run/operation": "resolve",
+      "operator.ptah.run/operation-id": "5d4cc820b37f3d1f"
+    },
+    "annotations": {
+      "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "operator.ptah.run/controller-revision": "controller-test-revision",
+      "operator.ptah.run/controller-state-version": "1",
+      "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+      "operator.ptah.run/input-fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "operator.ptah.run/operation-id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "operator.ptah.run/ptah-version": "v0.3.0"
+    },
+    "ownerReferences": [
+      {
+        "apiVersion": "operator.ptah.run/v1alpha1",
+        "kind": "PtahMigration",
+        "name": "orders",
+        "uid": "migration-uid",
+        "controller": true,
+        "blockOwnerDeletion": true
+      }
+    ]
+  },
+  "spec": {
+    "parallelism": 1,
+    "completions": 1,
+    "activeDeadlineSeconds": 600,
+    "backoffLimit": 0,
+    "manualSelector": false,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/component": "migration-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/migration": "orders",
+          "operator.ptah.run/operation": "resolve",
+          "operator.ptah.run/operation-id": "5d4cc820b37f3d1f"
+        },
+        "annotations": {
+          "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "operator.ptah.run/controller-revision": "controller-test-revision",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+          "operator.ptah.run/input-fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "operator.ptah.run/operation-id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "operator.ptah.run/ptah-version": "v0.3.0"
+        }
+      },
+      "spec": {
+        "volumes": [
+          {
+            "name": "runner",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "64Mi"
+            }
+          },
+          {
+            "name": "work",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "128Mi"
+            }
+          },
+          {
+            "name": "registry-docker-config",
+            "secret": {
+              "secretName": "registry-docker",
+              "items": [
+                {
+                  "key": ".dockerconfigjson",
+                  "path": "config.json",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          },
+          {
+            "name": "registry-ca",
+            "configMap": {
+              "name": "registry-ca",
+              "items": [
+                {
+                  "key": "ca.pem",
+                  "path": "ca.pem",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          }
+        ],
+        "initContainers": [
+          {
+            "name": "install-runner",
+            "image": "example.invalid/operator@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "command": [
+              "/ptah-runner"
+            ],
+            "args": [
+              "--install-to",
+              "/runner/ptah-runner"
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "mountPath": "/runner"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "containers": [
+          {
+            "name": "ptah",
+            "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "command": [
+              "/runner/ptah-runner"
+            ],
+            "args": [
+              "--ptah-binary",
+              "/usr/local/bin/ptah",
+              "--max-result-bytes",
+              "8388608",
+              "--max-plan-bytes",
+              "8388608",
+              "--operation",
+              "resolve"
+            ],
+            "workingDir": "/work",
+            "env": [
+              {
+                "name": "DOCKER_CONFIG",
+                "value": "/credentials/docker"
+              },
+              {
+                "name": "HOME",
+                "value": "/work"
+              },
+              {
+                "name": "PTAH_OCI_REGISTRY",
+                "value": "registry.example"
+              },
+              {
+                "name": "PTAH_OPERATION_ID",
+                "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                "value": "DockerConfigJSON"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "registry-docker",
+                    "key": "registry"
+                  }
+                }
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_CA_SHA256_GRANT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "registry-docker",
+                    "key": "caSHA256"
+                  }
+                }
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_CA_SOURCE_FILE",
+                "value": "/credentials/ca-source/ca.pem"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_HAS_CA",
+                "value": "true"
+              },
+              {
+                "name": "PTAH_PLAIN_HTTP",
+                "value": "false"
+              },
+              {
+                "name": "PTAH_REQUESTED_REFERENCE",
+                "value": "oci://registry.example/acme/orders-migrations:stable"
+              },
+              {
+                "name": "TMPDIR",
+                "value": "/work"
+              }
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              },
+              {
+                "name": "work",
+                "mountPath": "/work"
+              },
+              {
+                "name": "registry-docker-config",
+                "readOnly": true,
+                "mountPath": "/credentials/docker"
+              },
+              {
+                "name": "registry-ca",
+                "readOnly": true,
+                "mountPath": "/credentials/ca-source"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "restartPolicy": "Never",
+        "terminationGracePeriodSeconds": 30,
+        "activeDeadlineSeconds": 600,
+        "dnsPolicy": "ClusterFirst",
+        "nodeSelector": {
+          "workload": "database"
+        },
+        "serviceAccountName": "migration-jobs",
+        "automountServiceAccountToken": false,
+        "securityContext": {
+          "runAsUser": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "fsGroup": 65532,
+          "fsGroupChangePolicy": "OnRootMismatch",
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "imagePullSecrets": [
+          {
+            "name": "image-pull"
+          }
+        ],
+        "schedulerName": "default-scheduler",
+        "enableServiceLinks": false
+      }
+    },
+    "completionMode": "NonIndexed",
+    "suspend": false,
+    "podReplacementPolicy": "Failed"
+  },
+  "status": {}
+}

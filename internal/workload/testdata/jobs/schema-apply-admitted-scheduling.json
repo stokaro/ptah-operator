@@ -1,0 +1,376 @@
+{
+  "metadata": {
+    "name": "ptah-apply-orders-6674d54604caaf6b",
+    "namespace": "team-a",
+    "labels": {
+      "app.kubernetes.io/component": "schema-operation",
+      "app.kubernetes.io/managed-by": "ptah-operator",
+      "operator.ptah.run/operation": "apply",
+      "operator.ptah.run/operation-id": "aa8c786b111a8c3b",
+      "operator.ptah.run/schema": "orders"
+    },
+    "annotations": {
+      "operator.ptah.run/admission-snapshot-digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "operator.ptah.run/controller-revision": "controller-test-revision",
+      "operator.ptah.run/controller-state-version": "1",
+      "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+      "operator.ptah.run/input-fingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "operator.ptah.run/operation-id": "operation-01",
+      "operator.ptah.run/plan-content-digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "operator.ptah.run/plan-fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "operator.ptah.run/ptah-version": "v0.3.0"
+    },
+    "ownerReferences": [
+      {
+        "apiVersion": "operator.ptah.run/v1alpha1",
+        "kind": "PtahSchema",
+        "name": "orders",
+        "uid": "schema-uid",
+        "controller": true,
+        "blockOwnerDeletion": true
+      }
+    ]
+  },
+  "spec": {
+    "parallelism": 1,
+    "completions": 1,
+    "activeDeadlineSeconds": 540,
+    "backoffLimit": 0,
+    "manualSelector": false,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "operator.ptah.run/operation": "apply",
+          "operator.ptah.run/operation-id": "aa8c786b111a8c3b",
+          "operator.ptah.run/schema": "orders"
+        },
+        "annotations": {
+          "operator.ptah.run/admission-snapshot-digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+          "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "operator.ptah.run/controller-revision": "controller-test-revision",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+          "operator.ptah.run/input-fingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "operator.ptah.run/operation-id": "operation-01",
+          "operator.ptah.run/plan-content-digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "operator.ptah.run/plan-fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "operator.ptah.run/ptah-version": "v0.3.0"
+        }
+      },
+      "spec": {
+        "volumes": [
+          {
+            "name": "runner",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "64Mi"
+            }
+          },
+          {
+            "name": "work",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "128Mi"
+            }
+          },
+          {
+            "name": "plan",
+            "projected": {
+              "sources": [
+                {
+                  "configMap": {
+                    "name": "ptah-plan-0123456789abcdef-000",
+                    "items": [
+                      {
+                        "key": "chunk",
+                        "path": "000.plan",
+                        "mode": 288
+                      }
+                    ]
+                  }
+                },
+                {
+                  "configMap": {
+                    "name": "ptah-plan-0123456789abcdef-001",
+                    "items": [
+                      {
+                        "key": "chunk",
+                        "path": "001.plan",
+                        "mode": 288
+                      }
+                    ]
+                  }
+                }
+              ],
+              "defaultMode": 288
+            }
+          }
+        ],
+        "initContainers": [
+          {
+            "name": "install-runner",
+            "image": "example.invalid/operator@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "command": [
+              "/ptah-runner"
+            ],
+            "args": [
+              "--install-to",
+              "/runner/ptah-runner"
+            ],
+            "resources": {
+              "limits": {
+                "memory": "512Mi"
+              },
+              "requests": {
+                "cpu": "250m",
+                "memory": "256Mi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "mountPath": "/runner"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "containers": [
+          {
+            "name": "ptah",
+            "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "command": [
+              "/runner/ptah-runner"
+            ],
+            "args": [
+              "--ptah-binary",
+              "/usr/local/bin/ptah",
+              "--max-result-bytes",
+              "8388608",
+              "--max-plan-bytes",
+              "8388608",
+              "--operation",
+              "apply"
+            ],
+            "workingDir": "/work",
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/work"
+              },
+              {
+                "name": "PTAH_CONNECT_TIMEOUT",
+                "value": "7s"
+              },
+              {
+                "name": "PTAH_COORDINATION_DIGEST",
+                "value": "sha256:e7842a5b8d1b2f6e0f1704421610b8d777032c9b31d893236683eb2df047acfe"
+              },
+              {
+                "name": "PTAH_DB_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "database",
+                    "key": "url"
+                  }
+                }
+              },
+              {
+                "name": "PTAH_DISPATCH_NOT_AFTER",
+                "value": "2026-08-30T12:05:00Z"
+              },
+              {
+                "name": "PTAH_EXECUTION_NOT_AFTER",
+                "value": "2026-08-30T12:09:00Z"
+              },
+              {
+                "name": "PTAH_EXPECTED_COORDINATION_DIGEST",
+                "value": "sha256:e7842a5b8d1b2f6e0f1704421610b8d777032c9b31d893236683eb2df047acfe"
+              },
+              {
+                "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                "value": "PostgreSQL"
+              },
+              {
+                "name": "PTAH_EXPECTED_PLAN_CONTENT_DIGEST",
+                "value": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+              },
+              {
+                "name": "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
+                "value": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              {
+                "name": "PTAH_LOCK_TIMEOUT",
+                "value": "12s"
+              },
+              {
+                "name": "PTAH_OPERATION_ID",
+                "value": "operation-01"
+              },
+              {
+                "name": "PTAH_PLAN_DIR",
+                "value": "/plan"
+              },
+              {
+                "name": "PTAH_TX_MODE",
+                "value": "all"
+              },
+              {
+                "name": "TMPDIR",
+                "value": "/work"
+              }
+            ],
+            "resources": {
+              "limits": {
+                "memory": "512Mi"
+              },
+              "requests": {
+                "cpu": "250m",
+                "memory": "256Mi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              },
+              {
+                "name": "work",
+                "mountPath": "/work"
+              },
+              {
+                "name": "plan",
+                "readOnly": true,
+                "mountPath": "/plan"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "restartPolicy": "Never",
+        "terminationGracePeriodSeconds": 45,
+        "activeDeadlineSeconds": 540,
+        "dnsPolicy": "ClusterFirst",
+        "nodeSelector": {
+          "workload": "database",
+          "zone": "eu-west-1a"
+        },
+        "serviceAccountName": "schema-jobs",
+        "automountServiceAccountToken": false,
+        "securityContext": {
+          "runAsUser": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "fsGroup": 65532,
+          "fsGroupChangePolicy": "OnRootMismatch",
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "imagePullSecrets": [
+          {
+            "name": "image-pull"
+          },
+          {
+            "name": "mirror-pull"
+          }
+        ],
+        "affinity": {
+          "nodeAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": {
+              "nodeSelectorTerms": [
+                {
+                  "matchExpressions": [
+                    {
+                      "key": "kubernetes.io/arch",
+                      "operator": "In",
+                      "values": [
+                        "amd64",
+                        "arm64"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "podAntiAffinity": {
+            "preferredDuringSchedulingIgnoredDuringExecution": [
+              {
+                "weight": 50,
+                "podAffinityTerm": {
+                  "labelSelector": {
+                    "matchLabels": {
+                      "app.kubernetes.io/managed-by": "ptah-operator"
+                    }
+                  },
+                  "topologyKey": "kubernetes.io/hostname"
+                }
+              }
+            ]
+          }
+        },
+        "schedulerName": "default-scheduler",
+        "tolerations": [
+          {
+            "key": "dedicated",
+            "operator": "Equal",
+            "value": "database",
+            "effect": "NoSchedule"
+          },
+          {
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "effect": "NoExecute",
+            "tolerationSeconds": 120
+          }
+        ],
+        "priorityClassName": "database-maintenance",
+        "runtimeClassName": "gvisor",
+        "enableServiceLinks": false
+      }
+    },
+    "completionMode": "NonIndexed",
+    "suspend": false,
+    "podReplacementPolicy": "Failed"
+  },
+  "status": {}
+}
