@@ -379,6 +379,42 @@ func TestCertificateE2EBundleContainsCertificateDespiteSharedSubjects(t *testing
 	}
 }
 
+func TestCertificateE2ESecretFieldBytesAreExact(t *testing.T) {
+	t.Parallel()
+	// The staged CA is compared byte for byte with the switched Secret's
+	// ca.crt, which the row decodes with openssl. A decoder that appends
+	// anything makes the same certificate compare unequal.
+	certificate := "-----BEGIN CERTIFICATE-----\nQ0VSVElGSUNBVEU=\n-----END CERTIFICATE-----\n"
+	encoded := base64.StdEncoding.EncodeToString([]byte(certificate))
+	for _, test := range []struct {
+		name string
+		data map[string]any
+		key  string
+		want string
+	}{
+		{name: "PEM field", data: map[string]any{"candidate.ca.crt": encoded}, key: "candidate.ca.crt", want: certificate},
+		{name: "field without a trailing newline", data: map[string]any{"expanded-at": base64.StdEncoding.EncodeToString([]byte("2026-09-26T12:00:00Z"))}, key: "expanded-at", want: "2026-09-26T12:00:00Z"},
+		{name: "absent field", data: map[string]any{"candidate.ca.crt": encoded}, key: "candidate.ca.key", want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newCertificateShellFixture(t)
+			fixture.writeJSON("staging.json", map[string]any{"data": test.data})
+			output, err := fixture.run("secret_field_bytes \"$UPGRADE_WORK_DIR/staging.json\" " + test.key + " >\"$UPGRADE_WORK_DIR/field\"\n")
+			if err != nil {
+				t.Fatalf("secret_field_bytes: %v\n%s", err, output)
+			}
+			got, err := os.ReadFile(filepath.Join(fixture.directory, "field"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != test.want {
+				t.Fatalf("secret_field_bytes wrote %q, want exactly %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCertificateE2EPrimarySecretState(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
