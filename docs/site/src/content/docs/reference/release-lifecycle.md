@@ -11,6 +11,15 @@ here has to be read to follow a runbook there. What a release promises about
 objects you have stored is
 [API compatibility](../../support/api-compatibility/).
 
+The release namespace is trusted infrastructure: whoever can create workloads
+there is a Ptah administrator, as
+[the release namespace contract](../../use/security/#release-namespace) says.
+Several mechanisms below go further and defend the hooks against a hostile
+writer inside that namespace. They sit outside the contract, and
+[#443](https://github.com/stokaro/ptah-operator/issues/443) removes them. The
+checks against a stale or buggy previous release stay: schema identity, the
+downgrade preflight and the runtime verifier.
+
 ## The hooks and what each decides
 
 `ptah-crd-manager` runs as Helm hooks. Each mode validates its preconditions
@@ -242,11 +251,10 @@ Fewer addresses than Leases means an address fronts more than one API server.
 A provider that does not expose those Leases leaves the count to its own
 documentation. Where the proofs sample rather than cover:
 
-- Keep the release namespace under exclusive administrative control until Helm
-  reports success for every install, upgrade and uninstall, not only for the
-  first installation [Install the operator](../../use/operations/#install-before)
-  names. After it, the per-API-server admission proof is what replaces that
-  exclusion, and here the proof cannot carry it.
+- Hold to [the release namespace contract](../../use/security/#release-namespace)
+  without exception. It keeps the namespace to Ptah administrators for every
+  install, upgrade and uninstall, and where the proofs sample it is the only
+  thing that keeps a writer in the namespace away from the hooks.
 - Raise `certificateRotation.admissionConvergence.stabilityDuration`. A longer
   window is more fresh connections, which narrows the chance that an API server
   behind the address answered none of them. It does nothing against a load
