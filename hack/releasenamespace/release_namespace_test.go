@@ -23,10 +23,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"sigs.k8s.io/yaml"
 )
 
 const releaseName = "ptah-e2e"
@@ -191,10 +194,8 @@ func TestTheNotesWarnAboutAdministratorGrants(t *testing.T) {
 		namespace    = "ptah-system"
 		coordination = "ptah-coordination"
 	)
-	ownServiceAccount := serviceAccount(namespace, "ptah-e2e-ptah-operator-v1-000000000000", releaseName)
+	manager := renderIdentities(t, helm, chartPath(t), releaseName, namespace, nil).manager
 	objects := []object{
-		ownServiceAccount,
-		serviceAccount(namespace, "application", ""),
 		role(namespace, "pod-creator", rule([]string{""}, []string{"pods"}, []string{"create"}, nil)),
 		role(namespace, "reader", rule([]string{""}, []string{"pods", "pods/log"}, []string{"get", "list", "watch"}, nil)),
 		role(namespace, "everything", rule([]string{"*"}, []string{"*"}, []string{"*"}, nil)),
@@ -216,7 +217,7 @@ func TestTheNotesWarnAboutAdministratorGrants(t *testing.T) {
 		roleBinding(namespace, "tokens-for-dave", "Role", "named-tokens", subject("User", "", "dave")),
 		roleBinding(namespace, "aggregated-for-erin", "ClusterRole", "aggregated-jobs", subject("User", "", "erin")),
 		roleBinding(namespace, "mixed-subjects", "Role", "pod-creator",
-			subject("ServiceAccount", namespace, ownServiceAccount.name), subject("User", "", "frank")),
+			subject("ServiceAccount", namespace, manager), subject("User", "", "frank")),
 		roleBinding(coordination, "leases-for-grace", "Role", "lease-writer", subject("User", "", "grace")),
 		roleBinding(coordination, "edit-for-foreign-sa", "ClusterRole", "edit", subject("ServiceAccount", "applications", "worker")),
 
@@ -224,7 +225,7 @@ func TestTheNotesWarnAboutAdministratorGrants(t *testing.T) {
 		// role, a create the authorizer can never grant by name, a role
 		// that grants nothing dangerous, and a namespace the operator does
 		// not use.
-		roleBinding(namespace, "own-controller", "Role", "pod-creator", subject("ServiceAccount", namespace, ownServiceAccount.name)),
+		roleBinding(namespace, "own-controller", "Role", "pod-creator", subject("ServiceAccount", namespace, manager)),
 		roleBinding(namespace, "readers", "Role", "reader", subject("Group", "", "readers")),
 		roleBinding(namespace, "named-pods-for-heidi", "Role", "named-pods", subject("User", "", "heidi")),
 		roleBinding(namespace, "viewers", "ClusterRole", "viewer", subject("User", "", "ivan")),
@@ -255,41 +256,318 @@ func TestTheNotesWarnAboutAdministratorGrants(t *testing.T) {
 	assertSameLines(t, got, want)
 }
 
-// A release's own grants, including the per-sequence ServiceAccounts a
-// deployment supplies itself with serviceAccount.create=false, produce no
-// warning at all.
-func TestTheNotesAreQuietAboutTheReleasesOwnGrants(t *testing.T) {
+// chartIdentities is the number of distinct ServiceAccounts a release runs
+// its Pods as: the manager, the certificate rotator, the CRD manager hook, the
+// teardown cleanup hook and the uninstall bootstrap. A render that yields
+// another number is a chart that grew or lost an identity, and the warning's
+// list of its own names has to follow it.
+const chartIdentities = 5
+
+// The warning knows a release's own identities by the names the chart gives
+// them, not by the objects: on a retried upgrade the stable coordination
+// binding already names this sequence's manager before Helm has created that
+// ServiceAccount. So no case here has a ServiceAccount object at all. The
+// names come from the chart's own offline render, so this checks what the
+// chart runs as rather than a second copy of its naming rules, including where
+// a long name forces the helpers to truncate and at a later release sequence.
+func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
+	t.Parallel()
+	helm := helmOrSkip(t)
+	const (
+		namespace    = "ptah-system"
+		longRelease  = "ptah-runtime-generated-name-prefix-boundary-proof-rel"
+		longFullname = "ptah-runtime-generated-name-prefix-boundary-proof-0123456789"
+	)
+	if len(longRelease) != 53 {
+		t.Fatalf("the long release name is %d bytes; Helm's limit is 53 and the case needs all of them", len(longRelease))
+	}
+	cases := []struct {
+		name     string
+		release  string
+		sequence int
+		values   []string
+		// fullname is what the chart would call the release if nothing were
+		// truncated; truncated says the identities must be shorter.
+		fullname  string
+		truncated bool
+	}{
+		{name: "sequence 1", release: releaseName, sequence: 1, fullname: releaseName + "-ptah-operator"},
+		{
+			name: "a release name that truncates every identity", release: longRelease, sequence: 1,
+			fullname: longRelease + "-ptah-operator", truncated: true,
+		},
+		{
+			// The acceptance lifecycle's shape: a 60-byte fullname override,
+			// upgraded to the synthetic next release.
+			name: "sequence 2 under a truncated fullname override", release: releaseName, sequence: 2,
+			values: []string{"fullnameOverride=" + longFullname}, fullname: longFullname, truncated: true,
+		},
+		{
+			name: "external identities at sequence 2", release: releaseName, sequence: 2,
+			values:   []string{"serviceAccount.create=false", "serviceAccount.name=external-controller"},
+			fullname: releaseName + "-ptah-operator",
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			chart := chartAtSequence(t, test.sequence)
+			identities := renderIdentities(t, helm, chart, test.release, namespace, test.values)
+			if len(identities.names) != chartIdentities {
+				t.Fatalf("the chart runs as %d identities, want %d: %q", len(identities.names), chartIdentities, identities.names)
+			}
+			sequenceMarker := fmt.Sprintf("-v%d", test.sequence)
+			if !strings.Contains(identities.manager, sequenceMarker) {
+				t.Fatalf("the manager %s does not carry release sequence %d", identities.manager, test.sequence)
+			}
+			for _, name := range identities.names {
+				if len(name) > 63 {
+					t.Errorf("identity %s is longer than a ServiceAccount name may be", name)
+				}
+				if test.truncated && strings.HasPrefix(name, test.fullname) {
+					t.Errorf("identity %s carries the whole name %s, so this case does not reach the truncation it is for", name, test.fullname)
+				}
+			}
+
+			objects := []object{
+				role(namespace, "pod-creator", rule([]string{""}, []string{"pods"}, []string{"create"}, nil)),
+				role(namespace, "lease-writer", rule([]string{"coordination.k8s.io"}, []string{"leases"}, []string{"create"}, nil)),
+				// The coordination binding as a retried upgrade finds it.
+				roleBinding(namespace, "coordination", "Role", "lease-writer", subject("ServiceAccount", namespace, identities.manager)),
+			}
+			for index, name := range identities.names {
+				objects = append(objects,
+					roleBinding(namespace, fmt.Sprintf("own-%d", index), "Role", "pod-creator", subject("ServiceAccount", namespace, name)))
+			}
+			// Near misses: the manager at a release sequence this render does
+			// not run as, the manager with one more character, and the manager
+			// in another namespace.
+			otherSequence := strings.Replace(identities.manager, sequenceMarker, fmt.Sprintf("-v%d", test.sequence+1), 1)
+			objects = append(objects,
+				roleBinding(namespace, "other-sequence", "Role", "pod-creator", subject("ServiceAccount", namespace, otherSequence)),
+				roleBinding(namespace, "longer-name", "Role", "pod-creator", subject("ServiceAccount", namespace, identities.manager+"x")),
+				roleBinding(namespace, "other-namespace", "Role", "pod-creator", subject("ServiceAccount", "applications", identities.manager)),
+			)
+			cluster := newFakeCluster(t, objects)
+			output, err := installChartDryRun(t, helm, chart, test.release, cluster.kubeconfig(t), namespace, test.values)
+			if err != nil {
+				t.Fatalf("the install was refused: %v\n%s", err, tail(output))
+			}
+			assertSameLines(t, warnings(t, string(output)), []string{
+				"RoleBinding ptah-system/other-sequence grants create on pods through Role pod-creator to ServiceAccount ptah-system/" + otherSequence,
+				"RoleBinding ptah-system/longer-name grants create on pods through Role pod-creator to ServiceAccount ptah-system/" + identities.manager + "x",
+				"RoleBinding ptah-system/other-namespace grants create on pods through Role pod-creator to ServiceAccount applications/" + identities.manager,
+			})
+		})
+	}
+}
+
+// A retried upgrade to sequence 2 reads the manager it succeeds from the
+// service-account-origin guard the first attempt left, and while the bindings
+// hand over, that predecessor still holds them. The warning counts it as the
+// release's own exactly when the chart knows it as the predecessor: with the
+// guard it is quiet, and without the guard the same binding is a stranger's.
+func TestTheNotesKnowThePredecessorOnARetriedUpgrade(t *testing.T) {
 	t.Parallel()
 	helm := helmOrSkip(t)
 	const namespace = "ptah-system"
-	objects := []object{
-		role(namespace, "pod-creator", rule([]string{""}, []string{"pods"}, []string{"create"}, nil)),
-		roleBinding(namespace, "external-controller", "Role", "pod-creator", subject("ServiceAccount", namespace, "external-controller-v1")),
-		roleBinding(namespace, "external-controller-next", "Role", "pod-creator", subject("ServiceAccount", namespace, "external-controller-v2")),
-		roleBinding(namespace, "readers", "ClusterRole", "view", subject("Group", "", "readers")),
+	predecessor := renderIdentities(t, helm, chartAtSequence(t, 1), releaseName, namespace, nil)
+	chart := chartAtSequence(t, 2)
+	candidate := renderIdentities(t, helm, chart, releaseName, namespace, nil)
+	if predecessor.manager == candidate.manager {
+		t.Fatalf("sequences 1 and 2 render the same manager %s", candidate.manager)
 	}
-	cluster := newFakeCluster(t, objects)
-	output, err := installDryRun(t, helm, cluster.kubeconfig(t), namespace,
-		[]string{"serviceAccount.create=false", "serviceAccount.name=external-controller"})
+	guard := candidate.originGuard(t)
+	guard.body["metadata"].(map[string]any)["uid"] = "retained-origin-guard"
+	annotations := guard.body["metadata"].(map[string]any)["annotations"].(map[string]any)
+	annotations["operator.ptah.run/previous-controller-service-account-name"] = predecessor.manager
+	annotations["operator.ptah.run/previous-controller-service-account-uid"] = "predecessor-manager"
+	annotations["operator.ptah.run/previous-controller-service-account-managed"] = "true"
+	annotations["operator.ptah.run/previous-controller-release-sequence"] = "1"
+	annotations["operator.ptah.run/previous-controller-manager-image"] = predecessor.managerImage
+
+	bindings := []object{
+		role(namespace, "lease-writer", rule([]string{"coordination.k8s.io"}, []string{"leases"}, []string{"create"}, nil)),
+		roleBinding(namespace, "coordination", "Role", "lease-writer", subject("ServiceAccount", namespace, predecessor.manager)),
+		roleBinding(namespace, "coordination-next", "Role", "lease-writer", subject("ServiceAccount", namespace, candidate.manager)),
+	}
+	for _, test := range []struct {
+		name    string
+		objects []object
+		want    []string
+	}{
+		{name: "with the retained guard", objects: append([]object{guard}, bindings...)},
+		{
+			name:    "without it",
+			objects: bindings,
+			want: []string{
+				"RoleBinding ptah-system/coordination grants create on leases.coordination.k8s.io through Role lease-writer to ServiceAccount ptah-system/" + predecessor.manager,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			cluster := newFakeCluster(t, test.objects)
+			output, err := installChartDryRun(t, helm, chart, releaseName, cluster.kubeconfig(t), namespace, nil)
+			if err != nil {
+				t.Fatalf("the install was refused: %v\n%s", err, tail(output))
+			}
+			assertSameLines(t, warnings(t, string(output)), test.want)
+		})
+	}
+}
+
+// identities is what an offline render of the chart says the release runs as.
+type identities struct {
+	// manager is the manager Deployment's ServiceAccount, and managerImage its
+	// container image.
+	manager, managerImage string
+	// names are every ServiceAccount a Pod the chart renders runs as.
+	names []string
+	// policies are the ValidatingAdmissionPolicies the render carries. One
+	// name can occur twice: uninstall replaces a guard with a policy of the
+	// same name.
+	policies []map[string]any
+}
+
+// originGuard is the release's service-account-origin guard as the install
+// hook creates it, told apart from the uninstall policy of the same name by
+// its component.
+func (i identities) originGuard(t *testing.T) object {
+	t.Helper()
+	var found []map[string]any
+	for _, policy := range i.policies {
+		metadata, _ := policy["metadata"].(map[string]any)
+		labels, _ := metadata["labels"].(map[string]any)
+		if labels["app.kubernetes.io/component"] == "service-account-origin-guard" {
+			found = append(found, policy)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the render carries %d service-account-origin guards, want 1", len(found))
+	}
+	name, _ := found[0]["metadata"].(map[string]any)["name"].(string)
+	return object{
+		groupVersion: "admissionregistration.k8s.io/v1", resource: "validatingadmissionpolicies", name: name,
+		body: found[0],
+	}
+}
+
+// renderIdentities renders the chart offline and reads which ServiceAccounts
+// its Pods run as. Offline, the names are the ones the helpers derive from the
+// release and the values alone, which is also what they are when the render
+// can read the cluster.
+func renderIdentities(t *testing.T, helm, chart, release, namespace string, values []string) identities {
+	t.Helper()
+	arguments := append([]string{"template", release, chart, "--namespace", namespace}, requiredValues()...)
+	for _, value := range values {
+		arguments = append(arguments, "--set", value)
+	}
+	output, err := runHelm(t, helm, arguments...)
 	if err != nil {
-		t.Fatalf("the install was refused: %v\n%s", err, tail(output))
+		t.Fatalf("render the chart offline: %v\n%s", err, tail(output))
 	}
-	if got := warnings(t, string(output)); len(got) != 0 {
-		t.Fatalf("the notes warn about the release's own grants: %q", got)
+	var result identities
+	names := map[string]bool{}
+	for _, document := range strings.Split(string(output), "\n---\n") {
+		var parsed map[string]any
+		if err := yaml.Unmarshal([]byte(document), &parsed); err != nil {
+			t.Fatalf("parse a rendered document: %v\n%s", err, document)
+		}
+		if parsed == nil {
+			continue
+		}
+		metadata, _ := parsed["metadata"].(map[string]any)
+		switch parsed["kind"] {
+		case "ValidatingAdmissionPolicy":
+			result.policies = append(result.policies, parsed)
+		case "Deployment":
+			labels, _ := metadata["labels"].(map[string]any)
+			if labels["app.kubernetes.io/component"] != "controller" {
+				break
+			}
+			spec, _ := parsed["spec"].(map[string]any)
+			template, _ := spec["template"].(map[string]any)
+			podSpec, _ := template["spec"].(map[string]any)
+			result.manager, _ = podSpec["serviceAccountName"].(string)
+			containers, _ := podSpec["containers"].([]any)
+			for _, container := range containers {
+				if entry, ok := container.(map[string]any); ok && entry["name"] == "manager" {
+					result.managerImage, _ = entry["image"].(string)
+				}
+			}
+		}
+		// Every Pod template names the identity it runs as.
+		collectServiceAccountNames(parsed, names)
 	}
-	// The same fixture with a ServiceAccount outside the base name is
-	// warned about, so the quiet above is the filter at work.
-	objects = append(objects,
-		roleBinding(namespace, "impostor", "Role", "pod-creator", subject("ServiceAccount", namespace, "external-controller-v1-impostor")))
-	cluster = newFakeCluster(t, objects)
-	output, err = installDryRun(t, helm, cluster.kubeconfig(t), namespace,
-		[]string{"serviceAccount.create=false", "serviceAccount.name=external-controller"})
-	if err != nil {
-		t.Fatalf("the install was refused: %v\n%s", err, tail(output))
+	if result.manager == "" || result.managerImage == "" {
+		t.Fatalf("the render has no manager Deployment with a ServiceAccount and an image")
 	}
-	assertSameLines(t, warnings(t, string(output)), []string{
-		"RoleBinding ptah-system/impostor grants create on pods through Role pod-creator to ServiceAccount ptah-system/external-controller-v1-impostor",
+	for name := range names {
+		result.names = append(result.names, name)
+	}
+	sort.Strings(result.names)
+	return result
+}
+
+// collectServiceAccountNames adds every serviceAccountName a document's Pod
+// templates carry, however deep the template sits.
+func collectServiceAccountNames(value any, names map[string]bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if name, ok := child.(string); ok && key == "serviceAccountName" && name != "" {
+				names[name] = true
+				continue
+			}
+			collectServiceAccountNames(child, names)
+		}
+	case []any:
+		for _, child := range typed {
+			collectServiceAccountNames(child, names)
+		}
+	}
+}
+
+// chartAtSequence copies the chart and compiles it at another release
+// sequence, the way the acceptance harness builds its synthetic next release.
+func chartAtSequence(t *testing.T, sequence int) string {
+	t.Helper()
+	source := chartPath(t)
+	if sequence == 1 {
+		return source
+	}
+	const compiled = `{{- define "ptah-operator.releaseSequence" -}}1{{- end -}}`
+	destination := filepath.Join(t.TempDir(), "ptah-operator")
+	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		content, err := os.ReadFile(path) //nolint:gosec // A path this test walked under the repository.
+		if err != nil {
+			return err
+		}
+		if relative == filepath.Join("templates", "_helpers.tpl") {
+			if strings.Count(string(content), compiled) != 1 {
+				return fmt.Errorf("the chart no longer compiles its release sequence as %s", compiled)
+			}
+			content = []byte(strings.Replace(string(content), compiled,
+				fmt.Sprintf(`{{- define "ptah-operator.releaseSequence" -}}%d{{- end -}}`, sequence), 1))
+		}
+		return os.WriteFile(target, content, 0o600)
 	})
+	if err != nil {
+		t.Fatalf("compile the chart at release sequence %d: %v", sequence, err)
+	}
+	return destination
 }
 
 // warnings reads the list NOTES.txt prints under its WARNING paragraph. A
@@ -372,17 +650,6 @@ func everyKind(namespace, instance string) []object {
 	return objects
 }
 
-func serviceAccount(namespace, name, instance string) object {
-	metadata := map[string]any{"name": name, "namespace": namespace}
-	if instance != "" {
-		metadata["labels"] = map[string]any{"app.kubernetes.io/instance": instance}
-	}
-	return object{
-		groupVersion: "v1", resource: "serviceaccounts", namespace: namespace, name: name,
-		body: map[string]any{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": metadata},
-	}
-}
-
 func rule(groups, resources, verbs, names []string) map[string]any {
 	result := map[string]any{"apiGroups": groups, "resources": resources, "verbs": verbs}
 	if names != nil {
@@ -445,7 +712,7 @@ func roleBinding(namespace, name, roleKind, roleName string, subjects ...map[str
 
 // fakeCluster answers discovery for every kind the chart renders or looks up,
 // lists the kinds the release-namespace check and warning read, and gets
-// Roles and ClusterRoles by name. Everything else is 404, which Helm's lookup
+// Roles, ClusterRoles and ValidatingAdmissionPolicies by name. Everything else is 404, which Helm's lookup
 // reads as absent -- the same answer the chart's other lookups get from
 // internal/crdupgrade's fake.
 type fakeCluster struct {
@@ -456,20 +723,22 @@ type fakeCluster struct {
 	lists map[string]int
 }
 
-// listable are the resources served as lists. Workloads, ServiceAccounts
-// and RoleBindings are what the check and the warning list.
+// listable are the resources served as lists: the workloads the check
+// lists, and the RoleBindings the warning lists.
 var listable = func() map[string]bool {
-	result := map[string]bool{"v1/serviceaccounts": true, "rbac.authorization.k8s.io/v1/rolebindings": true}
+	result := map[string]bool{"rbac.authorization.k8s.io/v1/rolebindings": true}
 	for _, kind := range workloadKinds {
 		result[kind.groupVersion+"/"+kind.resource] = true
 	}
 	return result
 }()
 
-// gettable are the resources served by name.
+// gettable are the resources served by name: the roles a binding names, and
+// the retained policy a retried upgrade reads its predecessor from.
 var gettable = map[string]bool{
-	"rbac.authorization.k8s.io/v1/roles":        true,
-	"rbac.authorization.k8s.io/v1/clusterroles": true,
+	"rbac.authorization.k8s.io/v1/roles":                          true,
+	"rbac.authorization.k8s.io/v1/clusterroles":                   true,
+	"admissionregistration.k8s.io/v1/validatingadmissionpolicies": true,
 }
 
 func newFakeCluster(t *testing.T, objects []object) *fakeCluster {
@@ -678,8 +947,13 @@ users:
 // not.
 func installDryRun(t *testing.T, helm, kubeconfig, namespace string, values []string) ([]byte, error) {
 	t.Helper()
+	return installChartDryRun(t, helm, chartPath(t), releaseName, kubeconfig, namespace, values)
+}
+
+func installChartDryRun(t *testing.T, helm, chart, release, kubeconfig, namespace string, values []string) ([]byte, error) {
+	t.Helper()
 	arguments := []string{
-		"install", releaseName, chartPath(t),
+		"install", release, chart,
 		"--namespace", namespace,
 		"--dry-run=server",
 		"--disable-openapi-validation",

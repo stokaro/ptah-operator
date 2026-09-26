@@ -587,7 +587,7 @@ would leave them unguarded.
 {{- $fenceDigest := printf "1\n%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $fenceA := printf "ptah-operator-teardown-fence-a-v1-%s" $fenceDigest -}}
 {{- $fenceB := printf "ptah-operator-teardown-fence-b-v1-%s" $fenceDigest -}}
-{{- $bootstrapName := printf "ptah-teardown-bootstrap-v1-%s" $fenceDigest -}}
+{{- $bootstrapName := include "ptah-operator.teardownBootstrapName" . -}}
 {{- $probeAJob := printf "ptah-teardown-probe-a-v1-%s" $fenceDigest -}}
 {{- $jointGateJob := printf "ptah-teardown-gate-v1-%s" $fenceDigest -}}
 {{- $hookServiceAccount := include "ptah-operator.crdManagerServiceAccountName" . -}}
