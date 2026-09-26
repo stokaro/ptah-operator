@@ -4678,17 +4678,29 @@ wait_for_deletion_apply_dispatch() {
 # ValidatingAdmissionPolicy scoped to this row's Lease and to the manager's own
 # service account, refusing an update that empties a holder. Acquiring and
 # renewing still pass, so the fault is the release failing and nothing else.
-# It goes in while the uncertain artifact's slow third migration runs, so the
-# claim was taken before it and the release is attempted after it.
+#
+# The Apply is claimed with its Pod held by the apply gate, so the claim has
+# taken the Lease and no SQL has run yet. The fault goes in and is proven in
+# force while nothing can finish, and only then is the gate opened. An earlier
+# version raced the fault against a running Apply and measured the policy's
+# propagation instead of the release.
 run_lock_release_fault_proof() {
 	create_release_fault_database
+	open_apply_gate
 	create_release_fault_migration_resource
+	wait_for_release_fault_plan
+	close_apply_gate
+	approve_release_fault_plan
 	wait_for_release_fault_claim
+	wait_for_release_fault_pod_to_be_gated
 	find_release_fault_lease
 	apply_release_fault
 	wait_for_release_fault_in_force
+	printf 'e2e migrations: opening the gate on the %s Apply with its release refused\n' "$ENGINE_KIND" >&2
+	open_apply_gate
 
 	wait_for_release_owed
+	close_apply_gate
 	release_fault_jobs=$(release_fault_job_uids)
 	# Owed and held for a minute: the record stays, the Lease still names the
 	# run's holder, and the resource claims no new work while it owes the realm.
@@ -4794,17 +4806,20 @@ create_release_fault_database() {
 	rm -f "$SECRET_FILE"
 }
 
-# The uncertain row's artifact, for its slow third migration: the fault has to
-# be in force after the claim took the Lease and before the run ends.
+# OnApproval, so the approval chooses when the Apply is claimed, and the gate
+# in the nodeSelector of every operation, so the claimed Apply's Pod can be held
+# while the fault is installed. An hour's interval keeps a refresh from landing
+# between the gate closing and the claim.
 create_release_fault_migration_resource() {
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$RELEASE_FAULT_MIGRATION" \
 		--arg secret "$RELEASE_FAULT_DB_SECRET" \
-		--arg reference "$UNCERTAIN_REFERENCE" \
+		--arg reference "$MIGRATION_REFERENCE" \
 		--arg coordinationKey "$RELEASE_FAULT_COORDINATION_KEY" \
 		--arg policy "$MIGRATION_POLICY" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg gate "$APPLY_GATE_LABEL" \
 		--arg engine "$ENGINE_KIND" '
     {
       apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
@@ -4824,14 +4839,82 @@ create_release_fault_migration_resource() {
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
         },
-        policy: {apply: "Always", lockTimeout: "30s"},
-        interval: "30s",
+        policy: {apply: "OnApproval", lockTimeout: "30s"},
+        interval: "1h",
         execution: {
-          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s",
+          nodeSelector: ($gate | {(.): "open"})
         }
       }
     }' >"$RESOURCE_FILE"
 	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_release_fault_plan() {
+	release_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$release_deadline" ]; do
+		release_fault_status
+		if jq -e '.status.phase == "AwaitingApproval" and ((.status.plan.name // "") | length) > 0' \
+			"$STATUS_FILE" >/dev/null; then
+			RELEASE_FAULT_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 5
+	done
+	report_release_fault_state
+	fail "$RELEASE_FAULT_MIGRATION did not publish a plan to approve within ${TIMEOUT_SECONDS}s"
+}
+
+approve_release_fault_plan() {
+	release_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$RELEASE_FAULT_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	release_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$RELEASE_FAULT_PLAN" \
+		-o jsonpath='{.metadata.uid}')
+	release_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$RELEASE_FAULT_PLAN" \
+		-o jsonpath='{.spec.fingerprint}')
+	[ -n "$release_migration_uid" ] && [ -n "$release_plan_uid" ] && [ -n "$release_plan_fingerprint" ] ||
+		fail "$RELEASE_FAULT_MIGRATION or its plan $RELEASE_FAULT_PLAN carries no identity to approve"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "${RELEASE_FAULT_MIGRATION}-approval" \
+		--arg migration "$RELEASE_FAULT_MIGRATION" \
+		--arg migrationUID "$release_migration_uid" \
+		--arg plan "$RELEASE_FAULT_PLAN" \
+		--arg planUID "$release_plan_uid" \
+		--arg fingerprint "$release_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the $ENGINE release-fault approval could not be created"
+}
+
+# The claim has taken the Lease; its Pod exists and no node has taken it.
+wait_for_release_fault_pod_to_be_gated() {
+	gated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$gated_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get pods -l "job-name=${RELEASE_FAULT_APPLY_JOB}" -o json \
+			>"$WORK_DIR/release-fault-pods.json" ||
+			fail "the $ENGINE Apply Pods could not be read while the gate was closed"
+		if jq -e --arg gate "$APPLY_GATE_LABEL" \
+			-f "$ROOT_DIR/testdata/e2e/gated-apply-pod.jq" \
+			"$WORK_DIR/release-fault-pods.json" >/dev/null; then
+			return 0
+		fi
+		if jq -e 'any(.items[]?; ((.spec.nodeName // "") | length) > 0)' \
+			"$WORK_DIR/release-fault-pods.json" >/dev/null; then
+			fail "the $ENGINE Apply Pod reached a node while the gate was closed, so the gate is not what held it"
+		fi
+		sleep 2
+	done
+	report_release_fault_state
+	fail "the $ENGINE Apply never produced a Pod held off every node"
 }
 
 wait_for_release_fault_claim() {
@@ -4840,9 +4923,11 @@ wait_for_release_fault_claim() {
 		release_fault_status
 		if jq -e '
           .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
           ((.status.activeOperation.jobUID // "") | length) > 0 and
           ((.status.activeOperation.leaseEpoch // "") | length) > 0
         ' "$STATUS_FILE" >/dev/null; then
+			RELEASE_FAULT_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
 			RELEASE_FAULT_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
 			RELEASE_FAULT_EPOCH=$(jq -er '.status.activeOperation.leaseEpoch' "$STATUS_FILE")
 			return 0
@@ -4867,13 +4952,39 @@ find_release_fault_lease() {
 	read -r RELEASE_FAULT_LEASE_NAMESPACE RELEASE_FAULT_LEASE RELEASE_FAULT_HOLDER <"$WORK_DIR/release-fault-lease.txt"
 	[ -n "$RELEASE_FAULT_HOLDER" ] ||
 		fail "the realm Lease under $RELEASE_FAULT_MIGRATION's running Apply names no holder"
-	RELEASE_FAULT_MANAGER=$(k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get pods \
-		-l app.kubernetes.io/component=controller -o json |
-		jq -er '[.items[].spec.serviceAccountName] | unique |
-          if length == 1 then "system:serviceaccount:" + $namespace + ":" + .[0]
-          else error("the manager Pods do not share one service account") end' \
-			--arg namespace "$RELEASE_FAULT_LEASE_NAMESPACE") ||
-		fail "the manager's service account could not be read beside its Leases"
+	k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get pods -l app.kubernetes.io/component=controller -o json \
+		>"$WORK_DIR/release-fault-managers.json" ||
+		fail "the manager Pods could not be read beside its Leases"
+	release_manager_account=$(jq -er '[.items[].spec.serviceAccountName] | unique |
+      if length == 1 then .[0] else error("the manager Pods do not share one service account") end' \
+		"$WORK_DIR/release-fault-managers.json") ||
+		fail "the manager Pods do not share one service account"
+	RELEASE_FAULT_MANAGER="system:serviceaccount:${RELEASE_FAULT_LEASE_NAMESPACE}:${release_manager_account}"
+	# The chart's origin guard admits the manager's identity only with the
+	# token-bound Pod it came from, so the dry run below carries a running
+	# manager Pod's name and UID and the ServiceAccount's own UID, the way the
+	# lifecycle suite's controller impersonation does.
+	RELEASE_FAULT_MANAGER_UID=$(k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get serviceaccount \
+		"$release_manager_account" -o jsonpath='{.metadata.uid}')
+	jq -r '[.items[] | select(.status.phase == "Running" and .metadata.deletionTimestamp == null)][0] |
+      "\(.metadata.name) \(.metadata.uid)"' "$WORK_DIR/release-fault-managers.json" \
+		>"$WORK_DIR/release-fault-manager-pod.txt"
+	read -r RELEASE_FAULT_MANAGER_POD RELEASE_FAULT_MANAGER_POD_UID <"$WORK_DIR/release-fault-manager-pod.txt"
+	[ -n "$RELEASE_FAULT_MANAGER_UID" ] && [ -n "$RELEASE_FAULT_MANAGER_POD" ] &&
+		[ "$RELEASE_FAULT_MANAGER_POD" != null ] && [ -n "$RELEASE_FAULT_MANAGER_POD_UID" ] ||
+		fail "no running manager Pod and ServiceAccount identity to impersonate"
+}
+
+# Writes as the manager, with the identity its token carries.
+release_fault_manager_kube() {
+	k --as "$RELEASE_FAULT_MANAGER" \
+		--as-uid "$RELEASE_FAULT_MANAGER_UID" \
+		--as-group system:serviceaccounts \
+		--as-group "system:serviceaccounts:$RELEASE_FAULT_LEASE_NAMESPACE" \
+		--as-group system:authenticated \
+		--as-user-extra "authentication.kubernetes.io/pod-name=$RELEASE_FAULT_MANAGER_POD" \
+		--as-user-extra "authentication.kubernetes.io/pod-uid=$RELEASE_FAULT_MANAGER_POD_UID" \
+		"$@"
 }
 
 apply_release_fault() {
@@ -4918,13 +5029,22 @@ wait_for_release_fault_in_force() {
 		k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get lease "$RELEASE_FAULT_LEASE" -o json |
 			jq '.spec.holderIdentity = ""' >"$WORK_DIR/release-fault-dry-run.json" ||
 			fail "the $ENGINE realm Lease could not be read for the dry run"
-		if ! k --as "$RELEASE_FAULT_MANAGER" replace --dry-run=server \
+		if ! release_fault_manager_kube replace --dry-run=server \
 			-f "$WORK_DIR/release-fault-dry-run.json" >"$ADMISSION_ERROR_FILE" 2>&1 &&
 			grep -q 'may not be released' "$ADMISSION_ERROR_FILE"; then
 			release_fault_status
 			jq -e '.status.activeOperation.type == "Apply"' "$STATUS_FILE" >/dev/null || {
 				report_release_fault_state
 				fail "the $ENGINE Apply ended before the release fault was in force, so the release was never refused"
+			}
+			# The gated Pod still has to start inside the claim's dispatch
+			# window, or the row would measure a late dispatch instead.
+			release_dispatch_left=$(jq -er '(.status.activeOperation.dispatchNotAfter | fromdateiso8601) - now | floor' \
+				"$STATUS_FILE") ||
+				fail "the $ENGINE Apply claim carries no readable dispatch window"
+			[ "$release_dispatch_left" -gt 30 ] || {
+				report_release_fault_state
+				fail "the release fault took until ${release_dispatch_left}s before the dispatch deadline to come into force"
 			}
 			return 0
 		fi
