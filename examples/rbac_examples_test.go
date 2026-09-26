@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -30,7 +31,7 @@ func TestDesiredStateAuthorRoleIsSeparateAndNamespaceScoped(t *testing.T) {
 	assertGroupBinding(t, role, binding, "<desired-state-author-group>")
 }
 
-func TestDiagnosticReaderRoleCannotChangeStateOrReadCredentials(t *testing.T) {
+func TestDiagnosticReaderRoleCannotChangeStateOrReadPlansOrCredentials(t *testing.T) {
 	role, binding := readRoleExample(t, "diagnostic-reader-role.yaml")
 	if role.Namespace != "application" || binding.Namespace != role.Namespace {
 		t.Fatalf("diagnostic reader namespace = %q/%q, want application", role.Namespace, binding.Namespace)
@@ -42,26 +43,73 @@ func TestDiagnosticReaderRoleCannotChangeStateOrReadCredentials(t *testing.T) {
 		}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
 		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch"}},
 	}
 	if !reflect.DeepEqual(role.Rules, wantRules) {
 		t.Fatalf("diagnostic reader rules = %#v, want %#v", role.Rules, wantRules)
 	}
-	for _, rule := range role.Rules {
+	if violations := diagnosticReaderViolations(role.Rules); len(violations) != 0 {
+		t.Fatalf("the diagnostic reader reaches what it exists not to reach: %v", violations)
+	}
+	assertGroupBinding(t, role, binding, "<diagnostic-reader-group>")
+}
+
+// The exact-rules comparison above fails on any edit, and says nothing about
+// why a rule was left out. This check is the reason, so it has to refuse each
+// grant it is there for, including the pods/log rule the example carried until
+// stokaro/ptah-operator#449.
+func TestTheDiagnosticReaderCheckRefusesPlanAndCredentialAccess(t *testing.T) {
+	read := []string{"get", "list", "watch"}
+	for name, rule := range map[string]rbacv1.PolicyRule{
+		"Pod logs":            {APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
+		"Pod attach":          {APIGroups: []string{""}, Resources: []string{"pods/attach"}, Verbs: []string{"get"}},
+		"Pod exec":            {APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"get"}},
+		"every Pod resource":  {APIGroups: []string{""}, Resources: []string{"pods/*"}, Verbs: read},
+		"plan chunks":         {APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: read},
+		"credentials":         {APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}},
+		"every resource":      {APIGroups: []string{""}, Resources: []string{"*"}, Verbs: read},
+		"an approval write":   {APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaapprovals"}, Verbs: []string{"create"}},
+		"a desired-state set": {APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahmigrations"}, Verbs: []string{"patch"}},
+		"every verb":          {APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"*"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if violations := diagnosticReaderViolations([]rbacv1.PolicyRule{rule}); len(violations) == 0 {
+				t.Fatalf("the check admits %#v", rule)
+			}
+		})
+	}
+}
+
+// diagnosticReaderRefuses maps each resource a diagnostic reader must not reach
+// to what it would read. A Plan Pod hands the whole plan to the controller
+// through its log, so every stream out of an operation Pod is plan access, and
+// exec reaches an Apply Pod's database credentials as well.
+var diagnosticReaderRefuses = map[string]string{
+	"secrets":     "database and registry credentials",
+	"configmaps":  "plan chunks",
+	"pods/log":    "the Plan frame, which carries the plan",
+	"pods/attach": "the Plan frame, which carries the plan",
+	"pods/exec":   "a process beside the plan and the credentials",
+	"pods/*":      "every Pod stream",
+	"*":           "every resource",
+}
+
+func diagnosticReaderViolations(rules []rbacv1.PolicyRule) []string {
+	var violations []string
+	for _, rule := range rules {
 		for _, resource := range rule.Resources {
-			if resource == "secrets" || resource == "configmaps" {
-				t.Fatalf("diagnostic reader can access sensitive resource %q", resource)
+			if what, refused := diagnosticReaderRefuses[resource]; refused {
+				violations = append(violations, fmt.Sprintf("%s reads %s", resource, what))
 			}
 		}
 		for _, verb := range rule.Verbs {
 			switch verb {
-			case "create", "update", "patch", "delete", "deletecollection":
-				t.Fatalf("diagnostic reader has mutating verb %q", verb)
+			case "create", "update", "patch", "delete", "deletecollection", "*":
+				violations = append(violations, fmt.Sprintf("%s on %v changes state", verb, rule.Resources))
 			}
 		}
 	}
-	assertGroupBinding(t, role, binding, "<diagnostic-reader-group>")
+	return violations
 }
 
 func readRoleExample(t *testing.T, path string) (*rbacv1.Role, *rbacv1.RoleBinding) {

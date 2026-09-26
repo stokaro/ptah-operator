@@ -79,7 +79,7 @@ kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c '\dt'
 ```
 
 Read what the operator actually ran. The SQL lives in controller-owned
-ConfigMaps rather than in a status field or a log line, and
+ConfigMaps rather than in a status field or the manager's log, and
 [`kubectl ptah`](../../use/read-a-plan/) reads it back:
 
 ```sh

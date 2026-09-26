@@ -65,8 +65,8 @@ Key safety properties:
 ## Reading what it applied
 
 The SQL lives in immutable ConfigMaps a plan binds by index, size and digest,
-never in a status field or a log line. `kubectl ptah` reads it back the way the
-operator does:
+never in a status field or the manager's log. `kubectl ptah` reads it back the
+way the operator does:
 
 ```sh
 kubectl ptah plan storefront --applied -n application -o sql

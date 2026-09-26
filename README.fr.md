@@ -69,8 +69,8 @@ Propriétés de sécurité :
 ## Lire le SQL appliqué
 
 Le SQL réside dans des ConfigMaps immuables liées au plan par leur index,
-leur taille et leur digest. Il n’est placé ni dans le statut ni dans les logs.
-`kubectl ptah` le lit comme le fait l’opérateur :
+leur taille et leur digest. Il n’est placé ni dans le statut ni dans les logs
+du manager. `kubectl ptah` le lit comme le fait l’opérateur :
 
 ```sh
 kubectl ptah plan storefront --applied -n application -o sql

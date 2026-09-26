@@ -19,12 +19,17 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch"]
+  # Pods, and not their logs. A Plan Pod hands the whole plan to the controller
+  # through its log, row values of declared reference data included, and RBAC
+  # cannot grant the log of one operation Pod without the others: Pod names are
+  # generated per attempt and a rule has no label selector. Reading operation
+  # logs is reading every plan in the namespace, so grant pods/log the way plan
+  # access is granted, to the people who may read plans. What the controller
+  # made of each result is in status, conditions and Events, which this role
+  # reads.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods/log"]
-    verbs: ["get"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
@@ -40,7 +45,8 @@ roleRef:
   name: ptah-diagnostic-reader
 subjects:
   # Replace this placeholder with the on-call group. This role intentionally
-  # cannot read Secrets or plan-chunk ConfigMaps and cannot mutate approvals.
+  # cannot read Secrets, plan-chunk ConfigMaps or operation Pod logs, and
+  # cannot mutate approvals.
   - apiGroup: rbac.authorization.k8s.io
     kind: Group
     name: <diagnostic-reader-group>
