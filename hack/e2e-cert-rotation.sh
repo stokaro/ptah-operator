@@ -199,6 +199,14 @@ rotator_certificate_write_time() {
 	' "$1"
 }
 
+# secret_field_bytes writes one data field of a Secret document to stdout
+# exactly as the Secret stores it. `jq -r` would append a newline, so a PEM
+# field decoded that way never compares equal to the same field decoded from
+# another Secret with `openssl base64 -d`.
+secret_field_bytes() {
+	jq -j --arg key "$2" '.data[$key] // "" | @base64d' "$1"
+}
+
 # switched_after_delay succeeds when the switch instant lies at least the
 # delay, in seconds, after the expansion instant.
 switched_after_delay() {
@@ -289,7 +297,7 @@ observe_expanded_trust() {
 	done
 	[ -n "$EXPANDED_AT" ] ||
 		fail "${observed_stage}: the staging Secret held no expanded CA transition within 120 seconds"
-	jq -r '.data["candidate.ca.crt"] | @base64d' "$STAGING_OBSERVATION" >"$STAGED_CA_FILE" ||
+	secret_field_bytes "$STAGING_OBSERVATION" candidate.ca.crt >"$STAGED_CA_FILE" ||
 		fail "${observed_stage}: could not read the staged CA"
 	openssl verify -CAfile "$STAGED_CA_FILE" "$STAGED_CA_FILE" >/dev/null 2>&1 ||
 		fail "${observed_stage}: the staged CA is not a valid self-signed root"
