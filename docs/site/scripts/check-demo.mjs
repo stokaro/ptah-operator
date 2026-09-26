@@ -168,13 +168,7 @@ export function commandsInRun(run) {
 // editing it away. A drift nobody entered here fails, which is the point --
 // the previous check matched ids, so replacing a scenario's first command with
 // `false` still reported that every run held.
-export const RerecordPending = {
-  'failure-recovery': {
-    recordedAt: '8c7fe187707f6ea7af916d6005bc237291a35e18',
-    step: 4,
-    why: 'the step was rewritten to prove the planted credential stays out of status; the recording predates it and remaking it needs a cluster',
-  },
-};
+export const RerecordPending = {};
 
 // bindingProblemsIn compares the two, per run.
 export function bindingProblemsIn(record, scenarioSources, pending = RerecordPending) {
