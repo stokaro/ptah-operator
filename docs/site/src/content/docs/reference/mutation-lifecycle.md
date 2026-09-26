@@ -5,10 +5,15 @@ description: The obligations a mutating operation carries, and where each family
 
 Both resource families run SQL the same way: authorize the exact work, persist
 the claim, cross a dispatch boundary that is durable before anything external
-happens, account for the outcome, and hand the database back only once the
-account is settled. They enforce that in two separate implementations, which is
-why this page exists. An obligation stated once and enforced twice drifts, and
-the way to see the drift is to put both enforcement points beside each other.
+happens, account for the outcome, and hand the database back. They differ on
+when that last step happens. A schema hands the database back once the account
+is settled; a migration hands it back once nothing its claim dispatched can
+still write, and settles the account afterwards without the Lease.
+[Release coordination](#release-coordination) says why each order is safe.
+
+They enforce all of it in two separate implementations, which is why this page
+exists. An obligation stated once and enforced twice drifts, and the way to see
+the drift is to put both enforcement points beside each other.
 
 Symbols named without a package live in `internal/controller`:
 `schema_controller.go` for `PtahSchema`, `migration_controller.go` and
@@ -121,15 +126,22 @@ the create leaves a claim that says a Job may exist. The next pass either finds
 it and adopts its UID, or finds nothing and declares the outcome unknown. It
 never creates the Job a second time.
 
-The approval is consumed in the same stretch, immediately before the create.
+The approval is consumed in the same stretch, before the create, and the
+families put the two writes in opposite orders. A migration consumes the
+approval and then writes `dispatchStarted`. A schema writes `dispatchStarted`
+and then consumes the approval, so a crash between them leaves a dispatch
+marker beside an approval not yet spent; the next pass finds no Job, declares
+the outcome unknown, and spends the recorded approval before it writes the
+pending observation.
+
 Consumption is evidence that a decision was spent, not permission: a consumed
 approval is skipped when a claim looks for one, so it cannot authorize a second
 dispatch.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `markApprovalConsumed`, skipped by `findApproval` |
-| `PtahMigration` | `consumeMigrationApproval`, skipped by `findMigrationApproval` |
+| `PtahSchema` | `markApprovalConsumed` after the marker, and `consumeRecordedApprovalAtDispatch` on the uncertain path; skipped by `findApproval` |
+| `PtahMigration` | `consumeMigrationApproval` before the marker, skipped by `findMigrationApproval` |
 
 ## Create, confirm, record
 
@@ -163,6 +175,13 @@ in any of those is an uncertain outcome for a mutating claim, never a discard.
 
 Suspension cannot discard a dispatched mutating claim in either family. A
 resource suspended mid-Apply keeps its claim and keeps renewing the Lease.
+
+For a migration, suspending is also a spec edit, and the generation it bumps is
+one of the inputs `migrationInputFingerprint` digests. So the pass that finds
+the Job terminal also finds the inputs changed, and records the run `Unknown`
+and unresolved without reading its result, whatever the run did. A suspended
+migration takes no reading, so the record stands until the resource is resumed
+and a History reading of the same database finds nothing pending.
 
 ## Account for the outcome
 
@@ -219,12 +238,55 @@ database back under a claim that still reads as live.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `stageTargetLockRelease`, retried by `completePendingLockRelease` |
-| `PtahMigration` | `releaseMigrationApplyLock`, withheld by `dispatchedApplyMayStillWrite` |
+| `PtahSchema` | `stagePendingLockRelease` in the write that settles the proof, through `stageTargetLockRelease`, retried by `completePendingLockRelease` |
+| `PtahMigration` | `stageOwedMigrationRelease` where a result was read, `releaseMigrationApplyLock` where it was not, withheld by `dispatchedApplyMayStillWrite` |
 
-Release is withheld while the executor may still be running. A Job that is not
-terminal, a Pod that has not stopped, and a read that could not say are all
-treated as "may still be writing", and the Lease is left to expire instead.
+The two families release at different points.
+
+A schema holds the database until the account is settled. Every Apply, read or
+uncertain, leaves `status.pendingObservation` carrying the claim's Lease epoch.
+The pending observation renews the Lease, waits until no Apply Pod can still
+run, and claims the read-only Observe and Plan that settle it. Both run under
+that same Lease, and `mutationlifecycle.RealmHeldBy` makes retiring either of
+them release nothing while the proof is owed. Only the status write that
+settles the proof stages the release. No other claimant can change the database
+between the Apply and the reading that accounts for it, so an intervening
+mutation cannot be mistaken for this plan's convergence.
+
+A migration holds the database until nothing its claim dispatched can still
+write. A run whose result was read stages the release in the write that retires
+the claim. A run retired as uncertain (`finishUncertainMigrationApply`) releases
+after that write, and only when `dispatchedApplyMayStillWrite` says no: a Job
+that is not terminal, a Pod it owns that has not stopped, and a read that could
+not say all count as "may still be writing", and the Lease is left to expire
+instead. The reading that settles the account comes afterwards and takes no
+Lease: the one in `VerifyingHistory` after a run that reported what it did, and
+the one that clears `status.unresolvedRun` (`migrationUnresolvedRunSettledBy`)
+after a run that ended `Partial` or `Unknown`. Another resource that shares the
+realm may hold the Lease while that reading runs.
+
+Handing the database back before that reading lets no two writers overlap and
+no run repeat:
+
+- The release happens only when nothing of the claim can still write, so the
+  next claimant never starts beside this claim's executor.
+- A Lease left to expire outlives the executor. `migrationLeaseDuration` is the
+  Apply window plus the Job's deadline grace plus a lease grace, a minute each,
+  counted from the last renewal. The runner kills the Ptah child at the claim's
+  execution deadline, the end of that window, so the executor stops by its own
+  clock at least two minutes before the Lease can lapse, on a node the API
+  server cannot reach as well as on one it can.
+- The reading authorizes no write. Settling the record only lets this resource
+  plan again from a fresh reading, and every migration Apply, this resource's
+  next one or another resource's, takes the Lease and runs
+  `ptah migrations up --expect-sequence`. Ptah compares the approved sequence
+  with what it selects under its own migration lock and refuses before it
+  changes anything when the history moved after the approval. A reading taken
+  beside another writer can be stale; a stale reading cannot become a replay.
+
+Deciding the hand-back once, for both families, is
+[#457](https://github.com/stokaro/ptah-operator/issues/457). Until then the
+two orders above are the contract.
 
 ## Every durable write, and what follows it
 
@@ -242,18 +304,23 @@ next pass cannot tell" would be a defect; none of them is.
 | `activeOperation`, with the Job's deterministic name | Nothing external; the pass ends | A claim with no dispatch marker and no Job under the reserved name, which proceeds: a claim is not evidence that anything ran |
 | `leaseEpoch`, after the Lease was taken | Nothing external | The Lease held under an epoch the status does not name. The next pass acquires with the stale expectation, which is adopted before dispatch and is continuity loss after |
 | `admissionSnapshot` | Nothing; the pass returns deliberately | No Job can exist yet. The next pass rebuilds the Job and refuses a template whose digest disagrees |
-| The approval's `Consumed` condition | The `dispatchStarted` write, then the one create | An approval spent with nothing dispatched. Consumption is evidence, not permission, so it authorizes no second attempt |
-| `dispatchStarted` | The one permitted create | A claim that says a Job may exist. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again |
+| A migration's approval: its `Consumed` condition | The `dispatchStarted` write, then the one create | An approval spent with nothing dispatched. Consumption is evidence, not permission, so it authorizes no second attempt |
+| `dispatchStarted` | For a migration, the one permitted create. For a schema, its approval's `Consumed` condition, then the create | A claim that says a Job may exist. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again. A schema's approval may still be unspent here, and the unknown outcome spends it before the pending observation is written |
+| A schema's approval: its `Consumed` condition | The one permitted create | A marker and a spent approval with no Job behind them. The next pass declares the outcome unknown, as in the row above |
 | `jobUID` | An Event and the telemetry | Covered by the marker above: the next pass finds the Job under the reserved name and adopts its UID |
 | The Job's cleanup TTL | The outcome status patch | A Job carrying a TTL under a live claim. The next pass re-reads the same terminal Job and reaches the same verdict |
-| The outcome patch: the claim cleared and the record written together | The Lease release | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
-| `pendingLockRelease`, written with that same patch | The release itself | The realm still claimed, with a record saying so. The next pass releases it before doing anything else |
+| The outcome patch: the claim cleared and the record written together | For a migration, the Lease release. For a schema, the proof, under the same Lease | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
+| `pendingLockRelease`, staged in the patch that clears the last record holding the realm | The release itself | The realm still claimed, with a record saying so. The next pass releases it before doing anything else |
 
-The one window that is not closed by a record is the migration's release: it
-records a release that **failed**, so a process that stops between the outcome
-patch and the attempt leaves the Lease to expire. A schema stages the
-obligation inside the outcome patch and has no such gap. That difference is the
-last one in the list below.
+The one window that is not closed by a record is a migration run retired as
+uncertain. `finishUncertainMigrationApply` releases after its outcome patch, and
+only when nothing can still write; it records a release that **failed**, so a
+process that stops between that patch and the attempt leaves the Lease to
+expire. A schema stages the obligation inside the patch that settles its proof,
+and a migration whose result was read stages it inside the patch that retires
+the claim. The window costs time, not safety: the Lease it leaves outlives the
+run's own execution deadline. That difference is the first one in the list
+below.
 
 ## Durable safety state
 
@@ -281,11 +348,19 @@ exists to remove.
 A failed release used to be recoverable for a schema and not for a migration.
 Both families now keep the complete credential-free release request in
 `status.pendingLockRelease` until an idempotent release succeeds, and the top
-of every pass retries it before anything else. What remains different is the
-window: a schema stages the obligation inside the status patch that clears the
-claim, so a crash between the two is covered by the record, while a migration
-records a release that failed and leaves a crash at that instant to lease
-expiry.
+of every pass retries it before anything else. What remains different is one
+window. A schema stages the obligation inside the status patch that settles its
+proof, and a migration inside the patch that retires a claim whose result it
+read, so a crash between the patch and the release is covered by the record. A
+migration run retired as uncertain records only a release that failed, and
+leaves a crash at that instant to lease expiry.
+
+The database goes back at a different point. A schema holds it through the
+reading that settles the account; a migration hands it back once nothing its
+claim dispatched can still write, and reads the history without it.
+[Release coordination](#release-coordination) says why both are safe, and
+[#457](https://github.com/stokaro/ptah-operator/issues/457) is where one rule
+decides it for both.
 
 The proof is a prioritized operation for a schema and an ordinary reading for a
 migration. `reconcilePendingObservation` runs before suspension, before the

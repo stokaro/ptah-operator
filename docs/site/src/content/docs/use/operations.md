@@ -83,8 +83,14 @@ subresources, for the duration. A dedicated release namespace is how to satisfy
 that. The boundary ends once those policies and their direct per-API-server
 proofs have converged. Every release retains them, so upgrades and uninstalls
 protect hook creation, status and deletion without relying on namespace-writer
-exclusion. Cluster administrators and principals that can change admission
-policy remain inside the trust boundary.
+exclusion. That protection rests on the hooks' proofs reaching every API
+server, which they do where each address the `default/kubernetes` Service
+publishes is one API server. Where a managed control plane publishes one
+address in front of several, keep the exclusion for every upgrade and uninstall
+as well;
+[One address per API server](../../reference/release-lifecycle/#one-address-per-api-server)
+says how to tell. Cluster administrators and principals that can change
+admission policy remain inside the trust boundary.
 
 With `serviceAccount.create=false`, `serviceAccount.name` is an identity base
 rather than a complete Kubernetes object name. Create the dedicated
@@ -733,8 +739,14 @@ connection reuse and TLS session resumption, requires both mutating and
 validating typed denials, and then re-reads an identical endpoint inventory.
 `certificateRotation.admissionConvergence` controls the continuous stability
 window, poll interval, and timeout for one complete endpoint observation (the
-marker GET plus both denial probes). This prevents a load-balanced or cached
-success from standing in for convergence across all control-plane members.
+marker GET plus both denial probes). This keeps a reused connection or a cached
+success from standing in for convergence across all control-plane members, as
+long as each address the Service advertises is one of them. Where one address
+fronts several API servers, as it can on a managed control plane, the fresh
+connections sample the API servers behind it rather than cover them;
+[One address per API server](../../reference/release-lifecycle/#one-address-per-api-server)
+says what the proof then establishes, how to tell which case a cluster is, and
+what to set.
 
 CA replacement is fail-closed and restart-safe:
 
@@ -1010,12 +1022,23 @@ Setting `spec.suspend=true` prevents new Jobs. If an apply is already active,
 the controller continues observing that Job until its outcome is safe to
 classify; it does not delete the Pod mid-mutation.
 
-If an Apply outcome still needs convergence proof, suspension retains and
-renews that operation's database-realm Lease. This deliberately blocks later
-mutations in the same realm until the resource is resumed and the read-only
-proof completes, or until the resource is deleted. Releasing the Lease while
-retaining unresolved proof would let an intervening Apply contaminate the
-audit result.
+For a `PtahMigration` that classification is `Unknown`, whatever the run did.
+Suspending is a spec edit, the generation it bumps is one of the inputs the
+Apply claim was decided from, and a claim whose inputs changed while its Job ran
+is recorded as [a run nobody accounted for](#a-migration-run-nobody-accounted-for)
+without its result being read. The Lease goes back once nothing the run
+dispatched can still write. The record stays while the resource is suspended,
+because a suspended migration takes no reading, and it clears on the first
+reading after resume that finds nothing of the artifact pending on the same
+database. To have the run's own result recorded, let it finish before
+suspending.
+
+If a `PtahSchema` Apply outcome still needs convergence proof, suspension
+retains and renews that operation's database-realm Lease. This deliberately
+blocks later mutations in the same realm until the resource is resumed and the
+read-only proof completes, or until the resource is deleted. Releasing the
+Lease while retaining unresolved proof would let an intervening Apply
+contaminate the audit result.
 
 Deleting a `PtahSchema` never runs SQL. The transient finalizer exists only to
 observe an already active operation and release coordination safely. Once no
@@ -1213,9 +1236,10 @@ record you cleared, and account for that run the same way.
 ### Deleting the resource discards it
 
 `kubectl delete ptahmigration` removes the record with the object. The operator
-does not refuse the deletion: only a person clears this record, so a refusal
-would be one the operator could never lift, and a resource nobody can remove is
-worse than a record that ends in the event stream.
+does not refuse the deletion. A resource being deleted takes no further
+readings, so nothing but a person could clear its record; a refusal would be
+one the operator could never lift, and a resource nobody can remove is worse
+than a record that ends in the event stream.
 
 It does refuse to lose it quietly. The pass that removes the finalizer emits a
 Warning Event, `UnresolvedRunDiscarded`, naming the outcome, the Job the run
@@ -1261,7 +1285,7 @@ apply wants; add `family="migration"` to ask about one.
 - `ptah_operator_applies_total{family,outcome}` counts started, completed,
   uncertain, and stale Apply transitions. A migration run that ended `Partial`
   or `Unknown` is `uncertain`: neither may be retried, and both leave a record
-  only a person can clear.
+  that only a reading with nothing left to re-run, or a person, clears.
 - `ptah_operator_operation_duration_seconds{family,operation,outcome}` measures
   completed logical operations, including uncertain and stale outcomes.
   `operation` is the union of both families: `resolve`, `verify`, `observe`,
