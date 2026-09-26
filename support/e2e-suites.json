@@ -64,8 +64,8 @@
     {
       "name": "migrations-postgresql",
       "slug": "migrations-postgresql",
-      "summary": "The versioned migration rows and the declared reference data, on PostgreSQL",
-      "phases": ["migrations-postgresql", "reference-data-postgresql"],
+      "summary": "The versioned migration rows, the declared reference data, and the alerting path, on PostgreSQL",
+      "phases": ["migrations-postgresql", "reference-data-postgresql", "alerting"],
       "prepare": ["dataplane"]
     },
     {

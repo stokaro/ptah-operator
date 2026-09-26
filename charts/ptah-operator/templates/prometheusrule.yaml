@@ -57,4 +57,88 @@ spec:
             summary: "Scrapes are failing to read the state the unresolved counts are built from"
             description: "A scrape that cannot read that state publishes no counts, so PtahOperatorUnresolvedApply cannot fire while this lasts."
             runbook_url: {{ $runbook | quote }}
+{{- $rules := .Values.monitoring.prometheusRule }}
+{{- if or $rules.overdueAfterSeconds $rules.operationStalledAfterSeconds $rules.lockReleaseOwedFor $rules.certificateExpiresWithinSeconds $rules.planStoreBytesAbove $rules.failures.window $rules.admissionFailingFor }}
+    # One alert per threshold a deployment set, and none for a threshold it left
+    # empty: the chart has no number of its own for how late is too late on a
+    # given cluster. Every one reads gauges the view publishes only while it is
+    # synchronized, so the view alert above covers their silence too.
+    - name: ptah-operator-state
+      rules:
+        {{- with $rules.overdueAfterSeconds }}
+        - alert: PtahOperatorResourceOverdue
+          expr: max by (family) (ptah_operator_overdue_seconds) > {{ . }}
+          labels:
+            severity: warning
+          annotations:
+            summary: {{ printf "A %s resource is %s past its own next reconciliation" "{{ $labels.family }}" "{{ $value | humanizeDuration }}" | quote }}
+            description: "status.nextReconciliationTime is when the controller meant to look again. The runbook lists the resources and what holds them."
+            runbook_url: {{ printf "%s#resource-state" $rules.runbookBaseURL | quote }}
+        {{- end }}
+        {{- with $rules.operationStalledAfterSeconds }}
+        - alert: PtahOperatorOperationStalled
+          expr: max by (family, operation) (ptah_operator_active_operation_seconds) > {{ . }}
+          labels:
+            severity: warning
+          annotations:
+            summary: {{ printf "A %s %s operation has been in flight for %s" "{{ $labels.family }}" "{{ $labels.operation }}" "{{ $value | humanizeDuration }}" | quote }}
+            description: "status.activeOperation names the Job and the attempt. The runbook says how to read whether it is waiting or stuck."
+            runbook_url: {{ printf "%s#resource-state" $rules.runbookBaseURL | quote }}
+        {{- end }}
+        {{- with $rules.lockReleaseOwedFor }}
+        - alert: PtahOperatorLockReleaseOwed
+          expr: max by (family) (ptah_operator_pending_lock_releases) > 0
+          for: {{ . | quote }}
+          labels:
+            severity: warning
+          annotations:
+            summary: {{ printf "%s resources have owed a database-realm Lease release for longer than %s" "{{ $labels.family }}" . | quote }}
+            description: "A Lease still held keeps every other resource in that realm from running. status.pendingLockRelease names it."
+            runbook_url: {{ printf "%s#resource-state" $rules.runbookBaseURL | quote }}
+        {{- end }}
+        {{- with $rules.certificateExpiresWithinSeconds }}
+        - alert: PtahOperatorWebhookCertificateExpiring
+          expr: min(ptah_operator_webhook_certificate_expiry_timestamp_seconds) - time() < {{ . }}
+          labels:
+            severity: critical
+          annotations:
+            summary: "The admission serving certificate expires in {{`{{ $value | humanizeDuration }}`}}"
+            description: "The rotator replaces it long before this. A value that keeps falling is a rotation that is not happening, and an expired certificate refuses every approval."
+            runbook_url: {{ printf "%s#webhook-certificate-lifecycle" $rules.runbookBaseURL | quote }}
+        {{- end }}
+        {{- with $rules.planStoreBytesAbove }}
+        - alert: PtahOperatorPlanStoreLarge
+          expr: max(ptah_operator_stored_plan_bytes) > {{ . }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Retained schema plans hold {{`{{ $value | humanize1024 }}`}}B, over the budget set for them"
+            description: "The operator prunes no plan. The runbook says which plans are pinned and how to export and delete the rest."
+            runbook_url: {{ printf "%s#prune-plans" $rules.runbookBaseURL | quote }}
+        {{- end }}
+        {{- if $rules.failures.window }}
+        {{- $failures := required "monitoring.prometheusRule.failures.count is required with failures.window: how many failures in that window are too many depends on the workload" $rules.failures.count }}
+        - alert: PtahOperatorOperationsFailing
+          expr: sum by (family, stage) (increase(ptah_operator_failures_total[{{ $rules.failures.window }}])) > {{ $failures }}
+          labels:
+            severity: warning
+          annotations:
+            summary: {{ printf "%s %s failed more than %v times in %s" "{{ $labels.family }}" "{{ $labels.stage }}" $failures $rules.failures.window | quote }}
+            description: "Each failure is retried on the resource's failureRetryInterval; a count this high is a dependency that stays down. The resources' Failed conditions name it."
+            runbook_url: {{ printf "%s#resource-state" $rules.runbookBaseURL | quote }}
+        {{- end }}
+        {{- with $rules.admissionFailingFor }}
+        - alert: PtahOperatorAdmissionUnavailable
+          # The API server's own count of admission calls it could not complete,
+          # for this operator's webhooks. It needs the API server scraped, which
+          # a Prometheus Operator installation usually does already.
+          expr: sum(increase(apiserver_admission_webhook_rejection_count{name=~".*operator\\.ptah\\.run", error_type="calling_webhook_error"}[{{ . }}])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "The API server could not reach the operator's admission webhooks in the last {{ . }}"
+            description: "Admission fails closed, so approvals and the operator's own writes are refused while this lasts."
+            runbook_url: {{ printf "%s#webhook-certificate-lifecycle" $rules.runbookBaseURL | quote }}
+        {{- end }}
+{{- end }}
 {{- end }}

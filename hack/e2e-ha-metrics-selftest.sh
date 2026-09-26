@@ -55,7 +55,34 @@ ptah_operator_unresolved_owed_seconds{family="migration"} 61
 ptah_operator_unresolved_view_synced 1
 # HELP ptah_operator_unresolved_view_read_failures_total Failed reads.
 # TYPE ptah_operator_unresolved_view_read_failures_total counter
-ptah_operator_unresolved_view_read_failures_total 3'
+ptah_operator_unresolved_view_read_failures_total 3
+# HELP ptah_operator_resources Resources by phase.
+# TYPE ptah_operator_resources gauge
+ptah_operator_resources{family="schema",phase="InSync"} 1
+# HELP ptah_operator_overdue_resources Overdue resources.
+# TYPE ptah_operator_overdue_resources gauge
+ptah_operator_overdue_resources{family="schema"} 0
+# HELP ptah_operator_active_operations Operations in flight.
+# TYPE ptah_operator_active_operations gauge
+ptah_operator_active_operations{family="schema",operation="Observe"} 1
+# HELP ptah_operator_active_operation_seconds Oldest operation age.
+# TYPE ptah_operator_active_operation_seconds gauge
+ptah_operator_active_operation_seconds{family="schema",operation="Observe"} 4
+# HELP ptah_operator_pending_lock_releases Lock releases owed.
+# TYPE ptah_operator_pending_lock_releases gauge
+ptah_operator_pending_lock_releases{family="schema"} 0
+# HELP ptah_operator_stored_plans Retained plans.
+# TYPE ptah_operator_stored_plans gauge
+ptah_operator_stored_plans{family="schema"} 2
+# HELP ptah_operator_stored_plan_bytes Retained plan bytes.
+# TYPE ptah_operator_stored_plan_bytes gauge
+ptah_operator_stored_plan_bytes 4096
+# HELP ptah_operator_webhook_certificate_expiry_timestamp_seconds Certificate expiry.
+# TYPE ptah_operator_webhook_certificate_expiry_timestamp_seconds gauge
+ptah_operator_webhook_certificate_expiry_timestamp_seconds 1.8e+09
+# HELP ptah_operator_webhook_certificate_read_failures_total Failed certificate reads.
+# TYPE ptah_operator_webhook_certificate_read_failures_total counter
+ptah_operator_webhook_certificate_read_failures_total 0'
 
 expect 'the complete post-failover reading' 0 "$complete"
 

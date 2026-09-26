@@ -124,6 +124,11 @@ E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
 E2E_POSTGRES_SOURCE_IMAGE=${E2E_POSTGRES_SOURCE_IMAGE:-postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73}
 E2E_MYSQL_SOURCE_IMAGE=${E2E_MYSQL_SOURCE_IMAGE:-mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb}
+# The alerting phase's Prometheus and Alertmanager. Prometheus is the release
+# support/tools.json pins promtool from, so the rules run under the evaluator
+# their unit tests ran under.
+E2E_PROMETHEUS_SOURCE_IMAGE=${E2E_PROMETHEUS_SOURCE_IMAGE:-prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e}
+E2E_ALERTMANAGER_SOURCE_IMAGE=${E2E_ALERTMANAGER_SOURCE_IMAGE:-prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a}
 E2E_RUN_ID=${E2E_RUN_ID:-}
 E2E_API_SERVER_PORT=${E2E_API_SERVER_PORT:-}
 E2E_REGISTRY_PORT=${E2E_REGISTRY_PORT:-}
@@ -416,9 +421,10 @@ if [ -n "$E2E_RUNNER_IMAGE" ]; then
 	is_pinned_image "$E2E_RUNNER_IMAGE" ||
 		fail "E2E_RUNNER_IMAGE must be pinned with @sha256:<64 lowercase hex> when provided"
 fi
-for source_image in "$E2E_REGISTRY_IMAGE" "$E2E_POSTGRES_SOURCE_IMAGE" "$E2E_MYSQL_SOURCE_IMAGE"; do
+for source_image in "$E2E_REGISTRY_IMAGE" "$E2E_POSTGRES_SOURCE_IMAGE" "$E2E_MYSQL_SOURCE_IMAGE" \
+	"$E2E_PROMETHEUS_SOURCE_IMAGE" "$E2E_ALERTMANAGER_SOURCE_IMAGE"; do
 	is_pinned_image "$source_image" ||
-		fail "registry and database source images must be pinned by digest: $source_image"
+		fail "registry, database and monitoring source images must be pinned by digest: $source_image"
 done
 
 case "$DOCKER_CONTEXT" in
@@ -2318,6 +2324,9 @@ docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_A
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then
 	fail "the controller image contains the test-only OCI publisher"
 fi
+if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
+	fail "the controller image contains the test-only alert receiver"
+fi
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
 	fail "the controller image does not contain /manager"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
@@ -2330,6 +2339,8 @@ create_image_audit_container "$FIXTURE_BUILD_IMAGE"
 docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$' ||
 	fail "the isolated fixture image does not contain /e2e-handcraft-oci"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$' ||
+	fail "the isolated fixture image does not contain /e2e-alert-sink"
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)(manager|ptah-runner)$'; then
 	fail "the isolated fixture image contains an operator binary"
 fi
@@ -2488,6 +2499,16 @@ mirror_task_image "$E2E_POSTGRES_SOURCE_IMAGE" postgresql
 E2E_POSTGRES_IMAGE=$PUSHED_IMAGE_REF
 mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
 E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
+# Pulled only where the alerting phase runs: every other suite would fetch two
+# images from Docker Hub for nothing.
+E2E_PROMETHEUS_IMAGE=
+E2E_ALERTMANAGER_IMAGE=
+if suite_runs_phase alerting; then
+	mirror_task_image "$E2E_PROMETHEUS_SOURCE_IMAGE" prometheus
+	E2E_PROMETHEUS_IMAGE=$PUSHED_IMAGE_REF
+	mirror_task_image "$E2E_ALERTMANAGER_SOURCE_IMAGE" alertmanager
+	E2E_ALERTMANAGER_IMAGE=$PUSHED_IMAGE_REF
+fi
 
 # external-postgresql-container-create-begin
 timing_next bootstrap external-postgres
@@ -2901,6 +2922,19 @@ E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_ENGINE=mysql \
 	run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"
+
+# The alerting path runs last in the PostgreSQL migrations suite, on the cluster
+# that suite leaves: the migration rows are what leave an Apply nobody accounted
+# for, which is the first thing the phase needs a receiver to be told about.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_PROMETHEUS_IMAGE=$E2E_PROMETHEUS_IMAGE \
+E2E_ALERTMANAGER_IMAGE=$E2E_ALERTMANAGER_IMAGE \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+	run_recorded_phase alerting "$ROOT_DIR/hack/e2e-alerting.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \

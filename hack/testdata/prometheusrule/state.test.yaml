@@ -1,0 +1,162 @@
+# The state alerts, against the rules the chart renders with
+# overdueAfterSeconds=900, operationStalledAfterSeconds=1800,
+# lockReleaseOwedFor=15m, certificateExpiresWithinSeconds=604800,
+# failures.window=30m with failures.count=20, and admissionFailingFor=5m
+# (hack/prometheus_rule_test.go writes them to rules.yaml beside this file).
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # One schema drifting later and later past its own next reconciliation. It
+  # pages once it is fifteen minutes late, and not while it is merely a pass in
+  # progress.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_overdue_seconds{family="schema",pod="leader"}'
+        values: '60+60x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PtahOperatorResourceOverdue
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: PtahOperatorResourceOverdue
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              family: schema
+            exp_annotations:
+              summary: "A schema resource is 17m 0s past its own next reconciliation"
+              description: "status.nextReconciliationTime is when the controller meant to look again. The runbook lists the resources and what holds them."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#resource-state"
+
+  # An Apply in flight for longer than half an hour, beside a quick Resolve.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_active_operation_seconds{family="migration",operation="Apply",pod="leader"}'
+        values: '1740+60x5'
+      - series: 'ptah_operator_active_operation_seconds{family="migration",operation="Resolve",pod="leader"}'
+        values: '5x5'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: PtahOperatorOperationStalled
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: PtahOperatorOperationStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              family: migration
+              operation: Apply
+            exp_annotations:
+              summary: "A migration Apply operation has been in flight for 31m 0s"
+              description: "status.activeOperation names the Job and the attempt. The runbook says how to read whether it is waiting or stuck."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#resource-state"
+
+  # A Lease release owed across the window, and one owed only briefly.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_pending_lock_releases{family="migration",pod="leader"}'
+        values: '1x20'
+      - series: 'ptah_operator_pending_lock_releases{family="schema",pod="leader"}'
+        values: '1x3 0x16'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PtahOperatorLockReleaseOwed
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: PtahOperatorLockReleaseOwed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              family: migration
+            exp_annotations:
+              summary: "migration resources have owed a database-realm Lease release for longer than 15m"
+              description: "A Lease still held keeps every other resource in that realm from running. status.pendingLockRelease names it."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#resource-state"
+
+  # Two replicas, one presenting a certificate that expires in six days: the
+  # earliest is the one that fails first.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_webhook_certificate_expiry_timestamp_seconds{pod="a"}'
+        values: '5184000x3'
+      - series: 'ptah_operator_webhook_certificate_expiry_timestamp_seconds{pod="b"}'
+        values: '518400x3'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: PtahOperatorWebhookCertificateExpiring
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "The admission serving certificate expires in 6d 0h 0m 0s"
+              description: "The rotator replaces it long before this. A value that keeps falling is a rotation that is not happening, and an expired certificate refuses every approval."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#webhook-certificate-lifecycle"
+
+  # Resolve failing steadily, well past the count in the window; Observe
+  # failing twice.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_failures_total{family="schema",stage="resolve",category="operation",pod="leader"}'
+        values: '0+2x40'
+      - series: 'ptah_operator_failures_total{family="schema",stage="observe",category="operation",pod="leader"}'
+        values: '0 1 2x38'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PtahOperatorOperationsFailing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PtahOperatorOperationsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              family: schema
+              stage: resolve
+            exp_annotations:
+              summary: "schema resolve failed more than 20 times in 30m"
+              description: "Each failure is retried on the resource's failureRetryInterval; a count this high is a dependency that stays down. The resources' Failed conditions name it."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#resource-state"
+
+  # The API server failing to call this operator's webhook, and another
+  # webhook's failures that are not this alert's business.
+  - interval: 1m
+    input_series:
+      - series: 'apiserver_admission_webhook_rejection_count{name="approvals.operator.ptah.run",error_type="calling_webhook_error"}'
+        values: '0x5 3x10'
+      - series: 'apiserver_admission_webhook_rejection_count{name="policy.example.com",error_type="calling_webhook_error"}'
+        values: '0+5x15'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PtahOperatorAdmissionUnavailable
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: PtahOperatorAdmissionUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "The API server could not reach the operator's admission webhooks in the last 5m"
+              description: "Admission fails closed, so approvals and the operator's own writes are refused while this lasts."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#webhook-certificate-lifecycle"
+
+  # The retained schema plans growing past the budget, on the leader; a
+  # follower publishes no store. Below the budget nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_stored_plan_bytes{pod="leader"}'
+        values: '536870912x5 1610612736x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PtahOperatorPlanStoreLarge
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: PtahOperatorPlanStoreLarge
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Retained schema plans hold 1.5GiB, over the budget set for them"
+              description: "The operator prunes no plan. The runbook says which plans are pinned and how to export and delete the rest."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#prune-plans"

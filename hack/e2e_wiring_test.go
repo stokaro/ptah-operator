@@ -6215,6 +6215,7 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		certRotation:               filepath.Join("..", e2eCertRotationPath),
 		migrations:                 filepath.Join("..", e2eMigrationsPath),
 		referenceData:              filepath.Join("..", e2eReferenceDataPath),
+		alerting:                   filepath.Join("..", e2eAlertingPath),
 		failedHookEvidence:         filepath.Join("..", failedHookEvidencePath),
 		failedHookEvidenceSelftest: filepath.Join("..", failedHookEvidenceSelftestPath),
 		admissionSchemaContract:    filepath.Join("..", admissionSchemaContractPath),

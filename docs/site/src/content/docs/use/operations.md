@@ -1427,6 +1427,112 @@ The rules are tested with `promtool test rules` against the scenarios in
 a healthy fleet at zero, a view that stays unsynchronized past the window, a
 leader change shorter than it, a lost scrape target, and a failed read.
 
+#### The state gauges {#resource-state}
+
+The same view publishes the fleet as it stands, under the same guard: nothing
+while `ptah_operator_unresolved_view_synced` reads 0.
+
+| Series | What it is |
+| --- | --- |
+| `ptah_operator_resources{family,phase}` | Resources by the phase their status reports; `Unset` before the first reconciliation |
+| `ptah_operator_overdue_resources{family}` | Resources, not suspended, past their own `status.nextReconciliationTime` |
+| `ptah_operator_overdue_seconds{family}` | How far past it the latest one is. Absent where none is overdue |
+| `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type. A failed attempt waiting for its retry is not in flight |
+| `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
+| `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
+| `ptah_operator_stored_plans{family}` | Plans retained in the cluster. The operator prunes none; [pruning stored plans](#prune-plans) is the procedure |
+| `ptah_operator_stored_plan_bytes{}` | Bytes the retained schema plans hold in their chunk ConfigMaps, from each plan's `spec.size`. A migration plan stores no chunk |
+| `ptah_operator_webhook_certificate_expiry_timestamp_seconds{}` | When the admission certificate this replica presents expires; every replica publishes it |
+| `ptah_operator_webhook_certificate_read_failures_total{}` | Scrapes that could not read or parse that certificate, which publish no expiry |
+
+Being overdue for a moment is normal: `nextReconciliationTime` passes when a
+pass starts, and the status moves once its Jobs have run. What is not normal
+is a resource that stays late, which is why the alert is on how late rather
+than on whether.
+
+Each of these alerts renders only when its threshold is set, and the chart
+sets none:
+
+| Value | Alert |
+| --- | --- |
+| `overdueAfterSeconds` | `PtahOperatorResourceOverdue` |
+| `operationStalledAfterSeconds` | `PtahOperatorOperationStalled` |
+| `lockReleaseOwedFor` | `PtahOperatorLockReleaseOwed` |
+| `certificateExpiresWithinSeconds` | `PtahOperatorWebhookCertificateExpiring` |
+| `planStoreBytesAbove` | `PtahOperatorPlanStoreLarge` |
+| `failures.window` with `failures.count` | `PtahOperatorOperationsFailing` |
+| `admissionFailingFor` | `PtahOperatorAdmissionUnavailable`, which reads the API server's metrics |
+
+Read them off the installation they are for, over a period that includes a
+rollout and a busy day, and set each comfortably above what normal work
+produced:
+
+```promql
+max_over_time(max(ptah_operator_overdue_seconds)[7d:1m])
+max_over_time(max(ptah_operator_active_operation_seconds)[7d:1m])
+max_over_time(sum(increase(ptah_operator_failures_total[30m]))[7d:5m])
+```
+
+#### What reaches a receiver {#alert-delivery}
+
+The rules are tested against synthetic series with promtool, and the path a
+real alert takes is tested on a cluster. The PostgreSQL migrations suite ends
+with a phase that stands up Prometheus, Alertmanager and a webhook receiver as
+plain Deployments, loads the rules from the chart's `PrometheusRule` as a rule
+file, scrapes every manager Pod behind the metrics Service, and asserts what
+the receiver logged:
+
+| Condition the phase creates | Alert at the receiver | Asserted |
+| --- | --- | --- |
+| An Apply Job removed while its run was going, from the migration rows | `PtahOperatorUnresolvedApply{family="migration"}` | Fires; the count in its summary equals what the drill-down above lists; its runbook link resolves to this page |
+| A schema whose Resolve Pod no node will schedule | `PtahOperatorOperationStalled{family="schema",operation="Resolve"}` | Fires no earlier than the threshold and within the detection target; clears within the slack once the Pod runs |
+| Every manager Pod deleted with every node cordoned | `PtahOperatorUnresolvedViewNotSynced` | Fires within `viewUnsyncedFor` plus the slack; clears once the managers are back |
+
+With a five-second scrape and evaluation interval and a five-second
+Alertmanager group wait, the phase declares a detection target of the rule's
+own threshold plus 45 seconds, and a delivery later than that fails it. Those
+intervals are the phase's, not a recommendation: a deployment that scrapes
+every 30 seconds has a target larger by the same amount.
+
+The phase does not drive a certificate close to expiry, an admission webhook
+the API server cannot reach, or a failed upgrade hook. Their rules are tested
+with promtool only. `PtahOperatorAdmissionUnavailable` reads the API server's
+own `apiserver_admission_webhook_rejection_count`, and a Job that a hook left
+failed is Kubernetes object state; both come from the cluster's Kubernetes
+monitoring, not from this operator's endpoint.
+
+The supported integration is a Prometheus that scrapes each manager Pod, as the
+chart's `ServiceMonitor` configures one to, and loads the chart's rules, either
+as a `PrometheusRule` through the Prometheus Operator or as the rule file that
+object's `spec` is.
+
+### Queries for a dashboard {#dashboard-queries}
+
+A panel per question, over the series above. The state gauges come from the
+leader, so each reads the max across replicas; the counters are per process,
+so each sums them. The operation label on a state gauge is the API's type
+(`Apply`), and on a counter it is the lower-case stage (`apply`).
+
+| Question | Query |
+| --- | --- |
+| What state is the fleet in | `max by (family, phase) (ptah_operator_resources)` |
+| What needs a person | `max by (family) (ptah_operator_unresolved_attempts)` and `max by (family) (ptah_operator_resources{phase=~"Blocked\|AwaitingApproval"})` |
+| What has stopped being looked at | `max by (family) (ptah_operator_overdue_resources)` and `max by (family) (ptah_operator_overdue_seconds)` |
+| How long operations take | `histogram_quantile(0.95, sum by (family, operation, le) (rate(ptah_operator_operation_duration_seconds_bucket[1h])))` |
+| What is in flight, and for how long | `max by (family, operation) (ptah_operator_active_operation_seconds)` |
+| What is failing | `sum by (family, stage, category) (increase(ptah_operator_failures_total[1h]))` |
+| Whether a realm is held up | `max by (family) (ptah_operator_active_operation_seconds{operation="Apply"})` and `max by (family) (ptah_operator_pending_lock_releases)` |
+| How much history is kept | `max by (family) (ptah_operator_stored_plans)` and `max(ptah_operator_stored_plan_bytes)` |
+| What the manager costs | `process_resident_memory_bytes`, `rate(process_cpu_seconds_total[5m])` and `workqueue_depth` for the manager Pods |
+
+A claimed Apply that is waiting for its realm's Lease holds its operation
+claim while it waits, so contention for a realm reads as an Apply in flight for
+longer than its Job would take, and `PtahOperatorOperationStalled` covers a
+wait that does not end. The Lease names its holder:
+`kubectl -n <operator namespace> get leases -o wide`. Two resources claiming
+one realm without `spec.target.sharedRealm` is a refusal instead, and reads as
+`Blocked` with reason `RealmConflict`.
+
 ### Finding a resource that has stopped converging
 
 The counters above cannot answer this one. They are aggregates over every

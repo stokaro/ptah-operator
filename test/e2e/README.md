@@ -305,6 +305,14 @@ suspended because the CRD's maximum failure retry is shorter than the suite's
 maximum duration; final watch history must still contain exactly the original
 Plan Job and Pod UIDs and zero Apply UIDs.
 
+The same isolated fixture image carries `/e2e-alert-sink`, the webhook receiver
+the alerting phase points Alertmanager at. It writes one JSON line per delivered
+alert and refuses a payload it cannot read, so the phase asserts on what was
+delivered. The controller image audit refuses it exactly as it refuses the OCI
+publisher. The phase's Prometheus and Alertmanager images are pinned by digest
+in `hack/e2e-kind.sh` and mirrored into the run's registry only when the suite
+runs the alerting phase.
+
 PostgreSQL and MySQL use distinct stable coordination keys. The suite requires
 their status and approval bindings to expose only the derived digest, never the
 plaintext key, and binds every approval to runner protocol version 5.

@@ -176,6 +176,31 @@ monitoring:
     # Where each rule's runbook_url points. The page and its anchor are fixed;
     # this is the guide they are read from.
     runbookBaseURL: "https://operator.ptah.run/edge/use/operations/"
+    # The rules below render only where their threshold is set. Each one is a
+    # number about a particular cluster -- its intervals, its Job start times,
+    # its tolerance -- so the chart ships none; the operations guide says how
+    # to read each one off a running installation.
+    #
+    # Seconds a resource may be past its own status.nextReconciliationTime.
+    overdueAfterSeconds: null
+    # Seconds one operation may stay in flight.
+    operationStalledAfterSeconds: null
+    # How long a database-realm Lease release may stay owed.
+    lockReleaseOwedFor: ""
+    # Seconds before the admission serving certificate expires that are too few.
+    certificateExpiresWithinSeconds: null
+    # Bytes of retained schema plans that are too many. The operator prunes no
+    # plan, so this is the budget the installation set for them in etcd.
+    planStoreBytesAbove: null
+    # Operation failures in a window that are too many. Set both or neither.
+    failures:
+      # The window, as a duration.
+      window: ""
+      # The count in that window.
+      count: null
+    # How long the API server may fail to reach the admission webhooks. The
+    # alert reads the API server's metrics, so it needs the API server scraped.
+    admissionFailingFor: ""
 
 # The admission webhook server inside the manager, which is what refuses an
 # approval that does not name an exact plan.
