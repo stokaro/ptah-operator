@@ -1573,6 +1573,7 @@ func currentCleanupFixture(
 		}
 		annotations[workload.AnnotationPlanFingerprint] = schema.Status.Plan.Fingerprint
 		annotations[workload.AnnotationPlanContentDigest] = schema.Status.Plan.ContentDigest
+		workload.MarkMutatingOperation(annotations)
 	}
 	expected.Annotations = copyStringMap(annotations)
 	expected.Spec.Template.Annotations = copyStringMap(annotations)

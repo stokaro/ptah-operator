@@ -124,7 +124,7 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 		annotations[AnnotationAdmissionSnapshotDigest] = snapshot.Digest
 	}
 	if spec.mutating {
-		annotations[AnnotationSafeToEvict] = "false"
+		MarkMutatingOperation(annotations)
 	}
 	labels := map[string]string{
 		LabelManagedBy:           "ptah-operator",

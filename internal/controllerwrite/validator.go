@@ -406,6 +406,7 @@ func validatePendingApplyJobCleanup(
 		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
 		workload.AnnotationAdmissionSnapshotDigest: pending.AdmissionSnapshot.Digest,
 	}
+	workload.MarkMutatingOperation(wantAnnotations)
 	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
 		return errors.New("Job annotations are not the exact pending Apply envelope")
 	}
@@ -507,6 +508,7 @@ func validateClaimBoundJobCleanup(
 		}
 		wantAnnotations[workload.AnnotationPlanFingerprint] = plan.Fingerprint
 		wantAnnotations[workload.AnnotationPlanContentDigest] = plan.ContentDigest
+		workload.MarkMutatingOperation(wantAnnotations)
 	}
 	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
 		return errors.New("Job annotations are not the exact current operation envelope")
@@ -605,32 +607,51 @@ func validateRetiredReadOnlyStatus(
 	return nil
 }
 
+// operationEnvelopeAnnotations are the keys every operation Job carries.
+var operationEnvelopeAnnotations = []string{
+	workload.AnnotationOperationID,
+	workload.AnnotationInputFingerprint,
+	workload.AnnotationPtahVersion,
+	workload.AnnotationExecutionBindingID,
+	workload.AnnotationControllerImage,
+	workload.AnnotationControllerRevision,
+	workload.AnnotationControllerStateVersion,
+	workload.AnnotationAdmissionSnapshotDigest,
+}
+
+// currentOperationAnnotations reports whether a Job carries exactly the keys
+// the builder writes: the envelope alone for a read-only operation, or the
+// Apply set.
 func currentOperationAnnotations(annotations map[string]string) bool {
-	if len(annotations) != 8 && len(annotations) != 10 {
+	return hasExactlyKeys(annotations, operationEnvelopeAnnotations) || currentApplyAnnotations(annotations)
+}
+
+// currentApplyAnnotations reports whether a Job carries exactly the keys the
+// builder writes on a schema Apply: the envelope, the plan binding, and the
+// mutating-operation marks.
+func currentApplyAnnotations(annotations map[string]string) bool {
+	keys := append([]string{workload.AnnotationPlanFingerprint, workload.AnnotationPlanContentDigest},
+		operationEnvelopeAnnotations...)
+	marks := map[string]string{}
+	workload.MarkMutatingOperation(marks)
+	for key := range marks {
+		keys = append(keys, key)
+	}
+	return hasExactlyKeys(annotations, keys)
+}
+
+// hasExactlyKeys reports whether annotations hold the distinct keys and
+// nothing else.
+func hasExactlyKeys(annotations map[string]string, keys []string) bool {
+	if len(annotations) != len(keys) {
 		return false
 	}
-	for _, key := range []string{
-		workload.AnnotationOperationID,
-		workload.AnnotationInputFingerprint,
-		workload.AnnotationPtahVersion,
-		workload.AnnotationExecutionBindingID,
-		workload.AnnotationControllerImage,
-		workload.AnnotationControllerRevision,
-		workload.AnnotationControllerStateVersion,
-		workload.AnnotationAdmissionSnapshotDigest,
-	} {
+	for _, key := range keys {
 		if _, found := annotations[key]; !found {
 			return false
 		}
 	}
-	_, hasPlanFingerprint := annotations[workload.AnnotationPlanFingerprint]
-	_, hasPlanContentDigest := annotations[workload.AnnotationPlanContentDigest]
-	return len(annotations) == 8 && !hasPlanFingerprint && !hasPlanContentDigest ||
-		len(annotations) == 10 && hasPlanFingerprint && hasPlanContentDigest
-}
-
-func currentApplyAnnotations(annotations map[string]string) bool {
-	return len(annotations) == 10 && currentOperationAnnotations(annotations)
+	return true
 }
 
 func isExecutionBindingID(value string) bool {

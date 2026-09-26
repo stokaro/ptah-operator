@@ -842,8 +842,8 @@ func retiredPredecessorApplyJobMatches(
 		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
 		workload.AnnotationAdmissionSnapshotDigest: snapshotDigest,
 	}
-	if len(job.Annotations) != 10 ||
-		pending.Plan.Name == "" || pending.Plan.UID == "" ||
+	workload.MarkMutatingOperation(wantAnnotations)
+	if pending.Plan.Name == "" || pending.Plan.UID == "" ||
 		pending.AdmissionSnapshot == nil ||
 		podintent.ValidateSnapshot(pending.AdmissionSnapshot) != nil ||
 		pending.AdmissionSnapshot.Digest != snapshotDigest ||
