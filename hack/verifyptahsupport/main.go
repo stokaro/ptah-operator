@@ -49,6 +49,11 @@ const (
 	// against the catalog. It names the support job's output now, and this
 	// path keeps it that way.
 	workflowContractPath = "hack/verify-kubernetes-support.go"
+	// The release builds its executor from the same commit and reads it
+	// through hack/releaseverify, so neither the release workflow nor the
+	// recipe it builds with has a reason to write the commit down.
+	releaseWorkflowPath = ".github/workflows/release.yml"
+	executorRecipePath  = "Dockerfile.executor"
 	// schemaVersion is the shape this program understands. A catalog written
 	// for a later shape is refused rather than read with the fields this
 	// program happens to recognize.
@@ -173,7 +178,9 @@ func run(output, now string) error {
 	if err := validate(loaded, today); err != nil {
 		return err
 	}
-	if err := checkSinglePin(loaded, []string{lifecyclePath, workflowPath, workflowContractPath}); err != nil {
+	if err := checkSinglePin(loaded, []string{
+		lifecyclePath, workflowPath, workflowContractPath, releaseWorkflowPath, executorRecipePath,
+	}); err != nil {
 		return err
 	}
 

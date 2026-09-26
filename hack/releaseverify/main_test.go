@@ -632,26 +632,36 @@ func workflowJQPrograms(document []byte) ([]string, error) {
 	var programs []string
 	for _, job := range workflow.Jobs {
 		for _, step := range job.Steps {
-			for offset := 0; ; {
-				index := strings.Index(step.Run[offset:], "jq ")
-				if index < 0 {
-					break
-				}
-				index += offset
-				start := strings.IndexByte(step.Run[index:], '\'')
-				if start < 0 {
-					return nil, fmt.Errorf("release step %s has a jq command without a single-quoted program", step.ID)
-				}
-				start += index + 1
-				end := strings.IndexByte(step.Run[start:], '\'')
-				if end < 0 {
-					return nil, fmt.Errorf("release step %s has an unterminated jq program", step.ID)
-				}
-				end += start
-				programs = append(programs, step.Run[start:end])
-				offset = end + 1
+			stepPrograms, err := stepJQPrograms(step)
+			if err != nil {
+				return nil, err
 			}
+			programs = append(programs, stepPrograms...)
 		}
+	}
+	return programs, nil
+}
+
+func stepJQPrograms(step workflowStep) ([]string, error) {
+	var programs []string
+	for offset := 0; ; {
+		index := strings.Index(step.Run[offset:], "jq ")
+		if index < 0 {
+			break
+		}
+		index += offset
+		start := strings.IndexByte(step.Run[index:], '\'')
+		if start < 0 {
+			return nil, fmt.Errorf("release step %s has a jq command without a single-quoted program", step.ID)
+		}
+		start += index + 1
+		end := strings.IndexByte(step.Run[start:], '\'')
+		if end < 0 {
+			return nil, fmt.Errorf("release step %s has an unterminated jq program", step.ID)
+		}
+		end += start
+		programs = append(programs, step.Run[start:end])
+		offset = end + 1
 	}
 	return programs, nil
 }
@@ -759,6 +769,40 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"asset replacement":         {`gh release upload "$GITHUB_REF_NAME" "$source"`, `gh release upload "$GITHUB_REF_NAME" "$source" --clobber`, false},
 		"extra privileged step":     {`      - name: Publish completed release transaction`, "      - name: Injected\n        id: injected\n        run: true\n      - name: Publish completed release transaction", false},
 		"dead shell branch":         {`          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false`, "          if false; then\n            echo bypass\n          fi\n          gh release edit \"$GITHUB_REF_NAME\" --draft=false --latest=false", false},
+
+		// The executor, from the pinned source to the verified signature.
+		"executor repository":           {`  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah-operator-executor`, `  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah`, false},
+		"executor pin source":           {`pin="$(go run ./hack/releaseverify -print-executor-source)"`, `pin="$(cat support/ptah.json)"`, true},
+		"executor commit refusal":       {`if [[ "$fetched" != "$commit" ]]; then`, `if false; then`, true},
+		"executor source condition":     {"        id: executor-source\n        shell: bash", "        id: executor-source\n        if: github.event_name == 'push'\n        shell: bash", false},
+		"executor source credentials":   {"        id: executor-source\n        shell: bash", "        id: executor-source\n        env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        shell: bash", true},
+		"executor context":              {`context: ${{ steps.executor-source.outputs.context }}`, `context: .`, true},
+		"executor recipe":               {`file: ${{ github.workspace }}/Dockerfile.executor`, `file: ${{ steps.executor-source.outputs.context }}/Dockerfile`, true},
+		"executor commit argument":      {`PTAH_BUILD_COMMIT=${{ steps.executor-source.outputs.commit }}`, `PTAH_BUILD_COMMIT=unknown`, true},
+		"executor smoke platform":       {"          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: false", "          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64\n          push: false", false},
+		"executor smoke push":           {"          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: false", "          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: true", false},
+		"executor smoke output":         {"          sbom: false\n          build-args: |\n            PTAH_BUILD_VERSION", "          sbom: false\n          outputs: type=registry,name=example.invalid/executor\n          build-args: |\n            PTAH_BUILD_VERSION", false},
+		"executor staging recipe":       {"          file: ${{ github.workspace }}/Dockerfile.executor\n          platforms: linux/amd64,linux/arm64\n          push: true", "          file: ${{ steps.executor-source.outputs.context }}/Dockerfile\n          platforms: linux/amd64,linux/arm64\n          push: true", false},
+		"executor staging argument":     {"            PTAH_BUILD_VERSION=${{ steps.executor-source.outputs.version }}\n            PTAH_BUILD_COMMIT=${{ steps.executor-source.outputs.commit }}\n            PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}\n      - name: Attest exact executor build output checkpoint", "            PTAH_BUILD_VERSION=${{ steps.executor-source.outputs.version }}\n            PTAH_BUILD_COMMIT=unknown\n            PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}\n      - name: Attest exact executor build output checkpoint", false},
+		"executor staging push":         {"          push: true\n          tags: ${{ steps.transaction.outputs.executor-tag }}", "          push: false\n          tags: ${{ steps.transaction.outputs.executor-tag }}", false},
+		"executor staging tag":          {`          tags: ${{ steps.transaction.outputs.executor-tag }}`, `          tags: ${{ steps.transaction.outputs.image-tag }}`, false},
+		"executor provenance":           {"          tags: ${{ steps.transaction.outputs.executor-tag }}\n          provenance: mode=max", "          tags: ${{ steps.transaction.outputs.executor-tag }}\n          provenance: false", false},
+		"executor SBOM":                 {"          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9\n          build-args: |\n            PTAH_BUILD_VERSION", "          sbom: true\n          build-args: |\n            PTAH_BUILD_VERSION", false},
+		"executor rebuild guard":        {`steps.executor-stage-inspect.outputs.reuse != 'true'`, `true`, false},
+		"executor stage inspection":     {"        id: executor-stage-inspect\n        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'", "        id: executor-stage-inspect\n        if: steps.transaction.outputs.mode == 'fresh'", false},
+		"executor staging checkpoint":   {`gh attestation verify "oci://$EXECUTOR_IMAGE@$digest"`, `test -n "$digest"`, false},
+		"executor journal tag":          {`executor_tag="$EXECUTOR_IMAGE:tx-$GITHUB_SHA-$transaction"`, `executor_tag="$EXECUTOR_IMAGE:latest"`, false},
+		"executor checkpoint subject":   {`subject-name: ${{ env.EXECUTOR_IMAGE }}`, `subject-name: ${{ env.IMAGE }}`, false},
+		"executor checkpoint digest":    {`subject-digest: ${{ steps.executor-image.outputs.digest }}`, `subject-digest: sha256:bad`, false},
+		"executor manifest commit":      {`printf 'executor-ptah-commit=%s\n' '${{ steps.executor-source.outputs.commit }}'`, `printf 'executor-ptah-commit=%s\n' unknown`, false},
+		"executor structure skipped":    {"        id: executor-structure\n", "        id: executor-structure\n        if: steps.transaction.outputs.mode != 'published'\n", false},
+		"executor revision label":       {`--arg revision "$commit"`, `--arg revision "$GITHUB_SHA"`, false},
+		"executor provenance verifier":  {`-executor-provenance "$image_dir/provenance.json"`, `-executor-provenance /dev/null`, false},
+		"executor attestation digest":   {`subject-digest: ${{ steps.artifacts.outputs.executor-digest }}`, `subject-digest: ${{ steps.artifacts.outputs.image-digest }}`, false},
+		"executor signature guard":      {"        id: executor-signature\n        if: steps.transaction.outputs.mode != 'published'", "        id: executor-signature\n        if: steps.transaction.outputs.mode == 'fresh'", false},
+		"executor signature digest":     {`cosign sign --yes "${{ steps.artifacts.outputs.executor-repository }}@${{ steps.artifacts.outputs.executor-digest }}"`, `cosign sign --yes "${{ steps.artifacts.outputs.executor-repository }}:latest"`, false},
+		"executor final verify skipped": {"        id: executor-final-verify\n", "        id: executor-final-verify\n        if: steps.transaction.outputs.mode == 'published'\n", false},
+		"executor final read-back":      {`'${{ steps.artifacts.outputs.executor-tag }}' > "$image_dir/final-tag-index.json"`, `'${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/final-tag-index.json"`, false},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -869,6 +913,13 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	}
 	chartSum := fmt.Sprintf("%x", sha256.Sum256(chart))
 	digest := "sha256:" + strings.Repeat("2", 64)
+	executorDigest := "sha256:" + strings.Repeat("3", 64)
+	// The executor is whatever the catalog pins, so the fixture reads the
+	// catalog rather than repeating the commit.
+	pin, err := repositoryPtahPin(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	manifest := fmt.Sprintf("version=0.1.0\n"+
 		"source-repository=%s\n"+
 		"source-ref=refs/tags/%s\n"+
@@ -876,13 +927,30 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"transaction=123\n"+
 		"image=%s@%s\n"+
 		"image-tag=%s:tx-%s-123\n"+
+		"executor=%s@%s\n"+
+		"executor-tag=%s:tx-%s-123\n"+
+		"executor-ptah-commit=%s\n"+
+		"executor-ptah-version=%s\n"+
 		"chart-asset=%s\n"+
 		"chart-asset-sha256=%s\n"+
 		"client-assets=%s\n"+
 		"support-evidence-run-id=456\n"+
 		"kubernetes-support-window=%s\n",
-		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA, chartName, chartSum,
-		strings.Join(assets, ","), supportWindow)
+		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA,
+		executorImageName, executorDigest, executorImageName, sourceSHA, pin.Commit, pin.Version,
+		chartName, chartSum, strings.Join(assets, ","), supportWindow)
+	executorLines := fmt.Sprintf("executor=%s@%s\n"+
+		"executor-tag=%s:tx-%s-123\n"+
+		"executor-ptah-commit=%s\n"+
+		"executor-ptah-version=%s\n",
+		executorImageName, executorDigest, executorImageName, sourceSHA, pin.Commit, pin.Version)
+	if !strings.Contains(manifest, executorLines) {
+		t.Fatal("the fixture does not carry the executor records it mutates")
+	}
+	otherCommit := strings.Repeat("a", 40)
+	if otherCommit == pin.Commit {
+		otherCommit = strings.Repeat("b", 40)
+	}
 	manifestPath := filepath.Join(directory, "release-manifest.txt")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
@@ -924,6 +992,84 @@ func TestVerifyReleaseAssets(t *testing.T) {
 			}
 		})
 	}
+	// Each executor record is refused by the check that exists for it, which
+	// the problem each row names shows: a refusal for another reason would
+	// prove nothing about the executor.
+	for _, row := range []struct {
+		name     string
+		manifest string
+		problem  string
+	}{
+		{
+			// A manifest from before the executor shipped, or one that lost
+			// it: an installer reading it would find no executor to pin.
+			name:     "a manifest without the executor",
+			manifest: strings.Replace(manifest, executorLines, "", 1),
+			problem:  "release manifest has 12 records, expected 16",
+		},
+		{
+			// A tag moves; only a digest names the bytes that were signed.
+			name: "an executor named by a tag",
+			manifest: strings.Replace(manifest,
+				"executor="+executorImageName+"@"+executorDigest,
+				"executor="+executorImageName+":v0.1.0", 1),
+			problem: `release manifest reference "` + executorImageName + `:v0.1.0" is invalid`,
+		},
+		{
+			name: "an executor in another repository",
+			manifest: strings.Replace(manifest,
+				"executor="+executorImageName+"@",
+				"executor=ghcr.io/stokaro/ptah@", 1),
+			problem: `release manifest reference "ghcr.io/stokaro/ptah@`,
+		},
+		{
+			// The catalog at the tagged source is what the suite built and
+			// ran; a manifest naming another Ptah commit names a build nobody
+			// tested.
+			name: "a Ptah commit the catalog does not pin",
+			manifest: strings.Replace(manifest,
+				"executor-ptah-commit="+pin.Commit,
+				"executor-ptah-commit="+otherCommit, 1),
+			problem: "release manifest executor-ptah-commit is",
+		},
+		{
+			name: "a Ptah version the catalog does not record",
+			manifest: strings.Replace(manifest,
+				"executor-ptah-version="+pin.Version,
+				"executor-ptah-version=v9.9.9", 1),
+			problem: "release manifest executor-ptah-version is",
+		},
+		{
+			name: "an executor staged by another transaction",
+			manifest: strings.Replace(manifest,
+				"executor-tag="+executorImageName+":tx-"+sourceSHA+"-123",
+				"executor-tag="+executorImageName+":tx-"+sourceSHA+"-124", 1),
+			problem: "release manifest executor-tag is",
+		},
+		{
+			name: "the executor staged under the operator's name",
+			manifest: strings.Replace(manifest,
+				"executor-tag="+executorImageName+":tx-",
+				"executor-tag="+imageName+":tx-", 1),
+			problem: "release manifest executor-tag is",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if row.manifest == manifest {
+				t.Fatal("the mutation changed nothing, so this row measures nothing")
+			}
+			if err := os.WriteFile(manifestPath, []byte(row.manifest), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA)
+			if err == nil {
+				t.Fatal("verifyReleaseAssets() accepted the manifest")
+			}
+			if !strings.Contains(err.Error(), row.problem) {
+				t.Fatalf("verifyReleaseAssets() said %q, which does not carry %q", err, row.problem)
+			}
+		})
+	}
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -949,14 +1095,57 @@ func TestVerifyPreparedJournal(t *testing.T) {
 		"source-sha=%s\n"+
 		"transaction=123\n"+
 		"image-tag=%s:tx-%s-123\n"+
+		"executor-tag=%s:tx-%s-123\n"+
 		"chart-asset=ptah-operator-0.1.0.tgz\n",
-		repositoryName, tag, sourceSHA, imageName, sourceSHA)
+		repositoryName, tag, sourceSHA, imageName, sourceSHA, executorImageName, sourceSHA)
 	path := filepath.Join(t.TempDir(), "release-journal.txt")
 	if err := os.WriteFile(path, []byte(journal), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyPreparedJournal(path, tag, sourceSHA); err != nil {
 		t.Fatalf("verifyPreparedJournal(valid) error = %v", err)
+	}
+	// A resumed transaction reuses or rebuilds the executor at the tag its
+	// journal names, so the journal has to name one, and only this
+	// transaction's.
+	executorTag := "executor-tag=" + executorImageName + ":tx-" + sourceSHA + "-123\n"
+	for _, row := range []struct {
+		name    string
+		journal string
+		problem string
+	}{
+		{
+			name:    "a journal with no executor staging tag",
+			journal: strings.Replace(journal, executorTag, "", 1),
+			problem: "prepared release journal has 8 records, expected 9",
+		},
+		{
+			name:    "an executor staged by another transaction",
+			journal: strings.Replace(journal, executorTag, "executor-tag="+executorImageName+":tx-"+sourceSHA+"-124\n", 1),
+			problem: "prepared release journal executor-tag is",
+		},
+		{
+			name:    "the executor staged under the operator's name",
+			journal: strings.Replace(journal, executorTag, "executor-tag="+imageName+":tx-"+sourceSHA+"-123\n", 1),
+			problem: "prepared release journal executor-tag is",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if row.journal == journal {
+				t.Fatal("the mutation changed nothing, so this row measures nothing")
+			}
+			rowPath := filepath.Join(t.TempDir(), "release-journal.txt")
+			if err := os.WriteFile(rowPath, []byte(row.journal), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := verifyPreparedJournal(rowPath, tag, sourceSHA)
+			if err == nil {
+				t.Fatal("verifyPreparedJournal() accepted the journal")
+			}
+			if !strings.Contains(err.Error(), row.problem) {
+				t.Fatalf("verifyPreparedJournal() said %q, which does not carry %q", err, row.problem)
+			}
+		})
 	}
 	mutated := strings.Replace(journal, "transaction=123", "transaction=123-1", 1)
 	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {

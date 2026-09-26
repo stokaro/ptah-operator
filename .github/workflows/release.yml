@@ -16,13 +16,14 @@ permissions:
 
 env:
   IMAGE: ghcr.io/stokaro/ptah-operator
+  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah-operator-executor
 
 jobs:
   smoke:
     name: Release contract and multi-architecture build
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         id: checkout
@@ -93,6 +94,53 @@ jobs:
             VERSION=dev
             REVISION=${{ github.sha }}
             SOURCE=https://github.com/${{ github.repository }}
+      # The executor is Ptah, built here from the commit support/ptah.json pins,
+      # which is the commit the acceptance suite built its executor from. The
+      # source is fetched by that commit and refused if Git resolves anything
+      # else, then archived without its .git directory as the harness does.
+      - name: Fetch the pinned Ptah executor source
+        id: executor-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(go run ./hack/releaseverify -print-executor-source)"
+          commit="$(sed -n 's/^ptah-commit=//p' <<<"$pin")"
+          version="$(sed -n 's/^ptah-version=//p' <<<"$pin")"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$version" ]]
+          repository="$RUNNER_TEMP/ptah-repository"
+          context="$RUNNER_TEMP/ptah-source"
+          git init --quiet "$repository"
+          git -C "$repository" fetch --quiet --depth=1 --no-tags \
+            https://github.com/stokaro/ptah "$commit"
+          fetched="$(git -C "$repository" rev-parse --verify 'FETCH_HEAD^{commit}')"
+          if [[ "$fetched" != "$commit" ]]; then
+            echo "fetched Ptah commit $fetched, and support/ptah.json pins $commit; refusing to build" >&2
+            exit 1
+          fi
+          date="$(git -C "$repository" show -s --format=%cI "$commit")"
+          mkdir "$context"
+          git -C "$repository" archive --format=tar "$commit" | tar -x -C "$context"
+          {
+            printf 'commit=%s\n' "$commit"
+            printf 'version=%s\n' "$version"
+            printf 'date=%s\n' "$date"
+            printf 'context=%s\n' "$context"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build the executor for both release architectures
+        id: executor-build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: ${{ steps.executor-source.outputs.context }}
+          file: ${{ github.workspace }}/Dockerfile.executor
+          platforms: linux/amd64,linux/arm64
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            PTAH_BUILD_VERSION=${{ steps.executor-source.outputs.version }}
+            PTAH_BUILD_COMMIT=${{ steps.executor-source.outputs.commit }}
+            PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}
 
   support-preflight:
     name: Verify release Kubernetes support evidence
@@ -292,12 +340,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   publish:
-    name: Publish signed image and attested chart
+    name: Publish signed images and attested chart
     needs: [support-preflight]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha
     runs-on: ubuntu-latest
     environment: release
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: write
       packages: write
@@ -338,6 +386,39 @@ jobs:
           git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$default_branch"
           version="${GITHUB_REF_NAME#v}"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      # The executor is Ptah, built here from the commit support/ptah.json pins,
+      # which is the commit the acceptance suite built its executor from. The
+      # source is fetched by that commit and refused if Git resolves anything
+      # else, then archived without its .git directory as the harness does.
+      - name: Fetch the pinned Ptah executor source
+        id: executor-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(go run ./hack/releaseverify -print-executor-source)"
+          commit="$(sed -n 's/^ptah-commit=//p' <<<"$pin")"
+          version="$(sed -n 's/^ptah-version=//p' <<<"$pin")"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$version" ]]
+          repository="$RUNNER_TEMP/ptah-repository"
+          context="$RUNNER_TEMP/ptah-source"
+          git init --quiet "$repository"
+          git -C "$repository" fetch --quiet --depth=1 --no-tags \
+            https://github.com/stokaro/ptah "$commit"
+          fetched="$(git -C "$repository" rev-parse --verify 'FETCH_HEAD^{commit}')"
+          if [[ "$fetched" != "$commit" ]]; then
+            echo "fetched Ptah commit $fetched, and support/ptah.json pins $commit; refusing to build" >&2
+            exit 1
+          fi
+          date="$(git -C "$repository" show -s --format=%cI "$commit")"
+          mkdir "$context"
+          git -C "$repository" archive --format=tar "$commit" | tar -x -C "$context"
+          {
+            printf 'commit=%s\n' "$commit"
+            printf 'version=%s\n' "$version"
+            printf 'date=%s\n' "$date"
+            printf 'context=%s\n' "$context"
+          } >> "$GITHUB_OUTPUT"
       - name: Require immutable release enforcement
         id: immutability-preflight
         env:
@@ -420,6 +501,7 @@ jobs:
             release_state=fresh
             transaction="$GITHUB_RUN_ID"
             image_tag="$IMAGE:tx-$GITHUB_SHA-$transaction"
+            executor_tag="$EXECUTOR_IMAGE:tx-$GITHUB_SHA-$transaction"
             {
               printf 'state=prepared\n'
               printf 'version=%s\n' '${{ steps.release.outputs.version }}'
@@ -428,6 +510,7 @@ jobs:
               printf 'source-sha=%s\n' "$GITHUB_SHA"
               printf 'transaction=%s\n' "$transaction"
               printf 'image-tag=%s\n' "$image_tag"
+              printf 'executor-tag=%s\n' "$executor_tag"
               printf 'chart-asset=ptah-operator-%s.tgz\n' '${{ steps.release.outputs.version }}'
             } > dist/release-journal.txt
             go run ./hack/releaseverify \
@@ -450,6 +533,7 @@ jobs:
             printf 'mode=%s\n' "$release_state"
             printf 'transaction=%s\n' "$(field transaction)"
             printf 'image-tag=%s\n' "$(field image-tag)"
+            printf 'executor-tag=%s\n' "$(field executor-tag)"
           } >> "$GITHUB_OUTPUT"
       - name: Attest prepared release journal
         id: journal-attestation
@@ -535,6 +619,46 @@ jobs:
             echo 'could not determine prepared image state; refusing to rebuild' >&2
             exit 1
           fi
+      - name: Inspect prepared executor transaction anonymously
+        id: executor-stage-inspect
+        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference='${{ steps.transaction.outputs.executor-tag }}'
+          raw_manifest="$RUNNER_TEMP/prepared-executor-index.json"
+          error_file="$RUNNER_TEMP/prepared-executor-error.txt"
+          if docker buildx imagetools inspect --raw "$reference" > "$raw_manifest" 2>"$error_file"; then
+            digest="sha256:$(sha256sum "$raw_manifest" | awk '{print $1}')"
+            checkpoint_error="$RUNNER_TEMP/prepared-executor-checkpoint-error.txt"
+            if gh attestation verify "oci://$EXECUTOR_IMAGE@$digest" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              2>"$checkpoint_error"
+            then
+              {
+                printf 'reuse=true\n'
+                printf 'digest=%s\n' "$digest"
+              } >> "$GITHUB_OUTPUT"
+            else
+              cat "$checkpoint_error" >&2
+              echo 'prepared executor has no authenticated build checkpoint; rebuilding it' >&2
+              printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+            fi
+          elif go run ./hack/releaseverify \
+            -registry-missing-error "$error_file" \
+            -registry-missing-reference "$reference"
+          then
+            printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+          else
+            cat "$error_file" >&2
+            echo 'could not determine prepared executor state; refusing to rebuild' >&2
+            exit 1
+          fi
       - name: Log in to GHCR
         id: registry-login
         if: steps.transaction.outputs.mode != 'published'
@@ -567,6 +691,32 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Build executor into transaction staging
+        id: executor-image
+        if: >-
+          (steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared') &&
+          steps.executor-stage-inspect.outputs.reuse != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: ${{ steps.executor-source.outputs.context }}
+          file: ${{ github.workspace }}/Dockerfile.executor
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.transaction.outputs.executor-tag }}
+          provenance: mode=max
+          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
+          build-args: |
+            PTAH_BUILD_VERSION=${{ steps.executor-source.outputs.version }}
+            PTAH_BUILD_COMMIT=${{ steps.executor-source.outputs.commit }}
+            PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}
+      - name: Attest exact executor build output checkpoint
+        id: executor-build-checkpoint
+        if: steps.executor-image.outcome == 'success' && steps.executor-image.outputs.digest != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.EXECUTOR_IMAGE }}
+          subject-digest: ${{ steps.executor-image.outputs.digest }}
           push-to-registry: true
       - name: Reproducibly package chart
         id: chart-package
@@ -617,6 +767,10 @@ jobs:
             if [[ '${{ steps.stage-inspect.outputs.reuse }}' == true ]]; then
               image_digest='${{ steps.stage-inspect.outputs.digest }}'
             fi
+            executor_digest='${{ steps.executor-image.outputs.digest }}'
+            if [[ '${{ steps.executor-stage-inspect.outputs.reuse }}' == true ]]; then
+              executor_digest='${{ steps.executor-stage-inspect.outputs.digest }}'
+            fi
             chart_asset_sha256="$(sha256sum "$chart_path" | awk '{print $1}')"
             [[ "$TESTED_SUPPORT_EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
             [[ "$TESTED_KUBERNETES_SUPPORT_WINDOW" =~ ^[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+)*$ ]]
@@ -628,6 +782,10 @@ jobs:
               printf 'transaction=%s\n' '${{ steps.transaction.outputs.transaction }}'
               printf 'image=%s@%s\n' "$IMAGE" "$image_digest"
               printf 'image-tag=%s\n' '${{ steps.transaction.outputs.image-tag }}'
+              printf 'executor=%s@%s\n' "$EXECUTOR_IMAGE" "$executor_digest"
+              printf 'executor-tag=%s\n' '${{ steps.transaction.outputs.executor-tag }}'
+              printf 'executor-ptah-commit=%s\n' '${{ steps.executor-source.outputs.commit }}'
+              printf 'executor-ptah-version=%s\n' '${{ steps.executor-source.outputs.version }}'
               printf 'chart-asset=%s\n' "$(basename "$chart_path")"
               printf 'chart-asset-sha256=%s\n' "$chart_asset_sha256"
               printf 'client-assets=%s\n' 'kubectl-ptah-darwin-amd64,kubectl-ptah-darwin-arm64,kubectl-ptah-linux-amd64,kubectl-ptah-linux-arm64'
@@ -655,6 +813,9 @@ jobs:
             printf 'image-digest=%s\n' "$(field image | sed 's/.*@//')"
             printf 'image-repository=%s\n' "$(field image | sed 's/@sha256:.*//')"
             printf 'image-tag=%s\n' "$(field image-tag)"
+            printf 'executor-digest=%s\n' "$(field executor | sed 's/.*@//')"
+            printf 'executor-repository=%s\n' "$(field executor | sed 's/@sha256:.*//')"
+            printf 'executor-tag=%s\n' "$(field executor-tag)"
           } >> "$GITHUB_OUTPUT"
       - name: Verify staged image structure and build provenance
         id: image-structure
@@ -747,6 +908,100 @@ jobs:
             -provenance-source "$source" \
             -provenance-revision "$GITHUB_SHA" \
             -provenance-version "$version"
+      # The executor gate is the image gate with Ptah's identity in place of the
+      # operator's: the revision label and the build arguments must name the
+      # pinned Ptah commit before anything attests or signs the digest.
+      - name: Verify staged executor structure and build provenance
+        id: executor-structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference="${{ steps.artifacts.outputs.executor-repository }}@${{ steps.artifacts.outputs.executor-digest }}"
+          image_dir="$RUNNER_TEMP/release-executor"
+          mkdir -p "$image_dir"
+          docker buildx imagetools inspect --raw "$reference" > "$image_dir/index.json"
+          index_digest="sha256:$(sha256sum "$image_dir/index.json" | awk '{print $1}')"
+          [[ "$index_digest" == '${{ steps.artifacts.outputs.executor-digest }}' ]]
+          docker buildx imagetools inspect --raw \
+            '${{ steps.artifacts.outputs.executor-tag }}' > "$image_dir/tag-index.json"
+          cmp "$image_dir/index.json" "$image_dir/tag-index.json"
+
+          jq -e '
+            .schemaVersion == 2 and
+            (.mediaType == "application/vnd.oci.image.index.v1+json" or
+             .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json") and
+            (.manifests | length == 4) and
+            ([.manifests[] |
+              select(.platform.os == "linux" and
+                     (.platform.architecture == "amd64" or .platform.architecture == "arm64") and
+                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
+             map(.platform.os + "/" + .platform.architecture) | sort) ==
+              ["linux/amd64", "linux/arm64"] and
+            ([.manifests[] |
+              select(.annotations["vnd.docker.reference.type"] == "attestation-manifest")] |
+             length) == 2 and
+            ([.manifests[] |
+              select(.platform.os != "linux" and
+                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
+             length) == 0
+          ' "$image_dir/index.json" >/dev/null
+
+          source='https://github.com/stokaro/ptah'
+          commit='${{ steps.executor-source.outputs.commit }}'
+          version='${{ steps.executor-source.outputs.version }}'
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          for platform in linux/amd64 linux/arm64; do
+            os="${platform%/*}"
+            architecture="${platform#*/}"
+            platform_digest="$(jq -er \
+              --arg os "$os" --arg architecture "$architecture" \
+              '.manifests[] |
+               select(.platform.os == $os and .platform.architecture == $architecture and
+                      .annotations["vnd.docker.reference.type"] != "attestation-manifest") |
+               .digest' "$image_dir/index.json")"
+            attestation_digest="$(jq -er --arg digest "$platform_digest" \
+              '.manifests[] |
+               select(.annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+                      .annotations["vnd.docker.reference.digest"] == $digest) |
+               .digest' "$image_dir/index.json")"
+            docker buildx imagetools inspect \
+              "${{ steps.artifacts.outputs.executor-repository }}@$platform_digest" \
+              --format '{{json .}}' > "$image_dir/${architecture}-image.json"
+            jq -e \
+              --arg digest "$platform_digest" \
+              --arg os "$os" \
+              --arg architecture "$architecture" \
+              --arg source "$source" \
+              --arg revision "$commit" \
+              --arg version "$version" '
+                .manifest.digest == $digest and
+                .image.os == $os and .image.architecture == $architecture and
+                .image.config.Labels["org.opencontainers.image.source"] == $source and
+                .image.config.Labels["org.opencontainers.image.revision"] == $revision and
+                .image.config.Labels["org.opencontainers.image.version"] == $version
+              ' "$image_dir/${architecture}-image.json" >/dev/null
+            docker buildx imagetools inspect --raw \
+              "${{ steps.artifacts.outputs.executor-repository }}@$attestation_digest" \
+              > "$image_dir/${architecture}-attestation.json"
+            jq -e --arg digest "$platform_digest" '
+              .artifactType == "application/vnd.docker.attestation.manifest.v1+json" and
+              .subject.digest == $digest and
+              ([.layers[] |
+                select(.mediaType == "application/vnd.in-toto+json" and
+                       .annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document")] |
+               length) >= 1 and
+              ([.layers[] |
+                select(.mediaType == "application/vnd.in-toto+json" and
+                       .annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v1")] |
+               length) == 1
+            ' "$image_dir/${architecture}-attestation.json" >/dev/null
+          done
+
+          docker buildx imagetools inspect "$reference" \
+            --format '{{json .Provenance}}' > "$image_dir/provenance.json"
+          go run ./hack/releaseverify \
+            -executor-provenance "$image_dir/provenance.json" \
+            -executor-provenance-date '${{ steps.executor-source.outputs.date }}'
       - name: Attest release transaction assets
         id: asset-attestation
         if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
@@ -897,6 +1152,14 @@ jobs:
           subject-name: ${{ steps.artifacts.outputs.image-repository }}
           subject-digest: ${{ steps.artifacts.outputs.image-digest }}
           push-to-registry: true
+      - name: Attest final executor provenance
+        id: executor-attestation
+        if: steps.transaction.outputs.mode != 'published'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ steps.artifacts.outputs.executor-repository }}
+          subject-digest: ${{ steps.artifacts.outputs.executor-digest }}
+          push-to-registry: true
       - name: Install Cosign
         id: setup-cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
@@ -904,6 +1167,10 @@ jobs:
         id: image-signature
         if: steps.transaction.outputs.mode != 'published'
         run: cosign sign --yes "${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"
+      - name: Sign exact executor digest
+        id: executor-signature
+        if: steps.transaction.outputs.mode != 'published'
+        run: cosign sign --yes "${{ steps.artifacts.outputs.executor-repository }}@${{ steps.artifacts.outputs.executor-digest }}"
       - name: Verify final publication and signatures
         id: final-verify
         env:
@@ -943,6 +1210,46 @@ jobs:
           cmp "$image_dir/index.json" "$image_dir/final-index.json"
           docker buildx imagetools inspect --raw \
             '${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/final-tag-index.json"
+          cmp "$image_dir/final-index.json" "$image_dir/final-tag-index.json"
+      # This runs after the step above has logged out of GHCR, so the executor's
+      # signature, attestation and bytes are all read the way an installer
+      # reads them.
+      - name: Verify final executor publication and signature
+        id: executor-final-verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          reference="${{ steps.artifacts.outputs.executor-repository }}@${{ steps.artifacts.outputs.executor-digest }}"
+          delay=2
+          for attempt in {1..8}; do
+            if cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$reference" && \
+              gh attestation verify "oci://$reference" \
+                --repo "$GITHUB_REPOSITORY" \
+                --source-ref "$GITHUB_REF" \
+                --source-digest "$GITHUB_SHA" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+            then
+              break
+            fi
+            if [[ "$attempt" == 8 ]]; then
+              exit 1
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          image_dir="$RUNNER_TEMP/release-executor"
+          docker buildx imagetools inspect --raw "$reference" > "$image_dir/final-index.json"
+          final_digest="sha256:$(sha256sum "$image_dir/final-index.json" | awk '{print $1}')"
+          [[ "$final_digest" == '${{ steps.artifacts.outputs.executor-digest }}' ]]
+          cmp "$image_dir/index.json" "$image_dir/final-index.json"
+          docker buildx imagetools inspect --raw \
+            '${{ steps.artifacts.outputs.executor-tag }}' > "$image_dir/final-tag-index.json"
           cmp "$image_dir/final-index.json" "$image_dir/final-tag-index.json"
       - name: Publish completed release transaction
         id: publish-release

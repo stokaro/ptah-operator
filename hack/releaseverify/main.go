@@ -43,27 +43,44 @@ var (
 		"smoke/verify-release":               "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
 		"smoke/scan-vulnerabilities":         "8e0e527f037d2fc58747bd3fecf5b733bbf3bdc27f1d979508de0626f4bcb9ab",
 		"smoke/chart-reproducibility":        "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
+		"smoke/executor-source":              "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
 		"support-preflight/support-evidence": "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7",
 		"publish/release":                    "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
-		"publish/transaction":                "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
+		"publish/executor-source":            "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
+		"publish/transaction":                "f0f4f8c28e222c0aaed707d5e531c9f747bcea67b0a2c1e3e11ce621043e9445",
 		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
 		"publish/draft":                      "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
 		"publish/stage-inspect":              "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
+		"publish/executor-stage-inspect":     "9101f2bf05b917e79f04cbafdf82982ea27ccf4798c4d058797d1c276dbb86e2",
 		"publish/chart-package":              "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
-		"publish/artifacts":                  "3b684e7422b28920bf2253a99ffef11dd106b77e4c5c0fe683486b3988bea82b",
+		"publish/artifacts":                  "414c2c004e2128d064542bb9307781b5b3f2f561c80a982cb060cb7f3f24db6b",
 		"publish/image-structure":            "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
+		"publish/executor-structure":         "accafc13c918f4ee400aa83e7453418aade64bae112778ac6487119f2f7736c7",
 		"publish/finalize-journal":           "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
 		"publish/asset-auth":                 "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
 		"publish/asset-sync":                 "9edd9f8cac27bffcecf3bd2d456d2e007eeaa9e8223a18c58940e00b94c25db6",
 		"publish/image-signature":            "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
+		"publish/executor-signature":         "5e217c59d27aab1a85bb03fde7613fd4585a4386fc654ae50f4e7c68ae3932fe",
 		"publish/final-verify":               "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
+		"publish/executor-final-verify":      "6bef003c921421ec68e90568239626b8ea50e7dd28676ec02963d9445c9f5c87",
 		"publish/publish-release":            "ba0397a317ec34cb0e98c2c8c575a0afc1e0ed441e39121b7eda787cd4269a7c",
 	}
+	// BuildKit reads parser directives from the leading comment lines, in this
+	// shape, and stops at the first line that is not one.
+	dockerDirectivePattern = regexp.MustCompile(`^#[ \t]*([A-Za-z][A-Za-z0-9]*)[ \t]*=[ \t]*(.*?)[ \t]*$`)
+	// ptahVersionPattern is what the release accepts as the executor's Ptah
+	// version: a describe string or a tag, within the chart's 128-byte limit,
+	// and nothing a build argument or a Helm value would have to quote.
+	ptahVersionPattern = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._+-]{0,127}$`)
 )
 
 const (
 	repositoryName             = "stokaro/ptah-operator"
 	imageName                  = "ghcr.io/stokaro/ptah-operator"
+	executorImageName          = "ghcr.io/stokaro/ptah-operator-executor"
+	executorDockerfilePath     = "Dockerfile.executor"
+	executorSourceRepository   = "https://github.com/stokaro/ptah"
+	ptahCatalogPath            = "support/ptah.json"
 	releaseSequenceHistoryPath = "hack/releaseverify/release-sequence-history.json"
 	releaseSequenceHelperPath  = "charts/ptah-operator/templates/_helpers.tpl"
 	releaseSequenceGoPath      = "internal/crdupgrade/rollout.go"
@@ -104,6 +121,13 @@ func main() {
 	provenanceSource := flag.String("provenance-source", "", "expected provenance SOURCE build argument")
 	provenanceRevision := flag.String("provenance-revision", "", "expected provenance REVISION build argument")
 	provenanceVersion := flag.String("provenance-version", "", "expected provenance VERSION build argument")
+	printExecutorSource := flag.Bool(
+		"print-executor-source",
+		false,
+		"print the Ptah commit and version the release builds its executor from",
+	)
+	executorProvenance := flag.String("executor-provenance", "", "Buildx provenance JSON of the executor image to verify")
+	executorProvenanceDate := flag.String("executor-provenance-date", "", "expected executor PTAH_BUILD_DATE build argument")
 	flag.Parse()
 
 	if err := verifyRepository(*root, *tag); err != nil {
@@ -149,6 +173,26 @@ func main() {
 			err = verifyBuildProvenance(document, *provenanceSource, *provenanceRevision, *provenanceVersion, digests)
 		}
 		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *printExecutorSource {
+		pin, err := repositoryPtahPin(*root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("ptah-commit=%s\nptah-version=%s\n", pin.Commit, pin.Version)
+		return
+	}
+	if *executorProvenance != "" || *executorProvenanceDate != "" {
+		if *executorProvenance == "" || *executorProvenanceDate == "" {
+			fmt.Fprintln(os.Stderr, "executor provenance verification requires -executor-provenance and -executor-provenance-date")
+			os.Exit(1)
+		}
+		if err := verifyRepositoryExecutorProvenance(*root, *executorProvenance, *executorProvenanceDate); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -386,6 +430,16 @@ func verifyRepository(root, tag string) error {
 		return err
 	}
 	if err := verifyDockerfile(dockerfile, toolchain); err != nil {
+		return err
+	}
+	executorDockerfile, err := os.ReadFile(filepath.Join(root, executorDockerfilePath))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", executorDockerfilePath, err)
+	}
+	if err := verifyExecutorDockerfile(executorDockerfile); err != nil {
+		return err
+	}
+	if _, err := repositoryPtahPin(root); err != nil {
 		return err
 	}
 	if err := verifyWorkflow(workflow); err != nil {
@@ -1125,20 +1179,86 @@ func dockerfileExternalInputs(document []byte, toolchain string) ([]dockerfileIn
 	if len(lines) == 0 || !strings.HasPrefix(lines[0], "# syntax=") {
 		return nil, errors.New("Dockerfile must start with a digest-pinned syntax frontend")
 	}
-	frontend := strings.TrimSpace(strings.TrimPrefix(lines[0], "# syntax="))
-	if !digestReferencePattern.MatchString(frontend) || !strings.HasPrefix(frontend, "docker/dockerfile:") {
-		return nil, fmt.Errorf("Dockerfile syntax frontend %q is not digest-pinned", frontend)
+	scanned, err := scanDockerfileImageInputs(document)
+	if err != nil {
+		return nil, err
+	}
+	if scanned.stages < 2 {
+		return nil, errors.New("Dockerfile must contain pinned builder and runtime stages")
+	}
+	wantBuilder := "golang:" + toolchain + "-alpine@"
+	if !strings.HasPrefix(scanned.firstStageRoot, wantBuilder) {
+		return nil, fmt.Errorf("Dockerfile builder %q does not match Go toolchain %s", scanned.firstStageRoot, toolchain)
+	}
+	if !strings.HasPrefix(scanned.finalStageRoot, "gcr.io/distroless/static-debian13:nonroot@") {
+		return nil, fmt.Errorf("Dockerfile runtime %q is not the expected non-root image", scanned.finalStageRoot)
+	}
+	for _, label := range []string{
+		"org.opencontainers.image.source",
+		"org.opencontainers.image.revision",
+		"org.opencontainers.image.version",
+	} {
+		if !strings.Contains(string(document), label) {
+			return nil, fmt.Errorf("Dockerfile is missing OCI label %s", label)
+		}
+	}
+	return scanned.inputs, nil
+}
+
+// dockerfileImageInputs is what one pass over a Dockerfile finds: every
+// external image it reads, and the images its first and last stages stand on.
+type dockerfileImageInputs struct {
+	inputs         []dockerfileInput
+	firstStageRoot string
+	finalStageRoot string
+	stages         int
+}
+
+// dockerfileSyntaxDirective returns the syntax frontend a Dockerfile selects,
+// if it selects one. BuildKit reads directives only from the comment lines at
+// the very top, so the search stops at the first line that is not one.
+func dockerfileSyntaxDirective(document []byte) (string, int, bool, error) {
+	var frontend string
+	line := 0
+	for index, text := range strings.Split(string(document), "\n") {
+		match := dockerDirectivePattern.FindStringSubmatch(text)
+		if match == nil {
+			break
+		}
+		if !strings.EqualFold(match[1], "syntax") {
+			continue
+		}
+		if line != 0 {
+			return "", 0, false, fmt.Errorf("Dockerfile line %d repeats the syntax directive", index+1)
+		}
+		frontend, line = match[2], index+1
+	}
+	return frontend, line, line != 0, nil
+}
+
+// scanDockerfileImageInputs enumerates the external images a Dockerfile reads:
+// its syntax frontend when it names one, every FROM, every external COPY
+// --from and every external RUN --mount source. Each must be pinned by digest.
+func scanDockerfileImageInputs(document []byte) (dockerfileImageInputs, error) {
+	frontend, frontendLine, hasFrontend, err := dockerfileSyntaxDirective(document)
+	if err != nil {
+		return dockerfileImageInputs{}, err
+	}
+	inputs := make([]dockerfileInput, 0, 5)
+	if hasFrontend {
+		if !digestReferencePattern.MatchString(frontend) || !strings.HasPrefix(frontend, "docker/dockerfile:") {
+			return dockerfileImageInputs{}, fmt.Errorf("Dockerfile syntax frontend %q is not digest-pinned", frontend)
+		}
+		inputs = append(inputs, dockerfileInput{Kind: "syntax frontend", Reference: frontend, Line: frontendLine})
 	}
 
 	instructions, err := dockerfileInstructions(document)
 	if err != nil {
-		return nil, err
+		return dockerfileImageInputs{}, err
 	}
 	arguments := make(map[string]string)
 	stageRoots := make([]string, 0, 4)
 	stageNames := make(map[string]string)
-	inputs := make([]dockerfileInput, 0, 5)
-	inputs = append(inputs, dockerfileInput{Kind: "syntax frontend", Reference: frontend, Line: 1})
 	var firstStageRoot string
 	var finalStageRoot string
 
@@ -1147,7 +1267,7 @@ func dockerfileExternalInputs(document []byte, toolchain string) ([]dockerfileIn
 		case "arg":
 			name, value, hasValue, err := dockerfileArgument(instruction.Args, arguments)
 			if err != nil {
-				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+				return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
 			}
 			if hasValue {
 				arguments[name] = value
@@ -1157,14 +1277,14 @@ func dockerfileExternalInputs(document []byte, toolchain string) ([]dockerfileIn
 		case "from":
 			reference, stageName, err := dockerfileFrom(instruction.Args, arguments)
 			if err != nil {
-				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+				return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
 			}
 			root := reference
 			if inheritedRoot, internal := stageNames[strings.ToLower(reference)]; internal {
 				root = inheritedRoot
 			} else {
 				if !digestReferencePattern.MatchString(reference) {
-					return nil, fmt.Errorf("Dockerfile line %d external FROM reference %q is not digest-pinned", instruction.Line, reference)
+					return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d external FROM reference %q is not digest-pinned", instruction.Line, reference)
 				}
 				inputs = append(inputs, dockerfileInput{Kind: "FROM", Reference: reference, Line: instruction.Line})
 			}
@@ -1176,58 +1296,44 @@ func dockerfileExternalInputs(document []byte, toolchain string) ([]dockerfileIn
 			if stageName != "" {
 				key := strings.ToLower(stageName)
 				if _, duplicate := stageNames[key]; duplicate {
-					return nil, fmt.Errorf("Dockerfile line %d repeats stage name %q", instruction.Line, stageName)
+					return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d repeats stage name %q", instruction.Line, stageName)
 				}
 				stageNames[key] = root
 			}
 		case "copy":
 			reference, found, err := dockerfileCopyFrom(instruction.Args, arguments)
 			if err != nil {
-				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+				return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
 			}
 			if !found || dockerfileInternalStage(reference, stageNames, len(stageRoots)) {
 				continue
 			}
 			if !digestReferencePattern.MatchString(reference) {
-				return nil, fmt.Errorf("Dockerfile line %d external COPY --from reference %q is not digest-pinned", instruction.Line, reference)
+				return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d external COPY --from reference %q is not digest-pinned", instruction.Line, reference)
 			}
 			inputs = append(inputs, dockerfileInput{Kind: "COPY --from", Reference: reference, Line: instruction.Line})
 		case "run":
 			references, err := dockerfileRunMountFrom(instruction.Args, arguments)
 			if err != nil {
-				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+				return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
 			}
 			for _, reference := range references {
 				if dockerfileInternalStage(reference, stageNames, len(stageRoots)) {
 					continue
 				}
 				if !digestReferencePattern.MatchString(reference) {
-					return nil, fmt.Errorf("Dockerfile line %d external RUN --mount from reference %q is not digest-pinned", instruction.Line, reference)
+					return dockerfileImageInputs{}, fmt.Errorf("Dockerfile line %d external RUN --mount from reference %q is not digest-pinned", instruction.Line, reference)
 				}
 				inputs = append(inputs, dockerfileInput{Kind: "RUN --mount from", Reference: reference, Line: instruction.Line})
 			}
 		}
 	}
-	if len(stageRoots) < 2 {
-		return nil, errors.New("Dockerfile must contain pinned builder and runtime stages")
-	}
-	wantBuilder := "golang:" + toolchain + "-alpine@"
-	if !strings.HasPrefix(firstStageRoot, wantBuilder) {
-		return nil, fmt.Errorf("Dockerfile builder %q does not match Go toolchain %s", firstStageRoot, toolchain)
-	}
-	if !strings.HasPrefix(finalStageRoot, "gcr.io/distroless/static-debian13:nonroot@") {
-		return nil, fmt.Errorf("Dockerfile runtime %q is not the expected non-root image", finalStageRoot)
-	}
-	for _, label := range []string{
-		"org.opencontainers.image.source",
-		"org.opencontainers.image.revision",
-		"org.opencontainers.image.version",
-	} {
-		if !strings.Contains(string(document), label) {
-			return nil, fmt.Errorf("Dockerfile is missing OCI label %s", label)
-		}
-	}
-	return inputs, nil
+	return dockerfileImageInputs{
+		inputs:         inputs,
+		firstStageRoot: firstStageRoot,
+		finalStageRoot: finalStageRoot,
+		stages:         len(stageRoots),
+	}, nil
 }
 
 func dockerfileInstructions(document []byte) ([]dockerfileInstruction, error) {
@@ -1498,6 +1604,10 @@ func repositoryDockerfileInputDigests(root string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return uniqueInputDigests(inputs)
+}
+
+func uniqueInputDigests(inputs []dockerfileInput) ([]string, error) {
 	unique := make(map[string]struct{}, len(inputs))
 	for _, input := range inputs {
 		_, digest, found := strings.Cut(input.Reference, "@")
@@ -1512,6 +1622,209 @@ func repositoryDockerfileInputDigests(root string) ([]string, error) {
 	}
 	sort.Strings(digests)
 	return digests, nil
+}
+
+// verifyExecutorDockerfile holds the executor recipe to what the release relies
+// on. The harness builds from the same file, so this is also what the
+// acceptance suite built.
+func verifyExecutorDockerfile(document []byte) error {
+	_, err := executorDockerfileExternalInputs(document)
+	return err
+}
+
+// executorDockerfileExternalInputs enumerates the executor's external image
+// inputs with the parser the operator image uses, and checks the three bindings
+// the release reads back: what the binary is compiled for, what it is stamped
+// with, and what the image's labels say.
+func executorDockerfileExternalInputs(document []byte) ([]dockerfileInput, error) {
+	scanned, err := scanDockerfileImageInputs(document)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", executorDockerfilePath, err)
+	}
+	if scanned.stages < 2 {
+		return nil, fmt.Errorf("%s must contain pinned builder and runtime stages", executorDockerfilePath)
+	}
+	if !strings.HasPrefix(scanned.firstStageRoot, "golang:") || !strings.Contains(scanned.firstStageRoot, "-alpine@") {
+		return nil, fmt.Errorf("%s builder %q is not a pinned golang Alpine image", executorDockerfilePath, scanned.firstStageRoot)
+	}
+	if !strings.HasPrefix(scanned.finalStageRoot, "alpine:") {
+		return nil, fmt.Errorf("%s runtime %q is not a pinned Alpine image", executorDockerfilePath, scanned.finalStageRoot)
+	}
+	instructions, err := dockerfileInstructions(document)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", executorDockerfilePath, err)
+	}
+	stage := -1
+	builds := 0
+	finalArguments := make(map[string]struct{})
+	var finalLabels strings.Builder
+	for _, instruction := range instructions {
+		switch instruction.Name {
+		case "from":
+			stage++
+		case "arg":
+			if stage == scanned.stages-1 {
+				name, _, _ := strings.Cut(instruction.Args, "=")
+				finalArguments[name] = struct{}{}
+			}
+		case "label":
+			if stage == scanned.stages-1 {
+				finalLabels.WriteString(instruction.Args)
+				finalLabels.WriteByte('\n')
+			}
+		case "run":
+			if !strings.Contains(instruction.Args, "-o /out/ptah ./cmd/ptah") {
+				continue
+			}
+			builds++
+			if stage != 0 {
+				return nil, fmt.Errorf("%s line %d builds ptah outside the builder stage", executorDockerfilePath, instruction.Line)
+			}
+			// The builder runs on the build platform. Nothing downstream reads
+			// the binary's own architecture -- the image config says arm64
+			// whatever the layer holds -- so the build has to name the target.
+			for _, binding := range []string{
+				`GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build`,
+				"/internal/buildinfo.Version=${PTAH_BUILD_VERSION}",
+				"/internal/buildinfo.Commit=${PTAH_BUILD_COMMIT}",
+				"/internal/buildinfo.Date=${PTAH_BUILD_DATE}",
+			} {
+				if !strings.Contains(instruction.Args, binding) {
+					return nil, fmt.Errorf("%s line %d ptah build is missing %q", executorDockerfilePath, instruction.Line, binding)
+				}
+			}
+		}
+	}
+	if builds != 1 {
+		return nil, fmt.Errorf("%s must build ptah exactly once, found %d", executorDockerfilePath, builds)
+	}
+	for _, name := range []string{"PTAH_BUILD_COMMIT", "PTAH_BUILD_VERSION"} {
+		if _, declared := finalArguments[name]; !declared {
+			return nil, fmt.Errorf("%s runtime stage does not declare ARG %s, so its label would be empty", executorDockerfilePath, name)
+		}
+	}
+	for _, label := range []string{
+		`org.opencontainers.image.source="` + executorSourceRepository + `"`,
+		`org.opencontainers.image.revision="$PTAH_BUILD_COMMIT"`,
+		`org.opencontainers.image.version="$PTAH_BUILD_VERSION"`,
+	} {
+		if !strings.Contains(finalLabels.String(), label) {
+			return nil, fmt.Errorf("%s runtime stage is missing the label %s", executorDockerfilePath, label)
+		}
+	}
+	return scanned.inputs, nil
+}
+
+func repositoryExecutorDockerfileInputDigests(root string) ([]string, error) {
+	document, err := os.ReadFile(filepath.Join(root, executorDockerfilePath))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", executorDockerfilePath, err)
+	}
+	inputs, err := executorDockerfileExternalInputs(document)
+	if err != nil {
+		return nil, err
+	}
+	return uniqueInputDigests(inputs)
+}
+
+// ptahPin is the Ptah build a release publishes as its executor.
+type ptahPin struct {
+	Commit  string
+	Version string
+}
+
+// repositoryPtahPin reads the executor's source from the compatibility catalog.
+//
+// The rule is the one hack/verifyptahsupport applies to find the commit the
+// acceptance suite builds its executor from: the first verified build of the
+// edge row. A release built from any other commit would publish an executor
+// the suite never ran, so the release reads the same row rather than a value
+// of its own.
+func repositoryPtahPin(root string) (ptahPin, error) {
+	document, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ptahCatalogPath)))
+	if err != nil {
+		return ptahPin{}, fmt.Errorf("read the Ptah compatibility catalog: %w", err)
+	}
+	return parsePtahPin(document)
+}
+
+func parsePtahPin(document []byte) (ptahPin, error) {
+	var catalog struct {
+		Releases []struct {
+			Operator string `json:"operator"`
+			Verified []struct {
+				PtahCommit   string `json:"ptahCommit"`
+				PtahDescribe string `json:"ptahDescribe"`
+			} `json:"verified"`
+		} `json:"releases"`
+	}
+	if err := json.Unmarshal(document, &catalog); err != nil {
+		return ptahPin{}, fmt.Errorf("parse %s: %w", ptahCatalogPath, err)
+	}
+	var pin ptahPin
+	edges := 0
+	for _, release := range catalog.Releases {
+		if release.Operator != "edge" {
+			continue
+		}
+		edges++
+		if len(release.Verified) == 0 {
+			return ptahPin{}, fmt.Errorf("%s records no verified Ptah build for edge, so there is no executor to build", ptahCatalogPath)
+		}
+		pin = ptahPin{Commit: release.Verified[0].PtahCommit, Version: release.Verified[0].PtahDescribe}
+	}
+	if edges != 1 {
+		return ptahPin{}, fmt.Errorf("%s names the edge row %d times, expected once", ptahCatalogPath, edges)
+	}
+	if err := pin.validate(); err != nil {
+		return ptahPin{}, err
+	}
+	return pin, nil
+}
+
+func (pin ptahPin) validate() error {
+	if !commitPattern.MatchString(pin.Commit) {
+		return fmt.Errorf("%s pins Ptah commit %q, which is not an exact lowercase commit", ptahCatalogPath, pin.Commit)
+	}
+	if !ptahVersionPattern.MatchString(pin.Version) {
+		return fmt.Errorf("%s describes the pinned Ptah build as %q, which the release cannot stamp or install", ptahCatalogPath, pin.Version)
+	}
+	return nil
+}
+
+func verifyRepositoryExecutorProvenance(root, path, date string) error {
+	document, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read executor Buildx provenance: %w", err)
+	}
+	pin, err := repositoryPtahPin(root)
+	if err != nil {
+		return err
+	}
+	digests, err := repositoryExecutorDockerfileInputDigests(root)
+	if err != nil {
+		return err
+	}
+	digests = append(digests, sbomDigest)
+	sort.Strings(digests)
+	return verifyExecutorBuildProvenance(document, pin, date, digests)
+}
+
+// verifyExecutorBuildProvenance holds the executor's provenance to the pinned
+// Ptah build: the build arguments name the pinned commit, its version and the
+// commit's date, and every external input resolved to its pinned digest.
+func verifyExecutorBuildProvenance(document []byte, pin ptahPin, date string, expectedDigests []string) error {
+	if err := pin.validate(); err != nil {
+		return fmt.Errorf("executor Buildx provenance expectations are invalid: %w", err)
+	}
+	if _, err := time.Parse(time.RFC3339, date); err != nil {
+		return fmt.Errorf("executor Buildx provenance expectations are invalid: date %q: %w", date, err)
+	}
+	return verifyProvenanceArguments(document, map[string]string{
+		"build-arg:PTAH_BUILD_COMMIT":  pin.Commit,
+		"build-arg:PTAH_BUILD_VERSION": pin.Version,
+		"build-arg:PTAH_BUILD_DATE":    date,
+	}, expectedDigests)
 }
 
 func verifyRegistryMissingError(path, reference string) error {
@@ -1572,6 +1885,17 @@ func verifyBuildProvenance(
 	if source == "" || !commitPattern.MatchString(revision) || !semanticVersionPattern.MatchString(version) {
 		return errors.New("Buildx provenance expectations are invalid")
 	}
+	return verifyProvenanceArguments(document, map[string]string{
+		"build-arg:SOURCE":   source,
+		"build-arg:REVISION": revision,
+		"build-arg:VERSION":  version,
+	}, expectedDigests)
+}
+
+// verifyProvenanceArguments requires both platforms of a Buildx provenance
+// document to carry each named build argument with its exact value, a detailed
+// build graph, and every expected input digest among its resolved dependencies.
+func verifyProvenanceArguments(document []byte, wantArguments map[string]string, expectedDigests []string) error {
 	if len(expectedDigests) == 0 {
 		return errors.New("Buildx provenance requires at least one expected Dockerfile input digest")
 	}
@@ -1585,11 +1909,6 @@ func verifyBuildProvenance(
 	}
 	if len(platforms) != 2 {
 		return fmt.Errorf("Buildx provenance has %d platforms, expected 2", len(platforms))
-	}
-	wantArguments := map[string]string{
-		"build-arg:SOURCE":   source,
-		"build-arg:REVISION": revision,
-		"build-arg:VERSION":  version,
 	}
 	for _, platform := range []string{"linux/amd64", "linux/arm64"} {
 		entry, ok := platforms[platform]
@@ -1666,6 +1985,7 @@ type workflowDocument struct {
 	On          map[string]yaml.Node   `yaml:"on"`
 	Concurrency workflowConcurrency    `yaml:"concurrency"`
 	Permissions map[string]string      `yaml:"permissions"`
+	Env         map[string]string      `yaml:"env"`
 	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
 
@@ -1755,6 +2075,9 @@ func verifyWorkflowSemantics(document []byte) error {
 	if !equalStringMap(workflow.Permissions, map[string]string{"contents": "read"}) {
 		return errors.New("release workflow top-level permissions must be contents: read only")
 	}
+	if !equalStringMap(workflow.Env, map[string]string{"IMAGE": imageName, "EXECUTOR_IMAGE": executorImageName}) {
+		return fmt.Errorf("release workflow must publish exactly %s and %s", imageName, executorImageName)
+	}
 	if len(workflow.Jobs) != 3 {
 		return errors.New("release workflow must contain exactly the smoke, support-preflight, and publish jobs")
 	}
@@ -1766,13 +2089,17 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("smoke job must be read-only and gated to pull requests or manual dispatch")
 	}
 	if err := verifyStepContract("smoke", smoke.Steps,
-		[]string{"checkout", "setup-go", "setup-helm", "verify-release", "scan-vulnerabilities", "chart-reproducibility", "setup-buildx", "build"},
+		[]string{
+			"checkout", "setup-go", "setup-helm", "verify-release", "scan-vulnerabilities", "chart-reproducibility",
+			"setup-buildx", "build", "executor-source", "executor-build",
+		},
 		map[string]string{
-			"checkout":     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-			"setup-go":     "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-			"setup-helm":   "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4",
-			"setup-buildx": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
-			"build":        "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+			"checkout":       "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+			"setup-go":       "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+			"setup-helm":     "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4",
+			"setup-buildx":   "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+			"build":          "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+			"executor-build": "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
 		}); err != nil {
 		return err
 	}
@@ -1784,6 +2111,22 @@ func verifyWorkflowSemantics(document []byte) error {
 		"helm lint charts/ptah-operator",
 		`--set-string execution.ptahVersion="release-smoke-explicit"`); err != nil {
 		return err
+	}
+	if err := verifyExecutorSourceStep(smokeSteps); err != nil {
+		return fmt.Errorf("smoke: %w", err)
+	}
+	smokeExecutor, err := requireStep(smokeSteps, "executor-build")
+	if err != nil {
+		return err
+	}
+	if smokeExecutor.If != "" ||
+		value(smokeExecutor.With, "context") != "${{ steps.executor-source.outputs.context }}" ||
+		value(smokeExecutor.With, "file") != executorDockerfileInput ||
+		value(smokeExecutor.With, "platforms") != "linux/amd64,linux/arm64" ||
+		value(smokeExecutor.With, "push") != "false" ||
+		value(smokeExecutor.With, "build-args") != executorBuildArguments ||
+		len(smokeExecutor.With) != 7 {
+		return errors.New("smoke executor build must build both architectures of the fetched Ptah source without pushing")
 	}
 
 	preflight, ok := workflow.Jobs["support-preflight"]
@@ -1908,24 +2251,29 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 	if err := verifyStepContract("publish", publish.Steps,
 		[]string{
-			"checkout", "setup-go", "setup-buildx", "release", "immutability-preflight", "transaction",
-			"journal-attestation", "draft", "stage-inspect", "registry-login", "image", "build-checkpoint",
-			"chart-package", "client", "artifacts", "image-structure", "asset-attestation", "finalize-journal",
-			"asset-auth", "asset-sync",
-			"image-attestation", "setup-cosign", "image-signature", "final-verify", "publish-release",
+			"checkout", "setup-go", "setup-buildx", "release", "executor-source", "immutability-preflight", "transaction",
+			"journal-attestation", "draft", "stage-inspect", "executor-stage-inspect", "registry-login",
+			"image", "build-checkpoint", "executor-image", "executor-build-checkpoint",
+			"chart-package", "client", "artifacts", "image-structure", "executor-structure",
+			"asset-attestation", "finalize-journal", "asset-auth", "asset-sync",
+			"image-attestation", "executor-attestation", "setup-cosign", "image-signature", "executor-signature",
+			"final-verify", "executor-final-verify", "publish-release",
 		},
 		map[string]string{
-			"checkout":            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-			"setup-go":            "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-			"setup-buildx":        "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
-			"registry-login":      "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
-			"image":               "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
-			"journal-attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
-			"build-checkpoint":    "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
-			"asset-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
-			"client":              "goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94",
-			"image-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
-			"setup-cosign":        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+			"checkout":                  "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+			"setup-go":                  "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+			"setup-buildx":              "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+			"registry-login":            "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+			"image":                     "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+			"executor-image":            "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+			"journal-attestation":       "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"build-checkpoint":          "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"executor-build-checkpoint": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"asset-attestation":         "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"client":                    "goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94",
+			"image-attestation":         "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"executor-attestation":      "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"setup-cosign":              "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 		}); err != nil {
 		return err
 	}
@@ -2036,13 +2384,42 @@ func verifyWorkflowSemantics(document []byte) error {
 	if image.If != "(steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared') && steps.stage-inspect.outputs.reuse != 'true'" {
 		return errors.New("publish image step must build only a missing prepared transaction image")
 	}
+	if err := verifyExecutorSourceStep(steps); err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
+	executorImage, err := requireStep(steps, "executor-image")
+	if err != nil {
+		return err
+	}
+	if value(executorImage.With, "context") != "${{ steps.executor-source.outputs.context }}" ||
+		value(executorImage.With, "file") != executorDockerfileInput ||
+		value(executorImage.With, "platforms") != "linux/amd64,linux/arm64" ||
+		value(executorImage.With, "push") != "true" ||
+		value(executorImage.With, "provenance") != "mode=max" ||
+		value(executorImage.With, "sbom") != "generator="+sbomGenerator ||
+		value(executorImage.With, "tags") != "${{ steps.transaction.outputs.executor-tag }}" ||
+		value(executorImage.With, "build-args") != executorBuildArguments ||
+		len(executorImage.With) != 8 {
+		return errors.New("publish executor step must push the staged multi-architecture SBOM/provenance build of the fetched Ptah source")
+	}
+	if executorImage.If != "(steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared') && steps.executor-stage-inspect.outputs.reuse != 'true'" {
+		return errors.New("publish executor step must build only a missing prepared transaction executor")
+	}
 	for id, condition := range map[string]string{
-		"registry-login":   "steps.transaction.outputs.mode != 'published'",
-		"draft":            "steps.transaction.outputs.mode == 'fresh'",
-		"asset-sync":       "steps.transaction.outputs.mode != 'published'",
-		"image-signature":  "steps.transaction.outputs.mode != 'published'",
-		"stage-inspect":    "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'",
-		"finalize-journal": "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'",
+		"registry-login":         "steps.transaction.outputs.mode != 'published'",
+		"draft":                  "steps.transaction.outputs.mode == 'fresh'",
+		"asset-sync":             "steps.transaction.outputs.mode != 'published'",
+		"image-signature":        "steps.transaction.outputs.mode != 'published'",
+		"executor-signature":     "steps.transaction.outputs.mode != 'published'",
+		"stage-inspect":          "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'",
+		"executor-stage-inspect": "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'",
+		"finalize-journal":       "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'",
+		// These read what the transaction published, in every mode, including
+		// a published release being re-verified.
+		"image-structure":       "",
+		"executor-structure":    "",
+		"final-verify":          "",
+		"executor-final-verify": "",
 	} {
 		step, err := requireStep(steps, id)
 		if err != nil {
@@ -2064,6 +2441,13 @@ func verifyWorkflowSemantics(document []byte) error {
 	}, "steps.image.outcome == 'success' && steps.image.outputs.digest != ''"); err != nil {
 		return err
 	}
+	if err := verifyAttestationStep(steps, "executor-build-checkpoint", map[string]string{
+		"subject-name":     "${{ env.EXECUTOR_IMAGE }}",
+		"subject-digest":   "${{ steps.executor-image.outputs.digest }}",
+		"push-to-registry": "true",
+	}, "steps.executor-image.outcome == 'success' && steps.executor-image.outputs.digest != ''"); err != nil {
+		return err
+	}
 
 	if err := verifyAttestationStep(steps, "asset-attestation", map[string]string{
 		"subject-path": "${{ steps.chart-package.outputs.path }}\ndist/release-manifest.txt\ndist/SHA256SUMS\n" +
@@ -2079,8 +2463,19 @@ func verifyWorkflowSemantics(document []byte) error {
 	}, "steps.transaction.outputs.mode != 'published'"); err != nil {
 		return err
 	}
+	if err := verifyAttestationStep(steps, "executor-attestation", map[string]string{
+		"subject-name":     "${{ steps.artifacts.outputs.executor-repository }}",
+		"subject-digest":   "${{ steps.artifacts.outputs.executor-digest }}",
+		"push-to-registry": "true",
+	}, "steps.transaction.outputs.mode != 'published'"); err != nil {
+		return err
+	}
 	if err := requireRunBindings(steps, "image-signature",
 		"cosign sign --yes", "${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "executor-signature",
+		"cosign sign --yes", "${{ steps.artifacts.outputs.executor-repository }}@${{ steps.artifacts.outputs.executor-digest }}"); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "transaction",
@@ -2093,7 +2488,10 @@ func verifyWorkflowSemantics(document []byte) error {
 		".assets | length == 0",
 		"--source-ref \"$GITHUB_REF\"",
 		"--source-digest \"$GITHUB_SHA\"",
-		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\""); err != nil {
+		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\"",
+		"executor_tag=\"$EXECUTOR_IMAGE:tx-$GITHUB_SHA-$transaction\"",
+		"printf 'executor-tag=%s\\n' \"$executor_tag\"",
+		"printf 'executor-tag=%s\\n' \"$(field executor-tag)\""); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "immutability-preflight",
@@ -2113,6 +2511,47 @@ func verifyWorkflowSemantics(document []byte) error {
 		"--source-ref \"$GITHUB_REF\"", "--source-digest \"$GITHUB_SHA\"",
 		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\"",
 		"-registry-missing-error \"$error_file\"", "-registry-missing-reference \"$reference\""); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "executor-stage-inspect",
+		"imagetools inspect --raw", "steps.transaction.outputs.executor-tag", "reuse=true",
+		"reuse=false", "refusing to rebuild", "gh attestation verify \"oci://$EXECUTOR_IMAGE@$digest\"",
+		"--source-ref \"$GITHUB_REF\"", "--source-digest \"$GITHUB_SHA\"",
+		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\"",
+		"-registry-missing-error \"$error_file\"", "-registry-missing-reference \"$reference\""); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "artifacts",
+		"executor_digest='${{ steps.executor-image.outputs.digest }}'",
+		"executor_digest='${{ steps.executor-stage-inspect.outputs.digest }}'",
+		"printf 'executor=%s@%s\\n' \"$EXECUTOR_IMAGE\" \"$executor_digest\"",
+		"printf 'executor-tag=%s\\n' '${{ steps.transaction.outputs.executor-tag }}'",
+		"printf 'executor-ptah-commit=%s\\n' '${{ steps.executor-source.outputs.commit }}'",
+		"printf 'executor-ptah-version=%s\\n' '${{ steps.executor-source.outputs.version }}'",
+		"printf 'executor-digest=%s\\n' \"$(field executor | sed 's/.*@//')\""); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "executor-structure",
+		"imagetools inspect --raw \"$reference\"", "steps.artifacts.outputs.executor-tag",
+		"cmp \"$image_dir/index.json\" \"$image_dir/tag-index.json\"",
+		"[\"linux/amd64\", \"linux/arm64\"]", "vnd.docker.reference.digest",
+		"https://spdx.dev/Document", "https://slsa.dev/provenance/v1",
+		"source='"+executorSourceRepository+"'",
+		"commit='${{ steps.executor-source.outputs.commit }}'",
+		"--arg revision \"$commit\"",
+		".image.config.Labels[\"org.opencontainers.image.revision\"] == $revision",
+		"{{json .Provenance}}",
+		"-executor-provenance \"$image_dir/provenance.json\"",
+		"-executor-provenance-date '${{ steps.executor-source.outputs.date }}'"); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "executor-final-verify",
+		"--certificate-identity \"$identity\"", "--source-ref \"$GITHUB_REF\"",
+		"--source-digest \"$GITHUB_SHA\"",
+		"steps.artifacts.outputs.executor-repository", "steps.artifacts.outputs.executor-digest",
+		"imagetools inspect --raw \"$reference\"", "steps.artifacts.outputs.executor-tag",
+		"cmp \"$image_dir/index.json\" \"$image_dir/final-index.json\"",
+		"cmp \"$image_dir/final-index.json\" \"$image_dir/final-tag-index.json\""); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "image-structure",
@@ -2292,6 +2731,41 @@ func verifyAttestationStep(steps map[string]workflowStep, id string, bindings ma
 	return nil
 }
 
+const (
+	// executorDockerfileInput is the recipe the harness copies into its build
+	// context, named from the workspace because the context is the Ptah source.
+	executorDockerfileInput = "${{ github.workspace }}/" + executorDockerfilePath
+	// executorBuildArguments are the only arguments an executor build takes, all
+	// three from the step that fetched and checked the pinned source.
+	executorBuildArguments = "PTAH_BUILD_VERSION=${{ steps.executor-source.outputs.version }}\n" +
+		"PTAH_BUILD_COMMIT=${{ steps.executor-source.outputs.commit }}\n" +
+		"PTAH_BUILD_DATE=${{ steps.executor-source.outputs.date }}\n"
+)
+
+// verifyExecutorSourceStep holds the step that fetches the Ptah source to the
+// pin: it reads the commit through this program, fetches exactly that commit,
+// refuses anything else Git resolves, and hands on only an archive of it.
+func verifyExecutorSourceStep(steps map[string]workflowStep) error {
+	step, err := requireStep(steps, "executor-source")
+	if err != nil {
+		return err
+	}
+	if step.If != "" || step.Uses != "" || len(step.Env) != 0 {
+		return errors.New("executor source step must run in every mode, as a script, with no credentials")
+	}
+	return requireRunBindings(steps, "executor-source",
+		"pin=\"$(go run ./hack/releaseverify -print-executor-source)\"",
+		"[[ \"$commit\" =~ ^[0-9a-f]{40}$ ]]",
+		"https://github.com/stokaro/ptah \"$commit\"",
+		"fetched=\"$(git -C \"$repository\" rev-parse --verify 'FETCH_HEAD^{commit}')\"",
+		"if [[ \"$fetched\" != \"$commit\" ]]; then",
+		"git -C \"$repository\" archive --format=tar \"$commit\" | tar -x -C \"$context\"",
+		"printf 'commit=%s\\n' \"$commit\"",
+		"printf 'version=%s\\n' \"$version\"",
+		"printf 'date=%s\\n' \"$date\"",
+		"printf 'context=%s\\n' \"$context\"")
+}
+
 func requireRunBindings(steps map[string]workflowStep, id string, bindings ...string) error {
 	step, err := requireStep(steps, id)
 	if err != nil {
@@ -2386,7 +2860,11 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	if err != nil {
 		return err
 	}
-	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow, assets)
+	pin, err := repositoryPtahPin(root)
+	if err != nil {
+		return err
+	}
+	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow, assets, pin)
 	if err != nil {
 		return err
 	}
@@ -2443,7 +2921,7 @@ func verifyPreparedJournal(path, tag, sourceSHA string) error {
 	}
 	wantKeys := []string{
 		"state", "version", "source-repository", "source-ref", "source-sha",
-		"transaction", "image-tag", "chart-asset",
+		"transaction", "image-tag", "executor-tag", "chart-asset",
 	}
 	fields, err := exactRecords(document, wantKeys, "prepared release journal")
 	if err != nil {
@@ -2470,10 +2948,18 @@ func verifyPreparedJournal(path, tag, sourceSHA string) error {
 	if fields["image-tag"] != wantImageTag {
 		return fmt.Errorf("prepared release journal image-tag is %q, expected %q", fields["image-tag"], wantImageTag)
 	}
+	wantExecutorTag := executorImageName + ":tx-" + sourceSHA + "-" + fields["transaction"]
+	if fields["executor-tag"] != wantExecutorTag {
+		return fmt.Errorf("prepared release journal executor-tag is %q, expected %q", fields["executor-tag"], wantExecutorTag)
+	}
 	return nil
 }
 
-func parseReleaseManifest(path, tag, sourceSHA, supportWindow string, clientAssets []string) ([]byte, map[string]string, error) {
+func parseReleaseManifest(
+	path, tag, sourceSHA, supportWindow string,
+	clientAssets []string,
+	pin ptahPin,
+) ([]byte, map[string]string, error) {
 	if !commitPattern.MatchString(sourceSHA) {
 		return nil, nil, fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
 	}
@@ -2486,7 +2972,9 @@ func parseReleaseManifest(path, tag, sourceSHA, supportWindow string, clientAsse
 	}
 	wantKeys := []string{
 		"version", "source-repository", "source-ref", "source-sha", "transaction",
-		"image", "image-tag", "chart-asset", "chart-asset-sha256", "client-assets",
+		"image", "image-tag",
+		"executor", "executor-tag", "executor-ptah-commit", "executor-ptah-version",
+		"chart-asset", "chart-asset-sha256", "client-assets",
 		"support-evidence-run-id", "kubernetes-support-window",
 	}
 	fields, err := exactRecords(document, wantKeys, "release manifest")
@@ -2494,11 +2982,16 @@ func parseReleaseManifest(path, tag, sourceSHA, supportWindow string, clientAsse
 		return nil, nil, err
 	}
 	version := strings.TrimPrefix(tag, "v")
+	// The executor is built from the commit the catalog pins at the tagged
+	// source, so a manifest naming any other Ptah build describes an image this
+	// release did not build and the acceptance suite did not run.
 	wantExact := map[string]string{
 		"version":                   version,
 		"source-repository":         repositoryName,
 		"source-ref":                "refs/tags/" + tag,
 		"source-sha":                sourceSHA,
+		"executor-ptah-commit":      pin.Commit,
+		"executor-ptah-version":     pin.Version,
 		"chart-asset":               "ptah-operator-" + version + ".tgz",
 		"client-assets":             strings.Join(clientAssets, ","),
 		"kubernetes-support-window": supportWindow,
@@ -2524,6 +3017,13 @@ func parseReleaseManifest(path, tag, sourceSHA, supportWindow string, clientAsse
 	wantImageTag := imageName + ":tx-" + sourceSHA + "-" + fields["transaction"]
 	if fields["image-tag"] != wantImageTag {
 		return nil, nil, fmt.Errorf("release manifest image-tag is %q, expected %q", fields["image-tag"], wantImageTag)
+	}
+	if _, err := exactDigest(fields["executor"], executorImageName); err != nil {
+		return nil, nil, err
+	}
+	wantExecutorTag := executorImageName + ":tx-" + sourceSHA + "-" + fields["transaction"]
+	if fields["executor-tag"] != wantExecutorTag {
+		return nil, nil, fmt.Errorf("release manifest executor-tag is %q, expected %q", fields["executor-tag"], wantExecutorTag)
 	}
 	return document, fields, nil
 }

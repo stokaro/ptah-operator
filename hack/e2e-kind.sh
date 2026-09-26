@@ -2253,7 +2253,7 @@ elif [ -z "$E2E_EXECUTOR_IMAGE" ]; then
 	git -C "$E2E_PTAH_SOURCE_DIR" archive --format=tar \
 		--output="$PTAH_SOURCE_ARCHIVE" "$PTAH_COMMIT"
 	tar -xf "$PTAH_SOURCE_ARCHIVE" -C "$PTAH_BUILD_CONTEXT"
-	cp "$ROOT_DIR/test/e2e/Dockerfile.ptah" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"
+	cp "$ROOT_DIR/Dockerfile.executor" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"
 	printf 'e2e: building Ptah executor %s from commit %s\n' "$PTAH_IMAGE" "$PTAH_COMMIT"
 	add_created_image "$PTAH_IMAGE"
 	docker --context "$DOCKER_CONTEXT" buildx build \

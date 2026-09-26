@@ -26,7 +26,7 @@ var (
 // placeholderValues are the shapes the page asks a reader for.
 var placeholderValues = map[string]string{
 	"<operator-image-digest>": strings.Repeat("a", 64),
-	"<ptah-image-digest>":     strings.Repeat("b", 64),
+	"<executor-image-digest>": strings.Repeat("b", 64),
 	"<ptah-version>":          "v0.7.0",
 }
 
