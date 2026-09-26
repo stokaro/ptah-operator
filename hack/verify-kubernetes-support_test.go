@@ -486,8 +486,8 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n",
 		},
 		"race timeout drift": {
-			old: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n",
-			new: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 65\n",
+			old: "    name: Race detector\n    runs-on: ubuntu-latest\n    # The base pass and eight mutation shards run one after another, and the\n    # shards grow with the shell they inspect: 66 minutes on eb89fd3.\n    timeout-minutes: 90\n",
+			new: "    name: Race detector\n    runs-on: ubuntu-latest\n    # The base pass and eight mutation shards run one after another, and the\n    # shards grow with the shell they inspect: 66 minutes on eb89fd3.\n    timeout-minutes: 95\n",
 		},
 		"matrix timeout drift": {
 			old: "    name: Build Kubernetes support matrix\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
@@ -841,12 +841,12 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "      actions: write\n",
 		},
 		"short preflight job": {
-			old: "    timeout-minutes: 260\n",
-			new: "    timeout-minutes: 250\n",
+			old: "    timeout-minutes: 290\n",
+			new: "    timeout-minutes: 280\n",
 		},
 		"short support poll": {
-			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"250\"\n",
-			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"230\"\n",
+			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"280\"\n",
+			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"260\"\n",
 		},
 		"default branch binding": {
 			old: "          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n",
