@@ -222,7 +222,32 @@ primary_secret_state() {
 	fail "could not read the generated Secret: $(cat "$PRIMARY_OBSERVATION_ERROR")"
 }
 
-# assert_entry_trusts fails unless the entry's caBundle verifies every given
+# bundle_contains_certificate succeeds when the PEM bundle holds a certificate
+# byte-identical to the given one. It compares fingerprints rather than asking
+# `openssl verify`: every CA the rotator issues for a Service has the same
+# subject, and verify picks an issuer by subject, so with the old and the new
+# CA in one bundle it tries only the first and rejects the second.
+bundle_contains_certificate() {
+	contains_bundle=$1
+	contains_wanted=$(openssl x509 -in "$2" -noout -fingerprint -sha256 2>/dev/null) || return 1
+	contains_directory=$(mktemp -d "$UPGRADE_WORK_DIR/bundle-members.XXXXXX") || return 1
+	awk -v directory="$contains_directory" '
+		/^-----BEGIN CERTIFICATE-----$/ { count++; member = sprintf("%s/%d.pem", directory, count) }
+		member != "" { print > member }
+		/^-----END CERTIFICATE-----$/ { close(member); member = "" }
+	' "$contains_bundle" || return 1
+	contains_found=1
+	for contains_member in "$contains_directory"/*.pem; do
+		[ -f "$contains_member" ] || continue
+		if [ "$(openssl x509 -in "$contains_member" -noout -fingerprint -sha256 2>/dev/null)" = "$contains_wanted" ]; then
+			contains_found=0
+		fi
+	done
+	rm -rf -- "$contains_directory"
+	return "$contains_found"
+}
+
+# assert_entry_trusts fails unless the entry's caBundle holds every given
 # certificate file.
 assert_entry_trusts() {
 	trust_kind=$1
@@ -235,7 +260,7 @@ assert_entry_trusts() {
 	printf '%s' "$trust_bundle" | openssl base64 -d -A >"$trust_file" ||
 		fail "caBundle for ${trust_webhook} is not valid base64"
 	for trusted_certificate in "$@"; do
-		openssl verify -CAfile "$trust_file" "$trusted_certificate" >/dev/null 2>&1 ||
+		bundle_contains_certificate "$trust_file" "$trusted_certificate" ||
 			fail "caBundle for ${trust_webhook} does not trust ${trusted_certificate##*/} while the switch waits"
 	done
 }

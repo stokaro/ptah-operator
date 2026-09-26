@@ -15,13 +15,21 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCertificateE2EGeneratedSecretRequiresExactSource(t *testing.T) {
@@ -300,6 +308,74 @@ func TestCertificateE2ECASwitchDelaySeconds(t *testing.T) {
 				t.Fatalf("refusal does not name the flag: %q", output)
 			}
 		})
+	}
+}
+
+func TestCertificateE2EBundleContainsCertificateDespiteSharedSubjects(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Fatal("certificate E2E behavioral tests require openssl")
+	}
+	// Every CA the rotator issues for one Service has the same subject, and
+	// Go sets no authority key identifier on a self-signed certificate, so
+	// nothing but the subject tells OpenSSL which root in a bundle to try.
+	sameSubjectCA := func(serial int64) []byte {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template := &x509.Certificate{
+			SerialNumber:          big.NewInt(serial),
+			Subject:               pkix.Name{CommonName: "webhook webhook CA"},
+			NotBefore:             time.Now().Add(-5 * time.Minute),
+			NotAfter:              time.Now().Add(24 * time.Hour),
+			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+			BasicConstraintsValid: true,
+			IsCA:                  true,
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	}
+	old, staged, absent := sameSubjectCA(1), sameSubjectCA(2), sameSubjectCA(3)
+
+	fixture := newCertificateShellFixture(t)
+	fixture.write("old.pem", string(old))
+	fixture.write("staged.pem", string(staged))
+	fixture.write("absent.pem", string(absent))
+	fixture.write("bundle.pem", string(old)+string(staged))
+	fixture.write("empty.pem", "")
+	fixture.write("not-a-certificate.pem", "not PEM\n")
+
+	// The check this replaced: verify tries only the first root with the
+	// subject and refuses the staged CA that the bundle does hold.
+	verify := exec.Command("openssl", "verify", "-CAfile",
+		filepath.Join(fixture.directory, "bundle.pem"), filepath.Join(fixture.directory, "staged.pem"))
+	if output, err := verify.CombinedOutput(); err == nil {
+		t.Fatalf("test precondition: openssl verify accepted the second same-subject CA: %s", output)
+	}
+
+	for _, test := range []struct {
+		bundle, wanted string
+		want           bool
+	}{
+		{bundle: "bundle.pem", wanted: "old.pem", want: true},
+		{bundle: "bundle.pem", wanted: "staged.pem", want: true},
+		{bundle: "bundle.pem", wanted: "absent.pem"},
+		{bundle: "empty.pem", wanted: "old.pem"},
+		{bundle: "bundle.pem", wanted: "not-a-certificate.pem"},
+	} {
+		output, err := fixture.run("bundle_contains_certificate \"$UPGRADE_WORK_DIR/" + test.bundle +
+			"\" \"$UPGRADE_WORK_DIR/" + test.wanted + "\"\n")
+		if (err == nil) != test.want {
+			t.Errorf("%s contains %s = %v, want %v: %s", test.bundle, test.wanted, err == nil, test.want, output)
+		}
+	}
+	leftovers, err := filepath.Glob(filepath.Join(fixture.directory, "bundle-members.*"))
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("membership checks left split bundles behind: %v %v", leftovers, err)
 	}
 }
 
