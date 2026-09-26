@@ -45,8 +45,52 @@ func (i incompatibility) String() string {
 	return fmt.Sprintf("%s: %s: %s", i.crd, i.path, i.detail)
 }
 
+// declaredBreak excuses the transitions one change made on purpose.
+//
+// Breaking a rule this check enforces means editing the check, so that the
+// consequence is in the diff a reviewer reads. A declaration is that edit, and
+// it is scoped twice: it names every transition it excuses, exactly as the
+// check renders it, and the candidate schema version that makes them. In any
+// other version it excuses nothing, so a later change that repeats one of its
+// transitions is refused again. A declaration for the candidate's version that
+// names a transition the candidate does not make is refused too, so it cannot
+// quietly miss what it was written for.
+type declaredBreak struct {
+	version     uint64
+	reason      string
+	transitions []string
+}
+
+// declaredBreaks lists every break made on purpose, oldest first.
+var declaredBreaks = []declaredBreak{
+	{
+		version: 22,
+		reason: "Plans and approvals bind what a plan means when it runs rather than " +
+			"the manager build that computed it (stokaro/ptah-operator#448). The manager " +
+			"image, its revision and the runner image built from the same source leave the " +
+			"execution binding and the approval; the plan still records them. No release " +
+			"carried the old fields. A stored object read through the new schema loses " +
+			"them to pruning, and nothing requires them any more.",
+		transitions: []string{
+			"ptahmigrationapprovals.operator.ptah.run: spec.controllerImage: was required and the candidate does not have it",
+			"ptahmigrationapprovals.operator.ptah.run: spec.controllerRevision: was required and the candidate does not have it",
+			"ptahmigrationapprovals.operator.ptah.run: spec.runnerImage: was required and the candidate does not have it",
+			"ptahmigrations.operator.ptah.run: status.executionBinding.controllerImage: was required and the candidate does not have it",
+			"ptahmigrations.operator.ptah.run: status.executionBinding.controllerRevision: was required and the candidate does not have it",
+			"ptahmigrations.operator.ptah.run: status.executionBinding.runnerImage: was required and the candidate does not have it",
+			"ptahschemaapprovals.operator.ptah.run: spec.controllerImage: was required and the candidate does not have it",
+			"ptahschemaapprovals.operator.ptah.run: spec.controllerRevision: was required and the candidate does not have it",
+			"ptahschemaapprovals.operator.ptah.run: spec.runnerImage: was required and the candidate does not have it",
+			"ptahschemas.operator.ptah.run: status.executionBinding.controllerImage: was required and the candidate does not have it",
+			"ptahschemas.operator.ptah.run: status.executionBinding.controllerRevision: was required and the candidate does not have it",
+			"ptahschemas.operator.ptah.run: status.executionBinding.runnerImage: was required and the candidate does not have it",
+		},
+	},
+}
+
 // verifyStoredObjectCompatibility reports every transition between the
-// baseline and the candidate that reaches an object already in etcd.
+// baseline and the candidate that reaches an object already in etcd, less
+// the ones a break declared for the candidate's schema version excuses.
 //
 // Two of the three stop it validating. The third -- a default that moved --
 // changes what it reads back as, which is the same class of surprise and the
@@ -54,7 +98,11 @@ func (i incompatibility) String() string {
 //
 // A kind the baseline does not carry is new, and a new kind has no stored
 // objects to break.
-func verifyStoredObjectCompatibility(baseline, candidate documentSet) error {
+func verifyStoredObjectCompatibility(
+	baseline, candidate documentSet,
+	candidateVersion uint64,
+	declared []declaredBreak,
+) error {
 	var found []incompatibility
 	names := make([]string, 0, len(candidate.byName))
 	for name := range candidate.byName {
@@ -73,12 +121,41 @@ func verifyStoredObjectCompatibility(baseline, candidate documentSet) error {
 		}
 		found = append(found, compareSchemas(name, "", *before, *after)...)
 	}
-	if len(found) == 0 {
-		return nil
+
+	// excused maps each transition declared for this version to whether the
+	// candidate made it.
+	excused := make(map[string]bool)
+	for _, declaration := range declared {
+		if declaration.version != candidateVersion {
+			continue
+		}
+		for _, transition := range declaration.transitions {
+			excused[transition] = false
+		}
 	}
-	rendered := make([]string, 0, len(found))
+	var rendered []string
 	for _, item := range found {
-		rendered = append(rendered, item.String())
+		transition := item.String()
+		if _, isDeclared := excused[transition]; isDeclared {
+			excused[transition] = true
+			continue
+		}
+		rendered = append(rendered, transition)
+	}
+	var unmatched []string
+	for transition, made := range excused {
+		if !made {
+			unmatched = append(unmatched, transition)
+		}
+	}
+	if len(unmatched) > 0 {
+		sort.Strings(unmatched)
+		return fmt.Errorf(
+			"a break declared for schema version %d names transitions the candidate does not make:\n  %s",
+			candidateVersion, strings.Join(unmatched, "\n  "))
+	}
+	if len(rendered) == 0 {
+		return nil
 	}
 	return fmt.Errorf(
 		"the generated CRDs change in ways that reach objects already stored:\n  %s",

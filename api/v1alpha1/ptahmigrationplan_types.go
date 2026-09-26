@@ -107,15 +107,19 @@ type PtahMigrationPlanSpec struct {
 	// VerificationPolicyDigest is that policy's content at the time.
 	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
 
-	// ExecutionBindingID is a per-transition epoch. It changes even when an
-	// operator rollout returns to byte-identical component versions.
+	// ExecutionBindingID is the execution epoch the plan was computed under. It
+	// changes whenever a component that decides what the run means changes --
+	// the controller-state version, the Ptah version, the executor image or
+	// the runner protocol -- even when a rollout returns to byte-identical
+	// versions. A manager upgrade that changes none of them keeps it.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
 	// ControllerImage is the digest-pinned manager that published this plan.
+	// It is a record, not a binding: the fingerprint leaves it out, and a
+	// later manager may apply the plan.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
 	ControllerImage string `json:"controllerImage"`
-	// ControllerRevision is that manager's revision, which distinguishes two
-	// deployments of the same image.
+	// ControllerRevision is that manager's revision, recorded the same way.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
@@ -127,9 +131,11 @@ type PtahMigrationPlanSpec struct {
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image that ran Ptah.
 	ExecutorImage string `json:"executorImage"`
-	// RunnerImage is the digest-pinned image that supervised it.
+	// RunnerImage is the digest-pinned runner image of the manager that
+	// published this plan, recorded and not bound.
 	RunnerImage string `json:"runnerImage"`
-	// RunnerProtocolVersion is the result-frame protocol that runner speaks.
+	// RunnerProtocolVersion is the runner protocol the plan binds: what the
+	// runner enforces inside the Pod and the result frame it returns.
 	// +kubebuilder:validation:Minimum=1
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 

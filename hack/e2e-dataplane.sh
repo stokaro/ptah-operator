@@ -4366,8 +4366,6 @@ assert_plan() {
 		.status.target.identityDigest != "" and
 		.status.target.driftReportDigest != "" and
       ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
-      $binding.controllerImage == $controllerImage and
-      $binding.controllerRevision == $controllerRevision and
       $binding.controllerStateVersion == $controllerStateVersion and
       $plan.executionBindingID == $binding.epoch and
       $plan.controllerImage == $controllerImage and
@@ -4516,8 +4514,6 @@ create_exact_approval() {
       .status.plan as $current |
       ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
       $binding.epoch == $executionBindingID and
-      $binding.controllerImage == $controllerImage and
-      $binding.controllerRevision == $controllerRevision and
       $binding.controllerStateVersion == $controllerStateVersion and
       $current.name == $plan and $current.uid == $planUID and
       $current.fingerprint == $fingerprint and
@@ -4574,11 +4570,9 @@ create_exact_approval() {
       .spec.desiredStateFingerprint != "" and .spec.policyFingerprint != "" and
       .spec.verificationPolicyDigest != "" and .spec.ptahVersion != "" and
       .spec.executionBindingID == $executionBindingID and
-      .spec.controllerImage == $controllerImage and
-      .spec.controllerRevision == $controllerRevision and
       .spec.controllerStateVersion == $controllerStateVersion and
       (.spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
-      (.spec.runnerImage | test("@sha256:[0-9a-f]{64}$")) and
+      (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
       .spec.runnerProtocolVersion == 5 and .spec.approver.username != "" and
       .spec.approvedAt != null and .spec.mutationRequestUID != "" and
       ([.spec | .. | scalars | select(. == $coordinationKey)] | length == 0)
@@ -4698,8 +4692,6 @@ wait_for_in_sync() {
       .status.executionBinding as $binding |
       .status.applied as $applied |
       ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
-      $binding.controllerImage == $controllerImage and
-      $binding.controllerRevision == $controllerRevision and
       $binding.controllerStateVersion == $controllerStateVersion and
       $applied.executionBindingID == $binding.epoch and
       $applied.controllerImage == $controllerImage and
@@ -5386,8 +5378,6 @@ assert_registry_outage_and_recovery() {
           .status.applied.planFingerprint == $fingerprint and
           .status.applied.ptahVersion == $version and
           ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
-          $binding.controllerImage == $controllerImage and
-          $binding.controllerRevision == $controllerRevision and
           $binding.controllerStateVersion == $controllerStateVersion and
           $applied.executionBindingID == $binding.epoch and
           $applied.controllerImage == $controllerImage and
@@ -5492,8 +5482,6 @@ assert_registry_outage_and_recovery() {
           .status.phase == "InSync" and .status.source.digest == $digest and
           .status.executionBinding == $retained[0].executionBinding and
           .status.applied == $retained[0].applied and
-          .status.executionBinding.controllerImage == $controllerImage and
-          .status.executionBinding.controllerRevision == $controllerRevision and
           .status.executionBinding.controllerStateVersion == $controllerStateVersion and
           .status.applied.controllerImage == $controllerImage and
           .status.applied.controllerRevision == $controllerRevision and
@@ -5671,6 +5659,7 @@ assert_automatic_external_postgresql_lifecycle() {
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
 		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
+		--arg runnerImage "$RUNNER_IMAGE" \
 		--arg type application/vnd.stokaro.ptah.schema.v1 '
       .spec.policy.apply == "Always" and
       .spec.policy.allowDestructive == false and
@@ -5693,7 +5682,7 @@ assert_automatic_external_postgresql_lifecycle() {
       .status.applied.controllerStateVersion == $controllerStateVersion and
       .status.applied.ptahVersion == .status.executionBinding.ptahVersion and
       .status.applied.executorImage == .status.executionBinding.executorImage and
-      .status.applied.runnerImage == .status.executionBinding.runnerImage and
+      .status.applied.runnerImage == $runnerImage and
       .status.applied.runnerProtocolVersion == .status.executionBinding.runnerProtocolVersion and
       .status.applied.completedAt != null and
       .status.plan == null and .status.pendingObservation == null and
@@ -5908,6 +5897,7 @@ assert_automatic_external_postgresql_lifecycle() {
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
 		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
+		--arg runnerImage "$RUNNER_IMAGE" \
 		--slurpfile document "$automatic_plan_document" \
 		--slurpfile schema "$automatic_schema_file" '
       $document[0] as $document | $schema[0] as $schema |
@@ -5927,7 +5917,7 @@ assert_automatic_external_postgresql_lifecycle() {
       .spec.controllerStateVersion == $controllerStateVersion and
       .spec.ptahVersion == $schema.status.executionBinding.ptahVersion and
       .spec.executorImage == $schema.status.executionBinding.executorImage and
-      .spec.runnerImage == $schema.status.executionBinding.runnerImage and
+      .spec.runnerImage == $runnerImage and
       .spec.runnerProtocolVersion == $schema.status.executionBinding.runnerProtocolVersion and
       (.status.conditions | any(.type == "Ready" and .status == "True")) and
       ([. | .. | scalars | select(. == $coordinationKey)] | length) == 0

@@ -13,7 +13,10 @@ names something the operator must not guess.
 accepted, and a Docker image ID is not a registry manifest digest.
 
 `execution.executorImage` is the Ptah build the operator runs, by digest.
-`execution.runnerImage` is the runner beside it, also by digest. Each release
+`execution.runnerImage` is the runner beside it, also by digest. The executor
+is bound into every plan and approval; the runner is built from the operator's
+own source, so its digest is recorded and its enforcement is bound through the
+runner protocol version instead. Each release
 builds an executor from the Ptah commit it was tested with and names its digest
 in the release manifest, as [the executor](../../support/releases/#the-executor)
 describes; the chart still takes it only as an explicit value.

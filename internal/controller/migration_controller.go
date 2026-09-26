@@ -59,15 +59,17 @@ type MigrationJobBuilder interface {
 		operation operatorv1alpha1.MigrationOperationStatus,
 		plan *operatorv1alpha1.PtahMigrationPlan,
 	) (*batchv1.Job, error)
+	// ExecutionBinding is what this manager executes with: the components a
+	// plan and an approval bind, and whose change starts a new epoch.
 	ExecutionBinding() (
-		controllerImage string,
-		controllerRevision string,
 		controllerStateVersion int32,
 		ptahVersion string,
 		executorImage string,
-		runnerImage string,
 		runnerProtocolVersion int32,
 	)
+	// ManagerIdentity is the manager's own release and the runner image built
+	// beside it. What the manager publishes records it; nothing binds it.
+	ManagerIdentity() (controllerImage, controllerRevision, runnerImage string)
 }
 
 // MigrationReconciler carries one PtahMigration through Resolve -> Verify ->
@@ -387,8 +389,14 @@ func (r *MigrationReconciler) dispatchedMigrationApplyJob(
 
 // reconcileMigrationExecutionBinding publishes the component identity this
 // resource's work is bound to, and retires a claim authorized under an older
-// one. A rollout that changed the executor, the runner, or the manager itself
-// must invalidate work in flight rather than let it finish under new bytes.
+// one. A rollout that changed the executor, the Ptah version, the runner
+// protocol or the controller-state version must invalidate work in flight
+// rather than let it finish under new semantics.
+//
+// The manager's own image and revision and the runner image built beside it
+// are not compared. A release that changes only them keeps the epoch, the
+// plan and the approval, and adopts the Jobs the previous manager dispatched:
+// the runner in them speaks the same protocol.
 func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -510,15 +518,11 @@ func (r *MigrationReconciler) configuredMigrationBinding() (*operatorv1alpha1.Ex
 	if r.Jobs == nil {
 		return nil, errors.New("Job builder is not configured")
 	}
-	controllerImage, controllerRevision, controllerStateVersion,
-		ptahVersion, executorImage, runnerImage, protocolVersion := r.Jobs.ExecutionBinding()
+	controllerStateVersion, ptahVersion, executorImage, protocolVersion := r.Jobs.ExecutionBinding()
 	return &operatorv1alpha1.ExecutionBindingStatus{
-		ControllerImage:        controllerImage,
-		ControllerRevision:     controllerRevision,
 		ControllerStateVersion: controllerStateVersion,
 		PtahVersion:            ptahVersion,
 		ExecutorImage:          executorImage,
-		RunnerImage:            runnerImage,
 		RunnerProtocolVersion:  protocolVersion,
 	}, nil
 }
@@ -896,8 +900,19 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
 	}
 	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return r.discardUndispatchedMigrationOperation(ctx, migration,
-			errors.New("the rebuilt Job Pod template differs from the persisted admission snapshot"))
+		// Nothing was dispatched and the claim's inputs still hold, so what
+		// differs is the manager that built the template: a release that
+		// shares the execution binding differs in its recorded identity
+		// alone. The claim stands, and its snapshot is resolved again from
+		// the template this manager builds.
+		before := migration.DeepCopy()
+		migration.Status.ActiveOperation.AdmissionSnapshot = nil
+		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.event(migration, corev1.EventTypeNormal, "AdmissionSnapshotRefreshed",
+			"%s Job Pod template changed before dispatch; resolving its admission snapshot again", operation.Type)
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if operation.Type == operatorv1alpha1.MigrationOperationApply && !operation.DispatchStarted {
 		if err := r.consumeMigrationApproval(ctx, migration, operation.ApprovalRef); err != nil {
@@ -1275,6 +1290,10 @@ func (r *MigrationReconciler) publishMigrationPlan(
 	if err != nil {
 		return err
 	}
+	if r.Jobs == nil {
+		return errors.New("the Job builder is not configured")
+	}
+	controllerImage, controllerRevision, runnerImage := r.Jobs.ManagerIdentity()
 	planBinding := migrationplan.Binding{
 		MigrationUID:             migration.UID,
 		HistoryFingerprint:       history.Fingerprint,
@@ -1286,12 +1305,9 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		VerificationPolicyUID:    policyBinding.UID,
 		VerificationPolicyDigest: policyBinding.Digest,
 		ExecutionBindingID:       binding.Epoch,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 	}
 	planFingerprint, err := planBinding.Fingerprint()
@@ -1312,12 +1328,12 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		VerificationPolicyUID:    policyBinding.UID,
 		VerificationPolicyDigest: policyBinding.Digest,
 		ExecutionBindingID:       binding.Epoch,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
+		ControllerImage:          controllerImage,
+		ControllerRevision:       controllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
+		RunnerImage:              runnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 		CreatedAt:                metav1.NewTime(r.now()),
 	})

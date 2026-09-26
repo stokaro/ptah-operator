@@ -101,12 +101,9 @@ func (r *MigrationReconciler) currentMigrationPlan(
 		return nil, errors.New("the resolved artifact changed after the plan was published")
 	}
 	if plan.Spec.ExecutionBindingID != binding.Epoch ||
-		plan.Spec.ControllerImage != binding.ControllerImage ||
-		plan.Spec.ControllerRevision != binding.ControllerRevision ||
 		plan.Spec.ControllerStateVersion != binding.ControllerStateVersion ||
 		plan.Spec.PtahVersion != binding.PtahVersion ||
 		plan.Spec.ExecutorImage != binding.ExecutorImage ||
-		plan.Spec.RunnerImage != binding.RunnerImage ||
 		plan.Spec.RunnerProtocolVersion != binding.RunnerProtocolVersion {
 		return nil, errors.New("an execution component changed after the plan was published")
 	}

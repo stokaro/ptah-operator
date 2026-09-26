@@ -477,63 +477,6 @@ assert_object_unchanged() {
 	cmp "$before" "$after" || fail "$resource/$name UID, spec, or status changed during CRD management"
 }
 
-# A release-sequence upgrade replaces the data plane that produced a schema's
-# retained evidence, so the operator records the candidate manager under a new
-# execution-binding epoch and marks every retained condition for refresh. That
-# is the whole delta a user's object is allowed to show: the identity, the
-# spec, the plan and every other status field stay exactly as they were, and a
-# condition that did not move keeps its own reason and message.
-assert_object_execution_binding_refreshed() {
-	resource=$1
-	name=$2
-	before=$3
-	expected_controller_image=$4
-	after=$WORK_DIR/${resource}-after.json
-	# The refresh is a status write the candidate makes after it starts, so a
-	# single read either lands before it or after a later pass has moved the
-	# object on. Poll until the epoch moves and assert that document: it is
-	# the first version the candidate wrote, which is the refresh itself.
-	before_epoch=$(jq -r '.status.executionBinding.epoch // ""' "$before")
-	refresh_deadline=$(($(date +%s) + 300))
-	while :; do
-		object_evidence "$resource" "$name" "$after"
-		[ "$(jq -r '.status.executionBinding.epoch // ""' "$after")" = "$before_epoch" ] || break
-		[ "$(date +%s)" -lt "$refresh_deadline" ] ||
-			fail "$resource/$name did not record the candidate execution binding within 300s"
-		sleep 1
-	done
-	jq -e --arg image "$expected_controller_image" '
-      .status.executionBinding.controllerImage == $image and
-      (.status.executionBinding.epoch | test("^v1-[0-9a-f]{32}$"))
-    ' "$after" >/dev/null ||
-		fail "$resource/$name did not record the candidate execution binding"
-	[ "$(jq -r '.status.executionBinding.epoch' "$before")" != \
-		"$(jq -r '.status.executionBinding.epoch' "$after")" ] ||
-		fail "$resource/$name kept the predecessor execution-binding epoch"
-	for evidence_side in "$before" "$after"; do
-		jq -S 'del(
-          .status.executionBinding.controllerImage,
-          .status.executionBinding.epoch,
-          .status.conditions
-        )' "$evidence_side" >"$evidence_side.binding-invariant"
-	done
-	if ! cmp -s "$before.binding-invariant" "$after.binding-invariant"; then
-		diff -u "$before.binding-invariant" "$after.binding-invariant" >&2 || true
-		fail "$resource/$name changed outside the execution-binding refresh"
-	fi
-	jq -S '[.status.conditions[] | {type, status, reason, message}]' "$before" >"$before.conditions"
-	jq -S --slurpfile before_conditions "$before.conditions" '
-      [.status.conditions[] | {type, status, reason, message}] as $after_conditions |
-      $before_conditions[0] as $kept_conditions |
-      ([$after_conditions[] | select(.reason == "ExecutionBindingChanged")] | length) > 0 and
-      (([$kept_conditions[].type] - [$after_conditions[].type]) | length) == 0 and
-      ([$after_conditions[] | select(.reason != "ExecutionBindingChanged")] |
-        all(. as $kept | $kept_conditions | any(. == $kept)))
-    ' "$after" >"$after.conditions-verdict"
-	[ "$(cat "$after.conditions-verdict")" = true ] ||
-		fail "$resource/$name conditions moved for a reason other than the execution-binding refresh"
-}
-
 crd_evidence() {
 	name=$1
 	destination=$2
@@ -4089,8 +4032,15 @@ EOF
 	# The exact URL the Apply Job resolves. The runner derives the target
 	# identity from it and refuses a plan recorded against a different one, so
 	# the fixture binds this value rather than a placeholder.
+	# The plan records the manager that publishes it. The status binding holds
+	# only what the plan binds, so the manager's identity is read from a Job it
+	# dispatched: the read-only fixture this proof dispatches first.
+	running_apply_manager_job=$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job.json
+	{ [ -n "$READ_ONLY_JOB_SCHEMA" ] && [ -s "$running_apply_manager_job" ]; } ||
+		fail "the running Apply fixture needs a Job the live manager dispatched; the read-only Job fixture runs first"
 	go -C "$ROOT_DIR" run ./hack/predecessorapplyfixture \
 		-schema "$WORK_DIR/running-apply-schema.json" \
+		-manager-job "$running_apply_manager_job" \
 		-plan "$WORK_DIR/running-apply-plan.json" \
 		-policy-uid "$running_apply_policy_uid" \
 		-policy "$running_apply_policy_file" \
@@ -4309,7 +4259,26 @@ stage_predecessor_apply_job_uid_gap_while_running() {
 		'the Apply was already retired into a pending observation'
 }
 
+# The next release differs from the one that dispatched the Apply in its
+# manager image alone, which the execution binding does not hold. So the
+# successor keeps the epoch and adopts the running Apply as its own: the claim
+# stays, the Job UID the harness removed is recorded again, and nothing is
+# retired into a pending observation while the Apply is still inside the
+# engine.
 assert_predecessor_apply_remains_exclusive_while_running() {
+	# shellcheck disable=SC2016 # $before, $job and $uid are jq arguments, not shell variables.
+	exclusive_filter='
+      $before[0].status as $before |
+      .status.executionBinding.epoch == $before.executionBinding.epoch and
+      .status.activeOperation.type == "Apply" and
+      .status.activeOperation.id == $before.activeOperation.id and
+      .status.activeOperation.jobName == $job and
+      .status.activeOperation.jobUID == $uid and
+      .status.activeOperation.dispatchStarted == true and
+      .status.activeOperation.executionBindingID == .status.executionBinding.epoch and
+      (.status | has("pendingObservation") | not) and
+      ((.status.conditions // []) | any(.reason == "ExecutionBindingChanged") | not)
+    '
 	exclusive_deadline=$(($(date +%s) + 180))
 	while [ "$(date +%s)" -lt "$exclusive_deadline" ]; do
 		if kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
@@ -4317,17 +4286,8 @@ assert_predecessor_apply_remains_exclusive_while_running() {
 			jq -e \
 				--arg job "$RUNNING_APPLY_JOB_NAME" \
 				--arg uid "$RUNNING_APPLY_JOB_UID" \
-				--arg pod_uid "$RUNNING_APPLY_POD_UID" '
-              .status.phase == "Pending" and
-              (.status | has("activeOperation") | not) and
-              .status.pendingObservation.outcome == "OutcomeUnknown" and
-              .status.pendingObservation.applyJobName == $job and
-              .status.pendingObservation.applyJobUID == $uid and
-              (.status.pendingObservation.applyPodUIDs | index($pod_uid) != null) and
-              .status.pendingObservation.applyPodCount == 1 and
-              .status.pendingObservation.planRequired != true and
-              .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch
-            ' "$WORK_DIR/running-apply-fenced-schema.json" >/dev/null; then
+				--slurpfile before "$WORK_DIR/running-apply-staged-gap.json" \
+				"$exclusive_filter" "$WORK_DIR/running-apply-fenced-schema.json" >/dev/null; then
 			break
 		fi
 		sleep 1
@@ -4335,18 +4295,11 @@ assert_predecessor_apply_remains_exclusive_while_running() {
 	jq -e \
 		--arg job "$RUNNING_APPLY_JOB_NAME" \
 		--arg uid "$RUNNING_APPLY_JOB_UID" \
-		--arg pod_uid "$RUNNING_APPLY_POD_UID" '
-      .status.phase == "Pending" and
-      (.status | has("activeOperation") | not) and
-      .status.pendingObservation.outcome == "OutcomeUnknown" and
-      .status.pendingObservation.applyJobName == $job and
-      .status.pendingObservation.applyJobUID == $uid and
-      (.status.pendingObservation.applyPodUIDs | index($pod_uid) != null) and
-      .status.pendingObservation.applyPodCount == 1 and
-      .status.pendingObservation.planRequired != true and
-      .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch
-    ' "$WORK_DIR/running-apply-fenced-schema.json" >/dev/null ||
-		fail "the successor did not durably fence and adopt the running Apply"
+		--slurpfile before "$WORK_DIR/running-apply-staged-gap.json" \
+		"$exclusive_filter" "$WORK_DIR/running-apply-fenced-schema.json" >/dev/null || {
+		emit_running_apply_diagnostic
+		fail "the successor did not adopt the running Apply under the epoch it was dispatched in"
+	}
 
 	kube -n "$PROOF_NAMESPACE" get job "$RUNNING_APPLY_JOB_NAME" -o json \
 		>"$WORK_DIR/running-apply-after-upgrade.json"
@@ -4386,13 +4339,18 @@ wait_for_predecessor_apply_job_terminal() {
       .metadata.uid == $uid and
       ((.status.conditions // []) | any((.type == "Complete" or .type == "Failed") and .status == "True"))
     ' "$WORK_DIR/running-apply-terminal-job.json" >/dev/null ||
-		fail "the Apply Job did not finish after the successor fenced it"
+		fail "the Apply Job did not finish after the successor adopted it"
 	kube -n "$PROOF_NAMESPACE" get pod "$RUNNING_APPLY_POD_NAME" -o json |
 		jq -e --arg uid "$RUNNING_APPLY_POD_UID" '
           .metadata.uid == $uid and (.status.phase == "Succeeded" or .status.phase == "Failed")
-        ' >/dev/null || fail "the Apply Pod is not terminal after the successor fence"
+        ' >/dev/null || fail "the Apply Pod is not terminal after the successor adopted it"
 }
 
+# The adopted Apply is accounted for through its own result, under the epoch
+# it was dispatched in: the successor read the frame, scheduled the Job's
+# cleanup and recorded what the run said -- applied, or unknown when the frame
+# says so -- for the read-only observation that follows. Either account names
+# this Job; a fence would have moved the epoch instead.
 wait_for_predecessor_apply_job_cleanup() {
 	cleanup_deadline=$(($(date +%s) + 240))
 	while [ "$(date +%s)" -lt "$cleanup_deadline" ]; do
@@ -4403,19 +4361,19 @@ wait_for_predecessor_apply_job_cleanup() {
 				>"$WORK_DIR/running-apply-schema-after.json"; then
 			if jq -e \
 				--arg job "$RUNNING_APPLY_JOB_NAME" \
-				--arg uid "$RUNNING_APPLY_JOB_UID" '
-                  .status.phase == "Pending" and
-                  (.status | has("activeOperation") | not) and
-                  (.status | has("applied") | not) and
-                  .status.pendingObservation.outcome == "OutcomeUnknown" and
-                  .status.pendingObservation.applyJobName == $job and
-                  .status.pendingObservation.applyJobUID == $uid and
-                  .status.pendingObservation.planRequired != true and
-                  .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch and
-                  any(.status.conditions[];
-                    .type == "PlanReady" and .status == "False" and .reason == "ExecutionBindingChanged") and
-                  any(.status.conditions[];
-                    .type == "ApprovalRequired" and .status == "False" and .reason == "ExecutionBindingChanged")
+				--arg uid "$RUNNING_APPLY_JOB_UID" \
+				--arg planUID "$RUNNING_APPLY_PLAN_UID" \
+				--slurpfile before "$WORK_DIR/running-apply-staged-gap.json" '
+                  $before[0].status as $before |
+                  .status.executionBinding.epoch == $before.executionBinding.epoch and
+                  ((.status.conditions // []) | any(.reason == "ExecutionBindingChanged") | not) and
+                  ((.status.pendingObservation.applyJobName == $job and
+                    .status.pendingObservation.applyJobUID == $uid and
+                    (.status.pendingObservation.outcome == "ApplySucceeded" or
+                      .status.pendingObservation.outcome == "OutcomeUnknown") and
+                    .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch) or
+                   (.status.applied.planRef.uid == $planUID and
+                    .status.applied.executionBindingID == .status.executionBinding.epoch))
                 ' "$WORK_DIR/running-apply-schema-after.json" >/dev/null; then
 				jq -S '{
                   uid: .metadata.uid,
@@ -4436,7 +4394,8 @@ wait_for_predecessor_apply_job_cleanup() {
 		fi
 		sleep 1
 	done
-	fail "the successor did not adopt and retire the quiesced Apply Job"
+	emit_running_apply_diagnostic
+	fail "the successor did not account for the adopted Apply Job through its own result"
 }
 
 assert_controller_downgrade_blocked() {
@@ -4616,12 +4575,9 @@ spec:
   verificationPolicyUID: verification-policy-uid
   verificationPolicyDigest: sha256:verification-policy
   executionBindingID: v1-00000000000000000000000000000000
-  controllerImage: $PROOF_CONTROLLER_IMAGE
-  controllerRevision: e2e-crd-upgrade
   controllerStateVersion: 1
   ptahVersion: e2e
   executorImage: e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000
-  runnerImage: e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111
   runnerProtocolVersion: 1
   approver: {username: crd-upgrade-proof}
   approvedAt: "2026-01-01T00:00:00Z"
@@ -4990,14 +4946,17 @@ run_next_release_upgrade_proof() {
 	assert_inventory_resources_absent \
 		"$current_sequence_inventory" "$current_sequence_marker_name"
 	assert_release_sequence_candidate_residue_absent "$current_release_sequence"
-	assert_object_execution_binding_refreshed ptahschema "$PROOF_SCHEMA" \
-		"$WORK_DIR/ptahschema-before.json" "$E2E_NEXT_CONTROLLER_IMAGE"
-	for resource in ptahschemaplan ptahschemaapproval; do
+	# The synthetic next release differs from this one in its manager image
+	# alone: the executor, the Ptah version, the runner protocol and the
+	# controller-state version are the same. None of that is in the execution
+	# binding, so the schema keeps its epoch and the plan and approval under it
+	# stay exactly as they were -- a patch release retires nothing.
+	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" \
 			"$WORK_DIR/${resource}-before.json"
 	done
-	# The refresh above is the only change this upgrade may make. Everything
-	# after it, including the uninstall, is held to the state it leaves behind.
+	# Everything after this, including the uninstall, is held to the state the
+	# upgrade leaves behind.
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
@@ -5181,18 +5140,10 @@ run_uninstall_proof() {
 		"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \
 		"$fresh_current_marker" "$fresh_current_inventory"
 	fresh_current_marker_name=$(jq -er '.metadata.name' "$fresh_current_marker")
-	# This install puts a different release in place, so the running controller
-	# rebinds the schema's execution to its own image under a new epoch. That is
-	# the one change it owes, and it owes nothing else: identity, spec, every
-	# other status field and every condition but the binding one stay as they
-	# were, which is what this assertion holds it to.
-	assert_object_execution_binding_refreshed ptahschema "$PROOF_SCHEMA" \
-		"$WORK_DIR/ptahschema-before.json" "$E2E_CANDIDATE_IMAGE"
-	for resource in ptahschemaplan ptahschemaapproval; do
-		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
-	done
-	# The refresh above is the only change this install may make, as it is for
-	# the sequence upgrade. Everything after it, including this release's own
+	# This install puts a different manager in place and changes nothing the
+	# execution binding holds, so the schema, its plan and its approval stay
+	# exactly as they were, as they do across the sequence upgrade. Everything
+	# after this, including this release's own
 	# uninstall, is held to the state it leaves behind.
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"

@@ -2311,8 +2311,6 @@ assert_successful_apply_result() {
           $pendingObject.status.pendingObservation as $pending |
           $apply != null and $pendingObject != null and
           ($apply.status.executionBinding.epoch | test("^v1-[0-9a-f]{32}$")) and
-          $apply.status.executionBinding.controllerImage == $controllerImage and
-          $apply.status.executionBinding.controllerRevision == $controllerRevision and
           $apply.status.executionBinding.controllerStateVersion == $controllerStateVersion and
           $apply.status.activeOperation.executionBindingID == $apply.status.executionBinding.epoch and
           $apply.status.plan.executionBindingID == $apply.status.executionBinding.epoch and
@@ -2800,8 +2798,7 @@ assert_approval_consumed() {
 			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
         .spec.planRef.uid == $planUID and
         (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-        .spec.controllerImage == $controllerImage and
-        .spec.controllerRevision == $controllerRevision and
+        (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
         .spec.controllerStateVersion == $controllerStateVersion and
         (.status.conditions | any(
           .type == "Consumed" and .status == "True" and .reason == "DispatchCommitted")) and
@@ -3057,8 +3054,6 @@ wait_for_plan() {
       .status.executionBinding as $binding |
       .status.plan as $plan |
       ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
-      $binding.controllerImage == $controllerImage and
-      $binding.controllerRevision == $controllerRevision and
       $binding.controllerStateVersion == $controllerStateVersion and
       $plan.executionBindingID == $binding.epoch and
       $plan.controllerImage == $controllerImage and
@@ -3102,8 +3097,6 @@ create_approval() {
       .status.executionBinding as $binding |
       .status.plan as $current |
       $binding.epoch == $executionBindingID and
-      $binding.controllerImage == $controllerImage and
-      $binding.controllerRevision == $controllerRevision and
       $binding.controllerStateVersion == $controllerStateVersion and
       $current.name == $plan and $current.uid == $planUID and
       $current.fingerprint == $fingerprint and
@@ -3156,8 +3149,7 @@ create_approval() {
       (.spec.artifactDigest | test("^sha256:[0-9a-f]{64}$")) and
       (.spec.coordinationDigest | test("^sha256:[0-9a-f]{64}$")) and
       .spec.executionBindingID == $executionBindingID and
-      .spec.controllerImage == $controllerImage and
-      .spec.controllerRevision == $controllerRevision and
+      (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
       .spec.controllerStateVersion == $controllerStateVersion and
       .spec.runnerProtocolVersion == 5
     ' >/dev/null || fail "$approval_name was not hydrated against the exact current plan"
@@ -3744,8 +3736,6 @@ assert_post_apply_proof_history() {
 		--slurpfile leases "$proof_lease_watch" '
       def exact_controller_plan($plan; $binding):
         ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
-        $binding.controllerImage == $controllerImage and
-        $binding.controllerRevision == $controllerRevision and
         $binding.controllerStateVersion == $controllerStateVersion and
         $plan.executionBindingID == $binding.epoch and
         $plan.controllerImage == $controllerImage and
@@ -3955,8 +3945,6 @@ assert_uncertain_apply_proof_history() {
 		--slurpfile freshPlan "$unknown_fresh_plan" '
       def exact_controller_binding($binding):
         ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
-        $binding.controllerImage == $controllerImage and
-        $binding.controllerRevision == $controllerRevision and
         $binding.controllerStateVersion == $controllerStateVersion;
       def exact_controller_plan($plan; $binding):
         exact_controller_binding($binding) and

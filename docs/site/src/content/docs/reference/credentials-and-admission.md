@@ -70,6 +70,13 @@ version, and two more on a schema Apply for the plan fingerprint and content
 digest. A Job without the controller identity is refused on create and on
 update.
 
+The manager annotations record which manager built a Job, and bind nothing. A
+manager release that keeps the execution binding adopts the Jobs its
+predecessor dispatched: it rebuilds each one with the identity recorded on it
+and holds the live Pod template to the admission snapshot the claim persisted
+before dispatch, so what it takes from the Job is pinned by the claim rather
+than by the Job being checked.
+
 Upgrade compatibility is deliberately narrower than ordinary reconstruction.
 After an upgrade durably retires an execution epoch, the replacement manager
 may add only the cleanup TTL to an exact terminal Job retained from the

@@ -8,18 +8,41 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
 
-// Every record of an execution carries the identity of the manager that
-// published it. The plan contract has one version, and nothing in the API is
+// Every binding of an execution requires what decides a plan's meaning when it
+// runs, and every record of one also requires the manager that published it.
+// The binding itself and an approval carry nothing about that manager: a
+// manager release that changes only its own build keeps the epoch and every
+// approval. The plan contract has one version, and nothing in the API is
 // optional only so that an earlier shape could still be read.
 func TestGeneratedExecutionIdentityContract(t *testing.T) {
 	candidates := mustCandidates(t)
 	schemaRoot := candidateVersionSchema(t, candidateByName(candidates, PtahSchemaCRDName))
 	planRoot := candidateVersionSchema(t, candidateByName(candidates, PtahSchemaPlanCRDName))
 	approvalRoot := candidateVersionSchema(t, candidateByName(candidates, PtahSchemaApprovalCRDName))
+	migrationRoot := candidateVersionSchema(t, candidateByName(candidates, PtahMigrationCRDName))
+	migrationPlanRoot := candidateVersionSchema(t, candidateByName(candidates, PtahMigrationPlanCRDName))
+	migrationApprovalRoot := candidateVersionSchema(t, candidateByName(candidates, PtahMigrationApprovalCRDName))
 
-	requiredIdentity := []string{"controllerImage", "controllerRevision", "controllerStateVersion"}
-	executionBinding := schemaProperty(t, schemaRoot, "status", "executionBinding")
-	assertRequired(t, "PtahSchema status.executionBinding", executionBinding, requiredIdentity...)
+	bound := []string{"controllerStateVersion", "ptahVersion", "executorImage", "runnerProtocolVersion"}
+	publisher := []string{"controllerImage", "controllerRevision", "runnerImage"}
+
+	for _, location := range []struct {
+		name   string
+		schema apiextensionsv1.JSONSchemaProps
+		epoch  string
+	}{
+		{name: "PtahSchema status.executionBinding", schema: schemaProperty(t, schemaRoot, "status", "executionBinding"), epoch: "epoch"},
+		{name: "PtahMigration status.executionBinding", schema: schemaProperty(t, migrationRoot, "status", "executionBinding"), epoch: "epoch"},
+		{name: "PtahSchemaApproval spec", schema: schemaProperty(t, approvalRoot, "spec"), epoch: "executionBindingID"},
+		{name: "PtahMigrationApproval spec", schema: schemaProperty(t, migrationApprovalRoot, "spec"), epoch: "executionBindingID"},
+	} {
+		assertRequired(t, location.name, location.schema, append([]string{location.epoch}, bound...)...)
+		for _, field := range publisher {
+			if _, found := location.schema.Properties[field]; found {
+				t.Errorf("%s carries %s, so a manager release would retire it", location.name, field)
+			}
+		}
+	}
 
 	for _, location := range []struct {
 		name   string
@@ -29,9 +52,10 @@ func TestGeneratedExecutionIdentityContract(t *testing.T) {
 		{name: "PtahSchema status.applied", schema: schemaProperty(t, schemaRoot, "status", "applied")},
 		{name: "PtahSchema status.pendingObservation.plan", schema: schemaProperty(t, schemaRoot, "status", "pendingObservation", "plan")},
 		{name: "PtahSchemaPlan spec", schema: schemaProperty(t, planRoot, "spec")},
-		{name: "PtahSchemaApproval spec", schema: schemaProperty(t, approvalRoot, "spec")},
+		{name: "PtahMigrationPlan spec", schema: schemaProperty(t, migrationPlanRoot, "spec")},
 	} {
-		assertRequired(t, location.name, location.schema, append([]string{"executionBindingID"}, requiredIdentity...)...)
+		required := append(append([]string{"executionBindingID"}, bound...), publisher...)
+		assertRequired(t, location.name, location.schema, required...)
 	}
 
 	contractVersion := schemaProperty(t, planRoot, "spec", "contractVersion")

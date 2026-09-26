@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -136,21 +137,27 @@ func TestApprovalCreateRejectsFuturePlanContract(t *testing.T) {
 	}
 }
 
-func TestApprovalCreateRejectsNonCurrentManagerIdentity(t *testing.T) {
+// TestApprovalCreateRejectsAPlanUnderAnotherExecution refuses an approval for a
+// plan computed under an execution this manager does not run. Each case
+// changes one component the plan binds and nothing else.
+func TestApprovalCreateRejectsAPlanUnderAnotherExecution(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
 		name   string
 		mutate func(*operatorv1alpha1.PtahSchemaPlanSpec)
 	}{
-		{name: "missing image", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
-			spec.ControllerImage = ""
-		}},
-		{name: "missing revision", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
-			spec.ControllerRevision = ""
-		}},
-		{name: "future state version", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
+		{name: "controller state version", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
 			spec.ControllerStateVersion++
+		}},
+		{name: "Ptah version", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
+			spec.PtahVersion = "v0.4.0"
+		}},
+		{name: "executor image", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
+			spec.ExecutorImage = "example.invalid/ptah@sha256:other-executor"
+		}},
+		{name: "runner protocol", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
+			spec.RunnerProtocolVersion++
 		}},
 	} {
 		test := test
@@ -173,24 +180,83 @@ func TestApprovalCreateRejectsNonCurrentManagerIdentity(t *testing.T) {
 			request := requestFor(t, approval, admissionv1.Create)
 			request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
 			response := handler.Handle(context.Background(), request)
-			if response.Allowed || response.Result == nil || !strings.Contains(response.Result.Message, "manager identity is not current") {
-				t.Fatalf("Handle() response = %#v, want manager-identity denial", response.Result)
+			if response.Allowed || response.Result == nil ||
+				!strings.Contains(response.Result.Message, "execution binding this manager does not run") {
+				t.Fatalf("Handle() response = %#v, want an execution-binding denial", response.Result)
 			}
 		})
 	}
 }
 
-func TestApprovalHandlerRejectsControlCharacterControllerRevision(t *testing.T) {
+// TestApprovalCreateAcceptsAPlanAnotherManagerPublished is the admission half
+// of a manager-only upgrade: the plan records a manager image, revision and
+// runner image this manager does not have, and binds the same execution. The
+// approval is admitted, in both the mutating and the validating pass.
+func TestApprovalCreateAcceptsAPlanAnotherManagerPublished(t *testing.T) {
 	t.Parallel()
 
-	handler, approval := readyFixture(t, true, true)
-	handler.ControllerRevision = "release\ncandidate"
-	request := requestFor(t, approval, admissionv1.Create)
-	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
-	response := handler.Handle(context.Background(), request)
-	if response.Allowed || response.Result == nil || response.Result.Code != http.StatusInternalServerError ||
-		!strings.Contains(response.Result.Message, "not initialized") {
-		t.Fatalf("Handle() response = %#v, want invalid-handler refusal", response.Result)
+	for _, mutate := range []bool{true, false} {
+		mutate := mutate
+		t.Run(fmt.Sprintf("mutate=%t", mutate), func(t *testing.T) {
+			t.Parallel()
+			otherManager := "example.invalid/manager@sha256:" + strings.Repeat("d", 64)
+			handler, approval := readyFixture(t, true, mutate, func(status *operatorv1alpha1.PtahSchemaStatus) {
+				status.Plan.ControllerImage = otherManager
+				status.Plan.ControllerRevision = "an-earlier-release"
+			})
+			api, ok := handler.Reader.(client.Client)
+			if !ok {
+				t.Fatal("approval fixture reader is not mutable")
+			}
+			plan := &operatorv1alpha1.PtahSchemaPlan{}
+			key := client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}
+			if err := api.Get(context.Background(), key, plan); err != nil {
+				t.Fatal(err)
+			}
+			plan.Spec.ControllerImage = otherManager
+			plan.Spec.ControllerRevision = "an-earlier-release"
+			plan.Spec.RunnerImage = "example.invalid/operator@sha256:" + strings.Repeat("e", 64)
+			if err := api.Update(context.Background(), plan); err != nil {
+				t.Fatal(err)
+			}
+			if !mutate {
+				approval.Spec.Approver = operatorv1alpha1.ApprovalIdentity{Username: "alice"}
+				approval.Spec.ApprovedAt = metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+				approval.Spec.MutationRequestUID = "mutating-review-uid"
+			}
+			request := requestFor(t, approval, admissionv1.Create)
+			request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+			response := handler.Handle(context.Background(), request)
+			if !response.Allowed {
+				t.Fatalf("Handle() refused an approval for a plan an earlier manager of the same execution published: %#v",
+					response.Result)
+			}
+		})
+	}
+}
+
+func TestApprovalHandlerRefusesAnIncompleteExecution(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(*Execution){
+		"controller state version": func(e *Execution) { e.ControllerStateVersion = 0 },
+		"Ptah version":             func(e *Execution) { e.PtahVersion = " v0.3.0" },
+		"executor image":           func(e *Execution) { e.ExecutorImage = "" },
+		"runner protocol":          func(e *Execution) { e.RunnerProtocolVersion = 0 },
+	} {
+		mutate := mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			handler, approval := readyFixture(t, true, true)
+			mutate(&handler.Execution)
+			request := requestFor(t, approval, admissionv1.Create)
+			request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+			response := handler.Handle(context.Background(), request)
+			if response.Allowed || response.Result == nil || response.Result.Code != http.StatusInternalServerError ||
+				!strings.Contains(response.Result.Message, "not initialized") {
+				t.Fatalf("Handle() response = %#v, want invalid-handler refusal", response.Result)
+			}
+		})
 	}
 }
 
@@ -207,12 +273,9 @@ func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	approval.Spec.VerificationPolicyUID = ""
 	approval.Spec.VerificationPolicyDigest = ""
 	approval.Spec.ExecutionBindingID = ""
-	approval.Spec.ControllerImage = ""
-	approval.Spec.ControllerRevision = ""
 	approval.Spec.ControllerStateVersion = 0
 	approval.Spec.PtahVersion = ""
 	approval.Spec.ExecutorImage = ""
-	approval.Spec.RunnerImage = ""
 	approval.Spec.RunnerProtocolVersion = 0
 	request := requestFor(t, approval, admissionv1.Create)
 	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
@@ -231,12 +294,18 @@ func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	}
 	for _, want := range []string{
 		"sha256:artifact", coordinationDigest, "sha256:target", "sha256:actual", "sha256:desired",
-		"sha256:policy", "policy-v1-uid", "v1-33333333333333333333333333333333", testControllerImage,
-		"v0.3.0", "example.invalid/ptah@sha256:executor",
-		"example.invalid/operator@sha256:runner", "runnerProtocolVersion",
+		"sha256:policy", "policy-v1-uid", "v1-33333333333333333333333333333333",
+		"v0.3.0", "example.invalid/ptah@sha256:executor", "runnerProtocolVersion",
 	} {
 		if !containsJSON(patchJSON, want) {
 			t.Fatalf("hydration patch %s does not contain %q", patchJSON, want)
+		}
+	}
+	// The plan records the manager that published it; an approval binds
+	// nothing about that manager, so hydration copies none of it.
+	for _, unwanted := range []string{testControllerImage, "example.invalid/operator@sha256:runner"} {
+		if containsJSON(patchJSON, unwanted) {
+			t.Fatalf("hydration patch %s copies the publishing manager's %q into the approval", patchJSON, unwanted)
 		}
 	}
 }
@@ -470,11 +539,9 @@ func readyFixture(
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			Phase: operatorv1alpha1.PhaseAwaitingApproval,
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
-				Epoch: "v1-33333333333333333333333333333333", ControllerImage: testControllerImage,
-				ControllerRevision:     "controller-test-revision",
+				Epoch:                  "v1-33333333333333333333333333333333",
 				ControllerStateVersion: 1, PtahVersion: "v0.3.0",
 				ExecutorImage:         "example.invalid/ptah@sha256:executor",
-				RunnerImage:           "example.invalid/operator@sha256:runner",
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
 			},
 			Source: operatorv1alpha1.SchemaSourceStatus{
@@ -545,12 +612,9 @@ func readyFixture(
 			VerificationPolicyUID:    policyUID,
 			VerificationPolicyDigest: policyDigest,
 			ExecutionBindingID:       "v1-33333333333333333333333333333333",
-			ControllerImage:          testControllerImage,
-			ControllerRevision:       "controller-test-revision",
 			ControllerStateVersion:   1,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@sha256:executor",
-			RunnerImage:              "example.invalid/operator@sha256:runner",
 			RunnerProtocolVersion:    int32(runner.ProtocolVersion),
 		},
 	}
@@ -563,8 +627,11 @@ func readyFixture(
 	return &ApprovalHandler{
 		Reader: reader, Decoder: cradmission.NewDecoder(scheme),
 		Clock: fixedClock{value: now.Time}, Mutate: mutate,
-		ControllerImage:    testControllerImage,
-		ControllerRevision: "controller-test-revision", ControllerStateVersion: 1,
+		Execution: Execution{
+			ControllerStateVersion: 1, PtahVersion: "v0.3.0",
+			ExecutorImage:         "example.invalid/ptah@sha256:executor",
+			RunnerProtocolVersion: int32(runner.ProtocolVersion),
+		},
 	}, approval
 }
 

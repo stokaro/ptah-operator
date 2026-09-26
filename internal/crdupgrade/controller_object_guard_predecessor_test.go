@@ -430,12 +430,9 @@ func predecessorControllerJobFixture(t *testing.T) *batchv1.Job {
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 				Epoch:                  "v1-33333333333333333333333333333333",
-				ControllerImage:        predecessorControllerImage,
-				ControllerRevision:     "controller-test-revision",
 				ControllerStateVersion: ourStateVersion,
 				PtahVersion:            "v0.3.0",
 				ExecutorImage:          "registry.example/ptah@" + digest("d"),
-				RunnerImage:            "registry.example/operator@" + digest("e"),
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
 		},
@@ -454,10 +451,10 @@ func predecessorControllerJobFixture(t *testing.T) *batchv1.Job {
 	}
 	builder := workload.Builder{
 		ExecutorImage:          schema.Status.ExecutionBinding.ExecutorImage,
-		RunnerImage:            schema.Status.ExecutionBinding.RunnerImage,
+		RunnerImage:            "registry.example/operator@" + digest("e"),
 		PtahVersion:            schema.Status.ExecutionBinding.PtahVersion,
-		ControllerImage:        schema.Status.ExecutionBinding.ControllerImage,
-		ControllerRevision:     schema.Status.ExecutionBinding.ControllerRevision,
+		ControllerImage:        predecessorControllerImage,
+		ControllerRevision:     "controller-test-revision",
 		ControllerStateVersion: schema.Status.ExecutionBinding.ControllerStateVersion,
 	}
 	job, err := builder.Build(schema, operation, nil)

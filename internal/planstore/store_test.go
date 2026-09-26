@@ -315,12 +315,9 @@ func planBinding(schema *operatorv1alpha1.PtahSchema, spec operatorv1alpha1.Ptah
 		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
 		VerificationPolicyDigest: spec.VerificationPolicyDigest,
 		ExecutionBindingID:       spec.ExecutionBindingID,
-		ControllerImage:          spec.ControllerImage,
-		ControllerRevision:       spec.ControllerRevision,
 		ControllerStateVersion:   spec.ControllerStateVersion,
 		PtahVersion:              spec.PtahVersion,
 		ExecutorImage:            spec.ExecutorImage,
-		RunnerImage:              spec.RunnerImage,
 		RunnerProtocolVersion:    spec.RunnerProtocolVersion,
 	}
 }

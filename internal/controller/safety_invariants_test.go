@@ -393,8 +393,8 @@ func TestRunningApplyContinuityLossPersistsUnknownThroughValidatedCleanup(t *tes
 	schema.Status.Plan.UID = "current-plan-uid"
 	schema.Status.Plan.Fingerprint = testDigest
 	schema.Status.Plan.ContentDigest = safetyOtherDigest
-	schema.Status.Plan.ControllerImage = schema.Status.ExecutionBinding.ControllerImage
-	schema.Status.Plan.ControllerRevision = schema.Status.ExecutionBinding.ControllerRevision
+	schema.Status.Plan.ControllerImage = testControllerImage
+	schema.Status.Plan.ControllerRevision = testControllerRevision
 	schema.Status.Plan.ControllerStateVersion = schema.Status.ExecutionBinding.ControllerStateVersion
 	operation := schema.Status.ActiveOperation
 	bindActiveInput(t, schema)
@@ -595,8 +595,8 @@ func TestDeletingUntrustedApplySkipsJobCleanupAndPersistsUncertainty(t *testing.
 			schema.Status.Plan.UID = "current-plan-uid"
 			schema.Status.Plan.Fingerprint = testDigest
 			schema.Status.Plan.ContentDigest = safetyOtherDigest
-			schema.Status.Plan.ControllerImage = schema.Status.ExecutionBinding.ControllerImage
-			schema.Status.Plan.ControllerRevision = schema.Status.ExecutionBinding.ControllerRevision
+			schema.Status.Plan.ControllerImage = testControllerImage
+			schema.Status.Plan.ControllerRevision = testControllerRevision
 			schema.Status.Plan.ControllerStateVersion = schema.Status.ExecutionBinding.ControllerStateVersion
 			operation := schema.Status.ActiveOperation
 			operation.StartedAt = metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC))
@@ -2230,18 +2230,11 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 		name   string
 		mutate func(*executionBindingJobs)
 	}{
-		{name: "controller image", mutate: func(binding *executionBindingJobs) {
-			binding.controllerImage = "example.invalid/manager@" + safetyOtherDigest
-		}},
 		{name: "Ptah version", mutate: func(binding *executionBindingJobs) { binding.ptahVersion = "v0.4.0" }},
 		{name: "executor image", mutate: func(binding *executionBindingJobs) {
 			binding.executorImage = "example.invalid/ptah@" + safetyOtherDigest
 		}},
-		{name: "runner image", mutate: func(binding *executionBindingJobs) {
-			binding.runnerImage = "example.invalid/operator@" + safetyOtherDigest
-		}},
 		{name: "runner protocol", mutate: func(binding *executionBindingJobs) { binding.protocol++ }},
-		{name: "controller revision", mutate: func(binding *executionBindingJobs) { binding.controllerRevision += "-next" }},
 		{name: "controller state", mutate: func(binding *executionBindingJobs) { binding.controllerStateVersion++ }},
 	}
 	for _, change := range changes {
@@ -2298,11 +2291,10 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 					actual.Status.NextReconciliationTime != nil || actual.Status.Source.Verified || actual.Status.Source.VerifiedAt != nil {
 					t.Fatalf("durable binding fence status = %#v", actual.Status)
 				}
-				controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion := changed.ExecutionBinding()
+				controllerStateVersion, ptahVersion, executorImage, protocolVersion := changed.ExecutionBinding()
 				wantBinding := &operatorv1alpha1.ExecutionBindingStatus{
-					ControllerImage:    controllerImage,
-					ControllerRevision: controllerRevision, ControllerStateVersion: controllerStateVersion,
-					PtahVersion: ptahVersion, ExecutorImage: executorImage, RunnerImage: runnerImage,
+					ControllerStateVersion: controllerStateVersion,
+					PtahVersion:            ptahVersion, ExecutorImage: executorImage,
 					RunnerProtocolVersion: protocolVersion,
 				}
 				if actual.Status.ExecutionBinding == nil || actual.Status.ExecutionBinding.Epoch == oldEpoch ||
@@ -2422,7 +2414,7 @@ func TestExecutionBindingChangeBeforePlanRestartsFullChainAcrossRestart(t *testi
 				ExecutionBindingID:    schema.Status.ExecutionBinding.Epoch,
 				PtahVersion:           schema.Status.ExecutionBinding.PtahVersion,
 				ExecutorImage:         schema.Status.ExecutionBinding.ExecutorImage,
-				RunnerImage:           schema.Status.ExecutionBinding.RunnerImage,
+				RunnerImage:           testRunnerImage,
 				RunnerProtocolVersion: schema.Status.ExecutionBinding.RunnerProtocolVersion,
 			}
 			wantApplied := schema.Status.Applied.DeepCopy()
@@ -3013,8 +3005,8 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, policyConfig)
 	reconciler.Jobs = executionBindingJobs{
 		ptahVersion:   "v0.3.0",
-		executorImage: "example.invalid/ptah@" + testDigest,
-		runnerImage:   "example.invalid/operator@" + safetyOtherDigest,
+		executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage:   "example.invalid/operator@" + testDigest,
 		protocol:      int32(runner.ProtocolVersion),
 	}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
@@ -3042,8 +3034,12 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 	}
 	handler := &approvaladmission.ApprovalHandler{
 		Reader: api, Decoder: cradmission.NewDecoder(reconciler.Scheme), Mutate: false,
-		ControllerImage:    testControllerImage,
-		ControllerRevision: testControllerRevision, ControllerStateVersion: testControllerStateVersion,
+		// A webhook still serving the retired execution: the durable status
+		// fence, not the webhook's own configuration, is what refuses here.
+		Execution: approvaladmission.Execution{
+			ControllerStateVersion: testControllerStateVersion, PtahVersion: "v0.3.0",
+			ExecutorImage: "example.invalid/ptah@" + testDigest, RunnerProtocolVersion: int32(runner.ProtocolVersion),
+		},
 	}
 	response := handler.Handle(context.Background(), cradmission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
 		UID:       "post-fence-admission",
@@ -3115,7 +3111,7 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 	rollback := safetyGetSchema(t, api, schema)
 	if rollback.Status.ActiveOperation != nil || rollback.Status.ExecutionBinding == nil ||
 		rollback.Status.ExecutionBinding.Epoch == rolloutEpoch || rollback.Status.ExecutionBinding.Epoch == retiredPlan.ExecutionBindingID ||
-		rollback.Status.ExecutionBinding.RunnerImage != "example.invalid/operator@"+testDigest {
+		rollback.Status.ExecutionBinding.ExecutorImage != "example.invalid/ptah@"+testDigest {
 		t.Fatalf("rollback did not create a distinct durable epoch: %#v", rollback.Status)
 	}
 	if escapedApproval.Spec.ExecutionBindingID == rollback.Status.ExecutionBinding.Epoch {
@@ -3167,8 +3163,8 @@ func TestExecutionBindingChangeTakesPrecedenceOverPolicyChange(t *testing.T) {
 	}
 	reconciler.Jobs = executionBindingJobs{
 		ptahVersion:   "v0.3.0",
-		executorImage: "example.invalid/ptah@" + testDigest,
-		runnerImage:   "example.invalid/operator@" + safetyOtherDigest,
+		executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage:   "example.invalid/operator@" + testDigest,
 		protocol:      int32(runner.ProtocolVersion),
 	}
 
@@ -3239,8 +3235,8 @@ func TestExecutionBindingChangeAfterApplyClaimReleasesAuthorizationBeforeDispatc
 
 	reconciler.Jobs = executionBindingJobs{
 		ptahVersion:   "v0.3.0",
-		executorImage: "example.invalid/ptah@" + testDigest,
-		runnerImage:   "example.invalid/operator@" + safetyOtherDigest,
+		executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage:   "example.invalid/operator@" + testDigest,
 		protocol:      int32(runner.ProtocolVersion),
 	}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -3319,8 +3315,8 @@ func TestExecutionBindingChangeInvalidatesClaimDespiteTargetLockContention(t *te
 
 	reconciler.Jobs = executionBindingJobs{
 		ptahVersion:   "v0.3.0",
-		executorImage: "example.invalid/ptah@" + testDigest,
-		runnerImage:   "example.invalid/operator@" + safetyOtherDigest,
+		executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage:   "example.invalid/operator@" + testDigest,
 		protocol:      int32(runner.ProtocolVersion),
 	}
 	result, err := reconciler.Reconcile(context.Background(), request)
@@ -3410,15 +3406,15 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 				}
 			}
 
-			expectedRunnerImage := "example.invalid/operator@" + safetyOtherDigest
+			expectedExecutorImage := "example.invalid/ptah@" + safetyOtherDigest
 			if test.keepConfiguredTuple {
 				reconciler.Jobs = fakeJobs{}
-				expectedRunnerImage = "example.invalid/operator@" + testDigest
+				expectedExecutorImage = "example.invalid/ptah@" + testDigest
 			} else {
 				reconciler.Jobs = executionBindingJobs{
 					ptahVersion:   "v0.3.0",
-					executorImage: "example.invalid/ptah@" + testDigest,
-					runnerImage:   expectedRunnerImage,
+					executorImage: expectedExecutorImage,
+					runnerImage:   "example.invalid/operator@" + testDigest,
 					protocol:      int32(runner.ProtocolVersion),
 				}
 			}
@@ -3435,7 +3431,7 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 				pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
 				pending.PlanRequired || actual.Status.Phase != operatorv1alpha1.PhasePending ||
 				actual.Status.ExecutionBinding == nil || actual.Status.ExecutionBinding.Epoch == oldExecutionEpoch ||
-				actual.Status.ExecutionBinding.RunnerImage != expectedRunnerImage {
+				actual.Status.ExecutionBinding.ExecutorImage != expectedExecutorImage {
 				t.Fatalf("dispatched binding transition = %#v", actual.Status)
 			}
 			rolloutEpoch := actual.Status.ExecutionBinding.Epoch
@@ -3491,7 +3487,7 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 			if rolledBack.Status.ActiveOperation != nil || rolledBack.Status.PendingObservation == nil ||
 				rolledBack.Status.ExecutionBinding == nil || rolledBack.Status.ExecutionBinding.Epoch == rolloutEpoch ||
 				rolledBack.Status.ExecutionBinding.Epoch == oldExecutionEpoch ||
-				rolledBack.Status.ExecutionBinding.RunnerImage != "example.invalid/operator@"+testDigest {
+				rolledBack.Status.ExecutionBinding.ExecutorImage != "example.invalid/ptah@"+testDigest {
 				t.Fatalf("dispatched-Apply rollback reused an execution epoch: %#v", rolledBack.Status)
 			}
 		})
@@ -4155,8 +4151,8 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 	wantPending.PlanRequired = false
 	reconciler.Jobs = executionBindingJobs{
 		ptahVersion:   "v0.3.0",
-		executorImage: "example.invalid/ptah@" + testDigest,
-		runnerImage:   "example.invalid/operator@" + safetyOtherDigest,
+		executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage:   "example.invalid/operator@" + testDigest,
 		protocol:      int32(runner.ProtocolVersion),
 	}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
@@ -4177,7 +4173,7 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 		t.Fatalf("post-Apply proof first fence = %#v", fenced.Status)
 	}
 	if fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldBindingID ||
-		fenced.Status.ExecutionBinding.RunnerImage != "example.invalid/operator@"+safetyOtherDigest {
+		fenced.Status.ExecutionBinding.ExecutorImage != "example.invalid/ptah@"+safetyOtherDigest {
 		t.Fatalf("new execution epoch = %#v, old ID %q", fenced.Status.ExecutionBinding, oldBindingID)
 	}
 	newEpoch := fenced.Status.ExecutionBinding.Epoch
@@ -4330,8 +4326,8 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 			VerificationPolicyUID:    schema.Status.Source.VerificationPolicyUID,
 			VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
 			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
-			ControllerImage:          schema.Status.ExecutionBinding.ControllerImage,
-			ControllerRevision:       schema.Status.ExecutionBinding.ControllerRevision,
+			ControllerImage:          testControllerImage,
+			ControllerRevision:       testControllerRevision,
 			ControllerStateVersion:   schema.Status.ExecutionBinding.ControllerStateVersion,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@" + testDigest,
@@ -4357,12 +4353,9 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 			ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-			ControllerImage:          plan.Spec.ControllerImage,
-			ControllerRevision:       plan.Spec.ControllerRevision,
 			ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 			PtahVersion:              plan.Spec.PtahVersion,
 			ExecutorImage:            plan.Spec.ExecutorImage,
-			RunnerImage:              plan.Spec.RunnerImage,
 			RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
 			Approver:                 operatorv1alpha1.ApprovalIdentity{Username: "approver@example.com"},
 			ApprovedAt:               approvedAt,
@@ -4763,7 +4756,7 @@ func safetyApplySchema(t *testing.T) *operatorv1alpha1.PtahSchema {
 		ExecutionBindingID:    schema.Status.ExecutionBinding.Epoch,
 		PtahVersion:           schema.Status.ExecutionBinding.PtahVersion,
 		ExecutorImage:         schema.Status.ExecutionBinding.ExecutorImage,
-		RunnerImage:           schema.Status.ExecutionBinding.RunnerImage,
+		RunnerImage:           testRunnerImage,
 		RunnerProtocolVersion: schema.Status.ExecutionBinding.RunnerProtocolVersion,
 	}
 	target := databaseTargetBinding(schema.Spec.Target)
@@ -5059,8 +5052,8 @@ func safetyPostApplyObserveSchema(t *testing.T) *operatorv1alpha1.PtahSchema {
 			VerificationPolicyUID:    testPolicyUID,
 			VerificationPolicyDigest: testDigest,
 			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
-			ControllerImage:          schema.Status.ExecutionBinding.ControllerImage,
-			ControllerRevision:       schema.Status.ExecutionBinding.ControllerRevision,
+			ControllerImage:          testControllerImage,
+			ControllerRevision:       testControllerRevision,
 			ControllerStateVersion:   schema.Status.ExecutionBinding.ControllerStateVersion,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@" + testDigest,

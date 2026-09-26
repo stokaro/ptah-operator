@@ -418,12 +418,9 @@ func publishedPlanFor(
 		VerificationPolicyUID:    policyBinding.UID,
 		VerificationPolicyDigest: policyDigest,
 		ExecutionBindingID:       binding.Epoch,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 	}
 	planFingerprint, err := planBinding.Fingerprint()
@@ -444,12 +441,12 @@ func publishedPlanFor(
 		VerificationPolicyUID:    planBinding.VerificationPolicyUID,
 		VerificationPolicyDigest: planBinding.VerificationPolicyDigest,
 		ExecutionBindingID:       binding.Epoch,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
+		ControllerImage:          testControllerImage,
+		ControllerRevision:       testControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
+		RunnerImage:              testRunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 		CreatedAt:                metav1.Now(),
 	})
@@ -496,12 +493,9 @@ func migrationApprovalFor(
 			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 			ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-			ControllerImage:          plan.Spec.ControllerImage,
-			ControllerRevision:       plan.Spec.ControllerRevision,
 			ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 			PtahVersion:              plan.Spec.PtahVersion,
 			ExecutorImage:            plan.Spec.ExecutorImage,
-			RunnerImage:              plan.Spec.RunnerImage,
 			RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
 			Approver:                 operatorv1alpha1.ApprovalIdentity{Username: "operator@example.test"},
 			ApprovedAt:               metav1.Now(),
@@ -1394,29 +1388,6 @@ func TestMigrationApplyRefusedAtDispatchHandsBackTheDatabase(t *testing.T) {
 				return []client.Object{plan, verificationPolicyConfigMap()}
 			},
 		},
-		{
-			// The snapshot is persisted before the Job that carries its digest
-			// exists, and the Job is rebuilt from the spec on the pass that
-			// dispatches it. A snapshot that is internally consistent and
-			// names another template means the two disagree about what would
-			// be admitted.
-			name: "the rebuilt Pod template differs from the admission snapshot",
-			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) []client.Object {
-				t.Helper()
-				ensureMigrationAdmissionSnapshot(migration)
-				snapshot := migration.Status.ActiveOperation.AdmissionSnapshot
-				snapshot.TemplateDigest = "sha256:" + strings.Repeat("e", 64)
-				// Re-stamped, or the snapshot is refused for disagreeing with
-				// itself and never reaches the comparison this row is about.
-				snapshot.Digest = ""
-				digest, err := fingerprint.DigestCanonicalJSON(*snapshot)
-				if err != nil {
-					t.Fatal(err)
-				}
-				snapshot.Digest = digest
-				return []client.Object{plan, verificationPolicyConfigMap()}
-			},
-		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -1452,6 +1423,82 @@ func TestMigrationApplyRefusedAtDispatchHandsBackTheDatabase(t *testing.T) {
 					actual.Status.Phase)
 			}
 		})
+	}
+}
+
+// TestMigrationRebuiltTemplateBeforeDispatchRefreshesTheSnapshot is a manager
+// release arriving between an Apply claim's admission snapshot and its
+// dispatch. The claim's inputs still hold and nothing ran, so the only thing
+// that can make the rebuilt Pod template differ from the snapshot is the
+// manager that built it. The claim stands with its Lease, its approval and its
+// plan; only the snapshot is resolved again, and the Apply dispatches under
+// the same claim.
+func TestMigrationRebuiltTemplateBeforeDispatchRefreshesTheSnapshot(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	approval := migrationApprovalFor(migration, plan)
+	operation := undispatchedApplyClaim(t, migration, plan)
+	operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: approval.Name, UID: approval.UID}
+	ensureMigrationAdmissionSnapshot(migration)
+	snapshot := migration.Status.ActiveOperation.AdmissionSnapshot
+	snapshot.TemplateDigest = "sha256:" + strings.Repeat("e", 64)
+	// Re-stamped, or the snapshot is refused for disagreeing with itself and
+	// never reaches the comparison this test is about.
+	snapshot.Digest = ""
+	digest, err := fingerprint.DigestCanonicalJSON(*snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Digest = digest
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, approval, verificationPolicyConfigMap())
+
+	// The first pass takes the Lease; the snapshot is judged on the pass that
+	// reaches dispatch. Stop at the first pass that let go of the stale one.
+	var refreshed *operatorv1alpha1.PtahMigration
+	for pass := 0; pass < 4; pass++ {
+		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		refreshed = readMigration(t, api, migration)
+		if claim := refreshed.Status.ActiveOperation; claim == nil || claim.AdmissionSnapshot == nil {
+			break
+		}
+	}
+	claim := refreshed.Status.ActiveOperation
+	if claim == nil || claim.ID != operation.ID || claim.Type != operatorv1alpha1.MigrationOperationApply ||
+		claim.DispatchStarted || claim.AdmissionSnapshot != nil {
+		t.Fatalf("the Apply claim after a template change = %#v, want the same undispatched claim with no snapshot", claim)
+	}
+	if refreshed.Status.Plan == nil || refreshed.Status.Plan.UID != plan.UID {
+		t.Fatalf("the plan moved while only the snapshot was stale: %#v", refreshed.Status.Plan)
+	}
+	assertNoMigrationJobDispatched(t, api)
+	persisted := &operatorv1alpha1.PtahMigrationApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(approval), persisted); err != nil {
+		t.Fatal(err)
+	}
+	if meta.IsStatusConditionTrue(persisted.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) {
+		t.Fatal("the approval was consumed before anything was dispatched")
+	}
+	// The claim still holds the database: nothing handed it back.
+	other, err := reconciler.Locks.Acquire(context.Background(), targetlock.Request{
+		CoordinationNamespace: reconciler.LockNamespace,
+		CoordinationDigest:    operation.CoordinationDigest,
+		Holder:                targetlock.Holder{SchemaUID: "other-resource", OperationID: "other-apply"},
+		Duration:              time.Duration(operation.LeaseDurationSeconds) * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Acquired {
+		t.Fatal("refreshing the snapshot handed the database to another claimant")
+	}
+
+	job := reconcileUntilAMigrationJobExists(t, reconciler, api, migration)
+	dispatched := readMigration(t, api, migration).Status.ActiveOperation
+	if dispatched == nil || dispatched.ID != operation.ID || job.Name != dispatched.JobName {
+		t.Fatalf("dispatched claim %#v and Job %q, want the original claim %q", dispatched, job.Name, operation.ID)
 	}
 }
 

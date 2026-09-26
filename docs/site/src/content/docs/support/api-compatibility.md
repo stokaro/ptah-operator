@@ -30,8 +30,12 @@ not carry is new and has nothing stored to break.
 
 Breaking any of them is still possible: it means editing that check, which
 puts the consequence in front of whoever makes the change and into the diff of
-whoever reviews it. That is the whole of it before `v1` — not that the API
-will not move under you, but that it will not move quietly.
+whoever reviews it. The edit is a declared break in
+`hack/crdschemahistory/compatibility.go`: it names the schema version that
+makes the break, why, and every refusal it excuses, word for word. It excuses
+nothing in any other version, and it is refused itself if it names a refusal
+the change does not produce. That is the whole of it before `v1` — not that
+the API will not move under you, but that it will not move quietly.
 
 ## What must move when the schema moves
 

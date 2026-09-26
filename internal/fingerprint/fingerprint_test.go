@@ -171,15 +171,10 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		"VerificationPolicyUID":    func(v *fingerprint.PlanBinding) { v.VerificationPolicyUID += "-new" },
 		"VerificationPolicyDigest": func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
 		"ExecutionBindingID":       func(v *fingerprint.PlanBinding) { v.ExecutionBindingID = "v1-44444444444444444444444444444444" },
-		"ControllerImage": func(v *fingerprint.PlanBinding) {
-			v.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("d", 64)
-		},
-		"ControllerRevision":     func(v *fingerprint.PlanBinding) { v.ControllerRevision += "-new" },
-		"ControllerStateVersion": func(v *fingerprint.PlanBinding) { v.ControllerStateVersion++ },
-		"PtahVersion":            func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
-		"ExecutorImage":          func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
-		"RunnerImage":            func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
-		"RunnerProtocolVersion":  func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+		"ControllerStateVersion":   func(v *fingerprint.PlanBinding) { v.ControllerStateVersion++ },
+		"PtahVersion":              func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
+		"ExecutorImage":            func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
+		"RunnerProtocolVersion":    func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
 	}
 	// Keyed by field name, and checked against the type: a field added to the
 	// binding with no case here fails instead of going unmeasured. Prose keys
@@ -210,6 +205,27 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 				t.Fatalf("mutation %q did not change fingerprint %s", name, got)
 			}
 		})
+	}
+}
+
+// TestPlanBindingLeavesTheManagerOut holds the binding to what decides a plan's
+// meaning when it runs. The manager's image and revision, and the runner image
+// built beside it, change with every release of the operator; a fingerprint
+// that held them would retire every pending approval on a patch release. The
+// runner's enforcement is bound through RunnerProtocolVersion instead.
+func TestPlanBindingLeavesTheManagerOut(t *testing.T) {
+	t.Parallel()
+
+	bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
+	for _, name := range []string{"ControllerImage", "ControllerRevision", "RunnerImage"} {
+		if _, found := bindingType.FieldByName(name); found {
+			t.Errorf("PlanBinding carries %s, so a manager release would change every plan's fingerprint", name)
+		}
+	}
+	for _, name := range []string{"ControllerStateVersion", "PtahVersion", "ExecutorImage", "RunnerProtocolVersion"} {
+		if _, found := bindingType.FieldByName(name); !found {
+			t.Errorf("PlanBinding lost %s, which decides what the plan means when it runs", name)
+		}
 	}
 }
 
@@ -253,14 +269,6 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 			mutate: func(b *fingerprint.PlanBinding) { b.ExecutionBindingID = "retired-epoch" },
 			want:   "valid execution binding ID",
 		},
-		"tag-pinned manager image": {
-			mutate: func(b *fingerprint.PlanBinding) { b.ControllerImage = "example.invalid/manager:latest" },
-			want:   "controller image",
-		},
-		"control-character revision": {
-			mutate: func(b *fingerprint.PlanBinding) { b.ControllerRevision = "release\ncandidate" },
-			want:   "control characters",
-		},
 		"negative state version": {
 			mutate: func(b *fingerprint.PlanBinding) { b.ControllerStateVersion = -1 },
 			want:   "controller state version",
@@ -277,7 +285,7 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 	}
 }
 
-const currentPlanBindingFingerprint = "sha256:9f0c4f01e635cb3d36229ce273efbc4b6eeea56d08a83a38027ffa222157ea0b"
+const currentPlanBindingFingerprint = "sha256:d1de8ce758589df3bdcd8687f85c264ee6241e6b26e3e90be4690824aa80ceef"
 
 func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 	t.Parallel()
@@ -347,12 +355,9 @@ func completePlanBinding() fingerprint.PlanBinding {
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
 		ExecutionBindingID:       "v1-33333333333333333333333333333333",
-		ControllerImage:          "example.invalid/manager@sha256:" + strings.Repeat("c", 64),
-		ControllerRevision:       "controller-test-revision",
 		ControllerStateVersion:   1,
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
-		RunnerImage:              "example.invalid/operator@sha256:runner",
 		RunnerProtocolVersion:    1,
 	}
 }

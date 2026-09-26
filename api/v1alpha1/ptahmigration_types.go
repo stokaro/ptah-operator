@@ -136,8 +136,8 @@ type MigrationOperationStatus struct {
 	Attempt int32 `json:"attempt"`
 
 	// ExecutionBindingID is the epoch this claim was authorized under. A
-	// rollout that changes any execution component retires the claim rather
-	// than letting its Job finish under new bytes.
+	// rollout that changes a bound execution component retires the claim
+	// rather than letting its Job finish under new semantics.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
 
@@ -442,11 +442,12 @@ type PtahMigrationStatus struct {
 	// travels.
 	Artifact *OCIArtifactAccessBinding `json:"artifact,omitempty"`
 
-	// ExecutionBinding is the component identity this resource's work is bound
-	// to: the manager that authorized it and the executor and runner that will
-	// carry it out. It is the same contract the schema path publishes, because
-	// the question it answers is the same one: a rollout that changed any of
-	// them has to invalidate a plan rather than execute it under new bytes.
+	// ExecutionBinding is what this resource's plans and approvals are bound
+	// to: the components that decide what a run means. It is the same contract
+	// the schema path publishes, because the question it answers is the same
+	// one: a rollout that changed any of them has to invalidate a plan rather
+	// than execute it under new semantics. A manager upgrade that changes none
+	// of them leaves it, and every plan and approval, as they were.
 	ExecutionBinding *ExecutionBindingStatus `json:"executionBinding,omitempty"`
 
 	// ActiveOperation is the claim the controller is currently carrying out,

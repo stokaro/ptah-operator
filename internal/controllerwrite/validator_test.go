@@ -33,9 +33,21 @@ import (
 
 const managerUsername = "system:serviceaccount:ptah-system:ptah-operator"
 
+// The manager release every fixture here runs as. It is recorded on the Jobs
+// and plans the manager writes, and binds none of them.
+var (
+	testControllerImage    = "example.test/controller@" + digest('1')
+	testControllerRevision = "test-revision"
+	testRunnerImage        = "example.test/runner@" + digest('3')
+)
+
 type staticJobBuilder struct {
 	job *batchv1.Job
 	err error
+}
+
+func (staticJobBuilder) ManagerIdentity() (controllerImage, controllerRevision, runnerImage string) {
+	return testControllerImage, testControllerRevision, testRunnerImage
 }
 
 type barrierChunkReader struct {
@@ -456,8 +468,6 @@ func TestValidationHandlerAllowsCurrentFormatRetiredReadOnlyJobCleanup(t *testin
 
 	schema, _, oldJob, job := currentCleanupFixture(t, operatorv1alpha1.OperationResolve)
 	schema.Status.ExecutionBinding.Epoch = "v1-99999999999999999999999999999999"
-	schema.Status.ExecutionBinding.ControllerImage = "example.test/controller@" + digest('9')
-	schema.Status.ExecutionBinding.ControllerRevision = "next-revision"
 	schema.Status.ExecutionBinding.ControllerStateVersion = 2
 	schema.Status.ExecutionBinding.PtahVersion = "v0.4.0"
 	setExecutionBindingRetirementFence(schema)
@@ -487,7 +497,10 @@ func TestValidationHandlerRejectsUnsafeClaimBoundJobCleanup(t *testing.T) {
 			},
 		},
 		{
-			name:          "current controller binding mismatch",
+			// The recorded manager binds nothing, but it is part of the Pod
+			// template the claim's snapshot pinned, so a Job whose record
+			// was rewritten after dispatch is not the claim's Job.
+			name:          "recorded manager differs from the snapshot",
 			operationType: operatorv1alpha1.OperationResolve,
 			mutate: func(_ *operatorv1alpha1.PtahSchema, oldJob, job *batchv1.Job) {
 				for _, candidate := range []*batchv1.Job{oldJob, job} {
@@ -582,7 +595,7 @@ func TestValidationHandlerRejectsUnsafeCurrentFormatPendingApplyJobCleanup(t *te
 			},
 		},
 		{
-			name: "mutated controller envelope",
+			name: "recorded manager differs from the snapshot",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, oldJob, job *batchv1.Job) {
 				for _, candidate := range []*batchv1.Job{oldJob, job} {
 					candidate.Annotations[workload.AnnotationControllerRevision] = "other-revision"
@@ -1420,12 +1433,9 @@ func schemaFixture(operationType operatorv1alpha1.OperationType) *operatorv1alph
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 				Epoch:                  "v1-11111111111111111111111111111111",
-				ControllerImage:        "example.test/controller@" + digest('1'),
-				ControllerRevision:     "test-revision",
 				ControllerStateVersion: 1,
 				PtahVersion:            "v0.3.0",
 				ExecutorImage:          "example.test/executor@" + digest('2'),
-				RunnerImage:            "example.test/runner@" + digest('3'),
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
 			Source: operatorv1alpha1.SchemaSourceStatus{
@@ -1547,8 +1557,8 @@ func currentCleanupFixture(
 		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
 		workload.AnnotationPtahVersion:             binding.PtahVersion,
 		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationControllerImage:         binding.ControllerImage,
-		workload.AnnotationControllerRevision:      binding.ControllerRevision,
+		workload.AnnotationControllerImage:         testControllerImage,
+		workload.AnnotationControllerRevision:      testControllerRevision,
 		workload.AnnotationControllerStateVersion:  "1",
 		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
 	}
@@ -1559,8 +1569,8 @@ func currentCleanupFixture(
 			Fingerprint:            digest('a'),
 			ContentDigest:          digest('b'),
 			ExecutionBindingID:     operation.ExecutionBindingID,
-			ControllerImage:        binding.ControllerImage,
-			ControllerRevision:     binding.ControllerRevision,
+			ControllerImage:        testControllerImage,
+			ControllerRevision:     testControllerRevision,
 			ControllerStateVersion: binding.ControllerStateVersion,
 			PtahVersion:            binding.PtahVersion,
 		}
@@ -1614,8 +1624,6 @@ func pendingApplyCleanupFixture(
 	}
 	schema.Status.ActiveOperation = nil
 	schema.Status.ExecutionBinding.Epoch = "v1-99999999999999999999999999999999"
-	schema.Status.ExecutionBinding.ControllerImage = "example.test/controller@" + digest('9')
-	schema.Status.ExecutionBinding.ControllerRevision = "next-revision"
 	schema.Status.ExecutionBinding.ControllerStateVersion = 2
 	schema.Status.ExecutionBinding.PtahVersion = "v0.4.0"
 	setExecutionBindingRetirementFence(schema)
@@ -1677,12 +1685,9 @@ func recomputePlanFingerprint(
 		VerificationPolicyUID:    string(plan.Spec.VerificationPolicyUID),
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-		ControllerImage:          plan.Spec.ControllerImage,
-		ControllerRevision:       plan.Spec.ControllerRevision,
 		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 		PtahVersion:              plan.Spec.PtahVersion,
 		ExecutorImage:            plan.Spec.ExecutorImage,
-		RunnerImage:              plan.Spec.RunnerImage,
 		RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
 	}
 	value, err := binding.Fingerprint()
@@ -1719,12 +1724,9 @@ func preparedPlanFixtureWithContent(
 		VerificationPolicyUID:    string(schema.Status.Source.VerificationPolicyUID),
 		VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
 		ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
-		ControllerImage:          schema.Status.ExecutionBinding.ControllerImage,
-		ControllerRevision:       schema.Status.ExecutionBinding.ControllerRevision,
 		ControllerStateVersion:   schema.Status.ExecutionBinding.ControllerStateVersion,
 		PtahVersion:              schema.Status.ExecutionBinding.PtahVersion,
 		ExecutorImage:            schema.Status.ExecutionBinding.ExecutorImage,
-		RunnerImage:              schema.Status.ExecutionBinding.RunnerImage,
 		RunnerProtocolVersion:    schema.Status.ExecutionBinding.RunnerProtocolVersion,
 	}
 	planFingerprint, err := binding.Fingerprint()
@@ -1744,12 +1746,12 @@ func preparedPlanFixtureWithContent(
 		VerificationPolicyUID:    types.UID(binding.VerificationPolicyUID),
 		VerificationPolicyDigest: binding.VerificationPolicyDigest,
 		ExecutionBindingID:       binding.ExecutionBindingID,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
+		ControllerImage:          testControllerImage,
+		ControllerRevision:       testControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
+		RunnerImage:              testRunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 		Dialect:                  "postgres",
 		StatementCount:           1,

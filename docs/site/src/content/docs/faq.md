@@ -67,8 +67,10 @@ operator version.
 `image.digest`, `execution.executorImage`, and `execution.runnerImage` are
 registry manifest digests, and `execution.ptahVersion` is the identity verified
 from the executor image's own provenance. A default would let the chart assign a
-version identity to a digest nobody measured. All four are recorded in every
-plan, approval, Job, and applied status.
+version identity to a digest nobody measured. All four are recorded on every
+plan, Job and applied status. The executor image and `ptahVersion` are also
+bound into every plan fingerprint and approval; the manager and runner digests
+are not, so an operator patch release keeps pending approvals.
 
 - [Configuration](../use/configuration/#the-three-values-with-no-default)
 

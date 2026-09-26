@@ -1048,18 +1048,6 @@ func TestBuildApplyRejectsStaleBindings(t *testing.T) {
 			},
 		},
 		{
-			name: "controller image changed",
-			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
-				builder.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("8", 64)
-			},
-		},
-		{
-			name: "controller revision changed",
-			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
-				builder.ControllerRevision = "controller-next-revision"
-			},
-		},
-		{
 			name: "controller state version changed",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
 				builder.ControllerStateVersion++
@@ -1072,10 +1060,8 @@ func TestBuildApplyRejectsStaleBindings(t *testing.T) {
 			},
 		},
 		{
-			name: "missing plan manager identity",
+			name: "missing plan controller state version",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan, _ *Builder) {
-				plan.Spec.ControllerImage = ""
-				plan.Spec.ControllerRevision = ""
 				plan.Spec.ControllerStateVersion = 0
 			},
 		},
@@ -1089,12 +1075,6 @@ func TestBuildApplyRejectsStaleBindings(t *testing.T) {
 			name: "executor image changed",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
 				builder.ExecutorImage = "example.invalid/ptah@sha256:" + strings.Repeat("8", 64)
-			},
-		},
-		{
-			name: "runner image changed",
-			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
-				builder.RunnerImage = "example.invalid/operator@sha256:" + strings.Repeat("8", 64)
 			},
 		},
 		{
@@ -1174,6 +1154,88 @@ func TestBuildApplyRequiresApprovalForPrivilegeChangesUnderAlways(t *testing.T) 
 				t.Fatalf("Build() error = %v, want built = %t", err, test.wantBuilt)
 			}
 		})
+	}
+}
+
+// TestBuildApplyAcceptsAManagerOnlyChange is the builder half of a manager
+// release that shares the execution binding. The plan and the schema status
+// were written by one manager; a manager with another image, revision and
+// runner image builds the Apply for that plan, and the Job it builds records
+// the manager that built it.
+func TestBuildApplyAcceptsAManagerOnlyChange(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	previous := builderFixture()
+	plan := planFixture(schema, previous)
+	next := previous
+	next.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("8", 64)
+	next.ControllerRevision = "controller-next-revision"
+	next.RunnerImage = "example.invalid/operator@sha256:" + strings.Repeat("9", 64)
+
+	job, err := next.Build(schema, operationFixture(operatorv1alpha1.OperationApply), plan)
+	if err != nil {
+		t.Fatalf("Build() refused a plan an earlier manager of the same execution binding published: %v", err)
+	}
+	controllerImage, controllerRevision, runnerImage := ManagerIdentityOf(job)
+	if controllerImage != next.ControllerImage || controllerRevision != next.ControllerRevision || runnerImage != next.RunnerImage {
+		t.Fatalf("Job records manager %q, %q, runner %q; want the manager that built it: %q, %q, %q",
+			controllerImage, controllerRevision, runnerImage, next.ControllerImage, next.ControllerRevision, next.RunnerImage)
+	}
+	for _, key := range []string{AnnotationControllerImage, AnnotationControllerRevision} {
+		if job.Spec.Template.Annotations[key] != job.Annotations[key] {
+			t.Fatalf("Pod template %s = %q, Job %q", key, job.Spec.Template.Annotations[key], job.Annotations[key])
+		}
+	}
+}
+
+// TestCarryManagerIdentityTakesOnlyTheRecordedManager rebuilds a Job its
+// predecessor dispatched. Carrying the recorded identity makes the rebuild
+// equal to the live Job, and it carries nothing else: a live Job that differs
+// in a bound value still differs after the carry.
+func TestCarryManagerIdentityTakesOnlyTheRecordedManager(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	operation := operationFixture(operatorv1alpha1.OperationPlan)
+	previous := builderFixture()
+	next := previous
+	next.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("8", 64)
+	next.ControllerRevision = "controller-next-revision"
+	next.RunnerImage = "example.invalid/operator@sha256:" + strings.Repeat("9", 64)
+
+	live, err := previous.Build(schema, operation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := next.Build(schema, operation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflect.DeepEqual(live, rebuilt) {
+		t.Fatal("the fixture's two managers build the same Job, so the carry below proves nothing")
+	}
+	if !CarryManagerIdentity(rebuilt, live) {
+		t.Fatal("CarryManagerIdentity() reported nothing carried between two managers")
+	}
+	if !reflect.DeepEqual(live, rebuilt) {
+		t.Fatalf("after the carry the rebuild still differs from the live Job:\nlive    %#v\nrebuilt %#v", live, rebuilt)
+	}
+	if CarryManagerIdentity(rebuilt, live) {
+		t.Fatal("CarryManagerIdentity() reported a change on a rebuild that already matches")
+	}
+
+	tampered := live.DeepCopy()
+	tampered.Annotations[AnnotationPtahVersion] = "v0.4.0"
+	tampered.Spec.Template.Spec.Containers[0].Image = "example.invalid/ptah@sha256:" + strings.Repeat("7", 64)
+	again, err := next.Build(schema, operation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	CarryManagerIdentity(again, tampered)
+	if again.Annotations[AnnotationPtahVersion] == "v0.4.0" ||
+		again.Spec.Template.Spec.Containers[0].Image == tampered.Spec.Template.Spec.Containers[0].Image {
+		t.Fatal("CarryManagerIdentity() carried a bound value along with the manager identity")
 	}
 }
 
@@ -1437,11 +1499,15 @@ func TestBuilderExposesValidatedExecutionBinding(t *testing.T) {
 	if err := builder.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion := builder.ExecutionBinding()
-	if controllerImage != builder.ControllerImage || controllerRevision != builder.ControllerRevision || controllerStateVersion != builder.ControllerStateVersion ||
-		ptahVersion != builder.PtahVersion || executorImage != builder.ExecutorImage || runnerImage != builder.RunnerImage ||
-		protocolVersion != int32(runner.ProtocolVersion) {
-		t.Fatalf("ExecutionBinding() = %q, %q, %d, %q, %q, %q, %d", controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion)
+	controllerStateVersion, ptahVersion, executorImage, protocolVersion := builder.ExecutionBinding()
+	if controllerStateVersion != builder.ControllerStateVersion || ptahVersion != builder.PtahVersion ||
+		executorImage != builder.ExecutorImage || protocolVersion != int32(runner.ProtocolVersion) {
+		t.Fatalf("ExecutionBinding() = %d, %q, %q, %d", controllerStateVersion, ptahVersion, executorImage, protocolVersion)
+	}
+	controllerImage, controllerRevision, runnerImage := builder.ManagerIdentity()
+	if controllerImage != builder.ControllerImage || controllerRevision != builder.ControllerRevision ||
+		runnerImage != builder.RunnerImage {
+		t.Fatalf("ManagerIdentity() = %q, %q, %q", controllerImage, controllerRevision, runnerImage)
 	}
 	operation := operationFixture(operatorv1alpha1.OperationResolve)
 	methodName, err := builder.NameFor(schemaFixture(), operation)
@@ -1511,11 +1577,9 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
-				Epoch: "v1-33333333333333333333333333333333", ControllerImage: "example.invalid/manager@" + digest('f'),
-				ControllerRevision:     "controller-test-revision",
+				Epoch:                  "v1-33333333333333333333333333333333",
 				ControllerStateVersion: 1, PtahVersion: "v0.3.0",
 				ExecutorImage:         "example.invalid/ptah@" + digest('d'),
-				RunnerImage:           "example.invalid/operator@" + digest('e'),
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
 			},
 			Source: operatorv1alpha1.SchemaSourceStatus{

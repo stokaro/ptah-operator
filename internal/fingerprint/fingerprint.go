@@ -10,8 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
 
 const (
@@ -19,8 +17,12 @@ const (
 	coordinationContractVersion = 1
 
 	// CurrentPlanContractVersion is the only plan fingerprint format. It binds
-	// the durable execution epoch, the digest-pinned manager image, the manager
-	// revision, and the controller-state semantics into every plan.
+	// what decides the plan's meaning when it runs: the durable execution
+	// epoch, the controller-state version, the Ptah version, the executor
+	// image and the runner protocol. The manager's image and revision and the
+	// runner image are recorded on the plan but left out of the fingerprint,
+	// so a manager release that changes only them keeps every plan and
+	// approval.
 	CurrentPlanContractVersion int32 = 3
 )
 
@@ -29,7 +31,6 @@ var (
 	namespacePattern          = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$`)
 	realmNamePattern          = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
-	imageDigestPattern        = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 )
 
 // DigestBytes returns an OCI-style SHA-256 digest for exact bytes.
@@ -148,7 +149,10 @@ func NormalizeSet(values []string) []string {
 	return normalized
 }
 
-// PlanBinding is the complete approval identity of an immutable plan.
+// PlanBinding is the complete approval identity of an immutable plan. It holds
+// nothing that names the manager that published the plan: a manager that
+// changes only its own build must be able to apply what the previous one
+// planned and a person approved.
 type PlanBinding struct {
 	ContractVersion          int32  `json:"contract_version"`
 	SchemaUID                string `json:"schema_uid"`
@@ -162,12 +166,9 @@ type PlanBinding struct {
 	VerificationPolicyUID    string `json:"verification_policy_uid"`
 	VerificationPolicyDigest string `json:"verification_policy_digest"`
 	ExecutionBindingID       string `json:"execution_binding_id"`
-	ControllerImage          string `json:"controller_image"`
-	ControllerRevision       string `json:"controller_revision"`
 	ControllerStateVersion   int32  `json:"controller_state_version"`
 	PtahVersion              string `json:"ptah_version"`
 	ExecutorImage            string `json:"executor_image"`
-	RunnerImage              string `json:"runner_image"`
 	RunnerProtocolVersion    int32  `json:"runner_protocol_version"`
 }
 
@@ -189,7 +190,6 @@ func (b PlanBinding) Fingerprint() (string, error) {
 		"verification policy digest": b.VerificationPolicyDigest,
 		"Ptah version":               b.PtahVersion,
 		"executor image":             b.ExecutorImage,
-		"runner image":               b.RunnerImage,
 	}
 	for name, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -198,12 +198,6 @@ func (b PlanBinding) Fingerprint() (string, error) {
 	}
 	if !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
 		return "", fmt.Errorf("a valid execution binding ID is required")
-	}
-	if !imageDigestPattern.MatchString(b.ControllerImage) {
-		return "", fmt.Errorf("controller image must be pinned by a lowercase SHA-256 digest")
-	}
-	if err := controllerstate.ValidateRevision(b.ControllerRevision); err != nil {
-		return "", fmt.Errorf("invalid controller revision: %w", err)
 	}
 	if b.ControllerStateVersion < 1 {
 		return "", fmt.Errorf("controller state version must be positive")

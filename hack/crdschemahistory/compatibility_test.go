@@ -100,6 +100,7 @@ func TestStoredObjectCompatibilityRefusesOnlyWhatBreaksAStoredObject(t *testing.
 			err := verifyStoredObjectCompatibility(
 				setWith("ptahschemas.operator.ptah.run", test.before),
 				setWith("ptahschemas.operator.ptah.run", test.after),
+				1, nil,
 			)
 			if test.wantPart == "" {
 				if err != nil {
@@ -117,6 +118,108 @@ func TestStoredObjectCompatibilityRefusesOnlyWhatBreaksAStoredObject(t *testing.
 	}
 }
 
+// A declared break excuses exactly the transitions it names, and only in the
+// schema version it names. Each accepted row has refused rows beside it that
+// differ in one of those two.
+func TestStoredObjectCompatibilityExcusesOnlyWhatABreakDeclares(t *testing.T) {
+	t.Parallel()
+	const (
+		engineRemoved   = "ptahschemas.operator.ptah.run: engine: was required and the candidate does not have it"
+		intervalRemoved = "ptahschemas.operator.ptah.run: interval: was required and the candidate does not have it"
+	)
+	before := object(required("engine", "interval"), field("engine", text()), field("interval", text()))
+	tests := []struct {
+		name     string
+		after    apiextensionsv1.JSONSchemaProps
+		version  uint64
+		declared []declaredBreak
+		wantPart string
+	}{
+		{
+			name:    "the break is declared for the candidate's version",
+			after:   object(field("interval", text())),
+			version: 7,
+			declared: []declaredBreak{
+				{version: 7, transitions: []string{engineRemoved}},
+			},
+		},
+		{
+			name:    "the break is declared for another version",
+			after:   object(field("interval", text())),
+			version: 8,
+			declared: []declaredBreak{
+				{version: 7, transitions: []string{engineRemoved}},
+			},
+			wantPart: engineRemoved,
+		},
+		{
+			name:    "a second break goes undeclared",
+			after:   object(),
+			version: 7,
+			declared: []declaredBreak{
+				{version: 7, transitions: []string{engineRemoved}},
+			},
+			wantPart: intervalRemoved,
+		},
+		{
+			name:    "the declaration names a break the candidate does not make",
+			after:   object(field("interval", text())),
+			version: 7,
+			declared: []declaredBreak{
+				{version: 7, transitions: []string{engineRemoved, intervalRemoved}},
+			},
+			wantPart: "names transitions the candidate does not make:\n  " + intervalRemoved,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := verifyStoredObjectCompatibility(
+				setWith("ptahschemas.operator.ptah.run", before),
+				setWith("ptahschemas.operator.ptah.run", test.after),
+				test.version, test.declared,
+			)
+			if test.wantPart == "" {
+				if err != nil {
+					t.Fatalf("a declared break was refused: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("a break the declarations do not cover was accepted")
+			}
+			if !strings.Contains(err.Error(), test.wantPart) {
+				t.Fatalf("refusal = %v, want it to name %q", err, test.wantPart)
+			}
+		})
+	}
+}
+
+// Every shipped declaration names the version it was written for and at least
+// one transition, and no two share a version: a second declaration for one
+// version is a second reason for one change, which belongs in the first.
+func TestDeclaredBreaksAreEachScopedToOneVersion(t *testing.T) {
+	t.Parallel()
+	if len(declaredBreaks) == 0 {
+		t.Fatal("no declared break was read")
+	}
+	seen := make(map[uint64]bool, len(declaredBreaks))
+	var previous uint64
+	for _, declaration := range declaredBreaks {
+		if declaration.version == 0 || len(declaration.transitions) == 0 || strings.TrimSpace(declaration.reason) == "" {
+			t.Fatalf("declared break %+v needs a version, a reason and at least one transition", declaration)
+		}
+		if seen[declaration.version] {
+			t.Fatalf("schema version %d carries more than one declared break", declaration.version)
+		}
+		if declaration.version < previous {
+			t.Fatalf("declared breaks are not oldest first: %d follows %d", declaration.version, previous)
+		}
+		seen[declaration.version] = true
+		previous = declaration.version
+	}
+}
+
 // A kind the baseline does not carry has no stored objects to break, so its
 // schema is not compared against anything.
 func TestStoredObjectCompatibilitySkipsAKindThatIsNew(t *testing.T) {
@@ -124,7 +227,7 @@ func TestStoredObjectCompatibilitySkipsAKindThatIsNew(t *testing.T) {
 	baseline := documentSet{byName: map[string]document{}}
 	candidate := setWith("ptahmigrations.operator.ptah.run",
 		object(required("artifact"), field("artifact", text())))
-	if err := verifyStoredObjectCompatibility(baseline, candidate); err != nil {
+	if err := verifyStoredObjectCompatibility(baseline, candidate, 1, nil); err != nil {
 		t.Fatalf("a kind with no baseline was compared: %v", err)
 	}
 }
@@ -143,7 +246,7 @@ func TestStoredObjectCompatibilityReadsTheStorageVersion(t *testing.T) {
 	)
 	baseline := documentSet{byName: map[string]document{"x": {crd: before}}}
 	candidate := documentSet{byName: map[string]document{"x": {crd: after}}}
-	if err := verifyStoredObjectCompatibility(baseline, candidate); err != nil {
+	if err := verifyStoredObjectCompatibility(baseline, candidate, 1, nil); err != nil {
 		t.Fatalf("a served version's change was read as reaching a stored object: %v", err)
 	}
 }

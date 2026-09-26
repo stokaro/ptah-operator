@@ -1024,11 +1024,10 @@ durable Apply claim is the one-shot authorization boundary: dispatch, lock
 contention, and controller restarts continue the claimed operation instead of
 letting a later timer reinterpret it.
 
-The plan contract also binds the manager's complete execution identity:
-manager image digest, controller source revision, controller state version,
-Ptah version, executor image digest, runner image digest, and runner protocol.
-If that identity changes before a mutating Job is dispatched, the current plan
-is no longer executable. A recorded approval becomes stale with reason
+The plan contract also binds what decides a plan's meaning when it runs: the
+controller state version, the Ptah version, the executor image digest, and the
+runner protocol. If any of them changes before a mutating Job is dispatched,
+the current plan is no longer executable. A recorded approval becomes stale with reason
 `ExecutionBindingChanged`. A claimed but undispatched Apply releases its old
 authorization and database lock, the plan is cleared, and the replacement
 manager runs Resolve, Verify, Observe, and Plan again. Approve only the
@@ -1036,12 +1035,32 @@ replacement plan; do not recreate an approval against the old UID or
 fingerprint. A dispatched Apply is never recreated under the new binding; its
 outcome is handled conservatively and requires post-Apply observation.
 
-The audit-visible `status.executionBinding` records that component tuple plus
-an opaque `epoch`. The epoch changes for every observed component transition,
-including a rollback to a byte-identical tuple. A plan and approval carry the
-epoch as `spec.executionBindingID`, so approval is one-shot for that exact
-transition: it cannot become valid again after a later rollout or rollback,
-even if all seven component fields return to their previous values.
+The manager's own image digest and source revision, and the runner image
+digest, are recorded and not bound. A plan records the manager that published
+it and a Job the manager that dispatched it; neither is in a plan fingerprint
+or an approval. A manager release that changes only these -- a patch or a
+security fix -- keeps the execution epoch. A pending approval stays valid and
+is applied, a published plan stays current, and work the previous manager
+dispatched is adopted rather than retired: the replacement rebuilds such a Job
+with the identity recorded on it and holds the Pod template to the admission
+snapshot its claim persisted before dispatch. A claim that had not dispatched
+resolves its snapshot again from the template the replacement builds, and the
+`AdmissionSnapshotRefreshed` Event says so.
+
+The runner is built from the operator's source and ships in the manager's
+release, so its digest changes with every release, and binding it would bind the
+manager by another name. What the runner enforces inside the Pod -- the
+arguments and environment it accepts, the checks around the executor, and the
+result frame it returns -- is versioned by the runner protocol instead. A
+release that changes any of it bumps the protocol, and that retires the plans
+and approvals made under the old one.
+
+The audit-visible `status.executionBinding` records those four components plus
+an opaque `epoch`. The epoch changes whenever one of them changes, including a
+rollback to a byte-identical set. A plan and approval carry the epoch as
+`spec.executionBindingID`, so approval is one-shot for that exact transition: it
+cannot become valid again after a later rollout or rollback, even if all four
+components return to their previous values.
 
 A normal chart upgrade has a hard revision boundary: the `Recreate` strategy
 terminates every old manager Pod before any replacement manager Pod starts.
@@ -1051,8 +1070,10 @@ consistent and is never changed to the replacement binding. If an upgrade
 maintenance window requires that no new Apply be dispatched after the window
 begins, first scale the manager Deployment to zero and wait until all manager
 Pods have terminated. Then run `helm upgrade --wait`; the chart restores the
-configured replica count and the replacement manager invalidates every
-undispatched old-binding authorization before it can mutate a database.
+configured replica count. When the release changes the execution binding, the
+replacement manager invalidates every undispatched old-binding authorization
+before it can mutate a database. When it does not, those authorizations carry
+over, and the scale-down only holds dispatch for the length of the window.
 
 ## Mutable tags and registry outages
 

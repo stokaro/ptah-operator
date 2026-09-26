@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "21"
-    operator.ptah.run/crd-schema-digest: "sha256:1d4a834cd94281a224328fb83f77b42b5a543b031a57560430078c9e33427691"
+    operator.ptah.run/crd-schema-version: "22"
+    operator.ptah.run/crd-schema-digest: "sha256:aa1a30c1d75e1ed1ce1d392c0a5d5c2fb1602379c242c8f9185ca706aec83cba"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -1247,14 +1247,6 @@ spec:
                 x-kubernetes-list-type: map
               executionBinding:
                 properties:
-                  controllerImage:
-                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
-                    type: string
-                  controllerRevision:
-                    maxLength: 128
-                    minLength: 1
-                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
-                    type: string
                   controllerStateVersion:
                     format: int32
                     minimum: 1
@@ -1269,21 +1261,15 @@ spec:
                     maxLength: 128
                     minLength: 1
                     type: string
-                  runnerImage:
-                    minLength: 1
-                    type: string
                   runnerProtocolVersion:
                     format: int32
                     minimum: 1
                     type: integer
                 required:
-                - controllerImage
-                - controllerRevision
                 - controllerStateVersion
                 - epoch
                 - executorImage
                 - ptahVersion
-                - runnerImage
                 - runnerProtocolVersion
                 type: object
               history:

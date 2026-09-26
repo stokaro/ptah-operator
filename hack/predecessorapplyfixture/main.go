@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -26,16 +27,27 @@ import (
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 const verificationPolicyKey = "policy.yaml"
 
 type options struct {
-	schemaPath  string
-	planPath    string
-	policyUID   string
-	policyPath  string
-	databaseURL string
+	schemaPath     string
+	managerJobPath string
+	planPath       string
+	policyUID      string
+	policyPath     string
+	databaseURL    string
+}
+
+// managerIdentity is the release of the manager the plan records as its
+// publisher. The execution binding in status no longer carries it, because it
+// binds nothing, so it is read from a Job that manager dispatched.
+type managerIdentity struct {
+	controllerImage    string
+	controllerRevision string
+	runnerImage        string
 }
 
 type fixtureBundle struct {
@@ -46,6 +58,8 @@ type fixtureBundle struct {
 func main() {
 	var opts options
 	flag.StringVar(&opts.schemaPath, "schema", "", "path to the live predecessor PtahSchema JSON")
+	flag.StringVar(&opts.managerJobPath, "manager-job", "",
+		"path to the JSON of a Job the live predecessor manager dispatched, which records its identity")
 	flag.StringVar(&opts.planPath, "plan", "", "path to the exact native plan JSON")
 	flag.StringVar(&opts.policyUID, "policy-uid", "", "UID of the immutable verification policy ConfigMap")
 	flag.StringVar(&opts.policyPath, "policy", "", "path to the projected verification policy bytes")
@@ -59,8 +73,9 @@ func main() {
 }
 
 func run(opts options) error {
-	if opts.schemaPath == "" || opts.planPath == "" || opts.policyUID == "" || opts.policyPath == "" {
-		return errors.New("--schema, --plan, --policy-uid, and --policy are required")
+	if opts.schemaPath == "" || opts.managerJobPath == "" || opts.planPath == "" || opts.policyUID == "" ||
+		opts.policyPath == "" {
+		return errors.New("--schema, --manager-job, --plan, --policy-uid, and --policy are required")
 	}
 	if opts.databaseURL == "" {
 		return errors.New("--database-url is required")
@@ -81,8 +96,20 @@ func run(opts options) error {
 	if err := json.Unmarshal(schemaData, &schema); err != nil {
 		return fmt.Errorf("decode schema: %w", err)
 	}
+	managerJobData, err := os.ReadFile(opts.managerJobPath)
+	if err != nil {
+		return fmt.Errorf("read manager Job: %w", err)
+	}
+	var managerJob batchv1.Job
+	if err := json.Unmarshal(managerJobData, &managerJob); err != nil {
+		return fmt.Errorf("decode manager Job: %w", err)
+	}
+	manager, err := managerIdentityOf(&managerJob)
+	if err != nil {
+		return err
+	}
 	bundle, err := buildFixture(
-		&schema, planData, opts.policyUID, policyData, opts.databaseURL, time.Now().UTC())
+		&schema, manager, planData, opts.policyUID, policyData, opts.databaseURL, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -94,8 +121,23 @@ func run(opts options) error {
 	return nil
 }
 
+// managerIdentityOf reads the identity a manager-dispatched Job records, and
+// refuses a Job that records none.
+func managerIdentityOf(job *batchv1.Job) (managerIdentity, error) {
+	controllerImage, controllerRevision, runnerImage := workload.ManagerIdentityOf(job)
+	if controllerImage == "" || controllerRevision == "" || runnerImage == "" {
+		return managerIdentity{}, errors.New("manager Job records no complete manager identity")
+	}
+	return managerIdentity{
+		controllerImage:    controllerImage,
+		controllerRevision: controllerRevision,
+		runnerImage:        runnerImage,
+	}, nil
+}
+
 func buildFixture(
 	schema *operatorv1alpha1.PtahSchema,
+	manager managerIdentity,
 	planData []byte,
 	policyUID string,
 	policyData []byte,
@@ -109,11 +151,16 @@ func buildFixture(
 		return fixtureBundle{}, errors.New("schema lacks a predecessor execution binding")
 	}
 	binding := schema.Status.ExecutionBinding.DeepCopy()
-	// The plan contract binds the manager explicitly, and the admission guard
-	// over plan writes requires all three. A binding without them belongs to a
-	// release this fixture cannot describe.
-	if binding.ControllerImage == "" || binding.ControllerRevision == "" || binding.ControllerStateVersion == 0 {
-		return fixtureBundle{}, errors.New("schema execution binding carries no manager identity")
+	// The plan records the manager that published it, and the admission guard
+	// over plan writes requires the record. The binding carries what the plan
+	// binds; a binding without it belongs to a release this fixture cannot
+	// describe.
+	if binding.ControllerStateVersion == 0 || binding.PtahVersion == "" || binding.ExecutorImage == "" ||
+		binding.RunnerProtocolVersion == 0 {
+		return fixtureBundle{}, errors.New("schema execution binding is incomplete")
+	}
+	if manager.controllerImage == "" || manager.controllerRevision == "" || manager.runnerImage == "" {
+		return fixtureBundle{}, errors.New("the publishing manager's identity is incomplete")
 	}
 	if strings.TrimSpace(policyUID) == "" || len(policyData) == 0 {
 		return fixtureBundle{}, errors.New("verification policy identity and bytes are required")
@@ -173,12 +220,9 @@ func buildFixture(
 		VerificationPolicyUID:    policyUID,
 		VerificationPolicyDigest: verificationPolicyDigest,
 		ExecutionBindingID:       binding.Epoch,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 	}).Fingerprint()
 	if err != nil {
@@ -221,12 +265,12 @@ func buildFixture(
 			VerificationPolicyUID:    types.UID(policyUID),
 			VerificationPolicyDigest: verificationPolicyDigest,
 			ExecutionBindingID:       binding.Epoch,
-			ControllerImage:          binding.ControllerImage,
-			ControllerRevision:       binding.ControllerRevision,
+			ControllerImage:          manager.controllerImage,
+			ControllerRevision:       manager.controllerRevision,
 			ControllerStateVersion:   binding.ControllerStateVersion,
 			PtahVersion:              binding.PtahVersion,
 			ExecutorImage:            binding.ExecutorImage,
-			RunnerImage:              binding.RunnerImage,
+			RunnerImage:              manager.runnerImage,
 			RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 			Dialect:                  decoded.Dialect,
 			Destructive:              false,
@@ -277,12 +321,12 @@ func buildFixture(
 			VerificationPolicyUID:    types.UID(policyUID),
 			VerificationPolicyDigest: verificationPolicyDigest,
 			ExecutionBindingID:       binding.Epoch,
-			ControllerImage:          binding.ControllerImage,
-			ControllerRevision:       binding.ControllerRevision,
+			ControllerImage:          manager.controllerImage,
+			ControllerRevision:       manager.controllerRevision,
 			ControllerStateVersion:   binding.ControllerStateVersion,
 			PtahVersion:              binding.PtahVersion,
 			ExecutorImage:            binding.ExecutorImage,
-			RunnerImage:              binding.RunnerImage,
+			RunnerImage:              manager.runnerImage,
 			RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 			Destructive:              false,
 			StatementCount:           int32(len(decoded.Statements)),

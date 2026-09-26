@@ -895,30 +895,27 @@ printf '%s\n' "$schema_object" | jq -e '
 ' >/dev/null || fail "PtahSchema API defaults were not persisted for omitted safe policy and execution fields"
 schema_uid=$(printf '%s\n' "$schema_object" | jq -er '.metadata.uid')
 schema_generation=$(printf '%s\n' "$schema_object" | jq -er '.metadata.generation')
+# The binding holds what decides a plan's meaning when it runs and nothing
+# that names the manager's own release: a manager that changes only its image,
+# its revision or the runner image built beside it keeps the epoch.
 if ! execution_binding=$(printf '%s\n' "$schema_object" | jq -ce \
-	--arg controllerImage "$CONTROLLER_IMAGE" \
-	--arg controllerRevision "$CONTROLLER_REVISION" \
 	--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 	--arg ptahVersion "$PTAH_VERSION" \
-	--arg executorImage "$EXECUTOR_IMAGE" \
-	--arg runnerImage "$RUNNER_IMAGE" '
+	--arg executorImage "$EXECUTOR_IMAGE" '
     .status.executionBinding as $binding |
     select(
+      ($binding | keys) == ["controllerStateVersion", "epoch", "executorImage", "ptahVersion", "runnerProtocolVersion"] and
       ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
-      $binding.controllerImage == $controllerImage and
-      $binding.controllerRevision == $controllerRevision and
       $binding.controllerStateVersion == $controllerStateVersion and
       $binding.ptahVersion == $ptahVersion and
       $binding.executorImage == $executorImage and
-      $binding.runnerImage == $runnerImage and
       ($binding.runnerProtocolVersion | type == "number" and . == 5)
     ) | $binding
   '); then
-	fail "suspended schema lacks the exact seven-field controller/runtime execution binding"
+	fail "suspended schema lacks the exact four-component execution binding"
 fi
 execution_binding_id=$(printf '%s\n' "$execution_binding" | jq -er '.epoch')
-controller_image=$(printf '%s\n' "$execution_binding" | jq -er '.controllerImage')
-controller_revision=$(printf '%s\n' "$execution_binding" | jq -er '.controllerRevision')
+controller_revision=$CONTROLLER_REVISION
 controller_state_version=$(printf '%s\n' "$execution_binding" | jq -er '.controllerStateVersion')
 deployed_controller_image=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
 	jq -er '
@@ -927,10 +924,11 @@ deployed_controller_image=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLL
       if ($images | length) == 1 then $images[0]
       else error("manager must have exactly one --controller-image argument") end
     ')
-[ "$controller_image" = "$deployed_controller_image" ] ||
-	fail "schema execution binding does not match the manager's exact controller image argument"
 [ "$deployed_controller_image" = "$CONTROLLER_IMAGE" ] ||
 	fail "manager controller image argument does not match the externally expected image identity"
+# The plan fixture below records the manager that publishes it, as the manager
+# itself does: its image argument, its revision and its runner image.
+controller_image=$deployed_controller_image
 
 artifact_digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
 content_digest=sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881
@@ -956,12 +954,9 @@ plan_binding_json=$(jq -cn \
 	--arg verificationPolicyUID "$policy_uid" \
 	--arg verificationPolicyDigest "$policy_digest" \
 	--arg executionBindingID "$execution_binding_id" \
-	--arg controllerImage "$controller_image" \
-	--arg controllerRevision "$controller_revision" \
 	--argjson controllerStateVersion "$controller_state_version" \
 	--arg ptahVersion "$PTAH_VERSION" \
-	--arg executorImage "$EXECUTOR_IMAGE" \
-	--arg runnerImage "$RUNNER_IMAGE" '
+	--arg executorImage "$EXECUTOR_IMAGE" '
   {
     contract_version: 3,
     schema_uid: $schemaUID,
@@ -975,12 +970,9 @@ plan_binding_json=$(jq -cn \
     verification_policy_uid: $verificationPolicyUID,
     verification_policy_digest: $verificationPolicyDigest,
     execution_binding_id: $executionBindingID,
-    controller_image: $controllerImage,
-    controller_revision: $controllerRevision,
     controller_state_version: $controllerStateVersion,
     ptah_version: $ptahVersion,
     executor_image: $executorImage,
-    runner_image: $runnerImage,
     runner_protocol_version: 5
   }
 ')
@@ -1232,12 +1224,9 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
 		--arg verificationPolicyUID "$policy_uid" \
 		--arg verificationPolicyDigest "$policy_digest" \
 		--arg executionBindingID "$execution_binding_id" \
-		--arg controllerImage "$controller_image" \
-		--arg controllerRevision "$controller_revision" \
 		--argjson controllerStateVersion "$controller_state_version" \
 		--arg ptahVersion "$PTAH_VERSION" \
-		--arg executorImage "$EXECUTOR_IMAGE" \
-		--arg runnerImage "$RUNNER_IMAGE" '
+		--arg executorImage "$EXECUTOR_IMAGE" '
       .spec.approver.username != "" and
       .spec.approvedAt != null and
       .spec.mutationRequestUID != "" and
@@ -1250,13 +1239,11 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
       .spec.verificationPolicyUID == $verificationPolicyUID and
       .spec.verificationPolicyDigest == $verificationPolicyDigest and
       .spec.executionBindingID == $executionBindingID and
-      .spec.controllerImage == $controllerImage and
-      .spec.controllerRevision == $controllerRevision and
       .spec.controllerStateVersion == $controllerStateVersion and
       .spec.ptahVersion == $ptahVersion and
       .spec.executorImage == $executorImage and
-      .spec.runnerImage == $runnerImage and
-      .spec.runnerProtocolVersion == 5
+      .spec.runnerProtocolVersion == 5 and
+      (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not)
     ' >/dev/null || fail "mutating webhook did not stamp identity and hydrate the plan binding"
 
 for missing_binding in schema-name schema-uid plan-name plan-uid plan-fingerprint; do
@@ -1296,12 +1283,12 @@ jq --arg name e2e-conflicting-artifact \
 expect_denied "approval with a conflicting derived artifact binding" \
 	'artifact digest conflicts with the immutable plan' \
 	"$invalid_approval_file" "$error_file"
-jq --arg name e2e-conflicting-controller-image \
-	--arg image 'e2e.invalid/manager@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' '
-    .metadata.name = $name | .spec.controllerImage = $image
+jq --arg name e2e-conflicting-executor-image \
+	--arg image 'e2e.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' '
+    .metadata.name = $name | .spec.executorImage = $image
   ' "$approval_file" >"$invalid_approval_file"
-expect_denied "approval with a conflicting controller image binding" \
-	'controller image conflicts with the immutable plan' \
+expect_denied "approval with a conflicting executor image binding" \
+	'executor image conflicts with the immutable plan' \
 	"$invalid_approval_file" "$error_file"
 # Any runner protocol other than the plan's own version 5 conflicts with it;
 # 4 is just a value that differs.
