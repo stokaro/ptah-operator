@@ -35,8 +35,10 @@ through a staged transition, issues the serving certificate, repairs the trust
 bundles on both webhook configurations, and probes every endpoint directly to
 confirm the replacement is being served before it adopts it. A transition is
 accepted only after every directly addressed API server observes both canary
-webhooks continuously for a stability window. The manager never receives
-permission to read the Secret this writes.
+webhooks continuously for a stability window; an address that fronts several
+API servers is covered in
+[One address per API server](#one-address-per-api-server). The manager never
+receives permission to read the Secret this writes.
 
 ## What the CRD hook does
 
@@ -201,6 +203,59 @@ separately with exact attributed negative dry-runs on every API server, and the
 rotator still verifies the pair's complete stored structure before using its
 Secret `create` permission.
 
+## One address per API server {#one-address-per-api-server}
+
+Every proof on this page that names every API server -- the admission proof,
+the drain in the credential phase, the certificate rotator's canary barrier,
+and each sweep of the uninstall -- finds the API servers by listing the
+EndpointSlices of the `default/kubernetes` Service, and probes each address it
+lists. It treats one address as one API server. That holds where each API
+server publishes its own address into that Service. The API server's endpoint
+reconciler does that by default, and it is the case CI runs: every matrix
+cluster has three control-plane nodes and publishes three addresses.
+
+A managed control plane can publish one address in front of several API
+servers, behind a load balancer the provider runs. The probes then reach
+whichever API server the load balancer picks. The hooks keep one client per
+address while the inventory is unchanged, and that client reuses its
+connection, so behind a load balancer that forwards connections their probes
+can all reach the same API server. The certificate rotator opens a fresh
+connection for every request, so its probes are spread over whichever API
+servers the load balancer chooses: a sample, not coverage.
+
+A proof that passes there establishes less. Every response it received showed
+the new state for the whole window, so the API servers that answered had it.
+The ones that did not answer are assumed to reach it through their own caches,
+which Kubernetes does not bound and this operator does not measure. CI cannot
+show the difference, because on kind every address is one API server.
+
+To tell which case a cluster is, compare the addresses the Service publishes
+with the API servers that announce themselves. Each API server holds one
+identity Lease in `kube-system`:
+
+```sh
+kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes
+kubectl -n kube-system get lease -l apiserver.kubernetes.io/identity=kube-apiserver
+```
+
+Fewer addresses than Leases means an address fronts more than one API server.
+A provider that does not expose those Leases leaves the count to its own
+documentation. Where the proofs sample rather than cover:
+
+- Keep the release namespace under exclusive administrative control until Helm
+  reports success for every install, upgrade and uninstall, not only for the
+  first installation [Install the operator](../../use/operations/#install-before)
+  names. After it, the per-API-server admission proof is what replaces that
+  exclusion, and here the proof cannot carry it.
+- Raise `certificateRotation.admissionConvergence.stabilityDuration`. A longer
+  window is more fresh connections, which narrows the chance that an API server
+  behind the address answered none of them. It does nothing against a load
+  balancer that sends one client to the same API server every time.
+- Expect a rotation that an API server missed to cost availability rather than
+  the fence. That API server keeps the CA bundle it had, its calls to the
+  webhook fail TLS, and every webhook fails closed, so it refuses the requests
+  those webhooks match until it catches up.
+
 ## A retry before activation
 
 An interrupted upgrade is resumed by rerunning the identical candidate, and the
@@ -290,7 +345,9 @@ directly, while verifying the normal Kubernetes Service TLS name and cluster
 CA. Discovery uses a complete, coherently paginated EndpointSlice inventory.
 Membership, readiness, canonical address, stored contract, or probe-result
 changes restart the ordinary convergence windows. Missing, malformed,
-unreachable, or TLS-invalid inventory blocks uninstall.
+unreachable, or TLS-invalid inventory blocks uninstall. Each address stands for
+one API server; where it fronts several, the sweep proves what
+[One address per API server](#one-address-per-api-server) says and no more.
 
 Canonical SubjectAccessReviews bind every retired runtime and hook
 ServiceAccount to the exact mutating permissions issued by this release. A

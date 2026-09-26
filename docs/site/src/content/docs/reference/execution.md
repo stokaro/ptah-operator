@@ -168,12 +168,15 @@ child is executed, because a Pod scheduled late or resumed after an
 interruption can cross its window while the plan is being prepared, and the
 execution deadline is imposed on the child's own context so a run cannot
 outlive it. A migration Apply carries two more bindings, since its child
-selects its own work: the digest of the approved ordered sequence and the
+selects its own work: the approved ordered sequence with its digest, and the
 fingerprint of the history that sequence was computed against. The runner
 cannot re-derive either — it holds no artifact and reads no revision table — so
-what it enforces is that a migration child no plan authorized never starts.
-Proving the executed sequence is exactly the approved one needs an executor
-that accepts a sequence, which the pinned `migrations up` does not.
+it enforces that a migration child no plan authorized never starts, and hands
+the sequence, digested again, to `ptah migrations up --expect-sequence`. Ptah
+compares it with what it selects under its own migration lock and refuses
+before it changes anything when the two differ, so the executed sequence is
+the approved one or nothing: a history that moved after the approval, forwards
+or backwards, reads as a failed run with nothing applied.
 
 All resources use one configurable coordination namespace, so resources in
 different namespaces still contend for the same database. The manager's
@@ -185,10 +188,14 @@ availability domain: exactly one release per cluster is supported, and high
 availability comes from replicas within it.
 
 The Lease complements the database's own advisory lock. Its immutable duration
-covers the maximum Job deadline plus grace; the same holder is renewed through
-post-Apply verification, including retry delays. If Job creation or identity is
-uncertain, the read-only operations wait a complete Lease duration so a possibly
-unobserved mutating Pod cannot overlap them.
+covers the maximum Job deadline plus grace. A schema renews the same holder
+through its post-Apply verification, including retry delays, and where Job
+creation or identity is uncertain that verification waits until the Apply's
+execution deadline and the Pod's termination grace have passed, so a possibly
+unobserved mutating Pod cannot overlap it. A migration hands the Lease back
+once nothing its claim dispatched can still write, and reads its history
+afterwards without one; why that is safe is
+[Mutation lifecycle](../mutation-lifecycle/#release-coordination).
 
 The executor's advisory lock, its authoritative inspection and the target DDL
 share one physical database session. Losing that session aborts the operation
