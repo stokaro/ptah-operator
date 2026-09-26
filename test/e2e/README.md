@@ -147,9 +147,21 @@ published host port. A selectorless Service and an exact owner-bound
 EndpointSlice with a unique managed-by label route operation Jobs to its
 captured bridge IP. The fixture role is demoted from superuser after
 initialization while retaining database ownership. The suite proves that no
-Kubernetes workload hosts that database, then performs a focused Plan, exact
-approval, single Apply, post-Apply `NoChanges` proof, and an independent
-Docker-side catalog check.
+Kubernetes workload hosts that database, then, under `apply: Always`, performs
+a focused Plan, a single Apply with no approval, a post-Apply `NoChanges`
+proof, and an independent Docker-side catalog check.
+
+It then publishes a second artifact that adds one `SECURITY DEFINER` function,
+which Ptah rates safe and not destructive, so only the privilege class stands
+between that plan and an unattended Apply. The plan must record
+`SecurityDefiner` and `FunctionReplacement`, and the resource must wait with
+`ApprovalRequired` reason `PrivilegeChanges` and a condition message that names
+the kinds and nothing the statement says. It has to hold through its persisted
+refresh deadline and the refresh after it: every Apply read on every poll finds
+none, the refresh Resolve is dated at or after the deadline, the deadline sits
+a full interval after the Plan Job completed, and the database has no such
+function. One exact approval then applies it, and the database holds the
+function with definer rights.
 
 For each in-cluster engine the suite publishes a real schema
 artifact to a mutable tag, verifies tag-to-digest and artifact-type evidence,

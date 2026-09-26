@@ -2809,6 +2809,98 @@ if (assert_automatic_external_pg_boundary_source_contract \
 	exit 1
 fi
 
+# The privileged approval gate. What it proves is a negative -- no Apply for a
+# whole refresh interval under apply: Always -- and a negative is the easiest
+# proof to lose quietly: drop the Apply read from the wait, or the deadline
+# comparison from the hold, and the row still passes, having measured nothing.
+privileged_gate_section=$(sed -n '/^assert_privileged_plan_waits_under_always() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+privileged_wait_section=$(sed -n '/^wait_for_privileged_gate() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for required_privileged_section in "$privileged_gate_section" "$privileged_wait_section"; do
+	[ -n "$required_privileged_section" ] || {
+		printf '%s\n' 'e2e static: the privileged approval gate row is missing' >&2
+		exit 1
+	}
+done
+
+# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
+assert_privileged_gate_source_contract() {
+	privileged_row_section=$1
+	privileged_wait_row_section=$2
+	static_require_order "$privileged_row_section" 'privileged approval gate row' \
+		'[ "$(external_privileged_function_count)" = 0 ]' \
+		'publish_schema postgresql-external v2 postgres' \
+		'checkpoint_schema_jobs "$privileged_schema" "$privileged_before"' \
+		'.spec.policy.apply == "Always" and .spec.policy.allowDestructive == false and' \
+		'"$privileged_gate_file" "the privileged plan held for a person"' \
+		'.spec.privilegeChanges == ["SecurityDefiner", "FunctionReplacement"] and' \
+		'[ "$(external_privileged_function_count)" = 0 ]' \
+		'(.status.nextReconciliationTime | fromdateiso8601) > ($after | fromdateiso8601)' \
+		'all($refreshes[]; (.created | fromdateiso8601) >= ($deadline | fromdateiso8601)) and' \
+		'($deadline | fromdateiso8601) - ($planCompleted | fromdateiso8601) >= $intervalSeconds' \
+		'assert_no_job_between_checkpoints "$privileged_schema" apply' \
+		'"$privileged_before" "$privileged_held_checkpoint"' \
+		'[ "$(external_privileged_function_count)" = 0 ]' \
+		'assert_no_job_between_checkpoints "$privileged_schema" apply' \
+		'"$privileged_before" "$privileged_apply_checkpoint"' \
+		'create_exact_approval "$privileged_schema" "$privileged_plan"' \
+		'assert_one_job_between_checkpoints "$privileged_schema" apply' \
+		'assert_approval_consumed "$privileged_approval" "$privileged_plan_uid"' \
+		'[ "$(external_privileged_function_count)" = 1 ]'
+	static_require_order "$privileged_wait_row_section" 'privileged approval gate wait' \
+		'audit_completed_jobs' \
+		'assert_no_new_jobs "$privileged_gate_schema" apply "$privileged_gate_apply_checkpoint"' \
+		'-f "$ROOT_DIR/testdata/e2e/privileged-approval-gate.jq" "$privileged_gate_output"' \
+		'"$privileged_gate_expression" "$privileged_gate_output"' \
+		'fail "timed out waiting for $privileged_gate_schema: $privileged_gate_description; last reading: $privileged_gate_seen"'
+}
+
+assert_privileged_gate_source_contract "$privileged_gate_section" "$privileged_wait_section"
+# shellcheck disable=SC2016 # Exact source markers retain shell variables literally.
+static_require_order "$external_pg_lifecycle_section" 'privileged approval gate placement' \
+	'external PostgreSQL acceptance to suspend after exact convergence' \
+	'assert_schema_job_boundary_unchanged' \
+	'assert_privileged_plan_waits_under_always "$EXTERNAL_PG_SCHEMA"' \
+	'e2e data plane: PASS external PostgreSQL bridge lifecycle'
+
+# shellcheck disable=SC2016 # Mutation retains the literal shell variables.
+privileged_wait_without_apply=$(printf '%s\n' "$privileged_wait_section" |
+	sed '/assert_no_new_jobs "\$privileged_gate_schema" apply/d')
+[ "$privileged_wait_without_apply" != "$privileged_wait_section" ] || {
+	printf '%s\n' 'e2e static: privileged gate Apply-read mutation did not change its baseline' >&2
+	exit 1
+}
+if (assert_privileged_gate_source_contract \
+	"$privileged_gate_section" "$privileged_wait_without_apply") >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: privileged gate contract accepted a wait that never reads Apply Jobs' >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # Mutation retains the literal jq variables.
+privileged_hold_without_deadline=$(printf '%s\n' "$privileged_gate_section" |
+	sed 's/all(\$refreshes\[\]; (\.created | fromdateiso8601) >= (\$deadline | fromdateiso8601)) and/true and/')
+[ "$privileged_hold_without_deadline" != "$privileged_gate_section" ] || {
+	printf '%s\n' 'e2e static: privileged hold-deadline mutation did not change its baseline' >&2
+	exit 1
+}
+if (assert_privileged_gate_source_contract \
+	"$privileged_hold_without_deadline" "$privileged_wait_section") >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: privileged gate contract accepted a hold that never reached its deadline' >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # Mutation retains the literal shell variables.
+privileged_without_database_check=$(printf '%s\n' "$privileged_gate_section" |
+	sed 's/\[ "\$(external_privileged_function_count)" = 0 \]/true/')
+[ "$privileged_without_database_check" != "$privileged_gate_section" ] || {
+	printf '%s\n' 'e2e static: privileged database-absence mutation did not change its baseline' >&2
+	exit 1
+}
+if (assert_privileged_gate_source_contract \
+	"$privileged_without_database_check" "$privileged_wait_section") >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: privileged gate contract accepted a hold that never read the database' >&2
+	exit 1
+fi
+
 external_pg_main_wiring_count() {
 	printf '%s\n' "$1" | awk '
     /^[[:space:]]*create_registry_service[[:space:]]*$/ && stage == 0 { stage = 1; next }

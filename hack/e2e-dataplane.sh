@@ -328,6 +328,7 @@ OWNED_POD_RECORDS_FILE=$WORK_DIR/owned-pod-records.tsv
 MANAGER_POD_NAMES_FILE=$WORK_DIR/manager-pod-names.txt
 COMPLETE_JOB_RECORDS_FILE=$WORK_DIR/complete-job-records.json
 COMPLETE_JOB_LINES_FILE=$WORK_DIR/complete-job-records.jsonl
+PRIVILEGED_COMPLETION_UIDS_FILE=$WORK_DIR/privileged-completion-uids.txt
 CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 PG_PASSWORD_FILE=$WORK_DIR/postgresql.password
 PG_URL_FILE=$WORK_DIR/postgresql.url
@@ -6059,6 +6060,262 @@ assert_automatic_external_postgresql_lifecycle() {
 	printf '%s\n' 'e2e data plane: PASS automatic safe-plan PostgreSQL lifecycle'
 }
 
+external_privileged_function_count() {
+	privileged_count=$(external_pg_query \
+		"SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'e2e_widget_count' AND p.pronargs = 0 AND p.prosecdef AND pg_get_userbyid(p.proowner) = current_user")
+	printf '%s' "$privileged_count" | tr -d '[:space:]'
+}
+
+# wait_for_privileged_gate polls until the schema holds its privileged plan for
+# a person, and keeps the reading that matched in the output file: every claim
+# about the gate is made against that document rather than a later read. The
+# extra expression narrows the match to one plan and one moment, and the Apply
+# checkpoint is read on every poll, so an Apply that starts while the gate is
+# awaited fails the row where it happens rather than when it is next looked at.
+wait_for_privileged_gate() {
+	privileged_gate_schema=$1
+	privileged_gate_digest=$2
+	privileged_gate_apply_checkpoint=$3
+	privileged_gate_output=$4
+	privileged_gate_description=$5
+	privileged_gate_expression=${6:-true}
+	privileged_gate_plan_uid=${7:-}
+	privileged_gate_fingerprint=${8:-}
+	privileged_gate_after=${9:-}
+	privileged_gate_generation=${10:-0}
+	privileged_gate_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$privileged_gate_deadline" ]; do
+		audit_completed_jobs
+		assert_no_new_jobs "$privileged_gate_schema" apply "$privileged_gate_apply_checkpoint"
+		if k -n "$TEST_NAMESPACE" get ptahschema "$privileged_gate_schema" -o json >"$privileged_gate_output" 2>/dev/null; then
+			chmod 600 "$privileged_gate_output"
+			if jq -e --arg digest "$privileged_gate_digest" \
+				-f "$ROOT_DIR/testdata/e2e/privileged-approval-gate.jq" "$privileged_gate_output" >/dev/null &&
+				jq -e \
+					--arg planUID "$privileged_gate_plan_uid" \
+					--arg fingerprint "$privileged_gate_fingerprint" \
+					--arg after "$privileged_gate_after" \
+					--argjson generation "$privileged_gate_generation" \
+					"$privileged_gate_expression" "$privileged_gate_output" >/dev/null; then
+				scan_file_for_credentials "$privileged_gate_output" "the $privileged_gate_schema privileged approval gate"
+				return 0
+			fi
+			[ "$(jq -r '.status.phase // ""' "$privileged_gate_output")" != Failed ] ||
+				fail "$privileged_gate_schema entered Failed while waiting for $privileged_gate_description"
+		fi
+		sleep 2
+	done
+	privileged_gate_seen=$(jq -c '{
+	    generation: .metadata.generation, observedGeneration: .status.observedGeneration,
+	    phase: .status.phase, digest: .status.source.digest,
+	    nextReconciliationTime: .status.nextReconciliationTime,
+	    activeOperation: .status.activeOperation.type,
+	    plan: (.status.plan | if . == null then null
+	      else {name, uid, fingerprint, destructive, privilegeChanges, approved: (.approval != null)} end),
+	    approvalRequired: [.status.conditions[]? |
+	      select(.type == "ApprovalRequired") | {status, reason}]
+	  }' "$privileged_gate_output" 2>/dev/null || printf '%s' 'no readable PtahSchema')
+	fail "timed out waiting for $privileged_gate_schema: $privileged_gate_description; last reading: $privileged_gate_seen"
+}
+
+# latest_completion_between prints the latest completion time among the
+# schema's Jobs of one operation that appeared between two checkpoints, read
+# from their archived evidence: a completed Job may already be gone from the API.
+latest_completion_between() {
+	completion_schema=$1
+	completion_operation=$2
+	completion_before=$3
+	completion_after=$4
+	audit_completed_jobs
+	record_observed_jobs
+	jq -r -s \
+		--slurpfile before "$completion_before" \
+		--slurpfile after "$completion_after" \
+		--arg schema "$completion_schema" \
+		--arg operation "$completion_operation" '
+      [.[] |
+        select(.schema == $schema and .operation == $operation) |
+        .uid as $uid |
+        select(($after[0] | index($uid)) != null and ($before[0] | index($uid)) == null) |
+        .uid] | unique | .[]
+    ' "$OBSERVED_JOBS_FILE" >"$PRIVILEGED_COMPLETION_UIDS_FILE" ||
+		fail "could not select the $completion_operation Jobs of $completion_schema between checkpoints"
+	completion_latest=
+	while IFS= read -r completion_uid; do
+		validate_completed_job_evidence "$completion_schema" "$completion_operation" "$completion_uid"
+		completion_time=$(jq -er '.status.completionTime' "$VALIDATED_JOB_EVIDENCE_DIR/job.json") ||
+			fail "$completion_schema $completion_operation Job $completion_uid has no completion time"
+		if [ -z "$completion_latest" ] || [ "$(jq -nr --arg a "$completion_time" --arg b "$completion_latest" \
+			'($a | fromdateiso8601) > ($b | fromdateiso8601)')" = true ]; then
+			completion_latest=$completion_time
+		fi
+	done <"$PRIVILEGED_COMPLETION_UIDS_FILE"
+	[ -n "$completion_latest" ] ||
+		fail "$completion_schema has no completed $completion_operation Job between the checkpoints"
+	printf '%s\n' "$completion_latest"
+}
+
+# A plan that changes privileges waits for a person under apply: Always.
+#
+# The artifact adds one SECURITY DEFINER function to the converged external
+# schema. Ptah rates the statement safe and the plan not destructive, so on a
+# resource set to Always with allowDestructive false nothing but the privilege
+# class stands between the plan and an unattended apply. The row holds the
+# class to what it is for:
+#
+# - the plan and the schema name the kinds, and the condition says why the
+#   resource waits;
+# - it waits through its whole persisted refresh deadline and the refresh after
+#   it with no Apply Job and the function absent from the database, dated by
+#   the Jobs' own timestamps;
+# - one exact approval then applies it, and the function exists with definer
+#   rights.
+#
+# It starts from the suspended, converged resource the lifecycle above leaves,
+# and leaves it suspended again at the same interval.
+assert_privileged_plan_waits_under_always() {
+	privileged_schema=$1
+	privileged_publish_reference=$2
+	privileged_coordination_key=$3
+	privileged_coordination_digest=$4
+	privileged_approval=e2e-postgresql-external-privileged
+	privileged_before="$WORK_DIR/${privileged_schema}-privileged-before.json"
+	privileged_gate_file="$WORK_DIR/${privileged_schema}-privileged-gate.json"
+	privileged_gate_checkpoint="$WORK_DIR/${privileged_schema}-privileged-gate-jobs.json"
+	privileged_held_file="$WORK_DIR/${privileged_schema}-privileged-held.json"
+	privileged_held_checkpoint="$WORK_DIR/${privileged_schema}-privileged-held-jobs.json"
+	privileged_quiet_file="$WORK_DIR/${privileged_schema}-privileged-quiet.json"
+	privileged_apply_checkpoint="$WORK_DIR/${privileged_schema}-privileged-apply-before.json"
+	privileged_after="$WORK_DIR/${privileged_schema}-privileged-after.json"
+	[ "$RBAC_PAUSED" -eq 0 ] || fail "the privileged approval gate requires active controller status writes"
+	[ "$(external_privileged_function_count)" = 0 ] ||
+		fail "external PostgreSQL holds the definer function before any plan created it"
+
+	privileged_digest=$(publish_schema postgresql-external v2 postgres "$privileged_publish_reference" \
+		"$ROOT_DIR/testdata/e2e/postgresql-external-v2-definer.sql")
+	privileged_reference="${privileged_publish_reference%:stable}@${privileged_digest}"
+	checkpoint_schema_jobs "$privileged_schema" "$privileged_before"
+	privileged_patch=$(jq -nc \
+		--arg reference "$privileged_reference" \
+		--arg interval "$BLOCKED_REFRESH_INTERVAL" '
+      {spec: {suspend: false, interval: $interval, desired: {ociRef: $reference}}}')
+	k -n "$TEST_NAMESPACE" patch ptahschema "$privileged_schema" --type=merge \
+		-p "$privileged_patch" >/dev/null
+	k -n "$TEST_NAMESPACE" get ptahschema "$privileged_schema" -o json | jq -e \
+		--arg interval "$BLOCKED_REFRESH_INTERVAL" '
+      .spec.policy.apply == "Always" and .spec.policy.allowDestructive == false and
+      .spec.suspend == false and .spec.interval == $interval
+    ' >/dev/null || fail "$privileged_schema did not keep apply Always and allowDestructive false"
+
+	wait_for_privileged_gate "$privileged_schema" "$privileged_digest" "$privileged_before" \
+		"$privileged_gate_file" "the privileged plan held for a person"
+	checkpoint_schema_jobs "$privileged_schema" "$privileged_gate_checkpoint"
+	privileged_schema_uid=$(jq -er '.metadata.uid' "$privileged_gate_file")
+	privileged_plan=$(jq -er '.status.plan.name' "$privileged_gate_file")
+	privileged_plan_uid=$(jq -er '.status.plan.uid' "$privileged_gate_file")
+	privileged_fingerprint=$(jq -er '.status.plan.fingerprint' "$privileged_gate_file")
+	privileged_deadline=$(jq -er '.status.nextReconciliationTime' "$privileged_gate_file")
+	k -n "$TEST_NAMESPACE" get ptahschemaplan "$privileged_plan" -o json | jq -e \
+		--arg uid "$privileged_plan_uid" \
+		--arg fingerprint "$privileged_fingerprint" \
+		--arg digest "$privileged_digest" '
+      .metadata.uid == $uid and .spec.fingerprint == $fingerprint and
+      .spec.artifactDigest == $digest and .spec.destructive == false and
+      .spec.privilegeChanges == ["SecurityDefiner", "FunctionReplacement"] and
+      (.status.conditions | any(.type == "Ready" and .status == "True"))
+    ' >/dev/null || fail "$privileged_plan does not record the kinds its statement changes"
+	[ "$(external_privileged_function_count)" = 0 ] ||
+		fail "the definer function reached the database while its plan waited for a person"
+
+	# The hold, measured rather than waited out: the resource must reach its
+	# persisted deadline, refresh, and publish the same plan for a person again,
+	# with the Apply checkpoint read on every poll in between.
+	# shellcheck disable=SC2016 # jq variables are supplied by wait_for_privileged_gate.
+	wait_for_privileged_gate "$privileged_schema" "$privileged_digest" "$privileged_before" \
+		"$privileged_held_file" "the same plan held again after its refresh deadline" '
+      .status.plan.uid == $planUID and .status.plan.fingerprint == $fingerprint and
+      (.status.nextReconciliationTime | fromdateiso8601) > ($after | fromdateiso8601)
+    ' "$privileged_plan_uid" "$privileged_fingerprint" "$privileged_deadline"
+	checkpoint_schema_jobs "$privileged_schema" "$privileged_held_checkpoint"
+	privileged_plan_completed=$(latest_completion_between "$privileged_schema" plan \
+		"$privileged_before" "$privileged_gate_checkpoint")
+	jq -s -e \
+		--slurpfile gate "$privileged_gate_checkpoint" \
+		--slurpfile held "$privileged_held_checkpoint" \
+		--arg schema "$privileged_schema" \
+		--arg deadline "$privileged_deadline" \
+		--arg planCompleted "$privileged_plan_completed" \
+		--argjson intervalSeconds "$BLOCKED_REFRESH_SECONDS" '
+      [.[] | select(.schema == $schema and .operation == "resolve") |
+        .uid as $uid |
+        select(($held[0] | index($uid)) != null and ($gate[0] | index($uid)) == null)] |
+      unique_by(.uid) as $refreshes |
+      ($refreshes | length) >= 1 and
+      all($refreshes[]; (.created | fromdateiso8601) >= ($deadline | fromdateiso8601)) and
+      ($deadline | fromdateiso8601) - ($planCompleted | fromdateiso8601) >= $intervalSeconds
+    ' "$OBSERVED_JOBS_FILE" >/dev/null ||
+		fail "$privileged_schema did not hold its privileged plan for its persisted deadline $privileged_deadline before refreshing"
+	assert_no_job_between_checkpoints "$privileged_schema" apply \
+		"$privileged_before" "$privileged_held_checkpoint"
+	[ "$(external_privileged_function_count)" = 0 ] ||
+		fail "the definer function reached the database during the held refresh interval"
+	k -n "$TEST_NAMESPACE" get events -o json | jq -e \
+		--arg schemaUID "$privileged_schema_uid" '
+      [.items[] | select(
+        .involvedObject.kind == "PtahSchema" and .involvedObject.uid == $schemaUID and
+        .reason == "ApprovalRequired" and
+        (.message | contains("changes privileges (SecurityDefiner, FunctionReplacement)")))] |
+      length >= 1
+    ' >/dev/null || fail "$privileged_schema emitted no ApprovalRequired Event naming the kinds"
+
+	# A quiet cadence before the approval, so no refresh can land between the
+	# approval and its Apply and spend it on a reading.
+	privileged_quiet_patch=$(jq -nc --arg interval "$QUIESCENT_INTERVAL" '{spec: {interval: $interval}}')
+	k -n "$TEST_NAMESPACE" patch ptahschema "$privileged_schema" --type=merge \
+		-p "$privileged_quiet_patch" >/dev/null
+	privileged_quiet_generation=$(k -n "$TEST_NAMESPACE" get ptahschema "$privileged_schema" \
+		-o jsonpath='{.metadata.generation}')
+	# shellcheck disable=SC2016 # jq variables are supplied by wait_for_privileged_gate.
+	wait_for_privileged_gate "$privileged_schema" "$privileged_digest" "$privileged_before" \
+		"$privileged_quiet_file" "the same plan held at the quiet cadence" '
+      .metadata.generation == $generation and
+      .status.plan.uid == $planUID and .status.plan.fingerprint == $fingerprint
+    ' "$privileged_plan_uid" "$privileged_fingerprint" "" "$privileged_quiet_generation"
+
+	checkpoint_schema_jobs "$privileged_schema" "$privileged_apply_checkpoint"
+	assert_no_job_between_checkpoints "$privileged_schema" apply \
+		"$privileged_before" "$privileged_apply_checkpoint"
+	create_exact_approval "$privileged_schema" "$privileged_plan" "$privileged_approval" \
+		"$privileged_coordination_key" "$privileged_coordination_digest"
+	wait_for_schema "$privileged_schema" "
+      .status.observedGeneration == .metadata.generation and
+      .status.source.digest == \"$privileged_digest\" and
+      .status.applied.artifactDigest == \"$privileged_digest\" and
+      .status.applied.planFingerprint == \"$privileged_fingerprint\" and
+      .status.applied.planRef.uid == \"$privileged_plan_uid\" and
+      .status.plan == null and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null and
+      (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))
+    " "the approved privileged plan applied and converged"
+	checkpoint_schema_jobs "$privileged_schema" "$privileged_after"
+	assert_one_job_between_checkpoints "$privileged_schema" apply \
+		"$privileged_apply_checkpoint" "$privileged_after"
+	assert_approval_consumed "$privileged_approval" "$privileged_plan_uid"
+	[ "$(external_privileged_function_count)" = 1 ] ||
+		fail "the approved plan did not leave the definer function in external PostgreSQL"
+	assert_external_postgresql_catalog
+
+	k -n "$TEST_NAMESPACE" patch ptahschema "$privileged_schema" --type=merge \
+		-p '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_schema "$privileged_schema" '
+      .status.observedGeneration == .metadata.generation and
+      .status.phase == "Suspended" and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null
+    ' "external PostgreSQL acceptance to suspend after the privileged plan"
+	audit_runtime_credentials
+	printf '%s\n' 'e2e data plane: PASS privileged plan held for a person under apply Always'
+}
+
 run_external_postgresql_lifecycle() {
 	external_publish_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"
 	external_coordination_digest=$(coordination_digest postgresql "$EXTERNAL_PG_COORDINATION_KEY")
@@ -6103,6 +6360,9 @@ run_external_postgresql_lifecycle() {
 		"$external_suspended_observed_uids_file"
 	assert_external_postgresql_catalog
 	audit_runtime_credentials
+	assert_privileged_plan_waits_under_always "$EXTERNAL_PG_SCHEMA" \
+		"$external_publish_reference" "$EXTERNAL_PG_COORDINATION_KEY" \
+		"$external_coordination_digest"
 	printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'
 }
 
