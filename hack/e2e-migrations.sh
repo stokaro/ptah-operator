@@ -156,6 +156,13 @@ cleanup() {
 		k label nodes --all "${APPLY_GATE_LABEL}-" >/dev/null 2>&1 || true
 		APPLY_GATE_OPEN=0
 	fi
+	# A rival left claiming the realm would refuse the next run's migration
+	# before it ran anything, and read as the operator's fault.
+	if [ "${RIVAL_NAMESPACE_CREATED:-0}" -eq 1 ]; then
+		k delete namespace "$MIGRATION_RIVAL_NAMESPACE" --ignore-not-found \
+			--wait=false >/dev/null 2>&1 || true
+		RIVAL_NAMESPACE_CREATED=0
+	fi
 	# The scenario that was open is the one this phase died in. The call is
 	# observational and returns the status it was given, so $status below is
 	# the phase's own verdict.
@@ -283,6 +290,10 @@ select_engine() {
 	MIGRATION_APPROVAL="e2e-migrations-${ENGINE}-approval"
 	MIGRATION_STALE_APPROVAL="e2e-migrations-${ENGINE}-stale-approval"
 	MIGRATION_RIVAL_SCHEMA="e2e-migrations-${ENGINE}-rival"
+	# The rival lives in a namespace of its own. A realm is the database, not
+	# the namespace a resource was created in, and a census that counted one
+	# namespace would let a second tenant manage the same tables unrefused.
+	MIGRATION_RIVAL_NAMESPACE="e2e-realm-rival-${ENGINE}"
 	MIGRATION_PARTIAL_APPROVAL="e2e-migrations-${ENGINE}-partial-approval"
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}:stable"
@@ -1094,11 +1105,19 @@ assert_replaced_plan_approval_refused() {
 # operator refuses both until each declares the realm shared. Here neither
 # does, and what the proof wants is the refusal and the recovery: removing the
 # second claimant ends it without anybody editing the first.
+#
+# The PtahSchema is created in another namespace, which is the mapping #242
+# asks to see across namespaces: the realm is the engine and the coordination
+# key, wherever the claimant lives. Same-namespace aliases are the faults
+# suite's row. The rival's Secrets are never created there, because the
+# refusal comes before it reads any.
 assert_second_claimant_blocks_the_realm() {
-	printf 'e2e migrations: claiming the %s migration database with a PtahSchema as well\n' \
-		"$ENGINE_KIND" >&2
+	printf 'e2e migrations: claiming the %s migration database with a PtahSchema in %s as well\n' \
+		"$ENGINE_KIND" "$MIGRATION_RIVAL_NAMESPACE" >&2
+	k create namespace "$MIGRATION_RIVAL_NAMESPACE" >/dev/null
+	RIVAL_NAMESPACE_CREATED=1
 	jq -n \
-		--arg namespace "$TEST_NAMESPACE" \
+		--arg namespace "$MIGRATION_RIVAL_NAMESPACE" \
 		--arg name "$MIGRATION_RIVAL_SCHEMA" \
 		--arg engine "$ENGINE_KIND" \
 		--arg secret "$MIGRATION_DB_SECRET" \
@@ -1135,7 +1154,7 @@ assert_second_claimant_blocks_the_realm() {
 	while [ "$(date +%s)" -lt "$rival_deadline" ]; do
 		migration_status
 		rival_phase=$(jq -er '.status.phase' "$STATUS_FILE")
-		schema_refused=$(k -n "$TEST_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json |
+		schema_refused=$(k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json |
 			jq -r 'if (.status.conditions // []) | any(.type == "Ready" and .reason == "RealmConflict")
                    then "yes" else "no" end')
 		if [ "$rival_phase" = Blocked ] && [ "$schema_refused" = yes ]; then
@@ -1155,15 +1174,30 @@ assert_second_claimant_blocks_the_realm() {
 	[ "${schema_refused:-no}" = yes ] ||
 		fail "$MIGRATION_RIVAL_SCHEMA was allowed to manage a database a PtahMigration also claims"
 	# The refusal names counts and kinds and no other namespace's objects.
+	# Each side is read for the other's namespace and name: the claimants are
+	# different tenants, and a refusal that told one of them where the other
+	# lives would be the census leaking what it exists to count.
 	scan_for_credentials "$STATUS_FILE" "the realm refusal"
-	jq -e --arg key "$MIGRATION_COORDINATION_KEY" '
-      [.status | .. | scalars | select(. == $key)] | length == 0
+	jq -e --arg key "$MIGRATION_COORDINATION_KEY" \
+		--arg namespace "$MIGRATION_RIVAL_NAMESPACE" --arg name "$MIGRATION_RIVAL_SCHEMA" '
+      ([.status | .. | scalars | select(. == $key)] | length == 0) and
+      ([.status | .. | strings | select(contains($namespace) or contains($name))] | length == 0)
     ' "$STATUS_FILE" >/dev/null ||
-		fail "the realm refusal published the coordination key"
+		fail "the realm refusal published the coordination key or the other claimant"
+	# Read, then held to having a refusal to read: an empty status names
+	# nobody and would pass.
+	k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json |
+		jq -e --arg key "$MIGRATION_COORDINATION_KEY" \
+			--arg namespace "$TEST_NAMESPACE" --arg name "$MIGRATION_NAME" '
+          any(.status.conditions[]?; .reason == "RealmConflict") and
+          ([.status | .. | scalars | select(. == $key or . == $name)] | length == 0) and
+          ([.status | .. | strings | select(contains($namespace))] | length == 0)
+        ' >/dev/null ||
+		fail "$MIGRATION_RIVAL_SCHEMA's refusal published the coordination key or the other claimant"
 
 	# The refusal precedes the first claim, so the newcomer never resolved its
-	# reference and never created a Job.
-	[ "$(k -n "$TEST_NAMESPACE" get jobs \
+	# reference and never created a Job, in its own namespace or any other.
+	[ "$(k get jobs -A \
 		-l "operator.ptah.run/schema=${MIGRATION_RIVAL_SCHEMA}" -o json |
 		jq '.items | length')" -eq 0 ] ||
 		fail "$MIGRATION_RIVAL_SCHEMA dispatched a Job for a database it may not manage"
@@ -1172,11 +1206,13 @@ assert_second_claimant_blocks_the_realm() {
 	# make that happen: a resource that runs nothing claims nothing, which is
 	# how one database is handed to one manager without declaring anything
 	# shared.
-	k -n "$TEST_NAMESPACE" patch ptahschema "$MIGRATION_RIVAL_SCHEMA" --type=merge \
+	k -n "$MIGRATION_RIVAL_NAMESPACE" patch ptahschema "$MIGRATION_RIVAL_SCHEMA" --type=merge \
 		--patch '{"spec":{"suspend":true}}' >/dev/null
 	wait_for_migration_phase InSync
-	k -n "$TEST_NAMESPACE" delete ptahschema "$MIGRATION_RIVAL_SCHEMA" \
-		--wait=true >/dev/null
+	k delete namespace "$MIGRATION_RIVAL_NAMESPACE" \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "$MIGRATION_RIVAL_NAMESPACE was not removed"
+	RIVAL_NAMESPACE_CREATED=0
 	printf 'e2e migrations: PASS %s realm refusal and recovery\n' "$ENGINE_KIND" >&2
 }
 
@@ -5081,9 +5117,9 @@ reset_after_an_earlier_run() {
 		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "the approvals and plans an earlier run left behind were not removed"
 	select_engine "$PHASE_ENGINE"
-	k -n "$TEST_NAMESPACE" delete ptahschema "$MIGRATION_RIVAL_SCHEMA" \
+	k delete namespace "$MIGRATION_RIVAL_NAMESPACE" \
 		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
-		fail "$MIGRATION_RIVAL_SCHEMA was not removed"
+		fail "$MIGRATION_RIVAL_NAMESPACE was not removed"
 	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
 		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
 		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" \
