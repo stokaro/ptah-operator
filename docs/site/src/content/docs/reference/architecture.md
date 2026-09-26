@@ -172,7 +172,8 @@ ambiguous.
 What they genuinely share is the mechanism, not the model: OCI tag resolution
 and digest pinning (`internal/ocireference`), registry authentication and
 custom transport trust, artifact verification and type enforcement
-(`internal/policy`), Job construction (one `workload.Builder`), result framing
+(`internal/policy`), Job construction (one `workload.Builder`, with a single
+Pod skeleton that owns the hardening and the annotation envelope), result framing
 (`internal/runner`), coordination realms and Leases (`internal/targetlock`),
 and the route identity guard.
 

@@ -250,208 +250,43 @@ func (b Builder) Build(
 		return nil, err
 	}
 
-	labels := map[string]string{
-		LabelManagedBy:   "ptah-operator",
-		LabelComponent:   ComponentSchemaOperation,
-		LabelSchema:      schema.Name,
-		LabelOperation:   strings.ToLower(string(operation.Type)),
-		LabelOperationID: shortLabelHash(operation.ID),
+	job := operationJob{
+		family:             schemaOperations,
+		owner:              schema,
+		name:               name,
+		operationType:      string(operation.Type),
+		runnerOperation:    strings.ToLower(string(operation.Type)),
+		operationID:        operation.ID,
+		inputFingerprint:   operation.InputFingerprint,
+		executionBindingID: operation.ExecutionBindingID,
+		admissionSnapshot:  operation.AdmissionSnapshot,
+		execution:          schema.Spec.Execution,
+		mutating:           operation.Type == operatorv1alpha1.OperationApply,
+		startedAt:          operation.StartedAt,
+		executionNotAfter:  operation.ExecutionNotAfter,
+		env:                environment,
+		volumes:            volumes,
+		mounts:             mounts,
+		annotations:        annotations,
 	}
-	annotations[AnnotationOperationID] = operation.ID
-	annotations[AnnotationInputFingerprint] = operation.InputFingerprint
-	annotations[AnnotationPtahVersion] = b.PtahVersion
-	annotations[AnnotationExecutionBindingID] = operation.ExecutionBindingID
-	annotations[AnnotationControllerImage] = b.ControllerImage
-	annotations[AnnotationControllerRevision] = b.ControllerRevision
-	annotations[AnnotationControllerStateVersion] = strconv.FormatInt(int64(b.ControllerStateVersion), 10)
-	if operation.AdmissionSnapshot != nil {
-		if !sha256Pattern.MatchString(operation.AdmissionSnapshot.Digest) ||
-			!sha256Pattern.MatchString(operation.AdmissionSnapshot.TemplateDigest) {
-			return nil, errors.New("Pod admission snapshot and template digests must be lowercase SHA-256 digests")
-		}
-		annotations[AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
+	if operation.Type == operatorv1alpha1.OperationApply {
+		job.terminationGracePeriodSeconds = operation.TerminationGracePeriodSeconds
 	}
-
-	deadline, err := boundedDeadline(
-		activeDeadlineSeconds(schema.Spec.Execution),
-		operation.Type == operatorv1alpha1.OperationApply,
-		operation.StartedAt,
-		operation.ExecutionNotAfter,
-		0,
-	)
-	if err != nil {
-		return nil, err
-	}
-	backoffLimit := int32(0)
-	falseValue := false
-	trueValue := true
-	nonRootID := int64(65532)
-	terminationGrace := int64(30)
-	if operation.Type == operatorv1alpha1.OperationApply && operation.TerminationGracePeriodSeconds > 0 {
-		terminationGrace = operation.TerminationGracePeriodSeconds
-	}
-	fsGroupPolicy := corev1.FSGroupChangeOnRootMismatch
-	resources := *schema.Spec.Execution.Resources.DeepCopy()
-	initContainers := []corev1.Container{{
-		Name:            initContainerName,
-		Image:           b.RunnerImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"/ptah-runner"},
-		Args:            []string{"--install-to", runnerPath},
-		Resources:       resources,
-		SecurityContext: hardenedContainerContext(&falseValue, &trueValue, &nonRootID),
-		VolumeMounts:    []corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner"}},
-	}}
 	if operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan {
-		guard, fetch, fetchVolumes, err := b.schemaFetch(schema, operation, resources, &falseValue, &trueValue, &nonRootID)
+		// Registry credentials stay in the fetch pair: the operation container
+		// holds the database URL and reads only the verified, digest-pinned
+		// schema the fetch left behind.
+		source, err := schemaFetchBinding(schema, operation)
 		if err != nil {
 			return nil, err
 		}
-		initContainers = append(initContainers, guard, fetch)
-		volumes = append(volumes, fetchVolumes...)
-		mounts = append(mounts, corev1.VolumeMount{Name: sourceVolumeName, MountPath: sourcePath, ReadOnly: true})
-	}
-
-	controller := true
-	blockDeletion := true
-	podReplacementPolicy := batchv1.Failed
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:   schema.Namespace,
-			Name:        name,
-			Labels:      copyMap(labels),
-			Annotations: annotations,
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         operatorv1alpha1.GroupVersion.String(),
-				Kind:               "PtahSchema",
-				Name:               schema.Name,
-				UID:                schema.UID,
-				Controller:         &controller,
-				BlockOwnerDeletion: &blockDeletion,
-			}},
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:          &backoffLimit,
-			ActiveDeadlineSeconds: &deadline,
-			PodReplacementPolicy:  &podReplacementPolicy,
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: copyMap(labels), Annotations: copyMap(annotations)},
-				Spec: corev1.PodSpec{
-					ActiveDeadlineSeconds:         &deadline,
-					AutomountServiceAccountToken:  &falseValue,
-					EnableServiceLinks:            &falseValue,
-					ServiceAccountName:            executionServiceAccountName(schema.Spec.Execution),
-					ImagePullSecrets:              append([]corev1.LocalObjectReference(nil), schema.Spec.Execution.ImagePullSecrets...),
-					RestartPolicy:                 corev1.RestartPolicyNever,
-					TerminationGracePeriodSeconds: &terminationGrace,
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot:        &trueValue,
-						RunAsUser:           &nonRootID,
-						RunAsGroup:          &nonRootID,
-						FSGroup:             &nonRootID,
-						FSGroupChangePolicy: &fsGroupPolicy,
-						SeccompProfile:      &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
-					InitContainers: initContainers,
-					Containers: []corev1.Container{{
-						Name:            mainContainerName,
-						Image:           b.ExecutorImage,
-						ImagePullPolicy: corev1.PullIfNotPresent,
-						Command:         []string{runnerPath},
-						Args: []string{
-							"--ptah-binary", ptahBinaryPath,
-							"--max-result-bytes", strconv.FormatInt(runner.DefaultMaxResultBytes, 10),
-							"--max-plan-bytes", strconv.FormatInt(runner.DefaultMaxPlanBytes, 10),
-							"--operation", strings.ToLower(string(operation.Type)),
-						},
-						WorkingDir:      workPath,
-						Env:             environment,
-						Resources:       resources,
-						SecurityContext: hardenedContainerContext(&falseValue, &trueValue, &nonRootID),
-						VolumeMounts: append([]corev1.VolumeMount{
-							{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true},
-							{Name: workVolumeName, MountPath: workPath},
-						}, mounts...),
-					}},
-					Volumes:           append(baseVolumes(), volumes...),
-					NodeSelector:      copyMap(schema.Spec.Execution.NodeSelector),
-					Tolerations:       append([]corev1.Toleration(nil), schema.Spec.Execution.Tolerations...),
-					Affinity:          schema.Spec.Execution.Affinity.DeepCopy(),
-					RuntimeClassName:  copyStringPointer(schema.Spec.Execution.RuntimeClassName),
-					PriorityClassName: schema.Spec.Execution.PriorityClassName,
-				},
-			},
-		},
-	}
-	bindStableAPIDefaults(job)
-	return job, nil
-}
-
-// bindStableAPIDefaults makes the immutable Job intent independent of
-// kube-apiserver defaulting. These values are stable across the supported
-// Kubernetes window and are security-relevant inputs to intent comparison.
-// executionServiceAccountName returns the identity an operation Job runs as.
-// spec.execution.serviceAccountName is optional, and the Job write guard
-// requires the Pod template to name an account, so a schema that omits it gets
-// the namespace's default account written out rather than a Job that admission
-// refuses. Kubernetes would bind that same account to a Pod that names none;
-// writing it down is what makes the identity reviewable.
-func executionServiceAccountName(execution operatorv1alpha1.ExecutionSpec) string {
-	if execution.ServiceAccountName != "" {
-		return execution.ServiceAccountName
-	}
-	return "default"
-}
-
-func bindStableAPIDefaults(job *batchv1.Job) {
-	one := int32(1)
-	falseValue := false
-	completionMode := batchv1.NonIndexedCompletion
-	job.Spec.Parallelism = &one
-	job.Spec.Completions = &one
-	job.Spec.CompletionMode = &completionMode
-	job.Spec.Suspend = &falseValue
-	job.Spec.ManualSelector = &falseValue
-
-	template := &job.Spec.Template.Spec
-	if template.DNSPolicy == "" {
-		template.DNSPolicy = corev1.DNSClusterFirst
-	}
-	if template.SchedulerName == "" {
-		template.SchedulerName = corev1.DefaultSchedulerName
-	}
-	for i := range template.InitContainers {
-		bindContainerAPIDefaults(&template.InitContainers[i])
-	}
-	for i := range template.Containers {
-		bindContainerAPIDefaults(&template.Containers[i])
-	}
-	for i := range template.Volumes {
-		volume := &template.Volumes[i]
-		switch {
-		case volume.Secret != nil && volume.Secret.DefaultMode == nil:
-			mode := int32(corev1.SecretVolumeSourceDefaultMode)
-			volume.Secret.DefaultMode = &mode
-		case volume.ConfigMap != nil && volume.ConfigMap.DefaultMode == nil:
-			mode := int32(corev1.ConfigMapVolumeSourceDefaultMode)
-			volume.ConfigMap.DefaultMode = &mode
-		case volume.Projected != nil && volume.Projected.DefaultMode == nil:
-			mode := int32(corev1.ProjectedVolumeSourceDefaultMode)
-			volume.Projected.DefaultMode = &mode
-		case volume.DownwardAPI != nil && volume.DownwardAPI.DefaultMode == nil:
-			mode := int32(corev1.DownwardAPIVolumeSourceDefaultMode)
-			volume.DownwardAPI.DefaultMode = &mode
+		job.fetch = &artifactFetchRequest{
+			source:        source,
+			containerName: fetchContainerName,
+			args:          []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
 		}
 	}
-}
-
-func bindContainerAPIDefaults(container *corev1.Container) {
-	if container.TerminationMessagePath == "" {
-		container.TerminationMessagePath = corev1.TerminationMessagePathDefault
-	}
-	if container.TerminationMessagePolicy == "" {
-		container.TerminationMessagePolicy = corev1.TerminationMessageReadFile
-	}
+	return b.buildOperationJob(job)
 }
 
 type buildInput struct {
@@ -655,32 +490,7 @@ func (i buildInput) dataPlane() (
 		annotations[AnnotationPlanFingerprint] = i.plan.Spec.Fingerprint
 		annotations[AnnotationPlanContentDigest] = i.plan.Spec.ContentDigest
 	}
-
-	sort.Slice(environment, func(left, right int) bool { return environment[left].Name < environment[right].Name })
 	return environment, volumes, mounts, annotations, nil
-}
-
-// schemaFetch isolates registry credentials from the database-bearing
-// container. It materializes only the already verified, digest-pinned schema
-// into a bounded shared volume.
-func (b Builder) schemaFetch(
-	schema *operatorv1alpha1.PtahSchema,
-	operation operatorv1alpha1.ActiveOperationStatus,
-	resources corev1.ResourceRequirements,
-	falseValue, trueValue *bool,
-	nonRootID *int64,
-) (corev1.Container, corev1.Container, []corev1.Volume, error) {
-	source, err := schemaFetchBinding(schema, operation)
-	if err != nil {
-		return corev1.Container{}, corev1.Container{}, nil, err
-	}
-	return b.artifactFetch(
-		source,
-		fetchContainerName,
-		[]string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
-		resources,
-		falseValue, trueValue, nonRootID,
-	)
 }
 
 // artifactFetch builds the container pair that materializes one verified,
@@ -696,8 +506,6 @@ func (b Builder) artifactFetch(
 	fetchName string,
 	fetchArgs []string,
 	resources corev1.ResourceRequirements,
-	falseValue, trueValue *bool,
-	nonRootID *int64,
 ) (corev1.Container, corev1.Container, []corev1.Volume, error) {
 	environment := []corev1.EnvVar{
 		literalEnv("HOME", fetchWorkPath),
@@ -780,7 +588,7 @@ func (b Builder) artifactFetch(
 		Args:            guardArgs,
 		Env:             guardEnvironment,
 		Resources:       resources,
-		SecurityContext: hardenedContainerContext(falseValue, trueValue, nonRootID),
+		SecurityContext: hardenedContainerContext(),
 		VolumeMounts:    guardMounts,
 	}
 	fetch := corev1.Container{
@@ -792,7 +600,7 @@ func (b Builder) artifactFetch(
 		WorkingDir:      fetchWorkPath,
 		Env:             fetchEnvironment,
 		Resources:       resources,
-		SecurityContext: hardenedContainerContext(falseValue, trueValue, nonRootID),
+		SecurityContext: hardenedContainerContext(),
 		VolumeMounts:    fetchMounts,
 	}
 	return guard, fetch, volumes, nil
@@ -1173,29 +981,10 @@ func policyVolume(selector corev1.ConfigMapKeySelector) corev1.Volume {
 	}
 }
 
-func baseVolumes() []corev1.Volume {
-	return []corev1.Volume{
-		{Name: runnerVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(runnerVolumeBytes)}},
-		{Name: workVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(workVolumeBytes)}},
-	}
-}
-
 func memoryVolume(size int64) *corev1.EmptyDirVolumeSource {
 	return &corev1.EmptyDirVolumeSource{
 		Medium:    corev1.StorageMediumMemory,
 		SizeLimit: quantity(size),
-	}
-}
-
-func hardenedContainerContext(falseValue, trueValue *bool, nonRootID *int64) *corev1.SecurityContext {
-	return &corev1.SecurityContext{
-		AllowPrivilegeEscalation: falseValue,
-		ReadOnlyRootFilesystem:   trueValue,
-		RunAsNonRoot:             trueValue,
-		RunAsUser:                nonRootID,
-		RunAsGroup:               nonRootID,
-		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
 }
 
