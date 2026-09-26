@@ -395,8 +395,10 @@ func (r *MigrationReconciler) dispatchedMigrationApplyJob(
 //
 // The manager's own image and revision and the runner image built beside it
 // are not compared. A release that changes only them keeps the epoch, the
-// plan and the approval, and adopts the Jobs the previous manager dispatched:
-// the runner in them speaks the same protocol.
+// plan and the approval. A run the previous manager dispatched is read from
+// its own Job and Pods and held to the admission snapshot its claim persisted,
+// never rebuilt, so it is harvested whatever the new release changed in the
+// Job it builds; the runner in it speaks the same protocol.
 func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -901,12 +903,19 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	}
 	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
 		// Nothing was dispatched and the claim's inputs still hold, so what
-		// differs is the manager that built the template: a release that
-		// shares the execution binding differs in its recorded identity
-		// alone. The claim stands, and its snapshot is resolved again from
-		// the template this manager builds.
+		// differs is the manager that built the template: its recorded
+		// identity, and anything else the new release changed in the Job it
+		// builds. Neither binds the claim. The claim stands, and its snapshot
+		// is resolved again from the template this manager builds -- once. A
+		// template that moves again comes from a builder that does not build
+		// the same Job twice, and refreshing it would never end.
+		if operation.AdmissionSnapshotRefreshed {
+			return r.failUndispatchedMigrationOperation(ctx, migration, errors.New(
+				"rebuilt Job Pod template differs from the admission snapshot it was already resolved again for"))
+		}
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation.AdmissionSnapshot = nil
+		migration.Status.ActiveOperation.AdmissionSnapshotRefreshed = true
 		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 			return ctrl.Result{}, err
 		}

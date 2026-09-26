@@ -51,6 +51,20 @@ func dispatchableApply(
 	approved bool,
 ) (*SchemaReconciler, client.Client, *operatorv1alpha1.PtahSchema, string) {
 	t.Helper()
+	return dispatchableApplyStoring(t, approved, func(plan *operatorv1alpha1.PtahSchemaPlan) []byte {
+		return safetyPlanDocument(t, plan.Spec.ActualStateFingerprint)
+	})
+}
+
+// dispatchableApplyStoring is dispatchableApply with the plan bytes the store
+// holds chosen by the caller, so the manifest can say one thing about the
+// bytes while the bytes say another.
+func dispatchableApplyStoring(
+	t *testing.T,
+	approved bool,
+	storedBytes func(*operatorv1alpha1.PtahSchemaPlan) []byte,
+) (*SchemaReconciler, client.Client, *operatorv1alpha1.PtahSchema, string) {
+	t.Helper()
 
 	ctx := context.Background()
 	schema, plan, policyConfig := safetyReadyToApplyFixture(t)
@@ -62,7 +76,7 @@ func dispatchableApply(
 	reconciler.Plans = planstore.Store{Client: &planUIDAssigningClient{Client: api}, Reader: api}
 	reconciler.Locks = targetlock.New(api, api, nil)
 
-	content := []byte("CREATE TABLE widgets (id bigint primary key);\n")
+	content := storedBytes(plan)
 	spec := plan.Spec
 	spec.ContentDigest = fingerprint.DigestBytes(content)
 	spec.Fingerprint = fingerprint.DigestBytes([]byte("dispatchable-apply-plan"))

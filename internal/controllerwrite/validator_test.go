@@ -862,6 +862,27 @@ func TestValidationHandlerRejectsInvalidPlanManifest(t *testing.T) {
 				plan.Spec.StatementCount = 0
 			},
 		},
+		// What the manager read out of the plan bytes is bound by the
+		// fingerprint, so a plan that reports another reading under the same
+		// fingerprint is not the plan that was fingerprinted.
+		{
+			name: "destructive reading changed under the same fingerprint",
+			mutate: func(plan *operatorv1alpha1.PtahSchemaPlan) {
+				plan.Spec.Destructive = !plan.Spec.Destructive
+			},
+		},
+		{
+			name: "privilege reading changed under the same fingerprint",
+			mutate: func(plan *operatorv1alpha1.PtahSchemaPlan) {
+				plan.Spec.PrivilegeChanges = []operatorv1alpha1.PrivilegeChange{operatorv1alpha1.PrivilegeChangeGrant}
+			},
+		},
+		{
+			name: "statement count changed under the same fingerprint",
+			mutate: func(plan *operatorv1alpha1.PtahSchemaPlan) {
+				plan.Spec.StatementCount++
+			},
+		},
 		{
 			name: "wrong execution epoch",
 			mutate: func(plan *operatorv1alpha1.PtahSchemaPlan) {
@@ -1689,6 +1710,11 @@ func recomputePlanFingerprint(
 		PtahVersion:              plan.Spec.PtahVersion,
 		ExecutorImage:            plan.Spec.ExecutorImage,
 		RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
+		Destructive:              plan.Spec.Destructive,
+		StatementCount:           plan.Spec.StatementCount,
+	}
+	for _, kind := range plan.Spec.PrivilegeChanges {
+		binding.PrivilegeChanges = append(binding.PrivilegeChanges, string(kind))
 	}
 	value, err := binding.Fingerprint()
 	if err != nil {
@@ -1728,6 +1754,7 @@ func preparedPlanFixtureWithContent(
 		PtahVersion:              schema.Status.ExecutionBinding.PtahVersion,
 		ExecutorImage:            schema.Status.ExecutionBinding.ExecutorImage,
 		RunnerProtocolVersion:    schema.Status.ExecutionBinding.RunnerProtocolVersion,
+		StatementCount:           1,
 	}
 	planFingerprint, err := binding.Fingerprint()
 	if err != nil {
@@ -1754,7 +1781,7 @@ func preparedPlanFixtureWithContent(
 		RunnerImage:              testRunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 		Dialect:                  "postgres",
-		StatementCount:           1,
+		StatementCount:           binding.StatementCount,
 	}, content)
 	if err != nil {
 		t.Fatal(err)

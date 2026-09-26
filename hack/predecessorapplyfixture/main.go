@@ -224,6 +224,8 @@ func buildFixture(
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
+		Destructive:              false,
+		StatementCount:           int32(len(decoded.Statements)),
 	}).Fingerprint()
 	if err != nil {
 		return fixtureBundle{}, fmt.Errorf("fingerprint plan: %w", err)

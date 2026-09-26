@@ -1491,6 +1491,79 @@ func TestStalePlanEvidenceForcesFreshObservation(t *testing.T) {
 	}
 }
 
+// planHarvestFixture stands a schema up with a completed Plan Job whose frame
+// carries planDocument, so the next Reconcile reads the plan, classifies it
+// and publishes it.
+func planHarvestFixture(
+	t *testing.T,
+	apply operatorv1alpha1.ApplyPolicy,
+	planDocument []byte,
+) (*SchemaReconciler, client.Client, *operatorv1alpha1.PtahSchema) {
+	t.Helper()
+
+	policyBytes := "policy"
+	policyDigest := fingerprint.DigestBytes([]byte(policyBytes))
+	schema := schemaFixture()
+	schema.Spec.Interval = metav1.Duration{Duration: 8 * time.Minute}
+	schema.Spec.Policy.Apply = apply
+	schema.Spec.Policy.AllowDestructive = false
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhasePlanning
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+		ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
+		Digest:                   testDigest,
+		ArtifactType:             dataplane.SchemaArtifactType,
+		Verified:                 true,
+		VerificationPolicyUID:    testPolicyUID,
+		VerificationPolicyDigest: policyDigest,
+	}
+	schema.Status.Target = operatorv1alpha1.TargetStatus{
+		CoordinationDigest:   testCoordinationDigest,
+		IdentityDigest:       testDigest,
+		DriftReportDigest:    safetyOtherDigest,
+		HighestDriftSeverity: "warning",
+		DriftFindingCount:    3,
+		DriftFindings: []operatorv1alpha1.DriftFindingStatus{
+			{Category: "columns_added", Count: 2, Severity: "warning"},
+			{Category: "tables_added", Count: 1, Severity: "safe"},
+		},
+	}
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type:      operatorv1alpha1.OperationPlan,
+		ID:        "blocked-plan-operation",
+		JobName:   "blocked-plan-job",
+		JobUID:    "job-uid",
+		StartedAt: metav1.Now(),
+		Attempt:   1,
+	}
+	bindActiveInput(t, schema)
+	frame := safetyRunnerFrame(t, runner.Result{
+		ProtocolVersion:      runner.ProtocolVersion,
+		Operation:            runner.OperationPlan,
+		OperationID:          schema.Status.ActiveOperation.ID,
+		ChildExitCode:        0,
+		Stdout:               string(planDocument),
+		CoordinationDigest:   schema.Status.Target.CoordinationDigest,
+		TargetIdentityDigest: schema.Status.Target.IdentityDigest,
+		PlanContentDigest:    fingerprint.DigestBytes(planDocument),
+		PlanOutcome:          runner.PlanOutcomeChanges,
+	})
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	immutable := true
+	policyConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace,
+			Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
+			UID:       testPolicyUID,
+		},
+		Immutable: &immutable,
+		Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: policyBytes},
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
+	reconciler.Plans = planstore.Store{Client: api, Reader: api}
+	return reconciler, api, schema
+}
+
 func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) {
 	t.Parallel()
 
@@ -1536,70 +1609,11 @@ func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			policyBytes := "policy"
-			policyDigest := fingerprint.DigestBytes([]byte(policyBytes))
-			schema := schemaFixture()
-			schema.Spec.Interval = metav1.Duration{Duration: 8 * time.Minute}
-			schema.Spec.Policy.Apply = test.apply
-			schema.Spec.Policy.AllowDestructive = false
-			schema.Finalizers = []string{activeOperationFinalizer}
-			schema.Status.Phase = operatorv1alpha1.PhasePlanning
-			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
-				ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
-				Digest:                   testDigest,
-				ArtifactType:             dataplane.SchemaArtifactType,
-				Verified:                 true,
-				VerificationPolicyUID:    testPolicyUID,
-				VerificationPolicyDigest: policyDigest,
-			}
-			schema.Status.Target = operatorv1alpha1.TargetStatus{
-				CoordinationDigest:   testCoordinationDigest,
-				IdentityDigest:       testDigest,
-				DriftReportDigest:    safetyOtherDigest,
-				HighestDriftSeverity: "warning",
-				DriftFindingCount:    3,
-				DriftFindings: []operatorv1alpha1.DriftFindingStatus{
-					{Category: "columns_added", Count: 2, Severity: "warning"},
-					{Category: "tables_added", Count: 1, Severity: "safe"},
-				},
-			}
-			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-				Type:      operatorv1alpha1.OperationPlan,
-				ID:        "blocked-plan-operation",
-				JobName:   "blocked-plan-job",
-				JobUID:    "job-uid",
-				StartedAt: metav1.Now(),
-				Attempt:   1,
-			}
-			bindActiveInput(t, schema)
 			planDocument := safetyPlanDocument(t, "observed-state", test.destructive)
 			if test.statement != "" {
 				planDocument = safetyPlanDocumentWithStatement(t, "observed-state", test.statement)
 			}
-			frame := safetyRunnerFrame(t, runner.Result{
-				ProtocolVersion:      runner.ProtocolVersion,
-				Operation:            runner.OperationPlan,
-				OperationID:          schema.Status.ActiveOperation.ID,
-				ChildExitCode:        0,
-				Stdout:               string(planDocument),
-				CoordinationDigest:   schema.Status.Target.CoordinationDigest,
-				TargetIdentityDigest: schema.Status.Target.IdentityDigest,
-				PlanContentDigest:    fingerprint.DigestBytes(planDocument),
-				PlanOutcome:          runner.PlanOutcomeChanges,
-			})
-			job, pod := terminalWorkload(schema, batchv1.JobComplete)
-			immutable := true
-			policyConfigMap := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: schema.Namespace,
-					Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
-					UID:       testPolicyUID,
-				},
-				Immutable: &immutable,
-				Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: policyBytes},
-			}
-			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
-			reconciler.Plans = planstore.Store{Client: api, Reader: api}
+			reconciler, api, schema := planHarvestFixture(t, test.apply, planDocument)
 
 			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
 			if err != nil {
@@ -4334,6 +4348,7 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 			RunnerImage:              "example.invalid/operator@" + testDigest,
 			RunnerProtocolVersion:    int32(runner.ProtocolVersion),
 			Dialect:                  "postgresql",
+			StatementCount:           1,
 		},
 	}
 	schema.Status.Plan = currentPlanStatus(plan)

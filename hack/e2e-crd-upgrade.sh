@@ -4350,7 +4350,10 @@ wait_for_predecessor_apply_job_terminal() {
 # it was dispatched in: the successor read the frame, scheduled the Job's
 # cleanup and recorded what the run said -- applied, or unknown when the frame
 # says so -- for the read-only observation that follows. Either account names
-# this Job; a fence would have moved the epoch instead.
+# this Job; a fence would have moved the epoch instead. It also names the
+# manager that dispatched the Job, read from the Job's own Pod template: the
+# predecessor, not the successor that harvested it, because the Job is
+# collected five minutes later and the record is what is left.
 wait_for_predecessor_apply_job_cleanup() {
 	cleanup_deadline=$(($(date +%s) + 240))
 	while [ "$(date +%s)" -lt "$cleanup_deadline" ]; do
@@ -4359,10 +4362,18 @@ wait_for_predecessor_apply_job_cleanup() {
 			[ "$(jq -r '.spec.ttlSecondsAfterFinished // 0' "$WORK_DIR/running-apply-job-after.json")" -eq 300 ] &&
 			kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
 				>"$WORK_DIR/running-apply-schema-after.json"; then
+			running_apply_dispatcher=$(jq -r \
+				'.spec.template.metadata.annotations["operator.ptah.run/controller-image"] // ""' \
+				"$WORK_DIR/running-apply-job-after.json")
+			if [ -z "$running_apply_dispatcher" ] ||
+				[ "$running_apply_dispatcher" = "$E2E_NEXT_CONTROLLER_IMAGE" ]; then
+				fail "the adopted Apply Job does not record the predecessor that dispatched it"
+			fi
 			if jq -e \
 				--arg job "$RUNNING_APPLY_JOB_NAME" \
 				--arg uid "$RUNNING_APPLY_JOB_UID" \
 				--arg planUID "$RUNNING_APPLY_PLAN_UID" \
+				--arg dispatcher "$running_apply_dispatcher" \
 				--slurpfile before "$WORK_DIR/running-apply-staged-gap.json" '
                   $before[0].status as $before |
                   .status.executionBinding.epoch == $before.executionBinding.epoch and
@@ -4371,9 +4382,11 @@ wait_for_predecessor_apply_job_cleanup() {
                     .status.pendingObservation.applyJobUID == $uid and
                     (.status.pendingObservation.outcome == "ApplySucceeded" or
                       .status.pendingObservation.outcome == "OutcomeUnknown") and
-                    .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch) or
+                    .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
+                    .status.pendingObservation.dispatchedBy.controllerImage == $dispatcher) or
                    (.status.applied.planRef.uid == $planUID and
-                    .status.applied.executionBindingID == .status.executionBinding.epoch))
+                    .status.applied.executionBindingID == .status.executionBinding.epoch and
+                    .status.applied.dispatchedBy.controllerImage == $dispatcher))
                 ' "$WORK_DIR/running-apply-schema-after.json" >/dev/null; then
 				jq -S '{
                   uid: .metadata.uid,

@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
     operator.ptah.run/crd-schema-version: "22"
-    operator.ptah.run/crd-schema-digest: "sha256:aa1a30c1d75e1ed1ce1d392c0a5d5c2fb1602379c242c8f9185ca706aec83cba"
+    operator.ptah.run/crd-schema-digest: "sha256:77b58e846d82d2e416e9786a1b1f1dbe4ad55330a1d1932fc465d3fb4cd30282"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -979,6 +979,8 @@ spec:
                     - templateDigest
                     - version
                     type: object
+                  admissionSnapshotRefreshed:
+                    type: boolean
                   approvalRef:
                     properties:
                       name:
@@ -1337,6 +1339,26 @@ spec:
                     maxItems: 256
                     type: array
                     x-kubernetes-list-type: set
+                  dispatchedBy:
+                    properties:
+                      controllerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      runnerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - controllerImage
+                    - controllerRevision
+                    - runnerImage
+                    type: object
                   finishedAt:
                     format: date-time
                     type: string
@@ -1418,6 +1440,26 @@ spec:
                 type: object
               unresolvedRun:
                 properties:
+                  dispatchedBy:
+                    properties:
+                      controllerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      runnerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - controllerImage
+                    - controllerRevision
+                    - runnerImage
+                    type: object
                   jobName:
                     maxLength: 253
                     type: string

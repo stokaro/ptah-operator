@@ -509,6 +509,28 @@ type ExecutionBindingStatus struct {
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 }
 
+// ManagerRecord names one release of the manager: its image, its revision and
+// the runner image built from the same source. It is audit evidence and binds
+// nothing -- a release that changes only these values keeps every plan and
+// approval -- so it is written where a reader needs to know which build did
+// something after the Job that ran it has been collected.
+type ManagerRecord struct {
+	// ControllerImage is the digest-pinned manager image.
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	// +kubebuilder:validation:MaxLength=512
+	ControllerImage string `json:"controllerImage"`
+	// ControllerRevision is the source revision the manager was built from.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
+	ControllerRevision string `json:"controllerRevision"`
+	// RunnerImage is the digest-pinned runner image the manager installed in
+	// the task Pod.
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	// +kubebuilder:validation:MaxLength=512
+	RunnerImage string `json:"runnerImage"`
+}
+
 // TargetLockReleaseStatus is the complete credential-free request required to
 // retry one exact database-realm Lease release after a manager restart.
 type TargetLockReleaseStatus struct {
@@ -855,8 +877,7 @@ type AppliedStatus struct {
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
 	// ControllerImage is the digest-pinned manager that published the plan
-	// this apply ran. The manager that dispatched the Job is recorded on the
-	// Job itself.
+	// this apply ran. The manager that dispatched the Job is DispatchedBy.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
 	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision is that manager's revision.
@@ -875,6 +896,13 @@ type AppliedStatus struct {
 	RunnerImage string `json:"runnerImage"`
 	// RunnerProtocolVersion is the runner protocol the apply ran under.
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
+	// DispatchedBy is the manager that built and dispatched the Apply Job,
+	// read from the Job's Pod template when the Apply was harvested. It can
+	// differ from the publisher above: a later release of the manager that
+	// shares the execution binding applies the plans an earlier one
+	// published. It is absent when the Apply was settled without its Job.
+	// +optional
+	DispatchedBy *ManagerRecord `json:"dispatchedBy,omitempty"`
 	// CompletedAt is when convergence was independently observed, not when the
 	// Job exited.
 	CompletedAt metav1.Time `json:"completedAt"`
@@ -926,8 +954,15 @@ type PendingObservationStatus struct {
 	ObserveAfter *metav1.Time `json:"observeAfter,omitempty"`
 
 	// Plan is the plan the apply carried out, kept here after the active
-	// operation is cleared so the proof knows what it is proving.
+	// operation is cleared so the proof knows what it is proving. Its manager
+	// fields name the manager that published it.
 	Plan CurrentPlanStatus `json:"plan"`
+	// DispatchedBy is the manager that built and dispatched the Apply Job,
+	// read from the Job's Pod template when the Apply was harvested, and
+	// carried into status.applied when the proof completes. It is absent when
+	// the Apply was settled without its Job.
+	// +optional
+	DispatchedBy *ManagerRecord `json:"dispatchedBy,omitempty"`
 	// Target is the key-free binding the proof reads the database through.
 	Target DatabaseTargetBinding `json:"target"`
 	// CoordinationDigest is the realm the apply held, kept so the proof runs
@@ -996,6 +1031,14 @@ type ActiveOperationStatus struct {
 	// admission mutations while retaining exact validation for executable and
 	// security-sensitive Pod fields.
 	AdmissionSnapshot *PodAdmissionSnapshot `json:"admissionSnapshot,omitempty"`
+	// AdmissionSnapshotRefreshed records that this claim's admission snapshot
+	// was resolved a second time, because the Job template this manager
+	// builds differed from the one the snapshot recorded before anything was
+	// dispatched. That happens once, when a manager release that shares the
+	// execution binding takes over an undispatched claim. It happens at most
+	// once per claim: a template that differs again comes from a builder that
+	// does not build the same Job twice, and the claim is retired instead.
+	AdmissionSnapshotRefreshed bool `json:"admissionSnapshotRefreshed,omitempty"`
 
 	// DispatchStarted is persisted immediately before the one permitted Job
 	// create attempt. A missing Apply Job after this boundary is outcome-unknown

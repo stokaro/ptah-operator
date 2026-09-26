@@ -18,7 +18,7 @@ full on the resource's own status and in the operation's Job.
 
 | Reason | Type | Recorded on | What it says |
 | --- | --- | --- | --- |
-| `AdmissionSnapshotRefreshed` | Normal | `PtahSchema`, `PtahMigration` | A claim that had not dispatched found the Pod template it would dispatch different from the one its admission snapshot recorded, usually because a new manager release took over. The claim stands, and the snapshot is resolved again before its Job is created. |
+| `AdmissionSnapshotRefreshed` | Normal | `PtahSchema`, `PtahMigration` | A claim that had not dispatched found the Pod template it would dispatch different from the one its admission snapshot recorded, usually because a new manager release took over. The claim stands, and the snapshot is resolved again before its Job is created. This happens once per claim; a template that changes again retires the claim. |
 | `ApplyOutcomeUnknown` | Warning | `PtahSchema` | An Apply ended with no proof of whether it changed the database, so a read-only observation starts to establish what happened. |
 | `ApprovalAccepted` | Normal | `PtahSchema` | An authenticated approval was accepted for the current immutable plan. |
 | `ApprovalRequired` | Normal | `PtahSchema` | The current immutable plan needs an approval before anything applies it. |

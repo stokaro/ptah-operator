@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,6 +81,30 @@ func (changedTemplateJobs) Build(
 		job.Spec.Template.Annotations = map[string]string{}
 	}
 	job.Spec.Template.Annotations["operator.ptah.run/rebuilt-template"] = "changed"
+	return job, nil
+}
+
+// unstableTemplateJobs builds a different Pod template every time it is asked,
+// which no real builder may do. It is what a snapshot refresh has to survive
+// without refreshing forever.
+type unstableTemplateJobs struct {
+	fakeJobs
+	builds *atomic.Int64
+}
+
+func (jobs unstableTemplateJobs) Build(
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.PtahSchemaPlan,
+) (*batchv1.Job, error) {
+	job, err := (fakeJobs{}).Build(schema, operation, plan)
+	if err != nil {
+		return nil, err
+	}
+	if job.Spec.Template.Annotations == nil {
+		job.Spec.Template.Annotations = map[string]string{}
+	}
+	job.Spec.Template.Annotations["operator.ptah.run/build"] = strconv.FormatInt(jobs.builds.Add(1), 10)
 	return job, nil
 }
 
@@ -1565,8 +1591,9 @@ func TestChangedRebuiltTemplateBeforeDispatchRefreshesTheSnapshot(t *testing.T) 
 	}
 	operation := actual.Status.ActiveOperation
 	if operation == nil || operation.ID != claimed.ID || operation.JobName != claimed.JobName ||
-		operation.AdmissionSnapshot != nil {
-		t.Fatalf("the claim after a template change = %#v, want claim %q with its snapshot dropped", operation, claimed.ID)
+		operation.AdmissionSnapshot != nil || !operation.AdmissionSnapshotRefreshed {
+		t.Fatalf("the claim after a template change = %#v, want claim %q with its snapshot dropped and the refresh recorded",
+			operation, claimed.ID)
 	}
 	jobs := &batchv1.JobList{}
 	if err := api.List(context.Background(), jobs); err != nil {
@@ -1593,6 +1620,54 @@ func TestChangedRebuiltTemplateBeforeDispatchRefreshesTheSnapshot(t *testing.T) 
 		job.Spec.Template.Annotations["operator.ptah.run/rebuilt-template"] != "changed" {
 		t.Fatal("the dispatched Job is not the template the refreshed snapshot recorded")
 	}
+}
+
+// TestASnapshotIsRefreshedOnceForAClaim hands a snapshotted claim to a builder
+// that never builds the same template twice. The first difference is what a
+// manager release looks like, and refreshes the snapshot; the next one cannot
+// be, and retires the claim rather than refreshing it again. Without the
+// bound the claim would alternate between refreshing and resolving for as
+// long as the builder kept moving.
+func TestASnapshotIsRefreshedOnceForAClaim(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	reconciler.Client = assignCreatedJobUIDClient{Client: api, uid: "resolve-job-uid"}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	for pass := range 2 {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("Reconcile() pass %d error = %v", pass, err)
+		}
+	}
+	claimed := safetyGetSchema(t, api, schema).Status.ActiveOperation
+	if claimed == nil || claimed.AdmissionSnapshot == nil {
+		t.Fatalf("no snapshotted claim to start from: %#v", claimed)
+	}
+
+	reconciler.Jobs = unstableTemplateJobs{builds: &atomic.Int64{}}
+	refreshed := false
+	for pass := range 6 {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("Reconcile() pass %d error = %v", pass, err)
+		}
+		operation := safetyGetSchema(t, api, schema).Status.ActiveOperation
+		if operation == nil || operation.ID != claimed.ID {
+			if !refreshed {
+				t.Fatal("the claim was retired before its snapshot was refreshed once")
+			}
+			jobs := &batchv1.JobList{}
+			if err := api.List(context.Background(), jobs); err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs.Items) != 0 {
+				t.Fatalf("a claim with an unstable template dispatched %d Jobs", len(jobs.Items))
+			}
+			return
+		}
+		refreshed = refreshed || operation.AdmissionSnapshotRefreshed
+	}
+	t.Fatalf("the claim was still standing after six passes: %#v", safetyGetSchema(t, api, schema).Status.ActiveOperation)
 }
 
 func TestInvalidExcludeSelectorFailsBeforeCreatingJob(t *testing.T) {

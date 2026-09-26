@@ -353,6 +353,7 @@ spec:
 | `status.activeOperation.admissionSnapshot.serviceAccount.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
 | `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. TemplateDigest covers the Pod template the operator asked for, before the cluster's own admission had a chance to change it. |
 | `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` | Version is the snapshot format this record was written in. |
+| `status.activeOperation.admissionSnapshotRefreshed` | `boolean` | AdmissionSnapshotRefreshed records that this claim's admission snapshot was resolved a second time, because the Job template this manager builds differed from the one the snapshot recorded before anything was dispatched. That happens once, when a manager release that shares the execution binding takes over an undispatched claim. It happens at most once per claim: a template that differs again comes from a builder that does not build the same Job twice, and the claim is retired instead. |
 | `status.activeOperation.attempt` | `integer`, required | Attempt counts this claim among the retries of the same operation. |
 | `status.activeOperation.coordinationDigest` | `string` | Plan and Apply operations persist their credential-free lock binding so later spec changes cannot redirect or shorten protection for a running Job. |
 | `status.activeOperation.dispatchNotAfter` | `string` | DispatchNotAfter is the immutable last instant at which the Apply runner may start its mutating child. Missing or untrusted terminal Pod evidence keeps proof behind the complete execution horizon below. |
@@ -407,10 +408,14 @@ spec:
 | `status.applied` | `object` | Applied is the last apply that was independently observed to have converged, which is a different claim from a Job that exited zero. |
 | `status.applied.artifactDigest` | `string`, required | ArtifactDigest is the artifact that was applied. |
 | `status.applied.completedAt` | `string`, required | CompletedAt is when convergence was independently observed, not when the Job exited. |
-| `status.applied.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published the plan this apply ran. The manager that dispatched the Job is recorded on the Job itself. |
+| `status.applied.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published the plan this apply ran. The manager that dispatched the Job is DispatchedBy. |
 | `status.applied.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
 | `status.applied.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it wrote. |
 | `status.applied.coordinationDigest` | `string`, required | CoordinationDigest is the realm the apply held while it ran. |
+| `status.applied.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the Apply Job, read from the Job's Pod template when the Apply was harvested. It can differ from the publisher above: a later release of the manager that shares the execution binding applies the plans an earlier one published. It is absent when the Apply was settled without its Job. |
+| `status.applied.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
+| `status.applied.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
+| `status.applied.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
 | `status.applied.executionBindingID` | `string`, required | ExecutionBindingID is the epoch the apply ran under. |
 | `status.applied.executorImage` | `string`, required | ExecutorImage is the digest-pinned image it ran in. |
 | `status.applied.planFingerprint` | `string`, required | PlanFingerprint says whether the plan object read today is the one this record was written for. |
@@ -503,6 +508,10 @@ spec:
 | `status.pendingObservation.dev.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.pendingObservation.dev.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.dev.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
+| `status.pendingObservation.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the Apply Job, read from the Job's Pod template when the Apply was harvested, and carried into status.applied when the proof completes. It is absent when the Apply was settled without its Job. |
+| `status.pendingObservation.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
+| `status.pendingObservation.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
+| `status.pendingObservation.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
 | `status.pendingObservation.driftSeverity` | `string` | DriftSeverity is the severity the proof reads at. |
 | `status.pendingObservation.exclude` | `[]string` | Exclude is the managed scope the apply was computed under. |
 | `status.pendingObservation.leaseDurationSeconds` | `integer`, required | LeaseDurationSeconds is the immutable duration claimed for the Apply operation. The same holder remains active through convergence proof. |
@@ -510,7 +519,7 @@ spec:
 | `status.pendingObservation.lockTimeout` | `string` | LockTimeout is the database lock timeout it is dispatched with. |
 | `status.pendingObservation.observeAfter` | `string` | ObserveAfter delays proof when the Kubernetes Job identity or create result is uncertain. Until this time, the original mutating Pod could still be within its immutable active deadline. |
 | `status.pendingObservation.outcome` | `string`, required, one of `ApplySucceeded`, `OutcomeUnknown` | Outcome is what is known about the apply this proof is for: that it succeeded, or that nobody can say. |
-| `status.pendingObservation.plan` | `object`, required | Plan is the plan the apply carried out, kept here after the active operation is cleared so the proof knows what it is proving. |
+| `status.pendingObservation.plan` | `object`, required | Plan is the plan the apply carried out, kept here after the active operation is cleared so the proof knows what it is proving. Its manager fields name the manager that published it. |
 | `status.pendingObservation.plan.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed state it was planned from. |
 | `status.pendingObservation.plan.approval` | `object` | Approval is the decision that authorized this plan, where one was made. |
 | `status.pendingObservation.plan.approval.approvedAt` | `string`, required | ApprovedAt is when the decision was stamped. |

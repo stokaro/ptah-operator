@@ -479,10 +479,16 @@ post-Apply observation; the upgrade never recreates it with different binaries.
 A release that changes only the manager image, the manager revision and
 `execution.runnerImage` -- which the release builds together, from one source
 tree -- invalidates nothing. The execution epoch, the current plan and any
-pending approval carry over, and the replacement manager applies the approval
-and adopts the Jobs its predecessor dispatched. The runner's enforcement is
-bound through the runner protocol version rather than its digest, and a release
-that changes what the runner enforces bumps that version.
+pending approval carry over, and the replacement manager applies the approval.
+It adopts a Job its predecessor dispatched only when it builds the same Job
+apart from the recorded manager identity. A release that also changes the Job
+or its Pod template settles a dispatched `PtahSchema` Apply as outcome unknown,
+which a read-only observation then resolves, and runs a dispatched read-only
+Job again; a `PtahMigration` run is read from its own Job and is not affected.
+[Normal status progression](../../use/operations/#normal-status-progression)
+states the rule. The runner's enforcement is bound through the runner protocol
+version rather than its digest, and a release that changes what the runner
+enforces bumps that version.
 
 `status.executionBinding` exposes the controller-state contract, Ptah version,
 executor image, runner protocol, and its opaque `epoch` for audit. Every

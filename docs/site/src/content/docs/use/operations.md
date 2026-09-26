@@ -1038,14 +1038,32 @@ outcome is handled conservatively and requires post-Apply observation.
 The manager's own image digest and source revision, and the runner image
 digest, are recorded and not bound. A plan records the manager that published
 it and a Job the manager that dispatched it; neither is in a plan fingerprint
-or an approval. A manager release that changes only these -- a patch or a
+or an approval. A Job is collected five minutes after it is harvested, so the
+harvest copies its dispatcher into status, beside the publisher the plan
+names: `status.pendingObservation.dispatchedBy` and then
+`status.applied.dispatchedBy` for a schema, `status.lastRun.dispatchedBy` and
+`status.unresolvedRun.dispatchedBy` for a migration. A manager release that changes only these -- a patch or a
 security fix -- keeps the execution epoch. A pending approval stays valid and
-is applied, a published plan stays current, and work the previous manager
-dispatched is adopted rather than retired: the replacement rebuilds such a Job
-with the identity recorded on it and holds the Pod template to the admission
-snapshot its claim persisted before dispatch. A claim that had not dispatched
-resolves its snapshot again from the template the replacement builds, and the
-`AdmissionSnapshotRefreshed` Event says so.
+is applied, and a published plan stays current.
+
+Work the previous manager already dispatched is adopted under one rule: the
+replacement has to build the same Job, apart from the recorded manager
+identity. A `PtahSchema` claim's live Job is compared with the Job the
+replacement builds for it, with the manager identity taken from the live Pod
+template and the template held to the admission snapshot the claim persisted
+before dispatch. A release that changed nothing else in the Job adopts it. A
+release that also changed the Job or its Pod template -- an environment
+variable, an annotation, a security setting -- cannot confirm it: a dispatched
+Apply is settled as outcome unknown and the database is observed before
+anything else runs, and a dispatched read-only Job is run again under a new
+attempt. A `PtahMigration` run is read from its own Job and Pods and is never
+rebuilt, so a change to the Job template does not affect it.
+
+A claim that had not dispatched yet resolves its admission snapshot again from
+the template the replacement builds, and the `AdmissionSnapshotRefreshed` Event
+says so. That happens once per claim: a template that changes again retires
+the claim, because a builder that does not build the same Job twice would
+otherwise refresh it forever.
 
 The runner is built from the operator's source and ships in the manager's
 release, so its digest changes with every release, and binding it would bind the

@@ -175,6 +175,11 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		"PtahVersion":              func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
 		"ExecutorImage":            func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
 		"RunnerProtocolVersion":    func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+		"Destructive":              func(v *fingerprint.PlanBinding) { v.Destructive = !v.Destructive },
+		"PrivilegeChanges": func(v *fingerprint.PlanBinding) {
+			v.PrivilegeChanges = append(append([]string(nil), v.PrivilegeChanges...), "Role")
+		},
+		"StatementCount": func(v *fingerprint.PlanBinding) { v.StatementCount++ },
 	}
 	// Keyed by field name, and checked against the type: a field added to the
 	// binding with no case here fails instead of going unmeasured. Prose keys
@@ -205,6 +210,58 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 				t.Fatalf("mutation %q did not change fingerprint %s", name, got)
 			}
 		})
+	}
+}
+
+// TestPlanBindingReadsPrivilegeChangesAsASet holds the privilege kinds to what
+// they mean: which kinds of authority the plan changes. The order the
+// classifier found them in, and a kind found twice, change nothing; a kind
+// dropped does.
+func TestPlanBindingReadsPrivilegeChangesAsASet(t *testing.T) {
+	t.Parallel()
+
+	base := completePlanBinding()
+	base.PrivilegeChanges = []string{"Grant", "Role"}
+	want, err := base.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, kinds := range map[string][]string{
+		"reordered":  {"Role", "Grant"},
+		"duplicated": {"Grant", "Role", "Grant"},
+	} {
+		same := base
+		same.PrivilegeChanges = kinds
+		got, err := same.Fingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s privilege kinds changed the fingerprint", name)
+		}
+	}
+	for name, kinds := range map[string][]string{
+		"one kind dropped": {"Grant"},
+		"none":             nil,
+	} {
+		other := base
+		other.PrivilegeChanges = kinds
+		got, err := other.Fingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == want {
+			t.Errorf("%s privilege kinds kept the fingerprint", name)
+		}
+	}
+	if len(base.PrivilegeChanges) != 2 || base.PrivilegeChanges[0] != "Grant" || base.PrivilegeChanges[1] != "Role" {
+		t.Fatalf("Fingerprint() rewrote the caller's slice: %v", base.PrivilegeChanges)
+	}
+
+	empty := completePlanBinding()
+	empty.StatementCount = 0
+	if _, err := empty.Fingerprint(); err == nil {
+		t.Fatal("Fingerprint() accepted a plan with no statements")
 	}
 }
 
@@ -285,7 +342,7 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 	}
 }
 
-const currentPlanBindingFingerprint = "sha256:d1de8ce758589df3bdcd8687f85c264ee6241e6b26e3e90be4690824aa80ceef"
+const currentPlanBindingFingerprint = "sha256:70aa6bacc97510cb2a14105915a4f083efbb0dc3379fbc46f405498f63dffa0e"
 
 func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 	t.Parallel()
@@ -324,9 +381,15 @@ func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 func TestPlanBindingRefusesAnIncompleteBinding(t *testing.T) {
 	t.Parallel()
 
+	// A plan that is not destructive and changes no privilege is the common
+	// case, so the zero value of these two is a reading, not a gap.
+	readings := map[string]bool{"Destructive": true, "PrivilegeChanges": true}
 	bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
 	for index := range bindingType.NumField() {
 		field := bindingType.Field(index)
+		if readings[field.Name] {
+			continue
+		}
 		t.Run(field.Name, func(t *testing.T) {
 			t.Parallel()
 
@@ -359,5 +422,7 @@ func completePlanBinding() fingerprint.PlanBinding {
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
 		RunnerProtocolVersion:    1,
+		PrivilegeChanges:         []string{"Grant"},
+		StatementCount:           3,
 	}
 }

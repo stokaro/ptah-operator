@@ -108,7 +108,7 @@ func (l *lab) storeDocument(
 		change(&spec)
 	}
 	spec.ContentDigest = fingerprint.DigestBytes(document)
-	spec.Fingerprint, err = binding(l.schema, spec).Fingerprint()
+	spec.Fingerprint, err = planstore.Binding(l.schema.UID, spec).Fingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,27 +211,6 @@ func planDocument(t *testing.T, statements []string) []byte {
 		t.Fatal(err)
 	}
 	return document
-}
-
-func binding(schema *operatorv1alpha1.PtahSchema, spec operatorv1alpha1.PtahSchemaPlanSpec) fingerprint.PlanBinding {
-	return fingerprint.PlanBinding{
-		ContractVersion:          spec.ContractVersion,
-		SchemaUID:                string(schema.UID),
-		PlanContentDigest:        spec.ContentDigest,
-		ArtifactDigest:           spec.ArtifactDigest,
-		CoordinationDigest:       spec.CoordinationDigest,
-		TargetIdentityDigest:     spec.TargetIdentityDigest,
-		ActualStateFingerprint:   spec.ActualStateFingerprint,
-		DesiredStateFingerprint:  spec.DesiredStateFingerprint,
-		PolicyFingerprint:        spec.PolicyFingerprint,
-		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
-		VerificationPolicyDigest: spec.VerificationPolicyDigest,
-		ExecutionBindingID:       spec.ExecutionBindingID,
-		ControllerStateVersion:   spec.ControllerStateVersion,
-		PtahVersion:              spec.PtahVersion,
-		ExecutorImage:            spec.ExecutorImage,
-		RunnerProtocolVersion:    spec.RunnerProtocolVersion,
-	}
 }
 
 // uidAssigningClient stands in for the API server's UID assignment, which the

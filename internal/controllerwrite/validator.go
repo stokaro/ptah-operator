@@ -1048,25 +1048,7 @@ func validatePlanShape(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1
 	if err != nil || policyDigest != plan.Spec.PolicyFingerprint {
 		return errors.New("plan policy fingerprint does not match the current schema policy")
 	}
-	binding := fingerprint.PlanBinding{
-		ContractVersion:          plan.Spec.ContractVersion,
-		SchemaUID:                string(schema.UID),
-		PlanContentDigest:        plan.Spec.ContentDigest,
-		ArtifactDigest:           plan.Spec.ArtifactDigest,
-		CoordinationDigest:       plan.Spec.CoordinationDigest,
-		TargetIdentityDigest:     plan.Spec.TargetIdentityDigest,
-		ActualStateFingerprint:   plan.Spec.ActualStateFingerprint,
-		DesiredStateFingerprint:  plan.Spec.DesiredStateFingerprint,
-		PolicyFingerprint:        plan.Spec.PolicyFingerprint,
-		VerificationPolicyUID:    string(plan.Spec.VerificationPolicyUID),
-		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
-		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
-		PtahVersion:              plan.Spec.PtahVersion,
-		ExecutorImage:            plan.Spec.ExecutorImage,
-		RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
-	}
-	wantFingerprint, err := binding.Fingerprint()
+	wantFingerprint, err := planstore.Binding(schema.UID, plan.Spec).Fingerprint()
 	if err != nil || wantFingerprint != plan.Spec.Fingerprint {
 		return errors.New("plan fingerprint does not match its complete approval binding")
 	}

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -85,6 +86,15 @@ func TestConvergenceCreditsOnlyWhatItCanAttribute(t *testing.T) {
 			schema.Status.PendingObservation.Plan.VerificationPolicyDigest = policyDigest
 			bindActiveInput(t, schema)
 			wantFingerprint := schema.Status.PendingObservation.Plan.Fingerprint
+			// The harvest recorded who dispatched the Apply; the plan names
+			// who published it. The two are different managers here, and the
+			// credit carries both.
+			dispatcher := dispatcherRecordOf(nextManager())
+			schema.Status.PendingObservation.DispatchedBy = dispatcher.DeepCopy()
+			publisher := schema.Status.PendingObservation.Plan.ControllerImage
+			if publisher == "" || publisher == dispatcher.ControllerImage {
+				t.Fatalf("the fixture's publisher %q does not differ from its dispatcher", publisher)
+			}
 
 			job, pod := terminalWorkload(schema, batchv1.JobComplete)
 			frame := safetyRunnerFrame(t, runner.Result{
@@ -117,6 +127,11 @@ func TestConvergenceCreditsOnlyWhatItCanAttribute(t *testing.T) {
 			case row.wantAttribute:
 				if actual.Status.Applied == nil || actual.Status.Applied.PlanFingerprint != wantFingerprint {
 					t.Fatalf("applied = %#v, want attribution to %q", actual.Status.Applied, wantFingerprint)
+				}
+				if !reflect.DeepEqual(actual.Status.Applied.DispatchedBy, dispatcher) ||
+					actual.Status.Applied.ControllerImage != publisher {
+					t.Fatalf("applied records publisher %q and dispatcher %#v, want %q and %#v",
+						actual.Status.Applied.ControllerImage, actual.Status.Applied.DispatchedBy, publisher, dispatcher)
 				}
 			default:
 				if actual.Status.Applied != nil {

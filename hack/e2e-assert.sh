@@ -973,7 +973,10 @@ plan_binding_json=$(jq -cn \
     controller_state_version: $controllerStateVersion,
     ptah_version: $ptahVersion,
     executor_image: $executorImage,
-    runner_protocol_version: 5
+    runner_protocol_version: 5,
+    destructive: false,
+    privilege_changes: [],
+    statement_count: 1
   }
 ')
 plan_fingerprint="sha256:$(printf '%s' "$plan_binding_json" | sha256_stdin)"
@@ -1041,7 +1044,7 @@ jq -n \
       runnerProtocolVersion: 5,
       dialect: "postgres",
       destructive: false,
-      statementCount: 0,
+      statementCount: 1,
       chunks: [{
         name: $chunkName,
         key: "chunk",
@@ -1180,7 +1183,7 @@ schema_status=$(jq -n \
       runnerImage: $runnerImage,
       runnerProtocolVersion: 5,
       destructive: false,
-      statementCount: 0,
+      statementCount: 1,
       createdAt: $now
     }
   }}')

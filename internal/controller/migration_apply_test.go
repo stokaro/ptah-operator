@@ -1502,6 +1502,46 @@ func TestMigrationRebuiltTemplateBeforeDispatchRefreshesTheSnapshot(t *testing.T
 	}
 }
 
+// TestAMigrationSnapshotIsRefreshedOnceForAClaim is the same stale snapshot on
+// a claim that was already refreshed once. A manager release accounts for one
+// refresh; a second difference comes from a builder that does not build the
+// same Job twice, so the claim is retired before dispatch instead of
+// refreshed again, and nothing runs.
+func TestAMigrationSnapshotIsRefreshedOnceForAClaim(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	approval := migrationApprovalFor(migration, plan)
+	operation := undispatchedApplyClaim(t, migration, plan)
+	operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: approval.Name, UID: approval.UID}
+	operation.AdmissionSnapshotRefreshed = true
+	ensureMigrationAdmissionSnapshot(migration)
+	snapshot := migration.Status.ActiveOperation.AdmissionSnapshot
+	snapshot.TemplateDigest = "sha256:" + strings.Repeat("e", 64)
+	snapshot.Digest = ""
+	digest, err := fingerprint.DigestCanonicalJSON(*snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Digest = digest
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, approval, verificationPolicyConfigMap())
+
+	for pass := 0; pass < 4; pass++ {
+		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		claim := readMigration(t, api, migration).Status.ActiveOperation
+		if claim != nil && claim.ID == operation.ID && claim.AdmissionSnapshot == nil {
+			t.Fatalf("a claim already refreshed once was refreshed again: %#v", claim)
+		}
+		if claim == nil || claim.ID != operation.ID {
+			assertNoMigrationJobDispatched(t, api)
+			return
+		}
+	}
+	t.Fatalf("the claim was still standing after four passes: %#v", readMigration(t, api, migration).Status.ActiveOperation)
+}
+
 // failingMigrationBuildJobs refuses to build a migration Job, which is how a
 // dispatch fails for a reason that has nothing to do with the claim.
 type failingMigrationBuildJobs struct{ fakeJobs }

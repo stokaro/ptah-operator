@@ -289,8 +289,7 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		StatementCount:           1,
 	}
 	spec.ContentDigest = fingerprint.DigestBytes(content)
-	binding := planBinding(schema, spec)
-	spec.Fingerprint, err = binding.Fingerprint()
+	spec.Fingerprint, err = Binding(schema.UID, spec).Fingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,24 +300,66 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 	return schema, desired, chunks
 }
 
-func planBinding(schema *operatorv1alpha1.PtahSchema, spec operatorv1alpha1.PtahSchemaPlanSpec) fingerprint.PlanBinding {
-	return fingerprint.PlanBinding{
-		ContractVersion:          spec.ContractVersion,
-		SchemaUID:                string(schema.UID),
-		PlanContentDigest:        spec.ContentDigest,
-		ArtifactDigest:           spec.ArtifactDigest,
-		CoordinationDigest:       spec.CoordinationDigest,
-		TargetIdentityDigest:     spec.TargetIdentityDigest,
-		ActualStateFingerprint:   spec.ActualStateFingerprint,
-		DesiredStateFingerprint:  spec.DesiredStateFingerprint,
-		PolicyFingerprint:        spec.PolicyFingerprint,
-		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
-		VerificationPolicyDigest: spec.VerificationPolicyDigest,
-		ExecutionBindingID:       spec.ExecutionBindingID,
-		ControllerStateVersion:   spec.ControllerStateVersion,
-		PtahVersion:              spec.PtahVersion,
-		ExecutorImage:            spec.ExecutorImage,
-		RunnerProtocolVersion:    spec.RunnerProtocolVersion,
+// TestBindingReadsEverySpecFieldTheFingerprintHolds changes one plan spec field
+// at a time. A field the fingerprint binds must change it, and the publisher's
+// record must not: the webhook recomputes the fingerprint from the published
+// spec through Binding, so a field Binding forgot is a field nothing checks.
+func TestBindingReadsEverySpecFieldTheFingerprintHolds(t *testing.T) {
+	t.Parallel()
+
+	_, plan, _ := fixture(t, []byte("plan"))
+	base := plan.Spec
+	want, err := Binding("schema-uid", base).Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want != base.Fingerprint {
+		t.Fatalf("fixture fingerprint %q is not Binding's %q", base.Fingerprint, want)
+	}
+	bound := map[string]func(*operatorv1alpha1.PtahSchemaPlanSpec){
+		"content digest":             func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.ContentDigest += "-new" },
+		"artifact digest":            func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.ArtifactDigest += "-new" },
+		"coordination digest":        func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.CoordinationDigest += "-new" },
+		"target identity digest":     func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.TargetIdentityDigest += "-new" },
+		"actual state fingerprint":   func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.ActualStateFingerprint += "-new" },
+		"desired state fingerprint":  func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.DesiredStateFingerprint += "-new" },
+		"policy fingerprint":         func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.PolicyFingerprint += "-new" },
+		"verification policy UID":    func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.VerificationPolicyUID += "-new" },
+		"verification policy digest": func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.VerificationPolicyDigest += "-new" },
+		"execution binding ID": func(s *operatorv1alpha1.PtahSchemaPlanSpec) {
+			s.ExecutionBindingID = "v1-44444444444444444444444444444444"
+		},
+		"controller state version": func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.ControllerStateVersion++ },
+		"Ptah version":             func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.PtahVersion += "-new" },
+		"executor image":           func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.ExecutorImage += "-new" },
+		"runner protocol version":  func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.RunnerProtocolVersion++ },
+		"destructive":              func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.Destructive = !s.Destructive },
+		"privilege changes": func(s *operatorv1alpha1.PtahSchemaPlanSpec) {
+			s.PrivilegeChanges = []operatorv1alpha1.PrivilegeChange{operatorv1alpha1.PrivilegeChangeGrant}
+		},
+		"statement count": func(s *operatorv1alpha1.PtahSchemaPlanSpec) { s.StatementCount++ },
+	}
+	for name, mutate := range bound {
+		changed := *base.DeepCopy()
+		mutate(&changed)
+		got, err := Binding("schema-uid", changed).Fingerprint()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got == want {
+			t.Errorf("changing the %s kept the fingerprint", name)
+		}
+	}
+	if other, err := Binding("other-schema-uid", base).Fingerprint(); err != nil || other == want {
+		t.Errorf("another schema UID kept the fingerprint (err %v)", err)
+	}
+
+	recorded := *base.DeepCopy()
+	recorded.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("d", 64)
+	recorded.ControllerRevision = "another-revision"
+	recorded.RunnerImage = "example.invalid/operator@sha256:other"
+	if got, err := Binding("schema-uid", recorded).Fingerprint(); err != nil || got != want {
+		t.Errorf("the publisher's record changed the fingerprint to %q (err %v)", got, err)
 	}
 }
 

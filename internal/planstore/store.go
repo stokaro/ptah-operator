@@ -54,6 +54,38 @@ func Name(planFingerprint string) (string, error) {
 	return namePrefix + planFingerprint[len("sha256:"):len("sha256:")+24], nil
 }
 
+// Binding returns the approval identity a plan spec stands for, read from the
+// spec as published. The manager computes a plan's fingerprint from it before
+// publishing, and the controller-write webhook recomputes it before admitting
+// the plan, so the two cannot disagree about what a field means.
+func Binding(schemaUID types.UID, spec operatorv1alpha1.PtahSchemaPlanSpec) fingerprint.PlanBinding {
+	privileges := make([]string, 0, len(spec.PrivilegeChanges))
+	for _, kind := range spec.PrivilegeChanges {
+		privileges = append(privileges, string(kind))
+	}
+	return fingerprint.PlanBinding{
+		ContractVersion:          spec.ContractVersion,
+		SchemaUID:                string(schemaUID),
+		PlanContentDigest:        spec.ContentDigest,
+		ArtifactDigest:           spec.ArtifactDigest,
+		CoordinationDigest:       spec.CoordinationDigest,
+		TargetIdentityDigest:     spec.TargetIdentityDigest,
+		ActualStateFingerprint:   spec.ActualStateFingerprint,
+		DesiredStateFingerprint:  spec.DesiredStateFingerprint,
+		PolicyFingerprint:        spec.PolicyFingerprint,
+		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
+		VerificationPolicyDigest: spec.VerificationPolicyDigest,
+		ExecutionBindingID:       spec.ExecutionBindingID,
+		ControllerStateVersion:   spec.ControllerStateVersion,
+		PtahVersion:              spec.PtahVersion,
+		ExecutorImage:            spec.ExecutorImage,
+		RunnerProtocolVersion:    spec.RunnerProtocolVersion,
+		Destructive:              spec.Destructive,
+		PrivilegeChanges:         privileges,
+		StatementCount:           spec.StatementCount,
+	}
+}
+
 // Store uses direct API reads through Reader and mutating calls through Client.
 // The distinction lets controllers bypass a stale cache before apply.
 type Store struct {

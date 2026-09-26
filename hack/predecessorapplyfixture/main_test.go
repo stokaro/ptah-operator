@@ -13,6 +13,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
@@ -121,17 +122,10 @@ func TestBuildFixtureBindsTheCurrentPlanContract(t *testing.T) {
 		t.Fatalf("policy fingerprint = %q, want the controller's %q", bundle.Plan.Spec.PolicyFingerprint, wantPolicy)
 	}
 
-	wantFingerprint, err := (fingerprint.PlanBinding{
-		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaUID: string(schema.UID),
-		PlanContentDigest: bundle.Plan.Spec.ContentDigest, ArtifactDigest: bundle.Plan.Spec.ArtifactDigest,
-		CoordinationDigest: bundle.Plan.Spec.CoordinationDigest, TargetIdentityDigest: bundle.Plan.Spec.TargetIdentityDigest,
-		ActualStateFingerprint: bundle.Plan.Spec.ActualStateFingerprint, DesiredStateFingerprint: bundle.Plan.Spec.DesiredStateFingerprint,
-		PolicyFingerprint: bundle.Plan.Spec.PolicyFingerprint, VerificationPolicyUID: string(bundle.Plan.Spec.VerificationPolicyUID),
-		VerificationPolicyDigest: bundle.Plan.Spec.VerificationPolicyDigest, ExecutionBindingID: bundle.Plan.Spec.ExecutionBindingID,
-		ControllerStateVersion: bundle.Plan.Spec.ControllerStateVersion,
-		PtahVersion:            bundle.Plan.Spec.PtahVersion, ExecutorImage: bundle.Plan.Spec.ExecutorImage,
-		RunnerProtocolVersion: bundle.Plan.Spec.RunnerProtocolVersion,
-	}).Fingerprint()
+	// The webhook recomputes the fingerprint from the published spec through
+	// planstore.Binding; the fixture computes it on its own, and the two must
+	// agree or the plan is refused on admission.
+	wantFingerprint, err := planstore.Binding(schema.UID, bundle.Plan.Spec).Fingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,10 +168,13 @@ func TestBuildFixtureRefusesAPlanWithoutItsPublisher(t *testing.T) {
 func TestManagerIdentityOfReadsTheDispatchingManager(t *testing.T) {
 	t.Parallel()
 
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+	// The identity is read from the Pod template, which the admission
+	// snapshot pins; the builder writes the same values on the Job itself.
+	job := &batchv1.Job{}
+	job.Spec.Template.Annotations = map[string]string{
 		workload.AnnotationControllerImage:    "registry.invalid/controller@" + digest('f'),
 		workload.AnnotationControllerRevision: "release-1",
-	}}}
+	}
 	job.Spec.Template.Spec.InitContainers = []corev1.Container{{
 		Name: "install-runner", Image: "registry.invalid/runner@" + digest('b'),
 	}}
@@ -185,7 +182,7 @@ func TestManagerIdentityOfReadsTheDispatchingManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manager.controllerImage != job.Annotations[workload.AnnotationControllerImage] ||
+	if manager.controllerImage != "registry.invalid/controller@"+digest('f') ||
 		manager.controllerRevision != "release-1" || manager.runnerImage != "registry.invalid/runner@"+digest('b') {
 		t.Fatalf("managerIdentityOf() = %#v", manager)
 	}

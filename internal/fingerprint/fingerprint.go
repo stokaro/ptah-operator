@@ -19,10 +19,14 @@ const (
 	// CurrentPlanContractVersion is the only plan fingerprint format. It binds
 	// what decides the plan's meaning when it runs: the durable execution
 	// epoch, the controller-state version, the Ptah version, the executor
-	// image and the runner protocol. The manager's image and revision and the
-	// runner image are recorded on the plan but left out of the fingerprint,
-	// so a manager release that changes only them keeps every plan and
-	// approval.
+	// image and the runner protocol. It also binds what the manager reads out
+	// of the plan bytes -- whether they are destructive, which privileges they
+	// change, how many statements they hold -- because another build of the
+	// manager may read the same bytes differently, and the approval and the
+	// apply policy were decided on this reading. The manager's image and
+	// revision and the runner image are recorded on the plan but left out of
+	// the fingerprint, so a manager release that changes only them, and reads
+	// the plan the same way, keeps every plan and approval.
 	CurrentPlanContractVersion int32 = 3
 )
 
@@ -153,6 +157,12 @@ func NormalizeSet(values []string) []string {
 // nothing that names the manager that published the plan: a manager that
 // changes only its own build must be able to apply what the previous one
 // planned and a person approved.
+//
+// Destructive, PrivilegeChanges and StatementCount are what the manager read
+// out of the plan bytes. The bytes alone do not fix them: a build whose
+// classifier reads a statement differently derives different values from the
+// same content, and must derive a different plan rather than inherit one
+// whose approval and apply policy were decided on the older reading.
 type PlanBinding struct {
 	ContractVersion          int32  `json:"contract_version"`
 	SchemaUID                string `json:"schema_uid"`
@@ -170,9 +180,14 @@ type PlanBinding struct {
 	PtahVersion              string `json:"ptah_version"`
 	ExecutorImage            string `json:"executor_image"`
 	RunnerProtocolVersion    int32  `json:"runner_protocol_version"`
+
+	Destructive      bool     `json:"destructive"`
+	PrivilegeChanges []string `json:"privilege_changes"`
+	StatementCount   int32    `json:"statement_count"`
 }
 
-// Fingerprint validates and hashes the complete plan binding.
+// Fingerprint validates and hashes the complete plan binding. The privilege
+// kinds are a set, so their order and repetition do not change the result.
 func (b PlanBinding) Fingerprint() (string, error) {
 	if err := ValidatePlanContractVersion(b.ContractVersion); err != nil {
 		return "", err
@@ -205,6 +220,10 @@ func (b PlanBinding) Fingerprint() (string, error) {
 	if b.RunnerProtocolVersion < 1 {
 		return "", fmt.Errorf("runner protocol version must be positive")
 	}
+	if b.StatementCount < 1 {
+		return "", fmt.Errorf("statement count must be positive")
+	}
+	b.PrivilegeChanges = NormalizeSet(b.PrivilegeChanges)
 	return DigestCanonicalJSON(b)
 }
 

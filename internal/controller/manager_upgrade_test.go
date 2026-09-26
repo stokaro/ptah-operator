@@ -87,7 +87,7 @@ func TestAManagerOnlyUpgradeAppliesAPendingSchemaApproval(t *testing.T) {
 			reconciler.Plans = planstore.Store{Client: &planUIDAssigningClient{Client: api}, Reader: api}
 			reconciler.Locks = targetlock.New(api, api, nil)
 
-			content := []byte("CREATE TABLE widgets (id bigint primary key);\n")
+			content := safetyPlanDocument(t, plan.Spec.ActualStateFingerprint)
 			spec := plan.Spec
 			spec.ContentDigest = fingerprint.DigestBytes(content)
 			spec.Fingerprint = fingerprint.DigestBytes([]byte("manager-only-upgrade-plan"))
@@ -313,5 +313,20 @@ func TestAdoptedJobIntentTakesOnlyTheRecordedManager(t *testing.T) {
 	moved.Spec.Template.Spec.Containers[0].Image = "example.invalid/ptah@sha256:" + strings.Repeat("7", 64)
 	if err := validateAdoptedJobIntent(moved, rebuild(), schema, operation.AdmissionSnapshot); err == nil {
 		t.Fatal("a Job running another executor was adopted as the claim's Job")
+	}
+
+	// The Job's own annotations are outside the template the snapshot
+	// digests. An edit to them alone leaves the digest where it was, so the
+	// manager identity is carried from the template, and a Job that disagrees
+	// with its own template is refused by the comparison.
+	for _, key := range []string{workload.AnnotationControllerImage, workload.AnnotationControllerRevision} {
+		edited := live.DeepCopy()
+		edited.Annotations[key] = map[string]string{
+			workload.AnnotationControllerImage:    "example.invalid/manager@sha256:" + strings.Repeat("7", 64),
+			workload.AnnotationControllerRevision: "edited-after-dispatch",
+		}[key]
+		if err := validateAdoptedJobIntent(edited, rebuild(), schema, operation.AdmissionSnapshot); err == nil {
+			t.Fatalf("a Job whose own %s was edited outside the pinned template was adopted", key)
+		}
 	}
 }
