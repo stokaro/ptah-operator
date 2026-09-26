@@ -208,6 +208,9 @@ func main() {
 	if err := verifyReleaseWorkflow(releaseWorkflowPath); err != nil {
 		fatal(err)
 	}
+	if err := verifyCancelWorkflow(cancelWorkflowPath); err != nil {
+		fatal(err)
+	}
 	if err := verifyDocumentation(docsPath, parsed); err != nil {
 		fatal(err)
 	}
@@ -1576,6 +1579,200 @@ func verifyReleaseWorkflow(path string) error {
 		}
 	}
 	return verifyAuditedWorkflowDigest(path, contents, releasecontract.WorkflowSHA256)
+}
+
+// The workflow that cancels a closed pull request's runs.
+const (
+	cancelWorkflowPath           = ".github/workflows/cancel-closed-pull-request.yml"
+	cancelWorkflowSHA256         = "74011f445ed20fa21ef38d5bd332e0a319de85d16a357a948c9cf4d506a74b3d"
+	cancelWorkflowTimeoutMinutes = 5
+)
+
+// wantCancelRun is the whole cancellation command. It lists the unfinished
+// runs of the closed pull request's head branch by pull_request event, keeps
+// the ones from this repository other than its own, and cancels them. A run
+// that concludes between the listing and the request is not a failure; one
+// that is still running afterwards is.
+const wantCancelRun = `set -euo pipefail
+[[ -n "$HEAD_BRANCH" ]]
+run_ids_file="$RUNNER_TEMP/closed-pull-request-run-ids"
+: > "$run_ids_file"
+# Every status a run can hold before it concludes. This run is itself
+# an unfinished pull_request run on the branch, and is left out.
+for status in requested queued pending waiting in_progress; do
+  runs="$(gh api \
+    --method GET \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/$GITHUB_REPOSITORY/actions/runs" \
+    -f branch="$HEAD_BRANCH" \
+    -f event=pull_request \
+    -f status="$status" \
+    -f per_page=100)"
+  if ! jq -e '(.workflow_runs | length) == .total_count' <<<"$runs" >/dev/null; then
+    echo "the $status run listing for $HEAD_BRANCH is a partial page" >&2
+    exit 1
+  fi
+  jq -r \
+    --arg branch "$HEAD_BRANCH" \
+    --arg repository "$GITHUB_REPOSITORY" \
+    --argjson self "$GITHUB_RUN_ID" '
+      .workflow_runs[] |
+      select(.event == "pull_request" and
+             .head_branch == $branch and
+             .head_repository.full_name == $repository and
+             .id != $self) |
+      .id
+    ' <<<"$runs" >> "$run_ids_file"
+done
+while read -r run_id; do
+  [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+  if gh api \
+    --method POST \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null
+  then
+    echo "canceled run $run_id"
+    continue
+  fi
+  # A run can conclude between the listing and the request, and
+  # GitHub refuses to cancel a run that has concluded.
+  status="$(gh api \
+    --method GET \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+    --jq .status)"
+  if [[ "$status" != completed ]]; then
+    echo "run $run_id is $status and could not be canceled" >&2
+    exit 1
+  fi
+done < <(sort -u "$run_ids_file")
+`
+
+// verifyCancelWorkflow holds the workflow that cancels a closed pull request's
+// runs to that and nothing more. It holds actions: write, which can cancel any
+// run in the repository, master's and a release tag's included, so what it
+// cancels has to be decided by the audited command alone.
+func verifyCancelWorkflow(path string) error {
+	workflow, contents, err := readWorkflow(path)
+	if err != nil {
+		return err
+	}
+	if err := verifyCancelWorkflowSemantics(path, workflow, contents); err != nil {
+		return err
+	}
+	return verifyAuditedWorkflowDigest(path, contents, cancelWorkflowSHA256)
+}
+
+func verifyCancelWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
+	// The keys are an allow-list rather than a set of checks on the fields
+	// this verifier happens to decode. A concurrency group is the plainest
+	// case: groups are shared across workflows, so one named after CI's would
+	// cancel CI's runs with no command at all.
+	var shape struct {
+		Top  map[string]yaml.Node `yaml:",inline"`
+		Jobs map[string]struct {
+			Keys  map[string]yaml.Node   `yaml:",inline"`
+			Steps []map[string]yaml.Node `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(contents, &shape); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	for key := range shape.Top {
+		if key != "name" && key != "on" && key != "permissions" {
+			return fmt.Errorf("%s: workflow key %q is outside the audited shape of the cancellation", path, key)
+		}
+	}
+	if len(shape.Jobs) != 1 {
+		return fmt.Errorf("%s: the cancellation must be exactly one job, the audited cancel", path)
+	}
+	for jobName, job := range shape.Jobs {
+		for key := range job.Keys {
+			switch key {
+			case "name", "if", "runs-on", "timeout-minutes":
+			default:
+				return fmt.Errorf("%s: job %q key %q is outside the audited shape of the cancellation", path, jobName, key)
+			}
+		}
+		for _, step := range job.Steps {
+			for key := range step {
+				switch key {
+				case "name", "id", "env", "shell", "run":
+				default:
+					return fmt.Errorf("%s: job %q step key %q is outside the audited shape of the cancellation", path, jobName, key)
+				}
+			}
+		}
+	}
+
+	if !triggersOnlyOnPullRequestClose(workflow.On) {
+		return fmt.Errorf("%s: the cancellation must run only when a pull request closes: on pull_request, types [closed], and nothing else", path)
+	}
+	if !equalStringMap(workflow.Permissions, map[string]string{"actions": "write"}) {
+		return fmt.Errorf("%s: the cancellation must hold actions: write and nothing else", path)
+	}
+
+	job, err := requireWorkflowJob(path, workflow, "cancel")
+	if err != nil {
+		return err
+	}
+	if job.Name != "Cancel the closed pull request's runs" || job.RunsOn != "ubuntu-latest" ||
+		job.TimeoutMinutes != cancelWorkflowTimeoutMinutes {
+		return fmt.Errorf("%s: the cancel job must be the audited ubuntu-latest job with a %d-minute timeout", path, cancelWorkflowTimeoutMinutes)
+	}
+	// A fork's pull request gets a read-only token whatever the workflow asks
+	// for, so the job would only fail. It is skipped instead.
+	if job.If != "github.event.pull_request.head.repo.full_name == github.repository" {
+		return fmt.Errorf("%s: the cancel job must skip a pull request from a fork, whose token cannot cancel anything", path)
+	}
+	steps, err := requireWorkflowStepOrder(path, "cancel", job, []string{"cancel-runs"})
+	if err != nil {
+		return err
+	}
+	step := steps[0]
+	if step.Name != "Cancel the head branch's unfinished pull request runs" || step.Shell != "bash" {
+		return fmt.Errorf("%s: the cancellation must be the audited bash step", path)
+	}
+	if !equalStringMap(step.Env, map[string]string{
+		"GH_TOKEN":    "${{ secrets.GITHUB_TOKEN }}",
+		"HEAD_BRANCH": "${{ github.event.pull_request.head.ref }}",
+	}) {
+		return fmt.Errorf("%s: the cancellation must bind the closed pull request's head branch and the Actions token, and nothing else", path)
+	}
+	for _, rule := range []struct {
+		marker  string
+		problem string
+	}{
+		{`-f event=pull_request \`, "must list only pull_request runs"},
+		{`select(.event == "pull_request" and`, "must cancel only pull_request runs"},
+		{`-f branch="$HEAD_BRANCH" \`, "must list only the closed pull request's head branch"},
+		{`.head_branch == $branch and`, "must cancel only runs on the closed pull request's head branch"},
+		{`.head_repository.full_name == $repository and`, "must cancel only runs from this repository"},
+		{`.id != $self) |`, "must leave its own run to finish"},
+	} {
+		if !strings.Contains(step.Run, rule.marker) {
+			return fmt.Errorf("%s: the cancellation %s", path, rule.problem)
+		}
+	}
+	if step.Run != wantCancelRun {
+		return fmt.Errorf("%s: the cancellation command differs from the audited one", path)
+	}
+	return nil
+}
+
+func triggersOnlyOnPullRequestClose(on map[string]yaml.Node) bool {
+	trigger, ok := on["pull_request"]
+	if !ok || len(on) != 1 {
+		return false
+	}
+	var pullRequest struct {
+		Types []string             `yaml:"types"`
+		Other map[string]yaml.Node `yaml:",inline"`
+	}
+	if err := trigger.Decode(&pullRequest); err != nil || len(pullRequest.Other) != 0 {
+		return false
+	}
+	return len(pullRequest.Types) == 1 && pullRequest.Types[0] == "closed"
 }
 
 type workflowDocument struct {
