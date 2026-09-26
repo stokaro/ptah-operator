@@ -7,14 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -118,146 +116,34 @@ func (b Builder) BuildMigration(
 	if err != nil {
 		return nil, err
 	}
-	deadline, err := boundedDeadline(
-		activeDeadlineSeconds(migration.Spec.Execution),
-		operation.Type == operatorv1alpha1.MigrationOperationApply,
-		operation.StartedAt,
-		operation.ExecutionNotAfter,
-		JobDeadlineGrace,
-	)
-	if err != nil {
-		return nil, err
-	}
 
-	labels := map[string]string{
-		LabelManagedBy:   "ptah-operator",
-		LabelComponent:   ComponentMigrationOperation,
-		LabelMigration:   migration.Name,
-		LabelOperation:   strings.ToLower(string(operation.Type)),
-		LabelOperationID: shortLabelHash(operation.ID),
+	job := operationJob{
+		family:             migrationOperations,
+		owner:              migration,
+		name:               name,
+		operationType:      string(operation.Type),
+		runnerOperation:    string(migrationRunnerOperation(operation.Type)),
+		operationID:        operation.ID,
+		inputFingerprint:   operation.InputFingerprint,
+		executionBindingID: operation.ExecutionBindingID,
+		admissionSnapshot:  operation.AdmissionSnapshot,
+		execution:          migration.Spec.Execution,
+		mutating:           operation.Type == operatorv1alpha1.MigrationOperationApply,
+		startedAt:          operation.StartedAt,
+		executionNotAfter:  operation.ExecutionNotAfter,
+		env:                environment,
+		volumes:            volumes,
+		mounts:             mounts,
+		annotations:        annotations,
 	}
-	annotations[AnnotationOperationID] = operation.ID
-	annotations[AnnotationInputFingerprint] = operation.InputFingerprint
-	annotations[AnnotationPtahVersion] = b.PtahVersion
-	annotations[AnnotationExecutionBindingID] = operation.ExecutionBindingID
-	annotations[AnnotationControllerImage] = b.ControllerImage
-	annotations[AnnotationControllerRevision] = b.ControllerRevision
-	annotations[AnnotationControllerStateVersion] = strconv.FormatInt(int64(b.ControllerStateVersion), 10)
-	if operation.AdmissionSnapshot != nil {
-		if !sha256Pattern.MatchString(operation.AdmissionSnapshot.Digest) ||
-			!sha256Pattern.MatchString(operation.AdmissionSnapshot.TemplateDigest) {
-			return nil, errors.New("Pod admission snapshot and template digests must be lowercase SHA-256 digests")
-		}
-		annotations[AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
-	}
-
-	backoffLimit := int32(0)
-	falseValue := false
-	trueValue := true
-	nonRootID := int64(65532)
-	terminationGrace := int64(30)
-	fsGroupPolicy := corev1.FSGroupChangeOnRootMismatch
-	resources := *migration.Spec.Execution.Resources.DeepCopy()
-
-	initContainers := []corev1.Container{{
-		Name:            initContainerName,
-		Image:           b.RunnerImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"/ptah-runner"},
-		Args:            []string{"--install-to", runnerPath},
-		Resources:       resources,
-		SecurityContext: hardenedContainerContext(&falseValue, &trueValue, &nonRootID),
-		VolumeMounts:    []corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner"}},
-	}}
 	if migrationReadsArtifactBytes(operation.Type) {
-		guard, fetch, fetchVolumes, fetchErr := b.artifactFetch(
-			*operation.Source,
-			migrationFetchContainerName,
-			[]string{"migrations", "pull", operation.Source.ResolvedReference, "--out", migrationsPath},
-			resources,
-			&falseValue, &trueValue, &nonRootID,
-		)
-		if fetchErr != nil {
-			return nil, fetchErr
+		job.fetch = &artifactFetchRequest{
+			source:        *operation.Source,
+			containerName: migrationFetchContainerName,
+			args:          []string{"migrations", "pull", operation.Source.ResolvedReference, "--out", migrationsPath},
 		}
-		initContainers = append(initContainers, guard, fetch)
-		volumes = append(volumes, fetchVolumes...)
-		mounts = append(mounts, corev1.VolumeMount{Name: sourceVolumeName, MountPath: sourcePath, ReadOnly: true})
 	}
-
-	controller := true
-	blockDeletion := true
-	podReplacementPolicy := batchv1.Failed
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:   migration.Namespace,
-			Name:        name,
-			Labels:      copyMap(labels),
-			Annotations: annotations,
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         operatorv1alpha1.GroupVersion.String(),
-				Kind:               "PtahMigration",
-				Name:               migration.Name,
-				UID:                migration.UID,
-				Controller:         &controller,
-				BlockOwnerDeletion: &blockDeletion,
-			}},
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:          &backoffLimit,
-			ActiveDeadlineSeconds: &deadline,
-			PodReplacementPolicy:  &podReplacementPolicy,
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: copyMap(labels), Annotations: copyMap(annotations)},
-				Spec: corev1.PodSpec{
-					ActiveDeadlineSeconds:         &deadline,
-					AutomountServiceAccountToken:  &falseValue,
-					EnableServiceLinks:            &falseValue,
-					ServiceAccountName:            executionServiceAccountName(migration.Spec.Execution),
-					ImagePullSecrets:              append([]corev1.LocalObjectReference(nil), migration.Spec.Execution.ImagePullSecrets...),
-					RestartPolicy:                 corev1.RestartPolicyNever,
-					TerminationGracePeriodSeconds: &terminationGrace,
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot:        &trueValue,
-						RunAsUser:           &nonRootID,
-						RunAsGroup:          &nonRootID,
-						FSGroup:             &nonRootID,
-						FSGroupChangePolicy: &fsGroupPolicy,
-						SeccompProfile:      &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
-					InitContainers: initContainers,
-					Containers: []corev1.Container{{
-						Name:            mainContainerName,
-						Image:           b.ExecutorImage,
-						ImagePullPolicy: corev1.PullIfNotPresent,
-						Command:         []string{runnerPath},
-						Args: []string{
-							"--ptah-binary", ptahBinaryPath,
-							"--max-result-bytes", strconv.FormatInt(runner.DefaultMaxResultBytes, 10),
-							"--max-plan-bytes", strconv.FormatInt(runner.DefaultMaxPlanBytes, 10),
-							"--operation", string(migrationRunnerOperation(operation.Type)),
-						},
-						WorkingDir:      workPath,
-						Env:             environment,
-						Resources:       resources,
-						SecurityContext: hardenedContainerContext(&falseValue, &trueValue, &nonRootID),
-						VolumeMounts: append([]corev1.VolumeMount{
-							{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true},
-							{Name: workVolumeName, MountPath: workPath},
-						}, mounts...),
-					}},
-					Volumes:           append(baseVolumes(), volumes...),
-					NodeSelector:      copyMap(migration.Spec.Execution.NodeSelector),
-					Tolerations:       append([]corev1.Toleration(nil), migration.Spec.Execution.Tolerations...),
-					Affinity:          migration.Spec.Execution.Affinity.DeepCopy(),
-					RuntimeClassName:  copyStringPointer(migration.Spec.Execution.RuntimeClassName),
-					PriorityClassName: migration.Spec.Execution.PriorityClassName,
-				},
-			},
-		},
-	}
-	bindStableAPIDefaults(job)
-	return job, nil
+	return b.buildOperationJob(job)
 }
 
 // migrationReadsArtifactBytes reports whether an operation needs the artifact's
@@ -393,8 +279,6 @@ func migrationDataPlane(
 			)
 		}
 	}
-
-	sort.Slice(environment, func(left, right int) bool { return environment[left].Name < environment[right].Name })
 	return environment, volumes, mounts, annotations, nil
 }
 
