@@ -173,6 +173,14 @@ runner measure the operator well inside what the machine could give it; the
 figures that decide a budget are where these curves bend, and this workload
 never reached one.
 
+The acceptance record carries these figures in one place, as the operating
+targets and recovery objectives of a profile scoped to this lab:
+[`support/acceptance/lab-20.json`](https://github.com/stokaro/ptah-operator/blob/master/support/acceptance/lab-20.json),
+which `make acceptance-record ACCEPTANCE_PROFILE=support/acceptance/lab-20.json`
+reads. It says the lab restores no database and claims no recovery point or
+time for one. A test rebuilds its text from the report above, so the profile
+and the reading cannot disagree.
+
 ## What has not been measured
 
 Everything that decides whether an installation is inside its budget, at that
