@@ -70,6 +70,22 @@ sha256_stdin() {
 	shasum -a 256 | awk '{print $1}'
 }
 
+# derive_coordination_digest is the realm a coordination key names, derived as
+# internal/fingerprint derives it: the canonical engine, the namespace the
+# resource lives in and the key, in that field order, which jq keeps as
+# written. The approval webhook recomputes it from the schema's spec and refuses
+# a plan bound to anything else, so a literal written here goes stale the day
+# the derivation moves, as one did when the namespace became part of it.
+derive_coordination_digest() {
+	derived_canonical=$(jq -cn \
+		--arg engine "$1" \
+		--arg namespace "$2" \
+		--arg key "$3" '
+      {contract_version: 1, engine: $engine, namespace: $namespace, coordination_key: $key}
+    ')
+	printf 'sha256:%s\n' "$(printf '%s' "$derived_canonical" | sha256_stdin)"
+}
+
 for value_name in KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE FOREIGN_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE RUNNER_IMAGE PTAH_VERSION CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
@@ -447,6 +463,7 @@ k get crd ptahschemaapprovals.operator.ptah.run -o json |
 POLICY_NAME=e2e-verification-policy
 POLICY_KEY=policy.yaml
 SCHEMA_NAME=e2e-suspended-schema
+SUSPENDED_COORDINATION_KEY=e2e/admission/postgresql
 UNSUPPORTED_ENGINE_SCHEMA=e2e-unsupported-engine
 PLAN_NAME=e2e-plan
 PLAN_CHUNK_NAME=e2e-plan-chunk-0
@@ -717,6 +734,7 @@ delete_webhook_scope_fixtures
 jq -n \
 	--arg namespace "$TEST_NAMESPACE" \
 	--arg name "$SCHEMA_NAME" \
+	--arg coordinationKey "$SUSPENDED_COORDINATION_KEY" \
 	--arg policy "$POLICY_NAME" \
 	--arg policyKey "$POLICY_KEY" '
   {
@@ -726,7 +744,7 @@ jq -n \
     spec: {
       target: {
         engine: "PostgreSQL",
-        coordinationKey: "e2e/admission/postgresql",
+        coordinationKey: $coordinationKey,
         urlFrom: {name: "database-url", key: "url"}
       },
       desired: {
@@ -916,7 +934,9 @@ deployed_controller_image=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLL
 
 artifact_digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
 content_digest=sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881
-coordination_digest=sha256:a039cc1dcc29e539b94d48451d5b4b5fa2b2eebc7927f5c4e106679b98479725
+# The suspended schema's own realm. It is the one value in this binding the
+# webhook derives rather than copies, so it is derived here too.
+coordination_digest=$(derive_coordination_digest postgresql "$TEST_NAMESPACE" "$SUSPENDED_COORDINATION_KEY")
 target_digest=sha256:4444444444444444444444444444444444444444444444444444444444444444
 actual_fingerprint=sha256:5555555555555555555555555555555555555555555555555555555555555555
 drift_report_digest=sha256:9999999999999999999999999999999999999999999999999999999999999999
