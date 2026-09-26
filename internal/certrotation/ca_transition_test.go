@@ -408,6 +408,70 @@ func TestCATransitionSwitchesWithoutDelayWhenNothingVerifiesTheCurrentCertificat
 	}
 }
 
+func TestCATransitionReplacesBootstrapMaterialInOnePass(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	// The chart renders a two-day CA and a one-day serving certificate when it
+	// installs, both inside the renewal threshold from the start.
+	bootstrapPolicy := config
+	bootstrapPolicy.CACertificateValidity = 48 * time.Hour
+	bootstrapPolicy.ServingCertificateValidity = 24 * time.Hour
+	bootstrap := mustGenerateMaterial(t, now, bootstrapPolicy)
+	client := newTestClient(config, secretForMaterial(config, bootstrap), bootstrap.caPEM, twoReadyEndpoints(config))
+	fixture := &caTransitionFixture{client: client, config: config, prober: &recordingProber{}}
+
+	// One pass, finished before the rotator reports ready, so that nothing
+	// is left to write into the webhook configurations while a later Helm
+	// upgrade sits between its render and its apply.
+	fixture.mustPass(t, now.Add(time.Minute), 0)
+	updated := mustGetSecret(t, client, config)
+	if bytes.Equal(updated.Data[CACertificateKey], bootstrap.caPEM) {
+		t.Fatal("the bootstrap CA was not replaced")
+	}
+	state, err := inspectSecret(updated, config, now.Add(time.Minute))
+	if err != nil || state.rotateCA || state.rotateServing {
+		t.Fatalf("replaced Secret = %+v, %v; want current material", state, err)
+	}
+	assertFinalBundles(t, client, config, updated.Data[CACertificateKey])
+	if len(mustGetStagingSecret(t, client, config).Data) != 0 {
+		t.Fatal("the bootstrap transition kept its staging record")
+	}
+}
+
+func TestIssuedInsideRenewalThreshold(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	short := config
+	short.ServingCertificateValidity = time.Hour
+	short.CACertificateValidity = 2 * time.Hour
+	shortLived := mustGenerateMaterial(t, now, short)
+	longLived := mustGenerateMaterial(t, now, config)
+	lifetime := shortLived.ca.NotAfter.Sub(shortLived.ca.NotBefore)
+	for _, test := range []struct {
+		name      string
+		bundle    []byte
+		threshold time.Duration
+		want      bool
+	}{
+		{name: "lifetime shorter than the threshold", bundle: shortLived.caPEM, threshold: 7 * 24 * time.Hour, want: true},
+		{name: "lifetime equal to the threshold", bundle: shortLived.caPEM, threshold: lifetime, want: true},
+		{name: "lifetime one nanosecond longer", bundle: shortLived.caPEM, threshold: lifetime - time.Nanosecond},
+		{name: "a policy-length CA", bundle: longLived.caPEM, threshold: 7 * 24 * time.Hour},
+		{name: "a policy-length CA beside a short one", bundle: mustCombine(t, shortLived.caPEM, longLived.caPEM), threshold: 7 * 24 * time.Hour},
+		{name: "no CA", threshold: 7 * 24 * time.Hour},
+		{name: "not a certificate", bundle: []byte("not PEM"), threshold: 7 * 24 * time.Hour},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := issuedInsideRenewalThreshold(test.bundle, test.threshold); got != test.want {
+				t.Fatalf("issuedInsideRenewalThreshold() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestStillServingCountsOnlyExpiry(t *testing.T) {
 	t.Parallel()
 	config := testConfig()

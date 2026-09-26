@@ -96,10 +96,10 @@ func (r *Rotator) runPendingCATransition(
 		return Result{RequeueAfter: switchAt.Sub(now)}, nil
 	}
 	if !current.serving {
-		// The current serving certificate has expired, or no managed entry
-		// holds a CA that issued it, so admission through it has already
-		// stopped. Waiting would only prolong that.
-		r.logStep("current serving certificate no longer verifies; switching without the delay")
+		// The current serving certificate has expired, no managed entry holds
+		// a CA that issued it, or it is the install's bootstrap material, so
+		// there is nothing the delay would protect.
+		r.logStep("current serving certificate is expired, unverifiable, or bootstrap; switching without the delay")
 	}
 	if err := r.switchToNewCA(ctx, primary, pending); err != nil {
 		return Result{}, err
@@ -164,8 +164,29 @@ func (r *Rotator) currentServingTrust(ctx context.Context, primary *corev1.Secre
 	if err != nil {
 		return servingTrust{}, err
 	}
-	trust.serving = serving
+	trust.serving = serving && !issuedInsideRenewalThreshold(trust.bundle, r.config.RenewalThreshold)
 	return trust, nil
+}
+
+// issuedInsideRenewalThreshold reports whether every CA in the bundle was
+// already due for renewal when it was issued. That is the chart's bootstrap
+// CA: it lives two days, it exists only until the rotator's first pass
+// replaces it, and the rotator reports ready only after that pass. Waiting
+// out the switch delay there would let `helm install --wait` return with the
+// transition still open, and the rotator's final bundle write would then land
+// inside a later `helm upgrade`, between its render and its server-side apply,
+// which fails the upgrade with a field-manager conflict on caBundle.
+func issuedInsideRenewalThreshold(bundle []byte, threshold time.Duration) bool {
+	certificates, err := parseCertificateBundle(bundle)
+	if err != nil || len(certificates) == 0 {
+		return false
+	}
+	for _, certificate := range certificates {
+		if certificate.NotAfter.Sub(certificate.NotBefore) > threshold {
+			return false
+		}
+	}
+	return true
 }
 
 // stillServing reports whether an API server could still verify the leaf
