@@ -62,6 +62,7 @@ func TestEveryShellRealmDigestIsTheOperators(t *testing.T) {
 			} {
 				var want string
 				var arguments []string
+				var err error
 				if derivation.realm {
 					// A realm is named by a DNS subdomain, not by a key.
 					name := strings.ReplaceAll(sample.name, "/", "-")
