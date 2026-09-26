@@ -1177,23 +1177,33 @@ assert_second_claimant_blocks_the_realm() {
 	# Each side is read for the other's namespace and name: the claimants are
 	# different tenants, and a refusal that told one of them where the other
 	# lives would be the census leaking what it exists to count.
+	#
+	# The census writes into the condition messages, so that is where the other
+	# claimant is looked for. The rest of the status carries image references,
+	# and this harness serves its images from a registry Service in the test
+	# namespace, so the whole status names that namespace on every resource.
 	scan_for_credentials "$STATUS_FILE" "the realm refusal"
 	jq -e --arg key "$MIGRATION_COORDINATION_KEY" \
 		--arg namespace "$MIGRATION_RIVAL_NAMESPACE" --arg name "$MIGRATION_RIVAL_SCHEMA" '
       ([.status | .. | scalars | select(. == $key)] | length == 0) and
-      ([.status | .. | strings | select(contains($namespace) or contains($name))] | length == 0)
+      ([.status.conditions[]?.message | select(contains($namespace) or contains($name))] | length == 0)
     ' "$STATUS_FILE" >/dev/null ||
 		fail "the realm refusal published the coordination key or the other claimant"
 	# Read, then held to having a refusal to read: an empty status names
 	# nobody and would pass.
-	k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json |
-		jq -e --arg key "$MIGRATION_COORDINATION_KEY" \
-			--arg namespace "$TEST_NAMESPACE" --arg name "$MIGRATION_NAME" '
-          any(.status.conditions[]?; .reason == "RealmConflict") and
-          ([.status | .. | scalars | select(. == $key or . == $name)] | length == 0) and
-          ([.status | .. | strings | select(contains($namespace))] | length == 0)
-        ' >/dev/null ||
+	k -n "$MIGRATION_RIVAL_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json \
+		>"$WORK_DIR/realm-rival.json" ||
+		fail "$MIGRATION_RIVAL_SCHEMA could not be read"
+	scan_for_credentials "$WORK_DIR/realm-rival.json" "the rival's realm refusal"
+	jq -e --arg key "$MIGRATION_COORDINATION_KEY" \
+		--arg namespace "$TEST_NAMESPACE" --arg name "$MIGRATION_NAME" '
+      any(.status.conditions[]?; .reason == "RealmConflict") and
+      ([.status | .. | scalars | select(. == $key)] | length == 0) and
+      ([.status.conditions[]?.message | select(contains($namespace) or contains($name))] | length == 0)
+    ' "$WORK_DIR/realm-rival.json" >/dev/null || {
+		jq '.status.conditions' "$WORK_DIR/realm-rival.json" >&2 || true
 		fail "$MIGRATION_RIVAL_SCHEMA's refusal published the coordination key or the other claimant"
+	}
 
 	# The refusal precedes the first claim, so the newcomer never resolved its
 	# reference and never created a Job, in its own namespace or any other.
