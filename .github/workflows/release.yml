@@ -151,6 +151,7 @@ jobs:
       actions: read
       contents: read
     outputs:
+      acceptance-evidence-sha256: ${{ steps.acceptance-evidence.outputs.sha256 }}
       chart-sha256: ${{ steps.support-evidence.outputs.chart-sha256 }}
       kubernetes-support-window: ${{ steps.support-evidence.outputs.kubernetes-support-window }}
       source-sha: ${{ steps.support-evidence.outputs.source-sha }}
@@ -338,6 +339,64 @@ jobs:
             printf 'source-sha=%s\n' "$GITHUB_SHA"
             printf 'support-evidence-run-id=%s\n' "$evidence_run"
           } >> "$GITHUB_OUTPUT"
+      # PA-12 of #242: the evidence has to outlive the CI run that produced it,
+      # whose artifacts expire. This keeps what the run's acceptance jobs
+      # recorded, those jobs as the API reports them, and the acceptance record
+      # at this commit, as one bundle the release attaches as an asset.
+      - name: Bundle the acceptance evidence of that run
+        id: acceptance-evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVIDENCE_RUN_ID: ${{ steps.support-evidence.outputs.support-evidence-run-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          input="$RUNNER_TEMP/acceptance-evidence"
+          mkdir -p "$input/artifacts"
+          gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$EVIDENCE_RUN_ID" > "$input/run.json"
+          gh api \
+            --method GET \
+            --paginate \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$EVIDENCE_RUN_ID/jobs?filter=latest&per_page=100" \
+            --jq '{total_count, jobs}' \
+            | jq -s '{total_count: (.[0].total_count // 0), jobs: (map(.jobs // []) | add // [])}' \
+            > "$input/run-jobs.json"
+          go run ./hack/releaseverify -print-acceptance-artifacts > "$RUNNER_TEMP/acceptance-artifacts"
+          mapfile -t artifacts < "$RUNNER_TEMP/acceptance-artifacts"
+          [[ "${#artifacts[@]}" -gt 0 ]]
+          for artifact in "${artifacts[@]}"; do
+            mkdir "$input/artifacts/$artifact"
+            gh run download "$EVIDENCE_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact" \
+              --dir "$input/artifacts/$artifact"
+          done
+          go run ./hack/acceptancecoverage -record -profile support/acceptance/lab-20.json \
+            > "$input/acceptance-record.md"
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          bundle="$RUNNER_TEMP/acceptance-evidence.tar.gz"
+          go run ./hack/releaseverify \
+            -acceptance-evidence-input "$input" \
+            -acceptance-evidence-output "$bundle" \
+            -acceptance-evidence-source "$GITHUB_SHA" \
+            -acceptance-evidence-epoch "$source_epoch"
+          digest="$(sha256sum "$bundle" | awk '{print $1}')"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          printf 'sha256=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Hand the acceptance evidence to the publish job
+        id: acceptance-evidence-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: acceptance-evidence
+          path: ${{ runner.temp }}/acceptance-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: true
 
   publish:
     name: Publish signed images and attested chart
@@ -748,6 +807,27 @@ jobs:
           distribution: goreleaser
           version: v2.18.2
           args: build --clean
+      - name: Collect the acceptance evidence the preflight bundled
+        id: evidence-download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: acceptance-evidence
+          path: ${{ runner.temp }}/acceptance-evidence
+      # The bundle is an asset like the chart: these are the bytes the
+      # preflight built and reported, and no others.
+      - name: Materialize the acceptance evidence
+        id: evidence-asset
+        env:
+          TESTED_ACCEPTANCE_EVIDENCE_SHA256: ${{ needs.support-preflight.outputs.acceptance-evidence-sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/acceptance-evidence/acceptance-evidence.tar.gz"
+          [[ -f "$bundle" && ! -L "$bundle" ]]
+          [[ "$(find "$RUNNER_TEMP/acceptance-evidence" -mindepth 1 | wc -l)" -eq 1 ]]
+          [[ "$TESTED_ACCEPTANCE_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$(sha256sum "$bundle" | awk '{print $1}')" == "$TESTED_ACCEPTANCE_EVIDENCE_SHA256" ]]
+          mv "$bundle" dist/acceptance-evidence.tar.gz
       - name: Materialize immutable release assets
         id: artifacts
         env:
@@ -772,6 +852,7 @@ jobs:
               executor_digest='${{ steps.executor-stage-inspect.outputs.digest }}'
             fi
             chart_asset_sha256="$(sha256sum "$chart_path" | awk '{print $1}')"
+            evidence_sha256="$(sha256sum dist/acceptance-evidence.tar.gz | awk '{print $1}')"
             [[ "$TESTED_SUPPORT_EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
             [[ "$TESTED_KUBERNETES_SUPPORT_WINDOW" =~ ^[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+)*$ ]]
             {
@@ -789,6 +870,7 @@ jobs:
               printf 'chart-asset=%s\n' "$(basename "$chart_path")"
               printf 'chart-asset-sha256=%s\n' "$chart_asset_sha256"
               printf 'client-assets=%s\n' 'kubectl-ptah-darwin-amd64,kubectl-ptah-darwin-arm64,kubectl-ptah-linux-amd64,kubectl-ptah-linux-arm64'
+              printf 'acceptance-evidence-sha256=%s\n' "$evidence_sha256"
               printf 'support-evidence-run-id=%s\n' "$TESTED_SUPPORT_EVIDENCE_RUN_ID"
               printf 'kubernetes-support-window=%s\n' "$TESTED_KUBERNETES_SUPPORT_WINDOW"
             } > "$manifest"
@@ -796,7 +878,7 @@ jobs:
           chart_name="$(basename "$chart_path")"
           (
             cd dist
-            sha256sum "$chart_name" release-manifest.txt \
+            sha256sum "$chart_name" release-manifest.txt acceptance-evidence.tar.gz \
               kubectl-ptah-darwin-amd64 kubectl-ptah-darwin-arm64 \
               kubectl-ptah-linux-amd64 kubectl-ptah-linux-arm64 > SHA256SUMS
           )
@@ -1011,6 +1093,7 @@ jobs:
             ${{ steps.chart-package.outputs.path }}
             dist/release-manifest.txt
             dist/SHA256SUMS
+            dist/acceptance-evidence.tar.gz
             dist/kubectl-ptah-darwin-amd64
             dist/kubectl-ptah-darwin-arm64
             dist/kubectl-ptah-linux-amd64
@@ -1065,7 +1148,8 @@ jobs:
           for asset in \
             '${{ steps.chart-package.outputs.path }}' \
             dist/release-manifest.txt \
-            dist/SHA256SUMS
+            dist/SHA256SUMS \
+            dist/acceptance-evidence.tar.gz
           do
             delay=2
             for attempt in {1..8}; do
@@ -1096,6 +1180,7 @@ jobs:
             "$(basename '${{ steps.chart-package.outputs.path }}')" \
             release-manifest.txt \
             SHA256SUMS \
+            acceptance-evidence.tar.gz \
             kubectl-ptah-darwin-amd64 \
             kubectl-ptah-darwin-arm64 \
             kubectl-ptah-linux-amd64 \
@@ -1265,6 +1350,7 @@ jobs:
             "$(basename '${{ steps.chart-package.outputs.path }}')" \
             release-manifest.txt \
             SHA256SUMS \
+            acceptance-evidence.tar.gz \
             kubectl-ptah-darwin-amd64 \
             kubectl-ptah-darwin-arm64 \
             kubectl-ptah-linux-amd64 \

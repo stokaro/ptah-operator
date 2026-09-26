@@ -770,6 +770,26 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"extra privileged step":     {`      - name: Publish completed release transaction`, "      - name: Injected\n        id: injected\n        run: true\n      - name: Publish completed release transaction", false},
 		"dead shell branch":         {`          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false`, "          if false; then\n            echo bypass\n          fi\n          gh release edit \"$GITHUB_REF_NAME\" --draft=false --latest=false", false},
 
+		// The acceptance evidence, from the CI run the preflight verified to
+		// the asset the release publishes.
+		"evidence bundling step missing":  {"        id: acceptance-evidence\n", "        id: acceptance-evidence-bundle\n", false},
+		"evidence handoff missing":        {"        id: acceptance-evidence-upload\n", "        id: acceptance-evidence-copy\n", false},
+		"evidence preflight output":       {`acceptance-evidence-sha256: ${{ steps.acceptance-evidence.outputs.sha256 }}`, `acceptance-evidence-sha256: unverified`, false},
+		"evidence of another run":         {`EVIDENCE_RUN_ID: ${{ steps.support-evidence.outputs.support-evidence-run-id }}`, `EVIDENCE_RUN_ID: "1"`, false},
+		"evidence bundled conditionally":  {"        id: acceptance-evidence\n", "        id: acceptance-evidence\n        if: github.run_attempt == 1\n", false},
+		"evidence handed on from nowhere": {`          path: ${{ runner.temp }}/acceptance-evidence.tar.gz`, `          path: ${{ runner.temp }}/acceptance-evidence`, false},
+		"evidence collection missing":     {"        id: evidence-download\n", "        id: evidence-fetch\n", false},
+		"evidence collected once":         {"        id: evidence-download\n", "        id: evidence-download\n        if: steps.transaction.outputs.mode == 'fresh'\n", false},
+		"evidence asset missing":          {"        id: evidence-asset\n", "        id: evidence-copy\n", false},
+		"evidence digest binding":         {`TESTED_ACCEPTANCE_EVIDENCE_SHA256: ${{ needs.support-preflight.outputs.acceptance-evidence-sha256 }}`, `TESTED_ACCEPTANCE_EVIDENCE_SHA256: unverified`, false},
+		"evidence digest comparison":      {`[[ "$(sha256sum "$bundle" | awk '{print $1}')" == "$TESTED_ACCEPTANCE_EVIDENCE_SHA256" ]]`, `true`, false},
+		"evidence manifest key":           {`printf 'acceptance-evidence-sha256=%s\n' "$evidence_sha256"`, `true`, false},
+		"evidence checksum":               {`sha256sum "$chart_name" release-manifest.txt acceptance-evidence.tar.gz`, `sha256sum "$chart_name" release-manifest.txt`, false},
+		"evidence attestation":            {"            dist/acceptance-evidence.tar.gz\n            dist/kubectl-ptah-darwin-amd64", "            dist/kubectl-ptah-darwin-amd64", false},
+		"evidence authentication":         {"            dist/SHA256SUMS \\\n            dist/acceptance-evidence.tar.gz\n          do", "            dist/SHA256SUMS\n          do", false},
+		"evidence upload":                 {"            SHA256SUMS \\\n            acceptance-evidence.tar.gz \\\n", "            SHA256SUMS \\\n", false},
+		"evidence publication gate":       {"            -verify-tag-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n            acceptance-evidence.tar.gz \\\n", "            -verify-tag-identity\n          expected_names=\"$(printf '%s\\n' \\\n            \"$(basename '${{ steps.chart-package.outputs.path }}')\" \\\n            release-manifest.txt \\\n            SHA256SUMS \\\n", false},
+
 		// The executor, from the pinned source to the verified signature.
 		"executor repository":           {`  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah-operator-executor`, `  EXECUTOR_IMAGE: ghcr.io/stokaro/ptah`, false},
 		"executor pin source":           {`pin="$(go run ./hack/releaseverify -print-executor-source)"`, `pin="$(cat support/ptah.json)"`, true},
@@ -920,6 +940,14 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The acceptance evidence of the run the manifest names, built the way the
+	// release builds it.
+	evidence := validEvidenceBundle(t, root)
+	evidenceSum := fmt.Sprintf("%x", sha256.Sum256(evidence))
+	evidencePath := filepath.Join(directory, acceptanceEvidenceAsset)
+	if err := os.WriteFile(evidencePath, evidence, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	manifest := fmt.Sprintf("version=0.1.0\n"+
 		"source-repository=%s\n"+
 		"source-ref=refs/tags/%s\n"+
@@ -934,11 +962,12 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"chart-asset=%s\n"+
 		"chart-asset-sha256=%s\n"+
 		"client-assets=%s\n"+
+		"acceptance-evidence-sha256=%s\n"+
 		"support-evidence-run-id=456\n"+
 		"kubernetes-support-window=%s\n",
 		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA,
 		executorImageName, executorDigest, executorImageName, sourceSHA, pin.Commit, pin.Version,
-		chartName, chartSum, strings.Join(assets, ","), supportWindow)
+		chartName, chartSum, strings.Join(assets, ","), evidenceSum, supportWindow)
 	executorLines := fmt.Sprintf("executor=%s@%s\n"+
 		"executor-tag=%s:tx-%s-123\n"+
 		"executor-ptah-commit=%s\n"+
@@ -958,8 +987,8 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	// One binary per client platform, beside the chart and the manifest. The
 	// contents stand in for a build; what is measured is that the checksum file
 	// covers each one and matches the file that would be uploaded.
-	checksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n",
-		chartSum, chartName, sha256.Sum256([]byte(manifest)))
+	checksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n%s  %s\n",
+		chartSum, chartName, sha256.Sum256([]byte(manifest)), evidenceSum, acceptanceEvidenceAsset)
 	for _, asset := range assets {
 		binary := []byte("binary bytes of " + asset)
 		if err := os.WriteFile(filepath.Join(directory, asset), binary, 0o600); err != nil {
@@ -1005,7 +1034,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 			// it: an installer reading it would find no executor to pin.
 			name:     "a manifest without the executor",
 			manifest: strings.Replace(manifest, executorLines, "", 1),
-			problem:  "release manifest has 12 records, expected 16",
+			problem:  "release manifest has 13 records, expected 17",
 		},
 		{
 			// A tag moves; only a digest names the bytes that were signed.
@@ -1069,6 +1098,101 @@ func TestVerifyReleaseAssets(t *testing.T) {
 				t.Fatalf("verifyReleaseAssets() said %q, which does not carry %q", err, row.problem)
 			}
 		})
+	}
+	// The acceptance evidence is an asset like the chart: named by digest in
+	// the manifest, listed in the checksum file, and the bytes beside them.
+	otherEvidenceInput := validEvidenceInput(t, root)
+	otherEvidenceInput.job(t, supportGateJobName)["id"] = 1
+	otherEvidence, err := buildAcceptanceEvidence(root, otherEvidenceInput.write(t), evidenceSourceSHA, evidenceEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceLine := fmt.Sprintf("%s  %s\n", evidenceSum, acceptanceEvidenceAsset)
+	for _, row := range []struct {
+		name      string
+		manifest  string
+		checksums string
+		evidence  []byte
+		problem   string
+	}{
+		{
+			name:     "a manifest without the bundle",
+			manifest: strings.Replace(manifest, "acceptance-evidence-sha256="+evidenceSum+"\n", "", 1),
+			problem:  "release manifest has 16 records, expected 17",
+		},
+		{
+			name: "a manifest naming another bundle",
+			manifest: strings.Replace(manifest,
+				"acceptance-evidence-sha256="+evidenceSum,
+				"acceptance-evidence-sha256="+strings.Repeat("4", 64), 1),
+			problem: "and the release manifest records " + strings.Repeat("4", 64),
+		},
+		{
+			name: "a manifest naming the bundle by something other than a digest",
+			manifest: strings.Replace(manifest,
+				"acceptance-evidence-sha256="+evidenceSum,
+				"acceptance-evidence-sha256="+acceptanceEvidenceAsset, 1),
+			problem: "release manifest acceptance evidence digest is invalid",
+		},
+		{
+			// Another bundle for the same run, as a rerun of the preflight
+			// after the CI run was re-executed would build.
+			name:     "a bundle whose digest differs",
+			evidence: otherEvidence,
+			problem:  "and the release manifest records " + evidenceSum,
+		},
+		{
+			name:     "no bundle beside the checksum file",
+			evidence: []byte{},
+			problem:  "must be a non-empty regular file",
+		},
+		{
+			name:      "a checksum file without the bundle",
+			checksums: strings.Replace(checksums, evidenceLine, "", 1),
+			problem:   "SHA256SUMS is not the exact checksum set",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			rowManifest := manifest
+			if row.manifest != "" {
+				rowManifest = row.manifest
+			}
+			rowChecksums := checksums
+			if row.checksums != "" {
+				rowChecksums = row.checksums
+			}
+			if rowManifest == manifest && rowChecksums == checksums && row.evidence == nil {
+				t.Fatal("the row changes nothing, so it measures nothing")
+			}
+			rowEvidence := evidence
+			if row.evidence != nil {
+				rowEvidence = row.evidence
+			}
+			for path, content := range map[string][]byte{
+				manifestPath:  []byte(rowManifest),
+				checksumsPath: []byte(rowChecksums),
+				evidencePath:  rowEvidence,
+			} {
+				if err := os.WriteFile(path, content, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA)
+			if err == nil {
+				t.Fatal("verifyReleaseAssets() accepted the release")
+			}
+			if !strings.Contains(err.Error(), row.problem) {
+				t.Fatalf("verifyReleaseAssets() said %q, which does not carry %q", err, row.problem)
+			}
+		})
+	}
+	for path, content := range map[string][]byte{
+		checksumsPath: []byte(checksums),
+		evidencePath:  evidence,
+	} {
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
