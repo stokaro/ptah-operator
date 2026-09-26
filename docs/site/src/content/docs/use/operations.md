@@ -1094,6 +1094,13 @@ and it is a statement that nothing is executing against that database any more.
   If Job creation or identity is uncertain, observation waits for the complete
   possible mutation deadline while the holder is renewed. The plan is never
   blindly replayed.
+- A migration Apply whose Pod was stopped -- a drain, a preemption, an
+  eviction, its deadline -- is recorded with the account Ptah wrote as it
+  stopped, when it managed to write one inside the Pod's grace: a run stopped
+  between two files is a failed run with the versions it applied, and the
+  history read that follows confirms it. Where the log holding that account is
+  gone, the summary in the Pod's termination message stands in for it
+  ([The termination summary](../../reference/execution/#the-termination-summary)).
 - A native stale-plan refusal is accepted as pre-mutation only when its exact,
   untruncated diagnostic names the source fingerprint in the reconstructed
   immutable plan. The plan is cleared, its recorded approval becomes stale,
@@ -1126,8 +1133,10 @@ identity rather than pointing at them.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
 say. A readable result frame reports the database the executor opened, and that
-is the one the run reached. Without one -- an Apply whose create was never
-confirmed, a Pod that wrote nothing a reader could use -- the record falls back
+is the one the run reached; so does the summary the runner wrote into its Pod's
+termination message, where it was read in place of a log that was gone. Without
+either -- an Apply whose create was never confirmed, a Pod that wrote nothing a
+reader could use -- the record falls back
 to the database the plan was computed against, which is the last one this
 resource read. The record does not say which of the two it is, and the Secret
 behind a reference can rotate between a reading and a run, so treat the digest

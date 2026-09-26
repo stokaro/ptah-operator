@@ -27,6 +27,7 @@ var controllerFiles = []string{
 	"internal/controller/schema_controller.go",
 	"internal/controller/migration_controller.go",
 	"internal/controller/migration_apply.go",
+	"internal/controller/migration_termination_summary.go",
 	"internal/controller/result_arrival.go",
 }
 

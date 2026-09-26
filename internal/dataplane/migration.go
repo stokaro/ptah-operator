@@ -48,6 +48,13 @@ var migrationOutcomes = []string{
 	MigrationOutcomeUnknown,
 }
 
+// IsKnownMigrationOutcome reports whether outcome is one a run document may
+// carry. The runner's termination summary repeats a run's outcome, and it is
+// held to the same set the document was.
+func IsKnownMigrationOutcome(outcome string) bool {
+	return slices.Contains(migrationOutcomes, outcome)
+}
+
 // Outcomes a run document reports.
 const (
 	MigrationOutcomeUpToDate = "up-to-date"

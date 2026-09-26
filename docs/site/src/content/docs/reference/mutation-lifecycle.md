@@ -193,11 +193,18 @@ actually terminated.
 | | Enforcement |
 | --- | --- |
 | `PtahSchema` | `collectTerminalPodEvidence`, `runner.ParseResultFor`, `awaitFrameArrival` |
-| `PtahMigration` | `collectTerminalPodEvidence`, `runner.ParseResultFor`, `awaitFrameArrival` |
+| `PtahMigration` | `collectTerminalPodEvidence`, `runner.ParseResultFor`, `awaitFrameArrival`, `terminationSummaryStandIn` |
 
 The frame's own report of which database it opened is compared against the
 claim before the account is accepted. A run that reached a database other than
 the one it was planned for is uncertain, not failed.
+
+A migration Apply whose log holds no frame is read from the summary its runner
+wrote into the Pod's termination message, when that summary names this attempt
+and agrees with any frame header the log does hold
+([The termination summary](../execution/#the-termination-summary)). The same
+code decides it as decides a frame, so it can say less than the frame would
+have and never more.
 
 ## Retain uncertainty
 

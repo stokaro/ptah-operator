@@ -191,19 +191,26 @@ type ParseOptions struct {
 // MarshalFrame encodes a length- and digest-bound frame. The byte length and
 // SHA-256 cover exactly the JSON payload bytes between the header and footer.
 func MarshalFrame(result Result) ([]byte, error) {
+	frame, _, err := marshalFrame(result)
+	return frame, err
+}
+
+// marshalFrame is MarshalFrame, and also returns the payload digest the
+// header declares, as "sha256:" and lowercase hex.
+func marshalFrame(result Result) ([]byte, string, error) {
 	if result.ProtocolVersion == 0 {
 		result.ProtocolVersion = ProtocolVersion
 	}
 	if err := validateResult(result, ParseOptions{}); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	payload, err := json.Marshal(result)
 	if err != nil {
-		return nil, fmt.Errorf("marshal runner result: %w", err)
+		return nil, "", fmt.Errorf("marshal runner result: %w", err)
 	}
 	if int64(len(payload)) > DefaultMaxFrameBytes {
-		return nil, fmt.Errorf("%w: payload is %d bytes; maximum is %d", ErrFrameTooLarge, len(payload), DefaultMaxFrameBytes)
+		return nil, "", fmt.Errorf("%w: payload is %d bytes; maximum is %d", ErrFrameTooLarge, len(payload), DefaultMaxFrameBytes)
 	}
 	digest := sha256.Sum256(payload)
 	header := fmt.Sprintf("%s%d %s\n", frameHeader, len(payload), hex.EncodeToString(digest[:]))
@@ -213,7 +220,7 @@ func MarshalFrame(result Result) ([]byte, error) {
 	frame = append(frame, payload...)
 	frame = append(frame, frameFooter...)
 	frame = append(frame, '\n')
-	return frame, nil
+	return frame, "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func WriteFrame(w io.Writer, result Result) error {

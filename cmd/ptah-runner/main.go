@@ -6,15 +6,36 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 func main() {
-	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, os.Environ()))
+	os.Exit(runUntilSignaled(os.Args[1:], os.Stdout, os.Stderr, os.Environ(), runner.TerminationMessagePath))
 }
 
-func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, environment []string) int {
+// runUntilSignaled runs the runner under a context that SIGTERM and SIGINT
+// cancel.
+//
+// The runner is PID 1 in its container, so the kubelet's SIGTERM on eviction,
+// preemption, a drain or a Pod deadline reaches it and not the child. Without a
+// handler it died where it stood, the child was killed with it, and the Job
+// ended with no frame, which the controller can only record as unknown. With
+// one, the cancellation reaches the child as SIGTERM, the runner reads what the
+// child wrote once it stopped, and frames that, all inside the Pod's grace.
+//
+// Delivery stays captured until the process exits, so a second signal does not
+// kill the runner while it writes its frame: the kubelet's SIGKILL at the end
+// of the grace is the only bound, and the stop delay is sized under it.
+func runUntilSignaled(arguments []string, stdout, stderr io.Writer, environment []string, terminationLog string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	return run(ctx, arguments, stdout, stderr, environment, terminationLog)
+}
+
+func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, environment []string, terminationLog string) int {
 	flags := flag.NewFlagSet("ptah-runner", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	ptahBinary := flags.String("ptah-binary", "ptah", "path to the Ptah executable")
@@ -119,7 +140,29 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		Environment:    environment,
 		Diagnostics:    stderr,
 	})
-	if err := runner.WriteFrame(stdout, result); err != nil {
+	encoded, err := runner.EncodeResult(result)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: could not write the result frame")
+		return 2
+	}
+	// The summary goes first. It is small and local, while the frame may be
+	// megabytes through the container runtime's log pipe, so a runner killed
+	// part way through its frame has usually left the summary behind it. The
+	// summary names the frame's digest, so a log holding part of that frame
+	// still agrees with it.
+	switch {
+	case encoded.SummaryErr != nil:
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: the result has no termination summary: "+encoded.SummaryErr.Error())
+	case terminationLog != "":
+		if err := runner.WriteTerminationSummary(terminationLog, encoded.Summary); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: could not write the termination summary")
+		}
+	}
+	written, err := stdout.Write(encoded.Frame)
+	if err == nil && written != len(encoded.Frame) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "ptah-runner: could not write the result frame")
 		return 2
 	}

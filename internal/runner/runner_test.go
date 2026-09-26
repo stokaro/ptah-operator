@@ -961,6 +961,7 @@ func TestApplyChecksTargetIdentityBeforeDispatch(t *testing.T) {
 				envExpectedDatabaseEngine + "=PostgreSQL",
 				envDispatchNotAfter + "=2099-01-01T00:00:00Z",
 				envExecutionNotAfter + "=2099-01-01T00:00:00Z",
+				envTerminationGracePeriod + "=30",
 			}
 			result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
 			if test.wantError {
@@ -1128,6 +1129,7 @@ func TestApplyRechecksDispatchDeadlineImmediatelyBeforeExecution(t *testing.T) {
 		envExpectedPlanDigest + "=" + sha256Digest(plan),
 		envDispatchNotAfter + "=" + deadline.Format(time.RFC3339Nano),
 		envExecutionNotAfter + "=" + deadline.Format(time.RFC3339Nano),
+		envTerminationGracePeriod + "=30",
 	}
 	result := Run(context.Background(), Config{
 		Operation:   OperationApply,
@@ -2306,6 +2308,7 @@ func databaseEnvironment(operationID string) []string {
 		envCoordinationDigest + "=" + testCoordinationDigest(),
 		envDispatchNotAfter + "=2099-01-01T00:00:00Z",
 		envExecutionNotAfter + "=2099-01-01T00:00:00Z",
+		envTerminationGracePeriod + "=30",
 	}
 }
 

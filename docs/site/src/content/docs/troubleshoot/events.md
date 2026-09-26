@@ -37,6 +37,7 @@ full on the resource's own status and in the operation's Job.
 | `ProtectedTableRefused` | Warning | `PtahSchema` | A plan would change a table `spec.policy.protectedTables` fences off, so no plan is published. |
 | `ResultReadTimedOut` | Warning | `PtahSchema`, `PtahMigration` | Reading an operation's result took longer than the bound it is given. |
 | `TargetLockReleaseOwed` | Warning | `PtahMigration` | The database lock was not released, and the release the claim owes will be retried. |
+| `TerminationSummaryRefused` | Warning | `PtahMigration` | An Apply's log held no readable result, and the summary in its Pod's termination message was not read in its place. The message says why: another attempt, a summary cut short, or a log that holds a different frame. The run is recorded as unknown. |
 | `UnresolvedRunDiscarded` | Warning | `PtahMigration` | Deleting this resource discarded the record of a run nobody accounted for. The message names the outcome, the version, and the database. |
 | `VerificationPolicyInvalidated` | Warning | `PtahSchema` | The verification policy stopped matching the plan, so artifact and plan verification were invalidated. |
 
