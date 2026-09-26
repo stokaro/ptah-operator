@@ -175,8 +175,41 @@ func TestDecodePlanRaisesPrivilegeChanges(t *testing.T) {
 		{
 			name: "MariaDB definer function replaced", dialect: "mariadb",
 			statement: "CREATE OR REPLACE DEFINER=`admin`@`%` FUNCTION `f`() RETURNS int RETURN 1",
-			want:      []string{"Definer", "FunctionReplacement"},
+			want:      []string{"SecurityDefiner", "Definer", "FunctionReplacement"},
 		},
+		// A MySQL or MariaDB routine runs with its definer's rights unless it
+		// says otherwise, so one that names no SQL SECURITY is a definer-rights
+		// routine however plainly it is created.
+		{
+			name: "MySQL function with no security mode", dialect: "mysql",
+			statement: "CREATE FUNCTION `get_tenant`(p int) RETURNS int READS SQL DATA RETURN p + 1",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			name: "MySQL procedure with no security mode", dialect: "mysql",
+			statement: "CREATE PROCEDURE `archive`() MODIFIES SQL DATA BEGIN DELETE FROM `archive`; END",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			name: "MySQL function in an executable comment", dialect: "mysql",
+			statement: "/*!50003 CREATE FUNCTION `f`() RETURNS int DETERMINISTIC RETURN 1 */",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			name: "MariaDB invoker function replaced", dialect: "mariadb",
+			statement: "CREATE OR REPLACE FUNCTION `f`() RETURNS int SQL SECURITY INVOKER RETURN 1",
+			want:      []string{"FunctionReplacement"},
+		},
+		// The session's identity, which everything after it in the Apply runs as.
+		{name: "role assumed", dialect: "postgres", statement: `SET ROLE "app_admin"`, want: []string{"Role"}},
+		{name: "role assumed for the transaction", dialect: "postgres", statement: `SET LOCAL ROLE "app_admin"`, want: []string{"Role"}},
+		{name: "session authorization", dialect: "postgres", statement: `SET SESSION AUTHORIZATION "app_admin"`, want: []string{"Role"}},
+		{
+			name: "session authorization for the session", dialect: "postgres",
+			statement: `SET SESSION SESSION AUTHORIZATION "app_admin"`, want: []string{"Role"},
+		},
+		{name: "role assumed in a DO block", dialect: "postgres", statement: `DO $$ BEGIN SET ROLE app_admin; END $$`, want: []string{"Role"}},
+		{name: "MySQL role assumed", dialect: "mysql", statement: "SET ROLE ALL", want: []string{"Role"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -244,6 +277,21 @@ func TestDecodePlanDoesNotRaiseLookalikes(t *testing.T) {
 		{name: "MySQL skip comment", dialect: "mysql", statement: "-- CREATE POLICY p not supported in MySQL"},
 		{name: "MySQL hash comment", dialect: "mysql", statement: "# GRANT ALL ON *.* TO app\nCREATE TABLE t (id int)"},
 		{name: "MySQL declared row", dialect: "mysql", statement: "INSERT INTO `permissions` (`action`) VALUES ('GRANT ALL ON *.*')"},
+		{
+			name: "MySQL invoker procedure with a body", dialect: "mysql",
+			statement: "CREATE PROCEDURE `archive`() MODIFIES SQL DATA SQL SECURITY INVOKER BEGIN DELETE FROM `archive`; END",
+		},
+		{name: "MySQL table named for routines", dialect: "mysql", statement: "CREATE TABLE `functions` (`id` int, `procedure` text)"},
+		{name: "MySQL session setting", dialect: "mysql", statement: "SET SESSION sql_mode = 'ANSI_QUOTES'"},
+		// PostgreSQL defaults a function to SECURITY INVOKER, so the MySQL
+		// reading of a routine with no mode does not reach it.
+		{name: "function with no security mode", dialect: "postgres", statement: `CREATE FUNCTION "public"."total"(a int) RETURNS int LANGUAGE sql AS $$ SELECT a $$`},
+		{name: "a column called role updated", dialect: "postgres", statement: `UPDATE accounts SET role = 'admin' WHERE id = 1`},
+		{
+			name: "a column called role upserted", dialect: "postgres",
+			statement: `INSERT INTO accounts (id, role) VALUES (1, 'member') ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role`,
+		},
+		{name: "a search path set", dialect: "postgres", statement: `SET search_path = public`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

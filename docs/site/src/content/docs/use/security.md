@@ -148,6 +148,14 @@ lists what it reads and what it cannot see: rights an engine grants by default,
 such as a view reading with its owner's rights, SQL built at run time, and every
 `PtahMigration`.
 
+That reading is of keywords, and it is a filter rather than a boundary. The
+boundary is the database login an Apply runs as: an Apply can do what that
+login can do and nothing more, so a login that cannot grant, create roles or
+own other roles' objects keeps those out of every plan, read or not. Keep it to
+what the artifact manages, as
+[Databases and privileges](../../support/databases/#postgresql-authority) and
+[Does the login need superuser?](../../faq/#least-privilege-login) describe.
+
 `Always` is not wrong. It is the deliberate unattended mode, and an
 installation that wants it should have it. What matters is that choosing it is
 a decision someone made on purpose, rather than a default an author can reach

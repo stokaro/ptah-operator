@@ -91,10 +91,13 @@ CREATE TABLE "customers" (
 ```
 
 The statements come out as the planner wrote them, comments and all.
-`Privileges` names the kinds of authority the plan changes, or says `none`. A
-plan that names any waits for an approval even under `apply: Always`, and
+`Privileges` names the kinds of authority the plan records, or says `none`. A
+plan that records any waited for an approval even under `apply: Always`, and
 [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
-says what each kind covers.
+says what each kind covers. A kind the plugin reads in the SQL that the plan
+does not record is listed after them, marked `(read by this plugin, not
+recorded)`: the plugin and the manager that published the plan are different
+builds, and the manager did not hold the plan for it.
 
 `-o sql` prints the statements alone, in the order the plan holds them, each
 terminated once. Nothing is re-split on a semicolon: a statement may carry one

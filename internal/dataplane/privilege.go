@@ -18,8 +18,9 @@ const (
 	// PrivilegeRoleMembership is a role granted to, or revoked from, another
 	// role or user.
 	PrivilegeRoleMembership = "RoleMembership"
-	// PrivilegeRole is a role, user or group created, altered or dropped: its
-	// attributes, its settings, its existence.
+	// PrivilegeRole is a role, user or group created, altered or dropped -- its
+	// attributes, its settings, its existence -- or assumed for the rest of the
+	// session with SET ROLE or SET SESSION AUTHORIZATION.
 	PrivilegeRole = "Role"
 	// PrivilegeOwnership is an object given to another owner.
 	PrivilegeOwnership = "Ownership"
@@ -27,7 +28,8 @@ const (
 	// dropped, or row security switched off or unforced on a table.
 	PrivilegeRowSecurityPolicy = "RowSecurityPolicy"
 	// PrivilegeSecurityDefiner is code set to run with its owner's rights
-	// rather than its caller's.
+	// rather than its caller's. A MySQL or MariaDB routine does that unless it
+	// says SQL SECURITY INVOKER, so a routine that names no mode counts.
 	PrivilegeSecurityDefiner = "SecurityDefiner"
 	// PrivilegeDefiner is a MySQL DEFINER clause, which names the account a
 	// view, routine, trigger or event runs as.
@@ -75,6 +77,9 @@ func privilegeChanges(statement, dialect string) []string {
 	found := make(map[string]bool)
 	for _, tokens := range statementSegments(sqlKeywordTokens(statement, dialect)) {
 		classifyPrivilegeSegment(tokens, found)
+		if mysqlDialect(dialect) && definerRightsRoutine(tokens) {
+			found[PrivilegeSecurityDefiner] = true
+		}
 	}
 	var kinds []string
 	for _, kind := range privilegeChangeKinds {
@@ -151,6 +156,10 @@ func classifyPrivilegeSegment(tokens []string, found map[string]bool) {
 			if next == "DEFINER" {
 				found[PrivilegeSecurityDefiner] = true
 			}
+		case "SET":
+			if startsStatement(tokens, index) && assumesIdentity(tokens[index+1:]) {
+				found[PrivilegeRole] = true
+			}
 		case "SECURITY_INVOKER":
 			// A PostgreSQL view reverting to its owner's rights.
 			if next == "FALSE" || next == "OFF" || previous == "RESET" {
@@ -161,7 +170,7 @@ func classifyPrivilegeSegment(tokens []string, found map[string]bool) {
 				found[PrivilegeDefiner] = true
 			}
 		case "REPLACE":
-			if previous == "OR" && tokenAt(tokens, index-2) == "CREATE" && replacesRoutine(tokens[index+1:]) {
+			if previous == "OR" && tokenAt(tokens, index-2) == "CREATE" && namesRoutine(tokens[index+1:]) {
 				found[PrivilegeFunctionReplacement] = true
 			}
 		}
@@ -245,10 +254,56 @@ func definerClause(tokens []string, index int) bool {
 	return false
 }
 
-// replacesRoutine reports whether the words after CREATE OR REPLACE reach
-// FUNCTION or PROCEDURE before any other object keyword. MariaDB puts a DEFINER
-// clause and AGGREGATE in between.
-func replacesRoutine(tokens []string) bool {
+// startsStatement reports whether the word at index begins a statement: the
+// first word of a segment, or the first word after a procedural block opens a
+// branch, as in a DO block or a routine body. UPDATE t SET role = ... is not
+// one.
+func startsStatement(tokens []string, index int) bool {
+	switch tokenAt(tokens, index-1) {
+	case "", "BEGIN", "THEN", "ELSE", "LOOP":
+		return true
+	}
+	return false
+}
+
+// assumesIdentity reports whether the words after SET change the role the
+// session acts as, and so everything the rest of the Apply runs as:
+// SET [SESSION | LOCAL] ROLE and SET [SESSION | LOCAL] SESSION AUTHORIZATION.
+// MySQL's SET DEFAULT ROLE is membership and is read elsewhere.
+func assumesIdentity(tokens []string) bool {
+	sessionAuthorization := func(tokens []string) bool {
+		return tokenAt(tokens, 0) == "SESSION" && tokenAt(tokens, 1) == "AUTHORIZATION"
+	}
+	// SESSION is both a scope and the first word of SESSION AUTHORIZATION, so
+	// the statement is read as written before a scope is set aside.
+	if sessionAuthorization(tokens) {
+		return true
+	}
+	if first := tokenAt(tokens, 0); first == "SESSION" || first == "LOCAL" {
+		tokens = tokens[1:]
+	}
+	return tokenAt(tokens, 0) == "ROLE" || sessionAuthorization(tokens)
+}
+
+// definerRightsRoutine reports whether a MySQL or MariaDB statement creates a
+// stored routine that runs with its definer's rights. The engines default a
+// routine to SQL SECURITY DEFINER, so the only routine that does not is one
+// that says SQL SECURITY INVOKER; one that names no mode, or DEFINER, does.
+//
+// The characteristic is looked for anywhere in the statement rather than
+// between the name and the body. It cannot appear in a body by accident: SQL
+// is a reserved word, so the three words together are only ever the
+// characteristic. And each reading of the statement is judged on its own, so a
+// quote that hides the characteristic from one reading raises the routine.
+func definerRightsRoutine(tokens []string) bool {
+	return tokenAt(tokens, 0) == "CREATE" && namesRoutine(tokens[1:]) &&
+		!hasSQLTokenSequence(tokens, "SQL", "SECURITY", "INVOKER")
+}
+
+// namesRoutine reports whether the words after CREATE, or after CREATE OR
+// REPLACE, reach FUNCTION or PROCEDURE before any other object keyword. MySQL
+// and MariaDB put a DEFINER clause, and MariaDB AGGREGATE, in between.
+func namesRoutine(tokens []string) bool {
 	for _, token := range tokens {
 		switch token {
 		case "FUNCTION", "PROCEDURE":
