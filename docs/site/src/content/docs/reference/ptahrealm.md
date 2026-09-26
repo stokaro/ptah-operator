@@ -25,6 +25,11 @@ A database that only one namespace manages needs no realm: a
 same key in another namespace is another realm. See
 [One database, one manager](../../use/operations/#one-database-one-manager).
 
+A listed name is a grant to whoever holds a namespace of that name, now or
+later. Remove a namespace from every realm before deleting it, and where
+tenants choose their own namespace names, do not list one that does not exist
+yet.
+
 Only an administrator should be able to write a realm.
 `examples/realm-administrator-role.yaml` is a ClusterRole for that, and none of
 the author, approver or diagnostic roles beside it grants any access to realms.
@@ -88,7 +93,7 @@ kubectl get ptahschemas,ptahmigrations -A -o json |
 | Field | Type | What it does |
 | --- | --- | --- |
 | `spec.engine` | `string`, required | Engine is the database family of this realm. A resource that names the realm with another engine is refused. It cannot change: a realm is one physical database, and a database does not change engine. |
-| `spec.namespaces` | `[]string`, required | Namespaces are the namespaces whose resources may claim this realm, written out by name. There is deliberately no selector. Namespace labels are often writable by whoever administers the namespace, and a selector would let that person admit their own namespace to a database somebody else runs. Removing a namespace does not stop an operation already running there, the same as a conflict does not: the resource is refused at its next claim, before any Job. |
+| `spec.namespaces` | `[]string`, required | Namespaces are the namespaces whose resources may claim this realm, written out by name. There is deliberately no selector. Namespace labels are often writable by whoever administers the namespace, and a selector would let that person admit their own namespace to a database somebody else runs. A name is a grant to whoever holds the namespace of that name, now or later. A name listed before its namespace exists, or left listed after the namespace is deleted, belongs to whoever creates it next, and where tenants choose their own namespace names that is anybody. Remove a namespace from every realm before deleting it. Removing a namespace does not stop an operation already running there, the same as a conflict does not: the resource is refused at its next claim, before any Job. |
 | `spec.sharing` | `string`, required, one of `Exclusive`, `Shared` | Sharing is whether more than one resource may manage the database at once. Exclusive admits one claimant. A second one, in any listed namespace, is a conflict that refuses every claimant, whatever each declared. Shared admits several, on the rule a namespace-local key has: every claimant sets spec.target.sharedRealm, and one that has not refuses them all. Sharing is a statement both the administrator and each claimant make; neither can make it for the other. |
 
 ## status

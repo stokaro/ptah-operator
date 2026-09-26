@@ -16,6 +16,11 @@ A database that only one namespace manages needs no realm: a
 same key in another namespace is another realm. See
 [One database, one manager](../../use/operations/#one-database-one-manager).
 
+A listed name is a grant to whoever holds a namespace of that name, now or
+later. Remove a namespace from every realm before deleting it, and where
+tenants choose their own namespace names, do not list one that does not exist
+yet.
+
 Only an administrator should be able to write a realm.
 `examples/realm-administrator-role.yaml` is a ClusterRole for that, and none of
 the author, approver or diagnostic roles beside it grants any access to realms.

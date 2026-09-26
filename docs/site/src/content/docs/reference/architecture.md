@@ -164,7 +164,10 @@ reads it and never writes it. See
 
 The manager reconciles the two desired-state kinds, watches the two approval
 kinds and the realms, and watches the verification-policy ConfigMaps resources
-point at, so an edited policy or grant is noticed rather than waited out. It does not watch the plan
+point at, so an edited policy is noticed rather than waited out. A realm's
+grant is read before every claim: a withdrawn grant refuses the claimant on
+the pass the change starts, and a new one lifts a standing refusal at that
+refusal's re-check, within a minute. It does not watch the plan
 kinds: it writes them, and a plan it wrote tells it nothing it did not already
 know.
 

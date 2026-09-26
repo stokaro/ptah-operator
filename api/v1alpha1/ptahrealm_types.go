@@ -40,6 +40,12 @@ type PtahRealmSpec struct {
 	// by whoever administers the namespace, and a selector would let that
 	// person admit their own namespace to a database somebody else runs.
 	//
+	// A name is a grant to whoever holds the namespace of that name, now or
+	// later. A name listed before its namespace exists, or left listed after
+	// the namespace is deleted, belongs to whoever creates it next, and where
+	// tenants choose their own namespace names that is anybody. Remove a
+	// namespace from every realm before deleting it.
+	//
 	// Removing a namespace does not stop an operation already running there,
 	// the same as a conflict does not: the resource is refused at its next
 	// claim, before any Job.

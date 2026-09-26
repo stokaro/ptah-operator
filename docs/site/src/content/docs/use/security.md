@@ -321,6 +321,16 @@ namespace can still contest the realm by creating a second claimant, as any
 claimant can; what a realm withholds is that power from the namespaces it
 does not list.
 
+The grant is to a namespace name, not to a namespace object, so it passes to
+whoever holds that name. A name listed before its namespace exists, or left
+listed after the namespace is deleted, goes to whoever creates the namespace
+next. Where tenants choose their own namespace names -- OpenShift project
+self-provisioning, Capsule, HNC subnamespaces -- that is any tenant, and the
+denial of service a realm exists to prevent comes back through the grant
+itself. Remove a namespace from every realm before deleting it, and do not
+list a name that does not exist yet on a cluster where tenants can create
+namespaces.
+
 ## OCI integrity and identity
 
 The operator always resolves a tag to SHA-256 content and records that digest.
@@ -456,10 +466,11 @@ field-level authorization.
 The runner never invokes a shell. It checks command arguments against known
 credential values, derives and redacts standalone and escaped credentials from
 database URLs, bounds stdout and stderr, and validates a framed result containing
-the operation ID, coordination digest, and protocol version. The required
-`spec.target.coordinationKey` is a non-secret operator input; it is hashed with
-the normalized engine and the resource's namespace, and the plaintext key is
-never copied into status.
+the operation ID, coordination digest, and protocol version. A target sets
+exactly one of `spec.target.coordinationKey` and `spec.target.realmRef`, and
+both are non-secret operator inputs. A key is hashed with the normalized engine
+and the resource's namespace, a realm's name with the normalized engine, and
+the plaintext key is never copied into status.
 Status otherwise stores only hashes, counts, classification, immutable
 references, and timestamps.
 
@@ -553,7 +564,9 @@ in for, or a grant the default roles keep for the control plane.
   across all aliases, proxies, credentials, and Ptah resource kinds in the
   namespace. For a database that more than one namespace manages, create a
   `PtahRealm` listing exactly those namespaces, and keep write access to
-  realms with the cluster's administrators.
+  realms with the cluster's administrators. Remove a namespace from every
+  realm before deleting it, and where tenants can create namespaces, list only
+  names that already exist.
 - Use separate database credentials for production and optional dev rehearsal
   targets.
 
