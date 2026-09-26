@@ -3,6 +3,7 @@ package dataplane_test
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -253,6 +254,24 @@ func TestDecodePlanCarriesTheDeclaredRowSetsItRead(t *testing.T) {
 				t.Fatalf("a declared row set carries something that is not an identifier: %q", name)
 			}
 		}
+	}
+}
+
+// Ptah records the schemas a plan's fingerprint covers beyond the URL's own
+// scope when the desired state names one. The strict decoder refused such a
+// plan as carrying an unknown field until the field was declared, so a
+// schema-scoped URL and a desired state naming a second schema could not plan.
+func TestDecodePlanAcceptsSchemasBeyondTheURLScope(t *testing.T) {
+	t.Parallel()
+	document := `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from",` +
+		`"to_fingerprint":"to","schemas_beyond_url":["audit","ref"],"destructive":false,` +
+		`"statements":[{"sql":"CREATE TABLE audit.events (id bigint)","severity":"safe","reason":"new table"}]}`
+	decoded, err := dataplane.DecodePlan([]byte(document), "PostgreSQL")
+	if err != nil {
+		t.Fatalf("DecodePlan() error = %v", err)
+	}
+	if !slices.Equal(decoded.SchemasBeyondURL, []string{"audit", "ref"}) {
+		t.Fatalf("schemas beyond the URL = %v, want [audit ref]", decoded.SchemasBeyondURL)
 	}
 }
 

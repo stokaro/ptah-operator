@@ -296,9 +296,9 @@ Observe and `NoChanges` Plan. Its consumed approval must become stale, and the
 database fingerprint must remain unchanged throughout that recovery. Deleting an unapproved schema must create no later Job
 and must leave an exact database fingerprint unchanged through the remainder
 of the suite. A manual database change after approval must execute none of the
-planned SQL. Because the Apply Job was dispatched, even the exact native stale
-diagnostic must report `mutationStarted=true`, `uncertain=true`, and cause a
-durable `OutcomeUnknown`; the exact approval must be both consumed and marked
+planned SQL. Because the Apply Job was dispatched, even the `stale-plan`
+refusal in Ptah's apply report must report `mutationStarted=true`,
+`uncertain=true`, and cause a durable `OutcomeUnknown`; the exact approval must be both consumed and marked
 stale when a fresh plan replaces it. The controller must then dispatch exactly
 one read-only Observe followed by exactly one read-only Plan, with no Apply Job
 or Pod replay and an unchanged database fingerprint. The original manual-drift

@@ -3,12 +3,12 @@ package runner
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -30,8 +30,6 @@ var (
 	digestPattern            = regexp.MustCompile(`(?i)sha256:[0-9a-f]{64}`)
 	runnerRequirementPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
-
-const planNoChangesOutput = "Schema is synced, no changes to be made.\n"
 
 type Config struct {
 	Operation      Operation
@@ -237,8 +235,6 @@ func Run(ctx context.Context, config Config) Result {
 	}
 
 	var cleanup func()
-	applyPlanFromFingerprint := ""
-	var applyExpectedOutput []byte
 	if config.Operation == OperationApply {
 		plan, planDigest, err := reconstructPlan(inputs.PlanDir, inputs.ExpectedPlanContentDigest, config.MaxPlanBytes)
 		result.PlanContentDigest = planDigest
@@ -254,15 +250,10 @@ func Run(ctx context.Context, config Config) Result {
 			setResultError(&result, "invalid_plan", errors.New("expected database engine is required for exact plan validation"), redactor, config.Diagnostics)
 			return result
 		}
-		decoded, decodeErr := dataplane.DecodePlan(plan, inputs.ExpectedDatabaseEngine)
-		if decodeErr != nil {
+		if _, decodeErr := dataplane.DecodePlan(plan, inputs.ExpectedDatabaseEngine); decodeErr != nil {
 			setResultError(&result, "invalid_plan", errors.New("approved plan failed strict validation"), redactor, config.Diagnostics)
 			return result
 		}
-		if validProtocolDigest(decoded.FromFingerprint) {
-			applyPlanFromFingerprint = decoded.FromFingerprint
-		}
-		applyExpectedOutput = planApplyOutput(decoded)
 		planFile, err := os.CreateTemp(config.TempDir, "ptah-plan-*.hcl")
 		if err != nil {
 			setResultError(&result, "prepare_plan", errors.New("create temporary plan file"), redactor, config.Diagnostics)
@@ -339,11 +330,14 @@ func Run(ctx context.Context, config Config) Result {
 		executionContext, cancelExecution = context.WithDeadline(ctx, mutationExecutionDeadline)
 	}
 	defer cancelExecution()
-	outcome := executeCommand(executionContext, config, spec)
+	var outcome commandOutcome
 	if config.Operation == OperationApply {
+		outcome = executeReportCommand(executionContext, config, spec, config.MaxResultBytes)
 		// Dispatching a mutating child is enough to require observation before
 		// any retry. Even an executable-start ambiguity is handled fail-safe.
 		result.MutationStarted = true
+	} else {
+		outcome = executeCommand(executionContext, config, spec)
 	}
 	if config.Operation == OperationMigrationApply {
 		// The same rule, and one more: a migration child that is cancelled, or
@@ -363,20 +357,11 @@ func Run(ctx context.Context, config Config) Result {
 		false,
 	)
 	if config.Operation == OperationApply {
-		finishApplyCommandResult(&result, outcome, redactor, config.Diagnostics)
+		finishSchemaApply(&result, outcome, redactor, config.Diagnostics)
 	} else if outcome.err != nil {
 		setResultError(&result, "execution_error", childFailure(config.Operation, outcome.err), redactor, config.Diagnostics)
 	} else {
 		finishSingleCommandResult(&result, outcome, redactor, config.Diagnostics)
-	}
-	if config.Operation == OperationApply && applyPlanFromFingerprint != "" && outcome.exitCode == 2 && outcome.err == nil &&
-		outcome.stdout.dropped() == 0 && outcome.stderr.dropped() == 0 {
-		if databaseFingerprint, staleErr := parseStalePlanDiagnostic(applyPlanFromFingerprint, outcome.stdout.bytes(), outcome.stderr.bytes()); staleErr == nil && databaseFingerprint != applyPlanFromFingerprint {
-			setResultError(&result, "stale_plan", errors.New("database state no longer matches the approved plan"), redactor, config.Diagnostics)
-		}
-	}
-	if config.Operation == OperationApply && result.Error == nil && !bytes.Equal(outcome.stdout.bytes(), applyExpectedOutput) {
-		setResultError(&result, "invalid_apply_output", errors.New("native apply output does not match the approved plan transcript"), redactor, config.Diagnostics)
 	}
 	// The migration document is read on both paths, and before the exit status
 	// is allowed to classify anything. A run that stopped is exactly the run
@@ -486,10 +471,12 @@ func operationOCIReference(operation Operation, inputs Inputs) (string, bool) {
 	}
 }
 
-// runPlan accepts a plan only when two uninterrupted native reads return the
-// exact same bytes and the native apply path can parse and rehearse those
-// bytes without diagnostics. The controller keeps the database-realm Lease
-// throughout this function and through publication of the returned bytes.
+// runPlan accepts a plan only when two uninterrupted native reads save the
+// exact same bytes, and the native apply path reads those bytes and lists the
+// same statements in a dry run. Every read goes through the document Ptah
+// prints under --json; nothing is matched in the text it writes for a person.
+// The controller keeps the database-realm Lease throughout this function and
+// through publication of the returned bytes.
 func runPlan(
 	ctx context.Context,
 	config Config,
@@ -513,50 +500,67 @@ func runPlan(
 		return result
 	}
 
-	spec, err := BuildCommand(config.PtahBinary, OperationPlan, inputs)
+	// Each read saves into a directory only this process writes, under a name
+	// no earlier read used, so a file found there after a read is that read's.
+	outputDir, err := os.MkdirTemp(config.TempDir, "ptah-plan-output-*")
 	if err != nil {
-		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
+		setResultError(&result, "prepare_plan", errors.New("create the plan output directory"), redactor, config.Diagnostics)
 		return result
 	}
-	spec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_PROTECTED_TABLES")
-	for _, selector := range planExcludes {
-		spec.Args = append(spec.Args, "--exclude="+selector)
-	}
-	// The fence is passed to the plan and to nothing else. Ptah refuses a plan
-	// that would change a fenced table rather than saving one, so a fenced
-	// change never reaches an approval or an Apply.
-	for _, table := range protectedTables {
-		spec.Args = append(spec.Args, "--protected-table="+table)
-	}
-	if err := ensureNoCredentialsInArguments(spec.Args, environmentMap(environment)); err != nil {
-		setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
+	defer func() { _ = os.RemoveAll(outputDir) }()
+	if outputDir, err = filepath.Abs(outputDir); err != nil {
+		setResultError(&result, "prepare_plan", errors.New("resolve the plan output directory"), redactor, config.Diagnostics)
 		return result
 	}
 
-	first := executeCommand(ctx, config, spec)
-	if !validPlanCommandOutcome(&result, first, redactor, config.Diagnostics) {
-		return result
+	planSpec := func(outputPath string) (CommandSpec, error) {
+		planInputs := inputs
+		planInputs.PlanOutputPath = outputPath
+		spec, err := BuildCommand(config.PtahBinary, OperationPlan, planInputs)
+		if err != nil {
+			return CommandSpec{}, err
+		}
+		spec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_PROTECTED_TABLES")
+		for _, selector := range planExcludes {
+			spec.Args = append(spec.Args, "--exclude="+selector)
+		}
+		// The fence is passed to the plan and to nothing else. Ptah refuses a
+		// plan that would change a fenced table rather than saving one, so a
+		// fenced change never reaches an approval or an Apply.
+		for _, table := range protectedTables {
+			spec.Args = append(spec.Args, "--protected-table="+table)
+		}
+		return spec, nil
 	}
-	second := executeCommand(ctx, config, spec)
-	if !validPlanCommandOutcome(&result, second, redactor, config.Diagnostics) {
-		return result
+	var reads [2]nativePlan
+	for index, name := range []string{"first.plan.json", "second.plan.json"} {
+		outputPath := filepath.Join(outputDir, name)
+		spec, err := planSpec(outputPath)
+		if err != nil {
+			setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
+			return result
+		}
+		if err := ensureNoCredentialsInArguments(spec.Args, environmentMap(environment)); err != nil {
+			setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
+			return result
+		}
+		read, ok := readNativePlan(ctx, config, spec, outputPath, &result, redactor)
+		if !ok {
+			return result
+		}
+		reads[index] = read
 	}
-	if !bytes.Equal(first.stdout.bytes(), second.stdout.bytes()) {
-		result.ChildExitCode = second.exitCode
+	if reads[0].outcome != reads[1].outcome || !bytes.Equal(reads[0].document, reads[1].document) {
 		setResultError(&result, "unstable_plan", errors.New("consecutive plan reads did not return identical bytes"), redactor, config.Diagnostics)
 		return result
 	}
-
-	rawPlan := first.stdout.bytes()
-	result.ChildExitCode = second.exitCode
-	if string(rawPlan) == planNoChangesOutput {
+	if reads[0].outcome == dataplane.SchemaPlanOutcomeNoChanges {
+		result.ChildExitCode = 0
 		result.PlanOutcome = PlanOutcomeNoChanges
 		return result
 	}
-	if int64(len(rawPlan)) > config.MaxPlanBytes {
-		setResultError(&result, "invalid_plan_output", errors.New("plan output exceeds the configured plan limit"), redactor, config.Diagnostics)
-		return result
-	}
+
+	rawPlan := reads[0].document
 	if !utf8.Valid(rawPlan) {
 		setResultError(&result, "invalid_plan_output", errors.New("plan output is not valid UTF-8"), redactor, config.Diagnostics)
 		return result
@@ -575,25 +579,11 @@ func runPlan(
 		return result
 	}
 
-	planFile, err := os.CreateTemp(config.TempDir, "ptah-plan-validation-*.json")
-	if err != nil {
-		setResultError(&result, "prepare_plan", errors.New("create temporary plan validation file"), redactor, config.Diagnostics)
-		return result
-	}
-	planPath := planFile.Name()
-	defer func() { _ = os.Remove(planPath) }()
-	if _, err := planFile.Write(rawPlan); err != nil {
-		_ = planFile.Close()
-		setResultError(&result, "prepare_plan", errors.New("write temporary plan validation file"), redactor, config.Diagnostics)
-		return result
-	}
-	if err := planFile.Close(); err != nil {
-		setResultError(&result, "prepare_plan", errors.New("close temporary plan validation file"), redactor, config.Diagnostics)
-		return result
-	}
-
+	// The first read's file holds rawPlan, and the dry run's report names the
+	// digest of what it read, so validation reads that file rather than a
+	// second copy of it.
 	validationInputs := inputs
-	validationInputs.PlanPath = planPath
+	validationInputs.PlanPath = filepath.Join(outputDir, "first.plan.json")
 	validationSpec, err := BuildCommand(config.PtahBinary, OperationApply, validationInputs)
 	if err != nil {
 		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
@@ -611,81 +601,207 @@ func runPlan(
 		setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
 		return result
 	}
-	validation := executeCommand(ctx, config, validationSpec)
-	if !validPlanCommandOutcome(&result, validation, redactor, config.Diagnostics) {
-		return result
-	}
-	if !bytes.Equal(validation.stdout.bytes(), planDryRunOutput(decoded)) {
-		setResultError(&result, "invalid_plan_output", errors.New("native dry-run output does not match the reviewed plan statements"), redactor, config.Diagnostics)
+	contentDigest := sha256Digest(rawPlan)
+	if !validatePlanDryRun(ctx, config, validationSpec, decoded, contentDigest, &result, redactor) {
 		return result
 	}
 
-	result.ChildExitCode = validation.exitCode
+	result.ChildExitCode = 0
 	result.Stdout = string(rawPlan)
-	result.PlanContentDigest = sha256Digest(rawPlan)
+	result.PlanContentDigest = contentDigest
 	result.PlanOutcome = PlanOutcomeChanges
 	return result
 }
 
-func validPlanCommandOutcome(result *Result, outcome commandOutcome, redactor Redactor, diagnostics io.Writer) bool {
+// nativePlan is what one `schema plan --json` read produced: how it ended, and
+// for a plan with changes the exact bytes it saved.
+type nativePlan struct {
+	outcome  string
+	document []byte
+}
+
+// readNativePlan runs one plan and reads it back through its report.
+//
+// The plan is the file --output saved, not the copy the report embeds. The
+// file holds the bytes `schema plan --dry-run` printed before this runner read
+// reports, so the content digest of every plan already stored and approved is
+// the digest a new read of the same plan produces. The report's digest of that
+// file is what binds the two.
+//
+// A fence refusal is reported as protected_table with the report's own
+// sentence, which names the tables and no row. Any other refusal is reported
+// by its code, and a failure, a report this runner cannot read, a plan saved
+// somewhere else and a file whose digest is not the reported one are all
+// invalid plan output. The exit status decides nothing; see
+// noteReportedSuccess.
+func readNativePlan(
+	ctx context.Context,
+	config Config,
+	spec CommandSpec,
+	outputPath string,
+	result *Result,
+	redactor Redactor,
+) (nativePlan, bool) {
+	outcome := executeReportCommand(ctx, config, spec, planReportLimit(config.MaxPlanBytes))
 	result.ChildExitCode = outcome.exitCode
-	if outcome.stdout.dropped() != 0 || outcome.stderr.dropped() != 0 {
-		result.Truncation = &TruncationMetadata{
-			Stdout:             outcome.stdout.dropped() != 0,
-			StdoutBytesDropped: outcome.stdout.dropped(),
-			Stderr:             outcome.stderr.dropped() != 0,
-			StderrBytesDropped: outcome.stderr.dropped(),
+	if outcome.err != nil {
+		setResultError(result, "invalid_plan_output", childFailure(OperationPlan, outcome.err), redactor, config.Diagnostics)
+		return nativePlan{}, false
+	}
+	if dropped := outcome.stdout.dropped(); dropped != 0 {
+		result.Truncation = &TruncationMetadata{Stdout: true, StdoutBytesDropped: dropped}
+		setResultError(result, "invalid_plan_output", errors.New("plan report exceeded the configured result limit"), redactor, config.Diagnostics)
+		return nativePlan{}, false
+	}
+	report, err := dataplane.DecodeSchemaPlan(outcome.stdout.bytes())
+	if err != nil {
+		setResultError(result, "invalid_plan_output", reportDecodeError("plan", outcome), redactor, config.Diagnostics)
+		return nativePlan{}, false
+	}
+	switch report.Outcome {
+	case dataplane.SchemaPlanOutcomeRefused:
+		if report.Refusal.Code == dataplane.SchemaRefusalProtectedTable {
+			setResultError(result, "protected_table", errors.New(fenceRefusalMessage(report)), redactor, config.Diagnostics)
+			return nativePlan{}, false
 		}
-		setResultError(result, "invalid_plan_output", errors.New("plan validation output exceeded the configured result limit"), redactor, diagnostics)
+		setResultError(result, "plan_refused", fmt.Errorf("ptah refused to plan the change (%s)", report.Refusal.Code), redactor, config.Diagnostics)
+		return nativePlan{}, false
+	case dataplane.SchemaPlanOutcomeFailed:
+		setResultError(result, "invalid_plan_output", errors.New("plan command did not complete successfully"), redactor, config.Diagnostics)
+		return nativePlan{}, false
+	}
+	noteReportedSuccess(outcome.exitCode, config.Diagnostics)
+	if report.Outcome == dataplane.SchemaPlanOutcomeNoChanges {
+		return nativePlan{outcome: report.Outcome}, true
+	}
+	if report.PlanPath != outputPath {
+		setResultError(result, "invalid_plan_output", errors.New("ptah reported saving the plan somewhere other than the path it was given"), redactor, config.Diagnostics)
+		return nativePlan{}, false
+	}
+	document, err := readSavedPlan(outputPath, config.MaxPlanBytes)
+	if err != nil {
+		setResultError(result, "invalid_plan_output", err, redactor, config.Diagnostics)
+		return nativePlan{}, false
+	}
+	if sha256Digest(document) != report.PlanDigest {
+		setResultError(result, "invalid_plan_output", errors.New("the saved plan does not match the digest its report names"), redactor, config.Diagnostics)
+		return nativePlan{}, false
+	}
+	return nativePlan{outcome: report.Outcome, document: document}, true
+}
+
+// validatePlanDryRun runs the saved plan through `schema apply --dry-run` and
+// accepts it only when the report says a dry run read exactly this plan and
+// listed its statements in order. A dry run verifies the plan's source
+// fingerprint before it lists anything, so this is also a check that the plan
+// was not already stale when it was read.
+func validatePlanDryRun(
+	ctx context.Context,
+	config Config,
+	spec CommandSpec,
+	plan dataplane.PlanFile,
+	contentDigest string,
+	result *Result,
+	redactor Redactor,
+) bool {
+	outcome := executeReportCommand(ctx, config, spec, config.MaxResultBytes)
+	result.ChildExitCode = outcome.exitCode
+	if outcome.err != nil {
+		setResultError(result, "invalid_plan_output", childFailure(OperationPlan, outcome.err), redactor, config.Diagnostics)
 		return false
 	}
-	if outcome.err != nil || outcome.exitCode != 0 {
-		// One plan failure is not a fault: a plan that would change a table the
-		// caller fenced off is refused, and Ptah saves nothing. It is reported
-		// under its own code so the controller can say so, and the reason is
-		// the child's own sentence, which names the tables and no rows.
-		if refusal, fenced := protectedTableRefusal(outcome); fenced {
-			setResultError(result, "protected_table", errors.New(refusal), redactor, diagnostics)
-			return false
+	if dropped := outcome.stdout.dropped(); dropped != 0 {
+		result.Truncation = &TruncationMetadata{Stdout: true, StdoutBytesDropped: dropped}
+		setResultError(result, "invalid_plan_output", errors.New("plan validation output exceeded the configured result limit"), redactor, config.Diagnostics)
+		return false
+	}
+	report, err := dataplane.DecodeSchemaApply(outcome.stdout.bytes())
+	if err != nil {
+		setResultError(result, "invalid_plan_output", reportDecodeError("apply", outcome), redactor, config.Diagnostics)
+		return false
+	}
+	switch {
+	case report.Outcome != dataplane.SchemaApplyOutcomeDryRun:
+		reason := report.Outcome
+		if report.Refusal != nil {
+			reason += " (" + report.Refusal.Code + ")"
 		}
-		setResultError(result, "invalid_plan_output", errors.New("plan validation command did not complete successfully"), redactor, diagnostics)
+		setResultError(result, "invalid_plan_output", fmt.Errorf("plan validation reported %s rather than a dry run", reason), redactor, config.Diagnostics)
+		return false
+	case report.PlanDigest != contentDigest:
+		setResultError(result, "invalid_plan_output", errors.New("plan validation read a plan other than the one saved"), redactor, config.Diagnostics)
+		return false
+	case !slices.Equal(report.Statements, planStatements(plan)):
+		setResultError(result, "invalid_plan_output", errors.New("native dry run does not list the reviewed plan statements"), redactor, config.Diagnostics)
 		return false
 	}
-	if len(outcome.stderr.bytes()) != 0 {
-		setResultError(result, "invalid_plan_output", errors.New("plan validation command emitted unexpected diagnostics"), redactor, diagnostics)
-		return false
-	}
+	noteReportedSuccess(outcome.exitCode, config.Diagnostics)
 	return true
 }
 
-// protectedTableMarker is the sentence Ptah's fence refusal opens with. It is
-// the contract this reads, and a Ptah that stopped printing it would report the
-// refusal as an ordinary plan failure rather than as a fence -- which is the
-// safe direction to be wrong in.
-const protectedTableMarker = "refusing to change protected table"
-
-func protectedTableRefusal(outcome commandOutcome) (string, bool) {
-	stderr := string(outcome.stderr.bytes())
-	index := strings.Index(stderr, protectedTableMarker)
-	if index < 0 {
-		return "", false
+// planStatements is the SQL of each statement, in the plan's order and as the
+// plan stores it.
+func planStatements(plan dataplane.PlanFile) []string {
+	statements := make([]string, 0, len(plan.Statements))
+	for _, statement := range plan.Statements {
+		statements = append(statements, statement.SQL)
 	}
-	refusal := strings.TrimSpace(stderr[index:])
-	if line := strings.IndexByte(refusal, '\n'); line >= 0 {
-		refusal = strings.TrimSpace(refusal[:line])
-	}
-	return refusal, true
+	return statements
 }
 
-func planDryRunOutput(plan dataplane.PlanFile) []byte {
-	return []byte("Planned schema changes:\n" + strings.TrimSpace(dataplane.StatementsSQL(plan)) + "\n")
+// fenceRefusalMessage is the sentence a fence refusal is reported with: the
+// report's own, which names the fenced tables and no row.
+func fenceRefusalMessage(report dataplane.SchemaPlanReport) string {
+	if message := strings.TrimSpace(report.Error); message != "" {
+		return message
+	}
+	if len(report.Refusal.Tables) != 0 {
+		return "refusing to change protected table(s) " + strings.Join(report.Refusal.Tables, ", ")
+	}
+	return "refusing to change a protected table"
 }
 
-func planApplyOutput(plan dataplane.PlanFile) []byte {
-	output := append([]byte(nil), planDryRunOutput(plan)...)
-	output = append(output, "Auto-approval enabled; applying schema changes.\n"...)
-	output = append(output, "Schema apply completed successfully.\n"...)
-	return output
+// planReportEnvelopeBytes is room for the report fields around the plan a
+// `schema plan --json` report embeds: the version, the outcome, the digest and
+// the path of the saved file.
+const planReportEnvelopeBytes = 64 << 10
+
+// planReportLimit bounds what `schema plan --json` may print for a plan the
+// plan limit admits.
+//
+// The report embeds the plan it saved, indented one level deeper than the
+// file, so it is always larger than the plan. Every line of the file but its
+// outer braces carries at least two spaces of indentation, one character and
+// a newline, so two more bytes per line is at most half the file again; twice
+// the plan limit leaves room above that. Bounding the report by the plan limit
+// itself would refuse every plan near the limit as truncated output.
+func planReportLimit(maxPlanBytes int64) int64 {
+	return 2*maxPlanBytes + planReportEnvelopeBytes
+}
+
+// readSavedPlan reads the plan file a plan read saved, and refuses one larger
+// than the executable plan limit without reading past it.
+func readSavedPlan(path string, limit int64) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("the saved plan could not be opened")
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("the saved plan is not a regular file")
+	}
+	if info.Size() > limit {
+		return nil, errors.New("plan output exceeds the configured plan limit")
+	}
+	document, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, errors.New("the saved plan could not be read")
+	}
+	if int64(len(document)) > limit {
+		return nil, errors.New("plan output exceeds the configured plan limit")
+	}
+	return document, nil
 }
 
 // planProtectedTables reads the tables this plan may not change. An entry is a
@@ -1010,25 +1126,6 @@ func decodeEnvironmentList(value string) ([]string, error) {
 	return values, nil
 }
 
-func parseStalePlanDiagnostic(candidate string, stdout, stderr []byte) (string, error) {
-	if len(stdout) != 0 {
-		return "", errors.New("native fingerprint probe produced unexpected stdout")
-	}
-	prefix := "error: pre-planned migration is stale: the target database schema does not match the plan's source fingerprint " +
-		"(plan " + candidate + ", database "
-	suffix := "); the database changed since the plan was computed, so re-run `schema plan` " +
-		"against the current database and review the fresh plan\n"
-	if !bytes.HasPrefix(stderr, []byte(prefix)) || !bytes.HasSuffix(stderr, []byte(suffix)) ||
-		len(stderr) != len(prefix)+len("sha256:")+sha256.Size*2+len(suffix) {
-		return "", errors.New("native fingerprint probe produced an unexpected diagnostic")
-	}
-	fingerprint := string(stderr[len(prefix) : len(stderr)-len(suffix)])
-	if !validProtocolDigest(fingerprint) {
-		return "", errors.New("native fingerprint probe produced an invalid database fingerprint")
-	}
-	return fingerprint, nil
-}
-
 func executeCommand(ctx context.Context, config Config, spec CommandSpec) commandOutcome {
 	stdout := newBoundedBuffer(config.MaxResultBytes)
 	stderr := newBoundedBuffer(config.MaxResultBytes)
@@ -1078,12 +1175,124 @@ func consumeOutcome(
 	}
 }
 
-func finishApplyCommandResult(result *Result, outcome commandOutcome, redactor Redactor, diagnostics io.Writer) {
+// executeReportCommand runs a Ptah command that prints one JSON document on
+// standard output and writes everything meant for a person to standard error,
+// which is what `schema plan --json` and `schema apply --json` do.
+//
+// Standard error is discarded, never parsed and never forwarded. It lists the
+// planned statements, and a statement can carry a declared row value or a
+// credential that the plan gate keeps out of every frame, so the runner's own
+// diagnostics may not carry it either. The document says how the run ended.
+func executeReportCommand(ctx context.Context, config Config, spec CommandSpec, stdoutLimit int64) commandOutcome {
+	stdout := newBoundedBuffer(stdoutLimit)
+	exitCode, err := config.Executor.Execute(ctx, spec, stdout, io.Discard)
+	return commandOutcome{exitCode: exitCode, err: err, stdout: stdout, stderr: newBoundedBuffer(0)}
+}
+
+// reportDecodeError says why a report could not be read. Empty standard output
+// is named apart from a malformed document. An executor that predates --json
+// leaves it, because it refuses the flag before it runs anything, and so does
+// any flag error and a process that stopped before writing its report -- which
+// for an Apply may be after its statements were sent, so the caller treats it
+// as an outcome nobody knows rather than as a run that changed nothing.
+func reportDecodeError(command string, outcome commandOutcome) error {
+	if len(outcome.stdout.bytes()) == 0 {
+		return fmt.Errorf(
+			"ptah schema %s exited with code %d and printed no report; a build whose schema %s does not accept --json "+
+				"exits this way, and so does a run that stopped before writing its report",
+			command, outcome.exitCode, command,
+		)
+	}
+	return fmt.Errorf("ptah schema %s report failed strict validation", command)
+}
+
+// finishSchemaApply reads the document `schema apply --json` printed, on every
+// exit status, and settles the result from it.
+//
+// Only a report of applied that names the approved plan's digest is a success,
+// whatever status the child exited with. Every other ending is an error, and
+// Run marks every Apply error uncertain whatever the report says: Kubernetes
+// may start more than one Pod for the Job, so no one child's claim that
+// nothing reached the database speaks for the others, and only the
+// observation that follows can. That holds for a failed report too, although
+// in this contract failed means nothing was sent -- unlike a migration run,
+// whose failed may follow committed migrations -- so no reading here is shared
+// with decodeMigrationReport. The report still names the ending, so a refusal
+// reaches the resource as a refusal.
+//
+// A child this process stopped -- at its execution deadline, or because the Pod
+// is terminating -- is not read, unlike a migration child: its report could
+// only move the frame from uncertain to a success, and a run stopped by its own
+// authority is left for the observation to settle.
+func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor, diagnostics io.Writer) {
 	if outcome.err != nil {
 		setResultError(result, "execution_error", childFailure(OperationApply, outcome.err), redactor, diagnostics)
 		return
 	}
-	finishSingleCommandResult(result, outcome, redactor, diagnostics)
+	if outputWasTruncated(result) {
+		setResultError(result, "output_truncated", errors.New("ptah output exceeded the configured result limit"), redactor, diagnostics)
+		return
+	}
+	report, err := dataplane.DecodeSchemaApply(outcome.stdout.bytes())
+	if err != nil {
+		setResultError(result, "invalid_apply_output", reportDecodeError("apply", outcome), redactor, diagnostics)
+		return
+	}
+	switch report.Outcome {
+	case dataplane.SchemaApplyOutcomeApplied:
+		if report.PlanDigest != result.PlanContentDigest {
+			setResultError(result, "invalid_apply_output",
+				errors.New("ptah reported applying a plan other than the approved one"), redactor, diagnostics)
+			return
+		}
+		noteReportedSuccess(outcome.exitCode, diagnostics)
+		result.ChildExitCode = 0
+	case dataplane.SchemaApplyOutcomeRefused:
+		if report.Refusal.Code == dataplane.SchemaRefusalStalePlan {
+			setResultError(result, "stale_plan", staleApplyMessage(report.Refusal), redactor, diagnostics)
+			return
+		}
+		setResultError(result, "apply_refused",
+			fmt.Errorf("ptah refused the approved plan (%s)", report.Refusal.Code), redactor, diagnostics)
+	case dataplane.SchemaApplyOutcomeFailed:
+		setResultError(result, "apply_failed",
+			errors.New("ptah reported that the apply failed before it sent any statement"), redactor, diagnostics)
+	case dataplane.SchemaApplyOutcomeUnknown:
+		setResultError(result, "apply_outcome_unknown",
+			errors.New("ptah sent the statements and returned an error, so how far they got is unknown"), redactor, diagnostics)
+	default:
+		setResultError(result, "invalid_apply_output",
+			fmt.Errorf("ptah reported %s, which an approved plan applied with --auto-approve cannot end in", report.Outcome),
+			redactor, diagnostics)
+	}
+}
+
+// noteReportedSuccess writes down a nonzero exit beside a report of success.
+//
+// The report decides how a run ended, and the exit status does not overrule
+// it. Ptah writes the report once the work is done, so a child can report
+// success and still exit nonzero: a SIGTERM that lands between the commit and
+// the exit is 143 with applied on standard output. The frame protocol reads a
+// success with a nonzero exit as malformed, so the caller frames it with exit
+// code zero, and the status the child actually returned stays in the log.
+func noteReportedSuccess(exitCode int, diagnostics io.Writer) {
+	if exitCode != 0 && diagnostics != nil {
+		_, _ = fmt.Fprintf(diagnostics, "ptah-runner: ptah reported success and exited with code %d; the report decides\n", exitCode)
+	}
+}
+
+// staleApplyMessage says what moved under a stale plan. Ptah names structure
+// and declared rows apart; a value this runner does not know is left out
+// rather than repeated.
+func staleApplyMessage(refusal *dataplane.SchemaRefusal) error {
+	switch refusal.Changed {
+	case "schema":
+		return errors.New("database schema no longer matches the approved plan")
+	case "rows":
+		return errors.New("declared rows no longer match the approved plan")
+	default:
+		return errors.New("database state no longer matches the approved plan")
+	}
 }
 
 // stoppedByContext reports that a child produced no exit status of its own
