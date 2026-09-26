@@ -48,7 +48,7 @@ func TestControllerWriteGuardIsExactAndFailClosed(t *testing.T) {
 
 	guard := testControllerWriteGuard()
 	policy := guard.policy()
-	native := stripAdmissionConvergenceDependencyProbe(t, policy)
+	native := policy
 	binding := guard.binding()
 	if policy.Spec.ParamKind == nil || policy.Spec.ParamKind.APIVersion != "v1" || policy.Spec.ParamKind.Kind != "ConfigMap" ||
 		binding.Spec.ParamRef == nil || binding.Spec.ParamRef.Name != ReleaseActivationName || binding.Spec.ParamRef.Namespace != guard.ReleaseNamespace {
@@ -58,7 +58,7 @@ func TestControllerWriteGuardIsExactAndFailClosed(t *testing.T) {
 		t.Fatal("controller write guard is not fail-closed")
 	}
 	assertExactControllerWriteMatch(t, native.Spec.MatchConstraints)
-	assertControllerWriteMatchWithConvergenceProbe(t, binding.Spec.MatchResources)
+	assertExactControllerWriteMatch(t, binding.Spec.MatchResources)
 
 	wantUsername := `request.userInfo.username in ["system:serviceaccount:ptah-system:ptah-controller"]`
 	if !reflect.DeepEqual(native.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
@@ -75,7 +75,7 @@ func TestControllerWriteGuardIsExactAndFailClosed(t *testing.T) {
 func TestControllerWriteGuardCELContract(t *testing.T) {
 	t.Parallel()
 
-	policy := stripAdmissionConvergenceDependencyProbe(t, testControllerWriteGuard().policy())
+	policy := testControllerWriteGuard().policy()
 	if len(policy.Spec.Variables) != 6 {
 		t.Fatalf("controller write guard variables = %d, want six", len(policy.Spec.Variables))
 	}
@@ -272,19 +272,6 @@ func assertExactControllerWriteMatch(t *testing.T, match *admissionregistrationv
 		len(rule.ResourceNames) != 0 || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
 		t.Fatalf("controller write rule is not exact: %#v", rule)
 	}
-}
-
-func assertControllerWriteMatchWithConvergenceProbe(t *testing.T, match *admissionregistrationv1.MatchResources) {
-	t.Helper()
-	if match == nil || len(match.ResourceRules) != 2 {
-		t.Fatalf("controller write binding rules = %#v, want native rule plus convergence marker rule", match)
-	}
-	if !reflect.DeepEqual(match.ResourceRules[1], admissionConvergenceProbeResourceRule("")) {
-		t.Fatalf("controller write binding convergence rule = %#v, want %#v", match.ResourceRules[1], admissionConvergenceProbeResourceRule(""))
-	}
-	native := match.DeepCopy()
-	native.ResourceRules = native.ResourceRules[:1]
-	assertExactControllerWriteMatch(t, native)
 }
 
 func testControllerWriteGuard() *ControllerWriteGuard {

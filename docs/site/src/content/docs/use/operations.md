@@ -50,8 +50,7 @@ ones a first install never has to think about.
 #### Before you start {#install-before}
 
 You need `cluster-admin`: the CRDs, the admission policies and their
-bindings are all cluster-scoped, and the install hook proves them against
-every API server.
+bindings are all cluster-scoped.
 
 Install exactly one Helm release of the operator in a cluster. The manager
 watches cluster-wide resources, and admission uses the singleton
@@ -92,14 +91,10 @@ make somebody else an administrator there.
 list, and what a render without the cluster skips.
 
 The hook-progress admission policies the first installation creates guard the
-install hooks against a concurrent writer in the namespace once they have
-converged on every API server, and every release retains them. The hooks can
-prove that convergence only where each address the `default/kubernetes`
-Service publishes is one API server;
-[One address per API server](../../reference/release-lifecycle/#one-address-per-api-server)
-says how to tell. Either way the policies are hardening beyond the contract
-rather than a replacement for it, and they cover only the hooks' own Jobs and
-Pods.
+install hooks against a concurrent writer in the namespace, and every release
+retains them. The hooks check their stored contracts but do not probe whether
+every API server has loaded them. They are hardening beyond the contract rather
+than a replacement for it, and they cover only the hooks' own Jobs and Pods.
 
 With `serviceAccount.create=false`, `serviceAccount.name` is an identity base
 rather than a complete Kubernetes object name. Create the dedicated
@@ -391,14 +386,12 @@ the release is not repairable in place and
 
 ### Uninstall the release {#uninstall}
 
-Uninstall is a fail-closed, ordered retirement protocol rather than a delete,
-and it has three bounded credential windows to sit through.
+Uninstall is a fail-closed, ordered retirement protocol rather than a delete.
 
 #### Before you start {#uninstall-before}
 
 You need `cluster-admin`. The retirement protocol replaces and then removes
-cluster-scoped admission policies, and proves each removal against every API
-server.
+cluster-scoped admission policies.
 
 Back up the CRDs and their custom resources. Helm retains both, and an
 uninstall removes the controller and admission resources rather than the
@@ -413,8 +406,8 @@ Kubernetes RBAC has to be retired by hand first.
 
 #### Run it {#uninstall-run}
 
-Allow at least five minutes, because the protocol waits out three bounded
-credential windows:
+The hooks stop the runtime and wait for its Pods to go, so give the uninstall
+room for that:
 
 ```sh
 helm uninstall <release> --timeout 5m
@@ -422,10 +415,9 @@ helm uninstall <release> --timeout 5m
 
 #### What proves it worked {#uninstall-evidence}
 
-Helm reports success only after the final Job verified every retired pair and
-its exact attributed denial on every API endpoint, deleted its own cleanup
-ServiceAccount, and watched every frozen endpoint answer `Unauthorized` for an
-uninterrupted five seconds.
+Helm reports success only after the final Job verified every stored retired
+pair, deleted the release activation parameter and the retained markers, and
+deleted its own cleanup ServiceAccount.
 
 What remains afterwards is deliberate: the seven CRDs with their custom
 resources, and one cluster-scoped pair named
@@ -445,8 +437,8 @@ exists, or before the API servers restart. Reinstalling the chart recreates it.
 
 Every stage of the protocol fails toward the boundary staying in place. An API
 failure during the two-Deployment quiesce can leave one exact Deployment at
-zero, and at least one broad fence remains active. A later cleanup or
-token-retirement failure likewise leaves the admission boundary standing.
+zero, and at least one broad fence remains active. A later cleanup failure
+likewise leaves the admission boundary standing.
 
 Correct the reported conflict or API reachability problem and rerun the same
 `helm uninstall`. The hooks revalidate live state and resume idempotently from
@@ -780,8 +772,7 @@ release, and image ratchets intentionally block backward recovery; retry the
 same candidate to finish the interrupted transition. Helm
 installs and binds these policies before granting certificate update access.
 Every hook and runtime init verifier requires their observed generations to
-have no CEL warnings and proves their exact denials through every directly
-addressed API server before a certificate rotator can start. By default,
+have no CEL warnings before a certificate rotator can start. By default,
 `certificateRotation.recreateMissingSecret=false`: the chart grants no
 Secret `create`, renders no Secret-creation admission policy or binding, and
 grants no read access to those policy types. A deleted Secret therefore makes

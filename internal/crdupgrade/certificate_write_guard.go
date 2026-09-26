@@ -236,11 +236,6 @@ func (g *CertificateWriteGuard) policy(entry certificateWriteGuardEntry) *admiss
 			Validations: validations,
 		},
 	}
-	addStableAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		serviceAccountObjectGuardMarkerPattern(g.ReleaseNamespace, g.ReleaseName),
-	)
 	return policy
 }
 
@@ -254,7 +249,6 @@ func (g *CertificateWriteGuard) binding(entry certificateWriteGuardEntry) *admis
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding
 }
 

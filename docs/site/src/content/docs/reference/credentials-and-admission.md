@@ -50,7 +50,7 @@ The manager's own writes pass through two independent fail-closed layers.
 
 **Typed policies**, one per kind, reject objects outside their narrow
 structural form: Jobs, plan chunks, schema plans and migration plans, plus a
-fifth policy over `PtahSchema` updates and the admission convergence marker.
+fifth policy over `PtahSchema` and `PtahMigration` updates.
 One policy per kind avoids cross-type CEL assumptions while keeping the
 boundary closed during a rollout. The Job policy admits a Job that satisfies
 the schema shape or the migration shape and nothing else.

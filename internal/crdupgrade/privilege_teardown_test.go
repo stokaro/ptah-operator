@@ -1627,22 +1627,6 @@ func TestPrivilegeTeardownAdmissionV2CompilesCertificateCanaryConfigMapRevocatio
 	if !foundRule {
 		t.Fatalf("retired certificate Role is missing exact canary ConfigMap rule %#v", wantRule)
 	}
-
-	grants, err := RevokedPrivilegeMutationGrants(fixture.guard, fixture.contract)
-	if err != nil {
-		t.Fatalf("RevokedPrivilegeMutationGrants() error = %v", err)
-	}
-	foundGrant := false
-	for _, grant := range grants {
-		if grant.SubjectName == "certificate" && grant.Namespace == fixture.guard.ReleaseNamespace && !grant.ClusterWide &&
-			grant.APIGroup == "" && grant.Resource == "configmaps" && grant.Subresource == "" && grant.Verb == "update" &&
-			reflect.DeepEqual(grant.ResourceNames, []string{canaryConfigMapName}) {
-			foundGrant = true
-		}
-	}
-	if !foundGrant {
-		t.Fatalf("revoked privilege grants do not contain exact canary ConfigMap update: %#v", grants)
-	}
 }
 
 func TestPrivilegeTeardownAdmissionV1OmitsCertificateCanaryConfigMapRule(t *testing.T) {

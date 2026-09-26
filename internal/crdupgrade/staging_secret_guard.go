@@ -125,11 +125,6 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 			},
 		},
 	}
-	addStableAdmissionConvergenceDependencyProbe(
-		policy,
-		g.rollout.ReleaseNamespace,
-		serviceAccountObjectGuardMarkerPattern(g.rollout.ReleaseNamespace, g.rollout.ReleaseName),
-	)
 	return policy, nil
 }
 
@@ -155,7 +150,6 @@ func (g *StagingSecretGuard) ExpectedBinding() (*admissionregistrationv1.Validat
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding, nil
 }
 

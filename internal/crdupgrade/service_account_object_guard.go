@@ -22,9 +22,6 @@ const (
 	serviceAccountObjectPolicyWeight    = "-164"
 	serviceAccountObjectBindingWeight   = "-163"
 	serviceAccountObjectContractVersion = "2"
-
-	serviceAccountObjectProbeFieldManagerPrefix  = "ptah-service-account-object-probe-v1-"
-	serviceAccountObjectProbeDenialMessagePrefix = "Ptah admission convergence confirmed exact service account object guard "
 )
 
 var (
@@ -194,32 +191,6 @@ func serviceAccountObjectGuardDenialMessage() string {
 	return "Ptah service account object guard rejected an unsafe identity lifecycle request"
 }
 
-func serviceAccountObjectGuardProbe(releaseNamespace, releaseName string) admissionConvergenceDependencyProbe {
-	policyName := ServiceAccountObjectGuardPolicyName(releaseNamespace, releaseName)
-	markerPattern := serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName)
-	digest := sha256.Sum256([]byte("1\n" + policyName + "\n" + markerPattern))
-	fieldManager := serviceAccountObjectProbeFieldManagerPrefix + fmt.Sprintf("%x", digest)
-	return admissionConvergenceDependencyProbe{
-		PolicyName:   policyName,
-		FieldManager: fieldManager,
-		Message:      serviceAccountObjectProbeDenialMessagePrefix + fieldManager,
-	}
-}
-
-func serviceAccountObjectGuardProbeRequestExpression(releaseNamespace, releaseName string) string {
-	probe := serviceAccountObjectGuardProbe(releaseNamespace, releaseName)
-	return fmt.Sprintf(
-		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q`,
-		releaseNamespace,
-		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
-		probe.FieldManager,
-	)
-}
-
-func serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName string) string {
-	return "^" + regexp.QuoteMeta(admissionConvergenceMarkerPrefix) + `[1-9][0-9]*-` + admissionConvergenceReleaseDigest(releaseNamespace, releaseName) + `$`
-}
-
 // ServiceAccountObjectGuard prevents namespace-scoped writers from creating,
 // replacing, or deleting a ServiceAccount that can inherit release privileges.
 // Its name patterns are stable across candidate attempts, so an attacker cannot
@@ -351,7 +322,6 @@ func (g *ServiceAccountObjectGuard) ExpectedPolicy() (*admissionregistrationv1.V
 			},
 		},
 	}
-	addServiceAccountObjectConvergenceProbe(policy, g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
 	return policy, nil
 }
 
@@ -370,7 +340,6 @@ func (g *ServiceAccountObjectGuard) ExpectedBinding() (*admissionregistrationv1.
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding, nil
 }
 
@@ -439,96 +408,6 @@ func (g *ServiceAccountObjectGuard) WaitReady(ctx context.Context) error {
 		}
 		return true, nil
 	})
-}
-
-// Probe proves that one directly addressed API server observes both the exact
-// retained policy and binding. The unchanged dry-run update uses the current
-// exact convergence marker, which Helm creates before this guard; any admission
-// or marker shape other than the single compiled denial is inconclusive or
-// fatal.
-func (g *ServiceAccountObjectGuard) Probe(ctx context.Context, client AdmissionConvergenceMarkerClient) (bool, error) {
-	if ctx == nil {
-		return false, errors.New("service account object guard probe context is nil")
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	if client == nil {
-		return false, errors.New("service account object guard marker client is nil")
-	}
-	if err := g.validate(true); err != nil {
-		return false, err
-	}
-	markerName := AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.ReleaseSequence)
-	marker, err := client.Get(ctx, markerName, metav1.GetOptions{})
-	if contextErr := ctx.Err(); contextErr != nil {
-		return false, contextErr
-	}
-	if err != nil {
-		if retryableAdmissionConvergenceError(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("get direct service account object guard convergence marker: %w", err)
-	}
-	convergence := NewAdmissionConvergenceGuard(g.rollout)
-	unsealedErr := convergence.verifyUnsealedMarker(marker)
-	_, sealedErr := convergence.verifySealedMarker(marker)
-	if unsealedErr != nil && sealedErr != nil {
-		return false, fmt.Errorf("service account object guard convergence marker is neither exact unsealed nor sealed state: unsealed: %v; sealed: %v", unsealedErr, sealedErr)
-	}
-	probe := serviceAccountObjectGuardProbe(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
-	_, err = client.Update(ctx, marker.DeepCopy(), metav1.UpdateOptions{
-		DryRun:       []string{metav1.DryRunAll},
-		FieldManager: probe.FieldManager,
-	})
-	if contextErr := ctx.Err(); contextErr != nil {
-		return false, contextErr
-	}
-	if err == nil {
-		return false, nil
-	}
-	if hasExactValidatingAdmissionPolicyDenial(err, probe.PolicyName, probe.PolicyName, probe.Message) {
-		return true, nil
-	}
-	if retryableAdmissionConvergenceError(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("direct service account object guard probe returned an unexpected response: %w", err)
-}
-
-func addServiceAccountObjectConvergenceProbe(
-	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
-	releaseNamespace,
-	releaseName string,
-) {
-	if policy == nil {
-		return
-	}
-	expression := serviceAccountObjectGuardProbeRequestExpression(releaseNamespace, releaseName)
-	// This probe selects its marker by pattern rather than exact name, so
-	// there is nothing for ResourceNames to hold and the rule stays unscoped.
-	addAdmissionConvergenceProbeMatchResource(policy.Spec.MatchConstraints, "")
-	for index := range policy.Spec.MatchConditions {
-		policy.Spec.MatchConditions[index].Expression = "(" + expression + ") || (" + policy.Spec.MatchConditions[index].Expression + ")"
-	}
-	policy.Spec.Variables = append([]admissionregistrationv1.Variable{{
-		Name:       "isServiceAccountObjectConvergenceProbe",
-		Expression: expression,
-	}}, policy.Spec.Variables...)
-	for index := range policy.Spec.Validations {
-		policy.Spec.Validations[index].Expression = "variables.isServiceAccountObjectConvergenceProbe || (" + policy.Spec.Validations[index].Expression + ")"
-	}
-	probe := serviceAccountObjectGuardProbe(releaseNamespace, releaseName)
-	policy.Spec.Validations = append(policy.Spec.Validations,
-		admissionregistrationv1.Validation{
-			Expression: `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`,
-			Message:    admissionConvergenceProbePersistenceMessage,
-		},
-		admissionregistrationv1.Validation{
-			Expression: `!variables.isServiceAccountObjectConvergenceProbe`,
-			Message:    probe.Message,
-		},
-	)
 }
 
 type serviceAccountObjectPatterns struct {

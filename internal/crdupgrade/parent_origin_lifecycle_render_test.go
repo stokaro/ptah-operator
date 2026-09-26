@@ -143,7 +143,7 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 		helm: helm,
 		helpers: read("templates/_helpers.tpl") + "\n" +
 			prefix(read("templates/parent-workload-guard.yaml"), `{{- include "ptah-operator.validateAdmissionSingleton" . -}}`) + "\n" +
-			prefix(read("templates/admission-convergence.yaml"), `{{- $policyName :=`),
+			prefix(read("templates/admission-convergence.yaml"), `{{- /* The sequence-keyed admission marker.`),
 		values: read("values.yaml"),
 	}
 	object := func(objects map[string]map[string]any, kind, namespace, name string) map[string]any {

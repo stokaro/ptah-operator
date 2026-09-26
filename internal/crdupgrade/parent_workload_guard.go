@@ -67,8 +67,8 @@ func ParentHookJobContractPolicyName(releaseNamespace, releaseName string, seque
 }
 
 // ParentOriginReadyMarkerName returns the ordinary-manifest marker whose
-// presence proves that Helm reached resource application only after the
-// pre-upgrade direct admission-convergence barrier completed.
+// presence records that Helm reached resource application after the
+// pre-upgrade hooks completed.
 func ParentOriginReadyMarkerName(releaseNamespace, releaseName string) string {
 	return parentOriginReadyPrefix + parentWorkloadStableDigest(releaseNamespace, releaseName)
 }
@@ -333,12 +333,6 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 			},
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.rollout.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.ReleaseSequence),
-		hookIdentityDigest(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.ReleaseSequence, g.rollout.ManagerImage),
-	)
 	return policy
 }
 
@@ -676,18 +670,6 @@ func (g *ParentWorkloadGuard) hookPodOriginPolicy() *admissionregistrationv1.Val
 	return policy
 }
 
-// parentHookOriginConvergenceProbeExpression recognizes an admission
-// convergence probe aimed at any guard: a dry-run UPDATE of the convergence
-// marker under a probe field manager. It names no release sequence, because
-// the hook parent-origin guard is release-stable; the marker is recognized by
-// the pattern variable the guard already carries. The field manager pattern is
-// the one every marker-matching guard shares; the dry-run validation keeps
-// the escape from admitting a real write.
-func parentHookOriginConvergenceProbeExpression(releaseNamespace string) string {
-	return fmt.Sprintf(`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
-		releaseNamespace, admissionConvergenceAnyProbeFieldManagerPattern())
-}
-
 func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	exact := admissionregistrationv1.Exact
@@ -757,7 +739,6 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 				{Name: "isReadinessMarker", Expression: fmt.Sprintf(`request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName == %q`, ParentOriginReadyMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName))},
 				{Name: "isConvergenceMarker", Expression: fmt.Sprintf(`request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName.matches(%q)`, g.stableConvergenceMarkerPattern())},
 				{Name: "isMarker", Expression: `variables.isReadinessMarker || variables.isConvergenceMarker`},
-				{Name: "isServiceAccountObjectConvergenceProbe", Expression: serviceAccountObjectGuardProbeRequestExpression(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)},
 			},
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `(variables.isProtectedJob || variables.isMarker) && (variables.isMainWrite || variables.isStatusUpdate || variables.isDelete)`, Message: message},
@@ -772,8 +753,7 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 				// sealed predecessor marker when it retires it. Which marker a hook may
 				// touch is named in its Role; this guard asks only that the caller is a
 				// hook of this release. Every other caller still needs release authority.
-				{Expression: fmt.Sprintf(`!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (request.operation == "DELETE" && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, teardownUsernamePattern, authority), Message: message},
-				{Expression: `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`, Message: message},
+				{Expression: fmt.Sprintf(`!variables.isMarker || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (request.operation == "DELETE" && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, teardownUsernamePattern, authority), Message: message},
 				{Expression: `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (` + g.readinessMarkerShapeExpression("object", false) + `) : (` + g.readinessMarkerShapeExpression("object", true) + `))`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (` + g.readinessMarkerShapeExpression("oldObject", true) + `)`, Message: message},
 				{Expression: `!variables.isConvergenceMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (` + g.stableConvergenceMarkerStateShapeExpression("object", false, false) + `) : (` + g.stableConvergenceMarkerUpdateExpression() + `))`, Message: message},
@@ -782,24 +762,6 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 			},
 		},
 	}
-	// This guard matches the convergence marker, so every dry-run probe another
-	// guard is the target of passes through it too. The probe carries an
-	// unsealed marker unchanged, which the marker contract refuses; the probe
-	// is let through by its field manager and held to dry-run, as the runtime
-	// parent guard does. The chart renders the same escape. The guard is
-	// release-stable, so the probe is recognized by the marker pattern this
-	// guard already matches rather than by the sequence-bearing marker name.
-	policy.Spec.Variables = append(policy.Spec.Variables, admissionregistrationv1.Variable{
-		Name:       "isAnyAdmissionConvergenceProbe",
-		Expression: parentHookOriginConvergenceProbeExpression(g.rollout.ReleaseNamespace),
-	})
-	for index := range policy.Spec.Validations {
-		policy.Spec.Validations[index].Expression = "variables.isAnyAdmissionConvergenceProbe || (" + policy.Spec.Validations[index].Expression + ")"
-	}
-	policy.Spec.Validations = append(policy.Spec.Validations, admissionregistrationv1.Validation{
-		Expression: `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true`,
-		Message:    message,
-	})
 	return policy
 }
 
@@ -896,12 +858,6 @@ func (g *ParentWorkloadGuard) hookJobContractPolicy() *admissionregistrationv1.V
 			Validations: validations,
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.rollout.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.ReleaseSequence),
-		hookIdentityDigest(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.ReleaseSequence, g.rollout.ManagerImage),
-	)
 	return policy
 }
 

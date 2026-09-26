@@ -31,7 +31,6 @@ before proceeding:
 | `preflight` | Whether the install or upgrade may start at all: ownership, RBAC, namespaces, PriorityClass, resource quota |
 | `reconcile` | The CRDs themselves, against the stored schema history |
 | `verify`, `runtime-verify` | That what was applied is what runs |
-| `teardown-retirement-probe-a`, `teardown-retirement-gate` | Whether a predecessor epoch may be retired |
 | `teardown-quiesce`, `teardown`, `teardown-retirement-final` | Uninstall, privilege teardown and the final retirement record |
 
 A refusal is written to the container's termination message as well as to
@@ -144,19 +143,15 @@ ConfigMap moves monotonically from `{active=A, phase=active}` to
 `{active=A, phase=draining, target=T, attempt=<full SHA-256>}` and only candidate
 activation can return it to `{active=T, phase=active}`. While draining, the
 ServiceAccount-origin guard denies both controller API writes and node-issued
-TokenRequests for the candidate and predecessor controller identities. The
-hook proves that exact draining tuple on every API server and quiesces the
-runtime. The full 65-second credential grace is one uninterrupted joint
-window: every sweep refreshes the API endpoint topology, repeats every direct
-admission proof, verifies the exact stored admission tuple, and observes a
-namespace-wide LIST-to-WATCH stream with no protected runtime Pod. Any endpoint
-or Pod change, watch restart, stale response, or transient error resets the
-whole window before the first grant moves. A failed
-response at any transition is retried only for the same target and full attempt
-digest; there is no cancellation or backward state transition. A fresh install
-can skip the drain only when the activation state and complete preflight prove
-that no predecessor, candidate ServiceAccount, candidate grant, protected Pod,
-or prior drain exists.
+TokenRequests for the candidate and predecessor controller identities. The hook
+then stops the runtime and waits until no Pod running as a protected runtime
+identity remains in the namespace before any grant moves. A failed response at
+any transition is retried only for the same target and full attempt digest;
+there is no cancellation or backward state transition. A candidate that fails
+after the drain began leaves it in place, and rerunning the same candidate
+finishes the cutover. A fresh install can skip the drain only when the
+activation state and complete preflight prove that no predecessor, candidate
+ServiceAccount, candidate grant, protected Pod, or prior drain exists.
 
 For a predecessor cutover, the hook receives `bind` only on the stable
 controller ClusterRole and the exact existing controller Roles in their
@@ -165,101 +160,28 @@ coordination, release, and discovery namespaces. A fresh install receives no
 Pod to replace the predecessor subject with the candidate subject during that
 attempt's exact draining state. Role references, binding identity and metadata,
 and certificate subjects must remain unchanged. Other binding writes, including
-granting a role to the hook itself, are denied. Uninstall includes every issued
-`bind` grant in the direct authorization-revocation proof.
+granting a role to the hook itself, are denied.
 
-## The admission proof
+## The admission inventory marker
 
-Each release attempt also owns an immutable, sequence-keyed admission marker.
-The chart inventories at most the active predecessor marker and current
-candidate marker, rejects gaps, future or malformed markers, and refuses a
-same-sequence marker bound to another full manager-image attempt. A final
-ValidatingAdmissionPolicy and binding are installed after every retained
-release guard. The final policy is itself a fail-closed credential fence: in
-addition to its inert marker branch, it contains the complete protected
-controller, certificate, hook, and cleanup caller and bound-TokenRequest origin
-checks, including the controller phase ratchet. Seven credential and workload-
-provenance guards expose mutually exclusive, content-versioned field-manager
-branches on the same immutable marker: the ServiceAccount-origin guard plus
-the six workload guards that constrain the executable identities behind those
-credentials. For every
-ready API-server address, the hook sends one unchanged dry-run update per
-policy. Each request must return exactly one denial attributed to that exact
-policy and binding; removing any guard, retaining an old attempt, or adding a
-second cause makes the sweep inconclusive or fatal. The sentinel request also
-returns one exact tuple-specific denial, proving its broad binding and current
-activation fence. Each sweep re-reads and compares the complete stored policy,
-binding, activation, and marker contracts, so an old cached denial cannot hide
-a foreign stored replacement that may publish later. All endpoints must return
-the complete denial bundle for one uninterrupted five-second window; topology
-changes, stored-object changes, admitted dry-runs, stale tuple denials, and
-transient discovery, transport, or server errors reset the window. Foreign
-object shape or an unexpected denial fails
-the attempt closed. The Kubernetes Service virtual IP is never used for this
-proof. The sentinel policy/binding name versions this enforcement contract; a
-future semantic change must use a new versioned identity so a cached older
-pair cannot satisfy the proof.
+Each release attempt owns an immutable, sequence-keyed admission marker. The
+chart inventories at most the active predecessor marker and current candidate
+marker, rejects gaps, future or malformed markers, and refuses a same-sequence
+marker bound to another full manager-image attempt. Before activation, the
+reconcile hook reads every release-scoped admission policy and binding this
+release installed, and the hook identity probe ConfigMap, checks each against
+the contract it compiles, and seals the marker immutable with the live UID and
+a semantic digest of each object. The next release's hook reads that inventory
+back after it activates and retires exactly those objects: every binding first,
+then every policy, the probe ConfigMap and finally the marker, each deleted with
+the UID and resourceVersion of an immediate re-read. It never discovers what to
+delete from a label or a name prefix.
 
-Other retained functional guards are still compared exactly in shared storage,
-but are outside this per-endpoint credential/provenance publication claim.
-
-Controller and certificate init verification repeats the same direct endpoint
-proof for the activated candidate before either process starts serving. The
-optional missing-Secret recovery policy is installed later and is outside the
-retained-marker claim. When enabled, certificate startup fences that pair
-separately with exact attributed negative dry-runs on every API server, and the
-rotator still verifies the pair's complete stored structure before using its
-Secret `create` permission.
-
-## One address per API server {#one-address-per-api-server}
-
-Every proof on this page that names every API server -- the admission proof,
-the drain in the credential phase, and each sweep of the uninstall -- finds
-the API servers by listing the
-EndpointSlices of the `default/kubernetes` Service, and probes each address it
-lists. It treats one address as one API server. That holds where each API
-server publishes its own address into that Service. The API server's endpoint
-reconciler does that by default, and it is the case CI runs: every matrix
-cluster has three control-plane nodes and publishes three addresses.
-
-A managed control plane can publish one address in front of several API
-servers, behind a load balancer the provider runs. The probes then reach
-whichever API server the load balancer picks. The hooks keep one client per
-address while the inventory is unchanged, and that client reuses its
-connection, so behind a load balancer that forwards connections their probes
-can all reach the same API server: a sample, not coverage.
-
-A proof that passes there establishes less. Every response it received showed
-the new state for the whole window, so the API servers that answered had it.
-The ones that did not answer are assumed to reach it through their own caches,
-which Kubernetes does not bound and this operator does not measure. CI cannot
-show the difference, because on kind every address is one API server.
-
-To tell which case a cluster is, compare the addresses the Service publishes
-with the API servers that announce themselves. Each API server holds one
-identity Lease in `kube-system`:
-
-```sh
-kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes
-kubectl -n kube-system get lease -l apiserver.kubernetes.io/identity=kube-apiserver
-```
-
-Fewer addresses than Leases means an address fronts more than one API server.
-A provider that does not expose those Leases leaves the count to its own
-documentation. Where the proofs sample rather than cover:
-
-- Hold to [the release namespace contract](../../use/security/#release-namespace)
-  without exception. It keeps the namespace to Ptah administrators for every
-  install, upgrade and uninstall, and where the proofs sample it is the only
-  thing that keeps a writer in the namespace away from the hooks.
-- The certificate rotator needs no per-API-server proof: it keeps the old and
-  the new CA published together for `certificateRotation.caSwitchDelay` before
-  any endpoint serves a certificate from the new one. If the provider can hold
-  an API server's webhook configuration cache back for longer than that, raise
-  the delay. An API server that still missed the change would cost
-  availability rather than the fence: its calls to the webhook fail TLS, and
-  every webhook fails closed, so it refuses the requests those webhooks match
-  until it catches up.
+The hooks and the runtime init verifier compare the stored contract of every
+retained guard exactly and wait for its CEL type checking; they do not probe
+whether each API server has loaded it. The optional missing-Secret recovery
+policy is installed later, and the rotator verifies the pair's complete stored
+structure before using its Secret `create` permission.
 
 ## A retry before activation
 
@@ -313,92 +235,41 @@ has to be the bootstrap state; otherwise a reinstall in the same namespace
 meets guards reading the sequence the removed release last activated, and its
 first hook cannot get a Deployment past them.
 
-Uninstall is a fail-closed, ordered retirement protocol. Two release-stable
-validating admission fences are ordinary chart resources and therefore exist
-before an uninstall starts. Their narrow form protects the fixed bootstrap
-ServiceAccount and the exact proof Jobs and Pods. Helm first replaces fence A
-with the complete uninstall boundary while narrow fence B remains active, then
-the bootstrap Job proves fence A directly on every advertised API server for an
-uninterrupted five-second window. Helm can replace fence B only after that
-proof; a second Job then proves A and B together. Neither publication delay nor
-an interrupted replacement can expose an unfenced bootstrap credential.
+Uninstall is an ordered retirement. Two release-stable validating admission
+fences are ordinary chart resources and therefore exist before an uninstall
+starts. Pre-delete replaces fence A and then fence B with the complete uninstall
+boundary before any hook Job runs.
 
-The broad fences constrain the controller, certificate rotator, quiesce,
-cleanup, and bootstrap identities; their bound TokenRequests; and the complete
-Job and Pod execution contracts used by the remaining hooks. Job and Pod status
-updates are restricted to exact Kubernetes controller, scheduler, or node
-principals and to the fields those principals legitimately own. Deleting a
-protected Job is allowed only to a principal with admission-management
-authority and only after its authenticated status contains a terminal
-`Complete=True` or `Failed=True` condition. This prevents a namespace writer
-from turning Job deletion into hook success while preserving Helm's
-deterministic cleanup and retry path for a genuinely finished Job.
+The broad fences constrain the controller, certificate rotator, quiesce, and
+cleanup identities; their bound TokenRequests; and the complete Job and Pod
+execution contracts used by the remaining hooks. Job and Pod status updates are
+restricted to exact Kubernetes controller, scheduler, or node principals and to
+the fields those principals legitimately own. Deleting a protected Job is
+allowed only to a principal with admission-management authority and only after
+its authenticated status contains a terminal `Complete=True` or `Failed=True`
+condition.
 
 The quiesce hook verifies the complete release, admission, RBAC,
 ServiceAccount, and workload inventory before scaling the two exact runtime
-Deployments to zero. A separate cleanup identity removes only the candidate
-release's exact bindings and chart-created ServiceAccounts. Every chart
-workload uses a Pod-bound projected ServiceAccount token. After runtime Pods
-and retired chart-created ServiceAccounts disappear, the fences remain active
-through an uninterrupted 65-second credential-revocation proof. Kubernetes may
-continue accepting a bound credential for up to 60 seconds after its Pod or
-ServiceAccount enters deletion; the additional five-second stable interval
-prevents such a credential from outliving the boundary.
-
-Each authorization and admission sweep addresses every ready, serving,
-non-terminating endpoint advertised by the `default/kubernetes` Service
-directly, while verifying the normal Kubernetes Service TLS name and cluster
-CA. Discovery uses a complete, coherently paginated EndpointSlice inventory.
-Membership, readiness, canonical address, stored contract, or probe-result
-changes restart the ordinary convergence windows. Missing, malformed,
-unreachable, or TLS-invalid inventory blocks uninstall. Each address stands for
-one API server; where it fronts several, the sweep proves what
-[One address per API server](#one-address-per-api-server) says and no more.
-
-Canonical SubjectAccessReviews bind every retired runtime and hook
-ServiceAccount to the exact mutating permissions issued by this release. A
-normal Kubernetes RBAC no-opinion result (`allowed=false`, `denied=false`) is
-successful; an allow or evaluation error is not. SelfSubjectAccessReviews use
-the cleanup Job's real bearer token, so its ServiceAccount UID, Pod and node
-binding, and credential identifier come from authentication rather than a
-synthetic identity. Stored RBAC, protected-Pod absence, direct authorization,
-and topology evidence must agree for the same uninterrupted window.
+Deployments to zero, and waits until no runtime Pod remains. A separate cleanup
+identity removes only the candidate release's exact bindings and chart-created
+ServiceAccounts.
 
 Helm, not a Pod credential, performs every admission-policy mutation. While A
 and B remain broad, Helm replaces each original validating policy and binding
 with an exact inert marker-only form. A retry accepts only the narrowly defined
 original, retired, or temporarily absent side states reachable from that
 ordered replacement; foreign or ambiguous combinations fail closed. The final
-Job verifies all stored retired pairs and their exact attributed denials on
-every API endpoint before deleting the secondary convergence marker and exact
-release activation object.
-
-The final Job then deletes its own cleanup ServiceAccount with immutable UID
-and resource-version preconditions. Before that deletion it freezes the direct
-endpoint clients and starts an EndpointSlice watch from the inventory LIST
-resourceVersion. While an endpoint still authenticates the deleted credential,
-the release activation must remain absent and both broad fences must continue
-returning their exact denials. Only an `Unauthorized` response counts as token
-retirement; `Forbidden`, an admitted probe, a foreign phase, or a transport or
-server error fails closed. Every frozen endpoint must remain continuously
-unauthorized for five seconds after the last accepted authentication, and the
-EndpointSlice watch must remain unchanged and healthy throughout. An endpoint
-addition, removal, readiness change, watch closure, expired watch, or malformed
-event aborts the hook so a retry creates a fresh ServiceAccount and snapshot.
-After deleting its ServiceAccount, the manager performs no persistent API
-mutation: an endpoint that still authenticates the token receives only the
-exact dry-run fence probes, while an endpoint that has returned `Unauthorized`
-receives read-only phase checks to detect an authentication regression.
+Job verifies all stored retired pairs before deleting the secondary markers and
+the exact release activation object, and then deletes its own cleanup
+ServiceAccount with immutable UID and resource-version preconditions.
 
 The immutable retirement marker remains until the entire pre-delete event has
 succeeded. Helm then removes that marker and the inert retirement pairs under
 `hook-succeeded`; ordinary release deletion finally removes A and B by their
 stable manifest identities. No essential cleanup depends on a post-delete
-hook. Webhook-configuration cache retirement is outside this privilege proof;
-a stale webhook entry after uninstall is an availability residue, not evidence
-that a retired release credential still has authority. Because the protocol
-contains three bounded credential windows, use a Helm uninstall timeout of at
-least five minutes.
+hook. A webhook entry an API server still caches after uninstall is an
+availability residue, not authority a retired release credential keeps.
 
 ### The parameter informer anchor
 

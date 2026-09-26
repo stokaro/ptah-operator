@@ -44,7 +44,7 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 			*policy.Spec.MatchConstraints.MatchPolicy != admissionregistrationv1.Exact {
 			t.Fatalf("%s policy is not explicitly fail-closed with exact matching", name)
 		}
-		native := stripParentAdmissionConvergenceDependencyProbe(t, policy)
+		native := policy
 		if len(native.Spec.Validations) == 0 {
 			t.Fatalf("%s policy has no fail-closed validation contract", name)
 		}
@@ -56,7 +56,7 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 	otherRollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(otherRollout.ReleaseNamespace, otherRollout.ReleaseName, otherRollout.ReleaseSequence, otherRollout.ManagerImage)[:12]
 	otherRollout.ControllerServiceAccountName = "ptah-controller-v2"
 	other := NewParentWorkloadGuard(&otherRollout)
-	if replicaSet.Name == other.replicaSetPolicy().Name || reflect.DeepEqual(stripParentAdmissionConvergenceDependencyProbe(t, replicaSet).Spec, stripParentAdmissionConvergenceDependencyProbe(t, other.replicaSetPolicy()).Spec) {
+	if replicaSet.Name == other.replicaSetPolicy().Name || reflect.DeepEqual(replicaSet.Spec, other.replicaSetPolicy().Spec) {
 		t.Fatal("candidate ReplicaSet parent contract did not change across release identities")
 	}
 	if hookOrigin.Name != other.hookJobOriginPolicy().Name || !reflect.DeepEqual(hookOrigin.Spec, other.hookJobOriginPolicy().Spec) {
@@ -65,7 +65,7 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 	if hookPodOrigin.Name != other.hookPodOriginPolicy().Name || !reflect.DeepEqual(hookPodOrigin.Spec, other.hookPodOriginPolicy().Spec) {
 		t.Fatal("stable hook Pod origin contract changed across release sequences")
 	}
-	if hookContract.Name == other.hookJobContractPolicy().Name || reflect.DeepEqual(stripParentAdmissionConvergenceDependencyProbe(t, hookContract).Spec, stripParentAdmissionConvergenceDependencyProbe(t, other.hookJobContractPolicy()).Spec) {
+	if hookContract.Name == other.hookJobContractPolicy().Name || reflect.DeepEqual(hookContract.Spec, other.hookJobContractPolicy().Spec) {
 		t.Fatal("candidate hook Job contract did not change with release identity")
 	}
 }
@@ -139,67 +139,9 @@ func TestParentOriginV2SpecsAreByteStableAcrossReleaseAttempts(t *testing.T) {
 	}
 }
 
-func stripParentAdmissionConvergenceDependencyProbe(
-	t *testing.T,
-	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
-) *admissionregistrationv1.ValidatingAdmissionPolicy {
-	t.Helper()
-	if policy == nil {
-		t.Fatal("parent workload guard policy is nil")
-	}
-	if strings.HasPrefix(policy.Name, parentHookOriginGuardPrefix) ||
-		strings.HasPrefix(policy.Name, parentHookPodOriginPrefix) {
-		if len(policy.Spec.Variables) >= 2 &&
-			policy.Spec.Variables[0].Name == "isAnyAdmissionConvergenceProbe" &&
-			policy.Spec.Variables[1].Name == "isAdmissionConvergenceProbe" {
-			t.Fatal("release-stable parent origin guard unexpectedly embeds a candidate convergence probe")
-		}
-		return policy.DeepCopy()
-	}
-	if len(policy.Spec.Variables) < 2 ||
-		policy.Spec.Variables[0].Name != "isAnyAdmissionConvergenceProbe" ||
-		policy.Spec.Variables[1].Name != "isAdmissionConvergenceProbe" ||
-		policy.Spec.Variables[0].Expression != policy.Spec.Variables[1].Expression {
-		return stripAdmissionConvergenceDependencyProbe(t, policy)
-	}
-
-	stripped := policy.DeepCopy()
-	probeExpression := stripped.Spec.Variables[0].Expression
-	if len(stripped.Spec.MatchConstraints.ResourceRules) == 0 || len(stripped.Spec.Validations) < 2 {
-		t.Fatal("stable admission convergence wrapper is incomplete")
-	}
-	last := stripped.Spec.Validations[len(stripped.Spec.Validations)-2:]
-	if last[0].Expression != `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true` ||
-		last[0].Message != admissionConvergenceProbePersistenceMessage ||
-		last[1].Expression != `!variables.isAdmissionConvergenceProbe` ||
-		last[1].MessageExpression != `"Ptah admission convergence confirmed exact workload guard " + request.options.fieldManager` {
-		t.Fatal("stable admission convergence validations differ from the exact wrapper")
-	}
-	matchPrefix := "(" + probeExpression + ") || ("
-	for index := range stripped.Spec.MatchConditions {
-		expression := stripped.Spec.MatchConditions[index].Expression
-		if !strings.HasPrefix(expression, matchPrefix) || !strings.HasSuffix(expression, ")") {
-			t.Fatalf("stable admission convergence match condition %d differs from the exact wrapper", index)
-		}
-		stripped.Spec.MatchConditions[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, matchPrefix), ")")
-	}
-	validationPrefix := "variables.isAnyAdmissionConvergenceProbe || ("
-	for index := range stripped.Spec.Validations[:len(stripped.Spec.Validations)-2] {
-		expression := stripped.Spec.Validations[index].Expression
-		if !strings.HasPrefix(expression, validationPrefix) || !strings.HasSuffix(expression, ")") {
-			t.Fatalf("stable admission convergence validation %d differs from the exact wrapper", index)
-		}
-		stripped.Spec.Validations[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, validationPrefix), ")")
-	}
-	stripped.Spec.MatchConstraints.ResourceRules = stripped.Spec.MatchConstraints.ResourceRules[:len(stripped.Spec.MatchConstraints.ResourceRules)-1]
-	stripped.Spec.Variables = stripped.Spec.Variables[2:]
-	stripped.Spec.Validations = stripped.Spec.Validations[:len(stripped.Spec.Validations)-2]
-	return stripped
-}
-
 func TestParentHookPodOriginGuardPinsJobControllerUIDChain(t *testing.T) {
 	guard := NewParentWorkloadGuard(runtimePodGuardFixture())
-	policy := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookPodOriginPolicy())
+	policy := guard.hookPodOriginPolicy()
 	serialized, err := json.Marshal(policy.Spec)
 	if err != nil {
 		t.Fatal(err)
@@ -299,7 +241,7 @@ func TestParentHookJobDeleteRequiresTerminalStatusAndAdmissionAuthority(t *testi
 	}
 
 	for _, policy := range []*admissionregistrationv1.ValidatingAdmissionPolicy{guard.hookJobOriginPolicy(), guard.hookJobContractPolicy()} {
-		native := stripParentAdmissionConvergenceDependencyProbe(t, policy)
+		native := policy
 		encoded, err := json.Marshal(native.Spec)
 		if err != nil {
 			t.Fatal(err)
@@ -406,7 +348,7 @@ func TestParentHookPodMainUpdateCannotEraseProtectionBoundary(t *testing.T) {
 	t.Parallel()
 
 	guard := NewParentWorkloadGuard(runtimePodGuardFixture())
-	native := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookPodOriginPolicy())
+	native := guard.hookPodOriginPolicy()
 	oldObject := parentHookImageCheckPod(guard)
 	object := parentGuardCELClone(t, oldObject)
 	objectMetadata := object["metadata"].(map[string]any)
@@ -811,7 +753,7 @@ func TestParentHookIdentityProbeDeadlineLeavesTerminationMargin(t *testing.T) {
 	t.Parallel()
 
 	rollout := runtimePodGuardFixture()
-	policy := stripParentAdmissionConvergenceDependencyProbe(t, NewParentWorkloadGuard(rollout).hookJobContractPolicy())
+	policy := NewParentWorkloadGuard(rollout).hookJobContractPolicy()
 	deadlineExpression := ""
 	for _, validation := range policy.Spec.Validations {
 		if strings.Contains(validation.Expression, "dyn(object).spec.activeDeadlineSeconds") && !strings.Contains(validation.Expression, "dyn(oldObject).spec.activeDeadlineSeconds") {
@@ -932,7 +874,7 @@ func TestParentHookJobPriorityClassContract(t *testing.T) {
 	rollout.PriorityClassName = "runtime-critical"
 	guard := NewParentWorkloadGuard(rollout)
 	reconcileJob := rollout.hookJobName("reconcile")
-	policy := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookJobContractPolicy())
+	policy := guard.hookJobContractPolicy()
 
 	var expression string
 	for _, validation := range policy.Spec.Validations {
@@ -1142,7 +1084,7 @@ func TestParentWorkloadGuardsScopeOptionalServiceAccounts(t *testing.T) {
 			if test.policy.Spec.FailurePolicy == nil || *test.policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 				t.Fatal("policy is not fail-closed")
 			}
-			native := stripParentAdmissionConvergenceDependencyProbe(t, test.policy)
+			native := test.policy
 			encoded, err := json.Marshal(native.Spec)
 			if err != nil {
 				t.Fatal(err)

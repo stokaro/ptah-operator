@@ -14,7 +14,6 @@
 {{- $planMessage := "Ptah controller plan write guard rejected an unsafe manifest shape" -}}
 {{- $migrationPlanMessage := "Ptah controller migration plan write guard rejected an unsafe manifest shape" -}}
 {{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
-{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
 {{- $jobCurrent := `has(object.metadata.annotations) && ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest", "operator.ptah.run/plan-fingerprint", "operator.ptah.run/plan-content-digest", "cluster-autoscaler.kubernetes.io/safe-to-evict"]) && object.metadata.annotations["operator.ptah.run/operation-id"] != "" && object.metadata.annotations["operator.ptah.run/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/ptah-version"] != "" && object.metadata.annotations["operator.ptah.run/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.run/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.run/controller-revision"] != "" && object.metadata.annotations["operator.ptah.run/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString && object.metadata.annotations["operator.ptah.run/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && object.metadata.labels["app.kubernetes.io/component"] == "schema-operation" && "operator.ptah.run/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.run/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || ((object.metadata.labels["operator.ptah.run/operation"] != "apply" || object.metadata.labels["app.kubernetes.io/component"] == "migration-operation") && !("operator.ptah.run/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.run/plan-content-digest" in object.metadata.annotations))) && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && "cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations && object.metadata.annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] == "false") || (object.metadata.labels["operator.ptah.run/operation"] != "apply" && !("cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations)))` -}}
 {{- $jobActiveImageClause := ` && object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage` -}}
 {{- $jobActiveStateClause := ` && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString` -}}
@@ -63,9 +62,6 @@
       (dict "name" (include "ptah-operator.controllerPlanWriteGuardPolicyName" .) "component" "controller-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahschemaplans" "operations" (list "CREATE") "denialMessage" $planMessage "validations" $planValidations "parameterized" true)
       (dict "name" (include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" .) "component" "controller-migration-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahmigrationplans" "operations" (list "CREATE") "denialMessage" $migrationPlanMessage "validations" $migrationPlanValidations "parameterized" true) -}}
 {{- range $entry := $entries -}}
-{{- $probeFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" $ "policyName" $entry.name) -}}
-{{- $probeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" $ "fieldManager" $probeFieldManager) -}}
-{{- $probeMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $probeFieldManager) -}}
 {{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $entry.name -}}
 {{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $entry.name -}}
 {{- range $object := list
@@ -118,20 +114,10 @@ spec:
         operations: {{ $entry.operations | toJson }}
         resources: [{{ $entry.resource | quote }}]
         scope: Namespaced
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
-        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
-        scope: Namespaced
   matchConditions:
     - name: candidate-or-predecessor-controller-service-account
-      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest $controllerUsernameMatch | quote }}
+      expression: {{ $controllerUsernameMatch | quote }}
   variables:
-    - name: isAnyAdmissionConvergenceProbe
-      expression: {{ $anyConvergenceRequest | quote }}
-    - name: isAdmissionConvergenceProbe
-      expression: {{ $probeRequest | quote }}
     - name: activeRelease
       expression: 'params != null && has(params.data) && "active-release-sequence" in params.data && params.data["active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(params.data["active-release-sequence"]) : -1'
     - name: activeControllerStateString
@@ -143,18 +129,14 @@ spec:
     - name: candidateRelease
       expression: {{ $candidateSequence | quote }}
   validations:
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $activationShape | quote }}
+    - expression: {{ $activationShape | quote }}
       message: {{ $entry.denialMessage | quote }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $controllerAuthority | quote }}
+    - expression: {{ $controllerAuthority | quote }}
       message: "Ptah controller principal guard rejected an inactive release identity"
 {{- range $validation := $entry.validations }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $validation.expression | quote }}
+    - expression: {{ $validation.expression | quote }}
       message: {{ $validation.message | quote }}
 {{- end }}
-    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
-      message: Ptah admission convergence probe field manager is reserved for dry-run verification
-    - expression: '!variables.isAdmissionConvergenceProbe'
-      message: {{ $probeMessage | quote }}
 ---
 {{- end }}
 {{- if not $binding }}
@@ -184,11 +166,6 @@ spec:
         apiVersions: {{ $entry.apiVersions | toJson }}
         operations: {{ $entry.operations | toJson }}
         resources: [{{ $entry.resource | quote }}]
-        scope: Namespaced
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
         scope: Namespaced
 {{- if $entry.parameterized }}
   paramRef:

@@ -226,26 +226,10 @@
       "controller-service-account-managed" (printf "%t" .Values.serviceAccount.create)
       "hook-service-account-base" $hookBase
       "certificate-service-account-name" $certificateServiceAccount -}}
-{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
-{{- $replicaSetProbeFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $replicaSetName) -}}
-{{- $replicaSetProbeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $replicaSetProbeFieldManager) -}}
-{{- $replicaSetProbeMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $replicaSetProbeFieldManager) -}}
-{{- $hookOriginProbeFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $hookOriginName) -}}
-{{- $hookOriginProbeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $hookOriginProbeFieldManager) -}}
-{{- $hookOriginProbeMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $hookOriginProbeFieldManager) -}}
-{{- $hookPodProbeFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $hookPodOriginName) -}}
-{{- $hookPodProbeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $hookPodProbeFieldManager) -}}
-{{- $hookPodProbeMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $hookPodProbeFieldManager) -}}
-{{- $hookContractProbeFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $hookContractName) -}}
-{{- $hookContractProbeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $hookContractProbeFieldManager) -}}
-{{- $hookContractProbeMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $hookContractProbeFieldManager) -}}
 {{- $stableMarkerPattern := printf "^ptah-admission-convergence-v1-[1-9][0-9]*-%s$" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- $stableMarkerReleaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $parentOriginReadyName := printf "ptah-operator-parent-origin-ready-v2-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $stableMarkerReleaseDigest -}}
-{{- $serviceAccountObjectProbeDigest := printf "1\n%s\n%s" $serviceAccountObjectGuardName $stableMarkerPattern | sha256sum -}}
-{{- $serviceAccountObjectProbeFieldManager := printf "ptah-service-account-object-probe-v1-%s" $serviceAccountObjectProbeDigest -}}
-{{- $serviceAccountObjectProbeRequest := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q` .Release.Namespace $stableMarkerPattern $serviceAccountObjectProbeFieldManager -}}
 {{- $parentOriginReadyMatch := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && ((request.operation in ["CREATE", "UPDATE"] && request.name == %q) || (request.operation == "DELETE" && oldObject != null && oldObject.metadata.name == %q))` .Release.Namespace $parentOriginReadyName $parentOriginReadyName -}}
 {{- $stableMarkerObjectMatch := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && ((request.operation in ["CREATE", "UPDATE"] && request.name.matches(%q)) || (request.operation == "DELETE" && oldObject != null && oldObject.metadata.name.matches(%q)))` .Release.Namespace $stableMarkerPattern $stableMarkerPattern -}}
 {{- $parentOriginReadyCreateShape := include "ptah-operator.parentOriginReadyShapeExpression" (dict "root" . "name" $parentOriginReadyName "markerData" $parentOriginReadyData "object" "object" "persisted" false) -}}
@@ -385,12 +369,6 @@
 {{- $oldHookContractChunks = append $oldHookContractChunks $oldHookContractCurrent -}}
 {{- end -}}
 
-{{- /* The origin guard is release-stable: the probe is recognized by the marker
-      pattern the guard already matches, never by the sequence-bearing marker
-      name. The field manager pattern is the one every marker-matching guard
-      shares; the dry-run validation keeps the escape from admitting a real
-      write. ParentWorkloadGuard compiles the same text. */ -}}
-{{- $hookOriginProbeRequest := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace (include "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" .) -}}
 {{- $hookOriginVariables := list
       (dict "name" "isProtectedJob" "expression" `request.resource.group == "batch" && request.resource.version == "v1" && request.resource.resource == "jobs"`)
       (dict "name" "isMainWrite" "expression" `request.operation in ["CREATE", "UPDATE"] && (!has(request.subResource) || request.subResource == "")`)
@@ -399,9 +377,7 @@
       (dict "name" "effectiveName" "expression" `request.operation == "DELETE" && oldObject != null ? oldObject.metadata.name : request.name`)
       (dict "name" "isReadinessMarker" "expression" (printf `request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName == %q` $parentOriginReadyName))
       (dict "name" "isConvergenceMarker" "expression" (printf `request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName.matches(%q)` $stableMarkerPattern))
-      (dict "name" "isMarker" "expression" `variables.isReadinessMarker || variables.isConvergenceMarker`)
-      (dict "name" "isServiceAccountObjectConvergenceProbe" "expression" $serviceAccountObjectProbeRequest)
-      (dict "name" "isAnyAdmissionConvergenceProbe" "expression" $hookOriginProbeRequest) -}}
+      (dict "name" "isMarker" "expression" `variables.isReadinessMarker || variables.isConvergenceMarker`) -}}
 {{- /* A release hook writes and retires the convergence markers: it seals the
       current one and deletes the sealed predecessor marker as the last step of
       predecessor retirement. Both are UPDATE and DELETE by the same principal,
@@ -417,23 +393,16 @@
       (printf `!variables.isProtectedJob || !variables.isStatusUpdate || (%s)` $statusPreservesIdentity)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $terminalJob)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $hookAuthority)
-      (printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (request.operation == "DELETE" && request.userInfo.username.matches(%q)) || (%s)` $hookServiceAccountUsernamePattern $teardownServiceAccountUsernamePattern $hookAuthority)
-      `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`
+      (printf `!variables.isMarker || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (request.operation == "DELETE" && request.userInfo.username.matches(%q)) || (%s)` $hookServiceAccountUsernamePattern $teardownServiceAccountUsernamePattern $hookAuthority)
       (printf `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $parentOriginReadyCreateShape $parentOriginReadyStoredShape)
       (printf `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $parentOriginReadyOldShape)
       (printf `!variables.isConvergenceMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $stableMarkerCreateShape $stableMarkerUpdateShape)
       (printf `!variables.isConvergenceMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $stableMarkerOldShape)
       `!variables.isMarker || request.operation != "UPDATE" || (object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion)` -}}
-{{- /* This guard matches the convergence marker, so every dry-run probe another
-      guard is the target of passes through it too. The probe carries an unsealed
-      marker unchanged, which the marker contract below refuses; the probe is
-      let through by its field manager and held to dry-run, as the runtime
-      parent guard does. */ -}}
 {{- $hookOriginExactValidations := list -}}
 {{- range $expression := $hookOriginNativeValidations -}}
-{{- $hookOriginExactValidations = append $hookOriginExactValidations (dict "expression" (printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $expression) "message" $hookOriginMessage) -}}
+{{- $hookOriginExactValidations = append $hookOriginExactValidations (dict "expression" $expression "message" $hookOriginMessage) -}}
 {{- end -}}
-{{- $hookOriginExactValidations = append $hookOriginExactValidations (dict "expression" `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true` "message" $hookOriginMessage) -}}
 {{- $hookOriginSpec := dict
       "failurePolicy" "Fail"
       "matchConstraints" (dict "matchPolicy" "Exact" "namespaceSelector" (dict) "objectSelector" (dict) "resourceRules" (list
@@ -582,20 +551,10 @@ spec:
         operations: ["CREATE", "UPDATE"]
         resources: ["replicasets"]
         scope: Namespaced
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
-        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
-        scope: Namespaced
   matchConditions:
     - name: protected-runtime-service-account
-      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest $replicaSetMatch | quote }}
+      expression: {{ $replicaSetMatch | quote }}
   variables:
-    - name: isAnyAdmissionConvergenceProbe
-      expression: {{ $anyConvergenceRequest | quote }}
-    - name: isAdmissionConvergenceProbe
-      expression: {{ $replicaSetProbeRequest | quote }}
     - name: owner
       expression: 'object.metadata.ownerReferences[0]'
     - name: hash
@@ -610,13 +569,9 @@ spec:
       expression: {{ $replicaSetGarbageCollectorCleanup | quote }}
   validations:
     {{- range $expression := $replicaSetValidations }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $expression | quote }}
+    - expression: {{ $expression | quote }}
       message: {{ $replicaSetMessage | quote }}
     {{- end }}
-    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
-      message: Ptah admission convergence probe field manager is reserved for dry-run verification
-    - expression: '!variables.isAdmissionConvergenceProbe'
-      message: {{ $replicaSetProbeMessage | quote }}
 ---
 {{- end }}
 {{- if not $replicaSetBinding }}
@@ -822,20 +777,10 @@ spec:
         operations: ["UPDATE"]
         resources: ["jobs/status"]
         scope: Namespaced
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
-        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
-        scope: Namespaced
   matchConditions:
     - name: candidate-hook-service-account
-      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && request.resource.group == "batch" && request.resource.resource == "jobs" && (request.name in [%q, %q, %q, %q, %q, %q] || (oldObject != null && oldObject.metadata.name in [%q, %q, %q, %q, %q, %q]) || (object != null && has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (oldObject != null && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $imageCheckJob $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob $imageCheckJob $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob $hookServiceAccount $teardownServiceAccount $hookServiceAccount $teardownServiceAccount) | quote }}
+      expression: {{ printf `request.namespace == %q && request.resource.group == "batch" && request.resource.resource == "jobs" && (request.name in [%q, %q, %q, %q, %q, %q] || (oldObject != null && oldObject.metadata.name in [%q, %q, %q, %q, %q, %q]) || (object != null && has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (oldObject != null && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $imageCheckJob $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob $imageCheckJob $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob $hookServiceAccount $teardownServiceAccount $hookServiceAccount $teardownServiceAccount | quote }}
   variables:
-    - name: isAnyAdmissionConvergenceProbe
-      expression: {{ $anyConvergenceRequest | quote }}
-    - name: isAdmissionConvergenceProbe
-      expression: {{ $hookContractProbeRequest | quote }}
     - name: isMainWrite
       expression: 'request.operation in ["CREATE", "UPDATE"] && (!has(request.subResource) || request.subResource == "")'
     - name: isStatusUpdate
@@ -856,25 +801,21 @@ spec:
       expression: {{ printf `variables.effectiveName == %q` $teardownJob | quote }}
   validations:
     {{- range $expression := $hookContractValidations }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isMainWrite || (%s))` $expression | quote }}
+    - expression: {{ printf `!variables.isMainWrite || (%s)` $expression | quote }}
       message: {{ $hookContractMessage | quote }}
     {{- end }}
     {{- range $oldHookContract := $oldHookContractChunks }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!(variables.isStatusUpdate || variables.isDelete) || (oldObject != null && (%s)))` $oldHookContract | quote }}
+    - expression: {{ printf `!(variables.isStatusUpdate || variables.isDelete) || (oldObject != null && (%s))` $oldHookContract | quote }}
       message: {{ $hookContractMessage | quote }}
     {{- end }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isStatusUpdate || (%s))` $jobControllerPrincipal | quote }}
+    - expression: {{ printf `!variables.isStatusUpdate || (%s)` $jobControllerPrincipal | quote }}
       message: {{ $hookContractMessage | quote }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isStatusUpdate || (%s))` $statusPreservesIdentity | quote }}
+    - expression: {{ printf `!variables.isStatusUpdate || (%s)` $statusPreservesIdentity | quote }}
       message: {{ $hookContractMessage | quote }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isDelete || (%s))` $terminalJob | quote }}
+    - expression: {{ printf `!variables.isDelete || (%s)` $terminalJob | quote }}
       message: {{ $hookContractMessage | quote }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isDelete || (%s))` $hookAuthority | quote }}
+    - expression: {{ printf `!variables.isDelete || (%s)` $hookAuthority | quote }}
       message: {{ $hookContractMessage | quote }}
-    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
-      message: Ptah admission convergence probe field manager is reserved for dry-run verification
-    - expression: '!variables.isAdmissionConvergenceProbe'
-      message: {{ $hookContractProbeMessage | quote }}
 ---
 {{- end }}
 {{- if not $hookContractBinding }}

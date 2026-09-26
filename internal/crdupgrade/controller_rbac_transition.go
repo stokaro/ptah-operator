@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 
-	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -122,11 +120,12 @@ func (t *ControllerRBACTransition) HasPredecessor() bool {
 	return t != nil && t.rollout != nil && t.rollout.PreviousControllerServiceAccountName != ""
 }
 
-// RequiresCredentialGrace decides from the verified activation state and the
+// RequiresCredentialDrain decides from the verified activation state and the
 // durable preflight inventory whether controller credentials may already have
-// been issued. The sole no-grace case is a pristine managed bootstrap whose
-// candidate ServiceAccount and every candidate grant are still absent.
-func (t *ControllerRBACTransition) RequiresCredentialGrace(activation ReleaseActivationState, protectedPodsRemain bool) (bool, error) {
+// been issued, and so whether the cutover drains them first. The sole no-drain
+// case is a pristine managed bootstrap whose candidate ServiceAccount and every
+// candidate grant are still absent.
+func (t *ControllerRBACTransition) RequiresCredentialDrain(activation ReleaseActivationState, protectedPodsRemain bool) (bool, error) {
 	if t == nil || t.rollout == nil {
 		return false, errors.New("controller RBAC transition is nil")
 	}
@@ -246,34 +245,6 @@ func (t *ControllerRBACTransition) VerifyComplete(ctx context.Context) error {
 		return errors.New("controller ServiceAccount identity changed after transition")
 	}
 	return nil
-}
-
-// PredecessorAuthorizationProbe returns one canonical predecessor subject and
-// one check for every distinct grant in the exact predecessor role contracts.
-func (t *ControllerRBACTransition) PredecessorAuthorizationProbe() (AuthorizationProbe, error) {
-	if err := t.validate(); err != nil {
-		return AuthorizationProbe{}, err
-	}
-	if !t.HasPredecessor() {
-		return AuthorizationProbe{}, errors.New("controller RBAC transition has no predecessor")
-	}
-	checks, err := controllerRBACAuthorizationChecks(t.rollout, t.contract.roles)
-	if err != nil {
-		return AuthorizationProbe{}, err
-	}
-	return AuthorizationProbe{
-		Subject: AuthorizationSubject{
-			Name: "previous-controller",
-			User: "system:serviceaccount:" + t.rollout.ReleaseNamespace + ":" + t.rollout.PreviousControllerServiceAccountName,
-			UID:  string(t.rollout.PreviousControllerServiceAccountUID),
-			Groups: []string{
-				"system:serviceaccounts",
-				"system:serviceaccounts:" + t.rollout.ReleaseNamespace,
-				"system:authenticated",
-			},
-		},
-		Checks: checks,
-	}, nil
 }
 
 func (t *ControllerRBACTransition) advance(ctx context.Context, before *controllerRBACTransitionState) error {
@@ -910,10 +881,13 @@ func frozenPredecessorControllerRoleRules(rollout *RolloutGuard, runtimeContract
 	}, nil
 }
 
-// The runtime-admission Role sequence 1 published. Its controller identity and
-// mutable admission marker belong to the predecessor, not the candidate. Keep
-// the rules literal rather than inheriting future current-role changes.
-func sequence1ControllerRuntimeRoleRules(identity controllerRoleIdentity, contract RuntimeAdmissionContract) []rbacv1.PolicyRule {
+// The runtime-admission Role sequence 1 published. Its controller identity
+// belongs to the predecessor, not the candidate. Keep the rules literal rather
+// than inheriting future current-role changes.
+//
+// Sequence 1 is unshipped, so the record still describes the chart that
+// publishes it, as sequence1ControllerClusterRoleRules explains.
+func sequence1ControllerRuntimeRoleRules(_ controllerRoleIdentity, contract RuntimeAdmissionContract) []rbacv1.PolicyRule {
 	rules := []rbacv1.PolicyRule{
 		privilegePolicyRule(
 			[]string{""}, []string{"serviceaccounts"},
@@ -921,12 +895,6 @@ func sequence1ControllerRuntimeRoleRules(identity controllerRoleIdentity, contra
 			[]string{"get"},
 		),
 		privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
-		privilegePolicyRule(
-			[]string{""}, []string{"configmaps"},
-			[]string{AdmissionConvergenceMarkerName(contract.Namespace, identity.releaseName, identity.releaseSequence)},
-			[]string{"get", "update"},
-		),
-		privilegePolicyRule([]string{""}, []string{"configmaps"}, []string{ReleaseActivationName}, []string{"get"}),
 	}
 	if contract.Namespace == corev1.NamespaceDefault {
 		rules = append(rules, privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}))
@@ -1052,7 +1020,7 @@ func currentControllerClusterRoleRules(rollout *RolloutGuard) []rbacv1.PolicyRul
 	}
 }
 
-func currentControllerRuntimeRoleRules(rollout *RolloutGuard, contract RuntimeAdmissionContract) []rbacv1.PolicyRule {
+func currentControllerRuntimeRoleRules(_ *RolloutGuard, contract RuntimeAdmissionContract) []rbacv1.PolicyRule {
 	rules := []rbacv1.PolicyRule{
 		privilegePolicyRule(
 			[]string{""},
@@ -1061,29 +1029,18 @@ func currentControllerRuntimeRoleRules(rollout *RolloutGuard, contract RuntimeAd
 			[]string{"get"},
 		),
 		privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
-		privilegePolicyRule(
-			[]string{""},
-			[]string{"configmaps"},
-			[]string{AdmissionConvergenceMarkerName(contract.Namespace, rollout.ReleaseName, rollout.ReleaseSequence)},
-			[]string{"get", "update"},
-		),
-		// The runtime verifier reads the release activation parameter to prove
-		// the stored admission contract; the certificate rotator holds no other
-		// grant on that ConfigMap.
-		privilegePolicyRule([]string{""}, []string{"configmaps"}, []string{ReleaseActivationName}, []string{"get"}),
 	}
 	if contract.Namespace == corev1.NamespaceDefault {
-		// A release in the default namespace reads the API server
-		// EndpointSlices through this Role; any other through the discovery
-		// Role in that namespace.
+		// A release in the default namespace carries the discovery grant in
+		// this Role; any other in the discovery Role in that namespace.
 		rules = append(rules, currentControllerDiscoveryRoleRules()...)
 	}
 	return rules
 }
 
-// currentControllerDiscoveryRoleRules is the authority the runtime verifier
-// in both Deployments needs to discover every API server: the default
-// Kubernetes Service's EndpointSlices, and nothing else in that namespace.
+// currentControllerDiscoveryRoleRules is the grant the controller discovery
+// Role carries in the default namespace: the default Kubernetes Service's
+// EndpointSlices, and nothing else in that namespace.
 func currentControllerDiscoveryRoleRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
 		privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
@@ -1158,7 +1115,6 @@ func retainedAdmissionGuardNames(identity controllerRoleIdentity) []string {
 		HookIdentityGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		HookIdentityProbeGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		ReleaseActivationGuardPolicyName(identity.releaseNamespace, identity.releaseName),
-		AdmissionConvergencePolicyName(identity.releaseNamespace, identity.releaseName),
 		ServiceAccountObjectGuardPolicyName(identity.releaseNamespace, identity.releaseName),
 		ServiceAccountOriginGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		ControllerWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
@@ -1186,91 +1142,6 @@ func currentRetainedAdmissionGuardNames(rollout *RolloutGuard) []string {
 
 func currentCRDManagerAdmissionGuardNames(rollout *RolloutGuard) []string {
 	return currentRetainedAdmissionGuardNames(rollout)
-}
-
-func controllerRBACAuthorizationChecks(rollout *RolloutGuard, roles []controllerRBACRoleContract) ([]AuthorizationCheck, error) {
-	const probeName = "ptah-controller-rbac-revocation-probe"
-	checksByKey := make(map[string]AuthorizationCheck)
-	for _, role := range roles {
-		for ruleIndex, rule := range role.predecessorRules {
-			if len(rule.APIGroups) == 0 || len(rule.Resources) == 0 || len(rule.Verbs) == 0 || len(rule.NonResourceURLs) != 0 {
-				return nil, fmt.Errorf("controller RBAC role %q rule %d is not an exact resource grant", role.name, ruleIndex)
-			}
-			for _, group := range rule.APIGroups {
-				for _, combinedResource := range rule.Resources {
-					resource, subresource, _ := strings.Cut(combinedResource, "/")
-					if resource == "" || group == "*" || resource == "*" || subresource == "*" {
-						return nil, fmt.Errorf("controller RBAC role %q contains an unbounded resource grant", role.name)
-					}
-					for _, verb := range rule.Verbs {
-						if verb == "" || verb == "*" {
-							return nil, fmt.Errorf("controller RBAC role %q contains an unbounded verb grant", role.name)
-						}
-						names := rule.ResourceNames
-						if len(names) == 0 {
-							names = []string{""}
-						}
-						for _, resourceName := range names {
-							name := resourceName
-							if name == "" && verb != "list" && verb != "watch" && verb != "create" && verb != "deletecollection" {
-								name = probeName
-							}
-							namespace := role.namespace
-							if role.cluster {
-								namespace = controllerRBACResourceNamespace(group, resource, rollout.ReleaseNamespace)
-							}
-							attributes := &authorizationv1.ResourceAttributes{
-								Namespace:   namespace,
-								Verb:        verb,
-								Group:       group,
-								Version:     controllerRBACResourceVersion(group),
-								Resource:    resource,
-								Subresource: subresource,
-								Name:        name,
-							}
-							keyBytes, err := json.Marshal(attributes)
-							if err != nil {
-								return nil, err
-							}
-							key := string(keyBytes)
-							checksByKey[key] = AuthorizationCheck{ResourceAttributes: attributes}
-						}
-					}
-				}
-			}
-		}
-	}
-	keys := make([]string, 0, len(checksByKey))
-	for key := range checksByKey {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	checks := make([]AuthorizationCheck, 0, len(keys))
-	for index, key := range keys {
-		check := checksByKey[key]
-		check.Name = fmt.Sprintf("predecessor grant %03d", index+1)
-		checks = append(checks, check)
-	}
-	if len(checks) == 0 {
-		return nil, errors.New("controller RBAC predecessor authorization checks are empty")
-	}
-	return checks, nil
-}
-
-func controllerRBACResourceNamespace(group, resource, releaseNamespace string) string {
-	switch group + "/" + resource {
-	case "node.k8s.io/runtimeclasses", "scheduling.k8s.io/priorityclasses":
-		return ""
-	default:
-		return releaseNamespace
-	}
-}
-
-func controllerRBACResourceVersion(group string) string {
-	if group == "operator.ptah.run" {
-		return "v1alpha1"
-	}
-	return "v1"
 }
 
 func controllerRBACSubjectPatch(binding controllerRBACBindingState, candidate rbacv1.Subject) ([]byte, error) {

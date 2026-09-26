@@ -194,12 +194,10 @@ assert_webhook_runtime_argument_owners() {
       expected["Job/ptah-hook-identity-v1-a4221dfdc0df"] = 1
       expected["Job/ptah-e2e-ptah-operator-crd-v1-a4221dfdc0df-preflight"] = 1
       expected["Job/ptah-e2e-ptah-operator-crd-v1-a4221dfdc0df"] = 1
-      expected["Job/ptah-teardown-probe-a-v1-e48380a9a8af"] = 1
       expected["Job/ptah-e2e-ptah-operator-retire-v1-a4221dfdc0df"] = 1
-      expected["Job/ptah-teardown-gate-v1-e48380a9a8af"] = 1
       expected["Job/ptah-e2e-ptah-operator-quiesce-v1-a4221dfdc0df"] = 1
       expected["Job/ptah-e2e-ptah-operator-cleanup-v1-a4221dfdc0df"] = 1
-      expected_count = 10
+      expected_count = 8
       reset_document()
     }
     /^---$/ {
@@ -6336,17 +6334,21 @@ printf '%s\n' "$crd_role_section" |
 # Only the stable ClusterRoleBinding is mutable through cluster-wide RBAC.
 # Namespaced transition rules are checked against the compiled Role inventory.
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["get", "patch"]')" -eq 1 ]
-[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["create"]')" -eq 1 ]
 for crd_manager_rbac_marker in \
 	'resources: ["clusterrolebindings"]' \
-	'resources: ["rolebindings"]' \
-	'resources: ["subjectaccessreviews"]'; do
+	'resources: ["rolebindings"]'; do
 	printf '%s\n' "$crd_role_section" |
 		grep -F -- "$crd_manager_rbac_marker" >/dev/null
 done
+# The hook creates nothing cluster-wide. Its one create grant was the access
+# review it no longer sends, and a review grant is authority no step uses.
+[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["create"]')" -eq 0 ] || {
+	printf '%s\n' 'e2e static: fresh-install CRD manager ClusterRole grants create' >&2
+	exit 1
+}
 if printf '%s\n' "$crd_role_section" |
-	grep -Eq 'verbs:.*(bind|escalate|delete|watch)|resources:.*(\*|endpointslices|"roles")'; then
-	printf '%s\n' 'e2e static: fresh-install CRD manager ClusterRole contains an unsafe verb, wildcard, or cluster-wide namespaced access' >&2
+	grep -Eq 'verbs:.*(bind|escalate|delete|watch)|resources:.*(\*|endpointslices|"roles"|subjectaccessreviews)'; then
+	printf '%s\n' 'e2e static: fresh-install CRD manager ClusterRole contains an unsafe verb, wildcard, cluster-wide namespaced access, or an unused access review grant' >&2
 	exit 1
 fi
 for crd_runtime_marker in \
@@ -6705,9 +6707,7 @@ for activation_hook in \
 	'ValidatingAdmissionPolicy:-168' \
 	'ValidatingAdmissionPolicyBinding:-167' \
 	'ConfigMap:-166' \
-	'ConfigMap:-165' \
-	'ValidatingAdmissionPolicy:-38' \
-	'ValidatingAdmissionPolicyBinding:-37'; do
+	'ConfigMap:-165'; do
 	[ "$(printf '%s\n' "$activation_hook_order" | grep -Fxc -- "$activation_hook")" -eq 1 ] || {
 		printf 'e2e static: release activation hook order is missing exact entry %s\n' \
 			"$activation_hook" >&2
@@ -6730,7 +6730,7 @@ done
 	PTAH_PRIVILEGE_RECOVERY_RENDER="$CRD_FULL_RECOVERY_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceSentinelMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceMarkerMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
 	PTAH_TEARDOWN_CERTIFICATE_RUNTIME_ENABLED=false \

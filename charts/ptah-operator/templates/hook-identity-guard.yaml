@@ -22,13 +22,6 @@
 {{- $probeName := include "ptah-operator.hookIdentityProbeGuardPolicyName" . -}}
 {{- $message := printf "Ptah hook identity guard v%s rejected an unsafe privileged hook Pod" $sequence -}}
 {{- $probeMessage := printf "Ptah hook identity probe guard v%s rejected the enforcement probe" $sequence -}}
-{{- $convergenceFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $name) -}}
-{{- $convergenceRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $convergenceFieldManager) -}}
-{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
-{{- $convergenceMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $convergenceFieldManager) -}}
-{{- $probeConvergenceFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $probeName) -}}
-{{- $probeConvergenceRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $probeConvergenceFieldManager) -}}
-{{- $probeConvergenceMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $probeConvergenceFieldManager) -}}
 {{- $container := "dyn(object).spec.containers[0]" -}}
 {{- $args := printf "%s.args" $container -}}
 {{- $identityArgs := printf `%s == %s` $args (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "identity-probe" "timeout" "180s" "verifyControllerState" false)) -}}
@@ -161,29 +154,14 @@ spec:
         operations: ["CONNECT"]
         resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]
         scope: Namespaced
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
-        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
-        scope: Namespaced
   matchConditions:
     - name: fixed-hook-identity
-      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))` .Release.Namespace $serviceAccount $teardownServiceAccount $serviceAccount $teardownServiceAccount $identityPodRequestName $preflightPodRequestName $reconcilePodRequestName $quiescePodRequestName $teardownPodRequestName) | quote }}
-  variables:
-    - name: isAnyAdmissionConvergenceProbe
-      expression: {{ $anyConvergenceRequest | quote }}
-    - name: isAdmissionConvergenceProbe
-      expression: {{ $convergenceRequest | quote }}
+      expression: {{ printf `request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))` .Release.Namespace $serviceAccount $teardownServiceAccount $serviceAccount $teardownServiceAccount $identityPodRequestName $preflightPodRequestName $reconcilePodRequestName $quiescePodRequestName $teardownPodRequestName | quote }}
   validations:
     {{- range $expression := $podValidations }}
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $expression | quote }}
+    - expression: {{ $expression | quote }}
       message: {{ $message | quote }}
     {{- end }}
-    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
-      message: Ptah admission convergence probe field manager is reserved for dry-run verification
-    - expression: '!variables.isAdmissionConvergenceProbe'
-      message: {{ $convergenceMessage | quote }}
 ---
 {{- end }}
 {{- if not $probePolicy }}
@@ -216,27 +194,12 @@ spec:
         operations: ["UPDATE"]
         resources: ["configmaps"]
         scope: Namespaced
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
-        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
-        scope: Namespaced
   matchConditions:
     - name: fixed-hook-identity-probe
-      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && request.name == %q && request.userInfo.username == %q` .Release.Namespace $probeObject (printf "system:serviceaccount:%s:%s" .Release.Namespace $serviceAccount)) | quote }}
-  variables:
-    - name: isAnyAdmissionConvergenceProbe
-      expression: {{ $anyConvergenceRequest | quote }}
-    - name: isAdmissionConvergenceProbe
-      expression: {{ $probeConvergenceRequest | quote }}
+      expression: {{ printf `request.namespace == %q && request.name == %q && request.userInfo.username == %q` .Release.Namespace $probeObject (printf "system:serviceaccount:%s:%s" .Release.Namespace $serviceAccount) | quote }}
   validations:
-    - expression: 'variables.isAnyAdmissionConvergenceProbe || (false)'
+    - expression: 'false'
       message: {{ $probeMessage | quote }}
-    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
-      message: Ptah admission convergence probe field manager is reserved for dry-run verification
-    - expression: '!variables.isAdmissionConvergenceProbe'
-      message: {{ $probeConvergenceMessage | quote }}
 ---
 {{- end }}
 {{- if not $binding }}

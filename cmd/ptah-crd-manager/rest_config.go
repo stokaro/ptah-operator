@@ -6,11 +6,8 @@ const (
 	// boundedSweepQueriesPerSecond is the request rate a hook's in-cluster
 	// client may sustain. client-go's default of 5 requests per second with a
 	// burst of 10 is sized for a long-lived controller sharing the API server;
-	// a hook is a one-shot process whose verifications are bounded sweeps, a
-	// few dozen reads of the guards it owns, repeated under a per-attempt
-	// budget of seconds. At the default rate one sweep alone outlasted that
-	// budget, and the barrier reported the rate limiter's wait as contract
-	// drift. The direct per-API-server clients already run at this rate.
+	// a hook is a one-shot process whose verifications read every guard it owns
+	// several times over, inside a Job deadline.
 	boundedSweepQueriesPerSecond float32 = 100
 	boundedSweepBurst                    = 200
 )

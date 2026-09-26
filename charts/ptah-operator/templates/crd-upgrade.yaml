@@ -6,7 +6,6 @@
 {{- $imageCheckJobName := printf "%s-image-check" ($clusterRoleName | trunc 51 | trimSuffix "-") -}}
 {{- $identityProbeJobName := include "ptah-operator.hookIdentityProbeJobName" . -}}
 {{- $identityBootstrapRoleName := printf "%s-bootstrap" ($clusterRoleName | trunc 53 | trimSuffix "-") -}}
-{{- $admissionConvergencePolicyName := include "ptah-operator.admissionConvergencePolicyName" . -}}
 {{- $admissionConvergenceMarkerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
 {{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
 {{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
@@ -350,7 +349,6 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ $admissionConvergencePolicyName }}
       - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
@@ -378,7 +376,6 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ $admissionConvergencePolicyName }}
       - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
@@ -432,9 +429,6 @@ rules:
     {{- else }}
     verbs: ["get"]
     {{- end }}
-  - apiGroups: ["authorization.k8s.io"]
-    resources: ["subjectaccessreviews"]
-    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -510,7 +504,7 @@ rules:
     verbs: ["list"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["list", "watch"]
+    verbs: ["list"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames:
@@ -532,16 +526,13 @@ rules:
     verbs: ["get", "update"]
   {{- if ne $previousSequence "0" }}
   # The predecessor attempt marker is retired only after candidate activation.
-  # UPDATE is the dry-run denial probe that proves every predecessor policy is
-  # gone from every API server. The marker is sealed immutable before it becomes
-  # a predecessor, so no probe can rewrite the inventory the retirement reads.
-  # DELETE remains exact-name scoped and the manager supplies UID/resourceVersion
+  # DELETE is exact-name scoped and the manager supplies UID/resourceVersion
   # preconditions, so a replacement can never be removed by a stale retry.
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames:
       - {{ $previousAdmissionConvergenceMarkerName }}
-    verbs: ["get", "update", "delete"]
+    verbs: ["get", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames:
@@ -578,7 +569,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{ if ne .Release.Namespace "default" }}
 ---
-# Direct API-server convergence and exact controller binding transition.
+# Exact controller binding transition in the default namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

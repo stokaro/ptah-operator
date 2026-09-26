@@ -174,12 +174,6 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 			Validations: validations,
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy, nil
 }
 

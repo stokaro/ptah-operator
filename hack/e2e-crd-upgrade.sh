@@ -1908,10 +1908,10 @@ arm_late_activation_hook_log_captures() {
 		--failure-class-file "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
 		--timeout 3m >/dev/null 2>&1 &
 	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!
-	# The reconcile hook waits on the controller credential fence before it
-	# reports, and the blocker holds that fence for as long as the proof needs.
-	# Silence there is the scenario, not an unavailable stream, so this capture
-	# waits for the hook rather than for its first byte.
+	# The reconcile hook stops the runtime and waits for its Pods to go before
+	# it reaches the activation write the blocker refuses, and it may say
+	# nothing until then. Silence there is the scenario, not an unavailable
+	# stream, so this capture waits for the hook rather than for its first byte.
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
 		--kubeconfig "$E2E_KUBECONFIG" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" \
@@ -2392,25 +2392,35 @@ assert_late_activation_cutover() {
 		fail "late failure did not leave the exact namespace-scoped candidate bindings with the predecessor removed"
 
 	# These real authorization responses complement the hook's captured late
-	# boundary: reaching Activate already required the continuous Pod fence and
-	# predecessor authorization denial on every advertised API server.
+	# boundary. The hook moves the bindings and goes on to Activate without
+	# waiting for every API server's RBAC cache, and a review may reach any of
+	# them through the load balancer, so each one is asked again until the
+	# revocation shows or the budget runs out.
 	for late_probe in schema runtime coordination discovery; do
 		case "$late_probe" in
 		schema) late_attributes=$(jq -nc '{group: "operator.ptah.run", resource: "ptahschemas", subresource: "status", verb: "update"}') ;;
-		runtime) late_attributes=$(jq -nc --arg ns "$E2E_OPERATOR_NAMESPACE" --arg name "$current_sequence_marker_name" '{namespace: $ns, resource: "configmaps", name: $name, verb: "update"}') ;;
+		runtime) late_attributes=$(jq -nc --arg ns "$E2E_OPERATOR_NAMESPACE" '{namespace: $ns, resource: "limitranges", verb: "list"}') ;;
 		coordination) late_attributes=$(jq -nc --arg ns "$late_coordination_namespace" '{namespace: $ns, group: "coordination.k8s.io", resource: "leases", verb: "update"}') ;;
 		discovery) late_attributes=$(jq -nc '{namespace: "default", group: "discovery.k8s.io", resource: "endpointslices", verb: "list"}') ;;
 		esac
-		jq -nc --arg namespace "$E2E_OPERATOR_NAMESPACE" --arg previous "$current_sequence_service_account" \
-			--argjson attributes "$late_attributes" '{
+		late_authorization_deadline=$(($(date +%s) + 30))
+		while :; do
+			jq -nc --arg namespace "$E2E_OPERATOR_NAMESPACE" --arg previous "$current_sequence_service_account" \
+				--argjson attributes "$late_attributes" '{
           apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
           spec: {user: ("system:serviceaccount:" + $namespace + ":" + $previous),
             groups: ["system:serviceaccounts", ("system:serviceaccounts:" + $namespace), "system:authenticated"],
             resourceAttributes: $attributes}
         }' | kube create -f - -o json >"$WORK_DIR/late-activation-${late_probe}-authorization.json"
-		jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \
-			"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null ||
-			fail "late failure retained predecessor $late_probe authorization"
+			if jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \
+				"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null; then
+				break
+			fi
+			if [ "$(date +%s)" -ge "$late_authorization_deadline" ]; then
+				fail "late failure retained predecessor $late_probe authorization for 30s after the cutover; last review status: $(jq -c '.status' "$WORK_DIR/late-activation-${late_probe}-authorization.json")"
+			fi
+			sleep 1
+		done
 	done
 }
 
@@ -2439,10 +2449,10 @@ prove_late_activation_failure_recovery() {
 	late_upgrade_succeeded=false
 	# The window has to outlast the hook, not the other way round. The reconcile
 	# hook carries --timeout 360s under a Job deadline of 390s, and a sequence
-	# bump spends that budget on the predecessor retirement preflight and the
-	# continuous credential fence before it reaches the activation write the
-	# blocker refuses. At two minutes Helm gave up first and deleted the hook's
-	# own Role and ClusterRole, so the Pod reported losing them instead of the
+	# bump spends part of that budget on the predecessor retirement preflight and
+	# the runtime stop before it reaches the activation write the blocker
+	# refuses. At two minutes Helm once gave up first and deleted the hook's own
+	# Role and ClusterRole, so the Pod reported losing them instead of the
 	# refusal the proof came for.
 	# Helm 4 applies server-side, and a conflict is raised for a field whose
 	# value this apply changes while another manager owns it. A release-sequence
@@ -4923,7 +4933,8 @@ run_next_release_upgrade_proof() {
 	printf 'e2e crd: retrying current release sequence %s to the same synthetic sequence %s\n' \
 		"$current_release_sequence" "$next_release_sequence"
 	# Keep the outer Helm wait beyond the unchanged 360s/390s hook budgets,
-	# just as for the failed attempt; every credential fence runs again.
+	# just as for the failed attempt; the retry runs the whole reconcile hook
+	# again.
 	retry_same_candidate_with_diagnostics
 	wait_runtime_ready
 	wait_for_read_only_job_cleanup
