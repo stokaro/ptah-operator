@@ -1397,6 +1397,10 @@ for migration_marker in \
 	'does not publish the plan a reader has to approve' \
 	'printed the order as' \
 	'run_existing_schema_adoption_proof' \
+	'run_stopped_apply_proof' \
+	'run_lost_log_proof' \
+	'migration-stopped-run-recorded.jq' \
+	'migration-lost-log-run-recorded.jq' \
 	'build_adopt_schema_without_the_operator' \
 	'the operator recorded a migration as applied in a database it was never approved to migrate' \
 	'against a database that already carries the schema' \
@@ -1500,6 +1504,21 @@ for migration_engine in postgresql-uncertain mysql-uncertain; do
 	grep -Eq 'pg_sleep|SLEEP' \
 		"$ROOT_DIR/testdata/e2e/migrations/${migration_engine}/0000000003_settle_slowly.up.sql" || {
 		printf 'e2e static: the %s interrupted migration does not wait, so the run would finish before its evidence could be removed\n' \
+			"$migration_engine" >&2
+		exit 1
+	}
+done
+
+for migration_engine in postgresql-stopped mysql-stopped; do
+	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
+	[ "$migration_fixture_count" -eq 4 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof needs one committed migration and one that is still running\n' \
+			"$migration_engine" "$migration_fixture_count" >&2
+		exit 1
+	}
+	grep -Eq 'pg_sleep\(600\)|SLEEP\(600\)' \
+		"$ROOT_DIR/testdata/e2e/migrations/${migration_engine}/0000000002_wait_to_be_stopped.up.sql" || {
+		printf 'e2e static: the %s stopped migration does not outlast its window, so the run would finish before it could be stopped\n' \
 			"$migration_engine" >&2
 		exit 1
 	}

@@ -60,14 +60,15 @@ type PodLogReader interface {
 // means taking the read off the reconcile path or giving the family more than
 // one worker, and neither belongs in a change about the bound.
 //
-// A read that times out returns an error, which requeues with backoff. The
-// claim, the Lease and status.unresolvedRun are untouched by it: nothing about
-// a log this manager could not read says what the database now holds, so an
-// Apply stays exactly as uncertain as it was.
+// A read that times out is requeued at resultReadRetryInterval. The claim, the
+// Lease and status.unresolvedRun are untouched by it: nothing about a log this
+// manager could not read says what the database now holds, so an Apply stays
+// exactly as uncertain as it was. A read that keeps failing is given up after
+// resultLogLossWindow, and judged as a log with no frame.
 const defaultResultReadTimeout = 60 * time.Second
 
-// resultReadRetryInterval is how soon a read that ran out of time is tried
-// again.
+// resultReadRetryInterval is how soon a read that ran out of time, or failed in
+// any other way that may pass, is tried again.
 //
 // A timed-out read is a transient, and returning it as a reconcile error hands
 // it to the queue's exponential limiter, which climbs well past the headroom
@@ -77,8 +78,9 @@ const defaultResultReadTimeout = 60 * time.Second
 // the operation, and expensive, because that migration then waits for a
 // person.
 //
-// So a timeout is requeued at a fixed short interval instead, and reported as
-// an Event so it is still visible as the failure it is.
+// So a timeout, and every other failure that may pass, is requeued at a fixed
+// short interval instead, and reported as an Event so it is still visible as
+// the failure it is.
 const resultReadRetryInterval = 5 * time.Second
 
 // boundedResultReadTimeout is the bound this read actually gets: the ceiling

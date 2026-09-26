@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -30,6 +31,11 @@ const (
 // and a Job that finished longer ago than the window are all judged now.
 func awaitFrameArrival(job *batchv1.Job, parseErr error, now time.Time) (time.Duration, bool) {
 	if parseErr == nil || !runner.MayStillArrive(parseErr) {
+		return 0, false
+	}
+	// A log that will not be read again has nothing left to arrive.
+	var lost *resultLogLost
+	if errors.As(parseErr, &lost) {
 		return 0, false
 	}
 	finished, ok := jobFinishedAt(job)

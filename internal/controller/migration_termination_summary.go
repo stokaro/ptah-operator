@@ -103,7 +103,7 @@ func summaryMigrationApply(summary runner.Summary) reportedMigrationApply {
 		coordinationDigest:   summary.CoordinationDigest,
 		targetIdentityDigest: summary.TargetIdentityDigest,
 	}
-	source := "The Apply's result log held no readable frame; its termination message, bound to frame " +
+	source := "The Apply's frame could not be read from its log; its termination message, bound to frame " +
 		summary.FrameDigest + ", reports "
 	migration := summary.Migration
 	if migration == nil {

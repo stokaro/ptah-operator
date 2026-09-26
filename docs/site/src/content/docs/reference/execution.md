@@ -115,14 +115,32 @@ at the duration the claim recorded -- for the verification after an Apply, the
 one `status.pendingObservation` copied from it -- and `activeDeadlineSeconds` can
 be raised afterwards without lengthening a Lease already held.
 
-A read that ends at its deadline decides nothing: the claim, the Lease and any
+A read that fails decides nothing by itself: the claim, the Lease and any
 record of an unresolved run are left exactly as they were, because a log this
-manager could not read says nothing about what the database now holds. It is
-requeued at a fixed short interval rather than raised as a reconcile error,
-because the queue's own backoff climbs past the headroom the deadline was
-chosen to leave, and a terminal Job produces no further event to bring the
-resource back with. The timeout is reported as an Event, so it stays visible
-as the failure it is.
+manager could not read says nothing about what the database now holds. A read
+that ran out of time, or failed in any other way that may pass, is requeued at
+a fixed short interval rather than raised as a reconcile error, because the
+queue's own backoff climbs past the headroom the deadline was chosen to leave,
+and a terminal Job produces no further event to bring the resource back with.
+It is reported as an Event -- `ResultReadTimedOut` or `ResultReadFailed` -- so
+it stays visible as the failure it is.
+
+What ends the wait is the log being gone. Container garbage collection, a
+deleted node and a node that stays away all take the log while the Pod object,
+and the termination summary in its status, remain. The API server says so
+plainly for a deleted node (a NotFound for the Node) and for a container the
+kubelet can no longer serve (a BadRequest), and such a log is given up at once.
+A failure that may pass -- a kubelet it cannot reach, a read that ran out of
+time, a kubelet that does not know the Pod yet -- is given up once reads of that
+log have failed for two whole read budgets, two minutes, as this process
+watched them; a manager restart starts that measure again, which can only make
+it wait longer. Once the kubelet has begun answering, a garbage-collected
+container or a removed log file ends the stream with the reason as its body,
+which reads as a log that holds no frame. Either way a lost log is judged as a
+log with no frame: a read-only operation is retried, a schema Apply is unknown,
+and a migration Apply is settled from its termination summary when one stands
+in. A Pod that is itself gone takes its status with it, and is unknown as
+before.
 
 One case adds the field to a Job that is still running, and both admission
 layers name it: losing database lock continuity during an Apply retires the
@@ -175,9 +193,9 @@ a migration run's outcome with the count and the first and last applied
 versions, and the SHA-256 of the frame it summarizes. It carries no plan, no
 error text and nothing Ptah printed.
 
-The migration controller reads it for an Apply, and only when the log was read
-and held no frame, or ended inside the frame the summary names, once the
-window in which a frame may still be arriving has passed. A frame that is
+The migration controller reads it for an Apply, and only when the log holds no
+frame, ends inside the frame the summary names, or is gone, once the window in
+which a frame may still be arriving has passed. A frame that is
 there and was refused is never replaced. A summary that names another attempt
 or another frame is set aside with a `TerminationSummaryRefused` Event, and the
 run is unknown as before. What a summary says is decided by the same code that
@@ -189,7 +207,7 @@ started, not even from a frame: a Job may run more than one Pod, and one Pod's
 account of itself says nothing about another. So what a summary adds is a
 migration run's outcome and nothing else. The schema family and read-only
 operations do not read it, because neither can be decided from less than the
-whole frame, and a log that cannot be read at all is still retried.
+whole frame.
 
 ## Concurrency and coordination
 

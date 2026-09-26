@@ -1,0 +1,15 @@
+-- A second migration that is still running when its run's window closes.
+--
+-- The row this fixture serves stops the run from outside and asks what the run
+-- said about itself. The runner sends Ptah SIGTERM at the Apply's execution
+-- deadline, Ptah cancels this statement, and it writes its account: migration 1
+-- applied, this one failed with none of its statements committed. The sleep is
+-- far longer than any window the row gives the run, so a run that reached it
+-- can only end by being stopped.
+--
+-- Outside a transaction, so both engines stop the same way. MySQL's driver
+-- cancels a statement by closing its connection, which the server notices only
+-- once the sleep is over; a transaction left open behind it would hold the
+-- rows Ptah has to write the failure into.
+-- +ptah no_transaction
+SELECT pg_sleep(600);

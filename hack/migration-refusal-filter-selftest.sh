@@ -502,5 +502,68 @@ refuses privileged-approval-gate.jq 'no refresh deadline persisted' <<'JSON'
 {"metadata":{"generation":4},"status":{"observedGeneration":4,"phase":"AwaitingApproval","source":{"digest":"sha256:ff"},"plan":{"name":"ptah-plan-0","uid":"u-plan","destructive":false,"privilegeChanges":["SecurityDefiner","FunctionReplacement"]},"conditions":[{"type":"ApprovalRequired","status":"True","reason":"PrivilegeChanges","message":"The plan changes privileges (SecurityDefiner, FunctionReplacement), which apply policy Always applies only with an approval bound to this plan; read them with kubectl ptah plan"},{"type":"Ready","status":"False","reason":"AwaitingApproval","message":"Plan is waiting for approval"}]}}
 JSON
 
+# A run stopped at its execution deadline, and what its report said. Every
+# reading here is judged with stoppedAt=3, so the run applied 1 and 2 and
+# stopped in 3. The acceptance row passes 2, for its fixture of two migrations.
+accepts migration-stopped-run-recorded.jq 'the report the stopped run wrote' <<'JSON'
+{"status":{"phase":"VerifyingHistory",
+ "lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1,2],
+  "message":"A migration failed and committed nothing; 2 migrations before it are recorded applied"}}}
+JSON
+accepts migration-stopped-run-recorded.jq 'the same record once the history read moved the resource on' <<'JSON'
+{"status":{"phase":"Blocked",
+ "lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1,2]}}}
+JSON
+refuses migration-stopped-run-recorded.jq 'no report was read, as before the runner passed SIGTERM on' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply",
+  "message":"read the Apply result: ptah runner result frame not found"}}}
+JSON
+refuses migration-stopped-run-recorded.jq 'the outcome without the versions it applied' <<'JSON'
+{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply"}}}
+JSON
+refuses migration-stopped-run-recorded.jq 'fewer versions than the run applied' <<'JSON'
+{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1]}}}
+JSON
+refuses migration-stopped-run-recorded.jq 'the stopped migration named as applied' <<'JSON'
+{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1,2,3]}}}
+JSON
+refuses migration-stopped-run-recorded.jq 'a run that was never stopped' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply","appliedVersions":[1,2,3]}}}
+JSON
+refuses migration-stopped-run-recorded.jq 'a record of another run' <<'JSON'
+{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-replacement","appliedVersions":[1,2]}}}
+JSON
+refuses migration-stopped-run-recorded.jq 'no run recorded yet' <<'JSON'
+{"status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply"}}}
+JSON
+
+# A run whose log was lost, settled from its termination summary. Judged with
+# stoppedAt=3, the last version of the fixture the acceptance row runs, and
+# digest=sha256:ff.
+accepts migration-lost-log-run-recorded.jq 'the record the summary produced' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply",
+  "message":"The Apply's frame could not be read from its log; its termination message, bound to frame sha256:ff, reports outcome applied with 3 migrations recorded applied, from version 1 to version 3"}}}
+JSON
+refuses migration-lost-log-run-recorded.jq 'the same run settled from its frame' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply","appliedVersions":[1,2,3],
+  "message":"3 migrations are recorded applied"}}}
+JSON
+refuses migration-lost-log-run-recorded.jq 'the run left unknown' <<'JSON'
+{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply",
+  "message":"read the Apply result: the result log is gone: nodes \"kind-worker2\" not found"}}}
+JSON
+refuses migration-lost-log-run-recorded.jq 'a summary bound to another frame' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply",
+  "message":"The Apply's frame could not be read from its log; its termination message, bound to frame sha256:ffff, reports outcome applied with 3 migrations recorded applied, from version 1 to version 3"}}}
+JSON
+refuses migration-lost-log-run-recorded.jq 'a summary that counts fewer versions' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply",
+  "message":"The Apply's frame could not be read from its log; its termination message, bound to frame sha256:ff, reports outcome applied with 2 migrations recorded applied, from version 1 to version 2"}}}
+JSON
+refuses migration-lost-log-run-recorded.jq 'a record of another run' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-replacement",
+  "message":"The Apply's frame could not be read from its log; its termination message, bound to frame sha256:ff, reports outcome applied with 3 migrations recorded applied, from version 1 to version 3"}}}
+JSON
+
 printf 'migration refusal filter self-test: PASS\n'
 PHASE_COMPLETED=1
