@@ -17,7 +17,7 @@ certificate rotator, the CRD manager, the runner and the `kubectl ptah` plugin.
 says how those pieces fit together and which invariant each one holds.
 
 Read the versions out of `go.mod` rather than out of prose here. At the time of
-writing they are `sigs.k8s.io/controller-runtime v0.24.1`, `k8s.io/api v0.36.1`,
+writing they are `sigs.k8s.io/controller-runtime v0.25.1`, `k8s.io/api v0.37.1`,
 Go `1.26` with toolchain `1.27`.
 
 ## Skills
@@ -217,8 +217,8 @@ worth stating here because no gate catches them:
 
 - **A non-nil error requeues by itself.** `return ctrl.Result{}, err` is the
   shape. `Requeue` is deprecated in the pinned controller-runtime and the error
-  branch never reads `Result` at all, so pairing them is dead code that reads as
-  intent.
+  branch ignores `Result` beyond logging a warning, so pairing them is dead code
+  that reads as intent.
 - **envtest runs no built-in controllers.** Nothing there reconciles a
   Deployment into Pods or garbage-collects by owner reference, so a green
   envtest is evidence about this controller and about the API contract, and

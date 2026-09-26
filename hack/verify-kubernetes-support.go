@@ -68,9 +68,9 @@ const (
 
 	verificationMaxAgeDays = 35
 
-	reviewedKubernetesAPIMinor       = 36
+	reviewedKubernetesAPIMinor       = 37
 	reviewedKubernetesSupportMaximum = 37
-	reviewedJobAPISurfaceSHA256      = "f3e0bedd7235834b17dc52727eddb1268c1c62d7f9ec7cc5bdb4fcd494f4922f"
+	reviewedJobAPISurfaceSHA256      = "7e2ff8ed47e3cdcbddb712d8e0a179f2a81292816ef965dbc08d528dd4d26b44"
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.

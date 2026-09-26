@@ -1553,6 +1553,12 @@ func decodeObject(raw []byte, object any, kind metav1.GroupVersionKind) error {
 	if actualKind.Group != kind.Group || actualKind.Version != kind.Version || actualKind.Kind != kind.Kind {
 		return badRequestf("candidate type metadata does not match %s", kind.String())
 	}
+	if job, isJob := object.(*batchv1.Job); isJob {
+		if field := unreviewedJobField(job); field != "" {
+			return badRequestf("decode %s candidate strictly: unknown field %q: the Job contract this webhook enforces was reviewed without it",
+				kind.Kind, field)
+		}
+	}
 	return nil
 }
 

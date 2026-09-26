@@ -10,7 +10,7 @@ happens after: the reconcile loop, the objects it owns, and the tests that are
 allowed to claim it works.
 
 Everything below is measured against the versions this repository pins in
-`go.mod` — `sigs.k8s.io/controller-runtime v0.24.1`, `k8s.io/api v0.36.1`. When
+`go.mod` — `sigs.k8s.io/controller-runtime v0.25.1`, `k8s.io/api v0.37.1`. When
 those move, re-read the source rather than this file: the whole point of the
 facts here is that they were read rather than remembered.
 
@@ -21,7 +21,7 @@ most guidance on the internet says.
 
 **A non-nil error requeues by itself.** In `pkg/internal/controller/controller.go`
 the error branch adds the request back to the queue with the rate limiter and
-never reads `result`:
+ignores `result`, reading it only to log a warning when one was set:
 
 ```go
 switch {

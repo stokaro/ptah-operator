@@ -903,7 +903,10 @@ func jsonFieldNames(typeOf reflect.Type) []string {
 		field := typeOf.Field(index)
 		tag := field.Tag.Get("json")
 		name, options, _ := strings.Cut(tag, ",")
-		if name == "" && strings.Contains(","+options+",", ",inline,") {
+		// encoding/json inlines an embedded struct that has no name of its own,
+		// whatever its options say. The Kubernetes types spelled that
+		// `json:",inline"` until 0.37 and `json:""` since.
+		if name == "" && (field.Anonymous || strings.Contains(","+options+",", ",inline,")) {
 			fields = append(fields, jsonFieldNames(field.Type)...)
 			continue
 		}

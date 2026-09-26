@@ -131,6 +131,48 @@ func TestDecodeObjectRejectsUnknownFieldsForEveryControllerWriteKind(t *testing.
 			kind:   jobKind,
 		},
 		{
+			name:   "init container mount field from a newer Kubernetes API",
+			raw:    `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"unknown"},"spec":{"template":{"spec":{"initContainers":[{"name":"install-runner","volumeMounts":[{"name":"runner","mountPath":"/runner","bindMountOptions":["noexec"]}]}]}}}}`,
+			object: &batchv1.Job{},
+			kind:   jobKind,
+		},
+		{
+			name:   "ephemeral container probe field from a newer Kubernetes API",
+			raw:    `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"unknown"},"spec":{"template":{"spec":{"ephemeralContainers":[{"name":"debug","readinessProbe":{"grpc":{"port":8080,"mode":"TLS"}}}]}}}}`,
+			object: &batchv1.Job{},
+			kind:   jobKind,
+		},
+		{
+			name:   "lifecycle hook protocol from a newer Kubernetes API",
+			raw:    `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"unknown"},"spec":{"template":{"spec":{"containers":[{"name":"ptah","lifecycle":{"preStop":{"httpGet":{"port":8080,"protocol":"HTTP/1.1"}}}}]}}}}`,
+			object: &batchv1.Job{},
+			kind:   jobKind,
+		},
+		{
+			name:   "ConfigMap volume item user from a newer Kubernetes API",
+			raw:    `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"unknown"},"spec":{"template":{"spec":{"volumes":[{"name":"policy","configMap":{"name":"policy","items":[{"key":"policy.yaml","path":"policy.yaml","user":65532}]}}]}}}}`,
+			object: &batchv1.Job{},
+			kind:   jobKind,
+		},
+		{
+			name:   "Secret volume item user from a newer Kubernetes API",
+			raw:    `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"unknown"},"spec":{"template":{"spec":{"volumes":[{"name":"registry","secret":{"secretName":"registry","items":[{"key":"config","path":"config","user":65532}]}}]}}}}`,
+			object: &batchv1.Job{},
+			kind:   jobKind,
+		},
+		{
+			name:   "projected Secret item user from a newer Kubernetes API",
+			raw:    `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"unknown"},"spec":{"template":{"spec":{"volumes":[{"name":"plan","projected":{"sources":[{"secret":{"name":"plan","items":[{"key":"chunk","path":"chunk","user":65532}]}}]}}]}}}}`,
+			object: &batchv1.Job{},
+			kind:   jobKind,
+		},
+		{
+			name:   "projected downward API item user from a newer Kubernetes API",
+			raw:    `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"unknown"},"spec":{"template":{"spec":{"volumes":[{"name":"plan","projected":{"sources":[{"downwardAPI":{"items":[{"path":"labels","user":65532}]}}]}}]}}}}`,
+			object: &batchv1.Job{},
+			kind:   jobKind,
+		},
+		{
 			name:   "ConfigMap top-level field",
 			raw:    `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"unknown"},"future":true}`,
 			object: &corev1.ConfigMap{},
