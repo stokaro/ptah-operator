@@ -50,6 +50,9 @@ Key safety properties:
   admission identity.
 - Destructive plans are disabled by default and still require an exact-plan
   approval when enabled.
+- A plan that grants, revokes or delegates authority -- privileges, roles,
+  owners, row-security policies, definer rights -- requires an exact-plan
+  approval even under `apply: Always`.
 - Database and registry credentials are isolated from each other and are never
   placed in status, Events, plan resources, or command arguments.
 - Deletion and suspension never execute cleanup SQL.

@@ -24,10 +24,12 @@ kubectl ptah plan application -n application
 
 ### A plan with changes in it
 
-`destructive: false` is the one field to read first: it says no statement in
-this plan drops or rewrites anything. `spec.fingerprint` is what an approval
-must name, and it binds far more than the SQL -- the artifact, the observed and
-desired state, the policy, the target identity and every executing image.
+`destructive` and `privilegeChanges` are the fields to read first.
+`destructive: false` says no statement in this plan drops or rewrites anything,
+and a plan with no `privilegeChanges` grants, revokes and delegates nothing.
+`spec.fingerprint` is what an approval must name, and it binds far more than
+the SQL -- the artifact, the observed and desired state, the policy, the target
+identity and every executing image.
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
@@ -127,6 +129,61 @@ spec:
   controllerStateVersion: 2
 ```
 
+### A plan that changes privileges
+
+Ptah rates a grant, a new role or a `SECURITY DEFINER` function `safe`, and
+none of them loses data, so `destructive` stays `false`. The operator reads the
+statements itself and lists what kinds of authority they change. Any entry in
+`privilegeChanges` means the plan waits for an approval even when the schema
+says `apply: Always`, and the schema's `ApprovalRequired` condition says so with
+reason `PrivilegeChanges`. The list names kinds only; which table was granted to
+whom is in the SQL.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchemaPlan
+metadata:
+  name: ptah-plan-3263a9026c3e3f7e368860bd
+  namespace: application
+spec:
+  schemaRef:
+    name: application
+    uid: 4f2c9e1a-5b6d-4a7e-9c31-0d8f2b6a4e57
+  fingerprint: sha256:3263a9026c3e3f7e368860bd0443650cad3680f3e1232433fee3766613a67167
+  dialect: postgres
+  destructive: false
+  # A GRANT, and a function Ptah writes as CREATE OR REPLACE with
+  # SECURITY DEFINER.
+  privilegeChanges:
+    - Grant
+    - SecurityDefiner
+    - FunctionReplacement
+  statementCount: 2
+  size: 412
+  contentDigest: sha256:b96dbb7f7d0f19abc4926b0a52c0728ddc0da5967457f9e4dc584ae8ba1a8c2e
+  chunks:
+    - index: 0
+      name: ptah-plan-3263a9026c3e3f7e368860bd-000
+      key: chunk
+      size: 412
+      digest: sha256:b96dbb7f7d0f19abc4926b0a52c0728ddc0da5967457f9e4dc584ae8ba1a8c2e
+  contractVersion: 3
+  artifactDigest: sha256:ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d
+  verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+  verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
+  desiredStateFingerprint: sha256:e9dd8cf61b2be0e276c9e16e0a147dc02df8c4b06835721ca43adc99cbfa06a3
+  actualStateFingerprint: sha256:4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5
+  coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
+  targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
+  policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
+  ptahVersion: v0.8.1-54-gb689872e0
+  executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
+  runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
+  runnerProtocolVersion: 5
+  controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
+  controllerStateVersion: 2
+```
+
 ## spec
 
 | Field | Type | What it does |
@@ -152,6 +209,7 @@ spec:
 | `spec.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran Ptah. |
 | `spec.fingerprint` | `string`, required | Fingerprint is the complete approval identity of this plan: every binding below hashed together. An approval names this value, and an apply runs only while the live bindings still produce it. |
 | `spec.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy the plan was computed under. Editing the policy -- a protected table included -- retires a plan waiting for a person rather than letting it apply under rules nobody approved. |
+| `spec.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan's statements change: privileges granted or revoked, role membership, roles, owners, row-security policies and definer rights. A plan that lists any needs an approval naming these exact bytes whatever spec.policy.apply says, so apply: Always does not grant access on its own. The operator reads the kinds from the SQL itself, independently of the severity Ptah gave each statement, and only ever adds to a plan's class. It names kinds and nothing else: no object, no role and no text. Read the statements with kubectl ptah plan. |
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed this plan, as the executor image reports it. |
 | `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised the executor and returned its result. |
 | `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. A runner answering in another version has its result rejected rather than interpreted. |

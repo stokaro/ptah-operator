@@ -48,6 +48,7 @@ func TestConditionReasonWireContract(t *testing.T) {
 		{"policy changed", operatorv1alpha1.ReasonPolicyChanged, "PolicyChanged"},
 		{"policy refused", operatorv1alpha1.ReasonPolicyRefused, "PolicyRefused"},
 		{"policy satisfied", operatorv1alpha1.ReasonPolicySatisfied, "PolicySatisfied"},
+		{"privilege changes", operatorv1alpha1.ReasonPrivilegeChanges, "PrivilegeChanges"},
 		{"proof inputs changed", operatorv1alpha1.ReasonProofInputsChanged, "ProofInputsChanged"},
 		{"published", operatorv1alpha1.ReasonPublished, "Published"},
 		{"refresh failed", operatorv1alpha1.ReasonRefreshFailed, "RefreshFailed"},

@@ -57,6 +57,9 @@ Sicherheitseigenschaften:
   versieht sie mit der authentifizierten Identität.
 - Destruktive Pläne sind standardmäßig deaktiviert. Auch nach der Aktivierung
   benötigen sie eine Freigabe für genau diesen Plan.
+- Ein Plan, der Berechtigungen vergibt, entzieht oder weiterreicht
+  (Privilegien, Rollen, Eigentümer, Row-Security-Policies, Definer-Rechte),
+  benötigt auch unter `apply: Always` eine Freigabe für genau diesen Plan.
 - Zugangsdaten für Datenbank und Registry bleiben voneinander getrennt. Sie
   erscheinen nie in Status, Events, Planressourcen oder Befehlsargumenten.
 - Löschen und Pausieren führen kein Bereinigungs-SQL aus.

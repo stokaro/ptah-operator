@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "18"
-    operator.ptah.run/crd-schema-digest: "sha256:1b4ecc788f64ebb729c9e372e414ea6d731cdb447447bd33853e6ddcac3cc643"
+    operator.ptah.run/crd-schema-version: "19"
+    operator.ptah.run/crd-schema-digest: "sha256:b801f1885b81baa4a8a0abffe68d6eebcc1f2c5f1ebbc54ee0e95c6c22654fe4"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1762,6 +1762,22 @@ spec:
                         type: string
                       policyFingerprint:
                         type: string
+                      privilegeChanges:
+                        items:
+                          enum:
+                          - Grant
+                          - Revoke
+                          - RoleMembership
+                          - Role
+                          - Ownership
+                          - RowSecurityPolicy
+                          - SecurityDefiner
+                          - Definer
+                          - FunctionReplacement
+                          type: string
+                        maxItems: 16
+                        type: array
+                        x-kubernetes-list-type: set
                       ptahVersion:
                         type: string
                       runnerImage:
@@ -2011,6 +2027,22 @@ spec:
                     type: string
                   policyFingerprint:
                     type: string
+                  privilegeChanges:
+                    items:
+                      enum:
+                      - Grant
+                      - Revoke
+                      - RoleMembership
+                      - Role
+                      - Ownership
+                      - RowSecurityPolicy
+                      - SecurityDefiner
+                      - Definer
+                      - FunctionReplacement
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
                   ptahVersion:
                     type: string
                   runnerImage:

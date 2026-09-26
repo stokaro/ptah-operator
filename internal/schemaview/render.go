@@ -127,6 +127,9 @@ func renderPlan(text *strings.Builder, plan *PlanView) {
 	if plan.Destructive {
 		text.WriteString("  destructive\n")
 	}
+	if len(plan.PrivilegeChanges) > 0 {
+		fmt.Fprintf(text, "  changes privileges: %s\n", strings.Join(plan.PrivilegeChanges, ", "))
+	}
 	switch {
 	case plan.Approved:
 		approved := plan.ApprovalName

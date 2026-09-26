@@ -169,6 +169,13 @@ type PlanFile struct {
 	RowsFingerprint string          `json:"rows_fingerprint,omitempty"`
 	Destructive     bool            `json:"destructive"`
 	Statements      []PlanStatement `json:"statements"`
+
+	// PrivilegeChanges are the kinds of authority the statements change, read
+	// by the operator from the SQL: grants, role membership, ownership,
+	// row-security policies and definer rights. Ptah's document has no such
+	// field and cannot supply one, since a plan is decoded strictly; the list
+	// is the operator's own, in the order PrivilegeChangeKinds gives.
+	PrivilegeChanges []string `json:"-"`
 }
 
 // PlanRowSet is one declared row set a plan read: the table it owns, the
@@ -371,6 +378,7 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 		return PlanFile{}, err
 	}
 	hasDestructive := false
+	privileges := make(map[string]bool)
 	for i, statement := range plan.Statements {
 		if strings.TrimSpace(statement.SQL) == "" || !knownSeverity(statement.Severity) {
 			return PlanFile{}, fmt.Errorf("plan statement %d is empty or has unknown severity %q", i, statement.Severity)
@@ -382,12 +390,25 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 			plan.Statements[i].Severity = "destructive"
 		}
 		hasDestructive = hasDestructive || strings.EqualFold(plan.Statements[i].Severity, "destructive")
+		for _, kind := range privilegeChanges(statement.SQL, plan.Dialect) {
+			privileges[kind] = true
+		}
 	}
 	if hasDestructive {
 		// Safety metadata emitted by an executor may under-classify rendered SQL.
 		// The operator may only raise the classification; it never lowers an
 		// executor's destructive marker.
 		plan.Destructive = true
+	}
+	// "Destructive" means data can be lost, and a plan that grants, delegates
+	// or rebinds authority loses nothing. The privilege class is read
+	// separately and is independent of the severity Ptah gave each statement,
+	// so a statement Ptah called safe is still raised, and nothing lowers it.
+	plan.PrivilegeChanges = nil
+	for _, kind := range privilegeChangeKinds {
+		if privileges[kind] {
+			plan.PrivilegeChanges = append(plan.PrivilegeChanges, kind)
+		}
 	}
 	return plan, nil
 }
@@ -534,32 +555,66 @@ func credentialBearingPrincipalDDL(statement, dialect string) bool {
 	return false
 }
 
+// statementBoundary is the token the lexer emits where one statement ends and
+// the next begins, around a dollar-quoted body, and between two readings of the
+// same statement. No keyword is spelled that way, so no sequence a classifier
+// looks for can match across one.
+const statementBoundary = ";"
+
+// sqlKeywordTokens reads the keywords of one plan statement under every
+// interpretation the server might apply to it.
+//
+// Both engines can read the same bytes two ways, depending on a setting the plan
+// document does not carry. MySQL and MariaDB honor a backslash escape in a quoted
+// string unless SQL_MODE has NO_BACKSLASH_ESCAPES; PostgreSQL honors one in an
+// ordinary string only while standard_conforming_strings is off. A safety
+// classifier must see the keywords either reading exposes. Otherwise a quote the
+// server reads as closed hides the rest of the statement from the operator: a
+// quoted principal hides IDENTIFIED, and a quoted default hides DROP or SECURITY
+// DEFINER.
 func sqlKeywordTokens(statement, dialect string) []string {
-	if mysqlDialect(dialect) {
-		// MySQL and MariaDB can parse the same statement under either
-		// backslash-escape interpretation, depending on SQL_MODE. The database's
-		// effective mode is not part of the plan document, so a safety classifier
-		// must see keywords exposed by both interpretations. Otherwise a quoted
-		// principal can hide IDENTIFIED (or a destructive keyword) from the
-		// operator while NO_BACKSLASH_ESCAPES makes it executable on the server.
-		tokens := sqlKeywordTokensWithEscapes(statement, dialect, false)
-		return append(tokens, sqlKeywordTokensWithEscapes(statement, dialect, true)...)
-	}
-	return sqlKeywordTokensWithEscapes(statement, dialect, false)
+	tokens := sqlKeywordTokensWithEscapes(statement, dialect, false)
+	tokens = append(tokens, statementBoundary)
+	return append(tokens, sqlKeywordTokensWithEscapes(statement, dialect, true)...)
 }
 
 func sqlKeywordTokensWithEscapes(statement, dialect string, backslashEscapes bool) []string {
+	mysql := mysqlDialect(dialect)
 	var tokens []string
 	for index := 0; index < len(statement); {
 		switch {
 		case statement[index] == '\'':
-			index = skipSQLQuoted(statement, index, '\'', backslashEscapes)
+			// PostgreSQL reads backslash escapes in an E'' string whatever
+			// standard_conforming_strings says.
+			escapes := backslashEscapes || !mysql && escapeStringPrefix(statement, index)
+			index = skipSQLQuoted(statement, index, '\'', escapes)
 		case statement[index] == '"':
-			index = skipSQLQuoted(statement, index, '"', backslashEscapes)
-		case statement[index] == '`':
+			// A PostgreSQL identifier never takes a backslash escape.
+			index = skipSQLQuoted(statement, index, '"', backslashEscapes && mysql)
+		case statement[index] == '`' && mysql:
+			// A backtick quotes an identifier in MySQL. In PostgreSQL it is an
+			// operator character, and reading it as a quote would hide what
+			// follows it.
 			index = skipSQLQuoted(statement, index, '`', backslashEscapes)
+		case statement[index] == ';':
+			tokens = append(tokens, statementBoundary)
+			index++
+		case mysql && statement[index] == '#':
+			index = skipSQLLineComment(statement, index+1)
 		case startsDashComment(statement, index, dialect):
-			index = skipSQLLineComment(statement, index)
+			index = skipSQLLineComment(statement, index+2)
+		case !mysql && dollarQuoteTagEnd(statement, index) > index:
+			var body []string
+			body, index = dollarQuotedTokens(statement, index, dialect, backslashEscapes)
+			tokens = append(tokens, statementBoundary)
+			tokens = append(tokens, body...)
+			tokens = append(tokens, statementBoundary)
+		case !mysql && index+1 < len(statement) && statement[index:index+2] == "/*":
+			end, closed := skipNestedBlockComment(statement, index)
+			if !closed {
+				return tokens
+			}
+			index = end
 		case index+1 < len(statement) && statement[index:index+2] == "/*":
 			if end := strings.Index(statement[index+2:], "*/"); end >= 0 {
 				comment := statement[index+2 : index+2+end]
@@ -572,7 +627,11 @@ func sqlKeywordTokensWithEscapes(statement, dialect string, backslashEscapes boo
 			}
 		case asciiKeywordCharacter(statement[index]):
 			start := index
-			for index < len(statement) && asciiKeywordCharacter(statement[index]) {
+			// A word continues through the digits, dollar signs and non-ASCII
+			// bytes both engines accept inside an unquoted identifier, so
+			// grant2 or owner$id is read as the name it is rather than as the
+			// keyword it starts with.
+			for index < len(statement) && identifierCharacter(statement[index]) {
 				index++
 			}
 			tokens = append(tokens, strings.ToUpper(statement[start:index]))
@@ -581,6 +640,81 @@ func sqlKeywordTokensWithEscapes(statement, dialect string, backslashEscapes boo
 		}
 	}
 	return tokens
+}
+
+// escapeStringPrefix reports whether the quote at index opens a PostgreSQL
+// escape string: E'...' or e'...', where the E is a word of its own.
+func escapeStringPrefix(statement string, index int) bool {
+	if index < 1 || statement[index-1] != 'E' && statement[index-1] != 'e' {
+		return false
+	}
+	return index < 2 || !identifierCharacter(statement[index-2])
+}
+
+// dollarQuoteTagEnd returns the offset just past the PostgreSQL dollar-quote
+// delimiter that starts at index -- $$ or $tag$ -- and index itself where none
+// does. A dollar sign inside a word belongs to the word, and $1 is a parameter.
+func dollarQuoteTagEnd(statement string, index int) int {
+	if statement[index] != '$' || index > 0 && identifierCharacter(statement[index-1]) {
+		return index
+	}
+	for end := index + 1; end < len(statement); end++ {
+		switch character := statement[end]; {
+		case character == '$':
+			return end + 1
+		case asciiKeywordCharacter(character) || character >= 0x80:
+		case character >= '0' && character <= '9' && end > index+1:
+		default:
+			return index
+		}
+	}
+	return index
+}
+
+// dollarQuotedTokens reads a dollar-quoted body as SQL of its own.
+//
+// A body is a function or a DO block, and a DO block runs as soon as it is
+// applied, so its keywords stay visible. Reading it separately is what keeps a
+// quote or a comment inside it from swallowing the clauses after it: in
+//
+//	AS $$ SELECT 1 -- ' $$ SECURITY DEFINER
+//
+// the server reads the body as one string, and a lexer that did not would lose
+// SECURITY DEFINER inside a comment that ends with the line.
+func dollarQuotedTokens(statement string, index int, dialect string, backslashEscapes bool) ([]string, int) {
+	bodyStart := dollarQuoteTagEnd(statement, index)
+	tag := statement[index:bodyStart]
+	length := strings.Index(statement[bodyStart:], tag)
+	if length < 0 {
+		// Unterminated, the body runs to the end of the statement, and its
+		// words are read rather than dropped.
+		return sqlKeywordTokensWithEscapes(statement[bodyStart:], dialect, backslashEscapes), len(statement)
+	}
+	body := statement[bodyStart : bodyStart+length]
+	return sqlKeywordTokensWithEscapes(body, dialect, backslashEscapes), bodyStart + length + len(tag)
+}
+
+// skipNestedBlockComment skips a PostgreSQL block comment, which nests. Ending
+// it at the first */ would read the rest of an outer comment as SQL, where a
+// quote in it could hide the statement's real clauses.
+func skipNestedBlockComment(statement string, start int) (int, bool) {
+	depth := 0
+	for index := start; index+1 < len(statement); {
+		switch statement[index : index+2] {
+		case "/*":
+			depth++
+			index += 2
+		case "*/":
+			depth--
+			index += 2
+			if depth == 0 {
+				return index, true
+			}
+		default:
+			index++
+		}
+	}
+	return len(statement), false
 }
 
 func mysqlExecutableComment(comment, dialect string) (string, bool) {
@@ -637,8 +771,10 @@ func startsDashComment(statement string, index int, dialect string) bool {
 	return next <= ' ' || next == 0x7f
 }
 
-func skipSQLLineComment(statement string, start int) int {
-	for index := start + 2; index < len(statement); index++ {
+// skipSQLLineComment returns the offset after the line ending that closes a
+// comment whose body starts at from.
+func skipSQLLineComment(statement string, from int) int {
+	for index := from; index < len(statement); index++ {
 		if statement[index] != '\r' && statement[index] != '\n' {
 			continue
 		}
@@ -657,6 +793,11 @@ func mysqlDialect(dialect string) bool {
 
 func asciiKeywordCharacter(character byte) bool {
 	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character == '_'
+}
+
+func identifierCharacter(character byte) bool {
+	return asciiKeywordCharacter(character) || character >= '0' && character <= '9' || character == '$' ||
+		character >= 0x80
 }
 
 func decodeJSON(data []byte, target any, strict bool) error {

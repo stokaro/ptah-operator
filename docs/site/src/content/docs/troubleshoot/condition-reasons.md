@@ -19,7 +19,7 @@ decision.
 | `Active` | Reconciliation is not suspended. |
 | `ApplyDisabled` | Policy records plans but forbids Apply. |
 | `ApplyOutcomeUnknown` | Apply failed without proof of whether mutation occurred. |
-| `ApplyPending` | A non-destructive plan is eligible for automatic Apply. |
+| `ApplyPending` | A plan that destroys nothing and changes no privilege is eligible for automatic Apply. |
 | `ApprovalRevoked` | A reserved approval became invalid before dispatch. |
 | `ApprovedPlan` | The exact current approved plan is applying. |
 | `ArtifactUnverified` | No plan is usable because artifact verification did not succeed. |
@@ -43,7 +43,7 @@ decision.
 | `LeaseContinuityLost` | Database lock ownership was not continuous, so evidence was discarded. |
 | `MigrationsPending` | The migration artifact carries versions the database has not applied. |
 | `NoChanges` | Scoped planning produced no executable statements. |
-| `NotRequired` | Policy allows this non-destructive plan without separate approval. |
+| `NotRequired` | Policy allows this plan without separate approval: it destroys nothing and changes no privilege. |
 | `Observed` | A database observation completed successfully. |
 | `OperationFailed` | A read-only or mutating operation failed. |
 | `OperationInProgress` | A durable operation claim is active. |
@@ -55,6 +55,7 @@ decision.
 | `PolicyChanged` | Verification policy identity or bytes changed. |
 | `PolicyRefused` | Artifact verification policy explicitly refused the artifact. |
 | `PolicySatisfied` | Artifact type and verification policy checks succeeded. |
+| `PrivilegeChanges` | Apply policy `Always` waits for an approval because the plan changes privileges; the message names the kinds. |
 | `ProofInputsChanged` | Post-Apply proof will restart from its durable immutable binding. |
 | `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. |
 | `Published` | Exact plan bytes were committed to immutable storage. |

@@ -45,9 +45,11 @@ spec:
 ### Unattended, where nobody is waiting to approve
 
 `apply: Always` skips the approval and applies what it planned. It stays safe
-to leave running because the two fences below it hold: a destructive change is
-refused rather than applied, and a table named in `protectedTables` is refused
-even when it is not.
+to leave running because the fences below it hold: a destructive change is
+refused rather than applied, a table named in `protectedTables` is refused even
+when it is not, and a plan that changes privileges -- a grant, a role, an owner,
+a row-security policy, a `SECURITY DEFINER` function -- waits for an approval
+the way it would under `OnApproval`.
 
 Suitable for a development or staging database. On a production database it
 means an artifact push is a schema change with no person between the two.
@@ -283,7 +285,7 @@ spec:
 | `spec.interval` | `string`, default `10m` | Interval is the cadence for resolving mutable tags and observing drift. |
 | `spec.policy` | `object`, default `{}` | This resource requires: where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds. Policy decides what may happen without a person: whether a plan applies itself, whether a destructive one is permitted at all, what counts as drift, and which tables are fenced off entirely. |
 | `spec.policy.allowDestructive` | `boolean`, default `false` | AllowDestructive permits a plan that drops or rewrites something. It is permission for the category, not for a plan: a destructive plan still needs an approval where the apply policy asks for one. |
-| `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | Apply decides when a current plan may run: never, only with an approval naming its exact bytes, or as soon as it is ready. |
+| `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | Apply decides when a current plan may run: never, only with an approval naming its exact bytes, or as soon as it is ready. Always still waits for an approval when the plan is destructive or changes privileges: grants, role membership, owners, row-security policies or definer rights. |
 | `spec.policy.driftSeverity` | `string`, one of `all`, `destructive`, default `all` | DriftSeverity decides which differences count as drift worth applying: every difference, or only the destructive ones. |
 | `spec.policy.exclude` | `[]string` | Exclude defines the single authoritative managed scope. Raw drift is observed without exclusions, then a read-only plan classifies this exact scope as changed or converged. Exclude is the managed scope the apply was computed under. |
 | `spec.policy.lockTimeout` | `string`, default `30s` | This resource requires: where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds. LockTimeout is how long an operation waits for the database's own lock before giving up, so a busy database delays a run rather than stalling it for the Job's whole deadline. |
@@ -538,6 +540,7 @@ spec:
 | `status.pendingObservation.plan.fingerprint` | `string`, required | Fingerprint is the plan's complete approval identity, and the fields below are that identity spelled out. They are copied here so a reader -- and an audit -- can see what is waiting without fetching the plan. |
 | `status.pendingObservation.plan.name` | `string`, required | Name of the PtahSchemaPlan this record is about. |
 | `status.pendingObservation.plan.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy it was computed under. |
+| `status.pendingObservation.plan.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan changes, as the plan records them. Any entry means an approval is required even when spec.policy.apply is Always. |
 | `status.pendingObservation.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
 | `status.pendingObservation.plan.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
 | `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
@@ -599,6 +602,7 @@ spec:
 | `status.plan.fingerprint` | `string`, required | Fingerprint is the plan's complete approval identity, and the fields below are that identity spelled out. They are copied here so a reader -- and an audit -- can see what is waiting without fetching the plan. |
 | `status.plan.name` | `string`, required | Name of the PtahSchemaPlan this record is about. |
 | `status.plan.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy it was computed under. |
+| `status.plan.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan changes, as the plan records them. Any entry means an approval is required even when spec.policy.apply is Always. |
 | `status.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
 | `status.plan.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
 | `status.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |

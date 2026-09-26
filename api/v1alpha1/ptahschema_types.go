@@ -296,10 +296,13 @@ type TLSSecretReference struct {
 }
 
 // ReconciliationPolicy defines safety decisions. Destructive plans always
-// need both allowDestructive=true and a matching approval, even in Always mode.
+// need both allowDestructive=true and a matching approval, even in Always mode,
+// and a plan that changes privileges needs a matching approval in every mode.
 type ReconciliationPolicy struct {
 	// Apply decides when a current plan may run: never, only with an approval
-	// naming its exact bytes, or as soon as it is ready.
+	// naming its exact bytes, or as soon as it is ready. Always still waits for
+	// an approval when the plan is destructive or changes privileges: grants,
+	// role membership, owners, row-security policies or definer rights.
 	// +kubebuilder:default=OnApproval
 	Apply ApplyPolicy `json:"apply,omitempty"`
 
@@ -800,6 +803,13 @@ type CurrentPlanStatus struct {
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 	// Destructive says the plan drops or rewrites something.
 	Destructive bool `json:"destructive"`
+	// PrivilegeChanges names the kinds of authority the plan changes, as the
+	// plan records them. Any entry means an approval is required even when
+	// spec.policy.apply is Always.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	PrivilegeChanges []PrivilegeChange `json:"privilegeChanges,omitempty"`
 	// StatementCount is how many statements it holds. The statements
 	// themselves are not here: read them with kubectl ptah plan.
 	StatementCount int32 `json:"statementCount"`
@@ -1103,6 +1113,7 @@ const (
 	ReasonPolicyChanged                ConditionReason = "PolicyChanged"
 	ReasonPolicyRefused                ConditionReason = "PolicyRefused"
 	ReasonPolicySatisfied              ConditionReason = "PolicySatisfied"
+	ReasonPrivilegeChanges             ConditionReason = "PrivilegeChanges"
 	ReasonProofInputsChanged           ConditionReason = "ProofInputsChanged"
 	ReasonProtectedTable               ConditionReason = "ProtectedTable"
 	ReasonPublished                    ConditionReason = "Published"

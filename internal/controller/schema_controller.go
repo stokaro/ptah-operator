@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2134,7 +2135,13 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 				schema.Status.NextReconciliationTime = &next
 			}
 			schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
-			setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonWaiting, "Create an approval bound to the current plan fingerprint")
+			if privilegesRequireApproval(schema, plan) {
+				// The reason stays the one that says why an Always resource is
+				// waiting at all, rather than giving way to the generic one.
+				setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonPrivilegeChanges, privilegeApprovalMessage(plan))
+			} else {
+				setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonWaiting, "Create an approval bound to the current plan fingerprint")
+			}
 			if err := r.patchStatus(ctx, before, schema); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -3372,7 +3379,8 @@ func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1al
 		ControllerStateVersion:   executionBinding.ControllerStateVersion,
 		PtahVersion:              executionBinding.PtahVersion, ExecutorImage: executionBinding.ExecutorImage,
 		RunnerImage: executionBinding.RunnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
-		Dialect: decoded.Dialect, Destructive: decoded.Destructive, StatementCount: int32(len(decoded.Statements)),
+		Dialect: decoded.Dialect, Destructive: decoded.Destructive, PrivilegeChanges: planPrivilegeChanges(decoded),
+		StatementCount: int32(len(decoded.Statements)),
 	}
 	desired, chunks, err := planstore.Prepare(schema, spec, content)
 	if err != nil {
@@ -4257,7 +4265,13 @@ func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alp
 	approvalRequired := meta.IsStatusConditionTrue(after.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
 	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "") ||
 		newPlan && approvalRequired {
-		r.event(after, corev1.EventTypeNormal, "ApprovalRequired", "The current immutable plan requires approval")
+		message := "The current immutable plan requires approval"
+		if plan := after.Status.Plan; plan != nil && len(plan.PrivilegeChanges) > 0 &&
+			after.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyAlways {
+			message = "The current immutable plan changes privileges (" + privilegeKindList(plan.PrivilegeChanges) +
+				") and requires approval under apply policy Always"
+		}
+		r.event(after, corev1.EventTypeNormal, "ApprovalRequired", "%s", message)
 		if r.Telemetry != nil {
 			r.Telemetry.ObserveApproval(telemetry.FamilySchema, telemetry.ApprovalRequired)
 		}
@@ -4571,8 +4585,23 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.
 		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 		PtahVersion:              plan.Spec.PtahVersion, ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 		RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Destructive: plan.Spec.Destructive,
-		StatementCount: plan.Spec.StatementCount, CreatedAt: plan.CreationTimestamp,
+		PrivilegeChanges: slices.Clone(plan.Spec.PrivilegeChanges),
+		StatementCount:   plan.Spec.StatementCount, CreatedAt: plan.CreationTimestamp,
 	}
+}
+
+// planPrivilegeChanges carries the kinds the plan decoder read into the API
+// type. The decoder's vocabulary and the CRD enum are the same list, which a
+// test of the generated CRD holds them to.
+func planPrivilegeChanges(plan dataplane.PlanFile) []operatorv1alpha1.PrivilegeChange {
+	if len(plan.PrivilegeChanges) == 0 {
+		return nil
+	}
+	kinds := make([]operatorv1alpha1.PrivilegeChange, 0, len(plan.PrivilegeChanges))
+	for _, kind := range plan.PrivilegeChanges {
+		kinds = append(kinds, operatorv1alpha1.PrivilegeChange(kind))
+	}
+	return kinds
 }
 
 func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) *operatorv1alpha1.AppliedStatus {
@@ -4670,7 +4699,30 @@ func recordedApprovalMatches(recorded *operatorv1alpha1.ConsumedApprovalStatus, 
 }
 
 func planRequiresApproval(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) bool {
-	return schema.Spec.Policy.Apply != operatorv1alpha1.ApplyPolicyAlways || plan.Spec.Destructive
+	return schema.Spec.Policy.Apply != operatorv1alpha1.ApplyPolicyAlways || plan.Spec.Destructive ||
+		len(plan.Spec.PrivilegeChanges) > 0
+}
+
+// privilegesRequireApproval reports whether the privilege class is what stands
+// between this plan and an unattended apply. Under any other policy the plan
+// waits for a person anyway, and the reason says that instead.
+func privilegesRequireApproval(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) bool {
+	return schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyAlways && len(plan.Spec.PrivilegeChanges) > 0
+}
+
+// privilegeApprovalMessage names the kinds of authority the plan changes and
+// nothing the statements say: no object, no role, no text.
+func privilegeApprovalMessage(plan *operatorv1alpha1.PtahSchemaPlan) string {
+	return "The plan changes privileges (" + privilegeKindList(plan.Spec.PrivilegeChanges) + "), which apply policy " +
+		"Always applies only with an approval bound to this plan; read them with kubectl ptah plan"
+}
+
+func privilegeKindList(changes []operatorv1alpha1.PrivilegeChange) string {
+	kinds := make([]string, 0, len(changes))
+	for _, kind := range changes {
+		kinds = append(kinds, string(kind))
+	}
+	return strings.Join(kinds, ", ")
 }
 
 func setPlanPolicyStatus(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) {
@@ -4684,13 +4736,17 @@ func setPlanPolicyStatus(schema *operatorv1alpha1.PtahSchema, plan *operatorv1al
 		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonApplyDisabled, "Policy records plans but does not apply them")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonApplyDisabled, "Plan is ready but apply is disabled")
+	case privilegesRequireApproval(schema, plan):
+		schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonPrivilegeChanges, privilegeApprovalMessage(plan))
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonAwaitingApproval, "Plan is waiting for approval")
 	case planRequiresApproval(schema, plan):
 		schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
 		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonPlanReady, "An exact immutable plan is ready for approval")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonAwaitingApproval, "Plan is waiting for approval")
 	default:
 		schema.Status.Phase = operatorv1alpha1.PhaseReadyToApply
-		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonNotRequired, "Policy permits this non-destructive plan without a separate approval")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonNotRequired, "Policy permits this plan without a separate approval: it destroys nothing and changes no privilege")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonApplyPending, "The exact plan is ready to apply automatically")
 	}
 }

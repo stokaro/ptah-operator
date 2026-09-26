@@ -176,8 +176,10 @@ fall inside a SQL string, a JSON escape or a multi-byte character.
 ### The operator recorded a plan and refuses to apply it. Why? {#plan-recorded-not-applied}
 
 Destructive plans are disabled by default, and enabling them still requires an
-approval bound to the exact plan bytes. Check the condition reason: policy states
-appear as `ApplyDisabled`, `DestructiveChangesDisabled`, or `AwaitingApproval`.
+approval bound to the exact plan bytes. A plan that changes privileges needs an
+approval even under `apply: Always`. Check the condition reason: policy states
+appear as `ApplyDisabled`, `DestructiveChangesDisabled`, `PrivilegeChanges`, or
+`AwaitingApproval`.
 
 - [Condition reasons](../troubleshoot/condition-reasons/)
 - [Exact-plan approvals](../use/approvals/)

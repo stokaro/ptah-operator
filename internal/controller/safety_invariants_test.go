@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1492,10 +1493,13 @@ func TestStalePlanEvidenceForcesFreshObservation(t *testing.T) {
 func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) {
 	t.Parallel()
 
+	grant := []operatorv1alpha1.PrivilegeChange{operatorv1alpha1.PrivilegeChangeGrant}
 	for _, test := range []struct {
 		name           string
 		apply          operatorv1alpha1.ApplyPolicy
 		destructive    bool
+		statement      string
+		privileges     []operatorv1alpha1.PrivilegeChange
 		phase          operatorv1alpha1.ReconciliationPhase
 		approvalStatus metav1.ConditionStatus
 		approvalReason string
@@ -1503,6 +1507,18 @@ func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) 
 		{
 			name: "destructive changes disabled", apply: operatorv1alpha1.ApplyPolicyAlways, destructive: true,
 			phase: operatorv1alpha1.PhaseBlocked, approvalStatus: metav1.ConditionFalse, approvalReason: "DestructiveChangesDisabled",
+		},
+		{
+			// Ptah rates a grant safe. The operator's own reading is what
+			// keeps Always from applying it on its own.
+			name: "privilege change under Always", apply: operatorv1alpha1.ApplyPolicyAlways,
+			statement: `GRANT SELECT ON TABLE "public"."orders" TO PUBLIC`, privileges: grant,
+			phase: operatorv1alpha1.PhaseAwaitingApproval, approvalStatus: metav1.ConditionTrue, approvalReason: "PrivilegeChanges",
+		},
+		{
+			name: "privilege change under OnApproval", apply: operatorv1alpha1.ApplyPolicyOnApproval,
+			statement: `GRANT SELECT ON TABLE "public"."orders" TO PUBLIC`, privileges: grant,
+			phase: operatorv1alpha1.PhaseAwaitingApproval, approvalStatus: metav1.ConditionTrue, approvalReason: "PlanReady",
 		},
 		{
 			name: "apply disabled", apply: operatorv1alpha1.ApplyPolicyNever,
@@ -1556,6 +1572,9 @@ func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) 
 			}
 			bindActiveInput(t, schema)
 			planDocument := safetyPlanDocument(t, "observed-state", test.destructive)
+			if test.statement != "" {
+				planDocument = safetyPlanDocumentWithStatement(t, "observed-state", test.statement)
+			}
 			frame := safetyRunnerFrame(t, runner.Result{
 				ProtocolVersion:      runner.ProtocolVersion,
 				Operation:            runner.OperationPlan,
@@ -1597,6 +1616,15 @@ func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) 
 				!actual.Status.NextReconciliationTime.Time.Equal(wantNext) ||
 				approval == nil || approval.Status != test.approvalStatus || approval.Reason != test.approvalReason {
 				t.Fatalf("atomic deferred Plan status = %#v, want phase %s, deadline %s, and approval reason %s", actual.Status, test.phase, wantNext, test.approvalReason)
+			}
+			published := &operatorv1alpha1.PtahSchemaPlan{}
+			if err := api.Get(context.Background(), client.ObjectKey{Namespace: schema.Namespace, Name: actual.Status.Plan.Name}, published); err != nil {
+				t.Fatalf("read the published plan: %v", err)
+			}
+			if !slices.Equal(published.Spec.PrivilegeChanges, test.privileges) ||
+				!slices.Equal(actual.Status.Plan.PrivilegeChanges, test.privileges) {
+				t.Fatalf("privilege changes: plan %q, status %q, want %q in both",
+					published.Spec.PrivilegeChanges, actual.Status.Plan.PrivilegeChanges, test.privileges)
 			}
 			wantFindings := schema.Status.Target.DriftFindings
 			if actual.Status.Target.HighestDriftSeverity != "warning" || actual.Status.Target.DriftFindingCount != 3 ||
@@ -5078,6 +5106,28 @@ func safetyPlanDocument(t *testing.T, fromFingerprint string, destructive ...boo
 		"destructive":      isDestructive,
 		"statements": []map[string]any{{
 			"sql": "CREATE TABLE safety_test (id bigint)", "severity": "safe", "reason": "test",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Marshal(plan) error = %v", err)
+	}
+	return document
+}
+
+// safetyPlanDocumentWithStatement is a plan holding one statement Ptah rated
+// safe, which is what it rates a grant, a new role and a SECURITY DEFINER
+// function.
+func safetyPlanDocumentWithStatement(t *testing.T, fromFingerprint, statement string) []byte {
+	t.Helper()
+	document, err := json.Marshal(map[string]any{
+		"format_version":   1,
+		"name":             "safety-plan",
+		"dialect":          "postgresql",
+		"from_fingerprint": fromFingerprint,
+		"to_fingerprint":   "desired-state",
+		"destructive":      false,
+		"statements": []map[string]any{{
+			"sql": statement, "severity": "safe", "reason": "test",
 		}},
 	})
 	if err != nil {

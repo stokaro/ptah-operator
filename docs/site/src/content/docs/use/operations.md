@@ -899,8 +899,10 @@ Resolve rather than reusing the old plan or approval.
 
 `Ready=True` and `InSync=True` mean a read-only observation matched the verified
 artifact. They are not inferred from an apply exit code. `ReadyToApply` means
-the `Always` policy accepted a non-destructive plan without claiming that an
-approval is needed; `AwaitingApproval` means an exact approval is required.
+the `Always` policy accepted a plan that destroys nothing and changes no
+privilege without claiming that an approval is needed; `AwaitingApproval` means
+an exact approval is required, and under `Always` reason `PrivilegeChanges` says
+the plan's privilege changes are why.
 `Blocked` distinguishes deliberate policy refusal from an execution failure.
 `ReadyToApply`, `AwaitingApproval`, and `Blocked` all retain a read-only refresh
 deadline so the cadence survives controller restarts. An eligible Apply can be
@@ -1285,7 +1287,8 @@ apply wants; add `family="migration"` to ask about one.
   `required` is a plan that asked for a decision, `accepted` is a decision the
   controller consumed at the dispatch boundary, and `stale` is a decision that
   stopped being usable because the plan it named is no longer current. A policy
-  of `Always` waives the requirement and counts nothing.
+  of `Always` waives the requirement and counts nothing, except for a schema
+  plan that changes privileges, which still asks and counts as `required`.
 - `ptah_operator_applies_total{family,outcome}` counts started, completed,
   uncertain, and stale Apply transitions. A migration run that ended `Partial`
   or `Unknown` is `uncertain`: neither may be retried, and both leave a record

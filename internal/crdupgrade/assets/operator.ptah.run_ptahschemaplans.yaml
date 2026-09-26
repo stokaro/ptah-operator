@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "18"
-    operator.ptah.run/crd-schema-digest: "sha256:6d657fbacaa27593d4b692c0af6c590def3e75ef49a6f6c8d481f63aeffbd2a7"
+    operator.ptah.run/crd-schema-version: "19"
+    operator.ptah.run/crd-schema-digest: "sha256:bffe2017fdc69ccd0732fe3babc27baabab446b00142b2a479fc2bd9d6af6447"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemaplans.operator.ptah.run
 spec:
@@ -32,6 +32,9 @@ spec:
     - jsonPath: .spec.destructive
       name: Destructive
       type: boolean
+    - jsonPath: .spec.privilegeChanges
+      name: Privileges
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -119,6 +122,22 @@ spec:
                 type: string
               policyFingerprint:
                 type: string
+              privilegeChanges:
+                items:
+                  enum:
+                  - Grant
+                  - Revoke
+                  - RoleMembership
+                  - Role
+                  - Ownership
+                  - RowSecurityPolicy
+                  - SecurityDefiner
+                  - Definer
+                  - FunctionReplacement
+                  type: string
+                maxItems: 16
+                type: array
+                x-kubernetes-list-type: set
               ptahVersion:
                 type: string
               runnerImage:

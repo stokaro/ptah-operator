@@ -1150,6 +1150,51 @@ func TestBuildApplyRejectsStaleBindings(t *testing.T) {
 	}
 }
 
+// Under apply: Always the builder is the last place that decides whether an
+// Apply may run without a person, and it decides it again from the plan rather
+// than from the phase the controller wrote. The rows differ only in the plan's
+// privilege changes and the recorded approval, so a refusal is the privilege
+// class and nothing else.
+func TestBuildApplyRequiresApprovalForPrivilegeChangesUnderAlways(t *testing.T) {
+	t.Parallel()
+
+	grant := []operatorv1alpha1.PrivilegeChange{operatorv1alpha1.PrivilegeChangeGrant}
+	tests := []struct {
+		name       string
+		planKinds  []operatorv1alpha1.PrivilegeChange
+		statusKind []operatorv1alpha1.PrivilegeChange
+		approved   bool
+		wantBuilt  bool
+	}{
+		{name: "no privilege change and no approval", wantBuilt: true},
+		{name: "privilege change and no approval", planKinds: grant, statusKind: grant},
+		{name: "privilege change with an approval", planKinds: grant, statusKind: grant, approved: true, wantBuilt: true},
+		{
+			// A status that lost the plan's class is not the plan the schema
+			// is about, even with an approval recorded.
+			name: "status disagrees with the plan", planKinds: grant, approved: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+			builder := builderFixture()
+			plan := planFixture(schema, builder)
+			plan.Spec.PrivilegeChanges = test.planKinds
+			schema.Status.Plan.PrivilegeChanges = test.statusKind
+			if !test.approved {
+				schema.Status.Plan.Approval = nil
+			}
+			_, err := builder.Build(schema, operationFixture(operatorv1alpha1.OperationApply), plan)
+			if built := err == nil; built != test.wantBuilt {
+				t.Fatalf("Build() error = %v, want built = %t", err, test.wantBuilt)
+			}
+		})
+	}
+}
+
 func TestBuildHardensEveryContainerAndPod(t *testing.T) {
 	t.Parallel()
 	schema := schemaFixture()

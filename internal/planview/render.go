@@ -67,6 +67,11 @@ func renderText(out io.Writer, view View) error {
 	field("Dialect", view.Dialect)
 	field("Statements", fmt.Sprintf("%d", view.StatementCount))
 	field("Destructive", fmt.Sprintf("%t", view.Destructive))
+	privileges := "none"
+	if len(view.PrivilegeChanges) > 0 {
+		privileges = strings.Join(view.PrivilegeChanges, ", ")
+	}
+	field("Privileges", privileges)
 	if !view.CreatedAt.IsZero() {
 		field("Stored", view.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"))
 	}

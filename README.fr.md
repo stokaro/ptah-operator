@@ -60,6 +60,10 @@ Propriétés de sécurité :
   l’identité authentifiée lors du contrôle d’admission.
 - Les plans destructifs sont désactivés par défaut. Même après activation,
   ils exigent une approbation portant sur le plan exact.
+- Un plan qui accorde, retire ou délègue des droits (privilèges, rôles,
+  propriétaires, politiques de sécurité au niveau des lignes, droits du
+  définisseur) exige une approbation portant sur le plan exact, même avec
+  `apply: Always`.
 - Les identifiants de la base et du registre restent isolés les uns des autres.
   Ils n’apparaissent jamais dans le statut, les Events, les ressources de plan
   ou les arguments de commande.

@@ -124,6 +124,11 @@ func buildFixture(
 	if decoded.Destructive {
 		return fixtureBundle{}, errors.New("upgrade fixture plan must be non-destructive")
 	}
+	// The fixture writes the plan as ReadyToApply under Always, which a plan
+	// that changes privileges never is.
+	if len(decoded.PrivilegeChanges) > 0 {
+		return fixtureBundle{}, errors.New("upgrade fixture plan must change no privilege")
+	}
 	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
 		string(schema.Spec.Target.Engine),
 		schema.Spec.Target.CoordinationKey,

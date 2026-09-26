@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -60,11 +62,15 @@ type View struct {
 	PlanUID     types.UID
 	Fingerprint string
 
-	ContentDigest  string
-	Dialect        string
-	Destructive    bool
-	StatementCount int
-	CreatedAt      metav1.Time
+	ContentDigest string
+	Dialect       string
+	Destructive   bool
+	// PrivilegeChanges are the kinds of authority the plan changes: what the
+	// plan object records, together with what this build reads in its SQL.
+	// Any of them made the plan wait for an approval under apply: Always.
+	PrivilegeChanges []string
+	StatementCount   int
+	CreatedAt        metav1.Time
 	// CompletedAt is when the apply this plan belongs to finished. It is set
 	// for an applied plan and empty for a current one, which has not run.
 	CompletedAt *metav1.Time
@@ -109,21 +115,43 @@ func Load(
 		return View{}, fmt.Errorf("%w: %s: %w", ErrUnsupported, plan.Name, err)
 	}
 
+	// What the plan records, and what this reading of its SQL finds as well.
+	// The two agree when the plugin and the manager are the same build; where
+	// they are not, a reader is shown every kind either one raised, and never
+	// fewer than the plan object says.
+	recorded := make(map[string]bool, len(plan.Spec.PrivilegeChanges))
+	for _, kind := range plan.Spec.PrivilegeChanges {
+		recorded[string(kind)] = true
+	}
+	for _, kind := range decoded.PrivilegeChanges {
+		recorded[kind] = true
+	}
+	var privileges []string
+	for _, kind := range dataplane.PrivilegeChangeKinds() {
+		if recorded[kind] {
+			privileges = append(privileges, kind)
+			delete(recorded, kind)
+		}
+	}
+	// A kind this build does not know was recorded by a newer manager, and
+	// is shown rather than dropped.
+	privileges = append(privileges, slices.Sorted(maps.Keys(recorded))...)
 	return View{
-		Namespace:      schema.Namespace,
-		Schema:         schema.Name,
-		Selection:      selection,
-		PlanName:       plan.Name,
-		PlanUID:        plan.UID,
-		Fingerprint:    plan.Spec.Fingerprint,
-		ContentDigest:  plan.Spec.ContentDigest,
-		Dialect:        plan.Spec.Dialect,
-		Destructive:    plan.Spec.Destructive,
-		StatementCount: len(decoded.Statements),
-		CreatedAt:      plan.CreationTimestamp,
-		CompletedAt:    completedAt,
-		Document:       document,
-		Plan:           decoded,
+		Namespace:        schema.Namespace,
+		Schema:           schema.Name,
+		Selection:        selection,
+		PlanName:         plan.Name,
+		PlanUID:          plan.UID,
+		Fingerprint:      plan.Spec.Fingerprint,
+		ContentDigest:    plan.Spec.ContentDigest,
+		Dialect:          plan.Spec.Dialect,
+		Destructive:      plan.Spec.Destructive,
+		PrivilegeChanges: privileges,
+		StatementCount:   len(decoded.Statements),
+		CreatedAt:        plan.CreationTimestamp,
+		CompletedAt:      completedAt,
+		Document:         document,
+		Plan:             decoded,
 	}, nil
 }
 
