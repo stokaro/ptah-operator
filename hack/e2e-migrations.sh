@@ -378,6 +378,13 @@ select_engine() {
 	UNKNOWN_LAYER_COORDINATION_KEY="e2e/unknown-layer/${ENGINE}"
 	UNKNOWN_LAYER_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-unknown:stable"
 	UNKNOWN_LAYER_PUBLISH_REFERENCE="${REGISTRY_HOST_ADDRESS}/${MIGRATION_REPOSITORY}/${ENGINE}-unknown:stable"
+	RETARGET_DATABASE=ptah_e2e_retarget
+	RETARGET_OTHER_DATABASE=ptah_e2e_retarget_other
+	RETARGET_DB_SECRET="e2e-${ENGINE}-retarget-db"
+	RETARGET_MIGRATION="e2e-retarget-${ENGINE}"
+	RETARGET_COORDINATION_KEY="e2e/retarget/${ENGINE}"
+	RETARGET_DB_URL_FILE="$WORK_DIR/${ENGINE}-retarget-db-url"
+	RETARGET_OTHER_DB_URL_FILE="$WORK_DIR/${ENGINE}-retarget-other-db-url"
 	# The adoption row reads the artifact this engine already publishes. A
 	# second copy of the same three migrations would be a second thing to keep
 	# in step with the schema the proof builds out of them by hand.
@@ -5104,6 +5111,292 @@ assert_a_migration_converges_under_the_egress_policies() {
 		fail "the Jobs that ran $EGRESS_MIGRATION are not all ones the egress example selects, or none of them was the Apply"
 }
 
+# A target repointed between approval and dispatch.
+#
+# #242's PA-02 asks for every binding to be changed between approval and
+# dispatch, with evidence that the database received nothing. The target is the
+# one an installer changes without touching the resource: the Secret the URL
+# comes from. The Apply Pod reads it when its container is created, so a Secret
+# rewritten while the Pod waits is the database the executor would open.
+#
+# The apply gate holds the approved Apply's Pod off every node, the Secret is
+# pointed at a second database on the same server, and the gate opens. The
+# runner compares the target it was handed with the one the plan names before
+# it opens anything, so the refusal has to name that binding. A refusal for
+# any other reason would leave both databases untouched too and prove nothing,
+# which is why the reason is asserted and not only the absence of SQL.
+run_retarget_before_dispatch_proof() {
+	create_retarget_databases
+	open_apply_gate
+	create_retarget_migration_resource
+	wait_for_retarget_plan
+	printf 'e2e migrations: closing the gate before approving the %s plan\n' "$ENGINE_KIND" >&2
+	close_apply_gate
+	approve_retarget_plan
+	wait_for_retarget_apply
+	wait_for_retarget_pod_to_be_gated
+	printf 'e2e migrations: pointing the %s Secret at another database while the Apply Pod waits\n' \
+		"$ENGINE_KIND" >&2
+	jq -n --rawfile url "$RETARGET_OTHER_DB_URL_FILE" --arg database "$RETARGET_OTHER_DATABASE" \
+		'{stringData: {url: $url, database: $database}}' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k -n "$TEST_NAMESPACE" patch secret "$RETARGET_DB_SECRET" --type=merge \
+		--patch-file "$SECRET_FILE" >/dev/null ||
+		fail "the $ENGINE retarget Secret could not be rewritten"
+	rm -f "$SECRET_FILE"
+	open_apply_gate
+	wait_for_retarget_refusal
+	close_apply_gate
+
+	for retarget_database in "$RETARGET_DATABASE" "$RETARGET_OTHER_DATABASE"; do
+		assert_retarget_database_untouched "$retarget_database"
+	done
+	# A refused Apply is not replayed. The resource runs on an hour's interval,
+	# so what could start another Apply inside this window is the refusal not
+	# holding, which is the replay the unresolved record exists to prevent.
+	printf '%s\n' "$RETARGET_APPLY_JOB_UID" >"$WORK_DIR/retarget-applies.txt"
+	retarget_hold_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$retarget_hold_deadline" ]; do
+		assert_no_new_apply_job "$WORK_DIR/retarget-applies.txt" \
+			"after its target was repointed" "$RETARGET_MIGRATION"
+		sleep 10
+	done
+	for retarget_database in "$RETARGET_DATABASE" "$RETARGET_OTHER_DATABASE"; do
+		assert_retarget_database_untouched "$retarget_database"
+	done
+	printf 'e2e migrations: PASS %s refused an Apply whose target was repointed after approval\n' \
+		"$ENGINE_KIND" >&2
+}
+
+retarget_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$RETARGET_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$RETARGET_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$RETARGET_MIGRATION status"
+}
+
+report_retarget_state() {
+	printf 'e2e migrations: %s state when the wait ended:\n' "$RETARGET_MIGRATION" >&2
+	jq -r '
+      .status as $s |
+      "  phase=\($s.phase // "<none>") activeOperation=\(($s.activeOperation // {}) | "\(.type // "<none>")/\(.jobName // "<none>")")",
+      "  unresolvedRun=\(($s.unresolvedRun // {}) | "\(.jobName // "<none>")/\(.outcome // "<none>")")",
+      (($s.conditions // [])[] | "  condition \(.type)=\(.status) reason=\(.reason) message=\(.message[0:200])")
+    ' "$STATUS_FILE" >&2 2>/dev/null || true
+	k -n "$TEST_NAMESPACE" get pods -l "operator.ptah.run/migration=${RETARGET_MIGRATION}" \
+		-o json 2>/dev/null | jq -r '
+      .items[]? |
+      "  pod \(.metadata.name) phase=\(.status.phase) node=\(.spec.nodeName // "<unscheduled>")"
+    ' >&2 2>/dev/null || true
+}
+
+# Neither the approved database nor the one the Secret was pointed at holds a
+# revision table with rows, or the table the artifact's first migration makes.
+assert_retarget_database_untouched() {
+	case "$ENGINE" in
+	postgresql) retarget_schema="table_schema='public'" ;;
+	mysql) retarget_schema="table_schema=DATABASE()" ;;
+	esac
+	retarget_revision_tables=$(migration_query \
+		"SELECT count(*) FROM information_schema.tables WHERE ${retarget_schema} AND table_name='schema_migrations'" \
+		"$1")
+	if [ "$retarget_revision_tables" != 0 ]; then
+		[ "$(migration_query "SELECT count(*) FROM schema_migrations" "$1")" = 0 ] ||
+			fail "the $ENGINE Apply whose target was repointed recorded migrations in $1"
+	fi
+	[ "$(migration_query \
+		"SELECT count(*) FROM information_schema.tables WHERE ${retarget_schema} AND table_name='e2e_migration_widgets'" \
+		"$1")" = 0 ] ||
+		fail "the $ENGINE Apply whose target was repointed created its first migration's table in $1"
+}
+
+# Both databases exist before the resource does, so the second is a database
+# the executor could have opened and not a connection that failed.
+create_retarget_databases() {
+	create_database "$RETARGET_DATABASE"
+	create_database "$RETARGET_OTHER_DATABASE"
+	database_url "$RETARGET_DATABASE" >"$RETARGET_DB_URL_FILE"
+	database_url "$RETARGET_OTHER_DATABASE" >"$RETARGET_OTHER_DB_URL_FILE"
+	chmod 600 "$RETARGET_DB_URL_FILE" "$RETARGET_OTHER_DB_URL_FILE"
+	{
+		cat "$RETARGET_DB_URL_FILE"
+		printf '\n'
+		cat "$RETARGET_OTHER_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	# Not immutable, unlike the other rows' Secrets: rewriting it is the row.
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RETARGET_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$RETARGET_DATABASE" \
+		--rawfile url "$RETARGET_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# The late-dispatch row's shape: OnApproval so the approval chooses when the
+# Apply is claimed, the gate in the nodeSelector of every operation, and an
+# hour's interval so no refresh lands between the gate closing and the claim.
+create_retarget_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$RETARGET_MIGRATION" \
+		--arg secret "$RETARGET_DB_SECRET" \
+		--arg reference "$MIGRATION_REFERENCE" \
+		--arg coordinationKey "$RETARGET_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg gate "$APPLY_GATE_LABEL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "OnApproval", lockTimeout: "30s"},
+        interval: "1h",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s",
+          nodeSelector: ($gate | {(.): "open"})
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_retarget_plan() {
+	retarget_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$retarget_deadline" ]; do
+		retarget_status
+		if jq -e '
+          .status.phase == "AwaitingApproval" and
+          ((.status.plan.name // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			RETARGET_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 5
+	done
+	report_retarget_state
+	fail "$RETARGET_MIGRATION did not publish a plan to approve within ${TIMEOUT_SECONDS}s"
+}
+
+approve_retarget_plan() {
+	retarget_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$RETARGET_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	retarget_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$RETARGET_PLAN" \
+		-o jsonpath='{.metadata.uid}')
+	retarget_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$RETARGET_PLAN" \
+		-o jsonpath='{.spec.fingerprint}')
+	[ -n "$retarget_migration_uid" ] && [ -n "$retarget_plan_uid" ] && [ -n "$retarget_plan_fingerprint" ] ||
+		fail "$RETARGET_MIGRATION or its plan $RETARGET_PLAN carries no identity to approve"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "${RETARGET_MIGRATION}-approval" \
+		--arg migration "$RETARGET_MIGRATION" \
+		--arg migrationUID "$retarget_migration_uid" \
+		--arg plan "$RETARGET_PLAN" \
+		--arg planUID "$retarget_plan_uid" \
+		--arg fingerprint "$retarget_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the $ENGINE retarget approval could not be created"
+}
+
+wait_for_retarget_apply() {
+	retarget_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$retarget_deadline" ]; do
+		retarget_status
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			RETARGET_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
+			RETARGET_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 1
+	done
+	report_retarget_state
+	fail "$RETARGET_MIGRATION did not claim an Apply within ${TIMEOUT_SECONDS}s"
+}
+
+# The Secret is rewritten only once the Pod exists and no node has taken it,
+# so the value the container reads is the rewritten one and the approval
+# really came first.
+wait_for_retarget_pod_to_be_gated() {
+	gated_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$gated_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get pods -l "job-name=${RETARGET_APPLY_JOB}" -o json \
+			>"$WORK_DIR/retarget-pods.json" ||
+			fail "the $ENGINE Apply Pods could not be read while the gate was closed"
+		if jq -e --arg gate "$APPLY_GATE_LABEL" \
+			-f "$ROOT_DIR/testdata/e2e/gated-apply-pod.jq" \
+			"$WORK_DIR/retarget-pods.json" >/dev/null; then
+			return 0
+		fi
+		if jq -e 'any(.items[]?; ((.spec.nodeName // "") | length) > 0)' \
+			"$WORK_DIR/retarget-pods.json" >/dev/null; then
+			fail "the $ENGINE Apply Pod reached a node while the gate was closed, so the gate is not what held it"
+		fi
+		sleep 2
+	done
+	report_retarget_state
+	fail "the $ENGINE Apply never produced a Pod held off every node"
+}
+
+# The refusal is the runner's, for the binding this row changed, recorded
+# against the Job that was dispatched.
+wait_for_retarget_refusal() {
+	retarget_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$retarget_deadline" ]; do
+		retarget_status
+		if jq -e --arg uid "$RETARGET_APPLY_JOB_UID" '
+          .status.unresolvedRun as $run |
+          $run != null and $run.jobUID == $uid and
+          any(.status.conditions[];
+            .type == "Blocked" and .status == "True" and
+            .reason == "ApplyOutcomeUnknown" and
+            (.message | test("target_binding_mismatch")))
+        ' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	report_retarget_state
+	fail "$RETARGET_MIGRATION never reported that its Apply was refused for a repointed target"
+}
+
 run_egress_policy_proof() {
 	printf 'e2e migrations: applying the egress example to the %s operation Pods\n' "$ENGINE_KIND" >&2
 	read_egress_addresses
@@ -5166,6 +5459,7 @@ run_engine_migrations() {
 	run_suspension_during_apply_proof
 	run_unknown_layer_proof
 	run_egress_policy_proof
+	run_retarget_before_dispatch_proof
 	run_rebuild_drill
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
