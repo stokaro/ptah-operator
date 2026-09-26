@@ -336,6 +336,10 @@ select_engine() {
 	LATE_MIGRATION="e2e-late-dispatch-${ENGINE}"
 	LATE_COORDINATION_KEY="e2e/late-dispatch/${ENGINE}"
 	LATE_DB_URL_FILE="$WORK_DIR/${ENGINE}-late-dispatch-db-url"
+	DELETION_DATABASE=ptah_e2e_deletion
+	DELETION_DB_SECRET="e2e-${ENGINE}-deletion-db"
+	DELETION_MIGRATION="e2e-deletion-${ENGINE}"
+	DELETION_COORDINATION_KEY="e2e/deletion/${ENGINE}"
 	DRILL_DATABASE=ptah_e2e_drill
 	DRILL_DB_SECRET="e2e-${ENGINE}-drill-db"
 	DRILL_MIGRATION="e2e-drill-${ENGINE}"
@@ -343,10 +347,6 @@ select_engine() {
 	DRILL_DB_URL_FILE="$WORK_DIR/${ENGINE}-drill-db-url"
 	DRILL_OLDER_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-drill-older:stable"
 	DRILL_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-drill:stable"
-	DELETION_DATABASE=ptah_e2e_deletion
-	DELETION_DB_SECRET="e2e-${ENGINE}-deletion-db"
-	DELETION_MIGRATION="e2e-deletion-${ENGINE}"
-	DELETION_COORDINATION_KEY="e2e/deletion/${ENGINE}"
 	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-uncertain:stable"
 	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
 	UNKNOWN_LAYER_DATABASE=ptah_e2e_unknown_layer
@@ -3184,6 +3184,28 @@ run_late_dispatch_proof() {
 		"$ENGINE_KIND" >&2
 }
 
+run_uncertain_apply_proof() {
+	create_uncertain_database
+	publish_migrations "uncertain" "$UNCERTAIN_FIXTURE_DIR" "$UNCERTAIN_REFERENCE"
+	create_uncertain_migration_resource
+	wait_for_uncertain_apply_dispatch
+	wait_for_uncertain_commit
+	printf 'e2e migrations: removing the %s Apply Job while its run is still going\n' \
+		"$ENGINE_KIND" >&2
+	# The name is reused across attempts, so the UID is what says this is the
+	# Job the resource is waiting on rather than a later one under the same name.
+	uncertain_live_uid=$(k -n "$TEST_NAMESPACE" get job "$UNCERTAIN_APPLY_JOB" \
+		-o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+	[ "$uncertain_live_uid" = "$UNCERTAIN_APPLY_JOB_UID" ] ||
+		fail "the $ENGINE Apply Job under that name is not the one the resource dispatched"
+	k -n "$TEST_NAMESPACE" delete job "$UNCERTAIN_APPLY_JOB" --wait=true >/dev/null ||
+		fail "the $ENGINE Apply Job could not be removed"
+	assert_uncertain_apply_blocks_without_replaying
+	assert_unresolved_run_survives_another_refusal
+	printf 'e2e migrations: PASS %s stopped on a run it could not read, and replayed nothing\n' \
+		"$ENGINE_KIND" >&2
+}
+
 # A rebuild against a database that moved on after the backup.
 #
 # docs/site/src/content/docs/use/recovery.md calls this mode safe by
@@ -3533,28 +3555,6 @@ run_rebuild_drill() {
 		fail "after the rebuild the $ENGINE database has the fourth migration's table; it ran without an approval"
 	close_apply_gate
 	printf 'e2e migrations: PASS %s rebuilt against a database ahead of its backup and ran nothing unapproved\n' \
-		"$ENGINE_KIND" >&2
-}
-
-run_uncertain_apply_proof() {
-	create_uncertain_database
-	publish_migrations "uncertain" "$UNCERTAIN_FIXTURE_DIR" "$UNCERTAIN_REFERENCE"
-	create_uncertain_migration_resource
-	wait_for_uncertain_apply_dispatch
-	wait_for_uncertain_commit
-	printf 'e2e migrations: removing the %s Apply Job while its run is still going\n' \
-		"$ENGINE_KIND" >&2
-	# The name is reused across attempts, so the UID is what says this is the
-	# Job the resource is waiting on rather than a later one under the same name.
-	uncertain_live_uid=$(k -n "$TEST_NAMESPACE" get job "$UNCERTAIN_APPLY_JOB" \
-		-o jsonpath='{.metadata.uid}' 2>/dev/null || true)
-	[ "$uncertain_live_uid" = "$UNCERTAIN_APPLY_JOB_UID" ] ||
-		fail "the $ENGINE Apply Job under that name is not the one the resource dispatched"
-	k -n "$TEST_NAMESPACE" delete job "$UNCERTAIN_APPLY_JOB" --wait=true >/dev/null ||
-		fail "the $ENGINE Apply Job could not be removed"
-	assert_uncertain_apply_blocks_without_replaying
-	assert_unresolved_run_survives_another_refusal
-	printf 'e2e migrations: PASS %s stopped on a run it could not read, and replayed nothing\n' \
 		"$ENGINE_KIND" >&2
 }
 
@@ -4554,11 +4554,11 @@ run_engine_migrations() {
 	run_checkpoint_bootstrap_proof
 	run_uncertain_apply_proof
 	run_late_dispatch_proof
-	run_rebuild_drill
 	run_deletion_during_apply_proof
 	run_retry_interval_proof
 	run_unknown_layer_proof
 	run_egress_policy_proof
+	run_rebuild_drill
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
