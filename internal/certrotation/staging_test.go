@@ -28,9 +28,9 @@ func TestCARotationStagesCandidateBeforePublishingTrust(t *testing.T) {
 	config := testConfig()
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, now, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	sink := &recordingCandidateSink{}
 	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 	rotator.candidateSink = sink
@@ -102,9 +102,9 @@ func TestInterruptedCARotationReusesExactDurableCandidate(t *testing.T) {
 	config.ProbeInterval = time.Millisecond
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, now, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	first := mustNewTestRotator(t, client, config, now, &recordingProber{err: errors.New("projection pending")})
 	if err := first.Run(context.Background()); err == nil {
 		t.Fatal("first Run() unexpectedly succeeded")
@@ -155,9 +155,9 @@ func TestInterruptedCARotationBeforePrimaryWriteReusesExactDurableCandidate(t *t
 	config := testConfig()
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, now, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 
 	failFirstTrustWrite := true
 	client.PrependReactor("update", "mutatingwebhookconfigurations", func(k8stesting.Action) (bool, runtime.Object, error) {
@@ -212,9 +212,9 @@ func TestPendingCandidateRejectsSourceSecretDriftBeforeWrites(t *testing.T) {
 	config := testConfig()
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, now, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	failOverlap := true
 	client.PrependReactor("update", "validatingwebhookconfigurations", func(k8stesting.Action) (bool, runtime.Object, error) {
 		if failOverlap {
@@ -263,9 +263,9 @@ func TestPendingCandidateRejectsPostWriteForeignPrimaryMetadata(t *testing.T) {
 	config.ProbeInterval = time.Millisecond
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, now, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	first := mustNewTestRotator(t, client, config, now, &recordingProber{err: errors.New("projection pending")})
 	if err := first.Run(context.Background()); err == nil {
 		t.Fatal("first Run() unexpectedly succeeded")
@@ -478,9 +478,9 @@ func TestStagingSecretContractFailsClosedBeforeCertificateWrites(t *testing.T) {
 			config := testConfig()
 			now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 			material := mustGenerateMaterial(t, now, config)
-			legacy := secretForMaterial(config, material)
-			delete(legacy.Data, CAPrivateKeyKey)
-			client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+			keyless := secretForMaterial(config, material)
+			delete(keyless.Data, CAPrivateKeyKey)
+			client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 			test.mutate(t, client, config)
 			actionStart := len(client.Actions())
 			sink := &recordingCandidateSink{}
@@ -1196,9 +1196,9 @@ func TestStagingSecretUpdateAcceptsOnlyExactUncertainReadback(t *testing.T) {
 			config := testConfig()
 			now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 			material := mustGenerateMaterial(t, now, config)
-			legacy := secretForMaterial(config, material)
-			delete(legacy.Data, CAPrivateKeyKey)
-			client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+			keyless := secretForMaterial(config, material)
+			delete(keyless.Data, CAPrivateKeyKey)
+			client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 			client.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				secret := action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret)
 				if secret.Name != config.StagingSecretName {
@@ -1287,9 +1287,9 @@ func TestPrimarySecretUpdateAcceptsOnlyExactPostWriteObject(t *testing.T) {
 			config := testConfig()
 			now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 			material := mustGenerateMaterial(t, now, config)
-			legacy := secretForMaterial(config, material)
-			delete(legacy.Data, CAPrivateKeyKey)
-			client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+			keyless := secretForMaterial(config, material)
+			delete(keyless.Data, CAPrivateKeyKey)
+			client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 			client.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				secret := action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret)
 				if secret.Name != config.SecretName {
@@ -1325,9 +1325,9 @@ func TestPrimarySecretUpdateAcceptsExactUncertainReadback(t *testing.T) {
 	config := testConfig()
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	material := mustGenerateMaterial(t, now, config)
-	legacy := secretForMaterial(config, material)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, material)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 	client.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		secret := action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret)
 		if secret.Name != config.SecretName {

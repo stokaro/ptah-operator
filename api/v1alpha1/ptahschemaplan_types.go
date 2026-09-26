@@ -38,9 +38,8 @@ type PlanChunkReference struct {
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="a plan is immutable; generate a new plan instead"
 type PtahSchemaPlanSpec struct {
 	// ContractVersion versions plan publication and reconstruction separately
-	// from the Kubernetes API version.
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=3
+	// from the Kubernetes API version. Version 3 is the only one.
+	// +kubebuilder:validation:Enum=3
 	ContractVersion int32 `json:"contractVersion"`
 
 	// SchemaRef is the PtahSchema this plan was computed for.
@@ -85,24 +84,20 @@ type PtahSchemaPlanSpec struct {
 	// ExecutionBindingID is a per-transition epoch. It changes even when an
 	// operator rollout returns to byte-identical component versions.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	ExecutionBindingID string `json:"executionBindingID"`
 	// ControllerImage is the digest-pinned manager that published this plan.
-	// It, ControllerRevision and ControllerStateVersion are required by the
-	// current plan contract and stay optional on the wire only so legacy v1 and
-	// v2 plans can still be read and retired during an upgrade.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage,omitempty"`
+	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision is that manager's revision, which distinguishes two
 	// deployments of the same image.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision,omitempty"`
+	ControllerRevision string `json:"controllerRevision"`
 	// ControllerStateVersion is the state semantics that manager writes, so a
 	// plan is never applied by a controller that reads status differently.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+	ControllerStateVersion int32 `json:"controllerStateVersion"`
 	// PtahVersion is the Ptah build that computed this plan, as the executor
 	// image reports it.
 	PtahVersion string `json:"ptahVersion"`

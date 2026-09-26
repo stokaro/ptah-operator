@@ -663,7 +663,7 @@ func TestRuntimeVerifierRejectsFutureControllerStateInEveryDurableLocation(t *te
 		t.Run(test.name, func(t *testing.T) {
 			verifier := readyRuntimeVerifier(t)
 			object := schemaWithControllerStateAt("tenant-a", "schema-a", int64(newerStateVersion), test.path...)
-			// A current top-level plan and a missing legacy execution binding must
+			// A current top-level plan and a missing execution binding must
 			// not hide future state in another durable evidence location.
 			if test.name == "pending observation plan" {
 				setControllerStateAt(&object, int64(ourStateVersion), "status", "plan", "controllerStateVersion")
@@ -682,12 +682,12 @@ func TestRuntimeVerifierRejectsFutureControllerStateInEveryDurableLocation(t *te
 	}
 }
 
-func TestRuntimeVerifierAcceptsLegacyAndCurrentStateAcrossPages(t *testing.T) {
+func TestRuntimeVerifierAcceptsUnversionedAndCurrentStateAcrossPages(t *testing.T) {
 	verifier := readyRuntimeVerifier(t)
 	firstPage := &unstructured.UnstructuredList{
 		Items: []unstructured.Unstructured{
-			schemaWithoutControllerState("legacy", "missing"),
-			schemaWithControllerState("legacy", "zero", int64(0)),
+			schemaWithoutControllerState("unversioned", "missing"),
+			schemaWithControllerState("unversioned", "zero", int64(0)),
 		},
 	}
 	firstPage.SetContinue("page-two")
@@ -877,12 +877,12 @@ func TestVerifyStoredControllerStateListsEveryDurableKind(t *testing.T) {
 			Items: []unstructured.Unstructured{object},
 		}}}
 	}
-	schemas := page(schemaWithoutControllerState("tenant-a", "legacy-schema"))
-	plans := page(schemaWithoutControllerState("tenant-a", "legacy-plan"))
-	approvals := page(schemaWithControllerStateAt("tenant-a", "legacy-approval", int64(0), "spec", "controllerStateVersion"))
-	migrations := page(schemaWithoutControllerState("tenant-a", "legacy-migration"))
-	migrationPlans := page(schemaWithoutControllerState("tenant-a", "legacy-migration-plan"))
-	migrationApprovals := page(schemaWithControllerStateAt("tenant-a", "legacy-migration-approval", int64(0), "spec", "controllerStateVersion"))
+	schemas := page(schemaWithoutControllerState("tenant-a", "unversioned-schema"))
+	plans := page(schemaWithoutControllerState("tenant-a", "unversioned-plan"))
+	approvals := page(schemaWithControllerStateAt("tenant-a", "unversioned-approval", int64(0), "spec", "controllerStateVersion"))
+	migrations := page(schemaWithoutControllerState("tenant-a", "unversioned-migration"))
+	migrationPlans := page(schemaWithoutControllerState("tenant-a", "unversioned-migration-plan"))
+	migrationApprovals := page(schemaWithControllerStateAt("tenant-a", "unversioned-migration-approval", int64(0), "spec", "controllerStateVersion"))
 	clients := StoredControllerStateClients{
 		Schemas:            schemas,
 		Plans:              plans,

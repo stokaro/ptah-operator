@@ -202,34 +202,31 @@ func TestFrameRejectsAnUnclosedPayloadAndAPartialInterleavedLine(t *testing.T) {
 	}
 }
 
-func TestLegacyProtocolFourRequiresExplicitVersionBinding(t *testing.T) {
+// A frame speaks exactly ProtocolVersion. An earlier or a later version is
+// refused on both sides: this runner does not write one, and this manager does
+// not read one, whatever the rest of the frame says.
+func TestFrameOfAnotherProtocolVersionIsRefused(t *testing.T) {
 	t.Parallel()
 
-	legacy := Result{
-		ProtocolVersion: legacyProtocolVersion, Operation: OperationObserve, OperationID: "legacy-observe",
-		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
-		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
-		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
-		ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
-	}
-	frame := handcraftedIntegrityValidFrame(t, legacy)
-	if _, err := MarshalFrame(legacy); !errors.Is(err, ErrMalformedFrame) {
-		t.Fatalf("MarshalFrame(legacy v4) error = %v, want ErrMalformedFrame", err)
-	}
-	if _, err := ParseResultFor(frame, OperationObserve, legacy.OperationID); !errors.Is(err, ErrMalformedFrame) {
-		t.Fatalf("ParseResultFor(legacy v4) error = %v, want ErrMalformedFrame", err)
-	}
-
-	got, err := ParseResultWithOptions(frame, ParseOptions{
-		ExpectedProtocolVersion: legacyProtocolVersion,
-		ExpectedOperation:       legacy.Operation,
-		ExpectedOperationID:     legacy.OperationID,
-	})
-	if err != nil {
-		t.Fatalf("ParseResultWithOptions(explicit legacy v4) error = %v", err)
-	}
-	if !reflect.DeepEqual(got, legacy) {
-		t.Fatalf("ParseResultWithOptions(explicit legacy v4) = %#v, want %#v", got, legacy)
+	for _, version := range []int{ProtocolVersion - 1, ProtocolVersion + 1} {
+		other := Result{
+			ProtocolVersion: version, Operation: OperationObserve, OperationID: "other-protocol-observe",
+			ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+			TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+			DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+			ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
+			DriftFindings: []DriftFindingSummary{{Category: "columns_added", Count: 1, Severity: "warning"}},
+		}
+		if _, err := MarshalFrame(other); !errors.Is(err, ErrMalformedFrame) {
+			t.Fatalf("MarshalFrame(protocol %d) error = %v, want ErrMalformedFrame", version, err)
+		}
+		frame := handcraftedIntegrityValidFrame(t, other)
+		if _, err := ParseResultFor(frame, other.Operation, other.OperationID); !errors.Is(err, ErrMalformedFrame) {
+			t.Fatalf("ParseResultFor(protocol %d) error = %v, want ErrMalformedFrame", version, err)
+		}
+		if _, err := ParseResult(frame); !errors.Is(err, ErrMalformedFrame) {
+			t.Fatalf("ParseResult(protocol %d) error = %v, want ErrMalformedFrame", version, err)
+		}
 	}
 }
 
@@ -249,26 +246,6 @@ func TestProtocolFiveDriftRequiresStructuredFindings(t *testing.T) {
 	frame := handcraftedIntegrityValidFrame(t, result)
 	if _, err := ParseResultFor(frame, result.Operation, result.OperationID); !errors.Is(err, ErrMalformedFrame) {
 		t.Fatalf("ParseResultFor(v5 drift without findings) error = %v, want ErrMalformedFrame", err)
-	}
-}
-
-func TestLegacyProtocolFourRejectsStructuredFindings(t *testing.T) {
-	t.Parallel()
-
-	result := Result{
-		ProtocolVersion: legacyProtocolVersion, Operation: OperationObserve, OperationID: "legacy-structured-findings",
-		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
-		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
-		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
-		ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
-		DriftFindings: []DriftFindingSummary{{Category: "columns_added", Count: 1, Severity: "warning"}},
-	}
-	if _, err := ParseResultWithOptions(handcraftedIntegrityValidFrame(t, result), ParseOptions{
-		ExpectedProtocolVersion: legacyProtocolVersion,
-		ExpectedOperation:       result.Operation,
-		ExpectedOperationID:     result.OperationID,
-	}); !errors.Is(err, ErrMalformedFrame) {
-		t.Fatalf("ParseResultWithOptions(legacy v4 with structured findings) error = %v, want ErrMalformedFrame", err)
 	}
 }
 
@@ -413,17 +390,10 @@ func TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol(t *testing.T) {
 	}
 
 	previous := current
-	previous.ProtocolVersion = legacyProtocolVersion
+	previous.ProtocolVersion = ProtocolVersion - 1
 	frame := handcraftedIntegrityValidFrame(t, previous)
 	if _, err := ParseResultFor(frame, previous.Operation, previous.OperationID); !errors.Is(err, ErrMalformedFrame) {
 		t.Fatalf("ParseResultFor(previous protocol) error = %v, want ErrMalformedFrame", err)
-	}
-	if _, err := ParseResultWithOptions(frame, ParseOptions{
-		ExpectedProtocolVersion: legacyProtocolVersion,
-		ExpectedOperation:       previous.Operation,
-		ExpectedOperationID:     previous.OperationID,
-	}); err != nil {
-		t.Fatalf("ParseResultWithOptions(explicit previous protocol) error = %v", err)
 	}
 }
 
@@ -945,11 +915,15 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 		}
 	})
 
-	// A reader speaking another protocol version is the rejection that is not a
+	// A frame in another protocol version is the rejection that is not a
 	// damaged log, and the one most likely to be read as one.
 	t.Run("a frame this reader does not speak", func(t *testing.T) {
 		t.Parallel()
-		_, err := ParseResultWithOptions(complete(t), ParseOptions{ExpectedProtocolVersion: legacyProtocolVersion})
+		other := Result{
+			ProtocolVersion: ProtocolVersion + 1, Operation: OperationResolve, OperationID: "other-protocol",
+			ChildExitCode: -1, Error: &ResultError{Code: "test_error", Message: "test error"},
+		}
+		_, err := ParseResultWithOptions(handcraftedIntegrityValidFrame(t, other), ParseOptions{})
 		if !errors.Is(err, ErrMalformedFrame) {
 			t.Fatalf("err = %v, want a malformed-frame error", err)
 		}

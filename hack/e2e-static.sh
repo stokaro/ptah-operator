@@ -5893,43 +5893,22 @@ for helm_lookup_marker in \
 	'generate_upgrade_ca pod-validating' \
 	'assert_entry_bundle mutatingwebhookconfiguration' \
 	'assert_entry_bundle validatingwebhookconfiguration' \
-	'--reuse-values --dry-run=server --hide-secret' \
-	'exactly owned legacy Secret without ca.key' \
 	'--reuse-values --wait --timeout 5m' \
 	"caBundle for \${webhook_name} gained another entry" \
 	'assert_approval_admission_callable "after the Helm upgrade"'; do
 	grep -F -- "$helm_lookup_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
 		"$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
 done
-for failure_atomic_restore_marker in \
+for certificate_proof_marker in \
 	"chmod 700 \"\$UPGRADE_WORK_DIR\"" \
-	"LEGACY_SECRET_BEFORE=\$UPGRADE_WORK_DIR/legacy-secret-before.json" \
-	'LEGACY_SECRET_RESTORE_REQUIRED=1' \
-	'restore_legacy_secret()' \
-	"--patch-file \"\$LEGACY_SECRET_REMOVE_PATCH\"" \
-	"--patch-file \"\$LEGACY_SECRET_RESTORE_PATCH\"" \
-	"\$live.metadata.resourceVersion == \$after.metadata.resourceVersion" \
-	"legacy_secret_matches \"\$LEGACY_SECRET_VERIFIED\" original" \
-	'protected recovery files retained at %s' \
-	'verify_legacy_secret_lookup_state()' \
 	"rotation_transition_complete \"\$NEW_CA\"" \
-	"rotation_transition_complete \"\$RECREATED_CA\"" \
-	'refusing to overwrite a concurrently changed legacy Secret' \
-	'failure-atomic legacy Secret restoration failed'; do
-	grep -F -- "$failure_atomic_restore_marker" \
+	"rotation_transition_complete \"\$RECREATED_CA\""; do
+	grep -F -- "$certificate_proof_marker" \
 		"$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
 done
-[ "$(grep -Fc '"op":"test","path":"/metadata/uid"' \
-	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 2 ]
-[ "$(grep -Fc '"op":"test","path":"/metadata/resourceVersion"' \
-	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 2 ]
-[ "$(grep -Fc '"op":"test","path":"/data"' \
-	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 2 ]
-[ "$(grep -Fc 'LEGACY_SECRET_RESTORE_REQUIRED=0' \
-	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 3 ]
 if grep -Eq -- 'OLD_CA_KEY=|--arg[[:space:]]+caKey|-p=.*ca\.key' \
 	"$ROOT_DIR/hack/e2e-cert-rotation.sh"; then
-	printf '%s\n' 'e2e static: legacy Secret restoration exposes private key material through shell arguments' >&2
+	printf '%s\n' 'e2e static: the certificate rotation proof exposes private key material through shell arguments' >&2
 	exit 1
 fi
 for per_entry_marker in \
@@ -6476,9 +6455,7 @@ for controller_object_marker in \
 	'helm.sh/hook-weight: "-147"' \
 	'parameterNotFoundAction: Deny' \
 	'params.metadata.name == \"ptah-operator-release-activation\"' \
-	'variables.activeRelease == variables.previousRelease' \
 	'name: candidateRelease' \
-	'name: previousRelease' \
 	'request.operation == \"UPDATE\" || (request.operation == \"CREATE\" && (object.metadata.annotations[\"operator.ptah.run/controller-image\"] == variables.activeControllerImage && object.metadata.annotations[\"operator.ptah.run/controller-state-version\"] == variables.activeControllerStateString))' \
 	'== variables.activeControllerImage' \
 	'== variables.activeControllerStateString' \
@@ -6490,12 +6467,21 @@ for controller_object_marker in \
 	'Ptah controller migration plan write guard rejected an unsafe manifest shape' \
 	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
 	'dyn(object).binaryData[\"chunk\"].size() <= 699052' \
-	'dyn(object).spec.contractVersion == 2' \
 	'dyn(object).spec.contractVersion == 3' \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
 	'Ptah controller chunk write guard rejected an unsafe ConfigMap shape' \
 	'Ptah controller plan write guard rejected an unsafe manifest shape'; do
 	grep -F -- "$controller_object_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+done
+# Only the current Job envelope and plan contract are admitted: a Job without
+# controller provenance and a plan older than contract 3 are refused.
+for retired_controller_object_marker in \
+	'variables.previousRelease' \
+	'dyn(object).spec.contractVersion == 2'; do
+	if grep -F -- "$retired_controller_object_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null; then
+		printf 'e2e static: controller object guard still admits %s\n' "$retired_controller_object_marker" >&2
+		exit 1
+	fi
 done
 grep -F -- \
 	"request.userInfo.username == \\\"system:serviceaccount:ptah-e2e:$controller_service_account_name\\\" && variables.activeRelease == 1" \
@@ -6689,7 +6675,7 @@ for singleton_guard_marker in \
 	'lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration"' \
 	'lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration"' \
 	'is not owned by Helm release' \
-	'pre-upgrade hook'; do
+	'has an incomplete owned annotation tuple'; do
 	grep -F -- "$singleton_guard_marker" "$ROOT_DIR/charts/ptah-operator/templates/_helpers.tpl" >/dev/null
 done
 grep -E 'leaderElectionID[[:space:]]*=[[:space:]]*"ptah-operator.operator.ptah.run"' \

@@ -31,7 +31,6 @@ spec:
       mode: Environment
       usernameKey: username
       passwordKey: password
-      registryKey: registry
     verificationPolicyFrom:
       name: demo-verification-policy
       key: policy.yaml

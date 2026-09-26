@@ -44,7 +44,6 @@ const (
 var (
 	ErrSchemaNotFound = errors.New("no such schema")
 	ErrNoPlan         = errors.New("no such plan")
-	ErrAmbiguous      = errors.New("more than one plan matches")
 	ErrUnsupported    = errors.New("unsupported plan format")
 )
 
@@ -151,11 +150,7 @@ func resolve(
 				"%w: %s/%s records no confirmed apply", ErrNoPlan, schema.Namespace, schema.Name)
 		}
 		completedAt := applied.CompletedAt
-		if applied.PlanRef != nil && applied.PlanRef.Name != "" {
-			plan, err := get(ctx, reader, schema, applied.PlanRef.Name, applied.PlanRef.UID, applied.PlanFingerprint)
-			return plan, &completedAt, err
-		}
-		plan, err := search(ctx, reader, schema, applied.PlanFingerprint)
+		plan, err := get(ctx, reader, schema, applied.PlanRef.Name, applied.PlanRef.UID, applied.PlanFingerprint)
 		return plan, &completedAt, err
 	default:
 		return nil, nil, fmt.Errorf("unknown selection %q", selection)
@@ -172,6 +167,9 @@ func get(
 	uid types.UID,
 	fingerprint string,
 ) (*operatorv1alpha1.PtahSchemaPlan, error) {
+	if name == "" {
+		return nil, fmt.Errorf("%w: the record names no stored plan", ErrNoPlan)
+	}
 	if uid == "" {
 		return nil, fmt.Errorf(
 			"the record names the stored plan %s without a UID, so nothing says it is still the same object", name)
@@ -189,60 +187,14 @@ func get(
 	return plan, nil
 }
 
-// search finds the plan an older applied record could only name by fingerprint.
-//
-// It is the compatibility path for a record written before the reference
-// existed, and it decides nothing on its own: no match is an absence, and more
-// than one match is reported rather than resolved by taking the first.
-func search(
-	ctx context.Context,
-	reader client.Reader,
-	schema *operatorv1alpha1.PtahSchema,
-	fingerprint string,
-) (*operatorv1alpha1.PtahSchemaPlan, error) {
-	plans := &operatorv1alpha1.PtahSchemaPlanList{}
-	if err := reader.List(ctx, plans, client.InNamespace(schema.Namespace)); err != nil {
-		return nil, fmt.Errorf(
-			"list the stored plans of %s: %w\n\nThis record predates the plan reference, so finding its "+
-				"plan needs list access to PtahSchemaPlan in the namespace", schema.Namespace, err)
-	}
-	var found []*operatorv1alpha1.PtahSchemaPlan
-	for index := range plans.Items {
-		candidate := &plans.Items[index]
-		// No UID to match: a record that predates the reference names none, so
-		// what identifies the plan here is the full fingerprint and the schema
-		// it was written for.
-		if bound(candidate, schema, "", fingerprint) == nil {
-			found = append(found, candidate)
-		}
-	}
-	switch len(found) {
-	case 0:
-		return nil, fmt.Errorf(
-			"%w: no stored plan in %s carries the fingerprint %s that %s applied",
-			ErrNoPlan, schema.Namespace, fingerprint, schema.Name)
-	case 1:
-		return found[0], nil
-	default:
-		names := make([]string, 0, len(found))
-		for _, candidate := range found {
-			names = append(names, candidate.Name)
-		}
-		return nil, fmt.Errorf("%w: %v carry the fingerprint %s", ErrAmbiguous, names, fingerprint)
-	}
-}
-
 // bound reports whether a plan object is the one a status meant.
-//
-// An empty uid means the record carries none, which is the compatibility path
-// and not a match to be waved through: the caller that passes one requires it.
 func bound(
 	plan *operatorv1alpha1.PtahSchemaPlan,
 	schema *operatorv1alpha1.PtahSchema,
 	uid types.UID,
 	fingerprint string,
 ) error {
-	if uid != "" && plan.UID != uid {
+	if plan.UID != uid {
 		return fmt.Errorf(
 			"the stored plan %s has UID %q and the record names %q, so it is a different object under the same name",
 			plan.Name, plan.UID, uid)

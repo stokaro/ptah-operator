@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "17"
-    operator.ptah.run/crd-schema-digest: "sha256:0c927d86b580164884bd622bd2e0b06eaf5900983524a8872daeb6ad81eb35e9"
+    operator.ptah.run/crd-schema-version: "18"
+    operator.ptah.run/crd-schema-digest: "sha256:f74ba6993fc6a02d63f6858fbe90747cf3b913045bf74b17b47d802726ef78a3"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -72,11 +72,6 @@ spec:
                         type: string
                       passwordKey:
                         default: password
-                        type: string
-                      registryKey:
-                        default: registry
-                        enum:
-                        - registry
                         type: string
                       tokenKey:
                         default: token
@@ -1071,11 +1066,6 @@ spec:
                           passwordKey:
                             default: password
                             type: string
-                          registryKey:
-                            default: registry
-                            enum:
-                            - registry
-                            type: string
                           tokenKey:
                             default: token
                             type: string
@@ -1196,11 +1186,6 @@ spec:
                         type: string
                       passwordKey:
                         default: password
-                        type: string
-                      registryKey:
-                        default: registry
-                        enum:
-                        - registry
                         type: string
                       tokenKey:
                         default: token
@@ -1333,6 +1318,9 @@ spec:
                     minimum: 1
                     type: integer
                 required:
+                - controllerImage
+                - controllerRevision
+                - controllerStateVersion
                 - epoch
                 - executorImage
                 - ptahVersion

@@ -498,7 +498,6 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 					UsernameKey: "user",
 					PasswordKey: "pass",
 					TokenKey:    "identity-token",
-					RegistryKey: operatorv1alpha1.RegistryAuthoritySecretKey,
 				},
 				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"},

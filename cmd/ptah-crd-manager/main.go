@@ -810,8 +810,16 @@ func runtimeInvariants(
 		if previousControllerManagerImage != "" {
 			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image requires a previous release sequence")
 		}
-	} else if previousControllerManagerImage == "" {
-		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image is required with a previous release sequence")
+		if previousControllerServiceAccountName != "" {
+			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount requires a previous release sequence")
+		}
+	} else {
+		if previousControllerManagerImage == "" {
+			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image is required with a previous release sequence")
+		}
+		if previousControllerServiceAccountName == "" {
+			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount is required with a previous release sequence")
+		}
 	}
 	return crdupgrade.RuntimeInvariants{
 		ReleaseName:                             releaseName,

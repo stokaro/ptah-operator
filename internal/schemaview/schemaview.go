@@ -178,12 +178,10 @@ func Load(ctx context.Context, reader client.Reader, namespace, name string) (Vi
 	}
 	if applied := schema.Status.Applied; applied != nil {
 		view.Applied = &AppliedView{
+			PlanName:        applied.PlanRef.Name,
 			PlanFingerprint: applied.PlanFingerprint,
 			PtahVersion:     applied.PtahVersion,
 			CompletedAt:     applied.CompletedAt,
-		}
-		if applied.PlanRef != nil {
-			view.Applied.PlanName = applied.PlanRef.Name
 		}
 	}
 	for _, condition := range schema.Status.Conditions {

@@ -18,14 +18,9 @@ const (
 	prefix                      = "sha256:"
 	coordinationContractVersion = 1
 
-	// LegacyPlanContractVersion is the oldest plan fingerprint format that can
-	// still be read while existing objects are retired.
-	LegacyPlanContractVersion int32 = 1
-	// ExecutionEpochPlanContractVersion introduced the durable execution epoch.
-	ExecutionEpochPlanContractVersion int32 = 2
-	// CurrentPlanContractVersion additionally binds the digest-pinned manager
-	// image, manager revision, and controller-state semantics into every newly
-	// published plan.
+	// CurrentPlanContractVersion is the only plan fingerprint format. It binds
+	// the durable execution epoch, the digest-pinned manager image, the manager
+	// revision, and the controller-state semantics into every plan.
 	CurrentPlanContractVersion int32 = 3
 )
 
@@ -118,10 +113,10 @@ type PlanBinding struct {
 	PolicyFingerprint        string `json:"policy_fingerprint"`
 	VerificationPolicyUID    string `json:"verification_policy_uid"`
 	VerificationPolicyDigest string `json:"verification_policy_digest"`
-	ExecutionBindingID       string `json:"execution_binding_id,omitempty"`
-	ControllerImage          string `json:"controller_image,omitempty"`
-	ControllerRevision       string `json:"controller_revision,omitempty"`
-	ControllerStateVersion   int32  `json:"controller_state_version,omitempty"`
+	ExecutionBindingID       string `json:"execution_binding_id"`
+	ControllerImage          string `json:"controller_image"`
+	ControllerRevision       string `json:"controller_revision"`
+	ControllerStateVersion   int32  `json:"controller_state_version"`
 	PtahVersion              string `json:"ptah_version"`
 	ExecutorImage            string `json:"executor_image"`
 	RunnerImage              string `json:"runner_image"`
@@ -153,19 +148,17 @@ func (b PlanBinding) Fingerprint() (string, error) {
 			return "", fmt.Errorf("%s is required", name)
 		}
 	}
-	if b.ContractVersion >= ExecutionEpochPlanContractVersion && !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
-		return "", fmt.Errorf("a valid execution binding ID is required for plan contract version %d", b.ContractVersion)
+	if !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
+		return "", fmt.Errorf("a valid execution binding ID is required")
 	}
-	if b.ContractVersion >= CurrentPlanContractVersion {
-		if !imageDigestPattern.MatchString(b.ControllerImage) {
-			return "", fmt.Errorf("controller image must be pinned by a lowercase SHA-256 digest for plan contract version %d", b.ContractVersion)
-		}
-		if err := controllerstate.ValidateRevision(b.ControllerRevision); err != nil {
-			return "", fmt.Errorf("invalid controller revision for plan contract version %d: %w", b.ContractVersion, err)
-		}
-		if b.ControllerStateVersion < 1 {
-			return "", fmt.Errorf("controller state version must be positive for plan contract version %d", b.ContractVersion)
-		}
+	if !imageDigestPattern.MatchString(b.ControllerImage) {
+		return "", fmt.Errorf("controller image must be pinned by a lowercase SHA-256 digest")
+	}
+	if err := controllerstate.ValidateRevision(b.ControllerRevision); err != nil {
+		return "", fmt.Errorf("invalid controller revision: %w", err)
+	}
+	if b.ControllerStateVersion < 1 {
+		return "", fmt.Errorf("controller state version must be positive")
 	}
 	if b.RunnerProtocolVersion < 1 {
 		return "", fmt.Errorf("runner protocol version must be positive")
@@ -173,15 +166,14 @@ func (b PlanBinding) Fingerprint() (string, error) {
 	return DigestCanonicalJSON(b)
 }
 
-// ValidatePlanContractVersion rejects both retired pre-v1 data and unknown
-// future contracts. Future objects must not be interpreted using today's
-// approval or Apply semantics.
+// ValidatePlanContractVersion accepts only the current plan contract. A plan
+// under any other version must not be interpreted using today's approval or
+// Apply semantics.
 func ValidatePlanContractVersion(version int32) error {
-	if version < LegacyPlanContractVersion || version > CurrentPlanContractVersion {
+	if version != CurrentPlanContractVersion {
 		return fmt.Errorf(
-			"unsupported plan contract version %d; supported range is %d-%d",
+			"unsupported plan contract version %d; the only supported version is %d",
 			version,
-			LegacyPlanContractVersion,
 			CurrentPlanContractVersion,
 		)
 	}

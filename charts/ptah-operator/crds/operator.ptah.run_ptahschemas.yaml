@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "17"
-    operator.ptah.run/crd-schema-digest: "sha256:220ac51ac35ad1a356e1fe4a5bddf3d2fc4e275b044c317867d97da1dc43336d"
+    operator.ptah.run/crd-schema-version: "18"
+    operator.ptah.run/crd-schema-digest: "sha256:1b4ecc788f64ebb729c9e372e414ea6d731cdb447447bd33853e6ddcac3cc643"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -75,11 +75,6 @@ spec:
                         type: string
                       passwordKey:
                         default: password
-                        type: string
-                      registryKey:
-                        default: registry
-                        enum:
-                        - registry
                         type: string
                       tokenKey:
                         default: token
@@ -1130,11 +1125,6 @@ spec:
                           passwordKey:
                             default: password
                             type: string
-                          registryKey:
-                            default: registry
-                            enum:
-                            - registry
-                            type: string
                           tokenKey:
                             default: token
                             type: string
@@ -1298,9 +1288,14 @@ spec:
                 required:
                 - artifactDigest
                 - completedAt
+                - controllerImage
+                - controllerRevision
+                - controllerStateVersion
                 - coordinationDigest
+                - executionBindingID
                 - executorImage
                 - planFingerprint
+                - planRef
                 - ptahVersion
                 - runnerImage
                 - runnerProtocolVersion
@@ -1374,6 +1369,9 @@ spec:
                     minimum: 1
                     type: integer
                 required:
+                - controllerImage
+                - controllerRevision
+                - controllerStateVersion
                 - epoch
                 - executorImage
                 - ptahVersion
@@ -1786,10 +1784,14 @@ spec:
                     - actualStateFingerprint
                     - artifactDigest
                     - contentDigest
+                    - controllerImage
+                    - controllerRevision
+                    - controllerStateVersion
                     - coordinationDigest
                     - createdAt
                     - desiredStateFingerprint
                     - destructive
+                    - executionBindingID
                     - executorImage
                     - fingerprint
                     - name
@@ -1830,11 +1832,6 @@ spec:
                             type: string
                           passwordKey:
                             default: password
-                            type: string
-                          registryKey:
-                            default: registry
-                            enum:
-                            - registry
                             type: string
                           tokenKey:
                             default: token
@@ -2036,10 +2033,14 @@ spec:
                 - actualStateFingerprint
                 - artifactDigest
                 - contentDigest
+                - controllerImage
+                - controllerRevision
+                - controllerStateVersion
                 - coordinationDigest
                 - createdAt
                 - desiredStateFingerprint
                 - destructive
+                - executionBindingID
                 - executorImage
                 - fingerprint
                 - name

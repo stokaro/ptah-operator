@@ -929,13 +929,6 @@ func TestBuildRejectsCredentialScopeAndTransportDowngrades(t *testing.T) {
 	t.Parallel()
 
 	for name, mutate := range map[string]func(*operatorv1alpha1.PtahSchema){
-		"selectable Environment grant key": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Spec.Desired.RegistryAuthFrom.RegistryKey = "attacker-selected"
-		},
-		"selectable Docker config grant key": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Spec.Desired.RegistryAuthFrom.Mode = operatorv1alpha1.RegistryAuthDockerConfigJSON
-			schema.Spec.Desired.RegistryAuthFrom.RegistryKey = "attacker-selected"
-		},
 		"client certificate transport": func(schema *operatorv1alpha1.PtahSchema) {
 			schema.Spec.Desired.Transport.ClientCertificateFrom = &operatorv1alpha1.TLSSecretReference{
 				Name: "registry-client",
@@ -1458,7 +1451,6 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 					UsernameKey: "user",
 					PasswordKey: "pass",
 					TokenKey:    "identity-token",
-					RegistryKey: operatorv1alpha1.RegistryAuthoritySecretKey,
 				},
 				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"},

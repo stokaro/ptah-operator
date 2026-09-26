@@ -26,9 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestControllerRBACTransitionLegacyCutPointsAndRetries(t *testing.T) {
+func TestControllerRBACTransitionCutPointsAndRetries(t *testing.T) {
 	t.Parallel()
-	for initialCursor := 0; initialCursor <= 2; initialCursor++ {
+	for initialCursor := 0; initialCursor <= 4; initialCursor++ {
 		initialCursor := initialCursor
 		t.Run(fmt.Sprintf("cursor-%d", initialCursor), func(t *testing.T) {
 			t.Parallel()
@@ -46,7 +46,8 @@ func TestControllerRBACTransitionLegacyCutPointsAndRetries(t *testing.T) {
 				t.Fatalf("VerifyComplete() error = %v", err)
 			}
 			wantTargets := []string{}
-			for _, contract := range fixture.transition.contract.bindings[initialCursor:] {
+			moved := fixture.transition.contract.bindings[initialCursor:]
+			for _, contract := range moved {
 				key := controllerRBACBindingKey(contract)
 				wantTargets = append(wantTargets, key, key)
 			}
@@ -56,7 +57,10 @@ func TestControllerRBACTransitionLegacyCutPointsAndRetries(t *testing.T) {
 				if call.dryRun != (index%2 == 0) {
 					t.Errorf("patch call %d dryRun = %t, want alternating dry/persist", index, call.dryRun)
 				}
-				assertControllerRBACJSONPatch(t, call.patch, fixture.guard, fixture.previousSubject(), fixture.candidateSubject())
+				if index/2 < len(moved) {
+					assertControllerRBACJSONPatch(t, call.patch, fixture.guard, fixture.previousSubject(), fixture.candidateSubject(),
+						moved[index/2].fixedSubjects...)
+				}
 			}
 			if !reflect.DeepEqual(gotTargets, wantTargets) {
 				t.Fatalf("patch targets = %#v, want %#v", gotTargets, wantTargets)
@@ -199,10 +203,8 @@ func TestControllerRBACTransitionCredentialGraceDecision(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			fixture := newControllerRBACTransitionFixture(t, 0)
+			fixture := newFreshInstallControllerRBACTransitionFixture(t)
 			transition := fixture.transition
-			transition.rollout.PreviousControllerServiceAccountName = ""
-			transition.rollout.PreviousControllerServiceAccountUID = ""
 			transition.preflight = &controllerRBACTransitionState{
 				bindingUIDs:        map[string]types.UID{},
 				serviceAccountUIDs: map[string]types.UID{},
@@ -265,7 +267,7 @@ func TestControllerRBACTransitionSnapshotsConstructorIdentity(t *testing.T) {
 	fixture := newControllerRBACTransitionFixture(t, 0)
 	fixture.guard.PreviousControllerServiceAccountName = ""
 	fixture.guard.PreviousControllerServiceAccountUID = ""
-	fixture.guard.ReleaseSequence = 2
+	fixture.guard.ReleaseSequence = 3
 	if !fixture.transition.HasPredecessor() {
 		t.Fatal("transition identity changed after caller mutated the source RolloutGuard")
 	}
@@ -276,7 +278,7 @@ func TestControllerRBACTransitionSnapshotsConstructorIdentity(t *testing.T) {
 
 func TestControllerRBACTransitionAcceptsFrozenPredecessor(t *testing.T) {
 	t.Parallel()
-	fixture := newFrozenControllerRBACTransitionFixture(t)
+	fixture := newControllerRBACTransitionFixture(t, 0)
 	transition := fixture.transition
 	if err := transition.Preflight(context.Background()); err != nil {
 		t.Fatalf("sequence-1 predecessor Preflight() error = %v", err)
@@ -360,7 +362,7 @@ func TestControllerRBACTransitionFrozenRuntimeRoleValidation(t *testing.T) {
 			}
 			t.Run(test.name+"/"+phase, func(t *testing.T) {
 				t.Parallel()
-				fixture := newFrozenControllerRBACTransitionFixture(t)
+				fixture := newControllerRBACTransitionFixture(t, 0)
 				key := privilegeBindingKey(fixture.guard.ReleaseNamespace, fixture.guard.ControllerDeploymentName+"-runtime-admission")
 				mutate := func() { test.mutate(fixture, key) }
 				if phase != "preflight" {
@@ -405,7 +407,7 @@ func TestControllerRBACTransitionFrozenRuntimeRoleValidation(t *testing.T) {
 
 func TestControllerRBACTransitionFrozenRuntimeRoleAuthorizationProbe(t *testing.T) {
 	t.Parallel()
-	fixture := newFrozenControllerRBACTransitionFixture(t)
+	fixture := newControllerRBACTransitionFixture(t, 0)
 	probe, err := fixture.transition.PredecessorAuthorizationProbe()
 	if err != nil {
 		t.Fatalf("PredecessorAuthorizationProbe() error = %v", err)
@@ -448,7 +450,7 @@ func TestControllerRBACTransitionFrozenRuntimeRoleCandidateRulesRequireCompleteC
 	for cursor := 0; cursor <= 4; cursor++ {
 		t.Run(strconv.Itoa(cursor), func(t *testing.T) {
 			t.Parallel()
-			fixture := newFrozenControllerRBACTransitionFixture(t)
+			fixture := newControllerRBACTransitionFixture(t, 0)
 			if len(fixture.transition.contract.bindings) != 4 {
 				t.Fatalf("sequence-1 transition binding count = %d, want 4", len(fixture.transition.contract.bindings))
 			}
@@ -485,7 +487,7 @@ func TestFrozenPredecessorRuntimeRoleRules(t *testing.T) {
 	for _, namespace := range []string{"ptah-system", corev1.NamespaceDefault} {
 		t.Run(namespace, func(t *testing.T) {
 			t.Parallel()
-			fixture := newFrozenControllerRBACTransitionFixture(t)
+			fixture := newControllerRBACTransitionFixture(t, 0)
 			fixture.guard.ReleaseNamespace = namespace
 			fixture.runtimeContract.Namespace = namespace
 			rules, err := frozenPredecessorControllerRoleRules(fixture.guard, fixture.runtimeContract)
@@ -513,9 +515,7 @@ func TestFrozenPredecessorRuntimeRoleRules(t *testing.T) {
 func TestControllerRBACTransitionRejectsPredecessorWithoutManagerImage(t *testing.T) {
 	t.Parallel()
 	fixture := newControllerRBACTransitionFixture(t, 0)
-	fixture.guard.ReleaseSequence = 2
-	fixture.guard.PreviousControllerReleaseSequence = 1
-	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
+	fixture.guard.PreviousControllerManagerImage = ""
 	_, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
 	if err == nil || !strings.Contains(err.Error(), "requires the predecessor manager image") {
 		t.Fatalf("NewControllerRBACTransition() error = %v, want a missing predecessor image refusal", err)
@@ -553,9 +553,6 @@ func TestControllerRBACTransitionRejectsUnfrozenFuturePredecessor(t *testing.T) 
 func TestFrozenPredecessorRulesFollowThePredecessorIdentity(t *testing.T) {
 	t.Parallel()
 	fixture := newControllerRBACTransitionFixture(t, 0)
-	fixture.guard.ReleaseSequence = 2
-	fixture.guard.PreviousControllerReleaseSequence = 1
-	fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
 	predecessorRules, err := frozenPredecessorControllerRoleRules(fixture.guard, fixture.runtimeContract)
 	if err != nil {
 		t.Fatalf("frozenPredecessorControllerRoleRules() error = %v", err)
@@ -623,7 +620,7 @@ func TestControllerRBACTransitionLostResponseResumesForward(t *testing.T) {
 	if err := fixture.transition.Transition(context.Background()); err != nil {
 		t.Fatalf("Transition() after lost responses error = %v", err)
 	}
-	if got, want := len(fixture.client.patchCalls), 4; got != want {
+	if got, want := len(fixture.client.patchCalls), 2*len(fixture.transition.contract.bindings); got != want {
 		t.Fatalf("patch calls = %d, want %d dry/persist calls", got, want)
 	}
 }
@@ -789,88 +786,10 @@ func TestControllerRBACTransitionRejectsInvalidBindingStates(t *testing.T) {
 	}
 }
 
-func TestControllerRBACTransitionFutureTargetSetSupportsEveryPrefix(t *testing.T) {
-	t.Parallel()
-	for cursor := 0; cursor <= 3; cursor++ {
-		cursor := cursor
-		t.Run(strconv.Itoa(cursor), func(t *testing.T) {
-			t.Parallel()
-			fixture := newControllerRBACTransitionFixture(t, 0)
-			fixture.guard.ReleaseSequence = 2
-			fixture.guard.PreviousControllerReleaseSequence = 1
-			fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
-			// This white-box test isolates the three-target cursor state machine.
-			// The frozen-predecessor test above covers the complete sequence-1
-			// to sequence-2 transition through the public constructor.
-			fixture.transition.rollout = cloneControllerRBACRollout(fixture.guard)
-			runtime := controllerRBACBindingContract{
-				name:      fixture.guard.ControllerDeploymentName + "-runtime-admission",
-				namespace: fixture.guard.ReleaseNamespace,
-				roleRef:   controllerRBACRoleRef("Role", fixture.guard.ControllerDeploymentName+"-runtime-admission"),
-				fixedSubjects: []rbacv1.Subject{
-					controllerRBACServiceAccountSubject(fixture.guard.ReleaseNamespace, fixture.runtimeContract.CertificateServiceAccountName),
-				},
-			}
-			fixture.transition.contract.bindings = []controllerRBACBindingContract{
-				fixture.transition.contract.bindings[0],
-				runtime,
-				fixture.transition.contract.bindings[1],
-			}
-			fixture.transition.contract.postApplyBinding = nil
-			fixture.transition.contract.postApplyRole = nil
-			runtimeRole := controllerRBACRoleContract{
-				name:             runtime.name,
-				namespace:        runtime.namespace,
-				predecessorRules: currentControllerRuntimeRoleRules(fixture.guard, fixture.runtimeContract),
-				candidateRules:   currentControllerRuntimeRoleRules(fixture.guard, fixture.runtimeContract),
-			}
-			fixture.transition.contract.roles = append(fixture.transition.contract.roles, runtimeRole)
-			fixture.client.roleBindings[privilegeBindingKey(runtime.namespace, runtime.name)] = controllerRBACRoleBinding(
-				fixture.guard,
-				runtime,
-				fixture.previousSubject(),
-				"binding-runtime",
-				"13",
-			)
-			fixture.client.roles[privilegeBindingKey(runtime.namespace, runtime.name)] = &rbacv1.Role{
-				ObjectMeta: controllerRBACObjectMeta(fixture.guard, runtime.name, runtime.namespace, "role-runtime", "8"),
-				Rules:      append([]rbacv1.PolicyRule(nil), runtimeRole.predecessorRules...),
-			}
-			for index, contract := range fixture.transition.contract.bindings {
-				if index < cursor {
-					fixture.setBindingSubject(contract, fixture.candidateSubject())
-				} else {
-					fixture.setBindingSubject(contract, fixture.previousSubject())
-				}
-			}
-			if err := fixture.transition.Preflight(context.Background()); err != nil {
-				t.Fatalf("future Preflight() error = %v", err)
-			}
-			if err := fixture.transition.Transition(context.Background()); err != nil {
-				t.Fatalf("future Transition() error = %v", err)
-			}
-			if got, want := len(fixture.client.patchCalls), 2*(3-cursor); got != want {
-				t.Fatalf("patch calls = %d, want %d", got, want)
-			}
-		})
-	}
-}
-
 func TestControllerRBACTransitionFreshInstallDoesNotCreateBindings(t *testing.T) {
 	t.Parallel()
-	fixture := newControllerRBACTransitionFixture(t, 0)
-	fixture.guard.PreviousControllerServiceAccountName = ""
-	fixture.guard.PreviousControllerServiceAccountUID = ""
-	fixture.guard.PreviousControllerReleaseSequence = 0
-	delete(fixture.client.serviceAccounts, "legacy-controller")
-	fixture.client.roleBindings = map[string]*rbacv1.RoleBinding{}
-	fixture.client.clusterBindings = map[string]*rbacv1.ClusterRoleBinding{}
-	fixture.client.roles = map[string]*rbacv1.Role{}
-	fixture.client.clusterRoles = map[string]*rbacv1.ClusterRole{}
-	transition, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := newFreshInstallControllerRBACTransitionFixture(t)
+	transition := fixture.transition
 	if err := transition.Preflight(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -915,8 +834,8 @@ func TestControllerRBACTransitionAcceptsExactSameCandidateRetryStates(t *testing
 		{
 			name: "post-hook before ordinary apply",
 			mutate: func(f *controllerRBACTransitionFixture) {
-				// The predecessor may still exist and stable roles may still carry
-				// their frozen rules after the hook moved both core bindings.
+				// The predecessor may still exist and the roles may still carry
+				// their frozen rules after the hook moved every binding.
 			},
 		},
 		{
@@ -930,14 +849,14 @@ func TestControllerRBACTransitionAcceptsExactSameCandidateRetryStates(t *testing
 					"31",
 					true,
 				)
-				f.installExactCandidateRolesAndRuntimeBinding()
+				f.installExactCandidateRoles()
 			},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			fixture := newControllerRBACTransitionFixture(t, 2)
+			fixture := newControllerRBACTransitionFixture(t, 4)
 			test.mutate(fixture)
 			retry, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
 			if err != nil {
@@ -959,7 +878,7 @@ func TestControllerRBACTransitionAcceptsExactSameCandidateRetryStates(t *testing
 	}
 }
 
-func TestControllerRBACTransitionRejectsUnsafePostApplyMixtures(t *testing.T) {
+func TestControllerRBACTransitionRejectsUnsafeCutoverMixtures(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
@@ -968,24 +887,7 @@ func TestControllerRBACTransitionRejectsUnsafePostApplyMixtures(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "candidate-only binding before core cutover",
-			cursor: 1,
-			mutate: func(f *controllerRBACTransitionFixture) {
-				f.installExactCandidateRuntimeRoleAndBinding()
-			},
-			want: "before the stable controller binding cutover is complete",
-		},
-		{
-			name:   "candidate-only role before core cutover",
-			cursor: 1,
-			mutate: func(f *controllerRBACTransitionFixture) {
-				f.installExactCandidateRuntimeRoleAndBinding()
-				delete(f.client.roleBindings, privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission"))
-			},
-			want: "candidate-only Role/ptah-system/ptah-e2e-operator-runtime-admission exists before the stable controller binding cutover is complete",
-		},
-		{
-			name:   "candidate stable rules before core cutover",
+			name:   "candidate stable rules before cutover",
 			cursor: 1,
 			mutate: func(f *controllerRBACTransitionFixture) {
 				f.client.clusterRoles[f.guard.ControllerDeploymentName].Rules = currentControllerClusterRoleRules(f.guard)
@@ -993,37 +895,8 @@ func TestControllerRBACTransitionRejectsUnsafePostApplyMixtures(t *testing.T) {
 			want: "before the stable binding cutover is complete",
 		},
 		{
-			name:   "candidate-only binding has predecessor subject",
-			cursor: 2,
-			mutate: func(f *controllerRBACTransitionFixture) {
-				f.installExactCandidateRuntimeRoleAndBinding()
-				binding := f.client.roleBindings[privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission")]
-				binding.Subjects = append([]rbacv1.Subject{f.previousSubject()}, f.transition.contract.postApplyBinding.fixedSubjects...)
-			},
-			want: "does not name the exact candidate controller",
-		},
-		{
-			name:   "candidate-only role is missing",
-			cursor: 2,
-			mutate: func(f *controllerRBACTransitionFixture) {
-				f.installExactCandidateRuntimeRoleAndBinding()
-				delete(f.client.roles, privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission"))
-			},
-			want: "get Role",
-		},
-		{
-			name:   "candidate-only role is foreign",
-			cursor: 2,
-			mutate: func(f *controllerRBACTransitionFixture) {
-				f.installExactCandidateRuntimeRoleAndBinding()
-				role := f.client.roles[privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission")]
-				role.Rules[0].Verbs = append(role.Rules[0].Verbs, "list")
-			},
-			want: "exact predecessor and candidate contracts",
-		},
-		{
 			name:   "managed candidate ServiceAccount has foreign ownership",
-			cursor: 2,
+			cursor: 4,
 			mutate: func(f *controllerRBACTransitionFixture) {
 				f.client.serviceAccounts[f.guard.ControllerServiceAccountName] = controllerRBACServiceAccount(
 					f.guard, f.guard.ControllerServiceAccountName, "candidate-uid", "31", false,
@@ -1033,7 +906,7 @@ func TestControllerRBACTransitionRejectsUnsafePostApplyMixtures(t *testing.T) {
 		},
 		{
 			name:   "managed candidate ServiceAccount is deleting",
-			cursor: 2,
+			cursor: 4,
 			mutate: func(f *controllerRBACTransitionFixture) {
 				account := controllerRBACServiceAccount(f.guard, f.guard.ControllerServiceAccountName, "candidate-uid", "31", true)
 				now := metav1.Now()
@@ -1044,7 +917,7 @@ func TestControllerRBACTransitionRejectsUnsafePostApplyMixtures(t *testing.T) {
 		},
 		{
 			name:   "fully cut over stable role has foreign rules",
-			cursor: 2,
+			cursor: 4,
 			mutate: func(f *controllerRBACTransitionFixture) {
 				f.client.clusterRoles[f.guard.ControllerDeploymentName].Rules = []rbacv1.PolicyRule{{Verbs: []string{"*"}}}
 			},
@@ -1055,6 +928,88 @@ func TestControllerRBACTransitionRejectsUnsafePostApplyMixtures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			fixture := newControllerRBACTransitionFixture(t, test.cursor)
+			test.mutate(fixture)
+			retry, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = retry.Preflight(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Preflight() error = %v, want containing %q", err, test.want)
+			}
+			if len(fixture.client.patchCalls) != 0 {
+				t.Fatalf("unsafe cutover mixture issued patches: %#v", fixture.client.patchCalls)
+			}
+		})
+	}
+}
+
+// A fresh install grants the runtime-admission binding only after Helm has
+// applied the stable ones, and a retry of that install can find it at any
+// point. It never names anyone but the candidate.
+func TestControllerRBACTransitionRejectsUnsafePostApplyMixtures(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		stable bool
+		mutate func(*controllerRBACTransitionFixture)
+		want   string
+	}{
+		{
+			name: "candidate-only binding before the stable bindings",
+			mutate: func(f *controllerRBACTransitionFixture) {
+				f.installExactCandidateRuntimeRoleAndBinding()
+			},
+			want: "before the stable controller binding cutover is complete",
+		},
+		{
+			name: "candidate-only role before the stable bindings",
+			mutate: func(f *controllerRBACTransitionFixture) {
+				f.installExactCandidateRuntimeRoleAndBinding()
+				delete(f.client.roleBindings, privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission"))
+			},
+			want: "candidate-only Role/ptah-system/ptah-e2e-operator-runtime-admission exists before the stable controller binding cutover is complete",
+		},
+		{
+			name:   "candidate-only binding names someone else",
+			stable: true,
+			mutate: func(f *controllerRBACTransitionFixture) {
+				f.installExactCandidateRuntimeRoleAndBinding()
+				binding := f.client.roleBindings[privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission")]
+				binding.Subjects = append(
+					[]rbacv1.Subject{controllerRBACServiceAccountSubject(f.guard.ReleaseNamespace, "someone-else")},
+					f.transition.contract.postApplyBinding.fixedSubjects...,
+				)
+			},
+			want: "has a foreign controller subject",
+		},
+		{
+			name:   "candidate-only role is missing",
+			stable: true,
+			mutate: func(f *controllerRBACTransitionFixture) {
+				f.installExactCandidateRuntimeRoleAndBinding()
+				delete(f.client.roles, privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission"))
+			},
+			want: "get Role",
+		},
+		{
+			name:   "candidate-only role is foreign",
+			stable: true,
+			mutate: func(f *controllerRBACTransitionFixture) {
+				f.installExactCandidateRuntimeRoleAndBinding()
+				role := f.client.roles[privilegeBindingKey(f.guard.ReleaseNamespace, f.guard.ControllerDeploymentName+"-runtime-admission")]
+				role.Rules[0].Verbs = append(role.Rules[0].Verbs, "list")
+			},
+			want: "exact predecessor and candidate contracts",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newFreshInstallControllerRBACTransitionFixture(t)
+			if test.stable {
+				fixture.installExactCandidateStableBindings()
+			}
 			test.mutate(fixture)
 			retry, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
 			if err != nil {
@@ -1096,11 +1051,11 @@ func TestControllerRBACTransitionRechecksPostApplyServiceAccountAndRoleVersions(
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			fixture := newControllerRBACTransitionFixture(t, 2)
+			fixture := newControllerRBACTransitionFixture(t, 4)
 			fixture.client.serviceAccounts[fixture.guard.ControllerServiceAccountName] = controllerRBACServiceAccount(
 				fixture.guard, fixture.guard.ControllerServiceAccountName, "candidate-uid", "31", true,
 			)
-			fixture.installExactCandidateRolesAndRuntimeBinding()
+			fixture.installExactCandidateRoles()
 			retry, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
 			if err != nil {
 				t.Fatal(err)
@@ -1120,20 +1075,20 @@ func TestControllerRBACTransitionRechecksPostApplyServiceAccountAndRoleVersions(
 	}
 }
 
-func TestControllerRBACPredecessorAuthorizationProbeCoversExactLegacyUnion(t *testing.T) {
+func TestControllerRBACPredecessorAuthorizationProbeCoversExactPredecessorUnion(t *testing.T) {
 	t.Parallel()
-	fixture := newControllerRBACTransitionFixture(t, 2)
+	fixture := newControllerRBACTransitionFixture(t, 4)
 	probe, err := fixture.transition.PredecessorAuthorizationProbe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if probe.Subject.Name != "previous-controller" ||
-		probe.Subject.User != "system:serviceaccount:ptah-system:legacy-controller" ||
+		probe.Subject.User != "system:serviceaccount:ptah-system:previous-controller" ||
 		probe.Subject.UID != string(fixture.guard.PreviousControllerServiceAccountUID) {
 		t.Fatalf("probe subject = %#v", probe.Subject)
 	}
-	if got, want := len(probe.Checks), 47; got != want {
-		t.Fatalf("legacy authorization checks = %d, want complete %d-check union", got, want)
+	if got, want := len(probe.Checks), 120; got != want {
+		t.Fatalf("predecessor authorization checks = %d, want complete %d-check union", got, want)
 	}
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "list", "operator.ptah.run", "ptahschemas", "", "")
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "watch", "batch", "jobs", "", "")
@@ -1217,84 +1172,92 @@ type controllerRBACTransitionFixture struct {
 // names carry.
 const predecessorManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-func newFrozenControllerRBACTransitionFixture(t *testing.T) *controllerRBACTransitionFixture {
+// newControllerRBACTransitionFixture is release sequence 2 succeeding sequence 1,
+// with the first cursor of the four controller bindings, in cutover order,
+// already moved to the candidate. Every role still carries the rules sequence 1
+// published, and the predecessor's ServiceAccount still exists.
+func newControllerRBACTransitionFixture(t *testing.T, cursor int) *controllerRBACTransitionFixture {
 	t.Helper()
-	fixture := newControllerRBACTransitionFixture(t, 0)
-	fixture.guard.ReleaseSequence = 2
-	fixture.guard.PreviousControllerReleaseSequence = 1
-	fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
-	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
-	transition, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
-	if err != nil {
-		t.Fatalf("NewControllerRBACTransition() out of the frozen sequence error = %v", err)
+	guard := newControllerRBACTransitionGuard(2)
+	guard.PreviousControllerServiceAccountName = "previous-controller"
+	guard.PreviousControllerServiceAccountUID = "previous-controller-uid"
+	guard.PreviousControllerReleaseSequence = 1
+	guard.PreviousControllerManagerImage = predecessorManagerImage
+	fixture := newControllerRBACTransitionFixtureFor(t, guard)
+	transition := fixture.transition
+	if len(transition.contract.bindings) != 4 {
+		t.Fatalf("cutover binding count = %d, want the four sequence 1 published", len(transition.contract.bindings))
 	}
-	fixture.transition = transition
-	// Populate the sequence-1 objects absent from the legacy fixture. The
-	// transition keeps exactly the contract its public constructor built.
-	fixture.client.clusterRoles[fixture.guard.ControllerDeploymentName].Rules = sequence1ControllerClusterRoleRules(controllerRoleIdentity{
-		releaseNamespace: fixture.guard.ReleaseNamespace,
-		releaseName:      fixture.guard.ReleaseName,
-		releaseSequence:  1,
-		managerImage:     predecessorManagerImage,
-	})
-	for _, contract := range transition.contract.bindings {
-		if !contract.cluster {
-			fixture.client.roleBindings[privilegeBindingKey(contract.namespace, contract.name)] = controllerRBACRoleBinding(
-				fixture.guard, contract, fixture.previousSubject(), types.UID("binding-"+contract.name), "12",
-			)
+	for index, contract := range transition.contract.bindings {
+		subject := fixture.previousSubject()
+		if index < cursor {
+			subject = fixture.candidateSubject()
+		}
+		uid := types.UID("binding-" + contract.namespace + "-" + contract.name)
+		if contract.cluster {
+			fixture.client.clusterBindings[contract.name] = controllerRBACClusterRoleBinding(guard, contract, subject, uid, "11")
+		} else {
+			fixture.client.roleBindings[privilegeBindingKey(contract.namespace, contract.name)] = controllerRBACRoleBinding(guard, contract, subject, uid, "12")
 		}
 	}
-	discoveryName := fixture.guard.ControllerDeploymentName + "-runtime-discovery"
-	fixture.client.roles[privilegeBindingKey(corev1.NamespaceDefault, discoveryName)] = &rbacv1.Role{
-		ObjectMeta: controllerRBACObjectMeta(fixture.guard, discoveryName, corev1.NamespaceDefault, "discovery-role-uid", "7"),
-		Rules:      currentControllerDiscoveryRoleRules(),
+	for _, contract := range transition.contract.roles {
+		metadata := controllerRBACObjectMeta(guard, contract.name, contract.namespace, types.UID("role-"+contract.namespace+"-"+contract.name), "7")
+		if contract.cluster {
+			fixture.client.clusterRoles[contract.name] = &rbacv1.ClusterRole{ObjectMeta: metadata, Rules: append([]rbacv1.PolicyRule(nil), contract.predecessorRules...)}
+		} else {
+			fixture.client.roles[privilegeBindingKey(contract.namespace, contract.name)] = &rbacv1.Role{ObjectMeta: metadata, Rules: append([]rbacv1.PolicyRule(nil), contract.predecessorRules...)}
+		}
 	}
-	runtimeName := fixture.guard.ControllerDeploymentName + "-runtime-admission"
-	predecessor := *fixture.guard
-	predecessor.ReleaseSequence = 1
-	predecessor.ManagerImage = predecessorManagerImage
-	predecessorRuntime := fixture.runtimeContract
-	predecessorRuntime.ControllerServiceAccountName = fixture.guard.PreviousControllerServiceAccountName
-	fixture.client.roles[privilegeBindingKey(fixture.guard.ReleaseNamespace, runtimeName)] = &rbacv1.Role{
-		ObjectMeta: controllerRBACObjectMeta(fixture.guard, runtimeName, fixture.guard.ReleaseNamespace, "runtime-role-uid", "7"),
-		Rules:      currentControllerRuntimeRoleRules(&predecessor, predecessorRuntime),
-	}
+	fixture.client.serviceAccounts[guard.PreviousControllerServiceAccountName] = controllerRBACServiceAccount(
+		guard,
+		guard.PreviousControllerServiceAccountName,
+		guard.PreviousControllerServiceAccountUID,
+		"5",
+		false,
+	)
 	return fixture
 }
 
-func newControllerRBACTransitionFixture(t *testing.T, cursor int) *controllerRBACTransitionFixture {
+// newFreshInstallControllerRBACTransitionFixture is release sequence 1 in a
+// cluster that holds none of its controller RBAC yet.
+func newFreshInstallControllerRBACTransitionFixture(t *testing.T) *controllerRBACTransitionFixture {
 	t.Helper()
-	guard := &RolloutGuard{
-		ReleaseName:                          "ptah-e2e",
-		ReleaseNamespace:                     "ptah-system",
-		CoordinationNamespace:                "ptah-coordination",
-		LeaderElection:                       true,
-		LeaderElectionID:                     "ptah-operator.operator.ptah.run",
-		WebhookServiceName:                   "ptah-e2e-webhook",
-		WebhookTimeoutSeconds:                5,
-		WebhookSecretName:                    "ptah-e2e-webhook-cert",
-		WebhookPort:                          9443,
-		CertificateHealthPort:                8081,
-		HookServiceAccountName:               "ptah-e2e-operator-crd-v1-0123456789ab",
-		ControllerServiceAccountName:         "ptah-e2e-operator-v1-candidate",
-		ControllerServiceAccountManaged:      true,
-		PreviousControllerServiceAccountName: "legacy-controller",
-		PreviousControllerServiceAccountUID:  "legacy-controller-uid",
-		PreviousControllerReleaseSequence:    0,
-		ControllerDeploymentName:             "ptah-e2e-operator",
-		ControllerReplicas:                   1,
-		CertificateDeploymentName:            "ptah-e2e-operator-cert-rotator",
-		ControllerStateVersion:               ourStateVersion,
-		AdmissionContractVersion:             1,
-		ReleaseSequence:                      1,
-		ManagerImage:                         "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ControllerArgs:                       []string{"--leader-elect=true"},
-		CertificateArgs:                      []string{"--namespace=ptah-system"},
-		RuntimeDeploymentConfigExpressions:   []string{"true"},
-		RuntimePodConfigExpressions:          []string{"true"},
-		RuntimeAdmissionContractB64:          "e30=",
-		PollEvery:                            time.Millisecond,
+	return newControllerRBACTransitionFixtureFor(t, newControllerRBACTransitionGuard(1))
+}
+
+func newControllerRBACTransitionGuard(sequence int32) *RolloutGuard {
+	return &RolloutGuard{
+		ReleaseName:                        "ptah-e2e",
+		ReleaseNamespace:                   "ptah-system",
+		CoordinationNamespace:              "ptah-coordination",
+		LeaderElection:                     true,
+		LeaderElectionID:                   "ptah-operator.operator.ptah.run",
+		WebhookServiceName:                 "ptah-e2e-webhook",
+		WebhookTimeoutSeconds:              5,
+		WebhookSecretName:                  "ptah-e2e-webhook-cert",
+		WebhookPort:                        9443,
+		CertificateHealthPort:              8081,
+		HookServiceAccountName:             fmt.Sprintf("ptah-e2e-operator-crd-v%d-0123456789ab", sequence),
+		ControllerServiceAccountName:       fmt.Sprintf("ptah-e2e-operator-v%d-candidate", sequence),
+		ControllerServiceAccountManaged:    true,
+		ControllerDeploymentName:           "ptah-e2e-operator",
+		ControllerReplicas:                 1,
+		CertificateDeploymentName:          "ptah-e2e-operator-cert-rotator",
+		ControllerStateVersion:             ourStateVersion,
+		AdmissionContractVersion:           1,
+		ReleaseSequence:                    sequence,
+		ManagerImage:                       "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ControllerArgs:                     []string{"--leader-elect=true"},
+		CertificateArgs:                    []string{"--namespace=ptah-system"},
+		RuntimeDeploymentConfigExpressions: []string{"true"},
+		RuntimePodConfigExpressions:        []string{"true"},
+		RuntimeAdmissionContractB64:        "e30=",
+		PollEvery:                          time.Millisecond,
 	}
+}
+
+func newControllerRBACTransitionFixtureFor(t *testing.T, guard *RolloutGuard) *controllerRBACTransitionFixture {
+	t.Helper()
 	client := &fakeControllerRBACClient{
 		roleBindings:    make(map[string]*rbacv1.RoleBinding),
 		clusterBindings: make(map[string]*rbacv1.ClusterRoleBinding),
@@ -1311,36 +1274,9 @@ func newControllerRBACTransitionFixture(t *testing.T, cursor int) *controllerRBA
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := &controllerRBACTransitionFixture{
+	return &controllerRBACTransitionFixture{
 		guard: guard, runtimeContract: runtimeContract, client: client, transition: transition,
 	}
-	for index, contract := range transition.contract.bindings {
-		subject := fixture.previousSubject()
-		if index < cursor {
-			subject = fixture.candidateSubject()
-		}
-		if contract.cluster {
-			client.clusterBindings[contract.name] = controllerRBACClusterRoleBinding(guard, contract, subject, "binding-cluster", "11")
-		} else {
-			client.roleBindings[privilegeBindingKey(contract.namespace, contract.name)] = controllerRBACRoleBinding(guard, contract, subject, "binding-coordination", "12")
-		}
-	}
-	for _, contract := range transition.contract.roles {
-		metadata := controllerRBACObjectMeta(guard, contract.name, contract.namespace, types.UID("role-"+contract.name), "7")
-		if contract.cluster {
-			client.clusterRoles[contract.name] = &rbacv1.ClusterRole{ObjectMeta: metadata, Rules: append([]rbacv1.PolicyRule(nil), contract.predecessorRules...)}
-		} else {
-			client.roles[privilegeBindingKey(contract.namespace, contract.name)] = &rbacv1.Role{ObjectMeta: metadata, Rules: append([]rbacv1.PolicyRule(nil), contract.predecessorRules...)}
-		}
-	}
-	client.serviceAccounts[guard.PreviousControllerServiceAccountName] = controllerRBACServiceAccount(
-		guard,
-		guard.PreviousControllerServiceAccountName,
-		guard.PreviousControllerServiceAccountUID,
-		"5",
-		false,
-	)
-	return fixture
 }
 
 func (f *controllerRBACTransitionFixture) previousSubject() rbacv1.Subject {
@@ -1360,10 +1296,33 @@ func (f *controllerRBACTransitionFixture) setBindingSubject(contract controllerR
 	f.client.roleBindings[privilegeBindingKey(contract.namespace, contract.name)].Subjects = subjects
 }
 
-func (f *controllerRBACTransitionFixture) installExactCandidateRolesAndRuntimeBinding() {
-	f.client.clusterRoles[f.guard.ControllerDeploymentName].Rules = currentControllerClusterRoleRules(f.guard)
-	f.client.clusterRoles[f.guard.ControllerDeploymentName].ResourceVersion = "40"
-	f.installExactCandidateRuntimeRoleAndBinding()
+// installExactCandidateRoles is what ordinary apply leaves after a cutover:
+// every role carries the candidate's rules.
+func (f *controllerRBACTransitionFixture) installExactCandidateRoles() {
+	for _, contract := range f.transition.contract.roles {
+		if contract.cluster {
+			f.client.clusterRoles[contract.name].Rules = append([]rbacv1.PolicyRule(nil), contract.candidateRules...)
+			f.client.clusterRoles[contract.name].ResourceVersion = "40"
+			continue
+		}
+		role := f.client.roles[privilegeBindingKey(contract.namespace, contract.name)]
+		role.Rules = append([]rbacv1.PolicyRule(nil), contract.candidateRules...)
+		role.ResourceVersion = "40"
+	}
+}
+
+// installExactCandidateStableBindings is what ordinary apply leaves on a fresh
+// install before the candidate-only runtime contour: every stable binding
+// names the candidate.
+func (f *controllerRBACTransitionFixture) installExactCandidateStableBindings() {
+	for _, contract := range f.transition.contract.bindings {
+		uid := types.UID("binding-" + contract.namespace + "-" + contract.name)
+		if contract.cluster {
+			f.client.clusterBindings[contract.name] = controllerRBACClusterRoleBinding(f.guard, contract, f.candidateSubject(), uid, "11")
+		} else {
+			f.client.roleBindings[privilegeBindingKey(contract.namespace, contract.name)] = controllerRBACRoleBinding(f.guard, contract, f.candidateSubject(), uid, "12")
+		}
+	}
 }
 
 func (f *controllerRBACTransitionFixture) installExactCandidateRuntimeRoleAndBinding() {

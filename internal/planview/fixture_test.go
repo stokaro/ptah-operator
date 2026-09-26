@@ -143,25 +143,13 @@ func (l *lab) current(t *testing.T, plan *operatorv1alpha1.PtahSchemaPlan) {
 	})
 }
 
-// applied records a confirmed apply of a stored plan, with the reference a
-// current operator writes.
+// applied records a confirmed apply of a stored plan, with the reference the
+// operator writes.
 func (l *lab) applied(t *testing.T, plan *operatorv1alpha1.PtahSchemaPlan) {
 	t.Helper()
 	l.update(t, func(schema *operatorv1alpha1.PtahSchema) {
 		schema.Status.Applied = &operatorv1alpha1.AppliedStatus{
-			PlanRef:         &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
-			PlanFingerprint: plan.Spec.Fingerprint,
-			CompletedAt:     metav1.Now(),
-		}
-	})
-}
-
-// appliedBeforeTheReference records the same apply the way an operator wrote it
-// before AppliedStatus carried a plan reference.
-func (l *lab) appliedBeforeTheReference(t *testing.T, plan *operatorv1alpha1.PtahSchemaPlan) {
-	t.Helper()
-	l.update(t, func(schema *operatorv1alpha1.PtahSchema) {
-		schema.Status.Applied = &operatorv1alpha1.AppliedStatus{
+			PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
 			PlanFingerprint: plan.Spec.Fingerprint,
 			CompletedAt:     metav1.Now(),
 		}

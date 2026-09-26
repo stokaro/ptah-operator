@@ -391,9 +391,6 @@ func requireCurrentPlanContract(version int32) error {
 	if err := fingerprint.ValidatePlanContractVersion(version); err != nil {
 		return fmt.Errorf("referenced plan contract is not supported: %w", err)
 	}
-	if version != fingerprint.CurrentPlanContractVersion {
-		return fmt.Errorf("referenced plan contract version %d is not current", version)
-	}
 	return nil
 }
 

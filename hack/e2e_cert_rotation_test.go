@@ -23,113 +23,9 @@ import (
 	"testing"
 )
 
-func TestCertificateE2ELegacySecretRestoration(t *testing.T) {
+func TestCertificateE2EGeneratedSecretRequiresExactSource(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{
-		"lost removal response", "lost restoration response", "already restored",
-		"concurrent data change", "replacement identity", "foreign ownership",
-		"foreign type", "race after GET", "restoration rejected",
-	} {
-		t.Run(scenario, func(t *testing.T) {
-			t.Parallel()
-			fixture := newCertificateShellFixture(t)
-			original := certificateSecretFixture()
-			fixture.writeJSON("legacy-secret-before.json", original)
-			live := certificateSecretFixture()
-			delete(live["data"].(map[string]any), "ca.key")
-			live["metadata"].(map[string]any)["resourceVersion"] = "removed"
-			fixture.writeJSON("legacy-secret-after-remove.json", live)
-			wantRestore := true
-			switch scenario {
-			case "lost removal response":
-				fixture.write("legacy-secret-after-remove.json", "")
-			case "lost restoration response":
-				fixture.mode = "lost-response"
-			case "already restored":
-				live = certificateSecretFixture()
-				live["metadata"].(map[string]any)["resourceVersion"] = "restored-without-response"
-			case "concurrent data change":
-				live["data"].(map[string]any)["tls.crt"] = "concurrent-certificate"
-				wantRestore = false
-			case "replacement identity":
-				live["metadata"].(map[string]any)["uid"] = "replacement"
-				wantRestore = false
-			case "foreign ownership":
-				live["metadata"].(map[string]any)["annotations"].(map[string]any)["meta.helm.sh/release-name"] = "foreign"
-				wantRestore = false
-			case "foreign type":
-				live["type"] = "Opaque"
-				wantRestore = false
-			case "race after GET":
-				fixture.mode = "race"
-				wantRestore = false
-			case "restoration rejected":
-				fixture.mode = "reject"
-				wantRestore = false
-			}
-			fixture.writeJSON("api-secret.json", live)
-			script := "restore_legacy_secret\n[ \"$LEGACY_SECRET_RESTORE_REQUIRED\" -eq 0 ]\n"
-			if !wantRestore {
-				script = "trap cleanup_upgrade_files EXIT\nexit 1\n"
-			}
-			output, err := fixture.run(script)
-			if wantRestore && err != nil {
-				t.Fatalf("restore failed: %v\n%s", err, output)
-			}
-			if !wantRestore && (err == nil || !strings.Contains(output, "protected recovery files retained at "+fixture.directory)) {
-				t.Fatalf("unsafe recovery did not retain its backup: error %v, output %s", err, output)
-			}
-			contents, err := os.ReadFile(filepath.Join(fixture.directory, "api-secret.json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var result map[string]any
-			if err := json.Unmarshal(contents, &result); err != nil {
-				t.Fatal(err)
-			}
-			_, hasKey := result["data"].(map[string]any)["ca.key"]
-			if hasKey != wantRestore {
-				t.Fatalf("restored key = %v, want %v", hasKey, wantRestore)
-			}
-			if !wantRestore {
-				info, err := os.Stat(filepath.Join(fixture.directory, "legacy-secret-before.json"))
-				if err != nil || info.Mode().Perm() != 0o600 {
-					t.Fatalf("protected backup lost: info %v, error %v", info, err)
-				}
-			}
-			if strings.Contains(output, "PRIVATE-KEY-FIXTURE") {
-				t.Fatal("restoration printed private key material")
-			}
-		})
-	}
-}
-
-func TestCertificateE2ELegacySecretProofRejectsConcurrentRecovery(t *testing.T) {
-	t.Parallel()
-	for _, changed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "same removal version", true: "rotator write during dry run"}[changed], func(t *testing.T) {
-			t.Parallel()
-			fixture := newCertificateShellFixture(t)
-			fixture.writeJSON("legacy-secret-before.json", certificateSecretFixture())
-			removed := certificateSecretFixture()
-			delete(removed["data"].(map[string]any), "ca.key")
-			removed["metadata"].(map[string]any)["resourceVersion"] = "removed"
-			fixture.writeJSON("legacy-secret-after-remove.json", removed)
-			if changed {
-				removed["metadata"].(map[string]any)["resourceVersion"] = "concurrent-write"
-			}
-			fixture.writeJSON("api-secret.json", removed)
-			output, err := fixture.run("verify_legacy_secret_lookup_state\n")
-			if (err != nil) != changed {
-				t.Fatalf("proof error = %v, changed = %v, output = %s", err, changed, output)
-			}
-		})
-	}
-}
-
-func TestCertificateE2ELegacySecretRequiresExactSource(t *testing.T) {
-	t.Parallel()
-	for _, field := range []string{"valid", "name", "namespace", "type", "labels", "annotations", "tls.key", "extra data"} {
+	for _, field := range []string{"valid", "name", "namespace", "type", "labels", "annotations", "tls.key", "ca.key", "extra data"} {
 		t.Run(field, func(t *testing.T) {
 			t.Parallel()
 			fixture := newCertificateShellFixture(t)
@@ -144,11 +40,13 @@ func TestCertificateE2ELegacySecretRequiresExactSource(t *testing.T) {
 				metadata[field].(map[string]any)["unexpected"] = "foreign"
 			case "tls.key":
 				secret["data"].(map[string]any)[field] = ""
+			case "ca.key":
+				delete(secret["data"].(map[string]any), field)
 			case "extra data":
 				secret["data"].(map[string]any)["unexpected"] = "foreign"
 			}
-			fixture.writeJSON("legacy-secret-before.json", secret)
-			output, err := fixture.run("validate_generated_secret \"$LEGACY_SECRET_BEFORE\" original\n")
+			fixture.writeJSON("secret-before.json", secret)
+			output, err := fixture.run("validate_generated_secret \"$SECRET_BEFORE\"\n")
 			if (err == nil) != (field == "valid") {
 				t.Fatalf("source validation error = %v, output = %s", err, output)
 			}
@@ -214,7 +112,6 @@ func TestCertificateE2EParkedWebhookInventory(t *testing.T) {
 type certificateShellFixture struct {
 	t         *testing.T
 	directory string
-	mode      string
 }
 
 func newCertificateShellFixture(t *testing.T) *certificateShellFixture {
@@ -243,38 +140,10 @@ func newCertificateShellFixture(t *testing.T) *certificateShellFixture {
 		extract("validate_generated_secret()", "trap cleanup_upgrade_files EXIT"))
 	fixture.write("kubectl", `#!/bin/sh
 set -eu
-verb=
-patch_file=
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    get|patch) verb=$1 ;;
-    --patch-file) shift; patch_file=$1 ;;
-  esac
-  shift
+for argument in "$@"; do
+  [ "$argument" = get ] && exec cat "$UPGRADE_WORK_DIR/api-secret.json"
 done
-if [ "$verb" = get ]; then
-  cat "$UPGRADE_WORK_DIR/api-secret.json"
-  exit 0
-fi
-[ "$verb" = patch ] || exit 2
-[ "${RESTORE_TEST_MODE:-}" != reject ] || exit 1
-if [ "${RESTORE_TEST_MODE:-}" = race ]; then
-  jq '.metadata.resourceVersion = "raced" | .data["tls.crt"] = "concurrent-certificate"' \
-    "$UPGRADE_WORK_DIR/api-secret.json" >"$UPGRADE_WORK_DIR/concurrent.json"
-  mv "$UPGRADE_WORK_DIR/concurrent.json" "$UPGRADE_WORK_DIR/api-secret.json"
-fi
-jq -e --slurpfile patch "$patch_file" '
-  reduce $patch[0][] as $operation (.;
-    ($operation.path | split("/")[1:]) as $path |
-    if $operation.op == "test" then
-      if getpath($path) == $operation.value then . else error("patch precondition failed") end
-    elif $operation.op == "add" then setpath($path; $operation.value)
-    else error("unexpected patch operation") end) |
-  .metadata.resourceVersion = "restored"
-' "$UPGRADE_WORK_DIR/api-secret.json" >"$UPGRADE_WORK_DIR/patched.json"
-mv "$UPGRADE_WORK_DIR/patched.json" "$UPGRADE_WORK_DIR/api-secret.json"
-[ "${RESTORE_TEST_MODE:-}" != lost-response ] || exit 1
-cat "$UPGRADE_WORK_DIR/api-secret.json"
+exit 2
 `)
 	if err := os.Chmod(filepath.Join(directory, "kubectl"), 0o700); err != nil {
 		t.Fatal(err)
@@ -308,20 +177,14 @@ HELM_RELEASE=ptah
 KUBECONFIG_FILE=unused
 SERVICE=webhook
 CANDIDATE_SERVICE=candidate
-LEGACY_SECRET_RESTORE_REQUIRED=1
-LEGACY_SECRET_BEFORE=$UPGRADE_WORK_DIR/legacy-secret-before.json
-LEGACY_SECRET_AFTER_REMOVE=$UPGRADE_WORK_DIR/legacy-secret-after-remove.json
-LEGACY_SECRET_LIVE=$UPGRADE_WORK_DIR/legacy-secret-live.json
-LEGACY_SECRET_VERIFIED=$UPGRADE_WORK_DIR/legacy-secret-verified.json
-LEGACY_SECRET_RESTORE_PATCH=$UPGRADE_WORK_DIR/legacy-secret-restore-patch.json
-LEGACY_SECRET_RESTORED=$UPGRADE_WORK_DIR/legacy-secret-restored.json
-LEGACY_SECRET_ERROR=$UPGRADE_WORK_DIR/legacy-secret-error.log
+SECRET_BEFORE=$UPGRADE_WORK_DIR/secret-before.json
+SECRET_ERROR=$UPGRADE_WORK_DIR/secret-error.log
 . "$UPGRADE_WORK_DIR/functions.sh"
 `+body)
 	command := exec.Command("sh", filepath.Join(fixture.directory, "run.sh"))
 	command.Env = append(os.Environ(), "UPGRADE_WORK_DIR="+fixture.directory,
 		"PATH="+fixture.directory+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"TMPDIR="+filepath.Dir(fixture.directory), "RESTORE_TEST_MODE="+fixture.mode)
+		"TMPDIR="+filepath.Dir(fixture.directory))
 	output, err := command.CombinedOutput()
 	return string(output), err
 }

@@ -404,6 +404,24 @@ func TestReconcileRejectsMalformedSchemaVersions(t *testing.T) {
 	}
 }
 
+// The controller-state version belongs to the identity tuple every release
+// publishes, so a CRD that carries the schema pair without it is refused like
+// one that carries neither.
+func TestReconcileRefusesMissingControllerStateVersionEvenForExactCandidateSchema(t *testing.T) {
+	candidates := mustCandidates(t)
+	objects := readyObjects(candidates)
+	delete(objects[PtahSchemaCRDName].Annotations, ControllerStateVersionAnnotation)
+	client := &memoryClient{objects: objects}
+	manager := &Manager{Client: client, PollInterval: time.Millisecond}
+	err := manager.reconcile(context.Background(), nil)
+	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
+		t.Fatalf("reconcile error = %v, want an incomplete-identity refusal", err)
+	}
+	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
+		t.Fatalf("updates dry-run=%d real=%d before refusing the missing controller-state version", client.dryRunUpdates, client.realUpdates)
+	}
+}
+
 // A CRD missing its schema version and digest is refused even when its schema
 // is exactly the candidate's: identity is not inferred from a matching schema.
 func TestReconcileRefusesIncompleteIdentityEvenForExactCandidateSchema(t *testing.T) {
@@ -448,7 +466,7 @@ func TestReconcileRefusesMissingDigestWithSchemaDrift(t *testing.T) {
 	client := &memoryClient{objects: objects}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
 	err := manager.reconcile(context.Background(), nil)
-	if err == nil || !contains(err.Error(), "unknown legacy schema mutation without offline migration") {
+	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
 		t.Fatalf("reconcile error = %v, want missing-digest drift refusal", err)
 	}
 	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
@@ -471,7 +489,7 @@ func TestReconcileRefusesIncompleteSchemaIdentityWithDriftBeforeAnyUpdate(t *tes
 	client := &memoryClient{objects: objects}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
 	err := manager.reconcile(context.Background(), nil)
-	if err == nil || !contains(err.Error(), "unknown legacy schema mutation without offline migration") {
+	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
 		t.Fatalf("Reconcile error = %v, want unmarked drift refusal", err)
 	}
 	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
@@ -498,7 +516,7 @@ func TestReconcileRefusesConcurrentIncompleteSchemaIdentityDuringUpdate(t *testi
 	}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
 	err := manager.reconcile(context.Background(), mutateImmediatelyBeforeUpdate)
-	if err == nil || !contains(err.Error(), "unknown legacy schema mutation without offline migration") {
+	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
 		t.Fatalf("Reconcile error = %v, want concurrent unmarked drift refusal", err)
 	}
 	if client.dryRunUpdates != 1 || client.realUpdates != 0 {

@@ -239,19 +239,12 @@ command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required"
 umask 077
 UPGRADE_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-cert-upgrade.XXXXXX")
 chmod 700 "$UPGRADE_WORK_DIR"
-LEGACY_SECRET_BEFORE=$UPGRADE_WORK_DIR/legacy-secret-before.json
-LEGACY_SECRET_AFTER_REMOVE=$UPGRADE_WORK_DIR/legacy-secret-after-remove.json
-LEGACY_SECRET_LIVE=$UPGRADE_WORK_DIR/legacy-secret-live.json
-LEGACY_SECRET_VERIFIED=$UPGRADE_WORK_DIR/legacy-secret-verified.json
-LEGACY_SECRET_REMOVE_PATCH=$UPGRADE_WORK_DIR/legacy-secret-remove-patch.json
-LEGACY_SECRET_RESTORE_PATCH=$UPGRADE_WORK_DIR/legacy-secret-restore-patch.json
-LEGACY_SECRET_RESTORED=$UPGRADE_WORK_DIR/legacy-secret-restored.json
-LEGACY_SECRET_ERROR=$UPGRADE_WORK_DIR/legacy-secret-error.log
-LEGACY_SECRET_RESTORE_REQUIRED=0
+SECRET_BEFORE=$UPGRADE_WORK_DIR/secret-before.json
+SECRET_ERROR=$UPGRADE_WORK_DIR/secret-error.log
 
 validate_generated_secret() {
 	jq -e --arg name "$SECRET_NAME" --arg namespace "$OPERATOR_NAMESPACE" \
-		--arg release "$HELM_RELEASE" --arg key_state "$2" '
+		--arg release "$HELM_RELEASE" '
 		.apiVersion == "v1" and .kind == "Secret" and
 		.type == "kubernetes.io/tls" and
 		.metadata.name == $name and .metadata.namespace == $namespace and
@@ -271,97 +264,9 @@ validate_generated_secret() {
 		.metadata.deletionTimestamp == null and
 		.immutable == null and (.stringData // {}) == {} and
 		(.data | type == "object") and
-		(.data | keys) == (if $key_state == "original"
-			then ["ca.crt", "ca.key", "tls.crt", "tls.key"]
-			else ["ca.crt", "tls.crt", "tls.key"] end) and
+		(.data | keys) == ["ca.crt", "ca.key", "tls.crt", "tls.key"] and
 		(.data | all(.[]; type == "string" and length > 0))
-	' "$1" >/dev/null 2>"$LEGACY_SECRET_ERROR"
-}
-
-legacy_secret_matches() {
-	validate_generated_secret "$1" "$2" &&
-		jq -e -s --arg key_state "$2" '
-			.[0] as $before | .[1] as $live |
-			($live.metadata.uid == $before.metadata.uid) and
-			($live.data == (if $key_state == "original" then $before.data
-				else ($before.data | del(.["ca.key"])) end))
-		' "$LEGACY_SECRET_BEFORE" "$1" >/dev/null 2>"$LEGACY_SECRET_ERROR"
-}
-
-verify_legacy_secret_lookup_state() {
-	# The proof requires the exact state returned by our successful removal.
-	# Recovery can tolerate a lost response, but cannot establish this evidence.
-	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" --show-managed-fields -o json \
-			>"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR" &&
-		legacy_secret_matches "$LEGACY_SECRET_AFTER_REMOVE" removed &&
-		legacy_secret_matches "$LEGACY_SECRET_LIVE" removed &&
-		jq -e -s '
-			.[0] as $before | .[1] as $after | .[2] as $live |
-			($after.metadata.resourceVersion != $before.metadata.resourceVersion) and
-			($live.metadata.resourceVersion == $after.metadata.resourceVersion)
-		' "$LEGACY_SECRET_BEFORE" "$LEGACY_SECRET_AFTER_REMOVE" \
-			"$LEGACY_SECRET_LIVE" >/dev/null 2>"$LEGACY_SECRET_ERROR"
-}
-
-restore_legacy_secret() {
-	[ "$LEGACY_SECRET_RESTORE_REQUIRED" -eq 1 ] || return 0
-
-	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" --show-managed-fields -o json \
-		>"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR"; then
-		printf '%s\n' 'e2e certificate rotation: could not inspect the legacy Secret during restoration' >&2
-		return 1
-	fi
-
-	# Either PATCH response can be lost after the API server commits the change.
-	# Fresh exact state proves recovery without depending on a returned version.
-	if legacy_secret_matches "$LEGACY_SECRET_LIVE" original; then
-		LEGACY_SECRET_RESTORE_REQUIRED=0
-		return 0
-	fi
-
-	# Recovery may restore the exact original key only if identity, ownership,
-	# type, and every remaining data entry are unchanged. JSON Patch repeats the
-	# fresh metadata and data tests atomically, closing the race after this GET.
-	if ! legacy_secret_matches "$LEGACY_SECRET_LIVE" removed; then
-		printf '%s\n' 'e2e certificate rotation: refusing to overwrite a concurrently changed legacy Secret' >&2
-		return 1
-	fi
-	if ! jq -c -s '
-		.[0] as $before |
-		.[1] as $live |
-		[
-			{"op":"test","path":"/metadata/uid","value":$live.metadata.uid},
-			{"op":"test","path":"/metadata/resourceVersion","value":$live.metadata.resourceVersion},
-			{"op":"test","path":"/metadata","value":$live.metadata},
-			{"op":"test","path":"/type","value":$live.type},
-			{"op":"test","path":"/data","value":$live.data},
-			{"op":"add","path":"/data/ca.key","value":$before.data["ca.key"]}
-		]
-	' "$LEGACY_SECRET_BEFORE" "$LEGACY_SECRET_LIVE" \
-		>"$LEGACY_SECRET_RESTORE_PATCH" 2>"$LEGACY_SECRET_ERROR"; then
-		printf '%s\n' 'e2e certificate rotation: could not prepare the legacy Secret restoration patch' >&2
-		return 1
-	fi
-	if kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		patch secret "$SECRET_NAME" --type=json --patch-file "$LEGACY_SECRET_RESTORE_PATCH" \
-		-o json >"$LEGACY_SECRET_RESTORED" 2>"$LEGACY_SECRET_ERROR"; then
-		:
-	fi
-	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" --show-managed-fields -o json \
-		>"$LEGACY_SECRET_VERIFIED" 2>"$LEGACY_SECRET_ERROR"; then
-		printf '%s\n' 'e2e certificate rotation: could not verify the restored legacy Secret' >&2
-		return 1
-	fi
-	if ! legacy_secret_matches "$LEGACY_SECRET_VERIFIED" original; then
-		printf '%s\n' 'e2e certificate rotation: restored legacy Secret failed exact verification' >&2
-		return 1
-	fi
-
-	LEGACY_SECRET_RESTORE_REQUIRED=0
-	return 0
+	' "$1" >/dev/null 2>"$SECRET_ERROR"
 }
 
 # A refused parameter expansion (${VAR:?...}) or an unset name under set -u
@@ -380,12 +285,6 @@ cleanup_upgrade_files() {
 			printf 'e2e certificate rotation: exited with status %s at a command that failed under set -e; no proof reported a reason\n' "$status" >&2
 		fi
 		rm -f -- "$PHASE_REASON_MARKER"
-	fi
-	if [ "$LEGACY_SECRET_RESTORE_REQUIRED" -eq 1 ] && ! restore_legacy_secret; then
-		printf '%s\n' 'e2e certificate rotation: failure-atomic legacy Secret restoration failed' >&2
-		printf 'e2e certificate rotation: protected recovery files retained at %s\n' \
-			"$UPGRADE_WORK_DIR" >&2
-		exit 1
 	fi
 	case "$UPGRADE_WORK_DIR" in
 	"${TMPDIR:-/tmp}"/ptah-operator-cert-upgrade.*) rm -rf -- "$UPGRADE_WORK_DIR" ;;
@@ -554,56 +453,17 @@ while [ "$(date +%s)" -lt "$endpoint_deadline" ]; do
 done
 [ "$ready_endpoints" -eq 2 ] || fail "webhook Service did not converge to two ready endpoint addresses"
 
-# The removal patch below tests the whole metadata against what the server
-# stores, and kubectl hides managedFields unless asked, so a snapshot without
-# them can never match and the patch is refused before it is applied.
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-	get secret "$SECRET_NAME" --show-managed-fields -o json \
-	>"$LEGACY_SECRET_BEFORE" 2>"$LEGACY_SECRET_ERROR"; then
-	fail "could not capture the generated webhook Secret before the legacy lookup proof"
+	get secret "$SECRET_NAME" -o json \
+	>"$SECRET_BEFORE" 2>"$SECRET_ERROR"; then
+	fail "could not capture the generated webhook Secret before the Helm lookup proof"
 fi
-chmod 600 "$LEGACY_SECRET_BEFORE"
-if ! validate_generated_secret "$LEGACY_SECRET_BEFORE" original; then
+chmod 600 "$SECRET_BEFORE"
+if ! validate_generated_secret "$SECRET_BEFORE"; then
 	fail "generated webhook Secret lacks exact ownership, type, or required certificate material"
 fi
-OLD_CA=$(jq -r '.data["ca.crt"]' "$LEGACY_SECRET_BEFORE")
-OLD_CERT=$(jq -r '.data["tls.crt"]' "$LEGACY_SECRET_BEFORE")
-
-# The live lookup must tolerate the exact legacy managed shape without ca.key
-# so the rotator, rather than Helm rendering, owns recovery. A server-side dry
-# run exercises lookup without applying the temporarily incomplete Secret.
-if ! jq -c '
-	[
-		{"op":"test","path":"/metadata/uid","value":.metadata.uid},
-		{"op":"test","path":"/metadata/resourceVersion","value":.metadata.resourceVersion},
-		{"op":"test","path":"/metadata","value":.metadata},
-		{"op":"test","path":"/type","value":.type},
-		{"op":"test","path":"/data","value":.data},
-		{"op":"remove","path":"/data/ca.key"}
-	]
-' "$LEGACY_SECRET_BEFORE" >"$LEGACY_SECRET_REMOVE_PATCH" 2>"$LEGACY_SECRET_ERROR"; then
-	fail "could not prepare the legacy Secret removal patch"
-fi
-LEGACY_SECRET_RESTORE_REQUIRED=1
-if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-	patch secret "$SECRET_NAME" --type=json --patch-file "$LEGACY_SECRET_REMOVE_PATCH" \
-	-o json >"$LEGACY_SECRET_AFTER_REMOVE" 2>"$LEGACY_SECRET_ERROR"; then
-	fail "could not remove ca.key for the legacy Secret lookup proof"
-fi
-if ! verify_legacy_secret_lookup_state; then
-	fail "legacy Secret changed before the Helm lookup proof"
-fi
-if ! helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
-	--namespace "$OPERATOR_NAMESPACE" --reuse-values --dry-run=server --hide-secret \
-	>/dev/null 2>"$LEGACY_SECRET_ERROR"; then
-	fail "packaged chart rejected an exactly owned legacy Secret without ca.key"
-fi
-if ! verify_legacy_secret_lookup_state; then
-	fail "legacy Secret changed during the Helm lookup proof"
-fi
-if ! restore_legacy_secret; then
-	fail "legacy Secret lookup proof did not safely restore the original CA private key"
-fi
+OLD_CA=$(jq -r '.data["ca.crt"]' "$SECRET_BEFORE")
+OLD_CERT=$(jq -r '.data["tls.crt"]' "$SECRET_BEFORE")
 
 # Exercise Helm's live lookup path while the generated Secret exists. Every
 # managed entry begins with the serving root plus a distinct valid local root;

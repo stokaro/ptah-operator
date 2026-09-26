@@ -108,12 +108,12 @@ spec:
 | `spec.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
 | `spec.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `spec.artifactDigest` | `string`, required | ArtifactDigest is the OCI artifact the approved plan was computed from. |
-| `spec.controllerImage` | `string` | ControllerImage is the digest-pinned manager the approved apply must be dispatched by. |
-| `spec.controllerRevision` | `string` | ControllerRevision is that manager's revision. |
-| `spec.controllerStateVersion` | `integer` | ControllerStateVersion is the state semantics it writes. |
+| `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager the approved apply must be dispatched by. |
+| `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
+| `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it writes. |
 | `spec.coordinationDigest` | `string`, required | CoordinationDigest is the database realm the approved apply takes its turn in. |
 | `spec.desiredStateFingerprint` | `string`, required | DesiredStateFingerprint is the state the artifact declared. |
-| `spec.executionBindingID` | `string` | ExecutionBindingID is the execution epoch the approved plan belongs to. It changes on every operator transition, including one that returns to byte-identical versions, so an approval cannot survive a rollout unseen. |
+| `spec.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch the approved plan belongs to. It changes on every operator transition, including one that returns to byte-identical versions, so an approval cannot survive a rollout unseen. |
 | `spec.executorImage` | `string`, required | ExecutorImage is the digest-pinned image it must run in. |
 | `spec.mutationRequestUID` | `string`, required | MutationRequestUID records the mutating AdmissionReview that stamped the authenticated identity. Kubernetes creates a distinct AdmissionReview UID for the later validating webhook, so the validator checks this field is present while matching identity against its own authenticated UserInfo. |
 | `spec.planFingerprint` | `string`, required | PlanFingerprint is the plan's complete approval identity. Everything below is the same identity written out, so a reader can see what was approved without fetching the plan, and the admission that accepts this approval checks each part against the live plan. |

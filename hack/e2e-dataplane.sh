@@ -3996,14 +3996,12 @@ create_schema_resource() {
 		  registryAuthFrom: (if $registryAuthMode == "DockerConfigJSON" then {
 		    name: $registryAuthSecret,
 		    mode: "DockerConfigJSON",
-		    dockerConfigJSONKey: ".dockerconfigjson",
-		    registryKey: "registry"
+		    dockerConfigJSONKey: ".dockerconfigjson"
 		  } else {
 		    name: $registryAuthSecret,
 		    mode: "Environment",
 		    usernameKey: "username",
-		    passwordKey: "password",
-		    registryKey: "registry"
+		    passwordKey: "password"
 		  } end),
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -4064,8 +4062,7 @@ create_custom_ca_schema_resource() {
             mode: "Environment",
             usernameKey: "username",
             passwordKey: "password",
-            tokenKey: "token",
-            registryKey: "registry"
+            tokenKey: "token"
           },
           verificationPolicyFrom: {name: "e2e-verification-policy", key: "policy.yaml"},
           transport: {caFrom: {name: $caConfigMap, key: "ca.pem"}}

@@ -8,7 +8,10 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
 
-func TestGeneratedExecutionIdentityCompatibilityContract(t *testing.T) {
+// Every record of an execution carries the identity of the manager that
+// published it. The plan contract has one version, and nothing in the API is
+// optional only so that an earlier shape could still be read.
+func TestGeneratedExecutionIdentityContract(t *testing.T) {
 	candidates := mustCandidates(t)
 	schemaRoot := candidateVersionSchema(t, candidateByName(candidates, PtahSchemaCRDName))
 	planRoot := candidateVersionSchema(t, candidateByName(candidates, PtahSchemaPlanCRDName))
@@ -16,7 +19,7 @@ func TestGeneratedExecutionIdentityCompatibilityContract(t *testing.T) {
 
 	requiredIdentity := []string{"controllerImage", "controllerRevision", "controllerStateVersion"}
 	executionBinding := schemaProperty(t, schemaRoot, "status", "executionBinding")
-	assertOptional(t, "PtahSchema status.executionBinding", executionBinding, requiredIdentity...)
+	assertRequired(t, "PtahSchema status.executionBinding", executionBinding, requiredIdentity...)
 
 	for _, location := range []struct {
 		name   string
@@ -28,15 +31,12 @@ func TestGeneratedExecutionIdentityCompatibilityContract(t *testing.T) {
 		{name: "PtahSchemaPlan spec", schema: schemaProperty(t, planRoot, "spec")},
 		{name: "PtahSchemaApproval spec", schema: schemaProperty(t, approvalRoot, "spec")},
 	} {
-		assertOptional(t, location.name, location.schema, requiredIdentity...)
+		assertRequired(t, location.name, location.schema, append([]string{"executionBindingID"}, requiredIdentity...)...)
 	}
 
 	contractVersion := schemaProperty(t, planRoot, "spec", "contractVersion")
-	if contractVersion.Minimum == nil || *contractVersion.Minimum != 1 {
-		t.Fatalf("PtahSchemaPlan spec.contractVersion minimum = %v, want 1", contractVersion.Minimum)
-	}
-	if contractVersion.Maximum == nil || *contractVersion.Maximum != 3 {
-		t.Fatalf("PtahSchemaPlan spec.contractVersion maximum = %v, want 3", contractVersion.Maximum)
+	if len(contractVersion.Enum) != 1 || string(contractVersion.Enum[0].Raw) != "3" {
+		t.Fatalf("PtahSchemaPlan spec.contractVersion enum = %v, want exactly [3]", contractVersion.Enum)
 	}
 }
 
@@ -106,22 +106,6 @@ func assertRequired(t *testing.T, location string, schema apiextensionsv1.JSONSc
 	for _, field := range fields {
 		if _, found := required[field]; !found {
 			t.Fatalf("%s does not require %s; required=%v", location, field, schema.Required)
-		}
-	}
-}
-
-func assertOptional(t *testing.T, location string, schema apiextensionsv1.JSONSchemaProps, fields ...string) {
-	t.Helper()
-	required := make(map[string]struct{}, len(schema.Required))
-	for _, field := range schema.Required {
-		required[field] = struct{}{}
-	}
-	for _, field := range fields {
-		if _, found := required[field]; found {
-			t.Fatalf("%s unexpectedly requires legacy-compatible field %s", location, field)
-		}
-		if _, found := schema.Properties[field]; !found {
-			t.Fatalf("%s omits compatibility field %s", location, field)
 		}
 	}
 }

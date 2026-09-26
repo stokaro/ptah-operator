@@ -493,10 +493,10 @@ func (g *RolloutGuard) PreflightQuiesce(ctx context.Context) error {
 	return g.quiesce(ctx, false)
 }
 
-// Quiesce first stamps the durable state version onto legacy Deployments, then
-// scales both long-running binaries to zero and waits until every selected Pod
-// is gone. If Helm later fails, the cluster remains safely stopped and a retry
-// with the candidate release can resume the transition.
+// Quiesce stamps the candidate's state version and release sequence onto each
+// runtime Deployment as it scales it to zero, then waits until every selected
+// Pod is gone. If Helm later fails, the cluster remains safely stopped and a
+// retry with the candidate release can resume the transition.
 func (g *RolloutGuard) Quiesce(ctx context.Context) error {
 	return g.quiesce(ctx, true)
 }
@@ -681,6 +681,24 @@ type deploymentTarget struct {
 	selector  labels.Selector
 }
 
+// validatePredecessorRelease holds the predecessor controller to a released
+// one. A predecessor is named exactly when it records the release sequence it
+// ran as, and that sequence sits below the candidate's. Every release carries
+// a sequence, so a named predecessor without one is nothing to upgrade from.
+func validatePredecessorRelease(serviceAccountName string, sequence, candidate int32) error {
+	if sequence < 0 || sequence >= candidate {
+		return fmt.Errorf("predecessor release sequence %d is invalid for candidate %d", sequence, candidate)
+	}
+	if (serviceAccountName == "") != (sequence == 0) {
+		return fmt.Errorf(
+			"predecessor controller ServiceAccount %q and release sequence %d must be given together",
+			serviceAccountName,
+			sequence,
+		)
+	}
+	return nil
+}
+
 func (g *RolloutGuard) validate() error {
 	if g == nil || g.Policies == nil || g.Bindings == nil || g.Deployments == nil || g.Pods == nil || g.ConfigMaps == nil {
 		return fmt.Errorf("rollout guard clients are required")
@@ -791,6 +809,9 @@ func (g *RolloutGuard) validateIdentity() error {
 		if description, found := reserved[g.PreviousControllerServiceAccountName]; found {
 			return fmt.Errorf("previous controller ServiceAccount must differ from %s", description)
 		}
+	}
+	if err := validatePredecessorRelease(g.PreviousControllerServiceAccountName, g.PreviousControllerReleaseSequence, g.ReleaseSequence); err != nil {
+		return err
 	}
 	if g.PollEvery <= 0 {
 		return fmt.Errorf("rollout guard poll interval must be positive")
@@ -1432,29 +1453,34 @@ func (g *RolloutGuard) quiescedDeployment(target deploymentTarget, deployment *a
 	if err := g.verifyDeployment(target, deployment); err != nil {
 		return nil, false, err
 	}
+	// Every release writes both annotations on the Deployments it installs. A
+	// runtime Deployment that lacks one was not installed by a release, and
+	// nothing upgrades from it.
 	state, found, err := positiveAnnotation(deployment.Annotations, ControllerStateVersionAnnotation)
 	if err != nil {
 		return nil, false, fmt.Errorf("%s Deployment controller-state annotation: %w", target.component, err)
 	}
-	if found && state > uint64(g.ControllerStateVersion) {
+	if !found {
+		return nil, false, fmt.Errorf("%s Deployment %s/%s records no controller-state version and is not a supported predecessor", target.component, g.ReleaseNamespace, target.name)
+	}
+	if state > uint64(g.ControllerStateVersion) {
 		return nil, false, fmt.Errorf("%s Deployment controller-state rollback refused: existing version %d is newer than candidate %d", target.component, state, g.ControllerStateVersion)
 	}
-	sequence, sequenceFound, err := positiveAnnotation(deployment.Annotations, ReleaseSequenceAnnotation)
+	sequence, found, err := positiveAnnotation(deployment.Annotations, ReleaseSequenceAnnotation)
 	if err != nil {
 		return nil, false, fmt.Errorf("%s Deployment release-sequence annotation: %w", target.component, err)
 	}
-	if sequenceFound && sequence > uint64(g.ReleaseSequence) {
+	if !found {
+		return nil, false, fmt.Errorf("%s Deployment %s/%s records no release sequence and is not a supported predecessor", target.component, g.ReleaseNamespace, target.name)
+	}
+	if sequence > uint64(g.ReleaseSequence) {
 		return nil, false, fmt.Errorf("%s Deployment release rollback refused: existing sequence %d is newer than candidate %d", target.component, sequence, g.ReleaseSequence)
 	}
 	candidate := deployment.DeepCopy()
-	if candidate.Annotations == nil {
-		candidate.Annotations = map[string]string{}
-	}
 	candidate.Annotations[ControllerStateVersionAnnotation] = strconv.FormatInt(int64(g.ControllerStateVersion), 10)
 	candidate.Annotations[ReleaseSequenceAnnotation] = strconv.FormatInt(int64(g.ReleaseSequence), 10)
 	candidate.Spec.Replicas = int32Ptr(0)
-	changed := !found || state != uint64(g.ControllerStateVersion) ||
-		!sequenceFound || sequence != uint64(g.ReleaseSequence) ||
+	changed := state != uint64(g.ControllerStateVersion) || sequence != uint64(g.ReleaseSequence) ||
 		deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 0
 	return candidate, changed, nil
 }

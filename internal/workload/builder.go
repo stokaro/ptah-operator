@@ -857,10 +857,6 @@ func addRegistryAccess(
 		if mode == "" {
 			mode = operatorv1alpha1.RegistryAuthEnvironment
 		}
-		registryKey := stringOrDefault(auth.RegistryKey, operatorv1alpha1.RegistryAuthoritySecretKey)
-		if registryKey != operatorv1alpha1.RegistryAuthoritySecretKey {
-			return nil, nil, nil, errors.New("registry authority grant must use the fixed registry Secret key")
-		}
 		environment = append(environment,
 			literalEnv(runner.EnvOCIAuthMode, string(mode)),
 			literalEnv("PTAH_OCI_REGISTRY", authority),
@@ -1065,9 +1061,6 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 	}
 	if err := fingerprint.ValidatePlanContractVersion(plan.Spec.ContractVersion); err != nil {
 		return fmt.Errorf("apply plan contract is not supported: %w", err)
-	}
-	if plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
-		return fmt.Errorf("apply plan contract version %d is not current", plan.Spec.ContractVersion)
 	}
 	if plan.Namespace != schema.Namespace || plan.Spec.SchemaRef.Name != schema.Name || plan.Spec.SchemaRef.UID != schema.UID {
 		return errors.New("apply plan does not belong to the schema UID in this namespace")

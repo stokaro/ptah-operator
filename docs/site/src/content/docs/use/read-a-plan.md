@@ -229,12 +229,6 @@ rules:
     verbs: [get]
 ```
 
-Add `list` on `ptahschemaplans` for a schema whose last apply predates the
-`status.applied.planRef` field: without the reference the command has to find
-the plan by the fingerprint the record does carry, and finding it means listing
-the namespace's plans. It refuses to guess -- no match is an absence, and more
-than one match is reported rather than resolved by taking the first.
-
 :::caution
 The command reads the plan chunks as you, so granting it means granting
 `get` on those ConfigMaps. ConfigMaps are not secret and base64 is not

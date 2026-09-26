@@ -326,15 +326,14 @@ type privilegeServiceAccountContract struct {
 }
 
 type privilegeAuthorizationContract struct {
-	name           string
-	namespace      string
-	component      string
-	cluster        bool
-	retired        bool
-	probeSubject   string
-	probeSubjects  []string
-	rules          []rbacv1.PolicyRule
-	alternateRules []rbacv1.PolicyRule
+	name          string
+	namespace     string
+	component     string
+	cluster       bool
+	retired       bool
+	probeSubject  string
+	probeSubjects []string
+	rules         []rbacv1.PolicyRule
 }
 
 type privilegeControllerBindingState struct {
@@ -631,15 +630,9 @@ func (t *PrivilegeTeardown) bindingContracts() []privilegeBindingContract {
 	coordinationOrder := 1
 	if predecessorSubject != nil {
 		runtimeBinding.controllerBinding = true
-		if t.rollout.PreviousControllerReleaseSequence >= 1 {
-			runtimeBinding.predecessorSubject = predecessorSubject
-			runtimeBinding.controllerOrder = 1
-			coordinationOrder = 2
-		} else {
-			// Sequence zero did not have this binding. Its presence therefore
-			// proves ordinary apply reached the candidate-only post-cutover RBAC.
-			runtimeBinding.controllerOrder = 2
-		}
+		runtimeBinding.predecessorSubject = predecessorSubject
+		runtimeBinding.controllerOrder = 1
+		coordinationOrder = 2
 	}
 	contracts = append(contracts,
 		privilegeBindingContract{name: hook, roleRef: roleRef("ClusterRole", hook), subject: serviceAccountSubject(hook), component: "crd-manager", cluster: true},
@@ -665,15 +658,10 @@ func (t *PrivilegeTeardown) bindingContracts() []privilegeBindingContract {
 			},
 		}
 		if predecessorSubject != nil {
-			// Ordered after the coordination binding on every transition. A
-			// sequence-zero predecessor did not have it, so its presence, like
-			// the runtime-admission binding's, proves ordinary apply reached
-			// the candidate-only post-cutover RBAC.
+			// Ordered after the coordination binding on every transition.
 			discovery.controllerBinding = true
 			discovery.controllerOrder = 3
-			if t.rollout.PreviousControllerReleaseSequence >= 1 {
-				discovery.predecessorSubject = predecessorSubject
-			}
+			discovery.predecessorSubject = predecessorSubject
 		}
 		contracts = append(contracts, discovery)
 	}
@@ -780,8 +768,7 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 	contracts := []privilegeAuthorizationContract{
 		{
 			name: controller, cluster: true, retired: true, probeSubject: "controller",
-			rules:          currentControllerClusterRoleRules(t.rollout),
-			alternateRules: legacyControllerClusterRoleRules(),
+			rules: currentControllerClusterRoleRules(t.rollout),
 		},
 		{
 			name: controller + "-runtime-admission", namespace: t.rollout.ReleaseNamespace, retired: true, probeSubject: "controller",
@@ -1015,14 +1002,13 @@ func (t *PrivilegeTeardown) hookBindingTransitionRules(namespace string) []rbacv
 		)
 	}
 	if namespace == t.rollout.ReleaseNamespace {
-		appendBinding(t.rollout.ControllerDeploymentName+"-runtime-admission", t.rollout.PreviousControllerReleaseSequence > 0)
+		appendBinding(t.rollout.ControllerDeploymentName+"-runtime-admission", t.rollout.PreviousControllerServiceAccountName != "")
 	}
 	if namespace == t.rollout.CoordinationNamespace {
 		appendBinding(t.rollout.ControllerDeploymentName, t.rollout.PreviousControllerServiceAccountName != "")
 	}
 	if namespace == corev1.NamespaceDefault && t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
-		appendBinding(controllerDiscoveryBindingName(t.rollout.ControllerDeploymentName),
-			t.rollout.PreviousControllerServiceAccountName != "" && t.rollout.PreviousControllerReleaseSequence > 0)
+		appendBinding(controllerDiscoveryBindingName(t.rollout.ControllerDeploymentName), t.rollout.PreviousControllerServiceAccountName != "")
 	}
 	return rules
 }
@@ -1156,20 +1142,7 @@ func RevokedPrivilegeMutationGrants(
 }
 
 func exactPrivilegeAuthorizationRules(contract privilegeAuthorizationContract) []rbacv1.PolicyRule {
-	rules := append([]rbacv1.PolicyRule(nil), contract.rules...)
-	for _, alternate := range contract.alternateRules {
-		duplicate := false
-		for _, rule := range rules {
-			if reflect.DeepEqual(rule, alternate) {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
-			rules = append(rules, alternate)
-		}
-	}
-	return rules
+	return append([]rbacv1.PolicyRule(nil), contract.rules...)
 }
 
 func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthorizationContract {
@@ -1754,8 +1727,7 @@ func (t *PrivilegeTeardown) inspectAuthorizationClusterRole(ctx context.Context,
 	if err := t.verifyMetadata("ClusterRole", role.ObjectMeta, contract.component); err != nil {
 		return teardownIdentity{}, false, err
 	}
-	if !reflect.DeepEqual(role.Rules, contract.rules) &&
-		(len(contract.alternateRules) == 0 || !reflect.DeepEqual(role.Rules, contract.alternateRules)) {
+	if !reflect.DeepEqual(role.Rules, contract.rules) {
 		return teardownIdentity{}, false, fmt.Errorf("ClusterRole/%s policy rules differ from the exact ordered privilege contract", contract.name)
 	}
 	identity, err := deletionIdentity("ClusterRole", contract.name, role)
@@ -1782,8 +1754,7 @@ func (t *PrivilegeTeardown) inspectAuthorizationRole(ctx context.Context, contra
 	if err := t.verifyMetadata("Role", role.ObjectMeta, contract.component); err != nil {
 		return teardownIdentity{}, false, err
 	}
-	if !reflect.DeepEqual(role.Rules, contract.rules) &&
-		(len(contract.alternateRules) == 0 || !reflect.DeepEqual(role.Rules, contract.alternateRules)) {
+	if !reflect.DeepEqual(role.Rules, contract.rules) {
 		return teardownIdentity{}, false, fmt.Errorf("Role/%s/%s policy rules differ from the exact ordered privilege contract", contract.namespace, contract.name)
 	}
 	identity, err := deletionIdentity("Role", contract.name, role)
@@ -1806,9 +1777,9 @@ func (t *PrivilegeTeardown) verifyMetadata(kind string, metadata metav1.ObjectMe
 // when the sequence that recorded it is uninstalled.
 type predecessorPrivilegeRecord struct {
 	// controllerServiceAccount reports whether the predecessor's controller
-	// ServiceAccount can still exist. An installation that predates release
-	// sequences leaves one for sequence 1 to adopt. A cutover between sequences
-	// retires it before it activates, so a later sequence must not find one.
+	// ServiceAccount can still exist. A cutover between sequences retires it
+	// before the candidate activates, and sequence 1 has no predecessor, so no
+	// recorded sequence expects to find one.
 	controllerServiceAccount bool
 }
 
@@ -1819,7 +1790,7 @@ type predecessorPrivilegeRecord struct {
 // predecessor left cannot prove it removed it. An entry that records nothing is
 // a claim this teardown checks rather than assumes, in inspect below.
 var predecessorPrivilegeInventory = map[int32]predecessorPrivilegeRecord{
-	1: {controllerServiceAccount: true},
+	1: {},
 	2: {},
 }
 

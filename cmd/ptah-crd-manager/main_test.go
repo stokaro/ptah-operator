@@ -18,6 +18,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -170,6 +171,41 @@ func TestRuntimeInvariantsRejectSameCandidateAndPredecessorServiceAccount(t *tes
 	)
 	if err == nil || !strings.Contains(err.Error(), "must differ") {
 		t.Fatalf("runtimeInvariants error = %v, want distinct-principal refusal", err)
+	}
+}
+
+// A predecessor is a release, and every release runs at a sequence: the chart
+// passes the predecessor's ServiceAccount, sequence and manager image together
+// or none of them.
+func TestRuntimeInvariantsRequireAPredecessorToCarryItsReleaseSequence(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		previous string
+		sequence int32
+		image    string
+		want     string
+	}{
+		{name: "named predecessor without a sequence", previous: "previous-controller", want: "requires a previous release sequence"},
+		{name: "sequence without a named predecessor", sequence: 1, image: "registry.example/ptah@sha256:" + strings.Repeat("b", 64), want: "is required with a previous release sequence"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			uid := types.UID("")
+			if test.previous != "" {
+				uid = "previous-uid"
+			}
+			_, err := runtimeInvariants(
+				"release", "ptah-system", "ptah-system", "true",
+				"leader", "webhook", 10,
+				"hook", "controller", true, test.previous, uid, false, "controller",
+				"certificate", crdupgrade.CurrentReleaseSequence+1, test.sequence, test.image,
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("runtimeInvariants error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

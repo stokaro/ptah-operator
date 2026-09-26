@@ -846,9 +846,6 @@ func (r *PredecessorRetirement) validatedRollout() (*RolloutGuard, error) {
 	if err := copy.validateIdentity(); err != nil {
 		return nil, fmt.Errorf("validate predecessor retirement identity: %w", err)
 	}
-	if copy.PreviousControllerReleaseSequence < 0 || copy.PreviousControllerReleaseSequence >= copy.ReleaseSequence {
-		return nil, fmt.Errorf("predecessor release sequence %d is invalid for candidate %d", copy.PreviousControllerReleaseSequence, copy.ReleaseSequence)
-	}
 	if copy.PreviousControllerReleaseSequence > 0 && copy.PreviousControllerReleaseSequence+1 != copy.ReleaseSequence {
 		return nil, fmt.Errorf("candidate release sequence %d does not immediately follow predecessor %d", copy.ReleaseSequence, copy.PreviousControllerReleaseSequence)
 	}

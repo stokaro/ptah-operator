@@ -3021,7 +3021,7 @@ create_schema() {
             ociRef: $reference,
             registryAuthFrom: {
               name: $registrySecret, mode: "Environment",
-              usernameKey: "username", passwordKey: "password", registryKey: "registry"
+              usernameKey: "username", passwordKey: "password"
             },
             verificationPolicyFrom: {name: "e2e-verification-policy", key: "policy.yaml"},
             transport: {plainHTTP: true}

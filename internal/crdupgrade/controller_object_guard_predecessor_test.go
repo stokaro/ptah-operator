@@ -20,15 +20,17 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
-func TestControllerJobGuardAcceptsExactPredecessorCreateDuringBootstrap(t *testing.T) {
+// The release that is still active creates Jobs until the candidate cutover,
+// and each one carries that release's controller identity. The guard admits
+// them because the identity is the active one, not because they come early.
+func TestControllerJobGuardAcceptsTheActivePredecessorsCreateBeforeCutover(t *testing.T) {
 	t.Parallel()
 
 	job := predecessorControllerJobFixture(t)
-	object := predecessorControllerJobProbe(t, job)
+	object := controllerJobCreateProbe(t, job)
 	activation := map[string]any{
-		"activeRelease":               int64(0),
-		"candidateRelease":            int64(1),
-		"previousRelease":             int64(0),
+		"activeRelease":               int64(1),
+		"candidateRelease":            int64(2),
 		"activeControllerStateString": ourStateVersionString(),
 		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       predecessorControllerImage,
@@ -36,8 +38,21 @@ func TestControllerJobGuardAcceptsExactPredecessorCreateDuringBootstrap(t *testi
 	validations, evaluate := controllerJobValidationEvaluator(t, activation)
 	for index, validation := range validations {
 		if !evaluate(index, object) {
-			t.Errorf("Job validation %d rejected the exact predecessor CREATE contract: %s", index, validation.Expression)
+			t.Errorf("Job validation %d rejected the active predecessor's CREATE: %s", index, validation.Expression)
 		}
+	}
+
+	annotationValidation := controllerObjectValidationIndex(t, validations, `"operator.ptah.run/admission-snapshot-digest"].matches(`)
+	withoutProvenance := controllerJobCELClone(t, object)
+	for _, annotation := range []string{
+		workload.AnnotationControllerImage,
+		workload.AnnotationControllerRevision,
+		workload.AnnotationControllerStateVersion,
+	} {
+		delete(withoutProvenance["metadata"].(map[string]any)["annotations"].(map[string]any), annotation)
+	}
+	if evaluate(annotationValidation, withoutProvenance) {
+		t.Fatal("Job annotation validation accepted a CREATE that names no controller")
 	}
 	status, ok := object["status"].(map[string]any)
 	if !ok || len(status) != 0 {
@@ -73,11 +88,10 @@ func TestControllerJobGuardAcceptsExactPredecessorCreateDuringBootstrap(t *testi
 func TestControllerJobGuardAcceptsCurrentCreateAfterActivation(t *testing.T) {
 	t.Parallel()
 
-	object := controllerJobCreateProbe(t, predecessorControllerJobFixture(t), false)
+	object := controllerJobCreateProbe(t, predecessorControllerJobFixture(t))
 	activation := map[string]any{
 		"activeRelease":               int64(1),
 		"candidateRelease":            int64(1),
-		"previousRelease":             int64(0),
 		"activeControllerStateString": ourStateVersionString(),
 		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       predecessorControllerImage,
@@ -90,7 +104,7 @@ func TestControllerJobGuardAcceptsCurrentCreateAfterActivation(t *testing.T) {
 	}
 }
 
-func TestControllerPlanGuardAcceptsExactContractV2PredecessorCreateDuringBootstrap(t *testing.T) {
+func TestControllerPlanGuardAcceptsTheActivePredecessorsPlanBeforeCutover(t *testing.T) {
 	t.Parallel()
 
 	fixtureObject := predecessorControllerPlanProbe(t)
@@ -111,13 +125,8 @@ func TestControllerPlanGuardAcceptsExactContractV2PredecessorCreateDuringBootstr
 	if got := chunks[0].(map[string]any)["name"]; got != probeName+"-000" {
 		t.Fatalf("predecessor probe chunk name = %v, want %s-000", got, probeName)
 	}
-	if spec["contractVersion"] != int64(2) {
-		t.Fatalf("predecessor probe contractVersion = %v, want 2", spec["contractVersion"])
-	}
-	for _, field := range []string{"controllerImage", "controllerRevision", "controllerStateVersion"} {
-		if _, present := spec[field]; present {
-			t.Fatalf("contract-v2 predecessor probe unexpectedly contains %s", field)
-		}
+	if spec["contractVersion"] != int64(3) || spec["controllerImage"] != predecessorControllerImage {
+		t.Fatalf("predecessor probe contract = %v by %v, want 3 by %s", spec["contractVersion"], spec["controllerImage"], predecessorControllerImage)
 	}
 	status, ok := fixtureObject["status"].(map[string]any)
 	if !ok || len(status) != 0 {
@@ -132,9 +141,8 @@ func TestControllerPlanGuardAcceptsExactContractV2PredecessorCreateDuringBootstr
 	}
 
 	activation := map[string]any{
-		"activeRelease":               int64(0),
-		"candidateRelease":            int64(1),
-		"previousRelease":             int64(0),
+		"activeRelease":               int64(1),
+		"candidateRelease":            int64(2),
 		"activeControllerStateString": ourStateVersionString(),
 		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       predecessorControllerImage,
@@ -142,8 +150,19 @@ func TestControllerPlanGuardAcceptsExactContractV2PredecessorCreateDuringBootstr
 	validations, evaluate := controllerPlanValidationEvaluator(t, activation)
 	for index, validation := range validations {
 		if !evaluate(index, object) {
-			t.Errorf("PtahSchemaPlan validation %d rejected the exact contract-v2 predecessor CREATE: %s", index, validation.Expression)
+			t.Errorf("PtahSchemaPlan validation %d rejected the active predecessor's CREATE: %s", index, validation.Expression)
 		}
+	}
+
+	contractValidation := controllerObjectValidationIndex(t, validations, `dyn(object).spec.contractVersion == 3`)
+	olderContract := controllerPlanCELClone(t, object)
+	olderSpec := olderContract["spec"].(map[string]any)
+	olderSpec["contractVersion"] = int64(2)
+	for _, field := range []string{"controllerImage", "controllerRevision", "controllerStateVersion"} {
+		delete(olderSpec, field)
+	}
+	if evaluate(contractValidation, olderContract) {
+		t.Fatal("PtahSchemaPlan contract validation accepted a plan contract older than the current one")
 	}
 
 	statusValidation := controllerObjectValidationIndex(t, validations, `!has(dyn(object).status)`)
@@ -240,7 +259,7 @@ func predecessorControllerPlanProbe(t *testing.T) map[string]any {
 			}},
 		},
 		Spec: operatorv1alpha1.PtahSchemaPlanSpec{
-			ContractVersion:          2,
+			ContractVersion:          3,
 			SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: schemaName, UID: schemaUID},
 			Fingerprint:              digest("1"),
 			ContentDigest:            digest("2"),
@@ -254,6 +273,9 @@ func predecessorControllerPlanProbe(t *testing.T) map[string]any {
 			VerificationPolicyUID:    types.UID("policy-uid"),
 			VerificationPolicyDigest: digest("9"),
 			ExecutionBindingID:       "v1-" + strings.Repeat("a", 32),
+			ControllerImage:          predecessorControllerImage,
+			ControllerRevision:       "controller-test-revision",
+			ControllerStateVersion:   ourStateVersion,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "registry.example/ptah@" + digest("b"),
 			RunnerImage:              "registry.example/operator@" + digest("c"),
@@ -446,12 +468,7 @@ func predecessorControllerJobFixture(t *testing.T) *batchv1.Job {
 	return job
 }
 
-func predecessorControllerJobProbe(t *testing.T, job *batchv1.Job) map[string]any {
-	t.Helper()
-	return controllerJobCreateProbe(t, job, true)
-}
-
-func controllerJobCreateProbe(t *testing.T, job *batchv1.Job, stripControllerIdentity bool) map[string]any {
+func controllerJobCreateProbe(t *testing.T, job *batchv1.Job) map[string]any {
 	t.Helper()
 	payload, err := json.Marshal(job)
 	if err != nil {
@@ -486,22 +503,6 @@ func controllerJobCreateProbe(t *testing.T, job *batchv1.Job, stripControllerIde
 		"batch.kubernetes.io/controller-uid", "batch.kubernetes.io/job-name", "controller-uid", "job-name",
 	} {
 		delete(templateLabels, label)
-	}
-	if stripControllerIdentity {
-		for _, annotation := range []string{
-			workload.AnnotationControllerImage,
-			workload.AnnotationControllerRevision,
-			workload.AnnotationControllerStateVersion,
-		} {
-			delete(metadata["annotations"].(map[string]any), annotation)
-			delete(templateMetadata["annotations"].(map[string]any), annotation)
-		}
-		if got := len(metadata["annotations"].(map[string]any)); got != 5 {
-			t.Fatalf("predecessor Job annotation count = %d, want 5", got)
-		}
-		if got := len(templateMetadata["annotations"].(map[string]any)); got != 5 {
-			t.Fatalf("predecessor Pod template annotation count = %d, want 5", got)
-		}
 	}
 	if spec["manualSelector"] != false || spec["completionMode"] != "NonIndexed" || spec["podReplacementPolicy"] != "Failed" {
 		t.Fatalf("predecessor Job defaults are not explicit: %#v", spec)

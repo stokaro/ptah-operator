@@ -54,7 +54,7 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 		},
 		{name: "expired serving certificate", now: baseTime.Add(31 * 24 * time.Hour)},
 		{
-			name: "legacy Secret without CA private key",
+			name: "Secret without CA private key",
 			now:  baseTime,
 			mutateSecret: func(secret *corev1.Secret) {
 				delete(secret.Data, CAPrivateKeyKey)
@@ -813,9 +813,9 @@ func TestInterruptedBeforeSecondOverlapPublicationRecovers(t *testing.T) {
 	config := testConfig()
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	failOnce := true
 	client.PrependReactor("update", "validatingwebhookconfigurations", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		if failOnce {
@@ -852,9 +852,9 @@ func TestInterruptedAfterSecretUpdateBeforeReloadRecovers(t *testing.T) {
 	config.ProbeInterval = time.Millisecond
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	firstProbe := &recordingProber{err: errors.New("certificate projection has not reloaded")}
 	first := mustNewTestRotator(t, client, config, baseTime, firstProbe)
 	if err := first.Run(context.Background()); err == nil {
@@ -881,9 +881,9 @@ func TestInterruptedOneSidedContractionRecovers(t *testing.T) {
 	config := testConfig()
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	failContraction := true
 	client.PrependReactor("update", "validatingwebhookconfigurations", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		updated := action.(k8stesting.UpdateAction).GetObject().(*admissionregistrationv1.ValidatingWebhookConfiguration)
@@ -978,8 +978,8 @@ func TestCARotationPreservesEachEntryTrustUntilReplacementProof(t *testing.T) {
 	config.ProbeInterval = time.Millisecond
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	current := mustGenerateMaterial(t, now, config)
-	legacy := secretForMaterial(config, current)
-	delete(legacy.Data, CAPrivateKeyKey)
+	keyless := secretForMaterial(config, current)
+	delete(keyless.Data, CAPrivateKeyKey)
 	localMutating := mustGenerateMaterial(t, now.Add(time.Minute), config)
 	localValidatingA := mustGenerateMaterial(t, now.Add(2*time.Minute), config)
 	localValidatingB := mustGenerateMaterial(t, now.Add(3*time.Minute), config)
@@ -989,7 +989,7 @@ func TestCARotationPreservesEachEntryTrustUntilReplacementProof(t *testing.T) {
 		malformedBundleWithCertificates(t, current.caPEM, localValidatingA.caPEM)...,
 	)
 	validatingB := malformedBundleWithCertificates(t, current.caPEM, localValidatingB.caPEM)
-	client := newTestClient(config, legacy, current.caPEM, twoReadyEndpoints(config))
+	client := newTestClient(config, keyless, current.caPEM, twoReadyEndpoints(config))
 	setManagedBundles(t, client, config, mutating, [][]byte{validatingA, validatingB})
 	rotator := mustNewTestRotator(
 		t,
@@ -1029,9 +1029,9 @@ func TestMissingNamedWebhookStopsBeforeSecretTransition(t *testing.T) {
 	config := testConfig()
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	material := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, material)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, material)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 	validating, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
 		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
 	)
@@ -1060,9 +1060,9 @@ func TestRequiredWebhookOnDifferentPortStopsBeforeSecretTransition(t *testing.T)
 	config := testConfig()
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	material := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, material)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, material)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 	validating, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
 		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
 	)
@@ -1121,9 +1121,9 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 	config := testConfig()
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	foreignURL := "https://example.invalid/validate"
 	supportedPort := int32(443)
 	differentPort := int32(8443)
@@ -1254,9 +1254,9 @@ func TestAdditionalSameServiceWebhooksRetainOverlapUntilEndpointProof(t *testing
 	config.ProbeInterval = time.Millisecond
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	original := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, original)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, original)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 
 	mutating, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(
 		context.Background(), config.MutatingWebhookConfiguration, metav1.GetOptions{},
@@ -1367,9 +1367,9 @@ func TestEndpointSetMustBeReadyAndStable(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			material := mustGenerateMaterial(t, baseTime, config)
-			legacy := secretForMaterial(config, material)
-			delete(legacy.Data, CAPrivateKeyKey)
-			client := newTestClient(config, legacy, material.caPEM, test.endpoints)
+			keyless := secretForMaterial(config, material)
+			delete(keyless.Data, CAPrivateKeyKey)
+			client := newTestClient(config, keyless, material.caPEM, test.endpoints)
 			rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
 			err := rotator.Run(context.Background())
 			if err == nil || !bytes.Contains([]byte(err.Error()), []byte(test.wantError)) {
@@ -1388,9 +1388,9 @@ func TestEndpointSnapshotChangeRetriesFullProof(t *testing.T) {
 	config.ProbeInterval = time.Millisecond
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	material := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, material)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, material)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 	changed := false
 	prober := &recordingProber{callback: func(request probeRequest) {
 		if changed {
@@ -1424,9 +1424,9 @@ func TestLeaseSerializesRotators(t *testing.T) {
 	config.AcquireTimeout = 20 * time.Millisecond
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	material := mustGenerateMaterial(t, baseTime, config)
-	legacy := secretForMaterial(config, material)
-	delete(legacy.Data, CAPrivateKeyKey)
-	client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+	keyless := secretForMaterial(config, material)
+	delete(keyless.Data, CAPrivateKeyKey)
+	client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	firstProbe := &recordingProber{callback: func(probeRequest) {

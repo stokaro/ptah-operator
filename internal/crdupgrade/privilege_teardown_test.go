@@ -711,8 +711,10 @@ func TestPrivilegeTeardownCleanupServiceAccountRetirementRejectsPostDeleteReadFa
 func TestPrivilegeTeardownRejectsForeignBindingsBeforeMutation(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		add  func(*privilegeTeardownFixture)
-		want string
+		// fixture defaults to a first release with no predecessor.
+		fixture func(*testing.T) *privilegeTeardownFixture
+		add     func(*privilegeTeardownFixture)
+		want    string
 	}{
 		{
 			name: "RoleBinding",
@@ -738,10 +740,10 @@ func TestPrivilegeTeardownRejectsForeignBindingsBeforeMutation(t *testing.T) {
 		},
 		{
 			name: "previous controller RoleBinding",
+			fixture: func(t *testing.T) *privilegeTeardownFixture {
+				return privilegeTeardownCutoverFixture(t, 4)
+			},
 			add: func(f *privilegeTeardownFixture) {
-				f.guard.PreviousControllerServiceAccountName = "previous-controller"
-				f.guard.PreviousControllerServiceAccountUID = "previous-controller-uid"
-				f.guard.PreviousControllerReleaseSequence = 0
 				f.roleBindings.objects[privilegeBindingKey("foreign", "previous-controller-extra")] = &rbacv1.RoleBinding{
 					ObjectMeta: privilegeObjectMeta("previous-controller-extra", "foreign", f.guard, "", "previous-controller-extra"),
 					RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "edit"},
@@ -780,7 +782,12 @@ func TestPrivilegeTeardownRejectsForeignBindingsBeforeMutation(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newPrivilegeTeardownFixture(t, true, true)
+			var fixture *privilegeTeardownFixture
+			if test.fixture != nil {
+				fixture = test.fixture(t)
+			} else {
+				fixture = newPrivilegeTeardownFixture(t, true, true)
+			}
 			test.add(fixture)
 			err := fixture.teardown.Teardown(context.Background())
 			if err == nil || !strings.Contains(err.Error(), test.want) {

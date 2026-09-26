@@ -132,82 +132,71 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 	}
 }
 
-func TestPlanBindingExecutionEpochCompatibility(t *testing.T) {
+// TestPlanBindingAcceptsOnlyTheCurrentContract pins the one plan contract this
+// manager reads. Every other version is refused before any field is looked at,
+// so an earlier or a future plan is never given an identity under today's
+// approval semantics.
+func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 	t.Parallel()
 
-	legacy := fingerprint.PlanBinding{
-		ContractVersion:          1,
-		SchemaUID:                "schema-uid",
-		PlanContentDigest:        "sha256:plan",
-		ArtifactDigest:           "sha256:artifact",
-		CoordinationDigest:       "sha256:coordination",
-		TargetIdentityDigest:     "sha256:target",
-		ActualStateFingerprint:   "sha256:actual",
-		DesiredStateFingerprint:  "sha256:desired",
-		PolicyFingerprint:        "sha256:policy",
-		VerificationPolicyUID:    "verification-policy-uid",
-		VerificationPolicyDigest: "sha256:verification",
-		PtahVersion:              "v0.3.0",
-		ExecutorImage:            "example.invalid/ptah@sha256:executor",
-		RunnerImage:              "example.invalid/operator@sha256:runner",
-		RunnerProtocolVersion:    1,
-	}
-	legacyFingerprint, err := legacy.Fingerprint()
+	current := completePlanBinding()
+	got, err := current.Fingerprint()
 	if err != nil {
-		t.Fatalf("legacy v1 binding without execution epoch: %v", err)
+		t.Fatalf("current binding: %v", err)
 	}
-	if legacyFingerprint != "sha256:f1ea9f2864032cffccab3976470b524c794c4bd3c58917d48ffd161b0ddc9bdf" {
-		t.Fatalf("legacy v1 fingerprint = %q, want backward-compatible digest", legacyFingerprint)
-	}
-
-	epochContract := legacy
-	epochContract.ContractVersion = fingerprint.ExecutionEpochPlanContractVersion
-	if _, err := epochContract.Fingerprint(); err == nil || !strings.Contains(err.Error(), "execution binding ID") {
-		t.Fatalf("v2 binding without execution epoch error = %v, want execution binding refusal", err)
-	}
-	epochContract.ExecutionBindingID = "v1-33333333333333333333333333333333"
-	epochFingerprint, err := epochContract.Fingerprint()
-	if err != nil {
-		t.Fatalf("v2 binding with execution epoch: %v", err)
-	}
-	if epochFingerprint != "sha256:477c8ad206e3bb60a7e973ecdaaf5cf35b3313b41b32baf31827a6032e2e0f25" {
-		t.Fatalf("v2 fingerprint = %q, want backward-compatible digest", epochFingerprint)
-	}
-	epochContract.ExecutionBindingID = "retired-epoch"
-	if _, err := epochContract.Fingerprint(); err == nil || !strings.Contains(err.Error(), "valid execution binding ID") {
-		t.Fatalf("v2 binding with malformed execution epoch error = %v, want format refusal", err)
+	// The digest is also computed outside Go, by the acceptance fixtures, so a
+	// change to the encoding has to show up here first.
+	if got != currentPlanBindingFingerprint {
+		t.Fatalf("current fingerprint = %q, want %q", got, currentPlanBindingFingerprint)
 	}
 
-	current := legacy
-	current.ContractVersion = fingerprint.CurrentPlanContractVersion
-	current.ExecutionBindingID = "v1-33333333333333333333333333333333"
-	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "controller image") {
-		t.Fatalf("v3 binding without manager image error = %v, want controller image refusal", err)
+	for _, version := range []int32{0, 1, 2, fingerprint.CurrentPlanContractVersion + 1} {
+		other := current
+		other.ContractVersion = version
+		if _, err := other.Fingerprint(); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
+			t.Fatalf("contract version %d error = %v, want unsupported-version refusal", version, err)
+		}
+		if err := fingerprint.ValidatePlanContractVersion(version); err == nil {
+			t.Fatalf("ValidatePlanContractVersion(%d) accepted a version this manager does not write", version)
+		}
 	}
-	current.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("c", 64)
-	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "controller revision") {
-		t.Fatalf("v3 binding without manager identity error = %v, want controller revision refusal", err)
-	}
-	current.ControllerRevision = "controller-test-revision"
-	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "controller state version") {
-		t.Fatalf("v3 binding without state version error = %v, want controller state refusal", err)
-	}
-	current.ControllerStateVersion = 1
-	if _, err := current.Fingerprint(); err != nil {
-		t.Fatalf("v3 binding with manager identity: %v", err)
-	}
-	invalidRevision := current
-	invalidRevision.ControllerRevision = "release\ncandidate"
-	if _, err := invalidRevision.Fingerprint(); err == nil || !strings.Contains(err.Error(), "control characters") {
-		t.Fatalf("v3 binding with control-character revision error = %v, want revision refusal", err)
+	if err := fingerprint.ValidatePlanContractVersion(fingerprint.CurrentPlanContractVersion); err != nil {
+		t.Fatalf("ValidatePlanContractVersion(current): %v", err)
 	}
 
-	future := current
-	future.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
-	if _, err := future.Fingerprint(); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
-		t.Fatalf("future binding error = %v, want unsupported-version refusal", err)
+	for name, test := range map[string]struct {
+		mutate func(*fingerprint.PlanBinding)
+		want   string
+	}{
+		"malformed execution epoch": {
+			mutate: func(b *fingerprint.PlanBinding) { b.ExecutionBindingID = "retired-epoch" },
+			want:   "valid execution binding ID",
+		},
+		"tag-pinned manager image": {
+			mutate: func(b *fingerprint.PlanBinding) { b.ControllerImage = "example.invalid/manager:latest" },
+			want:   "controller image",
+		},
+		"control-character revision": {
+			mutate: func(b *fingerprint.PlanBinding) { b.ControllerRevision = "release\ncandidate" },
+			want:   "control characters",
+		},
+		"negative state version": {
+			mutate: func(b *fingerprint.PlanBinding) { b.ControllerStateVersion = -1 },
+			want:   "controller state version",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			binding := completePlanBinding()
+			test.mutate(&binding)
+			if _, err := binding.Fingerprint(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want a refusal naming %q", err, test.want)
+			}
+		})
 	}
 }
+
+const currentPlanBindingFingerprint = "sha256:9f0c4f01e635cb3d36229ce273efbc4b6eeea56d08a83a38027ffa222157ea0b"
 
 func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 	t.Parallel()
