@@ -334,8 +334,14 @@ func TestGeneratedPtahSchemaCRDBindsRegistryAccessPolicy(t *testing.T) {
 	spec := storageVersionSchema(t, crd).Properties["spec"]
 	desired := spec.Properties["desired"]
 	auth := desired.Properties["registryAuthFrom"]
-	authRegistryKey := auth.Properties["registryKey"]
-	assertFixedRegistryAuthorityKey(t, "spec.desired.registryAuthFrom.registryKey", authRegistryKey)
+	if len(auth.Properties) == 0 {
+		t.Fatal("spec.desired.registryAuthFrom has no properties, so nothing here says which keys are selectable")
+	}
+	// The authority grant is always read from the Secret's fixed registry key.
+	// A property naming it would let a resource author choose the grant.
+	if _, selectable := auth.Properties["registryKey"]; selectable {
+		t.Error("spec.desired.registryAuthFrom exposes a selectable registry authority Secret key")
+	}
 	if _, selectable := auth.Properties["caSHA256Key"]; selectable {
 		t.Error("spec.desired.registryAuthFrom exposes a selectable CA digest Secret key")
 	}
@@ -355,16 +361,6 @@ func TestGeneratedPtahSchemaCRDBindsRegistryAccessPolicy(t *testing.T) {
 		if !found {
 			t.Errorf("spec.desired.transport is missing validation %q", rule)
 		}
-	}
-}
-
-func assertFixedRegistryAuthorityKey(t *testing.T, path string, property apiextensions.JSONSchemaProps) {
-	t.Helper()
-	if property.Default == nil || *property.Default != "registry" {
-		t.Errorf("%s default = %#v, want registry", path, property.Default)
-	}
-	if len(property.Enum) != 1 || property.Enum[0] != "registry" {
-		t.Errorf("%s enum = %#v, want [registry]", path, property.Enum)
 	}
 }
 
@@ -441,7 +437,7 @@ func TestGeneratedPtahSchemaAdmissionSnapshotBounds(t *testing.T) {
 		t.Fatal("status.pendingObservation.admissionSnapshot does not preserve the bounded active-operation snapshot schema")
 	}
 	if slices.Contains(pendingObservation.Required, "admissionSnapshot") {
-		t.Fatal("status.pendingObservation.admissionSnapshot must remain optional for backward decoding")
+		t.Fatal("status.pendingObservation.admissionSnapshot must remain optional")
 	}
 
 	limitRanges := snapshot.Properties["limitRanges"]

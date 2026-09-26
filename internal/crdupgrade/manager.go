@@ -64,8 +64,8 @@ func (m *Manager) PreflightWithState(ctx context.Context, state StoredController
 // ReconcileWithStatePreflightAndPrepare performs every CRD and stored-state
 // check, including server-side dry runs, before invoking prepare immediately
 // ahead of the first real CRD update. The Helm hook uses prepare to establish
-// the persistent rollout ratchet, adopt legacy admission metadata, and stop
-// old runtime Pods without weakening the mandatory state preflight.
+// the persistent rollout ratchet and stop old runtime Pods without weakening
+// the mandatory state preflight.
 func (m *Manager) ReconcileWithStatePreflightAndPrepare(
 	ctx context.Context,
 	state StoredControllerStateClients,
@@ -213,10 +213,11 @@ func (m *Manager) reconcile(ctx context.Context, beforeUpdate func() error) erro
 
 func incompleteSchemaIdentityError(name string) error {
 	return fmt.Errorf(
-		"CRD %s has an incomplete owned schema identity (%s and %s must be a pair) and its schema differs from the candidate; refusing unknown legacy schema mutation without offline migration",
+		"CRD %s has an incomplete owned schema identity (%s, %s and %s must all be present); no release of this operator published it, so it is refused",
 		name,
 		SchemaVersionAnnotation,
 		SchemaDigestAnnotation,
+		ControllerStateVersionAnnotation,
 	)
 }
 
@@ -367,10 +368,11 @@ func compatible(existing, candidate *apiextensionsv1.CustomResourceDefinition, s
 	}
 	_, existingHasVersion := existing.Annotations[SchemaVersionAnnotation]
 	_, existingHasDigest := existing.Annotations[SchemaDigestAnnotation]
-	// A CRD without the identity tuple was created by something other than a
-	// release that carries Ptah identity metadata. The operator upgrades only
-	// from those, so it is refused however its schema compares.
-	if !existingHasVersion || !existingHasDigest {
+	_, existingHasStateVersion := existing.Annotations[ControllerStateVersionAnnotation]
+	// Every release publishes its CRDs with the complete identity tuple. A CRD
+	// without it was created by something else, and it is refused however its
+	// schema compares.
+	if !existingHasVersion || !existingHasDigest || !existingHasStateVersion {
 		return incompleteSchemaIdentityError(candidate.Name)
 	}
 	if existingSchemaVersion == candidateSchemaVersion && existingDigest != candidateDigest {

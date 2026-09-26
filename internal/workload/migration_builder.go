@@ -350,8 +350,7 @@ func migrationDataPlane(
 		)
 		// Only when the resource asked for one, and the runner carries it only
 		// to the apply -- `migrations status` has no --tx-mode. An unset mode leaves the
-		// variable off, the runner leaves the flag off, and Ptah chooses --
-		// which is what every migration did before the field existed.
+		// variable off, the runner leaves the flag off, and Ptah chooses.
 		if mode := strings.TrimSpace(migration.Spec.Policy.TransactionMode); mode != "" {
 			environment = append(environment, literalEnv(runner.EnvTransactionMode, mode))
 		}

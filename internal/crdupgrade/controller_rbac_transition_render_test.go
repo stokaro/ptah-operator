@@ -273,7 +273,7 @@ func TestControllerRBACCutoverPredecessorHookRolesMatchRetirementInventory(t *te
 		{"ptah-system", "ptah-system"}, {"ptah-system", "coordination"},
 		{"ptah-system", "default"}, {"default", "default"}, {"default", "coordination"},
 	} {
-		for _, previous := range []int32{0, 1} {
+		for _, previous := range []int32{1} {
 			t.Run(fmt.Sprintf("%s/%s/previous=%d", namespaces[0], namespaces[1], previous), func(t *testing.T) {
 				guard := originParityGuard(previous, namespaces[0], namespaces[1], true, "managed")
 				objects := renderControllerRBACPredecessorChart(t, chart, guard)

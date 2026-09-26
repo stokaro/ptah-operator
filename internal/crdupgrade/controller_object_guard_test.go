@@ -111,7 +111,7 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				*binding.Spec.ParamRef.ParameterNotFoundAction != admissionregistrationv1.DenyAction {
 				t.Fatalf("controller object binding is not fail-closed on the exact activation parameter: %#v", binding.Spec.ParamRef)
 			}
-			if !reflect.DeepEqual(native.Spec.Variables, controllerObjectActivationVariables(guard.ReleaseSequence, guard.PreviousControllerReleaseSequence)) {
+			if !reflect.DeepEqual(native.Spec.Variables, controllerObjectActivationVariables(guard.ReleaseSequence)) {
 				t.Fatalf("controller object activation variables differ from the exact contract: %#v", native.Spec.Variables)
 			}
 			variableNames := make([]string, len(native.Spec.Variables))
@@ -124,7 +124,6 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				"activeControllerState",
 				"activeControllerImage",
 				"candidateRelease",
-				"previousRelease",
 			}
 			if !reflect.DeepEqual(variableNames, wantVariableNames) {
 				t.Fatalf("controller object activation variable order = %v, want %v", variableNames, wantVariableNames)
@@ -167,10 +166,7 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`container.securityContext.capabilities.add.size() == 0`,
 		`["install-runner", "validate-source-authority", "fetch-schema"]`,
 		`request.operation == "UPDATE"`,
-		`object.metadata.annotations.size() == 5`,
-		`["resolve", "verify", "observe", "plan"]`,
 		`object.metadata.labels["operator.ptah.run/operation"] == "apply"`,
-		`object.metadata.annotations.size() == 7`,
 		`"operator.ptah.run/plan-content-digest"`,
 		`dyn(oldObject).status.conditions.exists`,
 		`dyn(object).spec.ttlSecondsAfterFinished == 300`,
@@ -228,27 +224,14 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 			t.Fatalf("Job supported-window contract lacks %q", marker)
 		}
 	}
-	legacyEnvelope := entries[0].validations[1].Expression
-	bootstrapMarker := `(request.operation == "CREATE" && variables.activeRelease == variables.previousRelease)`
-	currentMarker := `)) || ((has(object.metadata.annotations)`
-	bootstrapIndex := strings.Index(legacyEnvelope, bootstrapMarker)
-	currentIndex := strings.Index(legacyEnvelope, currentMarker)
-	if bootstrapIndex < 0 || currentIndex < 0 || bootstrapIndex >= currentIndex {
-		t.Fatalf("legacy Job CREATE is not isolated to bootstrap before the active contract: %s", legacyEnvelope)
-	}
-	legacyPart := legacyEnvelope[:currentIndex]
-	currentPart := legacyEnvelope[currentIndex:]
-	if !strings.Contains(legacyPart, `request.operation == "UPDATE"`) ||
-		!strings.Contains(legacyPart, `object.metadata.labels["operator.ptah.run/operation"] == "apply"`) {
-		t.Fatalf("legacy terminal Job update envelopes are incomplete: %s", legacyPart)
-	}
+	annotationContract := entries[0].validations[1].Expression
 	for _, forbidden := range []string{
-		`operator.ptah.run/controller-image`,
-		`operator.ptah.run/controller-revision`,
-		`operator.ptah.run/controller-state-version`,
+		`variables.previousRelease`,
+		`annotations.size() == 5`,
+		`annotations.size() == 7`,
 	} {
-		if strings.Contains(legacyPart, forbidden) {
-			t.Fatalf("legacy Job envelope permits %s", forbidden)
+		if strings.Contains(annotationContract, forbidden) {
+			t.Fatalf("Job annotation contract admits an envelope without controller provenance through %s", forbidden)
 		}
 	}
 	for _, required := range []string{
@@ -256,7 +239,7 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage`,
 		`object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString`,
 	} {
-		if !strings.Contains(currentPart, required) {
+		if !strings.Contains(annotationContract, required) {
 			t.Fatalf("current Job envelope is not bound to active controller identity: missing %q", required)
 		}
 	}
@@ -279,7 +262,6 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.labels.size() == 1`,
 		`dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
 		`dyn(object).spec.contractVersion == 3`,
-		`variables.activeRelease == variables.previousRelease && dyn(object).spec.contractVersion == 2`,
 		`dyn(object).spec.executionBindingID.matches`,
 		`has(dyn(dyn(object).spec).controllerImage)`,
 		`dyn(dyn(object).spec).controllerImage.matches`,
@@ -297,6 +279,9 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		if !strings.Contains(plan, marker) {
 			t.Fatalf("plan structural contract lacks %q", marker)
 		}
+	}
+	if strings.Contains(plan, `contractVersion == 2`) || strings.Contains(plan, `variables.previousRelease`) {
+		t.Fatal("plan structural contract admits a plan contract older than the current one")
 	}
 	for _, staticReference := range []string{
 		`dyn(object).spec.controllerImage`,
@@ -449,7 +434,6 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 	bootstrap := map[string]any{
 		"activeRelease":               int64(0),
 		"candidateRelease":            int64(1),
-		"previousRelease":             int64(0),
 		"activeControllerStateString": ourStateVersionString(),
 		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       activeImage,
@@ -457,7 +441,6 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 	active := map[string]any{
 		"activeRelease":               int64(1),
 		"candidateRelease":            int64(1),
-		"previousRelease":             int64(0),
 		"activeControllerStateString": ourStateVersionString(),
 		"activeControllerState":       int64(ourStateVersion),
 		"activeControllerImage":       activeImage,
@@ -466,14 +449,13 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 	nextActive := map[string]any{
 		"activeRelease":               int64(2),
 		"candidateRelease":            int64(1),
-		"previousRelease":             int64(0),
 		"activeControllerStateString": newerStateVersionString(),
 		"activeControllerState":       int64(newerStateVersion),
 		"activeControllerImage":       nextActiveImage,
 	}
 
-	legacyJob := controllerObjectLegacyJobCELObject(false)
-	legacyApplyJob := controllerObjectLegacyJobCELObject(true)
+	provenanceFreeJob := controllerObjectJobCELObjectWithoutProvenance(false)
+	provenanceFreeApplyJob := controllerObjectJobCELObjectWithoutProvenance(true)
 	currentJob := controllerObjectCurrentJobCELObject(activeImage, int64(ourStateVersion))
 	jobExpression := controllerJobAnnotationContractExpression()
 	for _, test := range []struct {
@@ -483,12 +465,11 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		variables map[string]any
 		want      bool
 	}{
-		{name: "legacy create during bootstrap", object: legacyJob, operation: "CREATE", variables: bootstrap, want: true},
-		{name: "legacy create after activation", object: legacyJob, operation: "CREATE", variables: active, want: false},
-		{name: "legacy terminal update after activation", object: legacyJob, operation: "UPDATE", variables: active, want: true},
-		{name: "legacy apply create during bootstrap", object: legacyApplyJob, operation: "CREATE", variables: bootstrap, want: true},
-		{name: "legacy apply create after activation", object: legacyApplyJob, operation: "CREATE", variables: active, want: false},
-		{name: "legacy apply terminal update after activation", object: legacyApplyJob, operation: "UPDATE", variables: active, want: true},
+		{name: "create without controller provenance before cutover", object: provenanceFreeJob, operation: "CREATE", variables: bootstrap, want: false},
+		{name: "create without controller provenance after activation", object: provenanceFreeJob, operation: "CREATE", variables: active, want: false},
+		{name: "cleanup update without controller provenance", object: provenanceFreeJob, operation: "UPDATE", variables: active, want: false},
+		{name: "apply create without controller provenance before cutover", object: provenanceFreeApplyJob, operation: "CREATE", variables: bootstrap, want: false},
+		{name: "apply cleanup update without controller provenance", object: provenanceFreeApplyJob, operation: "UPDATE", variables: active, want: false},
 		{name: "current create after activation", object: currentJob, operation: "CREATE", variables: active, want: true},
 		{name: "active predecessor identity create before cutover", object: currentJob, operation: "CREATE", variables: bootstrap, want: true},
 		{name: "active predecessor identity update before cutover", object: currentJob, operation: "UPDATE", variables: bootstrap, want: true},
@@ -504,7 +485,7 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		})
 	}
 
-	legacyPlan := controllerObjectPlanCELObject(2, "", 0)
+	identityFreePlan := controllerObjectPlanCELObject(2, "", 0)
 	currentPlan := controllerObjectPlanCELObject(3, activeImage, int64(ourStateVersion))
 	planExpression := controllerPlanContractExpression()
 	for _, test := range []struct {
@@ -513,8 +494,8 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		variables map[string]any
 		want      bool
 	}{
-		{name: "legacy v2 during bootstrap", object: legacyPlan, variables: bootstrap, want: true},
-		{name: "legacy v2 after activation", object: legacyPlan, variables: active, want: false},
+		{name: "v2 without controller identity before cutover", object: identityFreePlan, variables: bootstrap, want: false},
+		{name: "v2 without controller identity after activation", object: identityFreePlan, variables: active, want: false},
 		{name: "current v3 after activation", object: currentPlan, variables: active, want: true},
 		{name: "active predecessor v3 before cutover", object: currentPlan, variables: bootstrap, want: true},
 		{name: "current v3 with foreign image", object: controllerObjectPlanCELObject(3, "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", int64(ourStateVersion)), variables: active, want: false},
@@ -528,7 +509,10 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 	}
 }
 
-func controllerObjectLegacyJobCELObject(apply bool) map[string]any {
+// controllerObjectJobCELObjectWithoutProvenance is a Job annotation envelope
+// that names no controller: the guard admits it neither as a create nor as a
+// cleanup update.
+func controllerObjectJobCELObjectWithoutProvenance(apply bool) map[string]any {
 	operation := "plan"
 	annotations := map[string]any{
 		"operator.ptah.run/operation-id":              "operation-id",
@@ -549,7 +533,7 @@ func controllerObjectLegacyJobCELObject(apply bool) map[string]any {
 }
 
 func controllerObjectCurrentJobCELObject(image string, state int64) map[string]any {
-	object := controllerObjectLegacyJobCELObject(false)
+	object := controllerObjectJobCELObjectWithoutProvenance(false)
 	annotations := object["metadata"].(map[string]any)["annotations"].(map[string]any)
 	annotations["operator.ptah.run/controller-image"] = image
 	annotations["operator.ptah.run/controller-revision"] = "revision"

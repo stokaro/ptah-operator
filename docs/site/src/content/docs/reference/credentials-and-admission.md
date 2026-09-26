@@ -62,10 +62,11 @@ the mutating side; `vapproval`, `vmigrationapproval`, `vpodintent`,
 `vcontrollerwrite` and `certificate-rotation-canary-validate` on the validating
 side.
 
-A Job carries an annotation envelope that admission checks as a set: five
-annotations on a legacy read-only Job, seven on a legacy Apply, and eight on
-the current contract, which adds the manager image, revision and
-controller-state version.
+A Job carries an annotation envelope that admission checks as a set: eight
+annotations, including the manager image, revision and controller-state
+version, and two more on a schema Apply for the plan fingerprint and content
+digest. A Job without the controller identity is refused on create and on
+update.
 
 Upgrade compatibility is deliberately narrower than ordinary reconstruction.
 After an upgrade durably retires an execution epoch, the replacement manager

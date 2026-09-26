@@ -71,7 +71,7 @@ func (s *scenarios) artifactSource(reference, policy string) map[string]any {
 		"ociRef": reference,
 		"registryAuthFrom": map[string]any{
 			"name": s.in.registrySecret, "mode": "Environment",
-			"usernameKey": "username", "passwordKey": "password", "registryKey": "registry",
+			"usernameKey": "username", "passwordKey": "password",
 		},
 		"verificationPolicyFrom": map[string]any{"name": policy, "key": "policy.yaml"},
 		"transport":              map[string]any{"plainHTTP": true},

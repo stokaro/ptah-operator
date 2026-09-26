@@ -227,7 +227,7 @@ func fixture() *operatorv1alpha1.PtahSchema {
 				CreatedAt:      observed,
 			},
 			Applied: &operatorv1alpha1.AppliedStatus{
-				PlanRef:         &operatorv1alpha1.ImmutableObjectReference{Name: "ptah-plan-earlier"},
+				PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: "ptah-plan-earlier"},
 				PlanFingerprint: digest,
 				PtahVersion:     "v0.5.0-131-g939c2fb46",
 				CompletedAt:     observed,

@@ -610,7 +610,7 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles"]
     resourceNames: [{{ printf "%s-runtime-discovery" $controllerName | quote }}]
-    {{- if and $previousControllerServiceAccount (ne $previousSequence "0") }}
+    {{- if $previousControllerServiceAccount }}
     verbs: ["get", "bind"]
     {{- else }}
     verbs: ["get"]

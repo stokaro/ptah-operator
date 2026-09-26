@@ -624,7 +624,7 @@ create_reference_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: $policyKey},
           transport: {plainHTTP: true}

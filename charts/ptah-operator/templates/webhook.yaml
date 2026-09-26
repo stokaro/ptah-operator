@@ -38,7 +38,7 @@
 {{- fail "generated webhook Secret has foreign or incomplete Helm ownership metadata" -}}
 {{- end -}}
 {{- $caBundle = required "generated webhook Secret must contain ca.crt" (index $existing.data "ca.crt") -}}
-{{- $caKey = default "" (index $existing.data "ca.key") -}}
+{{- $caKey = required "generated webhook Secret must contain ca.key" (index $existing.data "ca.key") -}}
 {{- $tlsCrt = required "generated webhook Secret must contain tls.crt" (index $existing.data "tls.crt") -}}
 {{- $tlsKey = required "generated webhook Secret must contain tls.key" (index $existing.data "tls.key") -}}
 {{- else -}}
@@ -98,9 +98,7 @@ metadata:
 type: kubernetes.io/tls
 data:
   ca.crt: {{ $caBundle }}
-  {{- if $caKey }}
   ca.key: {{ $caKey }}
-  {{- end }}
   tls.crt: {{ $tlsCrt }}
   tls.key: {{ $tlsKey }}
 ---

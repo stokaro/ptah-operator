@@ -728,7 +728,7 @@ func buildTeardownAuthorizationChecks(
 	if rollout.PreviousControllerServiceAccountName != "" {
 		appendResource(teardownCheckHook, "bind stable controller ClusterRole", "rbac.authorization.k8s.io", "v1", "clusterroles", "", "", "bind", rollout.ControllerDeploymentName)
 		appendResource(teardownCheckHook, "bind stable controller Role", "rbac.authorization.k8s.io", "v1", "roles", "", rollout.CoordinationNamespace, "bind", rollout.ControllerDeploymentName)
-		if rollout.PreviousControllerReleaseSequence > 0 && rollout.ReleaseNamespace != metav1.NamespaceDefault {
+		if rollout.ReleaseNamespace != metav1.NamespaceDefault {
 			appendResource(teardownCheckHook, "bind runtime discovery Role", "rbac.authorization.k8s.io", "v1", "roles", "", metav1.NamespaceDefault, "bind", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
 		}
 	}
@@ -741,9 +741,6 @@ func buildTeardownAuthorizationChecks(
 	// the installed controller roles gets a distinct probe; this does not rely
 	// on one cached RBAC rule being observed atomically.
 	appendResource(teardownCheckController, "patch PtahSchema", "operator.ptah.run", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "patch", arbitraryObjectName)
-	if rollout.PreviousControllerServiceAccountName != "" {
-		appendResource(teardownCheckController, "update PtahSchema legacy grant", "operator.ptah.run", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "update", arbitraryObjectName)
-	}
 	appendResource(teardownCheckController, "update PtahSchema finalizer", "operator.ptah.run", "v1alpha1", "ptahschemas", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	appendResource(teardownCheckController, "update PtahSchemaPlan finalizer", "operator.ptah.run", "v1alpha1", "ptahschemaplans", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	appendResource(teardownCheckController, "patch PtahMigration", "operator.ptah.run", "v1alpha1", "ptahmigrations", "", rollout.ReleaseNamespace, "patch", arbitraryObjectName)

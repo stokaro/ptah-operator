@@ -837,30 +837,22 @@ func retiredPredecessorApplyJobMatches(
 		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
 		workload.AnnotationAdmissionSnapshotDigest: snapshotDigest,
 	}
-	currentFormat := len(job.Annotations) == 10
-	switch {
-	case len(job.Annotations) == 7:
-		// The supported predecessor did not persist controller provenance in
-		// its Job envelope. Keep that compatibility path exact and separate.
-	case currentFormat:
-		if pending.Plan.Name == "" || pending.Plan.UID == "" ||
-			pending.AdmissionSnapshot == nil ||
-			podintent.ValidateSnapshot(pending.AdmissionSnapshot) != nil ||
-			pending.AdmissionSnapshot.Digest != snapshotDigest ||
-			!controllerImagePattern.MatchString(pending.Plan.ControllerImage) ||
-			controllerstate.ValidateRevision(pending.Plan.ControllerRevision) != nil ||
-			pending.Plan.ControllerStateVersion < 1 {
-			return false
-		}
-		wantAnnotations[workload.AnnotationControllerImage] = pending.Plan.ControllerImage
-		wantAnnotations[workload.AnnotationControllerRevision] = pending.Plan.ControllerRevision
-		wantAnnotations[workload.AnnotationControllerStateVersion] = strconv.FormatInt(
-			int64(pending.Plan.ControllerStateVersion),
-			10,
-		)
-	default:
+	if len(job.Annotations) != 10 ||
+		pending.Plan.Name == "" || pending.Plan.UID == "" ||
+		pending.AdmissionSnapshot == nil ||
+		podintent.ValidateSnapshot(pending.AdmissionSnapshot) != nil ||
+		pending.AdmissionSnapshot.Digest != snapshotDigest ||
+		!controllerImagePattern.MatchString(pending.Plan.ControllerImage) ||
+		controllerstate.ValidateRevision(pending.Plan.ControllerRevision) != nil ||
+		pending.Plan.ControllerStateVersion < 1 {
 		return false
 	}
+	wantAnnotations[workload.AnnotationControllerImage] = pending.Plan.ControllerImage
+	wantAnnotations[workload.AnnotationControllerRevision] = pending.Plan.ControllerRevision
+	wantAnnotations[workload.AnnotationControllerStateVersion] = strconv.FormatInt(
+		int64(pending.Plan.ControllerStateVersion),
+		10,
+	)
 	if !sha256DigestPattern.MatchString(inputFingerprint) ||
 		!sha256DigestPattern.MatchString(snapshotDigest) ||
 		!reflect.DeepEqual(job.Annotations, wantAnnotations) ||
@@ -874,11 +866,8 @@ func retiredPredecessorApplyJobMatches(
 	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
 		return false
 	}
-	if currentFormat {
-		templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
-		return err == nil && templateDigest == pending.AdmissionSnapshot.TemplateDigest
-	}
-	return true
+	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
+	return err == nil && templateDigest == pending.AdmissionSnapshot.TemplateDigest
 }
 
 func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -2916,11 +2905,9 @@ func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
 // what they know about the committed Job UID. After an ordinary dispatch the
 // operation carries it and the live object must repeat it; after a cutover
 // that lost it, the operation carries none and the caller is about to
-// reconstruct it from this object. Everything else, including the two
-// supported annotation envelopes, stays one implementation. A predicate that
-// accepted only the five-key envelope would reject every Job a current
-// manager built, and a Job it rejects is never harvested: its cleanup is
-// never scheduled and it outlives the release that created it.
+// reconstruct it from this object. Everything else stays one implementation,
+// because a Job it rejects is never harvested: its cleanup is never scheduled
+// and it outlives the release that created it.
 func readOnlyJobEnvelopeMatches(
 	schema *operatorv1alpha1.PtahSchema,
 	operation *operatorv1alpha1.ActiveOperationStatus,
@@ -2973,26 +2960,18 @@ func readOnlyJobEnvelopeMatches(
 		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
 		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
 	}
-	switch len(job.Annotations) {
-	case 5:
-		// The supported predecessor did not persist controller provenance.
-		// Keep its envelope exact and separate from the current format.
-	case 8:
-		controllerImage := job.Annotations[workload.AnnotationControllerImage]
-		controllerRevision := job.Annotations[workload.AnnotationControllerRevision]
-		controllerStateVersion := job.Annotations[workload.AnnotationControllerStateVersion]
-		parsedStateVersion, parseErr := strconv.ParseInt(controllerStateVersion, 10, 32)
-		if !controllerImagePattern.MatchString(controllerImage) ||
-			controllerstate.ValidateRevision(controllerRevision) != nil || parseErr != nil ||
-			parsedStateVersion < 1 || strconv.FormatInt(parsedStateVersion, 10) != controllerStateVersion {
-			return false
-		}
-		wantAnnotations[workload.AnnotationControllerImage] = controllerImage
-		wantAnnotations[workload.AnnotationControllerRevision] = controllerRevision
-		wantAnnotations[workload.AnnotationControllerStateVersion] = controllerStateVersion
-	default:
+	controllerImage := job.Annotations[workload.AnnotationControllerImage]
+	controllerRevision := job.Annotations[workload.AnnotationControllerRevision]
+	controllerStateVersion := job.Annotations[workload.AnnotationControllerStateVersion]
+	parsedStateVersion, parseErr := strconv.ParseInt(controllerStateVersion, 10, 32)
+	if !controllerImagePattern.MatchString(controllerImage) ||
+		controllerstate.ValidateRevision(controllerRevision) != nil || parseErr != nil ||
+		parsedStateVersion < 1 || strconv.FormatInt(parsedStateVersion, 10) != controllerStateVersion {
 		return false
 	}
+	wantAnnotations[workload.AnnotationControllerImage] = controllerImage
+	wantAnnotations[workload.AnnotationControllerRevision] = controllerRevision
+	wantAnnotations[workload.AnnotationControllerStateVersion] = controllerStateVersion
 	if !reflect.DeepEqual(job.Annotations, wantAnnotations) ||
 		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
 		return false
@@ -3413,8 +3392,7 @@ func (r *SchemaReconciler) currentPlan(ctx context.Context, schema *operatorv1al
 	if err := fingerprint.ValidatePlanContractVersion(plan.Spec.ContractVersion); err != nil {
 		return nil, fmt.Errorf("current plan contract is not supported: %w", err)
 	}
-	if plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion ||
-		plan.UID != schema.Status.Plan.UID || plan.DeletionTimestamp != nil || plan.Spec.SchemaRef.UID != schema.UID ||
+	if plan.UID != schema.Status.Plan.UID || plan.DeletionTimestamp != nil || plan.Spec.SchemaRef.UID != schema.UID ||
 		plan.Spec.Fingerprint != schema.Status.Plan.Fingerprint || plan.Spec.ArtifactDigest != schema.Status.Source.Digest ||
 		plan.Spec.ExecutionBindingID == "" || plan.Spec.ExecutionBindingID != schema.Status.Plan.ExecutionBindingID ||
 		schema.Status.ExecutionBinding == nil || plan.Spec.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
@@ -4598,8 +4576,13 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.
 }
 
 func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) *operatorv1alpha1.AppliedStatus {
-	applied := &operatorv1alpha1.AppliedStatus{
-		ArtifactDigest: plan.ArtifactDigest, PlanFingerprint: plan.Fingerprint,
+	// The reference comes from the same snapshot as everything else here.
+	// Reading it off status.plan instead would name whichever plan the
+	// controller has reached by now, which is not the plan this record is about.
+	return &operatorv1alpha1.AppliedStatus{
+		ArtifactDigest:     plan.ArtifactDigest,
+		PlanRef:            operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+		PlanFingerprint:    plan.Fingerprint,
 		CoordinationDigest: plan.CoordinationDigest, TargetIdentityDigest: plan.TargetIdentityDigest,
 		ExecutionBindingID: plan.ExecutionBindingID,
 		ControllerImage:    plan.ControllerImage,
@@ -4607,13 +4590,6 @@ func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) 
 		PtahVersion: plan.PtahVersion, ExecutorImage: plan.ExecutorImage, RunnerImage: plan.RunnerImage,
 		RunnerProtocolVersion: plan.RunnerProtocolVersion, CompletedAt: now,
 	}
-	// From the same snapshot as everything else here. Reading the reference off
-	// status.plan instead would name whichever plan the controller has reached
-	// by now, which is not the plan this record is about.
-	if plan.Name != "" && plan.UID != "" {
-		applied.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID}
-	}
-	return applied
 }
 
 func pendingMatchesCurrentSchema(schema *operatorv1alpha1.PtahSchema, pending *operatorv1alpha1.PendingObservationStatus) bool {

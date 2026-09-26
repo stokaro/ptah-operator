@@ -585,7 +585,7 @@ func TestStoredExecutionBindingWithoutManagerIdentityFailsClosed(t *testing.T) {
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-		t.Fatalf("fence legacy execution binding: %v", err)
+		t.Fatalf("fence execution binding without manager identity: %v", err)
 	}
 	fenced := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), request.NamespacedName, fenced); err != nil {
@@ -597,7 +597,7 @@ func TestStoredExecutionBindingWithoutManagerIdentityFailsClosed(t *testing.T) {
 		fenced.Status.ExecutionBinding.ControllerStateVersion != testControllerStateVersion ||
 		fenced.Status.ActiveOperation != nil || fenced.Status.Phase != operatorv1alpha1.PhasePending ||
 		fenced.Status.Source.Verified {
-		t.Fatalf("legacy execution binding was not fenced before work: %#v", fenced.Status)
+		t.Fatalf("execution binding without manager identity was not fenced before work: %#v", fenced.Status)
 	}
 
 	restarted := *reconciler
@@ -611,7 +611,7 @@ func TestStoredExecutionBindingWithoutManagerIdentityFailsClosed(t *testing.T) {
 	if refreshing.Status.ActiveOperation == nil ||
 		refreshing.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
 		refreshing.Status.ActiveOperation.ExecutionBindingID != fenced.Status.ExecutionBinding.Epoch {
-		t.Fatalf("legacy execution binding did not restart at Resolve: %#v", refreshing.Status)
+		t.Fatalf("execution binding without manager identity did not restart at Resolve: %#v", refreshing.Status)
 	}
 }
 
@@ -2332,7 +2332,7 @@ func TestDueBlockedPolicyClaimsResolveWithoutClearingCurrentPlan(t *testing.T) {
 	}
 }
 
-func TestLegacyBlockedStatusWithoutDeadlineClaimsResolveImmediately(t *testing.T) {
+func TestBlockedStatusWithoutDeadlineClaimsResolveImmediately(t *testing.T) {
 	t.Parallel()
 	schema := blockedPolicySchema(operatorv1alpha1.ApplyPolicyAlways, true)
 	wantPlan := schema.Status.Plan.DeepCopy()
@@ -2351,7 +2351,7 @@ func TestLegacyBlockedStatusWithoutDeadlineClaimsResolveImmediately(t *testing.T
 	}
 	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
 		!reflect.DeepEqual(actual.Status.Plan, wantPlan) {
-		t.Fatalf("legacy blocked refresh status = %#v", actual.Status)
+		t.Fatalf("blocked refresh status without a deadline = %#v", actual.Status)
 	}
 }
 
@@ -3023,9 +3023,6 @@ func TestAppliedStatusForNamesThePlanItWasBuiltFrom(t *testing.T) {
 
 	applied := appliedStatusFor(snapshot, now)
 
-	if applied.PlanRef == nil {
-		t.Fatal("the applied record names no plan, so a reader has to search the namespace for one")
-	}
 	if applied.PlanRef.Name != snapshot.Name || applied.PlanRef.UID != snapshot.UID {
 		t.Fatalf("the applied record names %+v, and the plan it was built from is %s/%s",
 			applied.PlanRef, snapshot.Name, snapshot.UID)
@@ -3034,14 +3031,5 @@ func TestAppliedStatusForNamesThePlanItWasBuiltFrom(t *testing.T) {
 	// fingerprint says whether the object read is the one this record is about.
 	if applied.PlanFingerprint != snapshot.Fingerprint {
 		t.Fatalf("the applied record carries the fingerprint %q, want %q", applied.PlanFingerprint, snapshot.Fingerprint)
-	}
-}
-
-// A snapshot with no plan identity is left without a reference rather than
-// given an empty one: a name with no UID cannot be checked against anything.
-func TestAppliedStatusForLeavesTheReferenceOutWhenThereIsNoPlanIdentity(t *testing.T) {
-	applied := appliedStatusFor(operatorv1alpha1.CurrentPlanStatus{Name: "ptah-plan-x"}, metav1.Now())
-	if applied.PlanRef != nil {
-		t.Fatalf("the applied record names %+v, which nothing can verify", applied.PlanRef)
 	}
 }

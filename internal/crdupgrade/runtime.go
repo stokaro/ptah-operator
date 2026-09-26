@@ -262,7 +262,7 @@ func (i RuntimeInvariants) validate() error {
 	if i.ReleaseSequence < 1 {
 		return fmt.Errorf("release sequence must be positive")
 	}
-	return nil
+	return validatePredecessorRelease(i.PreviousControllerServiceAccountName, i.PreviousControllerReleaseSequence, i.ReleaseSequence)
 }
 
 func (i RuntimeInvariants) annotations() map[string]string {

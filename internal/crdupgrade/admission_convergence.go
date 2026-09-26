@@ -689,8 +689,8 @@ func (g *AdmissionConvergenceGuard) validate() error {
 	if g.ReleaseSequence < 1 || g.ControllerStateVersion < 1 || g.AdmissionContractVersion < 1 {
 		return errors.New("admission convergence versions must be positive")
 	}
-	if g.PreviousControllerReleaseSequence < 0 || g.PreviousControllerReleaseSequence >= g.ReleaseSequence {
-		return errors.New("admission convergence predecessor sequence must be non-negative and lower than the candidate")
+	if err := validatePredecessorRelease(g.PreviousControllerServiceAccountName, g.PreviousControllerReleaseSequence, g.ReleaseSequence); err != nil {
+		return fmt.Errorf("admission convergence: %w", err)
 	}
 	if g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
 		return errors.New("admission convergence predecessor ServiceAccount name is padded")

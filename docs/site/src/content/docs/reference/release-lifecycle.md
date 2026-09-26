@@ -114,12 +114,12 @@ approval.
 Every kind is read through exhaustive pagination anchored to its own single
 collection `resourceVersion`. A nonzero version newer than the binary's
 supported controller-state version blocks the rollout, even if another stored
-location is absent or still legacy. During a Helm downgrade, the pre-upgrade
+location records none yet. During a Helm downgrade, the pre-upgrade
 hook fails before Helm changes the Deployment, so the newer ready manager Pods
 remain in place and the older candidate never gets an opportunity to
 reinterpret or rewrite future state.
-Missing or zero versions remain readable as legacy state and are upgraded only
-by ordinary reconciliation under the current manager. A malformed or negative
+A location that records no version, such as a resource the manager has not
+reconciled yet, blocks nothing. A malformed or negative
 stored version also blocks startup. The upgrade hook repeats this state scan
 after all server-side dry-runs, immediately before release cutover. After the
 old runtime Pods have stopped, it performs a third scan immediately before the

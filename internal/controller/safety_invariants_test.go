@@ -209,40 +209,6 @@ func bindRetiredReadOnlyJob(
 	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
 }
 
-func bindPredecessorApplyJob(
-	job *batchv1.Job,
-	schema *operatorv1alpha1.PtahSchema,
-	operation *operatorv1alpha1.ActiveOperationStatus,
-	plan *operatorv1alpha1.CurrentPlanStatus,
-) {
-	labels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   "apply",
-		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
-	}
-	annotations := map[string]string{
-		workload.AnnotationOperationID:             operation.ID,
-		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
-		workload.AnnotationPtahVersion:             plan.PtahVersion,
-		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationPlanFingerprint:         plan.Fingerprint,
-		workload.AnnotationPlanContentDigest:       plan.ContentDigest,
-		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
-	}
-	job.Labels = labels
-	job.Annotations = annotations
-	job.Spec.Template.Labels = map[string]string{}
-	for key, value := range labels {
-		job.Spec.Template.Labels[key] = value
-	}
-	job.Spec.Template.Annotations = map[string]string{}
-	for key, value := range annotations {
-		job.Spec.Template.Annotations[key] = value
-	}
-}
-
 func bindCurrentApplyJob(
 	t *testing.T,
 	job *batchv1.Job,
@@ -516,7 +482,7 @@ func TestRunningApplyContinuityLossPersistsUnknownThroughValidatedCleanup(t *tes
 func TestDeletingRetiredApplyCrossesValidatedCleanupBoundary(t *testing.T) {
 	t.Parallel()
 
-	schema, job := predecessorApplyCleanupMatchFixture()
+	schema, job := predecessorApplyCleanupMatchFixture(t)
 	schema.Finalizers = []string{activeOperationFinalizer}
 	deletedAt := metav1.NewTime(time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC))
 	schema.DeletionTimestamp = &deletedAt
@@ -1815,7 +1781,7 @@ func TestExpiredAwaitingApprovalRefreshesBeforeExactApproval(t *testing.T) {
 		setDeadline bool
 	}{
 		{name: "due deadline", setDeadline: true},
-		{name: "legacy missing deadline"},
+		{name: "missing deadline"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -1854,7 +1820,7 @@ func TestReadyToApplyRestartRefreshesExpiredPlanBeforeAutomaticApply(t *testing.
 		setDeadline bool
 	}{
 		{name: "deadline reached while manager was down", setDeadline: true},
-		{name: "legacy missing deadline"},
+		{name: "missing deadline"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -2678,8 +2644,28 @@ func TestRetiredPredecessorReadOnlyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 		{
 			name: "extra annotation",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
-				job.Annotations[workload.AnnotationControllerImage] = "example.invalid/controller@" + testDigest
-				job.Spec.Template.Annotations[workload.AnnotationControllerImage] = job.Annotations[workload.AnnotationControllerImage]
+				job.Annotations["example.invalid/extra"] = "value"
+				job.Spec.Template.Annotations["example.invalid/extra"] = "value"
+			},
+		},
+		{
+			name: "missing controller provenance",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				for _, key := range []string{
+					workload.AnnotationControllerImage,
+					workload.AnnotationControllerRevision,
+					workload.AnnotationControllerStateVersion,
+				} {
+					delete(job.Annotations, key)
+					delete(job.Spec.Template.Annotations, key)
+				}
+			},
+		},
+		{
+			name: "noncanonical controller state version",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Annotations[workload.AnnotationControllerStateVersion] = "01"
+				job.Spec.Template.Annotations[workload.AnnotationControllerStateVersion] = "01"
 			},
 		},
 		{
@@ -2712,12 +2698,11 @@ func TestRetiredPredecessorReadOnlyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 	}
 }
 
-// The workload builder stamps controller provenance on every Job it creates,
-// so a Job a live predecessor leaves behind carries eight annotations, not the
-// five a manager without provenance wrote. A predicate that accepts only the
-// five-key envelope rejects every Job a current manager built: the lost UID is
-// never reconstructed, cleanup is never scheduled, and the Job outlives the
-// release that created it.
+// A retired read-only Job carries the envelope the workload builder writes,
+// controller provenance included. Both matchers accept it: the one that
+// reconstructs a UID a cutover lost, and the one that checks a committed UID.
+// A Job either rejects is never harvested: its cleanup is never scheduled and
+// it outlives the release that created it.
 func TestRetiredPredecessorReadOnlyJobMatchesProvenanceEnvelope(t *testing.T) {
 	t.Parallel()
 
@@ -2725,29 +2710,7 @@ func TestRetiredPredecessorReadOnlyJobMatchesProvenanceEnvelope(t *testing.T) {
 	newBinding := schema.Status.ExecutionBinding.DeepCopy()
 	newBinding.Epoch = "v1-22222222222222222222222222222222"
 	schema.Status.ExecutionBinding = newBinding
-
-	for key, value := range map[string]string{
-		workload.AnnotationControllerImage:        testControllerImage,
-		workload.AnnotationControllerRevision:     testControllerRevision,
-		workload.AnnotationControllerStateVersion: "1",
-	} {
-		job.Annotations[key] = value
-		job.Spec.Template.Annotations[key] = value
-	}
 	operation := schema.Status.ActiveOperation
-	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation.AdmissionSnapshot.TemplateDigest = templateDigest
-	operation.AdmissionSnapshot.Digest = ""
-	snapshotDigest, err := fingerprint.DigestCanonicalJSON(*operation.AdmissionSnapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation.AdmissionSnapshot.Digest = snapshotDigest
-	job.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
-	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
 
 	if !retiredPredecessorReadOnlyJobMatches(schema, operation, job) {
 		t.Fatal("retiredPredecessorReadOnlyJobMatches() rejected the envelope the builder writes")
@@ -3367,7 +3330,7 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 	}{
 		{name: "existing Job"},
 		{name: "missing Job", deleteJob: true},
-		{name: "legacy operation missing epoch", keepConfiguredTuple: true, eraseOperationEpoch: true},
+		{name: "operation missing epoch", keepConfiguredTuple: true, eraseOperationEpoch: true},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -3666,7 +3629,7 @@ func TestExecutionBindingChangeCleansTerminalPredecessorApplyWithoutTrustingResu
 	}
 	applyJob.UID = "predecessor-apply-job-uid"
 	schema.Status.ActiveOperation.JobUID = applyJob.UID
-	bindPredecessorApplyJob(applyJob, schema, schema.Status.ActiveOperation, schema.Status.Plan)
+	bindCurrentApplyJob(t, applyJob, schema, schema.Status.ActiveOperation, schema.Status.Plan)
 	applyPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: schema.Namespace, Name: applyJob.Name + "-running", UID: "predecessor-apply-pod-uid",
@@ -3827,7 +3790,7 @@ func TestRetiredPredecessorApplyLateCreateAdoptsUIDBeforePodFenceAndCleanup(t *t
 		t.Fatal(err)
 	}
 	applyJob.UID = "late-predecessor-apply-job-uid"
-	bindPredecessorApplyJob(applyJob, schema, schema.Status.ActiveOperation, schema.Status.Plan)
+	bindCurrentApplyJob(t, applyJob, schema, schema.Status.ActiveOperation, schema.Status.Plan)
 	applyPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: schema.Namespace, Name: applyJob.Name + "-running", UID: "late-predecessor-apply-pod-uid",
@@ -3981,10 +3944,29 @@ func TestRetiredPredecessorApplyCleanupRequiresExactFencedEnvelope(t *testing.T)
 			},
 		},
 		{
-			name: "extra controller annotation",
+			name: "another controller identity",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
 				job.Annotations[workload.AnnotationControllerImage] = "example.invalid/controller@" + testDigest
 				job.Spec.Template.Annotations[workload.AnnotationControllerImage] = job.Annotations[workload.AnnotationControllerImage]
+			},
+		},
+		{
+			name: "an annotation the builder does not write",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Annotations["example.invalid/extra"] = "value"
+				job.Spec.Template.Annotations["example.invalid/extra"] = "value"
+			},
+		},
+		{
+			name: "admission snapshot missing",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				schema.Status.PendingObservation.AdmissionSnapshot = nil
+			},
+		},
+		{
+			name: "template differs from the admission snapshot",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Spec.Template.Spec.ServiceAccountName = "other-account"
 			},
 		},
 		{
@@ -4013,7 +3995,7 @@ func TestRetiredPredecessorApplyCleanupRequiresExactFencedEnvelope(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			schema, job := predecessorApplyCleanupMatchFixture()
+			schema, job := predecessorApplyCleanupMatchFixture(t)
 			test.mutate(schema, job)
 			if retiredPredecessorApplyJobMatches(schema, schema.Status.PendingObservation, job) {
 				t.Fatal("retiredPredecessorApplyJobMatches() accepted unsafe cleanup evidence")
@@ -4043,7 +4025,7 @@ func TestRetiredPredecessorApplyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 			},
 		},
 		{
-			name: "extra controller identity",
+			name: "another controller identity",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
 				job.Annotations[workload.AnnotationControllerImage] = "example.invalid/controller@" + testDigest
 				job.Spec.Template.Annotations[workload.AnnotationControllerImage] = job.Annotations[workload.AnnotationControllerImage]
@@ -4069,7 +4051,7 @@ func TestRetiredPredecessorApplyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			schema, job := predecessorApplyCleanupMatchFixture()
+			schema, job := predecessorApplyCleanupMatchFixture(t)
 			schema.Status.PendingObservation.ApplyJobUID = ""
 			test.mutate(schema, job)
 			if retiredPredecessorApplyJobMatches(schema, schema.Status.PendingObservation, job) {
@@ -4768,7 +4750,15 @@ func safetyApplySchema(t *testing.T) *operatorv1alpha1.PtahSchema {
 	return schema
 }
 
-func predecessorApplyCleanupMatchFixture() (*operatorv1alpha1.PtahSchema, *batchv1.Job) {
+// predecessorApplyCleanupMatchFixture is the Apply Job a predecessor release
+// left behind when an execution-binding change retired its epoch, with the
+// outcome-unknown evidence that names it. The Job carries the envelope the
+// workload builder writes, controller provenance and admission snapshot
+// included, so a matcher that accepts it measures the retirement contract and
+// not a shape nothing produces.
+func predecessorApplyCleanupMatchFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *batchv1.Job) {
+	t.Helper()
+
 	schema := schemaFixture()
 	retiredEpoch := "v1-22222222222222222222222222222222"
 	operationID := "predecessor-apply-operation"
@@ -4782,10 +4772,15 @@ func predecessorApplyCleanupMatchFixture() (*operatorv1alpha1.PtahSchema, *batch
 		ApplyJobName:     jobName,
 		ApplyJobUID:      jobUID,
 		Plan: operatorv1alpha1.CurrentPlanStatus{
-			Fingerprint:        testDigest,
-			ContentDigest:      safetyOtherDigest,
-			ExecutionBindingID: retiredEpoch,
-			PtahVersion:        "v0.3.0",
+			Name:                   "ptah-plan-0123456789abcdef01234567",
+			UID:                    "predecessor-plan-uid",
+			Fingerprint:            testDigest,
+			ContentDigest:          safetyOtherDigest,
+			ExecutionBindingID:     retiredEpoch,
+			ControllerImage:        testControllerImage,
+			ControllerRevision:     testControllerRevision,
+			ControllerStateVersion: testControllerStateVersion,
+			PtahVersion:            "v0.3.0",
 		},
 	}
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "retired")
@@ -4798,13 +4793,23 @@ func predecessorApplyCleanupMatchFixture() (*operatorv1alpha1.PtahSchema, *batch
 		workload.LabelOperationID: workload.OperationIDLabelValue(operationID),
 	}
 	annotations := map[string]string{
-		workload.AnnotationOperationID:             operationID,
-		workload.AnnotationInputFingerprint:        testDigest,
-		workload.AnnotationPtahVersion:             "v0.3.0",
-		workload.AnnotationExecutionBindingID:      retiredEpoch,
-		workload.AnnotationPlanFingerprint:         testDigest,
-		workload.AnnotationPlanContentDigest:       safetyOtherDigest,
-		workload.AnnotationAdmissionSnapshotDigest: testDigest,
+		workload.AnnotationOperationID:            operationID,
+		workload.AnnotationInputFingerprint:       testDigest,
+		workload.AnnotationPtahVersion:            "v0.3.0",
+		workload.AnnotationExecutionBindingID:     retiredEpoch,
+		workload.AnnotationControllerImage:        testControllerImage,
+		workload.AnnotationControllerRevision:     testControllerRevision,
+		workload.AnnotationControllerStateVersion: fmt.Sprintf("%d", testControllerStateVersion),
+		workload.AnnotationPlanFingerprint:        testDigest,
+		workload.AnnotationPlanContentDigest:      safetyOtherDigest,
+	}
+	templateAnnotations := make(map[string]string, len(annotations)+1)
+	for key, value := range annotations {
+		templateAnnotations[key] = value
+	}
+	templateLabels := make(map[string]string, len(labels))
+	for key, value := range labels {
+		templateLabels[key] = value
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -4813,18 +4818,36 @@ func predecessorApplyCleanupMatchFixture() (*operatorv1alpha1.PtahSchema, *batch
 			OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
 		},
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				workload.LabelManagedBy: "ptah-operator", workload.LabelComponent: "schema-operation",
-				workload.LabelSchema: schema.Name, workload.LabelOperation: "apply",
-				workload.LabelOperationID: workload.OperationIDLabelValue(operationID),
-			},
-			Annotations: map[string]string{
-				workload.AnnotationOperationID: operationID, workload.AnnotationInputFingerprint: testDigest,
-				workload.AnnotationPtahVersion: "v0.3.0", workload.AnnotationExecutionBindingID: retiredEpoch,
-				workload.AnnotationPlanFingerprint: testDigest, workload.AnnotationPlanContentDigest: safetyOtherDigest,
-				workload.AnnotationAdmissionSnapshotDigest: testDigest,
-			},
+			Labels:      templateLabels,
+			Annotations: templateAnnotations,
 		}}},
+	}
+
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := corev1.PreemptLowerPriority
+	snapshot := &operatorv1alpha1.PodAdmissionSnapshot{
+		Version:        podintent.SnapshotVersion,
+		TemplateDigest: templateDigest,
+		ServiceAccount: operatorv1alpha1.ServiceAccountAdmissionSnapshot{Object: operatorv1alpha1.AdmissionObjectBinding{
+			Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
+		}},
+		PriorityClass:                       operatorv1alpha1.PriorityClassAdmissionSnapshot{Value: 0, PreemptionPolicy: &policy},
+		DefaultTolerationsEnabled:           true,
+		DefaultNotReadyTolerationSeconds:    300,
+		DefaultUnreachableTolerationSeconds: 300,
+	}
+	snapshot.Digest, err = fingerprint.DigestCanonicalJSON(*snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema.Status.PendingObservation.AdmissionSnapshot = snapshot
+	job.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshot.Digest
+	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshot.Digest
+	if !retiredPredecessorApplyJobMatches(schema, schema.Status.PendingObservation, job) {
+		t.Fatal("the predecessor Apply fixture is not the envelope the retirement contract accepts")
 	}
 	return schema, job
 }
@@ -4870,10 +4893,17 @@ func predecessorReadOnlyLateCreateFixture(
 		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
 	}
 	annotations := map[string]string{
-		workload.AnnotationOperationID:        operation.ID,
-		workload.AnnotationInputFingerprint:   operation.InputFingerprint,
-		workload.AnnotationPtahVersion:        schema.Status.ExecutionBinding.PtahVersion,
-		workload.AnnotationExecutionBindingID: operation.ExecutionBindingID,
+		workload.AnnotationOperationID:            operation.ID,
+		workload.AnnotationInputFingerprint:       operation.InputFingerprint,
+		workload.AnnotationPtahVersion:            schema.Status.ExecutionBinding.PtahVersion,
+		workload.AnnotationExecutionBindingID:     operation.ExecutionBindingID,
+		workload.AnnotationControllerImage:        testControllerImage,
+		workload.AnnotationControllerRevision:     testControllerRevision,
+		workload.AnnotationControllerStateVersion: fmt.Sprintf("%d", testControllerStateVersion),
+	}
+	templateAnnotations := make(map[string]string, len(annotations)+1)
+	for key, value := range annotations {
+		templateAnnotations[key] = value
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -4888,11 +4918,7 @@ func predecessorReadOnlyLateCreateFixture(
 					workload.LabelSchema: schema.Name, workload.LabelOperation: strings.ToLower(string(operation.Type)),
 					workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
 				},
-				Annotations: map[string]string{
-					workload.AnnotationOperationID: operation.ID, workload.AnnotationInputFingerprint: operation.InputFingerprint,
-					workload.AnnotationPtahVersion:        schema.Status.ExecutionBinding.PtahVersion,
-					workload.AnnotationExecutionBindingID: operation.ExecutionBindingID,
-				},
+				Annotations: templateAnnotations,
 			},
 			Spec: corev1.PodSpec{
 				ServiceAccountName: "default", RestartPolicy: corev1.RestartPolicyNever,

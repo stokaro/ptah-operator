@@ -289,20 +289,17 @@ func validatePlanContract(spec operatorv1alpha1.PtahSchemaPlanSpec) error {
 	if err := fingerprint.ValidatePlanContractVersion(spec.ContractVersion); err != nil {
 		return err
 	}
-	if spec.ContractVersion >= fingerprint.ExecutionEpochPlanContractVersion &&
-		!executionBindingIDPattern.MatchString(spec.ExecutionBindingID) {
-		return fmt.Errorf("plan contract version %d requires a valid execution binding ID", spec.ContractVersion)
+	if !executionBindingIDPattern.MatchString(spec.ExecutionBindingID) {
+		return fmt.Errorf("plan requires a valid execution binding ID")
 	}
-	if spec.ContractVersion >= fingerprint.CurrentPlanContractVersion {
-		if !imageDigestPattern.MatchString(spec.ControllerImage) {
-			return fmt.Errorf("plan contract version %d requires a digest-pinned controller image", spec.ContractVersion)
-		}
-		if err := controllerstate.ValidateRevision(spec.ControllerRevision); err != nil {
-			return fmt.Errorf("plan contract version %d has an invalid controller revision: %w", spec.ContractVersion, err)
-		}
-		if spec.ControllerStateVersion < 1 {
-			return fmt.Errorf("plan contract version %d requires a positive controller state version", spec.ContractVersion)
-		}
+	if !imageDigestPattern.MatchString(spec.ControllerImage) {
+		return fmt.Errorf("plan requires a digest-pinned controller image")
+	}
+	if err := controllerstate.ValidateRevision(spec.ControllerRevision); err != nil {
+		return fmt.Errorf("plan has an invalid controller revision: %w", err)
+	}
+	if spec.ControllerStateVersion < 1 {
+		return fmt.Errorf("plan requires a positive controller state version")
 	}
 	return nil
 }

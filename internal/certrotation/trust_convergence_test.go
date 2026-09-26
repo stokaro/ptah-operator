@@ -181,8 +181,8 @@ func newTrustConvergenceFixture(t *testing.T, servingRotation bool) trustConverg
 		now = createdAt.Add(25 * 24 * time.Hour)
 	}
 	current := mustGenerateMaterial(t, createdAt, config)
-	legacy := mustGenerateMaterial(t, createdAt.Add(time.Minute), config)
-	overlap, err := combineCABundles(legacy.caPEM, current.caPEM)
+	older := mustGenerateMaterial(t, createdAt.Add(time.Minute), config)
+	overlap, err := combineCABundles(older.caPEM, current.caPEM)
 	if err != nil {
 		t.Fatalf("build pre-repair trust bundle: %v", err)
 	}

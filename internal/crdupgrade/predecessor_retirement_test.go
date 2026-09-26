@@ -456,6 +456,8 @@ func (f *predecessorRetirementFixture) advanceToNextRelease(t *testing.T) {
 	previous := f.rollout.ReleaseSequence
 	f.rollout.ReleaseSequence++
 	f.rollout.PreviousControllerReleaseSequence = previous
+	f.rollout.PreviousControllerServiceAccountName = "previous-controller"
+	f.rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
 	f.rollout.ManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	f.rollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(
 		f.rollout.ReleaseNamespace, f.rollout.ReleaseName, f.rollout.ReleaseSequence, f.rollout.ManagerImage,

@@ -24,7 +24,6 @@ spec:
       mode: Environment
       usernameKey: username
       passwordKey: password
-      registryKey: registry
     verificationPolicyFrom:
       name: demo-migration-verification-policy
       key: policy.yaml

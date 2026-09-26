@@ -73,19 +73,17 @@ a values file that still names either fails schema validation, and a render
 that skips schema validation refuses them by name. Manager Pods, hooks and
 controller identity all use the same `image.repository@image.digest` reference.
 
-Hold exclusive administrative control of the release namespace until Helm
-reports success. Before the v2 retained hook-progress admission policies have
-reached every API server, no in-chart workload can prove its own Job or Pod
-status and deletion integrity against a principal that already has write access
-to those resources in the namespace, so no untrusted principal may create,
-update or delete hook Jobs or Pods, or update their status subresources, for
-the duration. A dedicated release namespace is how to satisfy that. The same
-boundary applies to the first upgrade from a release that did not install those
-policies, and ends once they and their direct per-API-server proofs have
-converged; upgrades and uninstalls between v2-aware releases protect hook
-creation, status and deletion without relying on namespace-writer exclusion.
-Downgrading to a release that does not understand v2 removes that guarantee and
-is unsupported. Cluster administrators and principals that can change admission
+Hold exclusive administrative control of the release namespace until the first
+installation reports success. Before the retained hook-progress admission
+policies have reached every API server, no in-chart workload can prove its own
+Job or Pod status and deletion integrity against a principal that already has
+write access to those resources in the namespace, so no untrusted principal may
+create, update or delete hook Jobs or Pods, or update their status
+subresources, for the duration. A dedicated release namespace is how to satisfy
+that. The boundary ends once those policies and their direct per-API-server
+proofs have converged. Every release retains them, so upgrades and uninstalls
+protect hook creation, status and deletion without relying on namespace-writer
+exclusion. Cluster administrators and principals that can change admission
 policy remain inside the trust boundary.
 
 With `serviceAccount.create=false`, `serviceAccount.name` is an identity base
@@ -711,8 +709,10 @@ opening direct connections.
 
 Serving certificates rotate before `certificateRotation.renewalThreshold`.
 The CA rotates before its threshold, when it cannot safely issue a full-lived
-serving certificate, when a legacy generated Secret has no `ca.key`, or when
-`ca.crt` is missing, malformed, or unrelated to the serving leaf. Candidate
+serving certificate, when `ca.key` is missing, malformed, or does not match
+`ca.crt`, or when `ca.crt` is missing, malformed, or unrelated to the serving
+leaf. A Helm upgrade refuses a generated Secret without `ca.key` rather than
+rendering one, and the running rotator writes a new CA with its key. Candidate
 CAs from managed webhook entries are filtered certificate-by-certificate. A
 candidate is retained only when it signs the exact persisted leaf for every
 Service DNS name and every stable endpoint proves it is serving that byte-exact
@@ -897,7 +897,7 @@ durable Apply claim is the one-shot authorization boundary: dispatch, lock
 contention, and controller restarts continue the claimed operation instead of
 letting a later timer reinterpret it.
 
-Current plan contract v3 also binds the manager's complete execution identity:
+The plan contract also binds the manager's complete execution identity:
 manager image digest, controller source revision, controller state version,
 Ptah version, executor image digest, runner image digest, and runner protocol.
 If that identity changes before a mutating Job is dispatched, the current plan
@@ -1089,7 +1089,7 @@ nothing about whether the mutation was ever accounted for.
 kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
 ```
 
-A record this manager wrote names the attempt (`operationID`), the plan it was
+The record names the attempt (`operationID`), the plan it was
 carrying out, and the credential-free identity of a database. It names the Job
 by name and UID wherever the manager established that one existed, and the Job
 and its logs may be gone by then, which is why the record carries their
@@ -1114,13 +1114,6 @@ plan are still there. The deadline that claim carried is not: it lived on
 `status.activeOperation`, which is cleared with the claim, and neither the
 record nor the plan copies it. What is observable instead is the Lease, which
 this resource keeps for as long as a dispatched Apply could still be writing.
-
-A record **adopted** on upgrade names less, because less was kept. A manager
-older than this record held the state in a condition, and the claim that ran
-was gone long before the upgrade read it -- so `operationID` and `planRef` are
-empty, and what survives is the outcome, the Job the last run recorded, and the
-database the last reading named. Those are what to search for in that case;
-there is no attempt or plan to look up, and looking is wasted time.
 
 While the record stands this resource publishes no plan and dispatches no
 Apply, including the migration that run was applying. It goes on reading unless
@@ -1160,7 +1153,7 @@ committed, drop the unfinished revision, and publish the sequence without it --
 and the operator settles on its next reading with no spec edit.
 
 A reading of a different database does not clear a record that names one, and a
-record this manager wrote always names one: the plan that run was carrying out
+record always names one: the plan that run was carrying out
 was computed from a reading, and a reading that named no database is refused
 before it is stored. Neither does an artifact that ends before the database
 does: an artifact pointed at a shorter sequence says nothing about a run that
@@ -1177,31 +1170,9 @@ Establish what the run did. The record is the operator saying it cannot tell,
 so removing it without answering that question hands the next Apply a database
 in a state nobody checked.
 
-Clear whatever else is refusing the resource first. A manager older than this
-record held the same state in the `Blocked` condition, and the upgrade path
-reads that condition before anything else in a pass, so anything that keeps
-writing `Blocked` -- a realm another resource still claims, an engine this
-operator does not support, a dirty revision row, an applied migration that no
-longer matches its file, a migration waiting below the current version --
-rebuilds the record on the pass after this one. The command below clears the
-refusal that is standing; it cannot clear one that keeps coming back.
-
-One standing refusal does not rebuild it: a database ahead of the artifact this
-resource resolves. That reading has nothing of the artifact left to apply,
-nothing dirty and nothing modified, so the upgrade path counts it as the
-account the run was owed and does not write the record again.
-
-That is not the same as the reading clearing it, and
-[How it clears](#how-it-clears) says why: a record still standing survives such
-a reading, because the refusal is answered before the branch that removes a
-record is reached. So the refusal has to be repaired either way, by publishing
-an artifact that carries the versions the database already applied.
-
 #### Run it {#clear-run}
 
-The refusal and the record go in one write. Removing the record alone is not
-enough even with nothing else refusing: the condition outlives it by a pass,
-and the upgrade path reads the condition.
+The record and the `Blocked` condition it set go in one write.
 
 ```sh
 kubectl get ptahmigration orders -o json \
@@ -1223,41 +1194,21 @@ whole.
 
 The operator rewrites the conditions on its next reading, so the resource comes
 back carrying a `Blocked` condition written whole and no
-`status.unresolvedRun`. That is also why this is one write rather than two: a
-resource left blocked between them is a resource whose record comes back.
+`status.unresolvedRun`.
 
 #### Where to stop {#clear-stop}
 
-Do not clear the record to make a resource move again. Do not remove it without
-the refusal beside it, and do not set `Blocked=False` in place of removing the
-condition. Do not reach for `kubectl delete` either;
+Do not clear the record to make a resource move again, and do not set
+`Blocked=False` in place of removing the condition. Do not reach for
+`kubectl delete` either;
 [Deleting the resource discards it](#deleting-the-resource-discards-it) says
 what that costs.
 
 #### If it fails {#clear-recovery}
 
-A record that is back on the next pass means a refusal is still standing, and
-the write cleared the one that happened to be current rather than the one that
-keeps returning. Repair the refusal the condition names, then clear the record
-again.
-
-### Runs adopted by an upgrade {#adopted-runs}
-
-A manager older than this record held the same state in the `Blocked`
-condition's reason, and an upgrade adopts those runs so the defect that rewrote
-the reason cannot lose them.
-
-It leaves alone a run the stored reading still accounts for. A reading taken
-after that run finished, with nothing of the artifact left to apply, no dirty
-revision and nothing modified, is the evidence the record would have been, and
-a resource carrying one is not latched however it is blocked now.
-
-So the runs that arrive this way are the ones no surviving reading settles: a
-resource that has read again and found work pending, or a dirty row, or one
-that has not read since. If such a resource is blocked for an unrelated reason
-at the moment of the upgrade, its old run is adopted with it. Establish what
-the run did, or that a later reading already accounted for it, and then
-[clear the record](#clear-unresolved-run).
+A record is written only where an Apply ends `Partial` or `Unknown`, so one
+that is back names a later run. Compare its `operationID` and `jobUID` with the
+record you cleared, and account for that run the same way.
 
 ### Deleting the resource discards it
 

@@ -381,7 +381,7 @@ func TestRolloutGuardEnforcementProbeCannotAcceptAnOlderGuardMessage(t *testing.
 
 func TestRolloutGuardEnforcementProbeChangesOnlyReservedAnnotation(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
-	live := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+	live := runtimeDeployment(guard, guard.ControllerDeploymentName, "controller")
 	deployments.objects[live.Name] = live.DeepCopy()
 	policyName := RolloutGuardPolicyName(guard.ReleaseSequence)
 
@@ -407,7 +407,7 @@ func TestRolloutGuardEnforcementProbeChangesOnlyReservedAnnotation(t *testing.T)
 
 func TestRolloutGuardEnforcementProbeFallsBackToLiveCertificateDeployment(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
-	live := legacyDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+	live := runtimeDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
 	deployments.objects[live.Name] = live.DeepCopy()
 	policyName := RuntimeGuardPolicyName(guard.ReleaseSequence)
 
@@ -603,7 +603,7 @@ func TestRolloutGuardEnforcementProbesRetryBenignDeploymentRaces(t *testing.T) {
 			t.Parallel()
 			guard, _, _, deployments := readyRolloutGuard()
 			if test.live {
-				deployments.objects[guard.ControllerDeploymentName] = legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+				deployments.objects[guard.ControllerDeploymentName] = runtimeDeployment(guard, guard.ControllerDeploymentName, "controller")
 			}
 			deployments.dryCreateResults = append([]error(nil), test.createErrs...)
 			deployments.dryUpdateResults = append([]error(nil), test.updateErrs...)
@@ -622,9 +622,7 @@ func TestRolloutGuardEnforcementProbeRetriesNotFoundBetweenReads(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
 	activation := guard.releaseActivationGuard()
 	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
-	live := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
-	live.Annotations[ControllerStateVersionAnnotation] = ourStateVersionString()
-	live.Annotations[ReleaseSequenceAnnotation] = "1"
+	live := runtimeDeployment(guard, guard.ControllerDeploymentName, "controller")
 	deployments.objects[live.Name] = live
 	resource := schema.GroupResource{Group: "apps", Resource: "deployments"}
 	deployments.getErrors = map[string][]error{
@@ -719,10 +717,10 @@ func TestRolloutGuardPrepareRejectsForeignBinding(t *testing.T) {
 	}
 }
 
-func TestRolloutGuardQuiescesLegacyDeploymentsAfterCompleteDryRun(t *testing.T) {
+func TestRolloutGuardQuiescesRunningDeploymentsAfterCompleteDryRun(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
-	deployments.objects[guard.CertificateDeploymentName] = legacyDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
-	deployments.objects[guard.ControllerDeploymentName] = legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+	deployments.objects[guard.CertificateDeploymentName] = runtimeDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+	deployments.objects[guard.ControllerDeploymentName] = runtimeDeployment(guard, guard.ControllerDeploymentName, "controller")
 
 	if err := guard.Quiesce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -733,7 +731,7 @@ func TestRolloutGuardQuiescesLegacyDeploymentsAfterCompleteDryRun(t *testing.T) 
 	for _, name := range []string{guard.CertificateDeploymentName, guard.ControllerDeploymentName} {
 		deployment := deployments.objects[name]
 		if got := deployment.Annotations[ControllerStateVersionAnnotation]; got != ourStateVersionString() {
-			t.Fatalf("Deployment %s state = %q, want 1", name, got)
+			t.Fatalf("Deployment %s state = %q, want %s", name, got, ourStateVersionString())
 		}
 		if got := deployment.Annotations[ReleaseSequenceAnnotation]; got != "1" {
 			t.Fatalf("Deployment %s release sequence = %q, want 1", name, got)
@@ -749,9 +747,7 @@ func TestRolloutGuardQuiescesLegacyDeploymentsAfterCompleteDryRun(t *testing.T) 
 }
 
 func candidateDeployment(guard *RolloutGuard, name, component string) *appsv1.Deployment {
-	deployment := legacyDeployment(guard, name, component)
-	deployment.Annotations[ControllerStateVersionAnnotation] = ourStateVersionString()
-	deployment.Annotations[ReleaseSequenceAnnotation] = "1"
+	deployment := runtimeDeployment(guard, name, component)
 	deployment.Spec.Template.Spec.Containers = []corev1.Container{{Name: "manager", Image: guard.ManagerImage}}
 	return deployment
 }
@@ -852,7 +848,7 @@ func TestRolloutGuardPreflightQuiesceDoesNotPersistStampOrScale(t *testing.T) {
 		guard.CertificateDeploymentName: "certificate-rotation",
 		guard.ControllerDeploymentName:  "controller",
 	} {
-		deployments.objects[name] = legacyDeployment(guard, name, component)
+		deployments.objects[name] = runtimeDeployment(guard, name, component)
 	}
 	before := map[string]*appsv1.Deployment{
 		guard.CertificateDeploymentName: deployments.objects[guard.CertificateDeploymentName].DeepCopy(),
@@ -873,8 +869,8 @@ func TestRolloutGuardPreflightQuiesceDoesNotPersistStampOrScale(t *testing.T) {
 
 func TestRolloutGuardQuiescePreflightsEveryAdoptionBeforeMutation(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
-	deployments.objects[guard.CertificateDeploymentName] = legacyDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
-	deployments.objects[guard.ControllerDeploymentName] = legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+	deployments.objects[guard.CertificateDeploymentName] = runtimeDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+	deployments.objects[guard.ControllerDeploymentName] = runtimeDeployment(guard, guard.ControllerDeploymentName, "controller")
 	deployments.dryUpdateErrors[guard.ControllerDeploymentName] = errors.New("policy denied")
 
 	err := guard.Quiesce(context.Background())
@@ -886,6 +882,9 @@ func TestRolloutGuardQuiescePreflightsEveryAdoptionBeforeMutation(t *testing.T) 
 	}
 }
 
+// Every release writes its release sequence and controller-state version on
+// the runtime Deployments it installs, so a Deployment without them was not
+// installed by one and is refused before anything is stopped.
 func TestRolloutGuardQuiesceRejectsForeignAndFutureDeployments(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -906,11 +905,25 @@ func TestRolloutGuardQuiesceRejectsForeignAndFutureDeployments(t *testing.T) {
 			},
 			want: "rollback refused",
 		},
+		{
+			name: "no controller-state version",
+			mutate: func(deployment *appsv1.Deployment) {
+				delete(deployment.Annotations, ControllerStateVersionAnnotation)
+			},
+			want: "records no controller-state version and is not a supported predecessor",
+		},
+		{
+			name: "no release sequence",
+			mutate: func(deployment *appsv1.Deployment) {
+				delete(deployment.Annotations, ReleaseSequenceAnnotation)
+			},
+			want: "records no release sequence and is not a supported predecessor",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			guard, _, _, deployments := readyRolloutGuard()
-			deployment := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+			deployment := runtimeDeployment(guard, guard.ControllerDeploymentName, "controller")
 			test.mutate(deployment)
 			deployments.objects[deployment.Name] = deployment
 
@@ -927,8 +940,7 @@ func TestRolloutGuardQuiesceRejectsForeignAndFutureDeployments(t *testing.T) {
 
 func TestRolloutGuardQuiesceWaitsForSelectedPodsToDisappear(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
-	deployment := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
-	deployment.Annotations[ControllerStateVersionAnnotation] = ourStateVersionString()
+	deployment := runtimeDeployment(guard, guard.ControllerDeploymentName, "controller")
 	deployments.objects[deployment.Name] = deployment
 	guard.Pods = &rolloutPodClient{items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "still-running"}}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
@@ -1851,7 +1863,9 @@ func readyPolicy(policy *admissionregistrationv1.ValidatingAdmissionPolicy) *adm
 	return result
 }
 
-func legacyDeployment(guard *RolloutGuard, name, component string) *appsv1.Deployment {
+// runtimeDeployment is a running release Deployment as the chart installs it,
+// carrying the guard's release sequence and controller-state version.
+func runtimeDeployment(guard *RolloutGuard, name, component string) *appsv1.Deployment {
 	serviceAccountName := guard.ControllerServiceAccountName
 	if component == "certificate-rotation" {
 		serviceAccountName = guard.CertificateDeploymentName
@@ -1861,8 +1875,10 @@ func legacyDeployment(guard *RolloutGuard, name, component string) *appsv1.Deplo
 			Name:      name,
 			Namespace: guard.ReleaseNamespace,
 			Annotations: map[string]string{
-				helmReleaseNameAnnotation:      guard.ReleaseName,
-				helmReleaseNamespaceAnnotation: guard.ReleaseNamespace,
+				helmReleaseNameAnnotation:        guard.ReleaseName,
+				helmReleaseNamespaceAnnotation:   guard.ReleaseNamespace,
+				ControllerStateVersionAnnotation: strconv.FormatInt(int64(guard.ControllerStateVersion), 10),
+				ReleaseSequenceAnnotation:        strconv.FormatInt(int64(guard.ReleaseSequence), 10),
 			},
 			Labels: map[string]string{
 				managedByLabel:                "Helm",

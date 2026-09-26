@@ -224,14 +224,12 @@ type OCIArtifactAccessBinding struct {
 	Transport OCITransportSpec `json:"transport,omitempty"`
 }
 
-// DesiredSchemaSpec is retained as a source-compatible name for clients that
-// used the provisional API type before the common OCI source was factored out.
-type DesiredSchemaSpec = OCIArtifactSourceSpec
-
 // RegistryAuthSource describes a Secret without requiring the controller to
 // read it. The kubelet projects only the selected credential representation
 // into a Job, while every mode also projects the fixed registry authority grant
-// to the runner.
+// to the runner. That grant is the Secret's `registry` key, holding the
+// authority-only host[:port] the credential is for. The key is fixed so the
+// Secret owner, rather than a resource author, controls the grant.
 // +kubebuilder:validation:XValidation:rule="self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)",message="dockerConfigJSONKey is required in DockerConfigJSON mode"
 type RegistryAuthSource struct {
 	// Name of the Secret the registry credential is read from. The manager
@@ -255,13 +253,6 @@ type RegistryAuthSource struct {
 	// TokenKey is the Secret key holding a bearer token, where one is used
 	// instead of a username and password.
 	TokenKey string `json:"tokenKey,omitempty"`
-	// RegistryKey is retained for source compatibility. The key is fixed so the
-	// Secret owner, rather than a PtahSchema author, controls the authority grant.
-	// The referenced Secret must contain an authority-only host[:port] value.
-	// +kubebuilder:default=registry
-	// +kubebuilder:validation:Enum=registry
-	// RegistryKey is the Secret key naming the registry the credential is for.
-	RegistryKey string `json:"registryKey,omitempty"`
 
 	// +kubebuilder:default=.dockerconfigjson
 	// DockerConfigJSONKey is the Secret key holding a Docker config document.
@@ -489,18 +480,18 @@ type ExecutionBindingStatus struct {
 	// ControllerImage identifies the exact manager container content that
 	// interpreted controller state and authorized this evidence epoch.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage,omitempty"`
+	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision identifies the exact manager build that interpreted
 	// controller state. It is provenance metadata in addition to ControllerImage,
 	// not a substitute for the image content digest.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision,omitempty"`
+	ControllerRevision string `json:"controllerRevision"`
 	// ControllerStateVersion versions manager-side reconciliation semantics
 	// independently of the data-plane runner protocol.
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+	ControllerStateVersion int32 `json:"controllerStateVersion"`
 
 	// PtahVersion is the Ptah build this epoch executes with.
 	// +kubebuilder:validation:MinLength=1
@@ -787,18 +778,18 @@ type CurrentPlanStatus struct {
 	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
 	// ExecutionBindingID is the execution epoch it belongs to.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	ExecutionBindingID string `json:"executionBindingID"`
 	// ControllerImage is the digest-pinned manager that published it.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage,omitempty"`
+	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision is that manager's revision.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision,omitempty"`
+	ControllerRevision string `json:"controllerRevision"`
 	// ControllerStateVersion is the state semantics it writes.
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+	ControllerStateVersion int32 `json:"controllerStateVersion"`
 	// PtahVersion is the Ptah build that computed the plan.
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image that ran it.
@@ -838,14 +829,11 @@ type AppliedStatus struct {
 	// ArtifactDigest is the artifact that was applied.
 	ArtifactDigest string `json:"artifactDigest"`
 	// PlanRef names the stored plan this apply ran. It is what a reader
-	// addresses to see the SQL that was applied, instead of searching the
-	// namespace for a fingerprint.
-	//
-	// Optional, because a record written before the field existed carries only
-	// PlanFingerprint. It does not replace that fingerprint: the reference says
-	// which object to read and the fingerprint says whether the object read is
-	// the one this record was written for.
-	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
+	// addresses to see the SQL that was applied. It does not replace
+	// PlanFingerprint: the reference says which object to read and the
+	// fingerprint says whether the object read is the one this record was
+	// written for.
+	PlanRef ImmutableObjectReference `json:"planRef"`
 	// PlanFingerprint says whether the plan object read today is the one this
 	// record was written for.
 	PlanFingerprint string `json:"planFingerprint"`
@@ -855,18 +843,18 @@ type AppliedStatus struct {
 	TargetIdentityDigest string `json:"targetIdentityDigest"`
 	// ExecutionBindingID is the epoch the apply ran under.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	ExecutionBindingID string `json:"executionBindingID"`
 	// ControllerImage is the digest-pinned manager that dispatched it.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage,omitempty"`
+	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision is that manager's revision.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision,omitempty"`
+	ControllerRevision string `json:"controllerRevision"`
 	// ControllerStateVersion is the state semantics it wrote.
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+	ControllerStateVersion int32 `json:"controllerStateVersion"`
 	// PtahVersion is the Ptah build that executed the statements.
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image it ran in.
@@ -906,9 +894,8 @@ type PendingObservationStatus struct {
 	// ApplyJobUID is that Job's UID.
 	ApplyJobUID types.UID `json:"applyJobUID,omitempty"`
 	// AdmissionSnapshot retains the exact pre-admission Pod template identity
-	// after ActiveOperation is cleared. Current-format Apply Job cleanup after
-	// an execution-binding change fails closed when this evidence is absent;
-	// older supported Job envelopes use their separate compatibility contract.
+	// after ActiveOperation is cleared. Apply Job cleanup after an
+	// execution-binding change fails closed when this evidence is absent.
 	AdmissionSnapshot *PodAdmissionSnapshot `json:"admissionSnapshot,omitempty"`
 	// ApplyPodUIDs and ApplyPodCount preserve the terminal Pod evidence seen at
 	// the mutation boundary. More than one Pod always forces outcome-unknown

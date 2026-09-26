@@ -1013,10 +1013,10 @@ func TestAPendingMigrationIsNotReplayedAfterAnUnreadableRun(t *testing.T) {
 			wantPhase: operatorv1alpha1.MigrationPhaseBlocked,
 		},
 		{
-			// The refusal is the latch. A resource somebody put right settles
+			// The record is the latch. A resource somebody put right settles
 			// through the history, and the next pending migration plans as
 			// usual rather than inheriting a refusal nothing renewed.
-			name:      "a run whose refusal was already cleared",
+			name:      "a run whose record was already cleared",
 			outcome:   operatorv1alpha1.MigrationRunOutcomeUnknown,
 			blocked:   false,
 			wantPhase: operatorv1alpha1.MigrationPhaseAwaitingApproval,
@@ -1047,6 +1047,13 @@ func TestAPendingMigrationIsNotReplayedAfterAnUnreadableRun(t *testing.T) {
 					Reason: string(operatorv1alpha1.ReasonApplyOutcomeUnknown), Message: "the run is over",
 					ObservedGeneration: migration.Generation,
 				})
+				// A run nobody could account for leaves its record where it
+				// ends. A run that failed and committed nothing leaves none.
+				if test.outcome != operatorv1alpha1.MigrationRunOutcomeFailed {
+					migration.Status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
+						Outcome: test.outcome, TargetIdentityDigest: testDigest, RecordedAt: finished,
+					}
+				}
 			}
 			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
 			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
@@ -1224,99 +1231,6 @@ func TestAnUnresolvedMigrationRunOutlivesEveryOtherRefusal(t *testing.T) {
 					// none, because it reads as coverage.
 				})
 			}
-		}
-	}
-}
-
-// A resource a manager blocked before the record existed carries its latch in
-// the refusal alone. That is the shape an upgrade finds, and letting the first
-// refusal that overwrites the reason release the latch would replay exactly the
-// run this refuses. The reconcile converts that refusal into the record before
-// it takes any refusal of its own, so which refusal comes next -- including one
-// added after this was written -- decides nothing.
-func TestAPreRecordUnresolvedMigrationRunIsAdoptedBeforeItIsOverwritten(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		refuse func(*testing.T, *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration
-	}{
-		{
-			name: "a realm another resource claimed for a while",
-			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
-				t.Helper()
-
-				competitor := realmSchemaFixture("orders", migration.Spec.Target.CoordinationKey, false)
-				reconciler, api := fakeMigrationReconciler(
-					t, staticLogs{}, migration.DeepCopy(), competitor, verificationPolicyConfigMap(),
-				)
-				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
-					t.Fatalf("Reconcile() error = %v", err)
-				}
-				contested := readMigration(t, api, migration)
-				assertMigrationBlockedFor(t, contested, operatorv1alpha1.ReasonRealmConflict)
-				return contested
-			},
-		},
-		{
-			name: "a revision row a run left dirty",
-			refuse: refuseMigrationHistory(
-				operatorv1alpha1.ReasonHistoryDirty,
-				func(report *dataplane.MigrationStatusReport) {
-					report.DirtyRevision = &dataplane.MigrationDirty{Version: 3, Applied: 1, Total: 2}
-				},
-			),
-		},
-		{
-			// This refusal is taken above the generation check and before any
-			// reading, so an edited spec reaches it on the pass that follows the
-			// edit. It says nothing about the database, and putting the engine
-			// back leaves the resource exactly where the run left it.
-			name: "an engine this operator does not support",
-			refuse: func(t *testing.T, migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigration {
-				t.Helper()
-
-				engine := migration.Spec.Target.Engine
-				flipped := migration.DeepCopy()
-				flipped.Spec.Target.Engine = operatorv1alpha1.DatabaseEngine("CockroachDB")
-				flipped.Generation++
-				reconciler, api := fakeMigrationReconciler(t, staticLogs{}, flipped, verificationPolicyConfigMap())
-				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(flipped)); err != nil {
-					t.Fatalf("Reconcile() error = %v", err)
-				}
-				refused := readMigration(t, api, flipped)
-				assertMigrationBlockedFor(t, refused, operatorv1alpha1.ReasonUnsupportedEngine)
-				refused.Spec.Target.Engine = engine
-				refused.Generation++
-				return refused
-			},
-		},
-	}
-
-	for _, outcome := range []operatorv1alpha1.MigrationRunOutcome{
-		operatorv1alpha1.MigrationRunOutcomeUnknown,
-		operatorv1alpha1.MigrationRunOutcomePartial,
-	} {
-		for _, test := range tests {
-			t.Run(string(outcome)+"/"+test.name, func(t *testing.T) {
-				t.Parallel()
-
-				migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways, outcome)
-				// The status an older manager wrote: the outcome and the
-				// refusal, and nothing else.
-				migration.Status.UnresolvedRun = nil
-				migration = test.refuse(t, migration)
-				if migration.Status.UnresolvedRun == nil {
-					// Not fatal: the reading below is what the missing record
-					// costs, and it is the claim this test is about.
-					t.Errorf("the refusal that overwrote the %s latch adopted nothing", outcome)
-				}
-				actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
-				assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
-				if actual.Status.Plan != nil {
-					t.Fatalf("a plan was published for a migration the %s run may already have executed", outcome)
-				}
-			})
 		}
 	}
 }
@@ -1584,51 +1498,6 @@ func blockedMessage(blocked *metav1.Condition) string {
 	return blocked.Message
 }
 
-// The state an upgrade actually finds. A manager older than status.unresolvedRun
-// held the latch in the Blocked condition's reason, and the defect that record
-// exists to fix is that every later refusal overwrote it -- so by the time the
-// new manager first reads the object, the reason it left is usually gone. An
-// adoption that required its own reason to have survived would adopt the
-// objects the defect missed and skip the ones it reached, and those are the
-// ones that go on to publish a plan and replay a run nobody accounted for.
-func TestAnUnresolvedMigrationRunIsAdoptedUnderARefusalThatOverwroteItBeforeTheUpgrade(t *testing.T) {
-	t.Parallel()
-
-	for _, reason := range []operatorv1alpha1.ConditionReason{
-		operatorv1alpha1.ReasonRealmConflict,
-		operatorv1alpha1.ReasonHistoryDirty,
-		operatorv1alpha1.ReasonHistoryModified,
-		operatorv1alpha1.ReasonHistoryOutOfOrder,
-		operatorv1alpha1.ReasonUnsupportedEngine,
-	} {
-		t.Run(string(reason), func(t *testing.T) {
-			t.Parallel()
-
-			migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
-				operatorv1alpha1.MigrationRunOutcomeUnknown)
-			// The status as the older manager left it: the run's outcome, a
-			// Blocked condition, and some other refusal's reason on it. No
-			// record, because that manager had none to write.
-			migration.Status.UnresolvedRun = nil
-			blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
-			if blocked == nil || blocked.Status != metav1.ConditionTrue {
-				t.Fatalf("the fixture is not blocked, so there is no latch to overwrite: %#v", blocked)
-			}
-			blocked.Reason = string(reason)
-
-			actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
-			if actual.Status.UnresolvedRun == nil {
-				t.Fatal("the upgrade adopted nothing for a run latched under another refusal's reason")
-			}
-			if actual.Status.Plan != nil {
-				t.Fatalf("a plan was published for a migration the unknown run may already have executed: %#v",
-					actual.Status.Plan)
-			}
-			assertMigrationBlockedFor(t, actual, operatorv1alpha1.ReasonApplyOutcomeUnknown)
-		})
-	}
-}
-
 // Which database the record names decides what can settle it, so it has to be
 // the one the run actually opened. The executor reports that in its result
 // frame, and it is not always the database the plan was computed against: the
@@ -1678,40 +1547,6 @@ func TestAnUnresolvedMigrationRunRecordsTheDatabaseTheRunReported(t *testing.T) 
 	if unresolved.TargetIdentityDigest != rotated {
 		t.Fatalf("recorded database = %q, want the one the run reported %q (the plan was computed against %q)",
 			unresolved.TargetIdentityDigest, rotated, planned)
-	}
-}
-
-// The cost of adopting too broadly, and the one case where evidence rules it
-// out. The old settlement path left status.lastRun as the run wrote it, so an
-// outcome of Unknown outlives the reading that accounted for it. Re-latching
-// such a resource on upgrade is not merely redundant: where a newer artifact
-// has since made work pending, the reading that would clear the record is the
-// one that now finds work, so it never clears. A resource blocked for an
-// unrelated refusal would go from recovering when that refusal lifted to
-// waiting for a person who has nothing to find.
-func TestASettledMigrationRunIsNotReLatchedByAnUpgrade(t *testing.T) {
-	t.Parallel()
-
-	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
-		operatorv1alpha1.MigrationRunOutcomeUnknown)
-	// The reading that settled it, as the old manager left things: the record
-	// gone, the run's own outcome untouched, and a history taken afterwards
-	// with nothing of the artifact left to apply.
-	migration.Status.UnresolvedRun = nil
-	settledAt := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(time.Minute))
-	migration.Status.History.ObservedAt = settledAt
-	migration.Status.History.PendingCount = 0
-	// Then a newer artifact made work pending again, and something unrelated
-	// stopped the resource before it could run.
-	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
-	if blocked == nil || blocked.Status != metav1.ConditionTrue {
-		t.Fatalf("the fixture is not blocked, so there is nothing for an upgrade to read: %#v", blocked)
-	}
-	blocked.Reason = string(operatorv1alpha1.ReasonRealmConflict)
-
-	actual, _ := readMigrationHistory(t, migration, pendingMigrationHistory())
-	if actual.Status.UnresolvedRun != nil {
-		t.Fatalf("the upgrade latched a run a later reading had already settled: %#v", actual.Status.UnresolvedRun)
 	}
 }
 
@@ -1910,11 +1745,9 @@ func extraJobs(objects []client.Object) []client.Object {
 
 // The manual clear operations.md documents, exactly as it is written there.
 //
-// The record is removed and the refusal lifted in one write. Removing the
-// record alone is not enough: the upgrade path reads the Blocked condition
-// before anything else in a pass, so a resource left blocked has its record
-// rebuilt on the next reconciliation -- which is a runbook that returns the
-// reader to where they started.
+// A record is written only where an Apply ends Partial or Unknown, so nothing a
+// reading finds brings back one a person cleared: not work still pending, and
+// not a refusal the database keeps answering with.
 func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 	t.Parallel()
 
@@ -1924,67 +1757,38 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 		// report is the reading each pass gets; the default has work pending
 		// and nothing else refusing.
 		report func() dataplane.MigrationStatusReport
-		// passes is how many readings to run. One is enough to show a clear
-		// holding or not; a refusal that keeps coming back needs the pass that
-		// rewrites Blocked and the pass that then reads it.
-		passes     int
-		wantRecord bool
 	}{
 		{
 			name:  "the record and the refusal go together",
 			clear: clearTheDocumentedWay,
 		},
 		{
-			name: "the record alone comes back",
+			name: "the record alone",
 			clear: func(migration *operatorv1alpha1.PtahMigration) {
 				migration.Status.UnresolvedRun = nil
 			},
-			wantRecord: true,
 		},
 		{
-			// The case the procedure is written for, and the one it cannot
-			// answer on its own: something else is still refusing the
-			// resource, so the pass after this one writes Blocked again and
-			// the upgrade path rebuilds the record. The runbook says to clear
-			// that refusal first, and this is why.
-			name:       "a refusal that keeps coming back rebuilds it",
-			clear:      clearTheDocumentedWay,
-			report:     func() dataplane.MigrationStatusReport { return dirtyMigrationHistory() },
-			passes:     2,
-			wantRecord: true,
+			name:   "a refusal that keeps coming back",
+			clear:  clearTheDocumentedWay,
+			report: func() dataplane.MigrationStatusReport { return dirtyMigrationHistory() },
 		},
 		{
-			// The same refusal with nothing pending, which is how an
-			// interrupted run usually leaves a database: the row it was
+			// How an interrupted run usually leaves a database: the row it was
 			// writing is dirty and the artifact has nothing else to apply.
-			// An empty pending list alone used to read as the settlement the
-			// run was waiting for, so the record a person cleared by hand
-			// stayed gone while the database went on refusing.
-			name:       "a dirty row with nothing pending rebuilds it",
-			clear:      clearTheDocumentedWay,
-			report:     settledDirtyMigrationHistory,
-			passes:     2,
-			wantRecord: true,
+			name:   "a dirty row with nothing pending",
+			clear:  clearTheDocumentedWay,
+			report: settledDirtyMigrationHistory,
 		},
 		{
-			// And the other refusal the database's own record can carry with
-			// nothing pending.
-			name:       "an applied migration that no longer matches its file rebuilds it",
-			clear:      clearTheDocumentedWay,
-			report:     modifiedMigrationHistory,
-			passes:     2,
-			wantRecord: true,
+			name:   "an applied migration that no longer matches its file",
+			clear:  clearTheDocumentedWay,
+			report: modifiedMigrationHistory,
 		},
 		{
-			// The boundary the runbook names. This refusal keeps coming back
-			// like the two above, and the clear still holds: the reading found
-			// every migration the artifact carries applied and nothing dirty
-			// or modified, which is the settlement, and the version the
-			// artifact ends at is not kept in status for this path to weigh.
-			name:   "a database ahead of its artifact does not rebuild it",
+			name:   "a database ahead of its artifact",
 			clear:  clearTheDocumentedWay,
 			report: historyAheadOfItsArtifact,
-			passes: 2,
 		},
 	} {
 		row := row
@@ -1996,14 +1800,6 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			if migration.Status.UnresolvedRun == nil {
 				t.Fatal("the fixture recorded no unresolved run")
 			}
-			// The upgrade path exempts a run a later reading already accounted
-			// for, and it compares the two instants strictly. This test clock
-			// stamps the run and every reading at the same one, which no
-			// cluster does and which would make each row below pass without
-			// ever reaching that exemption. Backdating the run is what puts
-			// the readings after it, as they are in a cluster.
-			finished := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(-time.Minute))
-			migration.Status.LastRun.FinishedAt = &finished
 			row.clear(migration)
 
 			// A reading that still has work pending, because the case this is
@@ -2013,19 +1809,14 @@ func TestTheDocumentedManualClearSurvivesTheNextPass(t *testing.T) {
 			if row.report != nil {
 				report = row.report
 			}
-			passes := row.passes
-			if passes < 1 {
-				passes = 1
-			}
+			// Two passes: the one that rewrites Blocked and the one that
+			// then reads it.
 			actual := migration
-			for pass := 0; pass < passes; pass++ {
+			for pass := 0; pass < 2; pass++ {
 				actual, _ = readMigrationHistory(t, actual, report())
 			}
-			if row.wantRecord && actual.Status.UnresolvedRun == nil {
-				t.Fatal("removing the record alone was enough, so the runbook's warning is wrong")
-			}
-			if !row.wantRecord && actual.Status.UnresolvedRun != nil {
-				t.Fatalf("the documented clear was undone by the next pass: %#v", actual.Status.UnresolvedRun)
+			if actual.Status.UnresolvedRun != nil {
+				t.Fatalf("the documented clear was undone by a later pass: %#v", actual.Status.UnresolvedRun)
 			}
 		})
 	}
@@ -2104,7 +1895,7 @@ func historyAheadOfItsArtifact() dataplane.MigrationStatusReport {
 // the name it reserved and no UID. The name alone is not evidence that anything
 // ran under it, so the record names no Job rather than sending a reader after
 // one that may never have existed. What it does name is the attempt and the
-// plan, which is what separates it from a record adopted on upgrade.
+// plan.
 func TestAnUnconfirmedApplyCreateRecordsNoJob(t *testing.T) {
 	t.Parallel()
 
@@ -2137,10 +1928,8 @@ func TestAnUnconfirmedApplyCreateRecordsNoJob(t *testing.T) {
 
 // A database ahead of its artifact does not clear a record that is standing.
 //
-// The runbook distinguishes the two, because the upgrade path does not write
-// such a record again once a person has cleared it by hand. The refusal is
-// answered before the branch that removes a record is reached, so a resource
-// left alone waits rather than settling.
+// The refusal is answered before the branch that removes a record is reached,
+// so a resource left alone waits rather than settling.
 func TestADatabaseAheadOfItsArtifactDoesNotClearAStandingRecord(t *testing.T) {
 	t.Parallel()
 
@@ -2457,43 +2246,5 @@ func settledMigrationHistory() dataplane.MigrationStatusReport {
 			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
 			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 		},
-	}
-}
-
-// The upgrade leaves alone a run the stored reading still accounts for.
-//
-// A reading taken after the run finished, with nothing of the artifact left to
-// apply and nothing the classifier refuses, is the evidence the record would
-// have been. Adopting anyway would latch a resource that was settled long ago
-// because something unrelated is refusing it now, and the page says it does
-// not.
-func TestAnUpgradeLeavesARunItsOwnReadingAccountsFor(t *testing.T) {
-	t.Parallel()
-
-	migration := unresolvedMigrationRun(t, operatorv1alpha1.ApplyPolicyAlways,
-		operatorv1alpha1.MigrationRunOutcomeUnknown)
-	clearTheDocumentedWay(migration)
-	// The state an older manager leaves: the run in status.lastRun, blocked
-	// for something that has nothing to do with it, and a reading since that
-	// found nothing to do.
-	finished := metav1.NewTime(migration.Status.LastRun.FinishedAt.Add(-time.Hour))
-	migration.Status.LastRun.FinishedAt = &finished
-	migration.Status.History = &operatorv1alpha1.MigrationHistoryStatus{
-		ObservedAt:           metav1.NewTime(finished.Add(time.Minute)),
-		ContractVersion:      dataplane.SupportedMigrationStatusContract,
-		Fingerprint:          testDigest,
-		TargetIdentityDigest: testDigest,
-		PendingCount:         0,
-	}
-	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
-		operatorv1alpha1.ReasonUnsupportedEngine, "something that is not about the run")
-
-	if migrationRunLatchedByRefusal(migration) {
-		t.Fatal("the upgrade would latch a run its own stored reading already accounts for")
-	}
-	// And it does latch once that reading no longer settles it.
-	migration.Status.History.PendingCount = 1
-	if !migrationRunLatchedByRefusal(migration) {
-		t.Fatal("the upgrade left a run no surviving reading accounts for")
 	}
 }

@@ -29,7 +29,6 @@ spec:
       mode: Environment
       usernameKey: username
       passwordKey: password
-      registryKey: registry
     # A migration's own policy. One that also accepted the schema artifact type
     # would let a declared schema stand in for a prepared sequence.
     verificationPolicyFrom:

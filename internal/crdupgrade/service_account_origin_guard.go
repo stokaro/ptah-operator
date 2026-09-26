@@ -305,12 +305,10 @@ func (g *ServiceAccountOriginGuard) bindingTransitionExpression() string {
 	targets := []string{
 		g.bindingTransitionTargetExpression("ClusterRoleBinding", "", g.ControllerDeploymentName, false),
 		g.bindingTransitionTargetExpression("RoleBinding", g.CoordinationNamespace, g.ControllerDeploymentName, false),
+		g.bindingTransitionTargetExpression("RoleBinding", g.ReleaseNamespace, g.ControllerDeploymentName+"-runtime-admission", true),
 	}
-	if g.PreviousControllerReleaseSequence > 0 {
-		targets = append(targets, g.bindingTransitionTargetExpression("RoleBinding", g.ReleaseNamespace, g.ControllerDeploymentName+"-runtime-admission", true))
-		if g.ReleaseNamespace != metav1.NamespaceDefault {
-			targets = append(targets, g.bindingTransitionTargetExpression("RoleBinding", metav1.NamespaceDefault, controllerDiscoveryBindingName(g.ControllerDeploymentName), true))
-		}
+	if g.ReleaseNamespace != metav1.NamespaceDefault {
+		targets = append(targets, g.bindingTransitionTargetExpression("RoleBinding", metav1.NamespaceDefault, controllerDiscoveryBindingName(g.ControllerDeploymentName), true))
 	}
 	parts := []string{
 		`request.operation == "UPDATE" && (!has(request.subResource) || request.subResource == "") && request.resource.version == "v1" && object != null && oldObject != null`,

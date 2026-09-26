@@ -140,7 +140,6 @@ spec:
 | `spec.desired.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
 | `spec.desired.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
 | `spec.desired.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
-| `spec.desired.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
 | `spec.desired.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `spec.desired.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
 | `spec.desired.transport` | `object` | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Transport is how the registry is reached: plain HTTP, a custom CA, a client certificate. |
@@ -381,7 +380,6 @@ spec:
 | `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
 | `status.activeOperation.source.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
 | `status.activeOperation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
-| `status.activeOperation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
 | `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
 | `status.activeOperation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
@@ -410,14 +408,14 @@ spec:
 | `status.applied` | `object` | Applied is the last apply that was independently observed to have converged, which is a different claim from a Job that exited zero. |
 | `status.applied.artifactDigest` | `string`, required | ArtifactDigest is the artifact that was applied. |
 | `status.applied.completedAt` | `string`, required | CompletedAt is when convergence was independently observed, not when the Job exited. |
-| `status.applied.controllerImage` | `string` | ControllerImage is the digest-pinned manager that dispatched it. |
-| `status.applied.controllerRevision` | `string` | ControllerRevision is that manager's revision. |
-| `status.applied.controllerStateVersion` | `integer` | ControllerStateVersion is the state semantics it wrote. |
+| `status.applied.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that dispatched it. |
+| `status.applied.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
+| `status.applied.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it wrote. |
 | `status.applied.coordinationDigest` | `string`, required | CoordinationDigest is the realm the apply held while it ran. |
-| `status.applied.executionBindingID` | `string` | ExecutionBindingID is the epoch the apply ran under. |
+| `status.applied.executionBindingID` | `string`, required | ExecutionBindingID is the epoch the apply ran under. |
 | `status.applied.executorImage` | `string`, required | ExecutorImage is the digest-pinned image it ran in. |
 | `status.applied.planFingerprint` | `string`, required | PlanFingerprint says whether the plan object read today is the one this record was written for. |
-| `status.applied.planRef` | `object` | PlanRef names the stored plan this apply ran. It is what a reader addresses to see the SQL that was applied, instead of searching the namespace for a fingerprint. Optional, because a record written before the field existed carries only PlanFingerprint. It does not replace that fingerprint: the reference says which object to read and the fingerprint says whether the object read is the one this record was written for. |
+| `status.applied.planRef` | `object`, required | PlanRef names the stored plan this apply ran. It is what a reader addresses to see the SQL that was applied. It does not replace PlanFingerprint: the reference says which object to read and the fingerprint says whether the object read is the one this record was written for. |
 | `status.applied.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.applied.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.applied.ptahVersion` | `string`, required | PtahVersion is the Ptah build that executed the statements. |
@@ -432,9 +430,9 @@ spec:
 | `status.conditions[].status` | `string`, required, one of `True`, `False`, `Unknown` | status of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | `string`, required | type of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.executionBinding` | `object` | ExecutionBinding is the durable identity of the controller/runtime epoch authorized to produce new reconciliation evidence. Retained evidence stays historical until refreshed. Epoch changes on every component transition, including a rollback to identical values. |
-| `status.executionBinding.controllerImage` | `string` | ControllerImage identifies the exact manager container content that interpreted controller state and authorized this evidence epoch. |
-| `status.executionBinding.controllerRevision` | `string` | ControllerRevision identifies the exact manager build that interpreted controller state. It is provenance metadata in addition to ControllerImage, not a substitute for the image content digest. |
-| `status.executionBinding.controllerStateVersion` | `integer` | ControllerStateVersion versions manager-side reconciliation semantics independently of the data-plane runner protocol. |
+| `status.executionBinding.controllerImage` | `string`, required | ControllerImage identifies the exact manager container content that interpreted controller state and authorized this evidence epoch. |
+| `status.executionBinding.controllerRevision` | `string`, required | ControllerRevision identifies the exact manager build that interpreted controller state. It is provenance metadata in addition to ControllerImage, not a substitute for the image content digest. |
+| `status.executionBinding.controllerStateVersion` | `integer`, required | ControllerStateVersion versions manager-side reconciliation semantics independently of the data-plane runner protocol. |
 | `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes on every component transition, a rollback to identical versions included, so evidence from before a rollout is historical rather than current. |
 | `status.executionBinding.executorImage` | `string`, required | ExecutorImage is the digest-pinned image carrying that build. |
 | `status.executionBinding.ptahVersion` | `string`, required | PtahVersion is the Ptah build this epoch executes with. |
@@ -450,7 +448,7 @@ spec:
 | `status.pendingLockRelease.leaseEpoch` | `string`, required | LeaseEpoch identifies that acquisition, so a release cannot free a lock somebody else acquired in the meantime. |
 | `status.pendingLockRelease.operationID` | `string`, required | OperationID is the operation that took it. |
 | `status.pendingObservation` | `object` | PendingObservation is durable proof work created after an Apply Job may have mutated the database. It is independent of Phase so retries and suspension cannot accidentally permit another mutation first. |
-| `status.pendingObservation.admissionSnapshot` | `object` | AdmissionSnapshot retains the exact pre-admission Pod template identity after ActiveOperation is cleared. Current-format Apply Job cleanup after an execution-binding change fails closed when this evidence is absent; older supported Job envelopes use their separate compatibility contract. |
+| `status.pendingObservation.admissionSnapshot` | `object` | AdmissionSnapshot retains the exact pre-admission Pod template identity after ActiveOperation is cleared. Apply Job cleanup after an execution-binding change fails closed when this evidence is absent. |
 | `status.pendingObservation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin, which rewrites every imagePullPolicy to Always. |
 | `status.pendingObservation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required | DefaultNotReadyTolerationSeconds is that plugin's not-ready value. |
 | `status.pendingObservation.admissionSnapshot.defaultTolerationsEnabled` | `boolean`, required | DefaultTolerationsEnabled records whether kube-apiserver runs the DefaultTolerationSeconds admission plugin. It and the two values below say what that plugin does, so a toleration the Pod did not ask for is recognized rather than refused. |
@@ -528,14 +526,14 @@ spec:
 | `status.pendingObservation.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
 | `status.pendingObservation.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
 | `status.pendingObservation.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
-| `status.pendingObservation.plan.controllerImage` | `string` | ControllerImage is the digest-pinned manager that published it. |
-| `status.pendingObservation.plan.controllerRevision` | `string` | ControllerRevision is that manager's revision. |
-| `status.pendingObservation.plan.controllerStateVersion` | `integer` | ControllerStateVersion is the state semantics it writes. |
+| `status.pendingObservation.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it. |
+| `status.pendingObservation.plan.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
+| `status.pendingObservation.plan.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it writes. |
 | `status.pendingObservation.plan.coordinationDigest` | `string`, required | CoordinationDigest is the database realm it takes its turn in. |
 | `status.pendingObservation.plan.createdAt` | `string`, required | CreatedAt is the plan object's own creation time, copied like every other field here, so an audit of this record and of the plan it names cannot disagree about when the plan came into being. |
 | `status.pendingObservation.plan.desiredStateFingerprint` | `string`, required | DesiredStateFingerprint is the state the artifact declared. |
 | `status.pendingObservation.plan.destructive` | `boolean`, required | Destructive says the plan drops or rewrites something. |
-| `status.pendingObservation.plan.executionBindingID` | `string` | ExecutionBindingID is the execution epoch it belongs to. |
+| `status.pendingObservation.plan.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch it belongs to. |
 | `status.pendingObservation.plan.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran it. |
 | `status.pendingObservation.plan.fingerprint` | `string`, required | Fingerprint is the plan's complete approval identity, and the fields below are that identity spelled out. They are copied here so a reader -- and an audit -- can see what is waiting without fetching the plan. |
 | `status.pendingObservation.plan.name` | `string`, required | Name of the PtahSchemaPlan this record is about. |
@@ -557,7 +555,6 @@ spec:
 | `status.pendingObservation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
 | `status.pendingObservation.source.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
 | `status.pendingObservation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
-| `status.pendingObservation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
 | `status.pendingObservation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.pendingObservation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
 | `status.pendingObservation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
@@ -590,14 +587,14 @@ spec:
 | `status.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
 | `status.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
 | `status.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
-| `status.plan.controllerImage` | `string` | ControllerImage is the digest-pinned manager that published it. |
-| `status.plan.controllerRevision` | `string` | ControllerRevision is that manager's revision. |
-| `status.plan.controllerStateVersion` | `integer` | ControllerStateVersion is the state semantics it writes. |
+| `status.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it. |
+| `status.plan.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
+| `status.plan.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it writes. |
 | `status.plan.coordinationDigest` | `string`, required | CoordinationDigest is the database realm it takes its turn in. |
 | `status.plan.createdAt` | `string`, required | CreatedAt is the plan object's own creation time, copied like every other field here, so an audit of this record and of the plan it names cannot disagree about when the plan came into being. |
 | `status.plan.desiredStateFingerprint` | `string`, required | DesiredStateFingerprint is the state the artifact declared. |
 | `status.plan.destructive` | `boolean`, required | Destructive says the plan drops or rewrites something. |
-| `status.plan.executionBindingID` | `string` | ExecutionBindingID is the execution epoch it belongs to. |
+| `status.plan.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch it belongs to. |
 | `status.plan.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran it. |
 | `status.plan.fingerprint` | `string`, required | Fingerprint is the plan's complete approval identity, and the fields below are that identity spelled out. They are copied here so a reader -- and an audit -- can see what is waiting without fetching the plan. |
 | `status.plan.name` | `string`, required | Name of the PtahSchemaPlan this record is about. |

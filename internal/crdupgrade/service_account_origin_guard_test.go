@@ -264,7 +264,7 @@ func TestServiceAccountOriginBindingCutoverCEL(t *testing.T) {
 		{"default", "default"},
 		{"default", "coordination"},
 	} {
-		for _, previous := range []int32{0, 1} {
+		for _, previous := range []int32{1} {
 			t.Run(fmt.Sprintf("%s/%s/%d", namespaces.release, namespaces.coordination, previous), func(t *testing.T) {
 				guard := testBindingOriginGuard(previous, namespaces.release, namespaces.coordination)
 				policy, err := guard.policy()
@@ -278,8 +278,8 @@ func TestServiceAccountOriginBindingCutoverCEL(t *testing.T) {
 				}{
 					{"ClusterRoleBinding", "", guard.ControllerDeploymentName, false, true},
 					{"RoleBinding", namespaces.coordination, guard.ControllerDeploymentName, false, true},
-					{"RoleBinding", namespaces.release, guard.ControllerDeploymentName + "-runtime-admission", true, previous > 0},
-					{"RoleBinding", "default", controllerDiscoveryBindingName(guard.ControllerDeploymentName), true, previous > 0 && namespaces.release != "default"},
+					{"RoleBinding", namespaces.release, guard.ControllerDeploymentName + "-runtime-admission", true, true},
+					{"RoleBinding", "default", controllerDiscoveryBindingName(guard.ControllerDeploymentName), true, namespaces.release != "default"},
 				} {
 					for _, dryRun := range []bool{false, true} {
 						fixture := bindingOriginCELFixture(guard, target.kind, target.namespace, target.name, target.certificate)
@@ -412,7 +412,7 @@ func TestServiceAccountOriginBindingCutoverRejectsPrivilegeChanges(t *testing.T)
 
 func TestServiceAccountOriginBindingCutoverRequestNamespace(t *testing.T) {
 	t.Parallel()
-	for _, previous := range []int32{0, 1} {
+	for _, previous := range []int32{1} {
 		guard := testBindingOriginGuard(previous, "ptah-system", "coordination")
 		policy, err := guard.policy()
 		if err != nil {
@@ -443,7 +443,7 @@ func TestServiceAccountOriginBindingCutoverRequestNamespace(t *testing.T) {
 
 func TestServiceAccountOriginClusterBindingCutoverRequiresExactDrain(t *testing.T) {
 	t.Parallel()
-	for _, previous := range []int32{0, 1} {
+	for _, previous := range []int32{1} {
 		guard := testBindingOriginGuard(previous, "ptah-system", "coordination")
 		policy, err := guard.policy()
 		if err != nil {
@@ -472,7 +472,11 @@ func TestServiceAccountOriginClusterBindingCutoverRequiresExactDrain(t *testing.
 
 func TestServiceAccountOriginBindingCutoverRetainedPolicyOverlap(t *testing.T) {
 	t.Parallel()
+	// The guard sequence 1 retained has no predecessor of its own.
 	previous := testBindingOriginGuard(0, "ptah-system", "coordination")
+	previous.PreviousControllerServiceAccountName = ""
+	previous.PreviousControllerServiceAccountUID = ""
+	previous.PreviousControllerManagerImage = ""
 	candidate := testBindingOriginGuard(1, "ptah-system", "coordination")
 	fixture := bindingOriginCELFixture(candidate, "ClusterRoleBinding", "", candidate.ControllerDeploymentName, false)
 	for _, guard := range []*ServiceAccountOriginGuard{previous, candidate} {
@@ -531,7 +535,7 @@ func TestRenderedPredecessorServiceAccountOriginGuardMatchesCompiledContract(t *
 		{"default", ""},
 		{"default", "coordination"},
 	} {
-		for _, previous := range []int32{0, 1} {
+		for _, previous := range []int32{1} {
 			for _, managed := range []bool{false, true} {
 				for _, certificateMode := range []string{"managed", "disabled", "external-secret"} {
 					name := fmt.Sprintf("%s/%s/%d-to-%d/managed-%t/%s", namespaces.release, namespaces.coordination, previous, previous+1, managed, certificateMode)
@@ -581,9 +585,6 @@ func originParityGuard(previous int32, namespace, coordination string, managed b
 	managerImage := "registry.example/ptah@sha256:" + strings.Repeat("a", 64)
 	previousImage := "registry.example/ptah@sha256:" + strings.Repeat("b", 64)
 	controllerName := func(sequence int32, image string) string {
-		if sequence == 0 {
-			return controllerBase
-		}
 		if !managed {
 			return fmt.Sprintf("%s-v%d", controllerBase, sequence)
 		}

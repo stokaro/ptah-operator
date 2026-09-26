@@ -181,9 +181,8 @@ func TestMigrationCommandNamesTheApprovedSequenceOnlyOnTheApply(t *testing.T) {
 }
 
 // A mode nobody asked for has to leave the command exactly as it was. Every
-// PtahMigration stored before the field existed runs through this code, and a
-// flag appearing for them would change how they execute without anyone editing
-// them.
+// PtahMigration that sets no mode runs through this code, and a flag appearing
+// for it would change how it executes without anyone editing it.
 func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 	t.Parallel()
 

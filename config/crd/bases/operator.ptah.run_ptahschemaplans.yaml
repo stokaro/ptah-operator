@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "17"
-    operator.ptah.run/crd-schema-digest: "sha256:8bd2fc0b658fab6c0421bbedb9024555b9217b29d4db4f40cb2166c04c62d6d2"
+    operator.ptah.run/crd-schema-version: "18"
+    operator.ptah.run/crd-schema-digest: "sha256:6d657fbacaa27593d4b692c0af6c590def3e75ef49a6f6c8d481f63aeffbd2a7"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemaplans.operator.ptah.run
 spec:
@@ -86,9 +86,9 @@ spec:
               contentDigest:
                 type: string
               contractVersion:
+                enum:
+                - 3
                 format: int32
-                maximum: 3
-                minimum: 1
                 type: integer
               controllerImage:
                 pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
@@ -156,10 +156,14 @@ spec:
             - chunks
             - contentDigest
             - contractVersion
+            - controllerImage
+            - controllerRevision
+            - controllerStateVersion
             - coordinationDigest
             - desiredStateFingerprint
             - destructive
             - dialect
+            - executionBindingID
             - executorImage
             - fingerprint
             - policyFingerprint

@@ -71,8 +71,8 @@ func ExternalControllerServiceAccountName(base string, releaseSequence int32) (s
 }
 
 // ServiceAccountObjectIdentityContractForRollout derives and validates the
-// frozen identity inputs from one rollout. Epoch-zero predecessors belong to
-// the separately trusted legacy bootstrap and do not expand this contract.
+// frozen identity inputs from one rollout. A predecessor must share the
+// candidate's identity base and mode, so it never widens this contract.
 func ServiceAccountObjectIdentityContractForRollout(rollout *RolloutGuard) (ServiceAccountObjectIdentityContract, error) {
 	if rollout == nil {
 		return ServiceAccountObjectIdentityContract{}, errors.New("service account object identity rollout is required")
@@ -107,14 +107,14 @@ func ServiceAccountObjectIdentityContractForRollout(rollout *RolloutGuard) (Serv
 		return ServiceAccountObjectIdentityContract{}, fmt.Errorf("certificate ServiceAccount name %q is invalid: %s", rollout.CertificateDeploymentName, strings.Join(problems, "; "))
 	}
 
-	if rollout.PreviousControllerReleaseSequence < 0 {
-		return ServiceAccountObjectIdentityContract{}, errors.New("predecessor controller release sequence must not be negative")
+	if err := validatePredecessorRelease(
+		rollout.PreviousControllerServiceAccountName,
+		rollout.PreviousControllerReleaseSequence,
+		rollout.ReleaseSequence,
+	); err != nil {
+		return ServiceAccountObjectIdentityContract{}, err
 	}
-	if rollout.PreviousControllerServiceAccountName == "" {
-		if rollout.PreviousControllerReleaseSequence != 0 {
-			return ServiceAccountObjectIdentityContract{}, errors.New("predecessor controller release sequence requires a ServiceAccount name")
-		}
-	} else if rollout.PreviousControllerReleaseSequence > 0 {
+	if rollout.PreviousControllerServiceAccountName != "" {
 		if rollout.PreviousControllerServiceAccountManaged != rollout.ControllerServiceAccountManaged {
 			return ServiceAccountObjectIdentityContract{}, errors.New("candidate and predecessor controller ServiceAccounts must use the same managed identity mode")
 		}

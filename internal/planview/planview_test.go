@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -100,26 +101,6 @@ func TestLoadKeepsCurrentAndAppliedApart(t *testing.T) {
 	}
 }
 
-// A record written before the reference existed is still readable, by the
-// fingerprint it does carry and the schema it was written for.
-func TestLoadFindsTheAppliedPlanOfARecordWithNoReference(t *testing.T) {
-	t.Parallel()
-	lab := newLab(t, "storefront")
-	plan, _ := lab.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
-	// A second plan of the same schema, so the search has something to be
-	// wrong about.
-	lab.store(t, []string{"ALTER TABLE customers ADD COLUMN email TEXT"}, "v2")
-	lab.appliedBeforeTheReference(t, plan)
-
-	view, err := planview.Load(context.Background(), lab.reader(), "application", "storefront", planview.Applied)
-	if err != nil {
-		t.Fatalf("Load(applied) error = %v", err)
-	}
-	if view.PlanName != plan.Name {
-		t.Fatalf("the fallback resolved to %s, want %s", view.PlanName, plan.Name)
-	}
-}
-
 // Absence is an answer. A schema with nothing applied is told so, rather than
 // handed the plan it would run next.
 func TestLoadFailurePath(t *testing.T) {
@@ -168,20 +149,6 @@ func TestLoadFailurePath(t *testing.T) {
 			schema:    "storefront",
 			want:      planview.ErrNoPlan,
 			message:   "is gone",
-		},
-		{
-			name: "a record with no reference and no matching plan",
-			arrange: func(t *testing.T, lab *lab) {
-				plan := first(t, lab)
-				lab.appliedBeforeTheReference(t, plan)
-				if err := lab.client.Delete(context.Background(), plan); err != nil {
-					t.Fatalf("delete the plan: %v", err)
-				}
-			},
-			selection: planview.Applied,
-			schema:    "storefront",
-			want:      planview.ErrNoPlan,
-			message:   "no stored plan",
 		},
 	}
 
@@ -287,53 +254,10 @@ func TestLoadReadsOnlyThePlansOwnObjects(t *testing.T) {
 	}
 }
 
-// The compatibility path is the one that lists, and only it.
-func TestLoadListsOnlyForARecordWithNoReference(t *testing.T) {
-	t.Parallel()
-	lab := newLab(t, "storefront")
-	plan, _ := lab.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
-	lab.appliedBeforeTheReference(t, plan)
-	reader := lab.reader()
-
-	if _, err := planview.Load(context.Background(), reader, "application", "storefront", planview.Applied); err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if !contains(reader.touched(), "list *v1alpha1.PtahSchemaPlanList") {
-		t.Fatalf("the fallback did not list the namespace's plans: %v", reader.touched())
-	}
-}
-
 func first(t *testing.T, lab *lab) *operatorv1alpha1.PtahSchemaPlan {
 	t.Helper()
 	plan, _ := lab.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
 	return plan
-}
-
-// Two plans carrying one fingerprint is a question the fallback may not answer
-// by itself. Taking the first would be choosing which SQL a reader is shown.
-func TestLoadRefusesAnAmbiguousFallback(t *testing.T) {
-	t.Parallel()
-	lab := newLab(t, "storefront")
-	plan, _ := lab.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
-	twin := plan.DeepCopy()
-	twin.Name = plan.Name + "-twin"
-	twin.ResourceVersion = ""
-	twin.UID = ""
-	if err := lab.client.Create(context.Background(), twin); err != nil {
-		t.Fatalf("store the twin: %v", err)
-	}
-	lab.appliedBeforeTheReference(t, plan)
-
-	view, err := planview.Load(context.Background(), lab.reader(), "application", "storefront", planview.Applied)
-	if !errors.Is(err, planview.ErrAmbiguous) {
-		t.Fatalf("Load() error = %v, want %v", err, planview.ErrAmbiguous)
-	}
-	if !strings.Contains(err.Error(), twin.Name) || !strings.Contains(err.Error(), plan.Name) {
-		t.Fatalf("Load() said %q, which does not name both plans", err)
-	}
-	if len(view.Document) != 0 {
-		t.Fatal("Load() returned a document with its error")
-	}
 }
 
 // A document this build does not know how to read is said to be that, rather
@@ -375,22 +299,31 @@ func TestLoadRefusesAPlanWhosePublicationDidNotFinish(t *testing.T) {
 	}
 }
 
-// One namespace, two schemas, and a record that names its own plan. The
-// fallback matches on the schema as well as the fingerprint, so a plan of the
-// other schema is not an answer.
+// One namespace, two schemas, and a record that names the other schema's plan
+// by its exact name and UID. The reference says which object to read; the
+// schema binding says whether it is an answer, and a plan of another schema is
+// not.
 func TestLoadKeepsTwoSchemasApart(t *testing.T) {
 	t.Parallel()
 	storefront := newLab(t, "storefront")
-	warehouse := newLab(t, "warehouse")
-	own, _ := storefront.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
-	warehouse.store(t, []string{"CREATE TABLE pallets (id BIGINT PRIMARY KEY)"}, "v1")
-	storefront.appliedBeforeTheReference(t, own)
+	warehouseSchema := &operatorv1alpha1.PtahSchema{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "warehouse", UID: types.UID("uid-warehouse")},
+		Spec: operatorv1alpha1.PtahSchemaSpec{
+			Target: operatorv1alpha1.DatabaseTargetSpec{Engine: "PostgreSQL"},
+		},
+	}
+	if err := storefront.client.Create(context.Background(), warehouseSchema); err != nil {
+		t.Fatalf("store the warehouse schema: %v", err)
+	}
+	warehouse := &lab{schema: warehouseSchema, client: storefront.client, reads: &recorder{}}
+	foreign, _ := warehouse.store(t, []string{"CREATE TABLE pallets (id BIGINT PRIMARY KEY)"}, "v1")
+	storefront.applied(t, foreign)
 
 	view, err := planview.Load(context.Background(), storefront.reader(), "application", "storefront", planview.Applied)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "not to this schema") {
+		t.Fatalf("Load() error = %v, want a refusal of the other schema's plan", err)
 	}
-	if view.PlanName != own.Name {
-		t.Fatalf("the fallback resolved to %s, want %s", view.PlanName, own.Name)
+	if len(view.Document) != 0 {
+		t.Fatal("Load() returned a document with its error")
 	}
 }

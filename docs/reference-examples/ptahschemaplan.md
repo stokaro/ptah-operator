@@ -51,7 +51,7 @@ spec:
       key: chunk
       size: 1832
       digest: sha256:3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea
-  contractVersion: 1
+  contractVersion: 3
   artifactDigest: sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
   verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
@@ -64,7 +64,9 @@ spec:
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 5
+  executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
+  controllerRevision: a7d0119c0bd0d34e0b73f1d9e0e5c6aa0d9ff2b1
   controllerStateVersion: 2
 ```
 
@@ -97,7 +99,7 @@ spec:
       key: chunk
       size: 96
       digest: sha256:6b51d431df5d7f141cbececcf79edf3dd861c3b4069f0b11661a3eefacbba918
-  contractVersion: 1
+  contractVersion: 3
   artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
   verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
@@ -110,6 +112,8 @@ spec:
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 5
+  executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
+  controllerRevision: a7d0119c0bd0d34e0b73f1d9e0e5c6aa0d9ff2b1
   controllerStateVersion: 2
 ```

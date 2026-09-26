@@ -278,15 +278,6 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 		(operation == nil || operation.Type != operatorv1alpha1.OperationApply || !currentApplyAnnotations(oldJob.Annotations)) {
 		return denyf("Job cleanup TTL cannot be set before terminal status")
 	}
-	if predecessorApplyAnnotations(oldJob.Annotations) {
-		if err := validatePredecessorApplyCleanup(schema, schema.Status.PendingObservation, oldJob); err != nil {
-			return denyf("predecessor Apply Job cleanup is outside the fenced uncertain-Apply contract: %v", err)
-		}
-		if err := validateOnlyCleanupTTLChanged(oldJob, job); err != nil {
-			return denyf("Job cleanup update changes fields outside the cleanup TTL: %v", err)
-		}
-		return nil
-	}
 	if schema.Status.ActiveOperation == nil && currentApplyAnnotations(oldJob.Annotations) {
 		if err := validatePendingApplyJobCleanup(schema, schema.Status.PendingObservation, oldJob); err != nil {
 			return denyf("current-format Apply Job cleanup is outside the fenced pending-observation contract: %v", err)
@@ -298,15 +289,6 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 	}
 	if operation == nil || operation.JobName != oldJob.Name || operation.JobUID != oldJob.UID {
 		return denyf("Job is not the exact active operation instance")
-	}
-	if predecessorReadOnlyAnnotations(oldJob.Annotations) {
-		if err := validatePredecessorReadOnlyCleanup(schema, operation, oldJob); err != nil {
-			return denyf("predecessor read-only Job cleanup is outside the retired operation contract: %v", err)
-		}
-		if err := validateOnlyCleanupTTLChanged(oldJob, job); err != nil {
-			return denyf("Job cleanup update changes fields outside the cleanup TTL: %v", err)
-		}
-		return nil
 	}
 	if currentOperationAnnotations(oldJob.Annotations) {
 		if err := validateClaimBoundJobCleanup(schema, operation, oldJob); err != nil {
@@ -623,220 +605,6 @@ func validateRetiredReadOnlyStatus(
 	return nil
 }
 
-// validatePredecessorApplyCleanup authorizes only garbage-collection
-// scheduling for the exact predecessor Apply Job persisted in outcome-unknown
-// rollover evidence. It never reconstructs, reads, or accepts the Apply result.
-func validatePredecessorApplyCleanup(
-	schema *operatorv1alpha1.PtahSchema,
-	pending *operatorv1alpha1.PendingObservationStatus,
-	job *batchv1.Job,
-) error {
-	if schema == nil || pending == nil || job == nil || schema.Status.ExecutionBinding == nil {
-		return errors.New("uncertain-Apply cleanup inputs are incomplete")
-	}
-	if schema.Status.ActiveOperation != nil || schema.Status.Phase != operatorv1alpha1.PhasePending ||
-		pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown || pending.PlanRequired {
-		return errors.New("schema is not at the fenced uncertain-Apply cleanup boundary")
-	}
-	for _, conditionType := range []string{
-		operatorv1alpha1.ConditionPlanReady,
-		operatorv1alpha1.ConditionApprovalRequired,
-	} {
-		condition := apiMeta.FindStatusCondition(schema.Status.Conditions, conditionType)
-		if condition == nil || condition.Status != metav1.ConditionFalse ||
-			condition.Reason != string(operatorv1alpha1.ReasonExecutionBindingChanged) {
-			return fmt.Errorf("schema condition %s does not prove execution-binding retirement", conditionType)
-		}
-	}
-	if !isExecutionBindingID(schema.Status.ExecutionBinding.Epoch) ||
-		!isExecutionBindingID(pending.Plan.ExecutionBindingID) ||
-		pending.Plan.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
-		return errors.New("Apply Job does not belong to a distinct retired execution epoch")
-	}
-	if pending.ApplyOperationID == "" || pending.ApplyJobName == "" || pending.ApplyJobUID == "" ||
-		job.Name != pending.ApplyJobName || job.UID != pending.ApplyJobUID {
-		return errors.New("Job name or UID does not match the persisted uncertain Apply")
-	}
-	if _, err := exactNamedControllerOwner(
-		job.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-		schema.Name,
-		schema.UID,
-	); err != nil {
-		return fmt.Errorf("Job owner does not match the current schema UID: %w", err)
-	}
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   "apply",
-		workload.LabelOperationID: workload.OperationIDLabelValue(pending.ApplyOperationID),
-	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
-		return errors.New("Job labels do not match the persisted uncertain Apply")
-	}
-	if !isSHA256Digest(pending.Plan.Fingerprint) || !isSHA256Digest(pending.Plan.ContentDigest) {
-		return errors.New("persisted Apply plan digests are invalid")
-	}
-	ptahVersion := pending.Plan.PtahVersion
-	if ptahVersion == "" || strings.TrimSpace(ptahVersion) != ptahVersion {
-		return errors.New("persisted Apply data-plane version is empty or ambiguous")
-	}
-	inputFingerprint := job.Annotations[workload.AnnotationInputFingerprint]
-	snapshotDigest := job.Annotations[workload.AnnotationAdmissionSnapshotDigest]
-	if !isSHA256Digest(inputFingerprint) || !isSHA256Digest(snapshotDigest) {
-		return errors.New("Job input or admission snapshot digest is invalid")
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             pending.ApplyOperationID,
-		workload.AnnotationInputFingerprint:        inputFingerprint,
-		workload.AnnotationPtahVersion:             ptahVersion,
-		workload.AnnotationExecutionBindingID:      pending.Plan.ExecutionBindingID,
-		workload.AnnotationPlanFingerprint:         pending.Plan.Fingerprint,
-		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
-		workload.AnnotationAdmissionSnapshotDigest: snapshotDigest,
-	}
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
-		return errors.New("Job annotations are not the exact supported predecessor Apply envelope")
-	}
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
-		return errors.New("Job Pod template annotations differ from the uncertain Apply envelope")
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeJobForComparison(normalized, true); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
-		return errors.New("Job Pod template labels differ from the uncertain Apply envelope")
-	}
-	return nil
-}
-
-// validatePredecessorReadOnlyCleanup accepts only the supported predecessor's
-// terminal read-only Job after the candidate has durably retired its execution
-// epoch. It authorizes scheduling deletion, never consuming the old result.
-func validatePredecessorReadOnlyCleanup(
-	schema *operatorv1alpha1.PtahSchema,
-	operation *operatorv1alpha1.ActiveOperationStatus,
-	job *batchv1.Job,
-) error {
-	if schema == nil || operation == nil || job == nil || schema.Status.ExecutionBinding == nil {
-		return errors.New("retired operation inputs are incomplete")
-	}
-	if schema.Status.Phase != operatorv1alpha1.PhasePending {
-		return errors.New("schema has not entered the durable execution-binding retirement fence")
-	}
-	for _, conditionType := range []string{
-		operatorv1alpha1.ConditionPlanReady,
-		operatorv1alpha1.ConditionApprovalRequired,
-	} {
-		condition := apiMeta.FindStatusCondition(schema.Status.Conditions, conditionType)
-		if condition == nil || condition.Status != metav1.ConditionFalse ||
-			condition.Reason != string(operatorv1alpha1.ReasonExecutionBindingChanged) {
-			return fmt.Errorf("schema condition %s does not prove execution-binding retirement", conditionType)
-		}
-	}
-	switch operation.Type {
-	case operatorv1alpha1.OperationResolve,
-		operatorv1alpha1.OperationVerify,
-		operatorv1alpha1.OperationObserve,
-		operatorv1alpha1.OperationPlan:
-	default:
-		return fmt.Errorf("operation %q is not read-only", operation.Type)
-	}
-	if !isExecutionBindingID(schema.Status.ExecutionBinding.Epoch) ||
-		operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
-		return errors.New("operation does not belong to a distinct retired execution epoch")
-	}
-	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
-	if err != nil {
-		return fmt.Errorf("derive retired Job name: %w", err)
-	}
-	if operation.JobName != expectedName || job.Name != expectedName ||
-		operation.JobUID == "" || operation.JobUID != job.UID {
-		return errors.New("Job name or UID does not match the retired operation claim")
-	}
-	if _, err := exactNamedControllerOwner(
-		job.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-		schema.Name,
-		schema.UID,
-	); err != nil {
-		return fmt.Errorf("Job owner does not match the current schema UID: %w", err)
-	}
-	if operation.AdmissionSnapshot == nil {
-		return errors.New("retired operation has no Pod admission snapshot")
-	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return fmt.Errorf("retired Pod admission snapshot is invalid: %w", err)
-	}
-
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
-		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
-	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
-		return errors.New("Job labels do not match the retired operation claim")
-	}
-	ptahVersion := job.Annotations[workload.AnnotationPtahVersion]
-	if ptahVersion == "" || strings.TrimSpace(ptahVersion) != ptahVersion {
-		return errors.New("Job data-plane version is empty or ambiguous")
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             operation.ID,
-		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
-		workload.AnnotationPtahVersion:             ptahVersion,
-		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
-	}
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
-		return errors.New("Job annotations are not the exact supported predecessor envelope")
-	}
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
-		return errors.New("Job Pod template annotations differ from the retired operation envelope")
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeJobForComparison(normalized, true); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
-		return errors.New("Job Pod template labels differ from the retired operation envelope")
-	}
-	snapshotTemplate := normalized.Spec.Template.DeepCopy()
-	delete(snapshotTemplate.Annotations, workload.AnnotationAdmissionSnapshotDigest)
-	templateDigest, err := podintent.DigestTemplate(snapshotTemplate)
-	if err != nil {
-		return fmt.Errorf("digest retired Job Pod template: %w", err)
-	}
-	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return errors.New("Job Pod template does not match the retired admission snapshot")
-	}
-	return nil
-}
-
-func predecessorReadOnlyAnnotations(annotations map[string]string) bool {
-	if len(annotations) != 5 {
-		return false
-	}
-	for _, key := range []string{
-		workload.AnnotationOperationID,
-		workload.AnnotationInputFingerprint,
-		workload.AnnotationPtahVersion,
-		workload.AnnotationExecutionBindingID,
-		workload.AnnotationAdmissionSnapshotDigest,
-	} {
-		if _, found := annotations[key]; !found {
-			return false
-		}
-	}
-	return true
-}
-
 func currentOperationAnnotations(annotations map[string]string) bool {
 	if len(annotations) != 8 && len(annotations) != 10 {
 		return false
@@ -863,26 +631,6 @@ func currentOperationAnnotations(annotations map[string]string) bool {
 
 func currentApplyAnnotations(annotations map[string]string) bool {
 	return len(annotations) == 10 && currentOperationAnnotations(annotations)
-}
-
-func predecessorApplyAnnotations(annotations map[string]string) bool {
-	if len(annotations) != 7 {
-		return false
-	}
-	for _, key := range []string{
-		workload.AnnotationOperationID,
-		workload.AnnotationInputFingerprint,
-		workload.AnnotationPtahVersion,
-		workload.AnnotationExecutionBindingID,
-		workload.AnnotationPlanFingerprint,
-		workload.AnnotationPlanContentDigest,
-		workload.AnnotationAdmissionSnapshotDigest,
-	} {
-		if _, found := annotations[key]; !found {
-			return false
-		}
-	}
-	return true
 }
 
 func isExecutionBindingID(value string) bool {

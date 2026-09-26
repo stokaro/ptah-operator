@@ -33,8 +33,9 @@ type ControllerRBACClient interface {
 
 // ControllerRBACTransition moves stable bindings from one immutable
 // controller ServiceAccount to the next. It never creates a binding or role.
-// Only explicitly frozen predecessor contracts are supported. A sequence-1
-// predecessor also contributes its runtime-admission and discovery bindings.
+// Only explicitly frozen predecessor contracts are supported. A predecessor
+// contributes its runtime-admission and discovery bindings besides the two
+// stable ones.
 type ControllerRBACTransition struct {
 	rollout   *RolloutGuard
 	client    ControllerRBACClient
@@ -703,9 +704,12 @@ func (t *ControllerRBACTransition) validateIdentity() error {
 	if t.rollout.ReleaseSequence < 1 {
 		return errors.New("controller RBAC transition release sequence must be positive")
 	}
-	if t.rollout.PreviousControllerReleaseSequence < 0 ||
-		t.rollout.PreviousControllerReleaseSequence >= t.rollout.ReleaseSequence {
-		return errors.New("controller RBAC predecessor release sequence must be non-negative and lower than the candidate")
+	if err := validatePredecessorRelease(
+		t.rollout.PreviousControllerServiceAccountName,
+		t.rollout.PreviousControllerReleaseSequence,
+		t.rollout.ReleaseSequence,
+	); err != nil {
+		return fmt.Errorf("controller RBAC transition: %w", err)
 	}
 	if t.rollout.PreviousControllerServiceAccountName != "" && t.rollout.PreviousControllerServiceAccountName == t.rollout.ControllerServiceAccountName {
 		return errors.New("controller RBAC predecessor and candidate ServiceAccounts must differ")
@@ -770,7 +774,7 @@ func controllerRBACContract(
 			controllerRBACServiceAccountSubject(rollout.ReleaseNamespace, runtimeContract.CertificateServiceAccountName),
 		},
 	}
-	if rollout.PreviousControllerReleaseSequence >= 1 {
+	if rollout.PreviousControllerServiceAccountName != "" {
 		bindings = append(bindings, runtimeBinding)
 	}
 	bindings = append(bindings, controllerRBACBindingContract{
@@ -778,11 +782,8 @@ func controllerRBACContract(
 		roleRef: controllerRBACRoleRef("Role", bindingName),
 	})
 	// The discovery binding in the default namespace moves with the controller
-	// ServiceAccount like the coordination binding. A sequence-zero predecessor
-	// did not have it, so the first managed transition leaves it to ordinary
-	// apply, the way the runtime-admission binding was introduced.
-	includeDiscovery := rollout.ReleaseNamespace != corev1.NamespaceDefault &&
-		(rollout.PreviousControllerServiceAccountName == "" || rollout.PreviousControllerReleaseSequence >= 1)
+	// ServiceAccount like the coordination binding.
+	includeDiscovery := rollout.ReleaseNamespace != corev1.NamespaceDefault
 	discoveryRole := controllerRBACRoleContract{
 		name:             controllerDiscoveryBindingName(bindingName),
 		namespace:        corev1.NamespaceDefault,
@@ -823,9 +824,12 @@ func controllerRBACContract(
 	if err != nil {
 		return controllerRBACTransitionContract{}, err
 	}
+	// The runtime-admission Role already grants the predecessor access to its
+	// runtime identity and admission marker. Keep it in every exact inventory
+	// and revocation probe, not in a candidate-only post-apply contour.
+	runtimeRole.predecessorRules = predecessorRules.runtime
 	contract := controllerRBACTransitionContract{
-		bindings:         bindings,
-		postApplyBinding: &runtimeBinding,
+		bindings: bindings,
 		roles: []controllerRBACRoleContract{
 			{
 				name:             bindingName,
@@ -839,17 +843,8 @@ func controllerRBACContract(
 				predecessorRules: predecessorRules.coordination,
 				candidateRules:   currentControllerCoordinationRoleRules(),
 			},
+			runtimeRole,
 		},
-		postApplyRole: &runtimeRole,
-	}
-	if rollout.PreviousControllerReleaseSequence >= 1 {
-		// This Role already grants the predecessor access to its runtime
-		// identity and admission marker. Keep it in every exact inventory and
-		// revocation probe, not in the candidate-only post-apply contour.
-		runtimeRole.predecessorRules = predecessorRules.runtime
-		contract.roles = append(contract.roles, runtimeRole)
-		contract.postApplyBinding = nil
-		contract.postApplyRole = nil
 	}
 	if includeDiscovery {
 		contract.roles = append(contract.roles, discoveryRole)
@@ -892,15 +887,6 @@ func frozenPredecessorControllerRoleRules(rollout *RolloutGuard, runtimeContract
 		rollout.PreviousControllerReleaseSequence,
 		rollout.ReleaseSequence,
 	)
-	if rollout.PreviousControllerReleaseSequence == 0 {
-		if rollout.ReleaseSequence != 1 {
-			return frozenControllerRoleRules{}, unsupported
-		}
-		return frozenControllerRoleRules{
-			cluster:      legacyControllerClusterRoleRules(),
-			coordination: legacyControllerCoordinationRoleRules(),
-		}, nil
-	}
 	if rollout.ReleaseSequence != rollout.PreviousControllerReleaseSequence+1 {
 		return frozenControllerRoleRules{}, unsupported
 	}
@@ -1016,33 +1002,6 @@ func sequence1ControllerCoordinationRoleRules() []rbacv1.PolicyRule {
 	}}
 }
 
-func legacyControllerClusterRoleRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
-		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, Verbs: []string{"update"}},
-		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, Verbs: []string{"get", "update", "patch"}},
-		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaplans"}, Verbs: []string{"get", "list", "watch", "create"}},
-		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaapprovals"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch", "create", "patch"}},
-		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
-		{APIGroups: []string{""}, Resources: []string{"serviceaccounts"}, Verbs: []string{"get"}},
-		{APIGroups: []string{""}, Resources: []string{"limitranges"}, Verbs: []string{"list"}},
-		{APIGroups: []string{"node.k8s.io"}, Resources: []string{"runtimeclasses"}, Verbs: []string{"get"}},
-		{APIGroups: []string{"scheduling.k8s.io"}, Resources: []string{"priorityclasses"}, Verbs: []string{"get", "list"}},
-		{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch", "create"}},
-		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch", "update"}},
-	}
-}
-
-func legacyControllerCoordinationRoleRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{{
-		APIGroups: []string{"coordination.k8s.io"},
-		Resources: []string{"leases"},
-		Verbs:     []string{"get", "create", "update"},
-	}}
-}
-
 func currentControllerClusterRoleRules(rollout *RolloutGuard) []rbacv1.PolicyRule {
 	crdNames := []string{
 		"ptahmigrationapprovals.operator.ptah.run",
@@ -1140,7 +1099,11 @@ func controllerDiscoveryBindingName(controllerDeploymentName string) string {
 }
 
 func currentControllerCoordinationRoleRules() []rbacv1.PolicyRule {
-	return legacyControllerCoordinationRoleRules()
+	return []rbacv1.PolicyRule{{
+		APIGroups: []string{"coordination.k8s.io"},
+		Resources: []string{"leases"},
+		Verbs:     []string{"get", "create", "update"},
+	}}
 }
 
 func currentControllerRuntimeGuardNames(rollout *RolloutGuard) []string {

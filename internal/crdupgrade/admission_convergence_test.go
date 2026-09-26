@@ -1366,6 +1366,8 @@ func TestAdmissionConvergenceRetiresPreviousMarkerWithExactPreconditions(t *test
 	previousImage := rollout.ManagerImage
 	rollout.ReleaseSequence = 2
 	rollout.PreviousControllerReleaseSequence = 1
+	rollout.PreviousControllerServiceAccountName = "previous-controller"
+	rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
 	rollout.ManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	rollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)[:12]
 	client := &admissionConvergenceConfigMapClient{objects: map[string]*corev1.ConfigMap{}}
@@ -1414,6 +1416,8 @@ func TestAdmissionConvergenceRefusesForeignPreviousMarker(t *testing.T) {
 	rollout, policies, bindings, _ := readyRolloutGuard()
 	rollout.ReleaseSequence = 2
 	rollout.PreviousControllerReleaseSequence = 1
+	rollout.PreviousControllerServiceAccountName = "previous-controller"
+	rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
 	rollout.ManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	rollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)[:12]
 	client := &admissionConvergenceConfigMapClient{objects: map[string]*corev1.ConfigMap{}}
@@ -1448,6 +1452,8 @@ func TestAdmissionConvergenceRefusesMalformedPreviousManagerIdentity(t *testing.
 			rollout, policies, bindings, _ := readyRolloutGuard()
 			rollout.ReleaseSequence = 2
 			rollout.PreviousControllerReleaseSequence = 1
+			rollout.PreviousControllerServiceAccountName = "previous-controller"
+			rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
 			rollout.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("b", 64)
 			rollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)[:12]
 			client := &admissionConvergenceConfigMapClient{objects: map[string]*corev1.ConfigMap{}}

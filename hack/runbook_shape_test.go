@@ -79,7 +79,6 @@ var runbookGroups = []runbookGroup{
 		runbooks: []runbookEntry{{"clear-unresolved-run", "clear"}},
 		reference: []string{
 			"How it clears",
-			"Runs adopted by an upgrade",
 			"Deleting the resource discards it",
 		},
 	},

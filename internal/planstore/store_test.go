@@ -106,7 +106,7 @@ func TestDesiredChunkUsesBlockingPlanOwner(t *testing.T) {
 	}
 }
 
-func TestPrepareExecutionEpochCompatibility(t *testing.T) {
+func TestPrepareAcceptsOnlyTheCurrentPlanContract(t *testing.T) {
 	t.Parallel()
 
 	content := []byte("small exact plan")
@@ -129,38 +129,18 @@ func TestPrepareExecutionEpochCompatibility(t *testing.T) {
 		t.Fatalf("Prepare(current with control-character revision) error = %v, want revision refusal", err)
 	}
 
-	epochContract := current.Spec
-	epochContract.ContractVersion = fingerprint.ExecutionEpochPlanContractVersion
-	epochContract.ControllerImage = ""
-	epochContract.ControllerRevision = ""
-	epochContract.ControllerStateVersion = 0
-	var err error
-	epochContract.Fingerprint, err = planBinding(schema, epochContract).Fingerprint()
-	if err != nil {
-		t.Fatalf("fingerprint legacy v2 plan: %v", err)
-	}
-	if _, _, err := Prepare(schema, epochContract, content); err != nil {
-		t.Fatalf("Prepare(v2 without manager identity) error = %v, want backward-compatible storage", err)
+	missingState := current.Spec
+	missingState.ControllerStateVersion = 0
+	if _, _, err := Prepare(schema, missingState, content); err == nil || !strings.Contains(err.Error(), "controller state version") {
+		t.Fatalf("Prepare(current without controller state version) error = %v, want controller state refusal", err)
 	}
 
-	legacy := current.Spec
-	legacy.ContractVersion = fingerprint.LegacyPlanContractVersion
-	legacy.ExecutionBindingID = ""
-	legacy.ControllerImage = ""
-	legacy.ControllerRevision = ""
-	legacy.ControllerStateVersion = 0
-	legacy.Fingerprint, err = planBinding(schema, legacy).Fingerprint()
-	if err != nil {
-		t.Fatalf("fingerprint legacy v1 plan: %v", err)
-	}
-	if _, _, err := Prepare(schema, legacy, content); err != nil {
-		t.Fatalf("Prepare(v1 without execution epoch) error = %v, want backward-compatible storage", err)
-	}
-
-	future := current.Spec
-	future.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
-	if _, _, err := Prepare(schema, future, content); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
-		t.Fatalf("Prepare(future contract) error = %v, want unsupported-version refusal", err)
+	for _, version := range []int32{1, 2, fingerprint.CurrentPlanContractVersion + 1} {
+		other := current.Spec
+		other.ContractVersion = version
+		if _, _, err := Prepare(schema, other, content); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
+			t.Fatalf("Prepare(contract version %d) error = %v, want unsupported-version refusal", version, err)
+		}
 	}
 }
 

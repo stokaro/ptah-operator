@@ -138,6 +138,16 @@ func TestServiceAccountObjectIdentityContractRejectsIdentityDrift(t *testing.T) 
 				rollout.HookServiceAccountName = "ptah-crd-v2-" + strings.Repeat("b", 12)
 			},
 		},
+		{
+			// Every release runs at a sequence, so a named predecessor
+			// without one is nothing this release succeeds.
+			name: "predecessor without a release sequence",
+			mutate: func(rollout *RolloutGuard) {
+				rollout.PreviousControllerServiceAccountName = "static-controller"
+				rollout.PreviousControllerServiceAccountManaged = false
+				rollout.PreviousControllerReleaseSequence = 0
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -150,13 +160,6 @@ func TestServiceAccountObjectIdentityContractRejectsIdentityDrift(t *testing.T) 
 		})
 	}
 
-	legacy := *testServiceAccountObjectGuard().rollout
-	legacy.PreviousControllerServiceAccountName = "legacy-static-controller"
-	legacy.PreviousControllerServiceAccountManaged = false
-	legacy.PreviousControllerReleaseSequence = 0
-	if _, err := ServiceAccountObjectIdentityContractForRollout(&legacy); err != nil {
-		t.Fatalf("separately trusted epoch-zero predecessor was rejected: %v", err)
-	}
 }
 
 func TestServiceAccountObjectGuardIsFailClosedAndDenyOnly(t *testing.T) {

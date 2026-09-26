@@ -78,20 +78,20 @@ app.kubernetes.io/component: controller
       (ne (default "" $metadata.name) .name)
       (ne (default "" $metadata.namespace) .namespace)
       (eq (default "" $metadata.uid) "") -}}
-{{- fail (printf "legacy controller provenance %s %s/%s has an invalid live identity" .kind (default "<cluster>" .namespace) .name) -}}
+{{- fail (printf "predecessor controller provenance %s %s/%s has an invalid live identity" .kind (default "<cluster>" .namespace) .name) -}}
 {{- end -}}
 {{- if or
       (ne (default "" (index $annotations "meta.helm.sh/release-name")) .root.Release.Name)
       (ne (default "" (index $annotations "meta.helm.sh/release-namespace")) .root.Release.Namespace)
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "Helm")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) .root.Release.Name) -}}
-{{- fail (printf "legacy controller provenance %s %s/%s is not owned by Helm release %s/%s" .kind (default "<cluster>" .namespace) .name .root.Release.Namespace .root.Release.Name) -}}
+{{- fail (printf "predecessor controller provenance %s %s/%s is not owned by Helm release %s/%s" .kind (default "<cluster>" .namespace) .name .root.Release.Namespace .root.Release.Name) -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "ptah-operator.validateControllerServiceAccountIdentityJSON" -}}
 {{- if not .object -}}
-{{- fail (printf "legacy controller ServiceAccount %s/%s is missing" .root.Release.Namespace .name) -}}
+{{- fail (printf "predecessor controller ServiceAccount %s/%s is missing" .root.Release.Namespace .name) -}}
 {{- end -}}
 {{- $metadata := default (dict) .object.metadata -}}
 {{- if or
@@ -100,7 +100,7 @@ app.kubernetes.io/component: controller
       (ne (default "" $metadata.name) .name)
       (ne (default "" $metadata.namespace) .root.Release.Namespace)
       (eq (default "" $metadata.uid) "") -}}
-{{- fail (printf "legacy controller ServiceAccount %s/%s has an invalid live identity" .root.Release.Namespace .name) -}}
+{{- fail (printf "predecessor controller ServiceAccount %s/%s has an invalid live identity" .root.Release.Namespace .name) -}}
 {{- end -}}
 {{- $annotations := default (dict) $metadata.annotations -}}
 {{- $labels := default (dict) $metadata.labels -}}
@@ -108,13 +108,13 @@ app.kubernetes.io/component: controller
       (hasKey $annotations "meta.helm.sh/release-name")
       (hasKey $annotations "meta.helm.sh/release-namespace")
       (eq (default "" (index $labels "app.kubernetes.io/managed-by")) "Helm") -}}
-{{- $managed := "false" -}}
 {{- if $hasHelmOwnership -}}
 {{- include "ptah-operator.validateHelmReleaseObject" (dict "root" .root "object" .object "apiVersion" "v1" "kind" "ServiceAccount" "namespace" .root.Release.Namespace "name" .name) -}}
 {{- end -}}
-{{- /* Live ownership metadata can be copied onto an external ServiceAccount.
-      Only Helm's stored predecessor manifest is authoritative for deletion. */ -}}
-{{- dict "uid" $metadata.uid "managed" $managed | toJson -}}
+{{- /* Live ownership metadata can be copied onto an external ServiceAccount,
+      so it says nothing about who may delete it: the identity mode comes from
+      the guard the predecessor release wrote. */ -}}
+{{- dict "uid" $metadata.uid | toJson -}}
 {{- end -}}
 
 {{- define "ptah-operator.validatePreviousControllerServiceAccountName" -}}
@@ -210,8 +210,8 @@ app.kubernetes.io/component: controller
 {{- fail (printf "retained %s %s has a malformed previous controller UID" .kind .name) -}}
 {{- end -}}
 {{- if or
-      (and (eq $previousName "") (or (ne $previousUID "") (ne $previousManaged "false")))
-      (and (ne $previousName "") (eq $previousUID "")) -}}
+      (and (eq $previousName "") (or (ne $previousUID "") (ne $previousManaged "false") (ne $retainedPreviousSequence "0")))
+      (and (ne $previousName "") (or (eq $previousUID "") (eq $retainedPreviousSequence "0"))) -}}
 {{- fail (printf "retained %s %s has an inconsistent previous controller identity" .kind .name) -}}
 {{- end -}}
 {{- if or
@@ -222,7 +222,14 @@ app.kubernetes.io/component: controller
 {{- end -}}
 {{- end -}}
 
-{{- define "ptah-operator.legacyControllerPrincipalCoreJSON" -}}
+{{/*
+The live controller a release succeeds, read from its Deployment and its two
+stable bindings. A released controller records its release sequence and its
+controller state version on the Deployment and on its Pod template; a live
+controller that records neither was not installed by a release, and nothing
+upgrades from it.
+*/}}
+{{- define "ptah-operator.liveControllerPrincipalCoreJSON" -}}
 {{- $root := .root -}}
 {{- $deployment := .deployment -}}
 {{- $clusterRoleBinding := .clusterRoleBinding -}}
@@ -237,7 +244,7 @@ app.kubernetes.io/component: controller
 {{- dict "name" "" "releaseSequence" "0" "managerImage" "" | toJson -}}
 {{- else -}}
 {{- if ne $present 3 -}}
-{{- fail "legacy controller provenance is incomplete; Deployment and both stable bindings must all exist or all be absent" -}}
+{{- fail "predecessor controller provenance is incomplete; Deployment and both stable bindings must all exist or all be absent" -}}
 {{- end -}}
 {{- $name := include "ptah-operator.fullname" $root -}}
 {{- include "ptah-operator.validateHelmReleaseObject" (dict "root" $root "object" $deployment "apiVersion" "apps/v1" "kind" "Deployment" "namespace" $root.Release.Namespace "name" $name) -}}
@@ -247,16 +254,14 @@ app.kubernetes.io/component: controller
 {{- if or
       (ne (default "" (index $deploymentLabels "app.kubernetes.io/name")) (include "ptah-operator.name" $root))
       (ne (default "" (index $deploymentLabels "app.kubernetes.io/component")) "controller") -}}
-{{- fail "legacy controller Deployment has an unexpected component identity" -}}
+{{- fail "predecessor controller Deployment has an unexpected component identity" -}}
 {{- end -}}
 {{- $deploymentAnnotations := default (dict) $deployment.metadata.annotations -}}
 {{- $podAnnotations := default (dict) (dig "spec" "template" "metadata" "annotations" (dict) $deployment) -}}
-{{- /* A controller from the sequence era records its release sequence and its
-      controller state version on the Deployment and on its Pod template. The
-      two must agree, both annotations travel together, and the sequence must
-      sit strictly below the one being rendered: an equal or higher sequence is
-      the candidate's own Deployment, which nothing succeeds. A controller from
-      before the sequence era records neither and answers with sequence 0. */ -}}
+{{- /* The Deployment and its Pod template must agree on the release identity,
+      both annotations must be present, and the sequence must sit strictly
+      below the one being rendered: an equal or higher sequence is the
+      candidate's own Deployment, which nothing succeeds. */ -}}
 {{- $deploymentSequence := default "" (index $deploymentAnnotations "operator.ptah.run/release-sequence") -}}
 {{- $podSequence := default "" (index $podAnnotations "operator.ptah.run/release-sequence") -}}
 {{- $deploymentStateVersion := default "" (index $deploymentAnnotations "operator.ptah.run/controller-state-version") -}}
@@ -264,8 +269,9 @@ app.kubernetes.io/component: controller
 {{- if or (ne $deploymentSequence $podSequence) (ne $deploymentStateVersion $podStateVersion) -}}
 {{- fail "controller Deployment and its Pod template disagree on the release identity" -}}
 {{- end -}}
-{{- $predecessorSequence := "0" -}}
-{{- if or (ne $deploymentSequence "") (ne $deploymentStateVersion "") -}}
+{{- if and (eq $deploymentSequence "") (eq $deploymentStateVersion "") -}}
+{{- fail "controller Deployment records no release identity and is not a supported predecessor" -}}
+{{- end -}}
 {{- if or (eq $deploymentSequence "") (eq $deploymentStateVersion "") -}}
 {{- fail "controller Deployment records a partial release identity" -}}
 {{- end -}}
@@ -275,26 +281,25 @@ app.kubernetes.io/component: controller
 {{- if ge (atoi $deploymentSequence) (atoi (include "ptah-operator.releaseSequence" $root)) -}}
 {{- fail "same-sequence controller Deployment is not a supported predecessor" -}}
 {{- end -}}
-{{- $predecessorSequence = $deploymentSequence -}}
-{{- end -}}
+{{- $predecessorSequence := $deploymentSequence -}}
 {{- $clusterRoleRef := default (dict) $clusterRoleBinding.roleRef -}}
 {{- if or
       (ne (default "" $clusterRoleRef.apiGroup) "rbac.authorization.k8s.io")
       (ne (default "" $clusterRoleRef.kind) "ClusterRole")
       (ne (default "" $clusterRoleRef.name) $name) -}}
-{{- fail "legacy controller ClusterRoleBinding roleRef differs from the supported predecessor" -}}
+{{- fail "predecessor controller ClusterRoleBinding roleRef differs from the supported predecessor" -}}
 {{- end -}}
 {{- $coordinationRoleRef := default (dict) $coordinationRoleBinding.roleRef -}}
 {{- if or
       (ne (default "" $coordinationRoleRef.apiGroup) "rbac.authorization.k8s.io")
       (ne (default "" $coordinationRoleRef.kind) "Role")
       (ne (default "" $coordinationRoleRef.name) $name) -}}
-{{- fail "legacy controller coordination RoleBinding roleRef differs from the supported predecessor" -}}
+{{- fail "predecessor controller coordination RoleBinding roleRef differs from the supported predecessor" -}}
 {{- end -}}
 {{- $clusterSubjects := default (list) $clusterRoleBinding.subjects -}}
 {{- $coordinationSubjects := default (list) $coordinationRoleBinding.subjects -}}
 {{- if or (ne (len $clusterSubjects) 1) (ne (len $coordinationSubjects) 1) -}}
-{{- fail "legacy controller stable bindings must each have exactly one subject" -}}
+{{- fail "predecessor controller stable bindings must each have exactly one subject" -}}
 {{- end -}}
 {{- $clusterSubject := first $clusterSubjects -}}
 {{- $coordinationSubject := first $coordinationSubjects -}}
@@ -306,7 +311,7 @@ app.kubernetes.io/component: controller
       (ne (default "" $entry.subject.kind) "ServiceAccount")
       (eq (default "" $entry.subject.name) "")
       (ne (default "" $entry.subject.namespace) $root.Release.Namespace) -}}
-{{- fail (printf "legacy controller %s has an invalid ServiceAccount subject" $entry.kind) -}}
+{{- fail (printf "predecessor controller %s has an invalid ServiceAccount subject" $entry.kind) -}}
 {{- end -}}
 {{- end -}}
 {{- $deploymentServiceAccount := default "" (dig "spec" "template" "spec" "serviceAccountName" "" $deployment) -}}
@@ -314,7 +319,7 @@ app.kubernetes.io/component: controller
       (eq $deploymentServiceAccount "")
       (ne $deploymentServiceAccount $clusterSubject.name)
       (ne $deploymentServiceAccount $coordinationSubject.name) -}}
-{{- fail "legacy controller Deployment and stable binding subjects disagree" -}}
+{{- fail "predecessor controller Deployment and stable binding subjects disagree" -}}
 {{- end -}}
 {{- include "ptah-operator.validatePreviousControllerServiceAccountName" (dict
       "name" $deploymentServiceAccount
@@ -324,8 +329,6 @@ app.kubernetes.io/component: controller
         (dict "name" (include "ptah-operator.teardownServiceAccountName" $root) "description" "teardown ServiceAccount")
         (dict "name" (include "ptah-operator.teardownQuiesceJobName" $root) "description" "teardown quiesce identity")
         (dict "name" (include "ptah-operator.certRotatorServiceAccountName" $root) "description" "certificate ServiceAccount"))) -}}
-{{- $predecessorManagerImage := "" -}}
-{{- if ne $predecessorSequence "0" -}}
 {{- $managerContainers := list -}}
 {{- range $container := (dig "spec" "template" "spec" "containers" (list) $deployment) -}}
 {{- if eq (default "" $container.name) "manager" -}}
@@ -335,10 +338,9 @@ app.kubernetes.io/component: controller
 {{- if ne (len $managerContainers) 1 -}}
 {{- fail "predecessor controller Deployment does not carry exactly one manager container" -}}
 {{- end -}}
-{{- $predecessorManagerImage = default "" (first $managerContainers).image -}}
+{{- $predecessorManagerImage := default "" (first $managerContainers).image -}}
 {{- if eq $predecessorManagerImage "" -}}
 {{- fail "predecessor controller Deployment does not pin a manager image" -}}
-{{- end -}}
 {{- end -}}
 {{- dict "name" $deploymentServiceAccount "releaseSequence" $predecessorSequence "managerImage" $predecessorManagerImage | toJson -}}
 {{- end -}}
@@ -424,18 +426,15 @@ that release wrote, found by the identity the live Deployment discloses.
 {{- end -}}
 {{- dict "name" $previousName "uid" $previousUID "managed" $previousManaged "releaseSequence" $previousSequence "managerImage" $previousManagerImage | toJson -}}
 {{- else -}}
-{{- $principal := include "ptah-operator.legacyControllerPrincipalCoreJSON" . | fromJson -}}
+{{- $principal := include "ptah-operator.liveControllerPrincipalCoreJSON" . | fromJson -}}
 {{- if $principal.name -}}
 {{- $serviceAccount := include "ptah-operator.validateControllerServiceAccountIdentityJSON" (dict "root" $root "object" .serviceAccount "name" $principal.name) | fromJson -}}
-{{- $managed := $serviceAccount.managed -}}
-{{- if ne $principal.releaseSequence "0" -}}
-{{- $managed = include "ptah-operator.predecessorControllerIdentityModeFromGuard" (dict
+{{- $managed := include "ptah-operator.predecessorControllerIdentityModeFromGuard" (dict
       "root" $root
       "guard" .predecessorGuard
       "sequence" $principal.releaseSequence
       "managerImage" $principal.managerImage
       "serviceAccountName" $principal.name) -}}
-{{- end -}}
 {{- $principal = dict "name" $principal.name "uid" $serviceAccount.uid "managed" $managed "releaseSequence" $principal.releaseSequence "managerImage" $principal.managerImage -}}
 {{- else -}}
 {{- $principal = dict "name" "" "uid" "" "managed" "false" "releaseSequence" "0" "managerImage" "" -}}
@@ -456,7 +455,7 @@ that release wrote, found by the identity the live Deployment discloses.
 {{- $clusterRoleBinding := lookup "rbac.authorization.k8s.io/v1" "ClusterRoleBinding" "" $name -}}
 {{- $coordinationRoleBinding := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" (include "ptah-operator.coordinationNamespace" .) $name -}}
 {{- $objects := dict "root" . "deployment" $deployment "clusterRoleBinding" $clusterRoleBinding "coordinationRoleBinding" $coordinationRoleBinding -}}
-{{- $principal := include "ptah-operator.legacyControllerPrincipalCoreJSON" $objects | fromJson -}}
+{{- $principal := include "ptah-operator.liveControllerPrincipalCoreJSON" $objects | fromJson -}}
 {{- $serviceAccount := dict -}}
 {{- if $principal.name -}}
 {{- $serviceAccount = lookup "v1" "ServiceAccount" .Release.Namespace $principal.name -}}
@@ -1300,10 +1299,9 @@ ptah-operator-parameter-informer-anchor
 {{- $present = add1 $present -}}
 {{- end -}}
 {{- end -}}
-{{- if and (ne $present 0) (ne $present (len $expected)) -}}
+{{- if ne $present (len $expected) -}}
 {{- fail (printf "fixed admission singleton %s/%s has an incomplete owned annotation tuple" .kind .object.metadata.name) -}}
 {{- end -}}
-{{- if ne $present 0 -}}
 {{- range $key, $expectedValue := .expectedImmutable -}}
 {{- $actual := index $annotations $key -}}
 {{- if ne $actual $expectedValue -}}
@@ -1343,9 +1341,6 @@ ptah-operator-parameter-informer-anchor
 {{- fail (printf "fixed admission singleton %s/%s has invalid historical hook ServiceAccount identity %q" .kind .object.metadata.name $actualHook) -}}
 {{- end -}}
 {{- end -}}
-{{- end -}}
-{{- /* Zero owned annotations is the sole legacy state. The pre-upgrade hook
-      verifies the complete predecessor webhook contract before stamping it. */ -}}
 {{- end -}}
 {{- end -}}
 

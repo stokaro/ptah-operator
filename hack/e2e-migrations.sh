@@ -861,8 +861,7 @@ create_migration_resource() {
             name: $registryAuthSecret,
             mode: "Environment",
             usernameKey: "username",
-            passwordKey: "password",
-            registryKey: "registry"
+            passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -1206,7 +1205,7 @@ assert_second_claimant_blocks_the_realm() {
           ociRef: "oci://example.invalid/schema:v1",
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -1702,7 +1701,7 @@ create_branch_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -2122,7 +2121,7 @@ create_guard_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -2411,7 +2410,7 @@ create_adopt_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -2724,7 +2723,7 @@ create_checkpoint_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -2987,7 +2986,7 @@ create_uncertain_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -3150,7 +3149,7 @@ assert_unresolved_run_survives_another_refusal() {
           ociRef: "oci://example.invalid/schema:v1",
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -3330,7 +3329,7 @@ create_late_dispatch_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -3707,7 +3706,7 @@ create_restore_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -4037,7 +4036,7 @@ create_drill_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -4407,7 +4406,7 @@ create_unknown_layer_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -4632,7 +4631,7 @@ create_deletion_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -4834,7 +4833,7 @@ create_release_fault_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -5314,7 +5313,7 @@ create_isolated_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -6056,7 +6055,7 @@ create_suspend_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -6147,7 +6146,7 @@ run_retry_interval_proof() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -6631,7 +6630,7 @@ create_egress_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -6840,7 +6839,7 @@ create_retarget_migration_resource() {
           ociRef: $reference,
           registryAuthFrom: {
             name: $registryAuthSecret, mode: "Environment",
-            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+            usernameKey: "username", passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
@@ -7101,8 +7100,7 @@ create_txmode_migration_resource() {
             name: $registryAuthSecret,
             mode: "Environment",
             usernameKey: "username",
-            passwordKey: "password",
-            registryKey: "registry"
+            passwordKey: "password"
           },
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}

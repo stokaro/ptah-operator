@@ -138,12 +138,6 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
 	}
-	// Before any refusal below writes its own reason: a resource an older
-	// manager blocked for an unresolved run carries that latch in the reason
-	// alone, and every refusal here overwrites it.
-	if err := r.adoptUnresolvedMigrationRun(ctx, migration); err != nil {
-		return ctrl.Result{}, err
-	}
 	if result, handled, err := r.reconcileMigrationExecutionBinding(ctx, migration); handled || err != nil {
 		return result, err
 	}
@@ -1061,125 +1055,6 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		}
 	}
 	return ctrl.Result{Requeue: true}, nil
-}
-
-// migrationRunLatchedByRefusal reads the pre-record latch: an unresolved
-// outcome on a resource a refusal has stopped. That is what a manager older
-// than status.unresolvedRun left behind, and an upgrade is the only reader:
-// adoptUnresolvedMigrationRun calls it, nothing else does, and no decision
-// about replaying a migration is taken from it.
-//
-// It asks that the resource is blocked and never which refusal blocked it. The
-// reason is what this change exists to stop trusting: an older manager wrote
-// ApplyOutcomeUnknown and any later refusal rewrote it, so demanding that the
-// original reason survived until the upgrade would adopt the objects the defect
-// missed and skip the ones it reached. An object blocked as RealmConflict,
-// HistoryDirty, HistoryModified, HistoryOutOfOrder or UnsupportedEngine over a
-// run nobody accounted for is the state this path is for.
-//
-// Blocked is still required, and it is what keeps the widening safe: a resource
-// carrying that condition has already stopped, so adopting changes why it is
-// stopped and never stops one that was running. A resource whose refusal had
-// been lifted is a different case and not this one -- the old manager was
-// already free to publish a plan and replay, so a record written now prevents
-// nothing, while latching it could block work a person had already approved.
-func migrationRunLatchedByRefusal(migration *operatorv1alpha1.PtahMigration) bool {
-	run := migration.Status.LastRun
-	if run == nil {
-		return false
-	}
-	if run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown &&
-		run.Outcome != operatorv1alpha1.MigrationRunOutcomePartial {
-		return false
-	}
-	if migrationRunAlreadySettled(migration) {
-		return false
-	}
-	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
-	return blocked != nil && blocked.Status == metav1.ConditionTrue
-}
-
-// migrationRunAlreadySettled reports that the reading this resource already
-// holds is the proof its last run needed: taken after that run finished, with
-// nothing of the artifact left for it to have half-done.
-//
-// The old settlement path left status.lastRun exactly as the run wrote it, so
-// an outcome of Unknown or Partial outlives the reading that accounted for it.
-// Without this, an upgrade re-latches a resource that was settled long ago --
-// and where a newer artifact has since made work pending, that latch never
-// clears on its own, because the reading that would clear it is the one that
-// now finds work. A resource blocked for an unrelated refusal would go from
-// recovering when that refusal lifted to waiting for a person.
-//
-// It is deliberately the only exemption. Where no such reading exists the
-// adoption still goes ahead, because the alternative is replaying a migration
-// over a database nobody read.
-//
-// "Nothing left to have half-done" is more than an empty pending list, and the
-// reason is that recordMigrationHistory already answers this question once per
-// pass: a reading it refuses never reaches the branch that removes the record,
-// so a resource holding one keeps it. Reading only PendingCount here made the
-// two paths disagree on the same reading -- a dirty revision row with nothing
-// pending kept the record of a resource that had one, and denied it to a
-// resource whose record a person had just cleared by hand. The database
-// recording an interrupted run is the case this record exists for, so the
-// answer that stands is the classifier's.
-func migrationRunAlreadySettled(migration *operatorv1alpha1.PtahMigration) bool {
-	run, history := migration.Status.LastRun, migration.Status.History
-	if run == nil || history == nil || run.FinishedAt == nil {
-		return false
-	}
-	// Strictly after: a reading that predates the run says nothing about it,
-	// and one stamped at the same instant cannot be shown to follow it.
-	if !run.FinishedAt.Before(&history.ObservedAt) {
-		return false
-	}
-	return migrationHistoryReadingSettles(history)
-}
-
-// migrationHistoryReadingSettles reports a stored reading the history
-// classifier found nothing to refuse in: every migration the artifact carries
-// is applied, no revision row is dirty, and every applied migration still
-// matches the file that accounts for it.
-//
-// Out-of-order migrations need no test of their own. Ptah selects them as
-// pending, so PendingCount already carries them, and a second test for a state
-// that cannot be reached would read as a decision this makes and does not.
-//
-// A database ahead of its artifact is the one refusal this cannot see, because
-// the version the artifact ends at is not kept in status. Such a reading still
-// settles, and that is why the runbook says the record survives every standing
-// refusal but that one.
-func migrationHistoryReadingSettles(history *operatorv1alpha1.MigrationHistoryStatus) bool {
-	return history.PendingCount == 0 && !history.Dirty && len(history.ModifiedVersions) == 0
-}
-
-// adoptUnresolvedMigrationRun converts the refusal an older manager latched an
-// unresolved run with into the record, and is a no-op for every resource that
-// already has one or never had a run to account for.
-//
-// It writes before anything else in the pass, rather than at each refusal that
-// would overwrite the reason. Three refusals write one today -- a contested
-// realm, the history classifier, and an unsupported engine above the generation
-// check -- and a fourth added later would have to remember as well: a spec
-// edited to an unsupported engine and back is otherwise enough to lose a latch
-// that was standing. Converting first means the record is the only thing any
-// decision below reads, and a reason is never the evidence that a mutation was
-// accounted for, not even for one pass.
-//
-// What it can recover is what the old refusal carried: the outcome, the Job,
-// and the database the last reading named. The claim that ran is long gone, so
-// the record names no attempt and no plan.
-func (r *MigrationReconciler) adoptUnresolvedMigrationRun(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-) error {
-	if migration.Status.UnresolvedRun != nil || !migrationRunLatchedByRefusal(migration) {
-		return nil
-	}
-	before := migration.DeepCopy()
-	recordUnresolvedMigrationRun(migration, nil, migration.Status.LastRun, "", r.now())
-	return r.patchMigrationStatus(ctx, before, migration)
 }
 
 // migrationUnresolvedRunSettledBy reports that this reading is the proof the

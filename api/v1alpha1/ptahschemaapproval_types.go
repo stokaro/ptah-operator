@@ -56,19 +56,19 @@ type PtahSchemaApprovalSpec struct {
 	// changes on every operator transition, including one that returns to
 	// byte-identical versions, so an approval cannot survive a rollout unseen.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	ExecutionBindingID string `json:"executionBindingID"`
 	// ControllerImage is the digest-pinned manager the approved apply must be
 	// dispatched by.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage,omitempty"`
+	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision is that manager's revision.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision,omitempty"`
+	ControllerRevision string `json:"controllerRevision"`
 	// ControllerStateVersion is the state semantics it writes.
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+	ControllerStateVersion int32 `json:"controllerStateVersion"`
 	// PtahVersion is the Ptah build the approved apply must run.
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image it must run in.

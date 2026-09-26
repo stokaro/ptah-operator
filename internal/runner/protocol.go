@@ -22,8 +22,6 @@ const (
 	// incompatible result format must use a new version.
 	ProtocolVersion = 5
 
-	legacyProtocolVersion = 4
-
 	// JSON escaping can expand a bounded plan payload. This shared cap includes
 	// the worst-case expansion plus fixed result-envelope headroom.
 	DefaultMaxFrameBytes int64 = plancontract.MaxResultPayloadBytes
@@ -183,13 +181,11 @@ type Result struct {
 }
 
 // ParseOptions optionally binds a parsed frame to the Job contract that
-// created it. A zero ExpectedProtocolVersion selects ProtocolVersion; legacy
-// protocol frames are accepted only when their version is explicitly set.
+// created it. A frame is always held to ProtocolVersion.
 type ParseOptions struct {
-	MaxFrameBytes           int64
-	ExpectedProtocolVersion int
-	ExpectedOperation       Operation
-	ExpectedOperationID     string
+	MaxFrameBytes       int64
+	ExpectedOperation   Operation
+	ExpectedOperationID string
 }
 
 // MarshalFrame encodes a length- and digest-bound frame. The byte length and
@@ -662,19 +658,12 @@ func (s *footerScan) closes(payloadEnd int) bool {
 }
 
 func validateResult(result Result, options ParseOptions) error {
-	expectedProtocolVersion := options.ExpectedProtocolVersion
-	if expectedProtocolVersion == 0 {
-		expectedProtocolVersion = ProtocolVersion
-	}
-	if expectedProtocolVersion != legacyProtocolVersion && expectedProtocolVersion != ProtocolVersion {
-		return fmt.Errorf("%w: unsupported expected protocol version %d", ErrMalformedFrame, expectedProtocolVersion)
-	}
-	if result.ProtocolVersion != expectedProtocolVersion {
+	if result.ProtocolVersion != ProtocolVersion {
 		return fmt.Errorf(
 			"%w: protocol version binding mismatch: got %d, expected %d",
 			ErrMalformedFrame,
 			result.ProtocolVersion,
-			expectedProtocolVersion,
+			ProtocolVersion,
 		)
 	}
 	if !result.Operation.Valid() {
@@ -853,12 +842,6 @@ func validateResult(result Result, options ParseOptions) error {
 
 func validateDriftFindingSummaries(result Result) error {
 	const maxFindings = 64
-	if result.ProtocolVersion == legacyProtocolVersion {
-		if len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
-			return fmt.Errorf("%w: legacy drift observation carries structured findings", ErrMalformedFrame)
-		}
-		return nil
-	}
 	if len(result.DriftFindings) == 0 {
 		if result.DriftFindingsTruncated {
 			return fmt.Errorf("%w: truncated drift observation has no finding summaries", ErrMalformedFrame)

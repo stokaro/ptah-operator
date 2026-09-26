@@ -1014,9 +1014,17 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 
 func TestTeardownAuthorizationProbesProtectCandidateAndPredecessorControllers(t *testing.T) {
 	rollout := validRBACRolloutGuard()
+	rollout.ReleaseSequence = 2
+	rollout.PreviousControllerReleaseSequence = 1
 	rollout.PreviousControllerServiceAccountName = "previous-controller"
 	rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
-	rollout.PreviousControllerReleaseSequence = 0
+	attempt := sha256.Sum256([]byte(strings.Join([]string{
+		rollout.ReleaseNamespace,
+		rollout.ReleaseName,
+		"2",
+		rollout.ManagerImage,
+	}, "\n")))
+	rollout.HookServiceAccountName = "ptah-operator-crd-v2-" + fmt.Sprintf("%x", attempt)[:12]
 	contract := validRBACAdmissionContract()
 
 	probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
@@ -1040,9 +1048,6 @@ func TestTeardownAuthorizationProbesProtectCandidateAndPredecessorControllers(t 
 	candidate := byName["controller"]
 	if !reflect.DeepEqual(previous.Checks, candidate.Checks) {
 		t.Fatal("candidate and predecessor controller probes do not cover the same exact role-rule union")
-	}
-	if _, found := authorizationCheckNames(previous.Checks)["update PtahSchema legacy grant"]; !found {
-		t.Fatal("predecessor probe omits the sequence-zero PtahSchema update grant")
 	}
 	grants, err := crdupgrade.RevokedPrivilegeMutationGrants(rollout, contract)
 	if err != nil {
@@ -1106,7 +1111,7 @@ func TestTeardownAuthorizationProbesCoverOnlyInheritedRoleBindGrants(t *testing.
 		{"ptah-system", "ptah-system"}, {"ptah-system", "ptah-coordination"},
 		{"ptah-system", "default"}, {"default", "default"}, {"default", "ptah-coordination"},
 	} {
-		for _, previousSequence := range []int32{-1, 0, 1} {
+		for _, previousSequence := range []int32{-1, 1} {
 			t.Run(fmt.Sprintf("%s/%s/previous=%d", namespaces[0], namespaces[1], previousSequence), func(t *testing.T) {
 				rollout := validRBACRolloutGuard()
 				rollout.ReleaseNamespace, rollout.CoordinationNamespace = namespaces[0], namespaces[1]
@@ -1131,8 +1136,6 @@ func TestTeardownAuthorizationProbesCoverOnlyInheritedRoleBindGrants(t *testing.
 				if previousSequence >= 0 {
 					want["clusterroles//"+controller] = true
 					want["roles/"+rollout.CoordinationNamespace+"/"+controller] = true
-				}
-				if previousSequence > 0 {
 					want["roles/"+rollout.ReleaseNamespace+"/"+controller+"-runtime-admission"] = true
 					if rollout.ReleaseNamespace != metav1.NamespaceDefault {
 						want["roles/default/"+controller+"-runtime-discovery"] = true
