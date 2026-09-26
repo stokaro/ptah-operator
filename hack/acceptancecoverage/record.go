@@ -58,17 +58,19 @@ var requirements = []requirement{
 		"every binding mutated between planning, approval and dispatch on both engines and families, with database evidence of zero unauthorized statements",
 		"the stale-approval and destructive-gate rows of `run_engine_lifecycle` and `assert_destructive_gate` on both engines, " +
 			"the drift-before-dispatch fault in `hack/e2e-faults.sh`, the approval bindings `hack/e2e-assert.sh` refuses, " +
-			"and `assert_approval_hydrated`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations",
-		"a target Secret, policy or transaction mode changed between approval and dispatch; " +
-			"drift before dispatch on MySQL; a count of the statements the database received; " +
-			"and an author changing policy to bypass approval, on a cluster"},
+			"`assert_approval_hydrated`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations, " +
+			"a migration's target Secret repointed between approval and dispatch in `run_retarget_before_dispatch_proof`, " +
+			"and an author refused Always by the example guard in `run_apply_policy_guard_proof`",
+		"a PtahSchema's target Secret, or either family's policy or transaction mode, changed between approval and dispatch; " +
+			"drift before dispatch on MySQL; and a count of the statements the database received"},
 	{"PA-03", "Preserve safety through interrupted Apply",
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
 		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `hack/e2e-faults.sh`, " +
 			"`run_uncertain_apply_proof`, `run_late_dispatch_proof` and `run_deletion_during_apply_proof`, " +
 			"an Apply held across an upgrade by `assert_predecessor_apply_remains_exclusive_while_running`, " +
-			"and one realm claimed from two namespaces in `assert_second_claimant_blocks_the_realm`",
-		"an isolated node, a fault during lock release, and suspension during an Apply"},
+			"one realm claimed from two namespaces in `assert_second_claimant_blocks_the_realm`, " +
+			"and a migration suspended inside its Apply in `run_suspension_during_apply_proof`",
+		"an isolated node, and a fault during lock release"},
 	{"PA-04", "Make progress and refusal states actionable",
 		"a measured progress target, dependency recovery inside it, and no hot loop on a permanent refusal",
 		"`run_retry_interval_proof`, the bounded refresh count under a standing refusal in `assert_destructive_gate`, " +
@@ -79,9 +81,9 @@ var requirements = []requirement{
 		"the CRD schema history gates, the admission rows in `hack/e2e-assert.sh`, " +
 			"`prove_controller_write_guard`, `prove_controller_downgrade_guard`, `prove_certificate_write_guards`, " +
 			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans `audit_runtime_credentials`, " +
-			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`",
-		"accepted values at the size and name limits, author and approver identities against admission on a cluster, " +
-			"and who may read a plan's SQL"},
+			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`, " +
+			"and author, approver and administrator identities against RBAC and the example guard in `run_apply_policy_guard_proof`",
+		"accepted values at the size and name limits, and who may read a plan's SQL"},
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",
 		"`run_upgrade_proof`, `run_next_release_upgrade_proof` and `run_uninstall_proof`, leader failover in `hack/e2e-ha.sh`, " +

@@ -141,7 +141,7 @@ func TestEveryProofTheRecordNamesExists(t *testing.T) {
 	}
 	// Counted against the names this was written over, so a change that
 	// stopped quoting them could not pass by checking nothing.
-	if resolved < 35 {
+	if resolved < 38 {
 		t.Fatalf("resolved %d named proofs; the record was written naming more", resolved)
 	}
 }
