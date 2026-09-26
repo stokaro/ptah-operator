@@ -205,6 +205,30 @@ jobs:
           chmod 0755 "$install_dir/shellcheck"
           "$install_dir/shellcheck" --version | grep -qx "version: ${version#v}"
           echo "$install_dir" >> "$GITHUB_PATH"
+      # The alerting-rule tests run promtool over the rules the chart renders,
+      # and require it here so a missing binary fails instead of skipping. The
+      # version is exact for the reason ShellCheck's is.
+      - name: Install the pinned promtool
+        id: promtool
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -er '.promtool.version' support/tools.json)"
+          url="$(jq -er '.promtool.linuxAmd64Url' support/tools.json)"
+          digest="$(jq -er '.promtool.linuxAmd64Sha256' support/tools.json)"
+          install_dir="$RUNNER_TEMP/promtool"
+          mkdir -p "$install_dir"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/prometheus.tar.gz" "$url"
+          echo "$digest  $RUNNER_TEMP/prometheus.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$RUNNER_TEMP/prometheus.tar.gz" --directory "$install_dir" \
+            --strip-components 1 --wildcards '*/promtool'
+          chmod 0755 "$install_dir/promtool"
+          reported="$("$install_dir/promtool" --version)"
+          case "$reported" in
+            "promtool, version ${version#v} "*) ;;
+            *) echo "promtool reports $reported, want ${version}" >&2; exit 1 ;;
+          esac
+          echo "$install_dir" >> "$GITHUB_PATH"
       # The client build configuration, checked where a pull request can see
       # it. A release reads the platforms out of this file, so a file
       # goreleaser refuses is a release that cannot be cut.
@@ -220,6 +244,7 @@ jobs:
         env:
           CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}
           CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE: "true"
+          PTAH_REQUIRE_PROMTOOL: "1"
         shell: bash
         run: make verify-source
 

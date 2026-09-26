@@ -1,8 +1,13 @@
 {
-  "description": "Exact versions of the third-party tools the static gate refuses to run without. ShellCheck findings are version-dependent, so an unpinned version makes a local pass and a CI pass two different claims.",
+  "description": "Exact versions of the third-party tools the static gate and the chart tests refuse to run without. ShellCheck findings and promtool's rule evaluation are version-dependent, so an unpinned version makes a local pass and a CI pass two different claims.",
   "shellcheck": {
     "version": "v0.11.0",
     "linuxAmd64Url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz",
     "linuxAmd64Sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+  },
+  "promtool": {
+    "version": "v3.15.0",
+    "linuxAmd64Url": "https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.linux-amd64.tar.gz",
+    "linuxAmd64Sha256": "2a542df32eac02ee17b9d844fb2aa1de00dafa5476579ba8a3ba862e9d572ea0"
   }
 }

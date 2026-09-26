@@ -304,8 +304,32 @@
     "monitoring": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["serviceMonitor"],
+      "required": ["serviceMonitor", "prometheusRule"],
       "properties": {
+        "prometheusRule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "labels", "viewUnsyncedFor", "runbookBaseURL"],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "viewUnsyncedFor": {
+              "type": "string",
+              "pattern": "^$|^[1-9][0-9]*(s|m|h)$"
+            },
+            "runbookBaseURL": {
+              "type": "string",
+              "pattern": "^https://[^\\s#]+/$"
+            }
+          }
+        },
         "serviceMonitor": {
           "type": "object",
           "additionalProperties": false,

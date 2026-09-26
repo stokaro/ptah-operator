@@ -139,8 +139,8 @@ metrics:
     # Port the metrics Service listens on.
     port: 8080
 
-# Scrape configuration for a Prometheus that discovers its targets from
-# ServiceMonitor objects.
+# Objects for a Prometheus run by the Prometheus Operator: how it scrapes the
+# manager, and the rules it alerts on.
 monitoring:
   # A ServiceMonitor, which is how Prometheus reaches each manager Pod behind
   # the metrics Service rather than one replica behind its address.
@@ -158,6 +158,24 @@ monitoring:
     interval: ""
     # How long a scrape may take. Unset leaves it to Prometheus.
     scrapeTimeout: ""
+  # Alerting rules for Apply runs nobody accounted for. Off by default for the
+  # same reason as the ServiceMonitor: the object needs the Prometheus Operator
+  # CRDs.
+  prometheusRule:
+    # Whether to create the PrometheusRule. When on, viewUnsyncedFor below has
+    # to be set as well.
+    enabled: false
+    # Labels the Prometheus instance selects rules by.
+    labels: {}
+    # How long the view behind the unresolved counts may report itself
+    # unsynchronized before that is an alert. Required when the rules are on,
+    # and deliberately without a default: how long a manager takes to
+    # synchronize after a restart or a leader change depends on the cluster it
+    # runs in. The operations guide says how to measure it there.
+    viewUnsyncedFor: ""
+    # Where each rule's runbook_url points. The page and its anchor are fixed;
+    # this is the guide they are read from.
+    runbookBaseURL: "https://operator.ptah.run/edge/use/operations/"
 
 # The admission webhook server inside the manager, which is what refuses an
 # approval that does not name an exact plan.
