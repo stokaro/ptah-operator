@@ -44,6 +44,46 @@ administrator doing administration, and the
 [security policy](https://github.com/stokaro/ptah-operator/blob/master/SECURITY.md)
 lists it as out of scope.
 
+### What the chart checks, and what it cannot see {#release-namespace-check}
+
+When Helm can read the cluster, which is `helm install`, `helm upgrade` and a
+dry run with `--dry-run=server`, the chart reads the release namespace before
+it renders anything. It refuses the install or upgrade when:
+
+- the namespace is `default` or starts with `kube-`, which the whole cluster
+  shares;
+- the namespace runs a Pod, ReplicationController, Deployment, StatefulSet,
+  DaemonSet, ReplicaSet, Job or CronJob that does not carry this release's
+  `app.kubernetes.io/instance` label. Every workload the chart creates, and
+  every Pod those workloads start, carries it.
+
+The refusal names the namespace and up to five of the workloads it found.
+`releaseNamespace.allowSharedNamespace: true` turns it off. Set it only when
+everyone who can create workloads in that namespace is trusted to administer
+Ptah, because installing there makes them administrators.
+
+The notes Helm prints after an install or upgrade warn, and refuse nothing,
+about RoleBindings in the release namespace, and in a separate coordination
+namespace, that give a subject other than this release's ServiceAccounts
+`create` on `pods`, `pods/exec`, `serviceaccounts/token`, a workload kind or
+`leases`, or that bind the `admin`, `edit` or `cluster-admin` ClusterRole. A
+ClusterRole is judged by the rules it carries. For an aggregated ClusterRole
+those are the rules the aggregation controller wrote into it, so a grant that
+arrives through aggregation is warned about too.
+
+The check catches plain mistakes. It is not the boundary, and the contract
+above holds whether the check runs or not. It cannot see:
+
+- ClusterRoleBindings, which grant the same rights in every namespace;
+- an external authorizer, such as a webhook authorizer or a cloud IAM mapping;
+- a grant made, or a workload deployed, after the install or upgrade it ran
+  in;
+- anything at all in a render that cannot read the cluster. `helm template`,
+  `helm lint`, a dry run without `--dry-run=server`, and a GitOps tool that
+  renders the chart with `helm template`, as Argo CD does, all get empty
+  lookups, and the check lets them through without a word. An installation
+  made that way has to hold to the contract with no check at all.
+
 ### Where the product boundary is {#product-boundary}
 
 The boundary the operator is built to hold lies between it and the application

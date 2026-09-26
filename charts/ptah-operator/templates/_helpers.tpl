@@ -1370,6 +1370,204 @@ ptah-operator-parameter-informer-anchor
 {{- include "ptah-operator.validateAdmissionSingletonObject" (merge (dict "kind" "ValidatingWebhookConfiguration" "object" $validating) $context) -}}
 {{- end -}}
 
+{{/*
+ptah-operator.validateReleaseNamespace refuses an install or upgrade into a
+namespace the operator would share. The release namespace is part of the
+operator's trusted computing base: Kubernetes lets whoever can create a Pod in
+a namespace run it as any ServiceAccount there, so a namespace the whole
+cluster uses, or one that already runs somebody else's workloads, hands the
+operator's identities to principals nobody chose to administer Ptah.
+
+It needs the cluster. A list lookup that reached an API server answers with an
+items key, even for a namespace that is empty or not created yet, while helm
+template, a client-side dry run and a GitOps render answer with an empty map.
+The check runs only in the first case, namespace name included, because an
+offline render such as helm lint renders into default.
+
+A workload is this release's when it carries the release's
+app.kubernetes.io/instance label, which every workload the chart renders and
+every Pod those workloads create carries. This catches a plain mistake and is
+not a boundary: grants made through RoleBindings are what NOTES.txt warns
+about, and ClusterRoleBindings, external authorizers and grants made later are
+outside what a render can see.
+*/}}
+{{- define "ptah-operator.validateReleaseNamespace" -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $pods := lookup "v1" "Pod" $namespace "" -}}
+{{- if and (hasKey $pods "items") (not .Values.releaseNamespace.allowSharedNamespace) -}}
+{{- $advice := printf "whoever can create workloads in the release namespace can run them as the operator's ServiceAccounts, so install into a namespace of its own, or set releaseNamespace.allowSharedNamespace=true if everyone who can create workloads in %s is trusted to administer Ptah" $namespace -}}
+{{- if or (eq $namespace "default") (hasPrefix "kube-" $namespace) -}}
+{{- fail (printf "release namespace %s is shared with the whole cluster: %s" $namespace $advice) -}}
+{{- end -}}
+{{- $foreign := list -}}
+{{- range $kind := list
+      (list "v1" "Pod")
+      (list "v1" "ReplicationController")
+      (list "apps/v1" "Deployment")
+      (list "apps/v1" "StatefulSet")
+      (list "apps/v1" "DaemonSet")
+      (list "apps/v1" "ReplicaSet")
+      (list "batch/v1" "Job")
+      (list "batch/v1" "CronJob") -}}
+{{- $objects := $pods -}}
+{{- if ne (index $kind 1) "Pod" -}}
+{{- $objects = lookup (index $kind 0) (index $kind 1) $namespace "" -}}
+{{- end -}}
+{{- range $object := default (list) $objects.items -}}
+{{- $labels := default (dict) $object.metadata.labels -}}
+{{- if ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name -}}
+{{- $foreign = append $foreign (printf "%s/%s" (index $kind 1) $object.metadata.name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $foreign -}}
+{{- $named := sortAlpha $foreign -}}
+{{- $shown := join ", " (slice $named 0 (min 5 (len $named))) -}}
+{{- if gt (len $named) 5 -}}
+{{- $shown = printf "%s and %d more" $shown (sub (len $named) 5) -}}
+{{- end -}}
+{{- fail (printf "release namespace %s runs workloads without app.kubernetes.io/instance=%s (%s): %s" $namespace $.Release.Name $shown $advice) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+ptah-operator.releaseNamespaceGrantWarnings lists, as JSON, the RoleBindings
+in the release namespace and a separate coordination namespace that let a
+subject other than this release's ServiceAccounts create what makes its holder
+a Ptah administrator: a Pod, an exec session, a ServiceAccount token, a
+workload controller or a Lease, or everything admin, edit or cluster-admin
+grants. NOTES.txt prints them as a warning and refuses nothing.
+
+A ServiceAccount is this release's when it lives in the release namespace and
+carries the release's app.kubernetes.io/instance label, or, with
+serviceAccount.create=false, when it is one of the per-sequence names the chart
+binds. A ClusterRole is read from its rules, which for an aggregated role are
+the aggregated rules: the aggregation controller writes them into the object.
+An offline render reads nothing and lists nothing.
+*/}}
+{{- define "ptah-operator.releaseNamespaceGrantWarnings" -}}
+{{- $root := . -}}
+{{- $namespaces := list .Release.Namespace -}}
+{{- $coordination := include "ptah-operator.coordinationNamespace" . -}}
+{{- if ne $coordination .Release.Namespace -}}
+{{- $namespaces = append $namespaces $coordination -}}
+{{- end -}}
+{{- $own := dict -}}
+{{- $serviceAccounts := lookup "v1" "ServiceAccount" .Release.Namespace "" -}}
+{{- range $serviceAccount := default (list) $serviceAccounts.items -}}
+{{- $labels := default (dict) $serviceAccount.metadata.labels -}}
+{{- if eq (default "" (index $labels "app.kubernetes.io/instance")) $root.Release.Name -}}
+{{- $_ := set $own $serviceAccount.metadata.name true -}}
+{{- end -}}
+{{- end -}}
+{{- $externalPattern := "" -}}
+{{- if not .Values.serviceAccount.create -}}
+{{- $externalPattern = printf "^%s-v[1-9][0-9]*$" (regexQuoteMeta (include "ptah-operator.serviceAccountBaseName" .)) -}}
+{{- end -}}
+{{- $warnings := list -}}
+{{- range $namespace := $namespaces -}}
+{{- $bindings := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" $namespace "" -}}
+{{- range $binding := default (list) $bindings.items -}}
+{{- $foreign := list -}}
+{{- range $subject := default (list) $binding.subjects -}}
+{{- $subjectNamespace := default $namespace $subject.namespace -}}
+{{- $ownSubject := false -}}
+{{- if and (eq $subject.kind "ServiceAccount") (eq $subjectNamespace $root.Release.Namespace) -}}
+{{- if or (hasKey $own $subject.name) (and $externalPattern (regexMatch $externalPattern $subject.name)) -}}
+{{- $ownSubject = true -}}
+{{- end -}}
+{{- end -}}
+{{- if not $ownSubject -}}
+{{- if eq $subject.kind "ServiceAccount" -}}
+{{- $foreign = append $foreign (printf "ServiceAccount %s/%s" $subjectNamespace $subject.name) -}}
+{{- else -}}
+{{- $foreign = append $foreign (printf "%s %s" $subject.kind $subject.name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $foreign -}}
+{{- $roleRef := default (dict) $binding.roleRef -}}
+{{- $reason := "" -}}
+{{- if and (eq $roleRef.kind "ClusterRole") (has $roleRef.name (list "admin" "edit" "cluster-admin")) -}}
+{{- $reason = printf "binds ClusterRole %s" $roleRef.name -}}
+{{- else -}}
+{{- $role := dict -}}
+{{- if eq $roleRef.kind "ClusterRole" -}}
+{{- $role = lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" $roleRef.name -}}
+{{- else if eq $roleRef.kind "Role" -}}
+{{- $role = lookup "rbac.authorization.k8s.io/v1" "Role" $namespace $roleRef.name -}}
+{{- end -}}
+{{- $granted := include "ptah-operator.administratorCreateGrants" (default (list) $role.rules) | fromJsonArray -}}
+{{- if $granted -}}
+{{- $reason = printf "grants create on %s through %s %s" (join ", " $granted) $roleRef.kind $roleRef.name -}}
+{{- end -}}
+{{- end -}}
+{{- if $reason -}}
+{{- $warnings = append $warnings (printf "RoleBinding %s/%s %s to %s" $namespace $binding.metadata.name $reason (join ", " $foreign)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $warnings | toJson -}}
+{{- end -}}
+
+{{/*
+ptah-operator.administratorCreateGrants lists, as JSON, which of the resources
+that make their creator a Ptah administrator in the operator's namespaces a
+list of RBAC rules lets its holder create. It matches a rule the way the RBAC
+authorizer does: the create verb or the verb wildcard, the resource's API
+group or the group wildcard, and the resource itself, the resource wildcard,
+or, for a subresource, the wildcard that names only the subresource. A rule
+that lists resourceNames never authorizes creating a top-level object, whose
+name the authorizer does not know yet, but it does authorize a subresource of
+the objects it names, so it counts for pods/exec and serviceaccounts/token.
+*/}}
+{{- define "ptah-operator.administratorCreateGrants" -}}
+{{- $targets := list
+      (list "" "pods")
+      (list "" "pods/exec")
+      (list "" "serviceaccounts/token")
+      (list "" "replicationcontrollers")
+      (list "apps" "deployments")
+      (list "apps" "statefulsets")
+      (list "apps" "daemonsets")
+      (list "apps" "replicasets")
+      (list "batch" "jobs")
+      (list "batch" "cronjobs")
+      (list "coordination.k8s.io" "leases") -}}
+{{- $granted := list -}}
+{{- range $rule := . -}}
+{{- $verbs := default (list) $rule.verbs -}}
+{{- if or (has "create" $verbs) (has "*" $verbs) -}}
+{{- $groups := default (list) $rule.apiGroups -}}
+{{- $resources := default (list) $rule.resources -}}
+{{- $named := not (empty $rule.resourceNames) -}}
+{{- range $target := $targets -}}
+{{- $group := index $target 0 -}}
+{{- $resource := index $target 1 -}}
+{{- $subresourceWildcard := "" -}}
+{{- if contains "/" $resource -}}
+{{- $subresourceWildcard = printf "*/%s" (last (splitList "/" $resource)) -}}
+{{- end -}}
+{{- if and
+      (or (not $named) $subresourceWildcard)
+      (or (has "*" $groups) (has $group $groups))
+      (or (has "*" $resources) (has $resource $resources) (and $subresourceWildcard (has $subresourceWildcard $resources))) -}}
+{{- $name := $resource -}}
+{{- if $group -}}
+{{- $name = printf "%s.%s" $resource $group -}}
+{{- end -}}
+{{- if not (has $name $granted) -}}
+{{- $granted = append $granted $name -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $granted | toJson -}}
+{{- end -}}
+
 {{- define "ptah-operator.webhookEntryCABundle" -}}
 {{- $result := .newBundle -}}
 {{- $existingBundle := default "" .existingBundle -}}

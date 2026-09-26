@@ -84,7 +84,12 @@ there, and grant no namespace-admin, `edit` or workload-creation access to
 anyone else. [Security model](../security/#release-namespace) is the contract,
 and it holds for installs, upgrades and uninstalls alike. Cluster
 administrators and principals that can change admission policy are inside the
-same boundary.
+same boundary. When Helm can read the cluster, the chart refuses `default`, a
+`kube-*` namespace, or a namespace that runs workloads without this release's
+`app.kubernetes.io/instance` label, and its notes warn about RoleBindings that
+make somebody else an administrator there.
+[What the chart checks](../security/#release-namespace-check) is the whole
+list, and what a render without the cluster skips.
 
 The hook-progress admission policies the first installation creates guard the
 install hooks against a concurrent writer in the namespace once they have
@@ -160,6 +165,11 @@ than warned about, and there is no value that accepts them. An installation
 whose CRDs carry no schema identity is a third: the operator intentionally
 provides no value that labels an unknown schema as trusted.
 
+A release namespace the chart would share is refused as well, and that one
+has a value: `releaseNamespace.allowSharedNamespace: true`. Setting it says
+that everyone who can create workloads in the namespace administers Ptah. If
+that is not true, move the release, or the other workloads, instead.
+
 #### If it fails {#install-recovery}
 
 A failed preflight leaves the runtime unchanged, and the refusal it reports is
@@ -176,6 +186,10 @@ Upgrades are supported from the first published release onward.
 
 You need `cluster-admin`, and enough visibility to find a RoleBinding in any
 namespace -- one naming a retired epoch blocks the upgrade wherever it lives.
+
+The [release namespace check](../security/#release-namespace-check) runs on
+every upgrade, so a workload somebody deployed into the release namespace
+since the last one refuses it until the workload leaves.
 
 Every release since the first stamps the CRDs with the schema version, schema
 digest and controller-state version, and the admission singletons and

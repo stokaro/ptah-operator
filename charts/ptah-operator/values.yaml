@@ -70,6 +70,18 @@ coordination:
   # cluster's one supported operator release.
   namespace: ""
 
+# The release namespace is part of the operator's trusted computing base:
+# whoever can create a workload there can run it as the operator's
+# ServiceAccounts. When Helm can read the cluster, the chart refuses to install
+# into default or a kube-* namespace, or into one that runs Pods or workload
+# controllers without this release's app.kubernetes.io/instance label.
+# helm template, and a GitOps tool that renders with it, cannot read the
+# cluster and skip the check.
+releaseNamespace:
+  # Install into such a namespace anyway. Set it only when everyone who can
+  # create workloads there is trusted to administer Ptah.
+  allowSharedNamespace: false
+
 # The identity the runtime components run as.
 serviceAccount:
   # With create=false, name is a stable base, not a complete object name. For

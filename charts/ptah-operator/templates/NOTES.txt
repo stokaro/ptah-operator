@@ -6,3 +6,17 @@ The controller ClusterRole intentionally has no permission to read Secrets.
 The optional ClusterRole {{ include "ptah-operator.fullname" . }}-approver is not
 bound automatically. Bind it only to authenticated identities allowed to create
 exact-plan approvals.
+{{- $grants := include "ptah-operator.releaseNamespaceGrantWarnings" . | fromJsonArray }}
+{{- if $grants }}
+
+WARNING: these RoleBindings let principals other than this release's
+ServiceAccounts create Pods, workloads, ServiceAccount tokens or Leases in the
+operator's namespaces. Whoever can do that can act as the operator, so each of
+them is a Ptah administrator:
+{{- range $grants }}
+  - {{ . }}
+{{- end }}
+Remove the grants, or confirm that every subject is trusted to administer Ptah.
+This reads RoleBindings only. ClusterRoleBindings, external authorizers and
+grants made after this install are not visible to it.
+{{- end }}

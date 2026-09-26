@@ -186,6 +186,16 @@
         }
       }
     },
+    "releaseNamespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowSharedNamespace"],
+      "properties": {
+        "allowSharedNamespace": {
+          "type": "boolean"
+        }
+      }
+    },
     "serviceAccount": {
       "type": "object",
       "additionalProperties": false,

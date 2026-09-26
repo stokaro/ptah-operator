@@ -1,5 +1,6 @@
 {{- $fullname := include "ptah-operator.fullname" . -}}
 {{- include "ptah-operator.validateAdmissionSingleton" . -}}
+{{- include "ptah-operator.validateReleaseNamespace" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
 {{- if and (not .Values.webhook.existingSecret) (not .Values.certificateRotation.enabled) -}}
 {{- fail "certificateRotation.enabled must be true when webhook.existingSecret is empty" -}}

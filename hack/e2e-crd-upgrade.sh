@@ -130,6 +130,10 @@ CONTROLLER_IMPERSONATION_UID=
 CONTROLLER_IMPERSONATION_POD_NAME=
 CONTROLLER_IMPERSONATION_POD_UID=
 CONTROLLER_GUARD_OWNER=
+# Set while the shared-namespace proof's foreign CronJob exists, so the exit
+# trap removes it: left behind, it makes every later upgrade in the release
+# namespace fail the chart's shared-namespace check.
+SHARED_NAMESPACE_PROBE=
 CONTROLLER_GUARD_PROBE_INDEX=0
 CONTROLLER_OBJECT_GUARD_PROBE_INDEX=0
 HOOK_PROGRESS_ADVERSARY=ptah-e2e-hook-progress-adversary
@@ -265,6 +269,12 @@ cleanup() {
 	fi
 	if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then
 		if [ "$retain" -eq 0 ] && ! kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
+			--ignore-not-found=true >/dev/null 2>&1; then
+			status=1
+		fi
+	fi
+	if [ "$retain" -eq 0 ] && [ -n "$SHARED_NAMESPACE_PROBE" ]; then
+		if ! kube -n "$E2E_OPERATOR_NAMESPACE" delete cronjob "$SHARED_NAMESPACE_PROBE" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
@@ -1750,6 +1760,59 @@ expect_upgrade_render_failure_without_deployment_change() {
 		fail "$description created Helm revision $after_revision before template validation, expected $before_revision"
 	deployment_evidence >"$after"
 	cmp "$before" "$after" || fail "$description mutated runtime Deployments"
+}
+
+# The release namespace is part of the operator's trusted computing base, so
+# the chart refuses to install into one that runs somebody else's workloads.
+# The foreign workload is a suspended CronJob: a workload controller that starts
+# no Pod and that no admission policy of this chart matches, so the refusal can
+# only be the chart's. The same upgrade with the override is then rendered as a
+# server-side dry run, which reads the same cluster and runs no hook.
+prove_shared_release_namespace_refusal() {
+	printf '%s\n' 'e2e crd: proving the chart refuses a release namespace that runs foreign workloads'
+	SHARED_NAMESPACE_PROBE=ptah-e2e-shared-namespace-probe
+	kube -n "$E2E_OPERATOR_NAMESPACE" create --request-timeout=15s -f - >/dev/null <<EOF
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: $SHARED_NAMESPACE_PROBE
+spec:
+  suspend: true
+  schedule: "0 0 1 1 *"
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: probe
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+EOF
+	expect_upgrade_render_failure_without_deployment_change "shared release namespace upgrade"
+	grep -F "release namespace $E2E_OPERATOR_NAMESPACE runs workloads without app.kubernetes.io/instance=$E2E_HELM_RELEASE (CronJob/$SHARED_NAMESPACE_PROBE)" \
+		"$WORK_DIR/failed-upgrade.err" >/dev/null ||
+		fail "an upgrade into a release namespace running a foreign CronJob failed without the shared-namespace refusal naming it"
+	if ! helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \
+		--set releaseNamespace.allowSharedNamespace=true \
+		--dry-run=server >/dev/null 2>"$WORK_DIR/shared-namespace-override.err"; then
+		cat "$WORK_DIR/shared-namespace-override.err" >&2 || true
+		fail "releaseNamespace.allowSharedNamespace=true did not admit the upgrade over a foreign CronJob"
+	fi
+	kube -n "$E2E_OPERATOR_NAMESPACE" delete cronjob "$SHARED_NAMESPACE_PROBE" \
+		--wait=true --timeout=60s --request-timeout=15s >/dev/null
+	SHARED_NAMESPACE_PROBE=
 }
 
 create_late_activation_blocker() {
@@ -4758,6 +4821,7 @@ run_upgrade_proof() {
 		"leader-election mutation" --set replicaCount=1 --set leaderElection=false
 	grep -F 'operator.ptah.run/leader-election' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
 		fail "leader-election mutation failed without the immutable annotation guard"
+	prove_shared_release_namespace_refusal
 
 	# The retained runtime Pod guard is created once per release sequence and
 	# never rewritten, and its contract digest covers the manager arguments that
