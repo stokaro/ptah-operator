@@ -107,15 +107,16 @@ reader of a converged schema can see exactly what produced it.
 | `certificateRotation.enabled` | `true` | Built-in management is automatically omitted when webhook.existingSecret is set. The manager never receives Secret-read permission. |
 | `certificateRotation.recreateMissingSecret` | `false` | Opt in to recreating a deleted chart-generated Secret. This necessarily grants the rotator namespace-wide Secret CREATE in RBAC; a fail-closed admission policy narrows its use to the exact generated TLS Secret. |
 | `certificateRotation.interval` | `"6h"` | How long the rotator waits after a reconciliation that changed nothing. |
+| `certificateRotation.caSwitchDelay` | `""` | How long every webhook entry trusts both the old and the new CA before the serving certificate moves to the new one. Empty means the interval. |
 | `certificateRotation.operationTimeout` | `"15m"` | Ceiling on one reconciliation, including the probes that prove every endpoint serves the new certificate. |
 | `certificateRotation.retryInitial` | `"5s"` | First backoff delay after a failed reconciliation. |
 | `certificateRotation.retryMax` | `"5m"` | Ceiling on the backoff after repeated failures. |
 | `certificateRotation.healthPort` | `8081` | Port the rotator serves its own health and readiness probes on. |
-| `certificateRotation.candidatePort` | `9444` | Port the rotator serves candidate admission TLS on while it proves a new certificate before adopting it. |
-| `certificateRotation.admissionConvergence` |  | A transition is accepted only after every directly addressed API server observes both canary webhooks continuously for this stability window. |
-| `certificateRotation.admissionConvergence.stabilityDuration` | `"10s"` | How long the candidate must be observed continuously, unbroken. |
-| `certificateRotation.admissionConvergence.pollInterval` | `"1s"` | How often the rotator asks each API-server endpoint during that window. |
-| `certificateRotation.admissionConvergence.requestTimeout` | `"5s"` | Bounds one endpoint observation: marker GET plus both denial probes. |
+| `certificateRotation.candidatePort` | `9444` | Unused. The rotator no longer runs the candidate listener; the release guards still require the port until they drop the admission canary. |
+| `certificateRotation.admissionConvergence` |  | Unused, and kept for the same reason as candidatePort. |
+| `certificateRotation.admissionConvergence.stabilityDuration` | `"10s"` | Unused. |
+| `certificateRotation.admissionConvergence.pollInterval` | `"1s"` | Unused. |
+| `certificateRotation.admissionConvergence.requestTimeout` | `"5s"` | Unused. |
 | `certificateRotation.renewalThreshold` | `"720h"` | Rotate a certificate once no more than this much validity remains. |
 | `certificateRotation.servingCertificateValidity` | `"2160h"` | Validity of a newly issued serving certificate. |
 | `certificateRotation.caCertificateValidity` | `"26280h"` | Validity of a newly issued CA certificate. |

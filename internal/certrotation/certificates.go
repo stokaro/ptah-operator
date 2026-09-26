@@ -305,10 +305,6 @@ func requiredDNSNames(config Config) []string {
 	return serviceDNSNames(config.ServiceName, config.ServiceNamespace)
 }
 
-func candidateServiceDNSNames(config Config) []string {
-	return serviceDNSNames(config.CandidateServiceName, config.Namespace)
-}
-
 func serviceDNSNames(serviceName, serviceNamespace string) []string {
 	return []string{
 		serviceName,

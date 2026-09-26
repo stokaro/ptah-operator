@@ -2,146 +2,236 @@ package certrotation
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// runPendingCATransition executes the complete durable transition from live
-// evidence on every attempt. The staged phase is only a monotonic audit cursor:
-// it never substitutes for exact API readback, endpoint proof, or a canary
-// convergence barrier after a restart.
+// A CA transition normally spans two reconciliations, and the staging Secret
+// records each step before the next one starts:
+//
+//  1. Expand: every managed webhook entry trusts the old and the new CA, and
+//     the record notes when that became true.
+//  2. Switch: no earlier than CASwitchDelay later, one atomic write gives the
+//     generated Secret the new CA and a serving certificate issued by it.
+//  3. Retire: once every webhook endpoint serves that certificate, every
+//     managed entry trusts the new CA alone, and the record is cleared.
+//
+// The delay is what the removed admission canary used to prove directly: that
+// every API server has picked up the expanded bundle before any webhook
+// presents a certificate only the new CA verifies. Nothing proves it now; the
+// delay makes it true with a wide margin, since an API server sees a webhook
+// configuration change within seconds and the default delay is hours.
+
+// runPendingCATransition takes one durable pending transition as far as the
+// clock allows. It returns a positive RequeueAfter while the switch waits.
 func (r *Rotator) runPendingCATransition(
 	ctx context.Context,
 	staging *corev1.Secret,
+	primary *corev1.Secret,
 	pending *pendingCandidate,
-	trustedOldCA []byte,
-) error {
-	if pending == nil {
-		return errors.New("durable CA transition is required")
+	relationship pendingRelationship,
+) (Result, error) {
+	switch relationship {
+	case pendingAfterPrimaryWrite:
+		// The generated Secret already holds the new material, so the switch
+		// happened on an earlier pass whose later steps were interrupted.
+		return Result{}, r.retireOldCA(ctx, staging, pending)
+	case pendingBeforePrimaryWrite:
+	default:
+		return Result{}, errors.New("durable CA transition has no known relationship to the generated TLS Secret")
 	}
-	if err := r.candidateSink.StoreCandidateCertificate(pending.listenerCertPEM, pending.listenerKeyPEM); err != nil {
-		r.candidateSink.ClearCandidateCertificate()
-		return fmt.Errorf("serve durable expansion certificate: %w", err)
-	}
-	expansion, err := NewAdmissionCanaryExpansion(trustedOldCA, pending.material.caPEM)
-	if err != nil {
-		return fmt.Errorf("build durable CA trust expansion: %w", err)
-	}
-	if err := r.canary.PublishMutating(ctx, expansion); err != nil {
-		return fmt.Errorf("publish mutating CA trust expansion: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseExpansionMutatingStored); err != nil {
-		return err
-	}
-	if err := r.canary.PublishValidating(ctx, expansion); err != nil {
-		return fmt.Errorf("publish validating CA trust expansion: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseExpansionBothStored); err != nil {
-		return err
-	}
-	if err := r.canary.Wait(ctx, expansion); err != nil {
-		return fmt.Errorf("prove CA trust expansion through every API server: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseExpansionProven); err != nil {
-		return err
+	if pending.sourceState == stagingSourceMissing {
+		// Prove the broad-CREATE guard on every pass, before trust changes, so
+		// a guard that stopped holding blocks the transition where it stands.
+		if err := r.ensureSecretCreateGuard(ctx, generatedSecret(r.config, pending.material)); err != nil {
+			return Result{}, err
+		}
 	}
 
-	primary, err := r.readPendingPrimary(ctx)
+	current, err := r.currentServingTrust(ctx, primary)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
-	switch relationship := relatePendingCandidate(primary, pending, r.config); relationship {
-	case pendingBeforePrimaryWrite:
-		if pending.sourceState == stagingSourceMissing {
-			desired := generatedSecret(r.config, pending.material)
-			if err := r.ensureSecretCreateGuard(ctx, desired); err != nil {
-				return err
-			}
-			if err := r.createSecret(ctx, desired, pending.material); err != nil {
-				return err
-			}
-		} else if err := r.updateSecret(ctx, primary, pending.material); err != nil {
-			return err
+	additions := [][]byte{pending.material.caPEM}
+	if len(current.bundle) != 0 {
+		additions = [][]byte{current.bundle, pending.material.caPEM}
+	}
+	candidateWasPublished, err := r.candidateTrustedEverywhere(ctx, pending.material.caPEM)
+	if err != nil {
+		return Result{}, err
+	}
+	r.logStep("publishing the old and the new CA in every managed webhook entry")
+	if err := r.publishPerEntryTransition(ctx, additions...); err != nil {
+		return Result{}, fmt.Errorf("publish CA trust expansion: %w", err)
+	}
+
+	now := r.now()
+	expandedNow := expansionInstant(now)
+	switch {
+	case pending.phase == stagingPhasePrepared:
+		staging, err = r.recordExpansion(ctx, staging, pending, expandedNow)
+	case !candidateWasPublished:
+		// An entry lost the new CA since the expansion was recorded, so some
+		// API server may have seen it without; its dwell starts again.
+		r.logStep("CA trust expansion was incomplete; restarting the switch delay")
+		staging, err = r.recordExpansion(ctx, staging, pending, expandedNow)
+	case pending.expandedAt.After(expandedNow):
+		// The recorded instant lies ahead of this clock, which moved back or
+		// belonged to another host. Restarting the dwell from now bounds the
+		// wait to one delay; keeping the record could stretch it without limit.
+		r.logStep("CA trust expansion is dated in the future; restarting the switch delay")
+		staging, err = r.recordExpansion(ctx, staging, pending, expandedNow)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+
+	switchAt := pending.expandedAt.Add(r.config.CASwitchDelay)
+	if current.serving && now.Before(switchAt) {
+		r.logStep("CA transition waits for its switch", "switchAt", switchAt.Format(time.RFC3339))
+		return Result{RequeueAfter: switchAt.Sub(now)}, nil
+	}
+	if !current.serving {
+		// The current serving certificate has expired, or no managed entry
+		// holds a CA that issued it, so admission through it has already
+		// stopped. Waiting would only prolong that.
+		r.logStep("current serving certificate no longer verifies; switching without the delay")
+	}
+	if err := r.switchToNewCA(ctx, primary, pending); err != nil {
+		return Result{}, err
+	}
+	return Result{}, r.retireOldCA(ctx, staging, pending)
+}
+
+// servingTrust is what the transition must keep trusted until the switch.
+type servingTrust struct {
+	// bundle holds the CA certificates that authenticate the current serving
+	// certificate. It is empty when none is known.
+	bundle []byte
+	// serving reports whether an API server can still verify the current
+	// serving certificate through a CA in bundle. The switch delay protects
+	// only a certificate that it can.
+	serving bool
+}
+
+func (r *Rotator) currentServingTrust(ctx context.Context, primary *corev1.Secret) (servingTrust, error) {
+	if primary == nil {
+		// The Secret is gone, but running manager Pods keep the certificate
+		// they last loaded, and the managed entries keep the CA that issued it.
+		// Every parseable certificate in an entry is preserved by the expansion,
+		// so treat that certificate as serving and let the delay protect it.
+		return servingTrust{serving: true}, nil
+	}
+	now := r.now()
+	state, err := inspectSecret(primary, r.config, now)
+	if err != nil {
+		return servingTrust{}, fmt.Errorf("inspect source TLS Secret for durable CA transition: %w", err)
+	}
+	trust := servingTrust{}
+	switch {
+	case state.currentServingChainAuthentic:
+		trust.bundle = state.current.caPEM
+	case state.current.leaf != nil:
+		mutating, err := r.readMutatingBundles(ctx)
+		if err != nil {
+			return servingTrust{}, err
 		}
-	case pendingAfterPrimaryWrite:
-		// An exact primary readback is authoritative evidence of an earlier
-		// successful write whose response or phase update may have been lost.
-	case pendingUnrelated:
-		return errors.New("durable CA transition became unrelated to the generated TLS Secret")
-	default:
-		return errors.New("durable CA transition has an unknown primary relationship")
+		validating, err := r.readValidatingBundles(ctx)
+		if err != nil {
+			return servingTrust{}, err
+		}
+		recovered, found, err := authenticServingCABundle(
+			mutating,
+			validating,
+			state.current.leaf,
+			requiredDNSNames(r.config),
+		)
+		if err != nil {
+			return servingTrust{}, fmt.Errorf("filter authentic serving-certificate CAs: %w", err)
+		}
+		if found {
+			if err := r.probeCertificateIdentity(ctx, recovered, state.current.leaf); err != nil {
+				return servingTrust{}, fmt.Errorf("prove recovered CA signs the live serving certificate: %w", err)
+			}
+			trust.bundle = recovered
+		}
 	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhasePrimaryWritten); err != nil {
-		return err
+	serving, err := stillServing(state.current.leaf, trust.bundle, now)
+	if err != nil {
+		return servingTrust{}, err
 	}
+	trust.serving = serving
+	return trust, nil
+}
+
+// stillServing reports whether an API server could still verify the leaf
+// through a CA in the bundle, both already proved to belong together. Only
+// expiry counts against it: a certificate that looks not yet valid means this
+// clock runs behind the one that issued it, and switching early on the word
+// of a slow clock is exactly what the delay is there to prevent.
+func stillServing(leaf *x509.Certificate, bundle []byte, now time.Time) (bool, error) {
+	if leaf == nil || len(bundle) == 0 || !now.Before(leaf.NotAfter) {
+		return false, nil
+	}
+	certificates, err := parseCertificateBundle(bundle)
+	if err != nil {
+		return false, fmt.Errorf("parse current serving trust: %w", err)
+	}
+	for _, certificate := range certificates {
+		if now.Before(certificate.NotAfter) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// candidateTrustedEverywhere reports whether every managed entry already
+// holds the candidate CA in a well-formed bundle.
+func (r *Rotator) candidateTrustedEverywhere(ctx context.Context, candidateCA []byte) (bool, error) {
+	mutating, err := r.readMutatingBundles(ctx)
+	if err != nil {
+		return false, err
+	}
+	validating, err := r.readValidatingBundles(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, observed := range []observedCABundles{mutating, validating} {
+		if observed.invalidCount != 0 || len(observed.valid) != observed.total {
+			return false, nil
+		}
+		for _, bundle := range observed.valid {
+			if !caBundleContainsCertificate(bundle, candidateCA) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+func (r *Rotator) switchToNewCA(ctx context.Context, primary *corev1.Secret, pending *pendingCandidate) error {
+	r.logStep("switching the generated TLS Secret to the new CA")
+	if pending.sourceState == stagingSourceMissing {
+		return r.createSecret(ctx, generatedSecret(r.config, pending.material), pending.material)
+	}
+	return r.updateSecret(ctx, primary, pending.material)
+}
+
+// retireOldCA finishes a transition whose switch is done: it proves every
+// endpoint serves the new certificate, drops every other root from the
+// managed entries, and clears the durable record.
+func (r *Rotator) retireOldCA(ctx context.Context, staging *corev1.Secret, pending *pendingCandidate) error {
 	if err := r.probeCurrentCertificate(ctx, pending.material); err != nil {
 		return err
 	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhasePrimaryServed); err != nil {
-		return err
+	r.logStep("retiring the old CA from every managed webhook entry")
+	if err := r.setBothBundles(ctx, pending.material.caPEM); err != nil {
+		return fmt.Errorf("retire the old CA: %w", err)
 	}
-
-	if err := r.candidateSink.StoreCandidateCertificate(
-		pending.proofListenerCertPEM,
-		pending.proofListenerKeyPEM,
-	); err != nil {
-		r.candidateSink.ClearCandidateCertificate()
-		return fmt.Errorf("serve durable contraction-proof certificate: %w", err)
-	}
-	contraction, err := NewAdmissionCanaryContraction(pending.material.caPEM, pending.proofCACertPEM)
-	if err != nil {
-		return fmt.Errorf("build durable CA trust contraction: %w", err)
-	}
-	if err := r.canary.PublishMutating(ctx, contraction); err != nil {
-		return fmt.Errorf("publish mutating CA trust contraction: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseContractionMutatingStored); err != nil {
-		return err
-	}
-	if err := r.canary.PublishValidating(ctx, contraction); err != nil {
-		return fmt.Errorf("publish validating CA trust contraction: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseContractionBothStored); err != nil {
-		return err
-	}
-	if err := r.canary.Wait(ctx, contraction); err != nil {
-		return fmt.Errorf("prove CA trust contraction through every API server: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseContractionProven); err != nil {
-		return err
-	}
-
-	// Switch back to the candidate CA before parking either canary. The canary
-	// selectors are exact and dormant between our probes, so the sequential
-	// singleton updates cannot affect unrelated API requests.
-	if err := r.candidateSink.StoreCandidateCertificate(pending.listenerCertPEM, pending.listenerKeyPEM); err != nil {
-		r.candidateSink.ClearCandidateCertificate()
-		return fmt.Errorf("restore durable candidate certificate for canary parking: %w", err)
-	}
-	parked, err := NewAdmissionCanaryParked(pending.material.caPEM)
-	if err != nil {
-		return fmt.Errorf("build parked admission canary state: %w", err)
-	}
-	if err := r.canary.PublishMutating(ctx, parked); err != nil {
-		return fmt.Errorf("park mutating admission canary: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseMutatingParked); err != nil {
-		return err
-	}
-	if err := r.canary.PublishValidating(ctx, parked); err != nil {
-		return fmt.Errorf("park validating admission canary: %w", err)
-	}
-	if err := r.canary.Wait(ctx, parked); err != nil {
-		return fmt.Errorf("prove parked admission canaries through every API server: %w", err)
-	}
-	if err := r.recordPendingEvidence(ctx, &staging, pending, stagingPhaseBothParked); err != nil {
-		return err
-	}
-
 	if err := r.clearPendingCandidate(ctx, staging); err != nil {
 		return fmt.Errorf("retire completed pending CA transition: %w", err)
 	}
@@ -156,69 +246,4 @@ func (r *Rotator) runPendingCATransition(
 		return errors.New("completed pending CA transition requires immediate renewal under the current certificate policy")
 	}
 	return nil
-}
-
-func (r *Rotator) readPendingPrimary(ctx context.Context) (*corev1.Secret, error) {
-	secret, err := r.client.CoreV1().Secrets(r.config.Namespace).Get(ctx, r.config.SecretName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("re-read generated TLS Secret before durable primary write: %w", err)
-	}
-	if err := validatePrimarySecretSource(secret, r.config); err != nil {
-		return nil, fmt.Errorf("re-read generated TLS Secret source contract: %w", err)
-	}
-	return secret, nil
-}
-
-func (r *Rotator) recordPendingEvidence(
-	ctx context.Context,
-	staging **corev1.Secret,
-	pending *pendingCandidate,
-	target stagingPhase,
-) error {
-	currentRank, currentOK := stagingPhaseRank(pending.phase)
-	targetRank, targetOK := stagingPhaseRank(target)
-	if !currentOK || !targetOK || staging == nil || *staging == nil {
-		return errors.New("record durable CA transition evidence: phase and staging Secret must be valid")
-	}
-	if currentRank >= targetRank {
-		return nil
-	}
-	next, ok := nextStagingPhase(pending.phase)
-	if !ok || next != target {
-		return fmt.Errorf(
-			"record durable CA transition evidence: phase %q cannot follow verified target %q",
-			pending.phase,
-			target,
-		)
-	}
-	updated, err := r.advancePendingPhase(ctx, *staging, pending, target)
-	if err != nil {
-		return err
-	}
-	*staging = updated
-	return nil
-}
-
-func stagingPhaseRank(phase stagingPhase) (int, bool) {
-	for index, candidate := range []stagingPhase{
-		stagingPhasePrepared,
-		stagingPhaseExpansionMutatingStored,
-		stagingPhaseExpansionBothStored,
-		stagingPhaseExpansionProven,
-		stagingPhasePrimaryWritten,
-		stagingPhasePrimaryServed,
-		stagingPhaseContractionMutatingStored,
-		stagingPhaseContractionBothStored,
-		stagingPhaseContractionProven,
-		stagingPhaseMutatingParked,
-		stagingPhaseBothParked,
-	} {
-		if phase == candidate {
-			return index, true
-		}
-	}
-	return 0, false
 }

@@ -14,7 +14,7 @@ import (
 )
 
 type rotationRunner interface {
-	Run(context.Context) error
+	Run(context.Context) (certrotation.Result, error)
 }
 
 type supervisorConfig struct {
@@ -50,13 +50,16 @@ func validateRuntimeRelationships(supervisor supervisorConfig, rotation certrota
 		return errors.New("Lease acquire timeout and probe timeout must be positive")
 	}
 	const maximumDuration = time.Duration(1<<63 - 1)
-	if rotation.AcquireTimeout > maximumDuration-rotation.ProbeTimeout {
-		return errors.New("Lease acquire timeout plus probe timeout exceeds the supported duration")
+	// The pass that switches a recovered CA probes twice: once to prove the
+	// recovered CA signs the live certificate, once to prove the new one is
+	// served.
+	if rotation.ProbeTimeout > (maximumDuration-rotation.AcquireTimeout)/2 {
+		return errors.New("the Lease acquire timeout plus two probe timeouts exceeds the supported duration")
 	}
-	minimumOperationTimeout := rotation.AcquireTimeout + rotation.ProbeTimeout
+	minimumOperationTimeout := rotation.AcquireTimeout + 2*rotation.ProbeTimeout
 	if supervisor.OperationTimeout <= minimumOperationTimeout {
 		return fmt.Errorf(
-			"operation timeout must exceed Lease acquire timeout plus probe timeout (%s)",
+			"operation timeout must exceed Lease acquire timeout plus two probe timeouts (%s)",
 			minimumOperationTimeout,
 		)
 	}
@@ -68,6 +71,18 @@ func validateRuntimeRelationships(supervisor supervisorConfig, rotation certrota
 		return fmt.Errorf(
 			"run interval plus operation timeout must be shorter than serving certificate validity minus renewal threshold (%s)",
 			rotationWindow,
+		)
+	}
+	// A pass may notice a certificate inside the renewal threshold up to one
+	// scheduled cycle late, and the CA switch follows the delay after that.
+	// Both have to fit before the certificate that started it expires.
+	if rotation.CASwitchDelay <= 0 || scheduledCycle > maximumDuration-rotation.CASwitchDelay {
+		return errors.New("CA switch delay must be positive and fit the supported duration")
+	}
+	if scheduledCycle+rotation.CASwitchDelay >= rotation.RenewalThreshold {
+		return fmt.Errorf(
+			"run interval plus operation timeout plus CA switch delay must be shorter than the renewal threshold (%s)",
+			rotation.RenewalThreshold,
 		)
 	}
 	return nil
@@ -135,7 +150,7 @@ func (s *rotationSupervisor) Run(ctx context.Context) error {
 
 		s.logger.Info("reconciling generated webhook certificate")
 		operationCtx, cancel := context.WithTimeout(ctx, s.config.OperationTimeout)
-		err := s.runner.Run(operationCtx)
+		result, err := s.runner.Run(operationCtx)
 		operationErr := operationCtx.Err()
 		cancel()
 
@@ -148,9 +163,15 @@ func (s *rotationSupervisor) Run(ctx context.Context) error {
 
 		if err == nil {
 			s.probes.setReady(true)
-			s.logger.Info("generated webhook certificate is current")
 			retryDelay = s.config.RetryInitial
-			if !s.wait(ctx, s.config.RunInterval) {
+			next := s.config.RunInterval
+			if result.RequeueAfter > 0 {
+				next = min(next, result.RequeueAfter)
+				s.logger.Info("CA transition waits for its switch", "switch_in", result.RequeueAfter)
+			} else {
+				s.logger.Info("generated webhook certificate is current")
+			}
+			if !s.wait(ctx, next) {
 				return nil
 			}
 			continue

@@ -18,9 +18,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/certrotation"
 )
 
-type rotationRunnerFunc func(context.Context) error
+type rotationRunnerFunc func(context.Context) (certrotation.Result, error)
 
-func (f rotationRunnerFunc) Run(ctx context.Context) error {
+func (f rotationRunnerFunc) Run(ctx context.Context) (certrotation.Result, error) {
 	return f(ctx)
 }
 
@@ -37,13 +37,13 @@ func TestSupervisorRetriesImmediatelyAndResetsBackoff(t *testing.T) {
 		errors.New("failure after success"),
 	}
 	var events []string
-	runner := rotationRunnerFunc(func(ctx context.Context) error {
+	runner := rotationRunnerFunc(func(ctx context.Context) (certrotation.Result, error) {
 		if _, ok := ctx.Deadline(); !ok {
 			t.Error("reconciliation context has no operation deadline")
 		}
 		index := len(events) / 2
 		events = append(events, fmt.Sprintf("run-%d", index+1))
-		return outcomes[index]
+		return certrotation.Result{}, outcomes[index]
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -101,7 +101,7 @@ func TestSupervisorOperationTimeoutIsRetried(t *testing.T) {
 
 	const operationTimeout = 20 * time.Millisecond
 	probes := &probeState{}
-	runner := rotationRunnerFunc(func(ctx context.Context) error {
+	runner := rotationRunnerFunc(func(ctx context.Context) (certrotation.Result, error) {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			t.Fatal("reconciliation context has no deadline")
@@ -111,7 +111,7 @@ func TestSupervisorOperationTimeoutIsRetried(t *testing.T) {
 			t.Errorf("operation deadline remaining = %s, want within (0, %s]", remaining, operationTimeout)
 		}
 		<-ctx.Done()
-		return ctx.Err()
+		return certrotation.Result{}, ctx.Err()
 	})
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
@@ -146,10 +146,10 @@ func TestSupervisorCancellationStopsCurrentRunCleanly(t *testing.T) {
 
 	started := make(chan struct{})
 	var once sync.Once
-	runner := rotationRunnerFunc(func(ctx context.Context) error {
+	runner := rotationRunnerFunc(func(ctx context.Context) (certrotation.Result, error) {
 		once.Do(func() { close(started) })
 		<-ctx.Done()
-		return fmt.Errorf("rotation interrupted: %w", ctx.Err())
+		return certrotation.Result{}, fmt.Errorf("rotation interrupted: %w", ctx.Err())
 	})
 	probes := &probeState{}
 	var logs bytes.Buffer
@@ -187,14 +187,14 @@ func TestSupervisorPreservesReadinessDuringLaterReconciliation(t *testing.T) {
 	secondStarted := make(chan struct{})
 	releaseSecond := make(chan struct{})
 	var calls int
-	runner := rotationRunnerFunc(func(context.Context) error {
+	runner := rotationRunnerFunc(func(context.Context) (certrotation.Result, error) {
 		calls++
 		if calls == 1 {
-			return nil
+			return certrotation.Result{}, nil
 		}
 		close(secondStarted)
 		<-releaseSecond
-		return errors.New("second reconciliation failed")
+		return certrotation.Result{}, errors.New("second reconciliation failed")
 	})
 	probes := &probeState{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -233,6 +233,57 @@ func TestSupervisorPreservesReadinessDuringLaterReconciliation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Run() did not stop after the failed reconciliation")
+	}
+}
+
+func TestSupervisorWaitsForAPendingSwitchInsteadOfTheInterval(t *testing.T) {
+	t.Parallel()
+
+	const interval = 6 * time.Hour
+	// Each run reports how long its CA transition still waits. The supervisor
+	// must come back at that time when it is sooner than the interval, and
+	// keep the interval otherwise: a restart must not wait a whole interval
+	// past a switch that is due in minutes.
+	requeues := []time.Duration{
+		10 * time.Minute,
+		0,
+		interval + time.Hour,
+		time.Nanosecond,
+	}
+	var runs int
+	runner := rotationRunnerFunc(func(context.Context) (certrotation.Result, error) {
+		result := certrotation.Result{RequeueAfter: requeues[runs]}
+		runs++
+		return result, nil
+	})
+	probes := &probeState{}
+	var logs bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	supervisor := newSupervisor(runner, supervisorConfig{
+		RunInterval:      interval,
+		OperationTimeout: time.Minute,
+		RetryInitial:     time.Second,
+		RetryMax:         time.Minute,
+	}, probes, slog.New(slog.NewTextHandler(&logs, nil)))
+	var waits []time.Duration
+	supervisor.wait = func(_ context.Context, duration time.Duration) bool {
+		waits = append(waits, duration)
+		if !probes.ready.Load() {
+			t.Error("readiness is false while a CA transition waits for its switch")
+		}
+		return len(waits) < len(requeues)
+	}
+
+	if err := supervisor.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []time.Duration{10 * time.Minute, interval, interval, time.Nanosecond}
+	if !reflect.DeepEqual(waits, want) {
+		t.Fatalf("waits = %v, want %v", waits, want)
+	}
+	if got := strings.Count(logs.String(), "CA transition waits for its switch"); got != 3 {
+		t.Fatalf("pending-switch log lines = %d, want 3: %s", got, logs.String())
 	}
 }
 
@@ -282,11 +333,17 @@ func TestRuntimeRelationshipValidation(t *testing.T) {
 	validRotation := certrotation.Config{
 		RenewalThreshold:           30 * 24 * time.Hour,
 		ServingCertificateValidity: 90 * 24 * time.Hour,
+		CASwitchDelay:              6 * time.Hour,
 		ProbeTimeout:               5 * time.Minute,
 		AcquireTimeout:             30 * time.Second,
 	}
 	if err := validateRuntimeRelationships(validSupervisor, validRotation); err != nil {
 		t.Fatalf("valid relationship error = %v", err)
+	}
+	justInside := validRotation
+	justInside.CASwitchDelay = validRotation.RenewalThreshold - 6*time.Hour - 15*time.Minute - time.Nanosecond
+	if err := validateRuntimeRelationships(validSupervisor, justInside); err != nil {
+		t.Fatalf("switch one nanosecond inside the renewal threshold error = %v", err)
 	}
 
 	tests := []struct {
@@ -334,9 +391,30 @@ func TestRuntimeRelationshipValidation(t *testing.T) {
 		{
 			name: "operation timeout equals combined timeout",
 			mutateSupervisor: func(config *supervisorConfig) {
-				config.OperationTimeout = 5*time.Minute + 30*time.Second
+				config.OperationTimeout = 2*5*time.Minute + 30*time.Second
 			},
 			want: "operation timeout must exceed",
+		},
+		{
+			name: "nonpositive CA switch delay",
+			mutateCertRotation: func(config *certrotation.Config) {
+				config.CASwitchDelay = 0
+			},
+			want: "CA switch delay must be positive",
+		},
+		{
+			name: "CA switch delay overflow",
+			mutateCertRotation: func(config *certrotation.Config) {
+				config.CASwitchDelay = time.Duration(1<<63 - 1)
+			},
+			want: "fit the supported duration",
+		},
+		{
+			name: "switch lands on the renewal threshold",
+			mutateCertRotation: func(config *certrotation.Config) {
+				config.CASwitchDelay = config.RenewalThreshold - 6*time.Hour - 15*time.Minute
+			},
+			want: "plus CA switch delay must be shorter than the renewal threshold",
 		},
 	}
 	for _, test := range tests {

@@ -42,12 +42,11 @@ operator is told an uninstall was refused and never why.
 at a time, serialized by a Lease of its own: it issues or renews the CA
 through a staged transition, issues the serving certificate, repairs the trust
 bundles on both webhook configurations, and probes every endpoint directly to
-confirm the replacement is being served before it adopts it. A transition is
-accepted only after every directly addressed API server observes both canary
-webhooks continuously for a stability window; an address that fronts several
-API servers is covered in
-[One address per API server](#one-address-per-api-server). The manager never
-receives permission to read the Secret this writes.
+confirm the replacement is being served before it adopts it. A CA transition
+publishes the old and the new CA side by side, switches the serving certificate
+no earlier than a configured delay later, and withdraws the old CA once every
+endpoint serves the new certificate; each step is recorded before the next.
+The manager never receives permission to read the Secret this writes.
 
 ## What the CRD hook does
 
@@ -215,8 +214,8 @@ Secret `create` permission.
 ## One address per API server {#one-address-per-api-server}
 
 Every proof on this page that names every API server -- the admission proof,
-the drain in the credential phase, the certificate rotator's canary barrier,
-and each sweep of the uninstall -- finds the API servers by listing the
+the drain in the credential phase, and each sweep of the uninstall -- finds
+the API servers by listing the
 EndpointSlices of the `default/kubernetes` Service, and probes each address it
 lists. It treats one address as one API server. That holds where each API
 server publishes its own address into that Service. The API server's endpoint
@@ -228,9 +227,7 @@ servers, behind a load balancer the provider runs. The probes then reach
 whichever API server the load balancer picks. The hooks keep one client per
 address while the inventory is unchanged, and that client reuses its
 connection, so behind a load balancer that forwards connections their probes
-can all reach the same API server. The certificate rotator opens a fresh
-connection for every request, so its probes are spread over whichever API
-servers the load balancer chooses: a sample, not coverage.
+can all reach the same API server: a sample, not coverage.
 
 A proof that passes there establishes less. Every response it received showed
 the new state for the whole window, so the API servers that answered had it.
@@ -255,14 +252,14 @@ documentation. Where the proofs sample rather than cover:
   without exception. It keeps the namespace to Ptah administrators for every
   install, upgrade and uninstall, and where the proofs sample it is the only
   thing that keeps a writer in the namespace away from the hooks.
-- Raise `certificateRotation.admissionConvergence.stabilityDuration`. A longer
-  window is more fresh connections, which narrows the chance that an API server
-  behind the address answered none of them. It does nothing against a load
-  balancer that sends one client to the same API server every time.
-- Expect a rotation that an API server missed to cost availability rather than
-  the fence. That API server keeps the CA bundle it had, its calls to the
-  webhook fail TLS, and every webhook fails closed, so it refuses the requests
-  those webhooks match until it catches up.
+- The certificate rotator needs no per-API-server proof: it keeps the old and
+  the new CA published together for `certificateRotation.caSwitchDelay` before
+  any endpoint serves a certificate from the new one. If the provider can hold
+  an API server's webhook configuration cache back for longer than that, raise
+  the delay. An API server that still missed the change would cost
+  availability rather than the fence: its calls to the webhook fail TLS, and
+  every webhook fails closed, so it refuses the requests those webhooks match
+  until it catches up.
 
 ## A retry before activation
 
@@ -300,7 +297,8 @@ controller writes -- with fail-closed policies, nonempty CA bundles, the exact S
 match conditions, review version, side-effect and match policies, reinvocation
 policy, and their bounded timeouts. Where certificate rotation is enabled, the
 two candidate canary webhooks are required beside them; where it is not, they
-must be absent. Nothing else in either configuration is accepted.
+must be absent. The rotator no longer calls or updates the canary webhooks;
+they remain because this verifier still requires them. Nothing else in either configuration is accepted.
 The verifier reads this complete contract again after its wait and rechecks the
 CRDs immediately before allowing the process to start. A losing release or a
 Pod launched while Helm is repairing a drifted singleton can neither reconcile

@@ -22,7 +22,7 @@ const (
 	StagingSecretLabel      = "operator.ptah.run/certificate-rotation-staging"
 	StagingSecretLabelValue = "true"
 
-	stagingFormat = "v2"
+	stagingFormat = "v3"
 
 	stagingFormatKey             = "format"
 	stagingOperationKey          = "operation"
@@ -35,26 +35,14 @@ const (
 	stagingCAPrivateKeyKey       = "candidate.ca.key"
 	stagingServingCertKey        = "candidate.tls.crt"
 	stagingServingKeyKey         = "candidate.tls.key"
-	stagingCandidateCertKey      = "listener.tls.crt"
-	stagingCandidateKeyKey       = "listener.tls.key"
-	stagingProofCACertificateKey = "proof.ca.crt"
-	stagingProofListenerCertKey  = "proof.listener.tls.crt"
-	stagingProofListenerKeyKey   = "proof.listener.tls.key"
+	stagingExpandedAtKey         = "expanded-at"
 	stagingSourceStatePresent    = "present"
 	stagingSourceStateMissing    = "missing"
 	stagingOperationCATransition = "ca-transition"
 	stagingSourceDigestHexSize   = sha256.Size * 2
 	stagingTransitionHexSize     = sha256.Size * 2
+	stagingFieldCount            = 12
 )
-
-// CandidateCertificateSink receives the listener-only certificate associated
-// with a durable pending CA transition. Implementations must replace the
-// currently served certificate atomically and must not retain the input byte
-// slices.
-type CandidateCertificateSink interface {
-	StoreCandidateCertificate(certificatePEM, privateKeyPEM []byte) error
-	ClearCandidateCertificate()
-}
 
 type stagingSourceState string
 
@@ -68,35 +56,27 @@ const (
 
 	stagingOperationCA stagingOperation = stagingOperationCATransition
 
-	stagingPhasePrepared                  stagingPhase = "prepared"
-	stagingPhaseExpansionMutatingStored   stagingPhase = "expansion-mutating-stored"
-	stagingPhaseExpansionBothStored       stagingPhase = "expansion-both-stored"
-	stagingPhaseExpansionProven           stagingPhase = "expansion-proven"
-	stagingPhasePrimaryWritten            stagingPhase = "primary-written"
-	stagingPhasePrimaryServed             stagingPhase = "primary-served"
-	stagingPhaseContractionMutatingStored stagingPhase = "contraction-mutating-stored"
-	stagingPhaseContractionBothStored     stagingPhase = "contraction-both-stored"
-	stagingPhaseContractionProven         stagingPhase = "contraction-proven"
-	stagingPhaseMutatingParked            stagingPhase = "mutating-parked"
-	stagingPhaseBothParked                stagingPhase = "both-parked"
+	// stagingPhasePrepared records the new CA before any webhook entry trusts
+	// it.
+	stagingPhasePrepared stagingPhase = "prepared"
+	// stagingPhaseExpanded records that every managed webhook entry trusted
+	// the old and the new CA at expandedAt. The serving certificate switches
+	// to the new CA no earlier than CASwitchDelay after that instant.
+	stagingPhaseExpanded stagingPhase = "expanded"
 )
 
 type pendingCandidate struct {
-	operation            stagingOperation
-	phase                stagingPhase
-	transitionDigest     string
-	sourceState          stagingSourceState
-	sourceUID            types.UID
-	sourceDigest         string
-	material             certificateMaterial
-	listenerCertPEM      []byte
-	listenerKeyPEM       []byte
-	listenerLeaf         *x509.Certificate
-	proofCACertPEM       []byte
-	proofCA              *x509.Certificate
-	proofListenerCertPEM []byte
-	proofListenerKeyPEM  []byte
-	proofListenerLeaf    *x509.Certificate
+	operation        stagingOperation
+	phase            stagingPhase
+	transitionDigest string
+	sourceState      stagingSourceState
+	sourceUID        types.UID
+	sourceDigest     string
+	material         certificateMaterial
+	// expandedAt is zero in the prepared phase. It has whole-second
+	// precision, rounded up from the instant the expansion was confirmed, so
+	// the recorded dwell never starts before the expansion did.
+	expandedAt time.Time
 }
 
 func (r *Rotator) readStagingSecret(ctx context.Context) (*corev1.Secret, *pendingCandidate, error) {
@@ -106,20 +86,16 @@ func (r *Rotator) readStagingSecret(ctx context.Context) (*corev1.Secret, *pendi
 		metav1.GetOptions{},
 	)
 	if err != nil {
-		r.candidateSink.ClearCandidateCertificate()
 		return nil, nil, fmt.Errorf("get certificate rotation staging Secret %q: %w", r.config.StagingSecretName, err)
 	}
 	if err := validateStagingSecretMetadata(secret, r.config); err != nil {
-		r.candidateSink.ClearCandidateCertificate()
 		return nil, nil, fmt.Errorf("certificate rotation staging Secret %q contract: %w", r.config.StagingSecretName, err)
 	}
 	if len(secret.Data) == 0 {
-		r.candidateSink.ClearCandidateCertificate()
 		return secret, nil, nil
 	}
 	pending, err := decodePendingCandidate(secret.Data, r.config)
 	if err != nil {
-		r.candidateSink.ClearCandidateCertificate()
 		return nil, nil, fmt.Errorf("certificate rotation staging Secret %q pending material: %w", r.config.StagingSecretName, err)
 	}
 	return secret, pending, nil
@@ -192,36 +168,10 @@ func generatePendingCandidate(
 	if err != nil {
 		return nil, err
 	}
-	listenerMaterial, err := generateServingMaterialForService(
-		reader,
-		now,
-		config.ServingCertificateValidity,
-		config.CandidateServiceName,
-		config.Namespace,
-		material,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("generate candidate-listener certificate: %w", err)
-	}
-	proofConfig := config
-	proofConfig.ServiceName = config.CandidateServiceName
-	proofConfig.ServiceNamespace = config.Namespace
-	proofMaterial, err := generateMaterial(reader, now, proofConfig)
-	if err != nil {
-		return nil, fmt.Errorf("generate contraction-proof certificate: %w", err)
-	}
 	pending := &pendingCandidate{
-		operation:            stagingOperationCA,
-		phase:                stagingPhasePrepared,
-		material:             material,
-		listenerCertPEM:      append([]byte(nil), listenerMaterial.certPEM...),
-		listenerKeyPEM:       append([]byte(nil), listenerMaterial.keyPEM...),
-		listenerLeaf:         listenerMaterial.leaf,
-		proofCACertPEM:       append([]byte(nil), proofMaterial.caPEM...),
-		proofCA:              proofMaterial.ca,
-		proofListenerCertPEM: append([]byte(nil), proofMaterial.certPEM...),
-		proofListenerKeyPEM:  append([]byte(nil), proofMaterial.keyPEM...),
-		proofListenerLeaf:    proofMaterial.leaf,
+		operation: stagingOperationCA,
+		phase:     stagingPhasePrepared,
+		material:  material,
 	}
 	if source == nil {
 		pending.sourceState = stagingSourceMissing
@@ -239,8 +189,8 @@ func generatePendingCandidate(
 }
 
 func decodePendingCandidate(data map[string][]byte, config Config) (*pendingCandidate, error) {
-	if len(data) != 16 {
-		return nil, fmt.Errorf("data has %d fields, want exactly 16", len(data))
+	if len(data) != stagingFieldCount {
+		return nil, fmt.Errorf("data has %d fields, want exactly %d", len(data), stagingFieldCount)
 	}
 	for _, key := range []string{
 		stagingFormatKey,
@@ -254,11 +204,7 @@ func decodePendingCandidate(data map[string][]byte, config Config) (*pendingCand
 		stagingCAPrivateKeyKey,
 		stagingServingCertKey,
 		stagingServingKeyKey,
-		stagingCandidateCertKey,
-		stagingCandidateKeyKey,
-		stagingProofCACertificateKey,
-		stagingProofListenerCertKey,
-		stagingProofListenerKeyKey,
+		stagingExpandedAtKey,
 	} {
 		if _, found := data[key]; !found {
 			return nil, fmt.Errorf("required data field %q is missing", key)
@@ -269,24 +215,21 @@ func decodePendingCandidate(data map[string][]byte, config Config) (*pendingCand
 	}
 
 	pending := &pendingCandidate{
-		operation:            stagingOperation(data[stagingOperationKey]),
-		phase:                stagingPhase(data[stagingPhaseKey]),
-		transitionDigest:     string(data[stagingTransitionDigestKey]),
-		sourceState:          stagingSourceState(data[stagingSourceStateKey]),
-		sourceUID:            types.UID(data[stagingSourceUIDKey]),
-		sourceDigest:         string(data[stagingSourceDigestKey]),
-		listenerCertPEM:      append([]byte(nil), data[stagingCandidateCertKey]...),
-		listenerKeyPEM:       append([]byte(nil), data[stagingCandidateKeyKey]...),
-		proofCACertPEM:       append([]byte(nil), data[stagingProofCACertificateKey]...),
-		proofListenerCertPEM: append([]byte(nil), data[stagingProofListenerCertKey]...),
-		proofListenerKeyPEM:  append([]byte(nil), data[stagingProofListenerKeyKey]...),
+		operation:        stagingOperation(data[stagingOperationKey]),
+		phase:            stagingPhase(data[stagingPhaseKey]),
+		transitionDigest: string(data[stagingTransitionDigestKey]),
+		sourceState:      stagingSourceState(data[stagingSourceStateKey]),
+		sourceUID:        types.UID(data[stagingSourceUIDKey]),
+		sourceDigest:     string(data[stagingSourceDigestKey]),
 	}
 	if pending.operation != stagingOperationCA {
 		return nil, fmt.Errorf("operation is %q, want %q", pending.operation, stagingOperationCA)
 	}
-	if !validStagingPhase(pending.phase) {
-		return nil, fmt.Errorf("phase %q is not a supported CA-transition cursor", pending.phase)
+	expandedAt, err := decodeExpandedAt(pending.phase, data[stagingExpandedAtKey])
+	if err != nil {
+		return nil, err
 	}
+	pending.expandedAt = expandedAt
 	if len(pending.transitionDigest) != stagingTransitionHexSize {
 		return nil, errors.New("transition digest is not a canonical SHA-256 digest")
 	}
@@ -319,51 +262,49 @@ func decodePendingCandidate(data map[string][]byte, config Config) (*pendingCand
 		return nil, err
 	}
 	pending.material = material
-	listenerLeaf, err := decodePendingServingCertificate(
-		pending.listenerCertPEM,
-		pending.listenerKeyPEM,
-		material.ca,
-		candidateServiceDNSNames(config),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("candidate-listener material: %w", err)
-	}
-	if certificateRawEqual(material.leaf, listenerLeaf) {
-		return nil, errors.New("primary and candidate-listener certificates must be distinct")
-	}
-	pending.listenerLeaf = listenerLeaf
-
-	proofCA, normalizedProofCA, err := parseSingleCertificate(pending.proofCACertPEM)
-	if err != nil {
-		return nil, fmt.Errorf("contraction-proof CA certificate: %w", err)
-	}
-	if !bytes.Equal(normalizedProofCA, pending.proofCACertPEM) {
-		return nil, errors.New("contraction-proof CA certificate is not canonical PEM")
-	}
-	if !selfSignedCertificateAuthority(proofCA) || !certificateLifetimeWithinAbsoluteLimit(proofCA) {
-		return nil, errors.New("contraction-proof CA certificate is not an exact self-signed CA within the absolute validity limit")
-	}
-	if publicKeysEqual(material.ca.PublicKey, proofCA.PublicKey) {
-		return nil, errors.New("candidate and contraction-proof CAs must be distinct")
-	}
-	proofLeaf, err := decodePendingServingCertificate(
-		pending.proofListenerCertPEM,
-		pending.proofListenerKeyPEM,
-		proofCA,
-		candidateServiceDNSNames(config),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("contraction-proof listener material: %w", err)
-	}
-	if certificateRawEqual(material.leaf, proofLeaf) || certificateRawEqual(listenerLeaf, proofLeaf) {
-		return nil, errors.New("candidate primary, expansion listener, and contraction-proof listener certificates must be distinct")
-	}
-	pending.proofCA = proofCA
-	pending.proofListenerLeaf = proofLeaf
 	if pendingCandidateDigest(pending) != pending.transitionDigest {
 		return nil, errors.New("transition digest does not match the exact staged material")
 	}
 	return pending, nil
+}
+
+// decodeExpandedAt accepts exactly the value encodeExpandedAt writes for the
+// phase: nothing while prepared, and a whole-second UTC RFC 3339 instant once
+// expanded.
+func decodeExpandedAt(phase stagingPhase, value []byte) (time.Time, error) {
+	switch phase {
+	case stagingPhasePrepared:
+		if len(value) != 0 {
+			return time.Time{}, errors.New("prepared phase must not carry an expansion time")
+		}
+		return time.Time{}, nil
+	case stagingPhaseExpanded:
+		expandedAt, err := time.Parse(time.RFC3339, string(value))
+		if err != nil || expandedAt.IsZero() || encodeExpandedAt(expandedAt) != string(value) {
+			return time.Time{}, errors.New("expanded phase requires a canonical whole-second UTC expansion time")
+		}
+		return expandedAt, nil
+	default:
+		return time.Time{}, fmt.Errorf("phase %q is not a supported CA-transition cursor", phase)
+	}
+}
+
+func encodeExpandedAt(expandedAt time.Time) string {
+	if expandedAt.IsZero() {
+		return ""
+	}
+	return expandedAt.UTC().Format(time.RFC3339)
+}
+
+// expansionInstant rounds up to a whole second, so the recorded instant never
+// precedes the expansion it dates and a later comparison against second-grained
+// Kubernetes timestamps stays exact.
+func expansionInstant(now time.Time) time.Time {
+	truncated := now.UTC().Truncate(time.Second)
+	if truncated.Equal(now) {
+		return truncated
+	}
+	return truncated.Add(time.Second)
 }
 
 func decodeCandidateMaterial(data map[string][]byte, config Config) (certificateMaterial, error) {
@@ -441,9 +382,6 @@ func pendingCandidateTemporalUsability(pending *pendingCandidate, now time.Time)
 	}{
 		{name: "candidate CA", value: pending.material.ca},
 		{name: "candidate primary serving", value: pending.material.leaf},
-		{name: "candidate listener", value: pending.listenerLeaf},
-		{name: "contraction-proof CA", value: pending.proofCA},
-		{name: "contraction-proof listener", value: pending.proofListenerLeaf},
 	} {
 		if !certificateCurrentlyValid(certificate.value, now) {
 			return fmt.Errorf("%s certificate is not currently valid", certificate.name)
@@ -459,104 +397,55 @@ func certificateLifetimeWithinAbsoluteLimit(certificate *x509.Certificate) bool 
 	return certificate.NotAfter.Sub(certificate.NotBefore) <= maximumValidity+certificateBackdate
 }
 
-func validStagingPhase(phase stagingPhase) bool {
-	switch phase {
-	case stagingPhasePrepared,
-		stagingPhaseExpansionMutatingStored,
-		stagingPhaseExpansionBothStored,
-		stagingPhaseExpansionProven,
-		stagingPhasePrimaryWritten,
-		stagingPhasePrimaryServed,
-		stagingPhaseContractionMutatingStored,
-		stagingPhaseContractionBothStored,
-		stagingPhaseContractionProven,
-		stagingPhaseMutatingParked,
-		stagingPhaseBothParked:
-		return true
-	default:
-		return false
-	}
-}
-
-func nextStagingPhase(phase stagingPhase) (stagingPhase, bool) {
-	switch phase {
-	case stagingPhasePrepared:
-		return stagingPhaseExpansionMutatingStored, true
-	case stagingPhaseExpansionMutatingStored:
-		return stagingPhaseExpansionBothStored, true
-	case stagingPhaseExpansionBothStored:
-		return stagingPhaseExpansionProven, true
-	case stagingPhaseExpansionProven:
-		return stagingPhasePrimaryWritten, true
-	case stagingPhasePrimaryWritten:
-		return stagingPhasePrimaryServed, true
-	case stagingPhasePrimaryServed:
-		return stagingPhaseContractionMutatingStored, true
-	case stagingPhaseContractionMutatingStored:
-		return stagingPhaseContractionBothStored, true
-	case stagingPhaseContractionBothStored:
-		return stagingPhaseContractionProven, true
-	case stagingPhaseContractionProven:
-		return stagingPhaseMutatingParked, true
-	case stagingPhaseMutatingParked:
-		return stagingPhaseBothParked, true
-	default:
-		return "", false
-	}
-}
-
-func (r *Rotator) advancePendingPhase(
+// recordExpansion persists that every managed entry trusted the candidate CA
+// at expandedAt. It moves a prepared record to expanded, and it re-anchors an
+// expanded record whose dwell has to start again.
+func (r *Rotator) recordExpansion(
 	ctx context.Context,
 	staging *corev1.Secret,
 	pending *pendingCandidate,
-	next stagingPhase,
+	expandedAt time.Time,
 ) (*corev1.Secret, error) {
-	if pending == nil || !validStagingPhase(pending.phase) || !validStagingPhase(next) {
-		return nil, errors.New("advance durable CA transition: current and next phases must be valid")
-	}
-	if pending.phase == next {
-		return staging, nil
-	}
-	want, ok := nextStagingPhase(pending.phase)
-	if !ok || next != want {
-		return nil, fmt.Errorf("advance durable CA transition: phase %q cannot move directly to %q", pending.phase, next)
+	if pending == nil || expandedAt.IsZero() || !expandedAt.Equal(expandedAt.Truncate(time.Second)) {
+		return nil, errors.New("record CA trust expansion: pending record and a whole-second expansion time are required")
 	}
 	advanced := *pending
-	advanced.phase = next
+	advanced.phase = stagingPhaseExpanded
+	advanced.expandedAt = expandedAt.UTC()
 	updated, err := r.updateStagingSecretData(
 		ctx,
 		staging,
 		encodePendingCandidate(&advanced),
-		fmt.Sprintf("advance durable CA transition to %s", next),
+		"record CA trust expansion",
 	)
 	if err != nil {
 		return nil, err
 	}
-	pending.phase = next
+	pending.phase = advanced.phase
+	pending.expandedAt = advanced.expandedAt
 	return updated, nil
 }
 
 func encodePendingCandidate(pending *pendingCandidate) map[string][]byte {
 	return map[string][]byte{
-		stagingFormatKey:             []byte(stagingFormat),
-		stagingOperationKey:          []byte(pending.operation),
-		stagingPhaseKey:              []byte(pending.phase),
-		stagingTransitionDigestKey:   []byte(pending.transitionDigest),
-		stagingSourceStateKey:        []byte(pending.sourceState),
-		stagingSourceUIDKey:          []byte(pending.sourceUID),
-		stagingSourceDigestKey:       []byte(pending.sourceDigest),
-		stagingCACertificateKey:      append([]byte(nil), pending.material.caPEM...),
-		stagingCAPrivateKeyKey:       append([]byte(nil), pending.material.caKeyPEM...),
-		stagingServingCertKey:        append([]byte(nil), pending.material.certPEM...),
-		stagingServingKeyKey:         append([]byte(nil), pending.material.keyPEM...),
-		stagingCandidateCertKey:      append([]byte(nil), pending.listenerCertPEM...),
-		stagingCandidateKeyKey:       append([]byte(nil), pending.listenerKeyPEM...),
-		stagingProofCACertificateKey: append([]byte(nil), pending.proofCACertPEM...),
-		stagingProofListenerCertKey:  append([]byte(nil), pending.proofListenerCertPEM...),
-		stagingProofListenerKeyKey:   append([]byte(nil), pending.proofListenerKeyPEM...),
+		stagingFormatKey:           []byte(stagingFormat),
+		stagingOperationKey:        []byte(pending.operation),
+		stagingPhaseKey:            []byte(pending.phase),
+		stagingTransitionDigestKey: []byte(pending.transitionDigest),
+		stagingSourceStateKey:      []byte(pending.sourceState),
+		stagingSourceUIDKey:        []byte(pending.sourceUID),
+		stagingSourceDigestKey:     []byte(pending.sourceDigest),
+		stagingCACertificateKey:    append([]byte(nil), pending.material.caPEM...),
+		stagingCAPrivateKeyKey:     append([]byte(nil), pending.material.caKeyPEM...),
+		stagingServingCertKey:      append([]byte(nil), pending.material.certPEM...),
+		stagingServingKeyKey:       append([]byte(nil), pending.material.keyPEM...),
+		stagingExpandedAtKey:       []byte(encodeExpandedAt(pending.expandedAt)),
 	}
 }
 
+// pendingCandidateDigest binds the transition's identity: the source it
+// replaces and the material it installs. The phase and expansion time are the
+// transition's cursor and stay outside it.
 func pendingCandidateDigest(pending *pendingCandidate) string {
 	hash := sha256.New()
 	for _, field := range []struct {
@@ -572,11 +461,6 @@ func pendingCandidateDigest(pending *pendingCandidate) string {
 		{key: stagingCAPrivateKeyKey, value: pending.material.caKeyPEM},
 		{key: stagingServingCertKey, value: pending.material.certPEM},
 		{key: stagingServingKeyKey, value: pending.material.keyPEM},
-		{key: stagingCandidateCertKey, value: pending.listenerCertPEM},
-		{key: stagingCandidateKeyKey, value: pending.listenerKeyPEM},
-		{key: stagingProofCACertificateKey, value: pending.proofCACertPEM},
-		{key: stagingProofListenerCertKey, value: pending.proofListenerCertPEM},
-		{key: stagingProofListenerKeyKey, value: pending.proofListenerKeyPEM},
 	} {
 		writeLengthPrefixed(hash, []byte(field.key))
 		writeLengthPrefixed(hash, field.value)
@@ -617,11 +501,8 @@ func (r *Rotator) stageCandidate(
 }
 
 func (r *Rotator) clearPendingCandidate(ctx context.Context, staging *corev1.Secret) error {
-	if _, err := r.updateStagingSecretData(ctx, staging, nil, "clear durable CA transition"); err != nil {
-		return err
-	}
-	r.candidateSink.ClearCandidateCertificate()
-	return nil
+	_, err := r.updateStagingSecretData(ctx, staging, nil, "clear durable CA transition")
+	return err
 }
 
 func (r *Rotator) updateStagingSecretData(

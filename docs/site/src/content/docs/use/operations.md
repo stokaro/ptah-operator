@@ -678,8 +678,8 @@ hard-coding one release's list, a failed preflight before quiescence cannot lock
 the still-running predecessor rotator out of its existing CA-only updates. The
 rotator treats its configured production webhook names as required identity
 anchors, then rotates every additional entry targeting the exact production
-Service plus the exact canary entry. URL and foreign-Service entries remain
-untouched. This does not make a predecessor restartable once credential draining
+Service. URL and foreign-Service entries remain untouched, and so do the two
+canary entries: the rotator no longer writes them. This does not make a predecessor restartable once credential draining
 begins, including after a failure before candidate activation. The credential,
 release, and image ratchets intentionally block backward recovery; retry the
 same candidate to finish the interrupted transition. Helm
@@ -731,79 +731,76 @@ follows the same recovery path; the rotator talks to the Kubernetes API and
 probes webhook endpoints directly, so recovery never depends on a successful
 call through the expired production admission webhook.
 
-The rotator also exposes an isolated TLS listener through a dedicated
-`publishNotReadyAddresses` Service. Two permanently installed, fail-closed
-canary entries select only one immutable marker ConfigMap and only an exact,
-unchanged, server-side dry-run update made by the rotator's ServiceAccount and
-typed field manager. The listener validates the complete AdmissionReview and
-returns a deterministic typed denial; it never admits or mutates an object.
-For each observation, the rotator opens a fresh HTTP/1.1 connection directly
-to every API server advertised by the default Kubernetes Service. It disables
-connection reuse and TLS session resumption, requires both mutating and
-validating typed denials, and then re-reads an identical endpoint inventory.
-`certificateRotation.admissionConvergence` controls the continuous stability
-window, poll interval, and timeout for one complete endpoint observation (the
-marker GET plus both denial probes). This keeps a reused connection or a cached
-success from standing in for convergence across all control-plane members, as
-long as each address the Service advertises is one of them. Where one address
-fronts several API servers, as it can on a managed control plane, the fresh
-connections sample the API servers behind it rather than cover them;
-[One address per API server](../../reference/release-lifecycle/#one-address-per-api-server)
-says what the proof then establishes, how to tell which case a cluster is, and
-what to set.
+A new CA is published before anything presents a certificate it issued, and
+the old one is withdrawn only after nothing does. CA replacement takes three
+steps, and the rotator records each in the staging Secret before it takes the
+next:
 
-CA replacement is fail-closed and restart-safe:
+1. **Expand.** The rotator atomically persists one versioned pending record,
+   which binds the source Secret UID and a canonical digest of its four managed
+   fields to the new CA and key and the serving certificate and key issued
+   under it. Missing-Secret recovery records the absence explicitly instead of
+   inventing a source identity. The rotator then adds the new CA to every
+   managed entry, keeping that entry's own parseable certificates and the CA
+   that authenticates the certificate being served, and records when every
+   entry held both. A current signer may be shared between entries only after
+   its signature and exact live-leaf identity are independently proved;
+   unauthenticated entry-local trust is never copied to another entry.
+2. **Switch.** No earlier than `certificateRotation.caSwitchDelay` after the
+   recorded time, one atomic Secret update replaces the serving certificate,
+   serving key, CA, and CA key. A lost response is accepted only after
+   byte-exact readback. The delay defaults to the reconciliation interval, six
+   hours. An API server picks up a webhook configuration change within
+   seconds, so by the switch every one trusts the new CA; the delay stands in
+   for a proof that it does.
+3. **Retire.** The rotator lists the exact production Service EndpointSlices,
+   rejects empty, unready, terminating, malformed, or duplicate endpoint sets,
+   and performs a TLS handshake with every ready Pod IP using the Service DNS
+   name. Once every endpoint serves the exact new certificate, verified by the
+   new CA, and a second endpoint snapshot is identical, every managed entry
+   trusts the new CA alone and the staging record is cleared. Removing a root
+   needs no wait: an API server still holding the wider bundle trusts the
+   served certificate all the same.
 
-1. Before changing trust, the rotator atomically persists one versioned pending
-   record in the staging Secret. The record binds the source Secret UID and a
-   canonical digest of its four managed fields to the new CA and key, the next
-   primary leaf and key, a candidate-CA listener leaf and key, and an
-   independent proof CA certificate with its listener leaf and key. The proof
-   CA private key is discarded after issuing that leaf and is never persisted.
-   Missing-Secret recovery records the absence explicitly instead of inventing
-   a source identity.
-2. The rotator serves the candidate-CA listener certificate, expands each
-   production entry from its own authenticated prior trust to include the new
-   CA, publishes the mutating and validating singletons separately, and proves
-   their combined canary state through every API server. A current signer may
-   be shared only after its signature and exact live-leaf identity are
-   independently proved; unauthenticated entry-local prior trust is never
-   copied to another entry.
-3. One atomic Secret update replaces the serving certificate, serving key, CA,
-   and CA key. A lost response is accepted only after byte-exact readback. The
-   rotator then lists the exact production Service EndpointSlices, rejects
-   empty, unready, terminating, malformed, or duplicate endpoint sets, and
-   performs a TLS handshake with every ready Pod IP using the Service DNS name.
-   It requires the exact new leaf certificate and a second identical endpoint
-   snapshot.
-4. The rotator switches the isolated listener to the independent proof CA,
-   contracts every production entry exactly to the new CA while both canary
-   entries trust only that proof CA, and again publishes the mutating and
-   validating singletons separately before the combined all-API-server
-   barrier. Any API server retaining the expansion state rejects this proof
-   certificate, so a stale cache cannot authorize contraction.
-5. The listener switches back to the candidate-CA leaf, both canaries are
-   parked on the active CA through the same ordered publication and combined
-   barrier, and only then are the staging Secret and in-memory listener
-   credential cleared.
+The rotator comes back at the recorded switch time rather than a full interval
+later, and a restart neither resets nor skips the delay, because the time lives
+in the staging Secret. If an entry has lost the new CA when the rotator reads it
+again, the rotator adds it back and the delay starts over. If the recorded time
+lies ahead of the rotator's clock, the delay starts over from the clock the
+rotator has, so a clock that moved back cannot hold the switch off without
+limit.
+
+The delay protects a serving certificate that API servers can still verify.
+When the current certificate or every CA that issued it has expired, or no
+managed entry holds such a CA, admission through it has already stopped, and
+the rotator switches without waiting. A certificate that looks not yet valid
+only means the rotator's clock runs behind the one that issued it, and does not
+shorten the delay. Renewing the serving certificate under an unchanged CA needs
+no delay either: the new certificate needs exactly the trust the old one had.
 
 If the rotator stops between steps, its replacement validates and reloads the
-same byte-exact pending credentials, classifies the primary Secret against the
-stored source UID and digest, and replays every live readback, endpoint proof,
-and combined admission barrier. The persisted phase is a monotonic audit cursor
-only; it never permits a successor to skip evidence. The rotator never
-generates a second candidate while a temporally usable pending record exists.
-It validates durable cryptographic identity separately from certificate time,
-then classifies the exact primary relationship before acting. If related staged
-material has expired or is not yet valid, the rotator atomically clears only
-that record, confirms the clear by exact readback, and retries from the
+same byte-exact pending material, classifies the primary Secret against the
+stored source UID and digest, and continues from the recorded step. A primary
+Secret that already holds the pending material means the switch happened, so
+the replacement proves the endpoints and retires the old CA. The rotator never
+generates a second candidate while a temporally usable pending record exists,
+even when the old certificate crosses its own renewal threshold during the
+delay. It validates durable cryptographic identity separately from certificate
+time, then classifies the exact primary relationship before acting. If related
+staged material has expired or is not yet valid, the rotator atomically clears
+only that record, confirms the clear by exact readback, and retries from the
 authoritative primary state; an unrelated record remains untouched and
-fail-closed. A timeout leaves the durable record and a stage-specific
-recoverable trust state in place.
-Ordinary rotation never configures the API server to trust neither the old nor
-the new serving certificate.
+fail-closed. Ordinary rotation never configures the API server to trust neither
+the old nor the new serving certificate.
 controller-runtime watches the projected `tls.crt` and `tls.key` files and
 reloads them without restarting the manager Pods.
+
+The chart still installs two fail-closed certificate-rotation canary entries,
+their marker ConfigMap, a candidate Service with its container port, and the
+rotator's `--candidate-*` arguments, because the release verifiers pin all of
+them. The rotator no longer calls, serves, or updates any of them, and
+`certificateRotation.candidatePort` and
+`certificateRotation.admissionConvergence` have no effect.
 
 A generated Secret containing valid material with an empty or `Opaque` type is
 normalized to `kubernetes.io/tls`. The no-rotation path updates only the Secret
@@ -813,11 +810,14 @@ paths normalize the type as part of their existing atomic material update.
 With missing-Secret recreation enabled, the rotator first appends a newly
 generated CA to each exact entry. It preserves every parseable certificate
 candidate from that entry even when neighboring bytes are malformed, without
-borrowing trust from another entry. It then recreates only the
-policy-constrained Secret, accepts an uncertain or racing create only after
-byte-exact read-back, proves the new leaf at every stable endpoint, and
-contracts every entry to the new CA. Admission remains fail-closed while Pods
-reload the recreated certificate. Manager readiness is tied to the webhook
+borrowing trust from another entry. Running manager Pods keep serving the
+certificate they last loaded, so the recreation waits out the same switch
+delay; a manager Pod that restarts in the meantime cannot start until the
+Secret exists again. The rotator then recreates only the policy-constrained
+Secret, accepts an uncertain or racing create only after byte-exact read-back,
+proves the new leaf at every stable endpoint, and contracts every entry to the
+new CA. Admission remains fail-closed while Pods reload the recreated
+certificate. Manager readiness is tied to the webhook
 server's started checker rather than a process-only ping.
 
 The conservative defaults reconcile immediately at startup and every six
@@ -828,10 +828,10 @@ reconciliation and becomes false during retries. The Deployment exposes those
 states on `/healthz` and `/readyz` without serving certificate or key material.
 
 The binary accepts those timings only when the operation deadline strictly
-exceeds Lease acquisition,
-two possible production endpoint-probe windows, and three admission stability
-barriers, each rounded up to a whole poll interval. The per-API-server endpoint
-observation timeout must also remain below the operation deadline. Invalid or
+exceeds Lease acquisition plus two endpoint-probe windows, and when the
+interval, the operation deadline, and the CA switch delay together stay below
+the renewal threshold, so a transition noticed a whole interval late still
+switches before the certificate that started it expires. Invalid or
 overflowing timing combinations fail at process startup instead of creating a
 permanently unready rotator.
 
@@ -843,7 +843,7 @@ authorized, ReplicaSet-owned Deployment is deliberately outside the all-Job
 admission rule, so it can restart and repair trust when the webhook certificate
 or CA bundle is already broken. Its precreated Lease serializes reconciliation.
 To request an immediate reconciliation without changing the interval, restart
-that Deployment:
+that Deployment. A restart does not bring a pending CA switch forward:
 
 ```sh
 kubectl -n <namespace> rollout restart \

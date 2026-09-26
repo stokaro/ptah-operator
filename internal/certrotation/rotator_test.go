@@ -43,6 +43,9 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 		materialConfig func(Config) Config
 		mutateSecret   func(*corev1.Secret)
 		wantCARotated  bool
+		// wantSwitchDelay is set where the current serving certificate still
+		// verifies, so the new CA has to wait out the delay before it serves.
+		wantSwitchDelay bool
 	}{
 		{name: "near-expiry serving certificate", now: baseTime.Add(25 * 24 * time.Hour)},
 		{
@@ -59,8 +62,11 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 			mutateSecret: func(secret *corev1.Secret) {
 				delete(secret.Data, CAPrivateKeyKey)
 			},
-			wantCARotated: true,
+			wantCARotated:   true,
+			wantSwitchDelay: true,
 		},
+		// The serving certificate expired long before the CA reached its
+		// threshold, so nothing verifies it and the switch does not wait.
 		{name: "near-expiry CA", now: baseTime.Add(359 * 24 * time.Hour), wantCARotated: true},
 		{
 			name: "serving certificate exceeds configured lifetime",
@@ -77,7 +83,8 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 				config.CACertificateValidity *= 2
 				return config
 			},
-			wantCARotated: true,
+			wantCARotated:   true,
+			wantSwitchDelay: true,
 		},
 	}
 	for _, test := range tests {
@@ -93,16 +100,35 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 			if test.mutateSecret != nil {
 				test.mutateSecret(secret)
 			}
+			sourceData := cloneBytesMap(secret.Data)
 			client := newTestClient(config, secret, original.caPEM, twoReadyEndpoints(config))
 			prober := &recordingProber{}
 			rotator := mustNewTestRotator(t, client, config, test.now, prober)
 
-			if err := rotator.Run(context.Background()); err != nil {
+			result, err := rotator.Run(context.Background())
+			if err != nil {
 				t.Fatalf("Run() error = %v", err)
+			}
+			now := test.now
+			if waited := result.RequeueAfter > 0; waited != test.wantSwitchDelay {
+				t.Fatalf("first pass waits for a switch = %v (RequeueAfter %s), want %v", waited, result.RequeueAfter, test.wantSwitchDelay)
+			}
+			if test.wantSwitchDelay {
+				if result.RequeueAfter != config.CASwitchDelay {
+					t.Fatalf("RequeueAfter = %s, want the CA switch delay %s", result.RequeueAfter, config.CASwitchDelay)
+				}
+				if !maps.EqualFunc(mustGetSecret(t, client, config).Data, sourceData, bytes.Equal) {
+					t.Fatal("the Secret changed before the switch delay passed")
+				}
+				now = now.Add(result.RequeueAfter)
+				result, err = mustNewTestRotator(t, client, config, now, prober).Run(context.Background())
+				if err != nil || result.RequeueAfter != 0 {
+					t.Fatalf("switch pass = %+v, %v; want a finished transition", result, err)
+				}
 			}
 
 			updated := mustGetSecret(t, client, config)
-			state, err := inspectSecret(updated, config, test.now)
+			state, err := inspectSecret(updated, config, now)
 			if err != nil {
 				t.Fatalf("inspect updated Secret: %v", err)
 			}
@@ -237,7 +263,7 @@ func TestCurrentCertificateReprovesTrustWithoutProductionWrite(t *testing.T) {
 	prober := &recordingProber{}
 	rotator := mustNewTestRotator(t, client, config, now, prober)
 
-	if err := rotator.Run(context.Background()); err != nil {
+	if _, err := rotator.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	assertProbedAddresses(t, prober.addresses(), "10.0.0.10:9443", "10.0.0.11:9443")
@@ -266,7 +292,7 @@ func TestValidMaterialWithWrongSecretTypeIsNormalizedWithoutRotation(t *testing.
 			prober := &recordingProber{}
 			rotator := mustNewTestRotator(t, client, config, now, prober)
 
-			if err := rotator.Run(context.Background()); err != nil {
+			if _, err := rotator.Run(context.Background()); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
 
@@ -333,7 +359,7 @@ func TestMalformedManagedTrustIsRepairedFromAuthoritativeSecret(t *testing.T) {
 			prober := &recordingProber{}
 			rotator := mustNewTestRotator(t, client, config, now, prober)
 
-			if err := rotator.Run(context.Background()); err != nil {
+			if _, err := rotator.Run(context.Background()); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
 
@@ -361,11 +387,7 @@ func TestMalformedSecretCARecoversOnlyLiveAuthenticObservedRoot(t *testing.T) {
 	setManagedBundles(t, client, config, mixed, [][]byte{original.caPEM, original.caPEM})
 	assertCANotCopiedToValidatingUpdates(t, client, unrelated.caPEM)
 	prober := &recordingProber{}
-	rotator := mustNewTestRotator(t, client, config, now, prober)
-
-	if err := rotator.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+	completeCATransition(t, client, config, now, prober)
 
 	updated := mustGetSecret(t, client, config)
 	if bytes.Equal(updated.Data[CACertificateKey], original.caPEM) {
@@ -388,10 +410,24 @@ func TestMissingSecretIsRecreatedOnlyBehindEstablishedGuard(t *testing.T) {
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
 	installEstablishedSecretCreateGuard(t, client, config)
 	installSecretCreateAdmission(t, client, config)
-	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+	first := mustNewTestRotator(t, client, config, now, &recordingProber{})
 
-	if err := rotator.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	result, err := first.Run(context.Background())
+	if err != nil || result.RequeueAfter != config.CASwitchDelay {
+		t.Fatalf("first pass = %+v, %v; want a wait of the CA switch delay", result, err)
+	}
+	if _, getErr := client.CoreV1().Secrets(config.Namespace).Get(context.Background(), config.SecretName, metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
+		t.Fatalf("the Secret was recreated before the switch delay passed: %v", getErr)
+	}
+	for _, bundle := range managedEntryBundles(t, client, config) {
+		if !caBundleContainsCertificate(bundle, old.caPEM) {
+			t.Fatal("expansion dropped the CA the running manager still serves")
+		}
+		assertBundleCertificateCount(t, bundle, 2)
+	}
+	now = now.Add(result.RequeueAfter)
+	if _, err := mustNewTestRotator(t, client, config, now, &recordingProber{}).Run(context.Background()); err != nil {
+		t.Fatalf("switch pass error = %v", err)
 	}
 
 	created := mustGetSecret(t, client, config)
@@ -421,7 +457,7 @@ func TestMissingSecretRecreationIsDisabledByDefault(t *testing.T) {
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
 	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 
-	err := rotator.Run(context.Background())
+	_, err := rotator.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "recreation is disabled") {
 		t.Fatalf("Run() error = %v, want disabled-recreation error", err)
 	}
@@ -450,7 +486,7 @@ func TestMissingSecretGuardMustBeEstablishedBeforeCreate(t *testing.T) {
 	installUnestablishedSecretCreateGuard(t, client, config)
 	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 
-	err := rotator.Run(context.Background())
+	_, err := rotator.Run(context.Background())
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("not established")) {
 		t.Fatalf("Run() error = %v, want unestablished guard", err)
 	}
@@ -484,7 +520,7 @@ func TestMissingSecretGuardRejectsIndeterminateConditionBeforeCreate(t *testing.
 	}
 	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 
-	err = rotator.Run(context.Background())
+	_, err = rotator.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "is not true: Unknown") {
 		t.Fatalf("Run() error = %v, want indeterminate guard rejection", err)
 	}
@@ -646,7 +682,7 @@ func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
 			test.mutate(t, client, config)
 			rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 
-			err := rotator.Run(context.Background())
+			_, err := rotator.Run(context.Background())
 			if err == nil || !bytes.Contains([]byte(err.Error()), []byte("guard")) {
 				t.Fatalf("Run() error = %v, want guard contract rejection", err)
 			}
@@ -664,37 +700,21 @@ func TestConfigRejectsInvalidSecretCreateServiceAccountName(t *testing.T) {
 	config := testConfig()
 	config.SecretCreateServiceAccountName = "Bad_Name"
 	client := fake.NewClientset()
-	if _, err := newRotator(client, config, &recordingCandidateSink{}, newTestAdmissionCanaryController(client, config)); err == nil ||
+	if _, err := New(client, config); err == nil ||
 		!bytes.Contains([]byte(err.Error()), []byte("Secret CREATE ServiceAccount name")) {
 		t.Fatalf("New() error = %v, want invalid Secret CREATE ServiceAccount name", err)
 	}
 }
 
-func TestNewRotatorRejectsTypedNilDependencies(t *testing.T) {
+func TestNewRotatorRejectsTypedNilClient(t *testing.T) {
 	t.Parallel()
 
-	client := fake.NewClientset()
-	canary := newTestAdmissionCanaryController(client, testConfig())
 	var nilClient *fake.Clientset
-	var nilSink *recordingCandidateSink
-	var nilCanary *testAdmissionCanaryController
-
-	tests := []struct {
-		name   string
-		client kubernetes.Interface
-		sink   CandidateCertificateSink
-		canary admissionCanaryController
-		want   string
-	}{
-		{name: "Kubernetes client", client: nilClient, sink: &recordingCandidateSink{}, canary: canary, want: "Kubernetes client is required"},
-		{name: "candidate sink", client: client, sink: nilSink, canary: canary, want: "candidate certificate sink is required"},
-		{name: "admission canary", client: client, sink: &recordingCandidateSink{}, canary: nilCanary, want: "admission canary controller is required"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for name, client := range map[string]kubernetes.Interface{"nil interface": nil, "typed nil": nilClient} {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := newRotator(test.client, testConfig(), test.sink, test.canary); err == nil || err.Error() != test.want {
-				t.Fatalf("newRotator() error = %v, want %q", err, test.want)
+			if _, err := New(client, testConfig()); err == nil || err.Error() != "Kubernetes client is required" {
+				t.Fatalf("New() error = %v, want the client required", err)
 			}
 		})
 	}
@@ -705,7 +725,7 @@ func TestConfigRejectsSecretCreateGuardNamesWhenRecreationIsDisabled(t *testing.
 	config := testConfig()
 	config.RecreateMissingSecret = false
 	client := fake.NewClientset()
-	if _, err := newRotator(client, config, &recordingCandidateSink{}, newTestAdmissionCanaryController(client, config)); err == nil ||
+	if _, err := New(client, config); err == nil ||
 		!strings.Contains(err.Error(), "must be empty") {
 		t.Fatalf("New() error = %v, want disabled guard-name rejection", err)
 	}
@@ -733,9 +753,9 @@ func TestMissingSecretCreateRaceNeverOverwritesDifferentMaterial(t *testing.T) {
 		}
 		return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: "secrets"}, config.SecretName)
 	})
-	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
-
-	err := rotator.Run(context.Background())
+	switchAt := mustExpandCATransition(t, client, config, now, &recordingProber{})
+	rotator := mustNewTestRotator(t, client, config, switchAt, &recordingProber{})
+	_, err := rotator.Run(context.Background())
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("different material")) {
 		t.Fatalf("Run() error = %v, want different-material race", err)
 	}
@@ -743,7 +763,7 @@ func TestMissingSecretCreateRaceNeverOverwritesDifferentMaterial(t *testing.T) {
 	if !secretContainsMaterial(observed, racing) {
 		t.Fatal("rotator overwrote the racing Secret")
 	}
-	if err := rotator.Run(context.Background()); err != nil {
+	if _, err := rotator.Run(context.Background()); err != nil {
 		t.Fatalf("race recovery Run() error = %v", err)
 	}
 	assertFinalBundles(t, client, config, racing.caPEM)
@@ -784,7 +804,7 @@ func TestExpiredCertificateRotationsRepairMalformedManagedTrust(t *testing.T) {
 			prober := &recordingProber{}
 			rotator := mustNewTestRotator(t, client, config, test.now, prober)
 
-			if err := rotator.Run(context.Background()); err != nil {
+			if _, err := rotator.Run(context.Background()); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
 
@@ -826,18 +846,14 @@ func TestInterruptedBeforeSecondOverlapPublicationRecovers(t *testing.T) {
 	})
 
 	first := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
-	if err := first.Run(context.Background()); err == nil {
+	if _, err := first.Run(context.Background()); err == nil {
 		t.Fatal("first Run() unexpectedly succeeded")
 	}
 	if got := mustGetSecret(t, client, config).Data[CAPrivateKeyKey]; len(got) != 0 {
 		t.Fatal("Secret changed before both webhook configurations trusted the replacement CA")
 	}
 
-	prober := &recordingProber{}
-	second := mustNewTestRotator(t, client, config, baseTime.Add(time.Minute), prober)
-	if err := second.Run(context.Background()); err != nil {
-		t.Fatalf("recovery Run() error = %v", err)
-	}
+	completeCATransition(t, client, config, baseTime.Add(time.Minute), &recordingProber{})
 	updated := mustGetSecret(t, client, config)
 	if len(updated.Data[CAPrivateKeyKey]) == 0 {
 		t.Fatal("recovery did not persist the replacement CA private key")
@@ -856,9 +872,10 @@ func TestInterruptedAfterSecretUpdateBeforeReloadRecovers(t *testing.T) {
 	delete(keyless.Data, CAPrivateKeyKey)
 	client := newTestClient(config, keyless, original.caPEM, twoReadyEndpoints(config))
 	firstProbe := &recordingProber{err: errors.New("certificate projection has not reloaded")}
-	first := mustNewTestRotator(t, client, config, baseTime, firstProbe)
-	if err := first.Run(context.Background()); err == nil {
-		t.Fatal("first Run() unexpectedly succeeded")
+	switchAt := mustExpandCATransition(t, client, config, baseTime, firstProbe)
+	first := mustNewTestRotator(t, client, config, switchAt, firstProbe)
+	if _, err := first.Run(context.Background()); err == nil {
+		t.Fatal("switch pass unexpectedly succeeded")
 	}
 	updated := mustGetSecret(t, client, config)
 	if len(updated.Data[CAPrivateKeyKey]) == 0 {
@@ -869,8 +886,8 @@ func TestInterruptedAfterSecretUpdateBeforeReloadRecovers(t *testing.T) {
 
 	config.ProbeTimeout = time.Second
 	secondProbe := &recordingProber{}
-	second := mustNewTestRotator(t, client, config, baseTime.Add(time.Minute), secondProbe)
-	if err := second.Run(context.Background()); err != nil {
+	second := mustNewTestRotator(t, client, config, switchAt.Add(time.Minute), secondProbe)
+	if _, err := second.Run(context.Background()); err != nil {
 		t.Fatalf("recovery Run() error = %v", err)
 	}
 	assertFinalBundles(t, client, config, updated.Data[CACertificateKey])
@@ -896,16 +913,17 @@ func TestInterruptedOneSidedContractionRecovers(t *testing.T) {
 		return false, nil, nil
 	})
 
-	first := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
-	if err := first.Run(context.Background()); err == nil {
-		t.Fatal("first Run() unexpectedly succeeded")
+	switchAt := mustExpandCATransition(t, client, config, baseTime, &recordingProber{})
+	first := mustNewTestRotator(t, client, config, switchAt, &recordingProber{})
+	if _, err := first.Run(context.Background()); err == nil {
+		t.Fatal("switch pass unexpectedly succeeded")
 	}
 	assertBundleCertificateCount(t, mutatingBundle(t, client, config), 1)
 	assertBundleCertificateCount(t, validatingBundle(t, client, config), 2)
 
 	prober := &recordingProber{}
-	second := mustNewTestRotator(t, client, config, baseTime.Add(time.Minute), prober)
-	if err := second.Run(context.Background()); err != nil {
+	second := mustNewTestRotator(t, client, config, switchAt.Add(time.Minute), prober)
+	if _, err := second.Run(context.Background()); err != nil {
 		t.Fatalf("recovery Run() error = %v", err)
 	}
 	updated := mustGetSecret(t, client, config)
@@ -939,7 +957,7 @@ func TestInterruptedManagedEntryUpdateRecoversEveryNamedWebhook(t *testing.T) {
 
 	prober := &recordingProber{}
 	rotator := mustNewTestRotator(t, client, config, baseTime, prober)
-	if err := rotator.Run(context.Background()); err != nil {
+	if _, err := rotator.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	assertFinalBundles(t, client, config, current.caPEM)
@@ -957,7 +975,7 @@ func TestTrustRepairDoesNotContractBeforeEndpointProof(t *testing.T) {
 	client := newTestClient(config, secretForMaterial(config, current), old.caPEM, twoReadyEndpoints(config))
 	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{err: errors.New("projection pending")})
 
-	if err := rotator.Run(context.Background()); err == nil {
+	if _, err := rotator.Run(context.Background()); err == nil {
 		t.Fatal("Run() unexpectedly succeeded without endpoint proof")
 	}
 	for name, bundle := range map[string][]byte{
@@ -991,37 +1009,45 @@ func TestCARotationPreservesEachEntryTrustUntilReplacementProof(t *testing.T) {
 	validatingB := malformedBundleWithCertificates(t, current.caPEM, localValidatingB.caPEM)
 	client := newTestClient(config, keyless, current.caPEM, twoReadyEndpoints(config))
 	setManagedBundles(t, client, config, mutating, [][]byte{validatingA, validatingB})
-	rotator := mustNewTestRotator(
-		t,
-		client,
-		config,
-		now,
-		&recordingProber{err: errors.New("replacement not loaded")},
-	)
+	prober := &recordingProber{err: errors.New("replacement not loaded")}
+	wants := []certificateMaterial{localMutating, localValidatingA, localValidatingB}
+	assertEntries := func(stage string, nextCA []byte) {
+		t.Helper()
+		for i, bundle := range managedEntryBundles(t, client, config) {
+			for name, certificate := range map[string][]byte{
+				"current":     current.caPEM,
+				"replacement": nextCA,
+				"entry-local": wants[i].caPEM,
+			} {
+				if !caBundleContainsCertificate(bundle, certificate) {
+					t.Errorf("%s: entry %d dropped %s trust before endpoint proof", stage, i, name)
+				}
+			}
+			for otherIndex, other := range wants {
+				if otherIndex != i && caBundleContainsCertificate(bundle, other.caPEM) {
+					t.Errorf("%s: entry %d copied trust from entry %d", stage, i, otherIndex)
+				}
+			}
+			assertBundleCertificateCount(t, bundle, 3)
+		}
+	}
 
-	if err := rotator.Run(context.Background()); err == nil {
+	switchAt := mustExpandCATransition(t, client, config, now, prober)
+	staged, err := decodePendingCandidate(mustGetStagingSecret(t, client, config).Data, config)
+	if err != nil {
+		t.Fatalf("decode expanded transition: %v", err)
+	}
+	assertEntries("during the switch delay", staged.material.caPEM)
+
+	rotator := mustNewTestRotator(t, client, config, switchAt, prober)
+	if _, err := rotator.Run(context.Background()); err == nil {
 		t.Fatal("Run() unexpectedly succeeded without replacement endpoint proof")
 	}
 	nextCA := mustGetSecret(t, client, config).Data[CACertificateKey]
-	entries := managedEntryBundles(t, client, config)
-	wants := []certificateMaterial{localMutating, localValidatingA, localValidatingB}
-	for i, bundle := range entries {
-		for name, certificate := range map[string][]byte{
-			"current":     current.caPEM,
-			"replacement": nextCA,
-			"entry-local": wants[i].caPEM,
-		} {
-			if !caBundleContainsCertificate(bundle, certificate) {
-				t.Errorf("entry %d dropped %s trust before endpoint proof", i, name)
-			}
-		}
-		for otherIndex, other := range wants {
-			if otherIndex != i && caBundleContainsCertificate(bundle, other.caPEM) {
-				t.Errorf("entry %d copied trust from entry %d", i, otherIndex)
-			}
-		}
-		assertBundleCertificateCount(t, bundle, 3)
+	if !bytes.Equal(nextCA, staged.material.caPEM) {
+		t.Fatal("the switch installed a CA other than the staged one")
 	}
+	assertEntries("after the switch", nextCA)
 }
 
 func TestMissingNamedWebhookStopsBeforeSecretTransition(t *testing.T) {
@@ -1046,7 +1072,7 @@ func TestMissingNamedWebhookStopsBeforeSecretTransition(t *testing.T) {
 	}
 
 	rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
-	err = rotator.Run(context.Background())
+	_, err = rotator.Run(context.Background())
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte(config.ValidatingWebhookNames[1])) {
 		t.Fatalf("Run() error = %v, want missing webhook name", err)
 	}
@@ -1078,7 +1104,7 @@ func TestRequiredWebhookOnDifferentPortStopsBeforeSecretTransition(t *testing.T)
 	}
 
 	rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
-	err = rotator.Run(context.Background())
+	_, err = rotator.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), config.ValidatingWebhookNames[0]) {
 		t.Fatalf("Run() error = %v, want required webhook name", err)
 	}
@@ -1212,10 +1238,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 		t.Fatalf("add forward-compatibility webhooks: %v", err)
 	}
 
-	rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
-	if err := rotator.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+	completeCATransition(t, client, config, baseTime, &recordingProber{})
 	mutating, err = client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(
 		context.Background(), config.MutatingWebhookConfiguration, metav1.GetOptions{},
 	)
@@ -1300,14 +1323,10 @@ func TestAdditionalSameServiceWebhooksRetainOverlapUntilEndpointProof(t *testing
 		t.Fatalf("add future validating webhook: %v", err)
 	}
 
-	rotator := mustNewTestRotator(
-		t,
-		client,
-		config,
-		baseTime,
-		&recordingProber{err: errors.New("replacement not loaded")},
-	)
-	if err := rotator.Run(context.Background()); err == nil {
+	prober := &recordingProber{err: errors.New("replacement not loaded")}
+	switchAt := mustExpandCATransition(t, client, config, baseTime, prober)
+	rotator := mustNewTestRotator(t, client, config, switchAt, prober)
+	if _, err := rotator.Run(context.Background()); err == nil {
 		t.Fatal("Run() unexpectedly succeeded without endpoint proof")
 	}
 	replacementCA := mustGetSecret(t, client, config).Data[CACertificateKey]
@@ -1370,8 +1389,9 @@ func TestEndpointSetMustBeReadyAndStable(t *testing.T) {
 			keyless := secretForMaterial(config, material)
 			delete(keyless.Data, CAPrivateKeyKey)
 			client := newTestClient(config, keyless, material.caPEM, test.endpoints)
-			rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
-			err := rotator.Run(context.Background())
+			switchAt := mustExpandCATransition(t, client, config, baseTime, &recordingProber{})
+			rotator := mustNewTestRotator(t, client, config, switchAt, &recordingProber{})
+			_, err := rotator.Run(context.Background())
 			if err == nil || !bytes.Contains([]byte(err.Error()), []byte(test.wantError)) {
 				t.Fatalf("Run() error = %v, want substring %q", err, test.wantError)
 			}
@@ -1407,11 +1427,7 @@ func TestEndpointSnapshotChangeRetriesFullProof(t *testing.T) {
 			t.Errorf("update EndpointSlice during probe: %v", err)
 		}
 	}}
-	rotator := mustNewTestRotator(t, client, config, baseTime, prober)
-
-	if err := rotator.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+	completeCATransition(t, client, config, baseTime, prober)
 	addresses := prober.addresses()
 	if !slices.Contains(addresses, "10.0.0.10:9443") || !slices.Contains(addresses, "10.0.0.12:9443") {
 		t.Fatalf("probe addresses = %v, want proof attempts before and after endpoint change", addresses)
@@ -1424,9 +1440,7 @@ func TestLeaseSerializesRotators(t *testing.T) {
 	config.AcquireTimeout = 20 * time.Millisecond
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	material := mustGenerateMaterial(t, baseTime, config)
-	keyless := secretForMaterial(config, material)
-	delete(keyless.Data, CAPrivateKeyKey)
-	client := newTestClient(config, keyless, material.caPEM, twoReadyEndpoints(config))
+	client := newTestClient(config, secretForMaterial(config, material), material.caPEM, twoReadyEndpoints(config))
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	firstProbe := &recordingProber{callback: func(probeRequest) {
@@ -1439,13 +1453,16 @@ func TestLeaseSerializesRotators(t *testing.T) {
 	}}
 	first := mustNewTestRotator(t, client, config, baseTime, firstProbe)
 	firstResult := make(chan error, 1)
-	go func() { firstResult <- first.Run(context.Background()) }()
+	go func() {
+		_, err := first.Run(context.Background())
+		firstResult <- err
+	}()
 	<-entered
 
 	secondConfig := config
 	secondConfig.HolderIdentity = "job-b/uid-b"
 	second := mustNewTestRotator(t, client, secondConfig, baseTime, &recordingProber{})
-	if err := second.Run(context.Background()); err == nil {
+	if _, err := second.Run(context.Background()); err == nil {
 		t.Fatal("concurrent Run() unexpectedly acquired the held Lease")
 	}
 	close(release)
@@ -1459,41 +1476,6 @@ type recordingProber struct {
 	requests []probeRequest
 	err      error
 	callback func(probeRequest)
-}
-
-type recordingCandidateSink struct {
-	mu          sync.Mutex
-	certificate []byte
-	privateKey  []byte
-	stores      int
-	clears      int
-	err         error
-}
-
-func (sink *recordingCandidateSink) StoreCandidateCertificate(certificatePEM, privateKeyPEM []byte) error {
-	sink.mu.Lock()
-	defer sink.mu.Unlock()
-	if sink.err != nil {
-		return sink.err
-	}
-	sink.certificate = append([]byte(nil), certificatePEM...)
-	sink.privateKey = append([]byte(nil), privateKeyPEM...)
-	sink.stores++
-	return nil
-}
-
-func (sink *recordingCandidateSink) ClearCandidateCertificate() {
-	sink.mu.Lock()
-	defer sink.mu.Unlock()
-	sink.certificate = nil
-	sink.privateKey = nil
-	sink.clears++
-}
-
-func (sink *recordingCandidateSink) snapshot() (certificate, privateKey []byte, stores, clears int) {
-	sink.mu.Lock()
-	defer sink.mu.Unlock()
-	return append([]byte(nil), sink.certificate...), append([]byte(nil), sink.privateKey...), sink.stores, sink.clears
 }
 
 func (prober *recordingProber) Probe(_ context.Context, request probeRequest) error {
@@ -1665,7 +1647,6 @@ func testConfig() Config {
 		ValidatingWebhookNames:         []string{"vapproval.operator.ptah.run", "vpodintent.operator.ptah.run"},
 		ServiceName:                    "ptah-webhook",
 		ServiceNamespace:               "ptah-system",
-		CandidateServiceName:           "ptah-cert-candidate",
 		EndpointPortName:               "https",
 		HolderIdentity:                 "job-a/uid-a",
 		SecretCreatePolicyName:         "ptah-cert-rotator",
@@ -1675,6 +1656,7 @@ func testConfig() Config {
 		RenewalThreshold:               7 * 24 * time.Hour,
 		ServingCertificateValidity:     30 * 24 * time.Hour,
 		CACertificateValidity:          365 * 24 * time.Hour,
+		CASwitchDelay:                  6 * time.Hour,
 		ProbeTimeout:                   time.Second,
 		ProbeInterval:                  time.Millisecond,
 		LeaseDuration:                  30 * time.Second,
@@ -1802,92 +1784,6 @@ func podReference(name, uid, namespace string) *corev1.ObjectReference {
 
 func boolPointer(value bool) *bool { return &value }
 
-// testAdmissionCanaryController keeps the broad lifecycle tests focused on
-// production bundle transitions. admission_canary_test.go exercises the real
-// singleton publication and all-API-server proof implementation in isolation.
-type testAdmissionCanaryController struct {
-	client *fake.Clientset
-	config Config
-}
-
-func newTestAdmissionCanaryController(client *fake.Clientset, config Config) *testAdmissionCanaryController {
-	return &testAdmissionCanaryController{client: client, config: config}
-}
-
-func (c *testAdmissionCanaryController) PublishMutating(
-	ctx context.Context,
-	desired AdmissionCanaryDesiredState,
-) error {
-	if err := validateAdmissionCanaryDesiredState(desired); err != nil {
-		return err
-	}
-	client := c.client.AdmissionregistrationV1().MutatingWebhookConfigurations()
-	configuration, err := client.Get(ctx, c.config.MutatingWebhookConfiguration, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	webhooks, err := managedMutatingWebhooks(configuration.Webhooks, c.config)
-	if err != nil {
-		return err
-	}
-	changed := false
-	for _, webhook := range webhooks {
-		bundle, err := desired.productionBundleFor(webhook.ClientConfig.CABundle)
-		if err != nil {
-			return err
-		}
-		if bytes.Equal(webhook.ClientConfig.CABundle, bundle) {
-			continue
-		}
-		webhook.ClientConfig.CABundle = bundle
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	_, err = client.Update(ctx, configuration, metav1.UpdateOptions{})
-	return err
-}
-
-func (c *testAdmissionCanaryController) PublishValidating(
-	ctx context.Context,
-	desired AdmissionCanaryDesiredState,
-) error {
-	if err := validateAdmissionCanaryDesiredState(desired); err != nil {
-		return err
-	}
-	client := c.client.AdmissionregistrationV1().ValidatingWebhookConfigurations()
-	configuration, err := client.Get(ctx, c.config.ValidatingWebhookConfiguration, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	webhooks, err := managedValidatingWebhooks(configuration.Webhooks, c.config)
-	if err != nil {
-		return err
-	}
-	changed := false
-	for _, webhook := range webhooks {
-		bundle, err := desired.productionBundleFor(webhook.ClientConfig.CABundle)
-		if err != nil {
-			return err
-		}
-		if bytes.Equal(webhook.ClientConfig.CABundle, bundle) {
-			continue
-		}
-		webhook.ClientConfig.CABundle = bundle
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	_, err = client.Update(ctx, configuration, metav1.UpdateOptions{})
-	return err
-}
-
-func (*testAdmissionCanaryController) Wait(context.Context, AdmissionCanaryDesiredState) error {
-	return nil
-}
-
 func mustNewTestRotator(
 	t *testing.T,
 	client *fake.Clientset,
@@ -1896,13 +1792,70 @@ func mustNewTestRotator(
 	prober certificateProber,
 ) *Rotator {
 	t.Helper()
-	rotator, err := newRotator(client, config, &recordingCandidateSink{}, newTestAdmissionCanaryController(client, config))
+	rotator, err := New(client, config)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	rotator.now = func() time.Time { return now }
 	rotator.probe = prober
 	return rotator
+}
+
+// mustExpandCATransition runs the pass that starts or resumes a CA transition
+// at start, a whole second, and returns when its switch is due. That pass must
+// publish the new CA and wait exactly the configured delay without touching
+// the generated Secret.
+func mustExpandCATransition(
+	t *testing.T,
+	client *fake.Clientset,
+	config Config,
+	start time.Time,
+	prober certificateProber,
+) time.Time {
+	t.Helper()
+	before, beforeErr := client.CoreV1().Secrets(config.Namespace).Get(context.Background(), config.SecretName, metav1.GetOptions{})
+	result, err := mustNewTestRotator(t, client, config, start, prober).Run(context.Background())
+	if err != nil {
+		t.Fatalf("expansion pass error = %v", err)
+	}
+	if result.RequeueAfter != config.CASwitchDelay {
+		t.Fatalf("expansion pass RequeueAfter = %s, want the CA switch delay %s", result.RequeueAfter, config.CASwitchDelay)
+	}
+	after, afterErr := client.CoreV1().Secrets(config.Namespace).Get(context.Background(), config.SecretName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(beforeErr) && apierrors.IsNotFound(afterErr):
+	case beforeErr == nil && afterErr == nil && after.ResourceVersion == before.ResourceVersion:
+	default:
+		t.Fatalf("expansion pass wrote the generated Secret (before %v, after %v)", beforeErr, afterErr)
+	}
+	pending, err := decodePendingCandidate(mustGetStagingSecret(t, client, config).Data, config)
+	if err != nil {
+		t.Fatalf("decode the expanded transition: %v", err)
+	}
+	if pending.phase != stagingPhaseExpanded || !pending.expandedAt.Equal(start) {
+		t.Fatalf("staged transition = phase %q expanded at %s, want %q at %s", pending.phase, pending.expandedAt, stagingPhaseExpanded, start)
+	}
+	return start.Add(config.CASwitchDelay)
+}
+
+// completeCATransition runs a CA transition to its end from start: the pass
+// that expands, then the pass at the switch time.
+func completeCATransition(
+	t *testing.T,
+	client *fake.Clientset,
+	config Config,
+	start time.Time,
+	prober certificateProber,
+) {
+	t.Helper()
+	switchAt := mustExpandCATransition(t, client, config, start, prober)
+	result, err := mustNewTestRotator(t, client, config, switchAt, prober).Run(context.Background())
+	if err != nil || result.RequeueAfter != 0 {
+		t.Fatalf("switch pass = %+v, %v; want a finished transition", result, err)
+	}
+	if len(mustGetStagingSecret(t, client, config).Data) != 0 {
+		t.Fatal("finished transition left its staging record")
+	}
 }
 
 func mustGetSecret(t *testing.T, client *fake.Clientset, config Config) *corev1.Secret {

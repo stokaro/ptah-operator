@@ -60,7 +60,9 @@ and plan and reconstructing the exact expected object. Eight ship:
 `mapproval`, `mmigrationapproval` and `certificate-rotation-canary-mutate` on
 the mutating side; `vapproval`, `vmigrationapproval`, `vpodintent`,
 `vcontrollerwrite` and `certificate-rotation-canary-validate` on the validating
-side.
+side. The two canary entries match only a dry-run update the certificate
+rotator no longer sends, so nothing calls them; the release verifiers still
+require them.
 
 A Job carries an annotation envelope that admission checks as a set: eight
 annotations, including the manager image, revision and controller-state

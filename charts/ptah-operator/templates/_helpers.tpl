@@ -962,6 +962,7 @@ ptah-operator-parameter-informer-anchor
       "--endpoint-port-name=https"
       "--holder-identity=$(POD_NAME)/$(POD_UID)"
       (printf "--run-interval=%s" .Values.certificateRotation.interval)
+      (printf "--ca-switch-delay=%s" (default .Values.certificateRotation.interval .Values.certificateRotation.caSwitchDelay))
       (printf "--operation-timeout=%s" .Values.certificateRotation.operationTimeout)
       (printf "--retry-initial=%s" .Values.certificateRotation.retryInitial)
       (printf "--retry-max=%s" .Values.certificateRotation.retryMax)
