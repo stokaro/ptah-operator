@@ -1,0 +1,88 @@
+name: Cancel closed pull request runs
+
+# A pull request that was merged or closed still has its CI, Documentation and
+# Release runs holding runners, and master's run queues behind them. Nothing
+# reads their verdict any more: a merge is proven by master's own run, and a
+# closed pull request by nothing at all.
+#
+# This cancels the pull_request runs of the closed pull request's head branch
+# and nothing else. A push, a tag, a schedule or another branch is never
+# touched, which hack/verify-kubernetes-support.go holds to the exact command.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cancel:
+    name: Cancel the closed pull request's runs
+    # A pull request from a fork gets a read-only token, so there is nothing
+    # this job could cancel. It is skipped rather than failed, the way the
+    # support updater only acts on pull requests from this repository.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel the head branch's unfinished pull request runs
+        id: cancel-runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$HEAD_BRANCH" ]]
+          run_ids_file="$RUNNER_TEMP/closed-pull-request-run-ids"
+          : > "$run_ids_file"
+          # Every status a run can hold before it concludes. This run is itself
+          # an unfinished pull_request run on the branch, and is left out.
+          for status in requested queued pending waiting in_progress; do
+            runs="$(gh api \
+              --method GET \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/actions/runs" \
+              -f branch="$HEAD_BRANCH" \
+              -f event=pull_request \
+              -f status="$status" \
+              -f per_page=100)"
+            if ! jq -e '(.workflow_runs | length) == .total_count' <<<"$runs" >/dev/null; then
+              echo "the $status run listing for $HEAD_BRANCH is a partial page" >&2
+              exit 1
+            fi
+            jq -r \
+              --arg branch "$HEAD_BRANCH" \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --argjson self "$GITHUB_RUN_ID" '
+                .workflow_runs[] |
+                select(.event == "pull_request" and
+                       .head_branch == $branch and
+                       .head_repository.full_name == $repository and
+                       .id != $self) |
+                .id
+              ' <<<"$runs" >> "$run_ids_file"
+          done
+          while read -r run_id; do
+            [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+            if gh api \
+              --method POST \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null
+            then
+              echo "canceled run $run_id"
+              continue
+            fi
+            # A run can conclude between the listing and the request, and
+            # GitHub refuses to cancel a run that has concluded.
+            status="$(gh api \
+              --method GET \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+              --jq .status)"
+            if [[ "$status" != completed ]]; then
+              echo "run $run_id is $status and could not be canceled" >&2
+              exit 1
+            fi
+          done < <(sort -u "$run_ids_file")
