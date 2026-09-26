@@ -111,10 +111,10 @@ func TestRenderTextNamesThePlanAndNotItsChunks(t *testing.T) {
 
 // The text output says which kinds of authority a plan changes, the way it
 // says whether the plan is destructive, so a reviewer knows what to look for
-// in the SQL below it. The kinds are what the plan object records and what
-// this reading of the SQL finds, together: a plugin and a manager of
-// different builds can disagree, and the reader is never shown fewer kinds
-// than either raised.
+// in the SQL below it. The recorded kinds are what held the plan; a kind only
+// this plugin reads in the SQL is shown apart and marked, because a plugin and
+// a manager of different builds can disagree and the manager did not wait for
+// it.
 func TestRenderTextNamesThePrivilegeChanges(t *testing.T) {
 	t.Parallel()
 
@@ -150,7 +150,16 @@ func TestRenderTextNamesThePrivilegeChanges(t *testing.T) {
 		{
 			name:       "found in the SQL and not recorded",
 			statements: []string{`ALTER TABLE "public"."customers" OWNER TO "app"`},
-			want:       "Privileges:     Ownership\n",
+			want:       "Privileges:     Ownership (read by this plugin, not recorded)\n",
+		},
+		{
+			name: "some recorded, some not",
+			statements: []string{
+				`ALTER TABLE "public"."customers" OWNER TO "app"`,
+				`GRANT SELECT ON TABLE "public"."customers" TO PUBLIC`,
+			},
+			recorded: []operatorv1alpha1.PrivilegeChange{operatorv1alpha1.PrivilegeChangeGrant},
+			want:     "Privileges:     Grant; Ownership (read by this plugin, not recorded)\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

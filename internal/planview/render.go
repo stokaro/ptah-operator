@@ -47,6 +47,25 @@ func Render(out io.Writer, view View, format Format) error {
 	}
 }
 
+// privilegesLine names the kinds the plan records, which are what held it for
+// an approval, and then any kind this plugin reads in the SQL that the record
+// lacks, marked as such: a reader told the plan waited for a kind nobody
+// recorded would be told something that did not happen.
+func privilegesLine(view View) string {
+	var parts []string
+	if len(view.PrivilegeChanges) > 0 {
+		parts = append(parts, strings.Join(view.PrivilegeChanges, ", "))
+	}
+	if len(view.UnrecordedPrivilegeChanges) > 0 {
+		parts = append(parts, strings.Join(view.UnrecordedPrivilegeChanges, ", ")+
+			" (read by this plugin, not recorded)")
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, "; ")
+}
+
 // renderText says what the plan is before it says what it does.
 //
 // The chunk names are deliberately absent. They are how the plan is stored, not
@@ -67,11 +86,7 @@ func renderText(out io.Writer, view View) error {
 	field("Dialect", view.Dialect)
 	field("Statements", fmt.Sprintf("%d", view.StatementCount))
 	field("Destructive", fmt.Sprintf("%t", view.Destructive))
-	privileges := "none"
-	if len(view.PrivilegeChanges) > 0 {
-		privileges = strings.Join(view.PrivilegeChanges, ", ")
-	}
-	field("Privileges", privileges)
+	field("Privileges", privilegesLine(view))
 	if !view.CreatedAt.IsZero() {
 		field("Stored", view.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"))
 	}

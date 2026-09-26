@@ -41,12 +41,14 @@ type PlanChunkReference struct {
 //   - Grant: a privilege granted on an object, default privileges included.
 //   - Revoke: a privilege revoked from an object.
 //   - RoleMembership: a role granted to or revoked from a role or user.
-//   - Role: a role, user or group created, altered or dropped.
+//   - Role: a role, user or group created, altered or dropped, or assumed for
+//     the rest of the session with SET ROLE or SET SESSION AUTHORIZATION.
 //   - Ownership: an object given to another owner.
 //   - RowSecurityPolicy: a row-security policy created, altered or dropped, or
 //     row security switched off or unforced on a table.
 //   - SecurityDefiner: code set to run with its owner's rights rather than its
-//     caller's.
+//     caller's, which a MySQL or MariaDB routine does unless it says SQL
+//     SECURITY INVOKER.
 //   - Definer: a MySQL DEFINER clause naming the account a view, routine,
 //     trigger or event runs as.
 //   - FunctionReplacement: CREATE OR REPLACE of a function or procedure, which

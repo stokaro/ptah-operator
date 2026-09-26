@@ -121,12 +121,23 @@ waived it would be the same `Always` again.
 | `Grant` | `GRANT` of a privilege on an object, including `ALTER DEFAULT PRIVILEGES ... GRANT` |
 | `Revoke` | `REVOKE` of a privilege, including `ALTER DEFAULT PRIVILEGES ... REVOKE`, and `DROP OWNED` |
 | `RoleMembership` | `GRANT role TO role`, `REVOKE role FROM role`, `ALTER GROUP ... ADD USER` or `DROP USER`, MySQL `SET DEFAULT ROLE` |
-| `Role` | `CREATE`, `ALTER` or `DROP` of a `ROLE`, `USER` or `GROUP`: attributes such as `SUPERUSER`, and per-role settings |
+| `Role` | `CREATE`, `ALTER` or `DROP` of a `ROLE`, `USER` or `GROUP`: attributes such as `SUPERUSER`, and per-role settings; `SET ROLE` and `SET SESSION AUTHORIZATION`, which change who the rest of the Apply runs as |
 | `Ownership` | `OWNER TO`, `REASSIGN OWNED`, `CREATE SCHEMA ... AUTHORIZATION` |
 | `RowSecurityPolicy` | `CREATE`, `ALTER` or `DROP POLICY`, and `DISABLE` or `NO FORCE ROW LEVEL SECURITY` |
-| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure, MySQL `SQL SECURITY DEFINER`, a PostgreSQL view's `security_invoker` set to `false` or `off`, or reset |
+| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, and a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`; a PostgreSQL view's `security_invoker` set to `false` or `off`, or reset |
 | `Definer` | a MySQL `DEFINER =` clause on a view, routine, trigger or event |
 | `FunctionReplacement` | `CREATE OR REPLACE FUNCTION` or `PROCEDURE` |
+
+The classifier reads keywords. It does not parse SQL the way the server does
+and does not evaluate anything, so it is a filter in front of an approval rather
+than a boundary. What an Apply can do is bounded by the database login it runs
+as: a login with no right to grant, create roles or own other roles' objects
+cannot do any of those things, whatever a plan says and whatever this reading
+misses. Keep that login to what the artifact manages --
+[Databases and privileges](../../support/databases/#postgresql-authority) says
+what that is for each engine, and
+[Does the login need superuser?](../../faq/#least-privilege-login) says why the
+answer is no.
 
 The reading errs the same way the destructive one does. It reads keywords,
 never what a clause evaluates to, so it raises every policy: `USING (true)` and
@@ -141,6 +152,13 @@ string-escaping modes the server might be in, and reads dollar-quoted bodies,
 `E''` strings and nested comments the way PostgreSQL does, so a quote cannot
 hide a clause from it.
 
+MySQL and MariaDB run a stored routine with its definer's rights unless it says
+`SQL SECURITY INVOKER`, so a routine that names no mode is raised as
+`SecurityDefiner` whether or not the statement says so. Anyone with `EXECUTE`
+on it runs its body with the rights of the login that created it. To keep a
+plan that creates a routine unattended, declare the routine with invoker rights
+(`security = "INVOKER"`), and the plan carries `SQL SECURITY INVOKER`.
+
 The class only adds. Ptah's plan document has no field for it and a document
 that tried to supply one is refused, a statement Ptah rated `safe` is raised all
 the same, and nothing about it lowers `destructive`. What Ptah already rates
@@ -151,7 +169,7 @@ the kinds and nothing else: no object, no role and no statement text.
 
 What it cannot see:
 
-- Rights that come from an engine default rather than from the statement. A
+- Rights that come from an engine default on an object other than a routine. A
   view in either engine reads its tables with its owner's rights unless it says
   otherwise, and a MySQL trigger, like a MySQL view that names no
   `SQL SECURITY`, runs as its definer. Ptah writes no `SQL SECURITY` clause on a
