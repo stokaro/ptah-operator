@@ -2,6 +2,10 @@ SHELL := /bin/sh
 
 GO ?= go
 CONTROLLER_GEN_VERSION ?= v0.22.0
+SETUP_ENVTEST_VERSION ?= v0.25.1
+ENVTEST_KUBERNETES_VERSION ?= 1.37.0
+ENVTEST_INDEX ?= https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/1031496fc98a4f51010c3bdfdeb57b5d67bea7bd/envtest-releases.yaml
+ENVTEST_BIN_DIR ?=
 CRD_SCHEMA_VERSION := 21
 CONTROLLER_STATE_VERSION := 2
 override RACE_MUTATION_TESTS := TestVerifyE2EHarnessRejectsCriticalMutations|TestVerifyE2EDataPlaneRejectsCriticalMutations|TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|TestVerifyE2EChildScriptsRejectCriticalMutations
@@ -9,7 +13,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test test-race vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
+.PHONY: all build test test-envtest test-race vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -28,6 +32,27 @@ build:
 # mutation suites in it run nowhere else.
 test:
 	$(GO) test -timeout=30m ./...
+
+# The suites under test/envtest run against a real kube-apiserver and etcd and
+# nothing else: the CRD schemas and their CEL, the chart's admission policies
+# and bindings, and the manager's webhooks, decided by the API server itself.
+# setup-envtest is pinned by version and reads an index pinned by commit, which
+# carries the digest of every archive it downloads, so a run here and a run in
+# CI start the same binaries. hack/verify-kubernetes-support.go holds the
+# Kubernetes version inside the support window.
+#
+# -count=1 because the suites read the chart through helm, a child process the
+# test cache cannot see: a cached pass would survive a policy edit. The
+# slowest package took under three minutes on a laptop; -timeout is what the
+# verify job's limit is budgeted against, so a hung suite prints its goroutines
+# before the job is canceled.
+# ENVTEST_BIN_DIR empty keeps setup-envtest's own store, shared with other
+# checkouts; CI names a directory it caches.
+test-envtest:
+	@assets="$$($(GO) run sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION) \
+		use $(ENVTEST_KUBERNETES_VERSION) --index "$(ENVTEST_INDEX)" \
+		$(if $(ENVTEST_BIN_DIR),--bin-dir "$(ENVTEST_BIN_DIR)") -p path)" || exit $$?; \
+	KUBEBUILDER_ASSETS="$$assets" PTAH_REQUIRE_ENVTEST=1 $(GO) test -count=1 -timeout=10m ./test/envtest/...
 
 test-race:
 	@# The skipped suites are the shell mutation tables. Each row rewrites a
@@ -87,7 +112,7 @@ docs-reference-check:
 
 verify: verify-source test-race
 
-verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-release e2e-static vet build test
+verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-release e2e-static vet build test test-envtest
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets
 
 verify-crd-schema-history: manifests
