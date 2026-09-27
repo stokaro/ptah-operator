@@ -3,7 +3,7 @@
   "sources": [
     {
       "path": "internal/cli/drift/drift.go",
-      "sha256": "6a88eab8354811cb6787409d5735bde165e759639f074bcdb123ad8de448df3e"
+      "sha256": "7432306b4122be32c51aa3cefcd5e1142db2623ed877c1c1279a511bf17fd92d"
     },
     {
       "path": "internal/datamigrate/datamigrate.go",
@@ -11,7 +11,7 @@
     },
     {
       "path": "migration/safety/safety.go",
-      "sha256": "e6ec6712c01e9c4895be84ec8af6b52469a7abc5273c8a03629c628a2131e0be"
+      "sha256": "15e36b0770c20e2579d67104f29e0c666fad14f06b74bcfbc2b58122641407fe"
     }
   ],
   "categories": [
