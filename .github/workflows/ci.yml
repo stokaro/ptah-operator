@@ -95,9 +95,10 @@ jobs:
     name: Verify source and generated files
     runs-on: ubuntu-latest
     # make test gives go test 30 minutes, and the setup and checks before it
-    # took four minutes on acd17c4 and 93b209b. The limit outlasts both, so a
-    # hung test ends with Go's goroutine dump rather than a canceled job.
-    timeout-minutes: 40
+    # took four minutes on acd17c4 and 93b209b. make test-envtest follows with
+    # 10 more, after fetching its control plane. The limit outlasts all of it, so
+    # a hung test ends with Go's goroutine dump rather than a canceled job.
+    timeout-minutes: 55
     steps:
       - name: Check out repository
         id: checkout
@@ -232,6 +233,20 @@ jobs:
             *) echo "promtool reports $reported, want ${version}" >&2; exit 1 ;;
           esac
           echo "$install_dir" >> "$GITHUB_PATH"
+      # The envtest suites start the kube-apiserver and etcd the Makefile pins.
+      # setup-envtest checks every archive against the digest in an index
+      # pinned by commit whether or not this cache hits, so the cache only
+      # saves the download. The key follows the Makefile, where the pins live;
+      # a miss restores the newest earlier store, which already holds the
+      # pinned release unless the pin moved.
+      - name: Cache the envtest control plane
+        id: envtest-assets
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/envtest
+          key: envtest-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          restore-keys: |
+            envtest-${{ runner.os }}-
       # The client build configuration, checked where a pull request can see
       # it. A release reads the platforms out of this file, so a file
       # goreleaser refuses is a release that cannot be cut.
@@ -247,6 +262,7 @@ jobs:
         env:
           CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}
           CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE: "true"
+          ENVTEST_BIN_DIR: ${{ runner.temp }}/envtest
           PTAH_REQUIRE_PROMTOOL: "1"
         shell: bash
         run: make verify-source

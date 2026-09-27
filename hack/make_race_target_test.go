@@ -149,7 +149,8 @@ func TestVerifyMakeRaceTargetsRejectsRuleBypasses(t *testing.T) {
 		{
 			name: "verify-source no longer runs the test target",
 			mutate: func(source string) string {
-				return replaceMakeSourceExactly(t, source, " e2e-static vet build test\n", " e2e-static vet build\n")
+				return replaceMakeSourceExactly(t, source,
+					" e2e-static vet build test test-envtest\n", " e2e-static vet build test-envtest\n")
 			},
 		},
 	}

@@ -77,7 +77,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "a29bb5abb40c6d0512f37d22533f4352259233752310f57bbae2420e8a278815"
+	ciWorkflowSHA256                = "aa7e894d45f1356fa3702de66976e988bfef5b29ccc656e11a4da36e44602a8f"
 	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -91,9 +91,9 @@ const (
 	helmVersion     = "v4.3.0"
 
 	ciSupportMatrixTimeoutMinutes = 10
-	// The verify job outlasts go test's own timeout plus what runs before it,
-	// which verifyJobOutlastsTests holds.
-	ciVerifyTimeoutMinutes = 40
+	// The verify job outlasts both go test timeouts plus what runs before and
+	// between them, which verifyJobOutlastsTests holds.
+	ciVerifyTimeoutMinutes = 55
 	// makeTestTimeoutMinutes is the -timeout the Makefile's test target gives
 	// go test, which verifyMakeRaceTargets pins.
 	makeTestTimeoutMinutes = 30
@@ -101,7 +101,15 @@ const (
 	// starts: the job's setup steps and the checks verify-source runs ahead of
 	// test. It took four minutes on acd17c4 and 93b209b with the rolling build
 	// cache, and this is twice that, for a cold one.
-	ciVerifyBeforeTestMinutes         = 8
+	ciVerifyBeforeTestMinutes = 8
+	// makeEnvtestTimeoutMinutes is the -timeout the Makefile's test-envtest
+	// target gives go test, which verifyEnvtestPins pins. verify-source runs
+	// it after test, in the same job.
+	makeEnvtestTimeoutMinutes = 10
+	// ciEnvtestFetchMinutes is what test-envtest spends before its go test
+	// starts: building setup-envtest and, on a cache miss, downloading the
+	// control plane. Both took under a minute; this is twice that.
+	ciEnvtestFetchMinutes             = 2
 	ciRaceTimeoutMinutes              = 20
 	ciKubernetesE2ETimeoutMinutes     = 180
 	ciPrepareImagesTimeoutMinutes     = 45
@@ -220,6 +228,9 @@ func main() {
 	if err := verifyWorkflow(workflowPath); err != nil {
 		fatal(err)
 	}
+	if err := verifyEnvtestPins(makefilePath, parsed, proposal); err != nil {
+		fatal(err)
+	}
 	if err := verifyUpdateWorkflow(updateWorkflowPath); err != nil {
 		fatal(err)
 	}
@@ -294,6 +305,82 @@ func main() {
 
 func verifyKubernetesDependencyWindow(path string, releases []parsedRelease) (int, error) {
 	return verifyKubernetesDependencyWindowForMode(path, releases, false)
+}
+
+var (
+	envtestKubernetesVersion = regexp.MustCompile(`(?m)^ENVTEST_KUBERNETES_VERSION[ \t]*[:?]?=[ \t]*(\S*)[ \t]*$`)
+	setupEnvtestVersion      = regexp.MustCompile(`(?m)^SETUP_ENVTEST_VERSION[ \t]*[:?]?=[ \t]*(\S*)[ \t]*$`)
+	envtestIndex             = regexp.MustCompile(`(?m)^ENVTEST_INDEX[ \t]*[:?]?=[ \t]*(\S*)[ \t]*$`)
+	exactSemver              = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)$`)
+	commitPinnedEnvtestIndex = regexp.MustCompile(`^https://raw\.githubusercontent\.com/kubernetes-sigs/controller-tools/[0-9a-f]{40}/envtest-releases\.yaml$`)
+)
+
+// verifyEnvtestPins holds the envtest control plane to the support window and
+// to pins that are pins. The suites under test/envtest decide what the API
+// server does with the chart's policies and the CRDs; an API server from a
+// release the chart does not support measures a server nobody runs, and a
+// setup-envtest named by branch or an index read from HEAD would let two runs
+// of one commit start different binaries.
+//
+// A proposal moves the window before anyone has reviewed the envtest version,
+// so it is not held to the new window here; the ordinary verification of the
+// pull request that carries the proposal is, and names the pin to move.
+func verifyEnvtestPins(path string, releases []parsedRelease, proposal bool) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	value := func(pattern *regexp.Regexp, name string) (string, error) {
+		matches := pattern.FindAllStringSubmatch(string(contents), -1)
+		if len(matches) != 1 || matches[0][1] == "" {
+			return "", fmt.Errorf("%s: %s must be assigned exactly once, to a value", path, name)
+		}
+		return matches[0][1], nil
+	}
+	setupVersion, err := value(setupEnvtestVersion, "SETUP_ENVTEST_VERSION")
+	if err != nil {
+		return err
+	}
+	if !exactSemver.MatchString(setupVersion) || !strings.HasPrefix(setupVersion, "v") {
+		return fmt.Errorf("%s: SETUP_ENVTEST_VERSION %q is not an exact vX.Y.Z module version", path, setupVersion)
+	}
+	index, err := value(envtestIndex, "ENVTEST_INDEX")
+	if err != nil {
+		return err
+	}
+	if !commitPinnedEnvtestIndex.MatchString(index) {
+		return fmt.Errorf("%s: ENVTEST_INDEX %q is not the controller-tools envtest index at an exact commit", path, index)
+	}
+	version, err := value(envtestKubernetesVersion, "ENVTEST_KUBERNETES_VERSION")
+	if err != nil {
+		return err
+	}
+	parts := exactSemver.FindStringSubmatch(version)
+	if parts == nil || strings.HasPrefix(version, "v") {
+		return fmt.Errorf("%s: ENVTEST_KUBERNETES_VERSION %q is not an exact X.Y.Z release", path, version)
+	}
+	// The suites run inside make verify-source, after make test, under the
+	// timeout the verify job's limit is budgeted against.
+	suites := fmt.Sprintf("PTAH_REQUIRE_ENVTEST=1 $(GO) test -count=1 -timeout=%dm ./test/envtest/...", makeEnvtestTimeoutMinutes)
+	if strings.Count(string(contents), suites) != 1 {
+		return fmt.Errorf("%s: make test-envtest must run the suites exactly once as %q", path, suites)
+	}
+	if !regexp.MustCompile(`(?m)^verify-source:[^\n#]* test test-envtest(?:[ \t]|$)`).Match(contents) {
+		return fmt.Errorf("%s: verify-source must run test-envtest right after test", path)
+	}
+	if proposal {
+		return nil
+	}
+	minor := parts[1] + "." + parts[2]
+	supported := make([]string, 0, len(releases))
+	for _, release := range releases {
+		if release.Minor == minor {
+			return nil
+		}
+		supported = append(supported, release.Minor)
+	}
+	return fmt.Errorf("%s: ENVTEST_KUBERNETES_VERSION %s is outside the supported window %s; move it, and ENVTEST_INDEX, to a supported release",
+		path, version, strings.Join(supported, ", "))
 }
 
 func verifyKubernetesDependencyWindowForMode(path string, releases []parsedRelease, proposal bool) (int, error) {
@@ -756,7 +843,7 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 	}
 	verifySteps, err := requireWorkflowStepOrder(path, "verify", verifyJob, []string{
 		"checkout", "setup-go", "verify-build-cache", "verify-support", "crd-baseline", "verify-helm",
-		"shellcheck", "promtool", "client-build-config", "project-verify",
+		"shellcheck", "promtool", "envtest-assets", "client-build-config", "project-verify",
 	})
 	if err != nil {
 		return err
@@ -898,23 +985,39 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 			return fmt.Errorf("%s: the pinned promtool install does not read %q", path, required)
 		}
 	}
+	// The envtest suites start the kube-apiserver and etcd the Makefile pins,
+	// which setup-envtest fetches and checks against the digests in a
+	// commit-pinned index whether or not this cache hits. The cache only saves
+	// the download: its key follows the Makefile, where the pins live, and a
+	// miss restores the newest earlier store, which already holds the pinned
+	// release unless the pin moved. make verify-source reads the store from
+	// ENVTEST_BIN_DIR below, so the two paths are one value.
+	if verifySteps[8].Name != "Cache the envtest control plane" {
+		return fmt.Errorf("%s: verify envtest cache step has unexpected name %q", path, verifySteps[8].Name)
+	}
+	if err := verifyUpdaterActionStep(path, "verify", verifySteps[8],
+		"actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", envtestCacheInputs()); err != nil {
+		return err
+	}
 	// The client build configuration is checked where a pull request sees it:
 	// a release reads its platforms out of that file, so one goreleaser refuses
 	// is a release that cannot be cut.
-	if verifySteps[8].Name != "Check the client build configuration" ||
-		!strings.HasPrefix(verifySteps[8].Uses, "goreleaser/goreleaser-action@") ||
-		verifySteps[8].Run != "" || verifySteps[8].With["args"] != "check" {
+	if verifySteps[9].Name != "Check the client build configuration" ||
+		!strings.HasPrefix(verifySteps[9].Uses, "goreleaser/goreleaser-action@") ||
+		verifySteps[9].Run != "" || verifySteps[9].With["args"] != "check" {
 		return fmt.Errorf("%s: the client build configuration is not checked with goreleaser", path)
 	}
-	if verifySteps[9].Name != "Run project verification" ||
-		verifySteps[9].If != "" || verifySteps[9].Uses != "" || verifySteps[9].Run != "make verify-source" ||
-		verifySteps[9].Shell != "bash" || verifySteps[9].WorkingDirectory != "" ||
-		len(verifySteps[9].With) != 0 || !equalStringMap(verifySteps[9].Env, map[string]string{
+	if verifySteps[10].Name != "Run project verification" ||
+		verifySteps[10].If != "" || verifySteps[10].Uses != "" || verifySteps[10].Run != "make verify-source" ||
+		verifySteps[10].Shell != "bash" || verifySteps[10].WorkingDirectory != "" ||
+		len(verifySteps[10].With) != 0 || !equalStringMap(verifySteps[10].Env, map[string]string{
 		"CRD_SCHEMA_BASELINE_REF":              "${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE": "true",
+		"ENVTEST_BIN_DIR":                      envtestCacheInputs()["path"],
 		"PTAH_REQUIRE_PROMTOOL":                "1",
 	}) {
-		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline and require promtool", path)
+		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline, "+
+			"require promtool, and read the cached envtest store", path)
 	}
 
 	if err := verifyRaceJob(path, workflow); err != nil {
@@ -1130,14 +1233,19 @@ done
 	return nil
 }
 
-// verifyJobOutlastsTests holds the verify job's limit above go test's own
-// timeout and what runs before it. At or under that sum, the job limit ends a
-// hung test first, and the run shows a canceled job instead of the goroutine
-// dump and the name of the running test that Go's timeout prints.
+// verifyJobOutlastsTests holds the verify job's limit above both go test
+// timeouts verify-source runs and what runs before and between them: make
+// test, then the envtest control plane's fetch, then make test-envtest. At or
+// under that sum, the job limit ends a hung test first, and the run shows a
+// canceled job instead of the goroutine dump and the name of the running test
+// that Go's timeout prints.
 func verifyJobOutlastsTests(path string, limit int) error {
-	if limit <= makeTestTimeoutMinutes+ciVerifyBeforeTestMinutes {
-		return fmt.Errorf("%s: verify's %d-minute limit must exceed make test's %d-minute go test timeout plus the %d minutes before it",
-			path, limit, makeTestTimeoutMinutes, ciVerifyBeforeTestMinutes)
+	budget := ciVerifyBeforeTestMinutes + makeTestTimeoutMinutes + ciEnvtestFetchMinutes + makeEnvtestTimeoutMinutes
+	if limit <= budget {
+		return fmt.Errorf("%s: verify's %d-minute limit must exceed make test's %d-minute go test timeout plus the %d minutes before it, "+
+			"and make test-envtest's %d-minute timeout plus the %d minutes its control plane takes to fetch: %d minutes",
+			path, limit, makeTestTimeoutMinutes, ciVerifyBeforeTestMinutes,
+			makeEnvtestTimeoutMinutes, ciEnvtestFetchMinutes, budget)
 	}
 	return nil
 }
@@ -2080,6 +2188,16 @@ func verifyGoBuildCacheStep(path, jobName string, step workflowStep, scope strin
 			"restore-keys": restore,
 		},
 	)
+}
+
+// envtestCacheInputs are the envtest store cache's inputs: the store the
+// Makefile's ENVTEST_BIN_DIR names, keyed by the Makefile that pins it.
+func envtestCacheInputs() map[string]string {
+	return map[string]string{
+		"path":         "${{ runner.temp }}/envtest",
+		"key":          "envtest-${{ runner.os }}-${{ hashFiles('Makefile') }}",
+		"restore-keys": "envtest-${{ runner.os }}-\n",
+	}
 }
 
 func verifyUpdaterActionStep(
