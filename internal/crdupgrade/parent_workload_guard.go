@@ -13,6 +13,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -100,8 +101,53 @@ func parentHookContractDenialMessage(sequence int32) string {
 // executable and privileges exactly.
 type ParentWorkloadGuard struct {
 	rollout          *RolloutGuard
-	identityContract ServiceAccountObjectIdentityContract
+	identityContract parentOriginIdentity
 	identityErr      error
+}
+
+// parentOriginIdentity is what the parent-origin readiness marker records:
+// the ServiceAccounts the release's runtime and hooks run as. None of them
+// carries a release sequence, so the immutable marker holds across upgrades.
+type parentOriginIdentity struct {
+	controllerServiceAccountName  string
+	hookServiceAccountBase        string
+	certificateServiceAccountName string
+}
+
+// parentOriginIdentityVersion names the marker payload. Version 2 recorded a
+// per-release controller ServiceAccount base; version 3 records the one
+// controller ServiceAccount every release shares.
+const parentOriginIdentityVersion = "3"
+
+// markerData returns the exact readiness-marker payload. Callers compare the
+// complete map, not a subset.
+func (c parentOriginIdentity) markerData() map[string]string {
+	return map[string]string{
+		"contract-version":                 parentOriginIdentityVersion,
+		"controller-service-account-name":  c.controllerServiceAccountName,
+		"hook-service-account-base":        c.hookServiceAccountBase,
+		"certificate-service-account-name": c.certificateServiceAccountName,
+	}
+}
+
+func parentOriginIdentityForRollout(rollout *RolloutGuard) (parentOriginIdentity, error) {
+	hookBase, err := rollout.hookServiceAccountBase()
+	if err != nil {
+		return parentOriginIdentity{}, err
+	}
+	for description, name := range map[string]string{
+		"controller":  rollout.ControllerServiceAccountName,
+		"certificate": rollout.CertificateDeploymentName,
+	} {
+		if problems := utilvalidation.IsDNS1123Subdomain(name); len(problems) != 0 {
+			return parentOriginIdentity{}, fmt.Errorf("%s ServiceAccount name %q is invalid: %s", description, name, strings.Join(problems, "; "))
+		}
+	}
+	return parentOriginIdentity{
+		controllerServiceAccountName:  rollout.ControllerServiceAccountName,
+		hookServiceAccountBase:        hookBase,
+		certificateServiceAccountName: rollout.CertificateDeploymentName,
+	}, nil
 }
 
 // NewParentWorkloadGuard derives every name and executable argument from the
@@ -116,7 +162,7 @@ const replicaSetMatchResourceScope = `request.resource.group == "apps" && reques
 func NewParentWorkloadGuard(rollout *RolloutGuard) *ParentWorkloadGuard {
 	guard := &ParentWorkloadGuard{rollout: rollout}
 	if rollout != nil {
-		guard.identityContract, guard.identityErr = ServiceAccountObjectIdentityContractForRollout(rollout)
+		guard.identityContract, guard.identityErr = parentOriginIdentityForRollout(rollout)
 	}
 	return guard
 }
@@ -446,7 +492,7 @@ func (g *ParentWorkloadGuard) hookImageCheckJobName() string {
 }
 
 func (g *ParentWorkloadGuard) hookImageCheckJobPattern() string {
-	base, _ := NewServiceAccountOriginGuard(g.rollout).hookServiceAccountBase()
+	base, _ := g.rollout.hookServiceAccountBase()
 	return "^" + regexp.QuoteMeta(base+"-crd-v") + `[1-9][0-9]*-[0-9a-f]{1,12}-image-check$`
 }
 
@@ -474,7 +520,7 @@ func (g *ParentWorkloadGuard) readinessMarker() *corev1.ConfigMap {
 			},
 		},
 		Immutable: &immutable,
-		Data:      g.identityContract.MarkerData(),
+		Data:      g.identityContract.markerData(),
 	}
 }
 
@@ -1011,7 +1057,7 @@ func exactParentGuardObjectMetadata(actual, expected metav1.ObjectMeta) bool {
 }
 
 func (g *ParentWorkloadGuard) hookServiceAccountPatterns() (string, string) {
-	base, _ := NewServiceAccountOriginGuard(g.rollout).hookServiceAccountBase()
+	base, _ := g.rollout.hookServiceAccountBase()
 	return "^" + regexp.QuoteMeta(base+"-crd-v") + `[1-9][0-9]*-[0-9a-f]{12}$`,
 		"^" + regexp.QuoteMeta(base+"-cleanup-v") + `[1-9][0-9]*-[0-9a-f]{12}$`
 }
@@ -1024,7 +1070,7 @@ func (g *ParentWorkloadGuard) validate() error {
 		return fmt.Errorf("validate parent workload identity: %w", err)
 	}
 	if g.identityErr != nil {
-		return fmt.Errorf("validate parent stable ServiceAccount identity: %w", g.identityErr)
+		return fmt.Errorf("validate parent-origin ServiceAccount identity: %w", g.identityErr)
 	}
 	if g.rollout.PollEvery <= 0 {
 		return fmt.Errorf("parent workload guard poll interval must be positive")
@@ -1032,7 +1078,7 @@ func (g *ParentWorkloadGuard) validate() error {
 	if !regexp.MustCompile(`^.+@sha256:[0-9a-f]{64}$`).MatchString(g.rollout.ManagerImage) {
 		return fmt.Errorf("parent workload guard manager image must use an immutable sha256 digest")
 	}
-	if _, err := NewServiceAccountOriginGuard(g.rollout).hookServiceAccountBase(); err != nil {
+	if _, err := g.rollout.hookServiceAccountBase(); err != nil {
 		return fmt.Errorf("validate parent hook identity: %w", err)
 	}
 	return nil

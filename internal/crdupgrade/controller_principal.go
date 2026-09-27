@@ -2,48 +2,35 @@ package crdupgrade
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 )
 
 func controllerPrincipalGuardDigest(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
 	return hookIdentityDigest(releaseNamespace, releaseName, releaseSequence, managerImage)[:12]
 }
 
-func controllerPrincipalUsernames(releaseNamespace, candidate, previous string) []string {
-	usernames := []string{"system:serviceaccount:" + releaseNamespace + ":" + candidate}
-	if previous != "" && previous != candidate {
-		usernames = append(usernames, "system:serviceaccount:"+releaseNamespace+":"+previous)
-	}
-	return usernames
+func controllerPrincipalUsername(releaseNamespace, serviceAccount string) string {
+	return "system:serviceaccount:" + releaseNamespace + ":" + serviceAccount
 }
 
-func controllerPrincipalMatchExpression(releaseNamespace, candidate, previous string) string {
-	usernames := controllerPrincipalUsernames(releaseNamespace, candidate, previous)
-	quoted := make([]string, len(usernames))
-	for index, username := range usernames {
-		quoted[index] = strconv.Quote(username)
-	}
-	return `request.userInfo.username in [` + strings.Join(quoted, ", ") + `]`
+func controllerPrincipalMatchExpression(releaseNamespace, serviceAccount string) string {
+	return fmt.Sprintf(`request.userInfo.username == %q`, controllerPrincipalUsername(releaseNamespace, serviceAccount))
 }
 
-func controllerPrincipalAuthorityExpression(
-	releaseNamespace, candidate, previous string, candidateSequence, previousSequence int32,
-) string {
-	usernames := controllerPrincipalUsernames(releaseNamespace, candidate, previous)
-	candidateAuthority := fmt.Sprintf(
-		`request.userInfo.username == %q && variables.activeRelease == %d`,
-		usernames[0],
-		candidateSequence,
-	)
-	if len(usernames) == 1 {
-		return candidateAuthority
+// controllerPrincipalAuthorityExpression admits the controller while this
+// release or the one before it is active. Every release runs the controller
+// under the same ServiceAccount, so the predecessor's runtime writes under
+// that name until the cutover stops it, and this release's runtime writes
+// under it once the cutover activates this release.
+func controllerPrincipalAuthorityExpression(releaseNamespace, serviceAccount string, releaseSequence int32) string {
+	username := controllerPrincipalUsername(releaseNamespace, serviceAccount)
+	if releaseSequence <= 1 {
+		return fmt.Sprintf(`request.userInfo.username == %q && variables.activeRelease == %d`, username, releaseSequence)
 	}
 	return fmt.Sprintf(
-		`(%s) || (request.userInfo.username == %q && variables.activeRelease == %d)`,
-		candidateAuthority,
-		usernames[1],
-		previousSequence,
+		`request.userInfo.username == %q && (variables.activeRelease == %d || variables.activeRelease == %d)`,
+		username,
+		releaseSequence,
+		releaseSequence-1,
 	)
 }
 

@@ -21,7 +21,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 )
@@ -178,45 +177,39 @@ type ConfigMapDeleter interface {
 // as an earlier, retained hook resource; this process has read-only access to
 // the guards and cannot weaken them.
 type RolloutGuard struct {
-	Policies                                ValidatingAdmissionPolicyReader
-	Bindings                                ValidatingAdmissionPolicyBindingReader
-	Deployments                             DeploymentWriter
-	Pods                                    PodLister
-	ConfigMaps                              ConfigMapWriter
-	ConfigMapDeleter                        ConfigMapDeleter
-	ReleaseName                             string
-	ReleaseNamespace                        string
-	CoordinationNamespace                   string
-	LeaderElection                          bool
-	LeaderElectionID                        string
-	WebhookServiceName                      string
-	WebhookTimeoutSeconds                   int32
-	WebhookSecretName                       string
-	WebhookPort                             int32
-	CertificateHealthPort                   int32
-	CertificateRuntimeEnabled               bool
-	HookServiceAccountName                  string
-	ControllerServiceAccountName            string
-	ControllerServiceAccountManaged         bool
-	PreviousControllerServiceAccountName    string
-	PreviousControllerServiceAccountUID     types.UID
-	PreviousControllerServiceAccountManaged bool
-	PreviousControllerReleaseSequence       int32
-	PreviousControllerManagerImage          string
-	ControllerDeploymentName                string
-	ControllerReplicas                      int32
-	CertificateDeploymentName               string
-	ControllerStateVersion                  int32
-	AdmissionContractVersion                int32
-	ReleaseSequence                         int32
-	ManagerImage                            string
-	ControllerArgs                          []string
-	CertificateArgs                         []string
-	RuntimeDeploymentConfigExpressions      []string
-	RuntimePodConfigExpressions             []string
-	PriorityClassName                       string
-	RuntimeAdmissionContractB64             string
-	PollEvery                               time.Duration
+	Policies                           ValidatingAdmissionPolicyReader
+	Bindings                           ValidatingAdmissionPolicyBindingReader
+	Deployments                        DeploymentWriter
+	Pods                               PodLister
+	ConfigMaps                         ConfigMapWriter
+	ConfigMapDeleter                   ConfigMapDeleter
+	ReleaseName                        string
+	ReleaseNamespace                   string
+	CoordinationNamespace              string
+	LeaderElection                     bool
+	LeaderElectionID                   string
+	WebhookServiceName                 string
+	WebhookTimeoutSeconds              int32
+	WebhookSecretName                  string
+	WebhookPort                        int32
+	CertificateHealthPort              int32
+	CertificateRuntimeEnabled          bool
+	HookServiceAccountName             string
+	ControllerServiceAccountName       string
+	ControllerDeploymentName           string
+	ControllerReplicas                 int32
+	CertificateDeploymentName          string
+	ControllerStateVersion             int32
+	AdmissionContractVersion           int32
+	ReleaseSequence                    int32
+	ManagerImage                       string
+	ControllerArgs                     []string
+	CertificateArgs                    []string
+	RuntimeDeploymentConfigExpressions []string
+	RuntimePodConfigExpressions        []string
+	PriorityClassName                  string
+	RuntimeAdmissionContractB64        string
+	PollEvery                          time.Duration
 }
 
 // Prepare establishes and proves the API-server-side ratchet before adopting
@@ -303,9 +296,6 @@ func (g *RolloutGuard) Verify(ctx context.Context) error {
 	}
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
-	}
-	if err := NewServiceAccountOriginGuard(g).Verify(ctx); err != nil {
-		return fmt.Errorf("verify service account origin guard: %w", err)
 	}
 	if err := g.releaseActivationGuard().Verify(ctx); err != nil {
 		return err
@@ -402,9 +392,6 @@ func (g *RolloutGuard) VerifyHookIdentity(ctx context.Context) error {
 	}
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
-	}
-	if err := NewServiceAccountOriginGuard(g).Verify(ctx); err != nil {
-		return fmt.Errorf("verify service account origin guard: %w", err)
 	}
 	name := HookIdentityGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	policy, err := g.Policies.Get(ctx, name, metav1.GetOptions{})
@@ -509,28 +496,14 @@ func (g *RolloutGuard) Activate(ctx context.Context) error {
 	return g.releaseActivationGuard().Activate(ctx)
 }
 
-// ReleaseActivationState returns the exact durable activation and controller
-// credential phase for cutover orchestration.
-func (g *RolloutGuard) ReleaseActivationState(ctx context.Context) (ReleaseActivationState, error) {
-	return g.releaseActivationGuard().CurrentState(ctx)
-}
-
-// BeginControllerCredentialDrain persists the candidate-specific drain tuple
-// before the runtime is stopped.
-func (g *RolloutGuard) BeginControllerCredentialDrain(ctx context.Context) (ReleaseActivationState, error) {
-	return g.releaseActivationGuard().BeginDraining(ctx)
-}
-
 // CandidateRuntimeConverged reports whether the candidate release is already
 // the active release and every existing runtime Deployment already runs it:
-// the durable activation parameter fences the candidate sequence with active
-// controller credentials, and each Deployment carries the candidate
-// controller-state and release-sequence annotations, the candidate manager
-// image and a non-zero replica count. Such a release has no transition left.
-// A repeated upgrade with the same chart, the shape a GitOps re-sync or a
-// values-only change produces, has to leave that runtime running: the retained
-// runtime guard admits a stop only toward a newer release, so a hook that
-// tried to quiesce here would be refused rather than protected. A stopped
+// the durable activation parameter records the candidate sequence, and each
+// Deployment carries the candidate controller-state and release-sequence
+// annotations, the candidate manager image and a non-zero replica count. Such
+// a release has no transition left. A repeated upgrade with the same chart,
+// the shape a GitOps re-sync or a values-only change produces, leaves that
+// runtime running instead of stopping and restarting it. A stopped
 // Deployment, or one still carrying an older identity, is a transition in
 // progress and reports false; a missing Deployment has nothing to keep
 // running and does not count against convergence. Ownership faults and
@@ -543,10 +516,7 @@ func (g *RolloutGuard) CandidateRuntimeConverged(ctx context.Context) (bool, err
 	if err != nil {
 		return false, err
 	}
-	active := ReleaseActivationState{
-		ActiveReleaseSequence: g.ReleaseSequence, ControllerCredentialPhase: ControllerCredentialsActive,
-	}
-	if state != active {
+	if state.ActiveReleaseSequence != g.ReleaseSequence {
 		return false, nil
 	}
 	targets := []deploymentTarget{
@@ -674,24 +644,6 @@ type deploymentTarget struct {
 	selector  labels.Selector
 }
 
-// validatePredecessorRelease holds the predecessor controller to a released
-// one. A predecessor is named exactly when it records the release sequence it
-// ran as, and that sequence sits below the candidate's. Every release carries
-// a sequence, so a named predecessor without one is nothing to upgrade from.
-func validatePredecessorRelease(serviceAccountName string, sequence, candidate int32) error {
-	if sequence < 0 || sequence >= candidate {
-		return fmt.Errorf("predecessor release sequence %d is invalid for candidate %d", sequence, candidate)
-	}
-	if (serviceAccountName == "") != (sequence == 0) {
-		return fmt.Errorf(
-			"predecessor controller ServiceAccount %q and release sequence %d must be given together",
-			serviceAccountName,
-			sequence,
-		)
-	}
-	return nil
-}
-
 func (g *RolloutGuard) validate() error {
 	if g == nil || g.Policies == nil || g.Bindings == nil || g.Deployments == nil || g.Pods == nil || g.ConfigMaps == nil {
 		return fmt.Errorf("rollout guard clients are required")
@@ -721,10 +673,6 @@ func (g *RolloutGuard) validateIdentity() error {
 	}
 	if g.ControllerDeploymentName == g.CertificateDeploymentName {
 		return fmt.Errorf("controller and certificate Deployment names must differ")
-	}
-	if g.PreviousControllerServiceAccountName != "" &&
-		g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
-		return fmt.Errorf("previous controller service account name must not contain surrounding whitespace")
 	}
 	if g.ControllerReplicas < 1 {
 		return fmt.Errorf("controller replicas must be positive")
@@ -783,28 +731,14 @@ func (g *RolloutGuard) validateIdentity() error {
 	if g.releaseHookUsernamePrefix() == "" {
 		return fmt.Errorf("hook service account does not encode the candidate release sequence")
 	}
-	cleanupServiceAccountName, err := TeardownServiceAccountName(g.HookServiceAccountName, g.ReleaseSequence)
-	if err != nil {
+	if _, err := TeardownServiceAccountName(g.HookServiceAccountName, g.ReleaseSequence); err != nil {
 		return err
 	}
-	quiesceJobName, err := TeardownQuiesceJobName(g.HookServiceAccountName)
-	if err != nil {
+	if _, err := TeardownQuiesceJobName(g.HookServiceAccountName); err != nil {
 		return err
 	}
-	if g.PreviousControllerServiceAccountName != "" {
-		reserved := map[string]string{
-			g.ControllerServiceAccountName: "candidate controller ServiceAccount",
-			g.HookServiceAccountName:       "CRD manager hook ServiceAccount",
-			cleanupServiceAccountName:      "teardown ServiceAccount",
-			quiesceJobName:                 "teardown quiesce identity",
-			g.CertificateDeploymentName:    "certificate ServiceAccount",
-		}
-		if description, found := reserved[g.PreviousControllerServiceAccountName]; found {
-			return fmt.Errorf("previous controller ServiceAccount must differ from %s", description)
-		}
-	}
-	if err := validatePredecessorRelease(g.PreviousControllerServiceAccountName, g.PreviousControllerReleaseSequence, g.ReleaseSequence); err != nil {
-		return err
+	if g.ControllerServiceAccountName == g.HookServiceAccountName || g.ControllerServiceAccountName == g.CertificateDeploymentName {
+		return fmt.Errorf("controller ServiceAccount must differ from the hook and certificate ServiceAccounts")
 	}
 	if g.PollEvery <= 0 {
 		return fmt.Errorf("rollout guard poll interval must be positive")
@@ -1133,7 +1067,7 @@ func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.
 		deployment, err := g.Deployments.Get(ctx, name, metav1.GetOptions{})
 		switch {
 		case err == nil:
-			baseline, err := g.drainingEnforcementProbeBaseline(ctx, deployment)
+			baseline, err := g.stoppedCandidateProbeBaseline(ctx, deployment)
 			return baseline, false, err
 		case apierrors.IsNotFound(err):
 			lastNotFound = err
@@ -1178,13 +1112,13 @@ func (g *RolloutGuard) activeIdentityProbeDeployment(ctx context.Context) (*apps
 	return probe, nil
 }
 
-// drainingEnforcementProbeBaseline handles only the interrupted pre-activation
+// stoppedCandidateProbeBaseline handles only the interrupted pre-activation
 // cutover: quiescence stamped the candidate's top-level identity but preserved
 // the active predecessor's template. The normal stop transition permits no
 // extra annotation, so adding the probe token would trigger unrelated denials.
 // Restore the active identity and desired replicas in a private dry-run copy;
 // the full retained policies must accept it before the probe is attempted.
-func (g *RolloutGuard) drainingEnforcementProbeBaseline(ctx context.Context, deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
+func (g *RolloutGuard) stoppedCandidateProbeBaseline(ctx context.Context, deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
 	if !g.isCandidateStampedStoppedDeployment(deployment) {
 		return deployment, nil
 	}
@@ -1196,12 +1130,9 @@ func (g *RolloutGuard) drainingEnforcementProbeBaseline(ctx context.Context, dep
 		return nil, fmt.Errorf("verify candidate identity for stopped Deployment probe: %w", err)
 	}
 	if identity.active >= uint64(g.ReleaseSequence) {
-		// Post-activation recovery is not a predecessor drain. Never invent an
+		// Post-activation recovery is not an interrupted cutover. Never invent an
 		// older active identity or replace the template to make a probe pass.
 		return deployment, nil
-	}
-	if identity.phase != ControllerCredentialsDraining {
-		return nil, fmt.Errorf("candidate-stamped stopped Deployment probe requires the exact candidate credential drain")
 	}
 	if identity.active > 0 && deployment.Name == g.ControllerDeploymentName {
 		// Every supported certificate contract has exactly one desired replica.
@@ -1386,11 +1317,6 @@ func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
 		"--certificate-health-port=" + strconv.FormatInt(int64(g.CertificateHealthPort), 10),
 		"--hook-service-account-name=" + g.HookServiceAccountName,
 		"--controller-service-account-name=" + g.ControllerServiceAccountName,
-		"--controller-service-account-managed=" + strconv.FormatBool(g.ControllerServiceAccountManaged),
-		"--previous-controller-service-account-name=" + g.PreviousControllerServiceAccountName,
-		"--previous-controller-service-account-uid=" + string(g.PreviousControllerServiceAccountUID),
-		"--previous-controller-service-account-managed=" + strconv.FormatBool(g.PreviousControllerServiceAccountManaged),
-		"--previous-controller-release-sequence=" + strconv.FormatInt(int64(g.PreviousControllerReleaseSequence), 10),
 		"--controller-deployment-name=" + g.ControllerDeploymentName,
 		"--controller-replicas=" + strconv.FormatInt(int64(g.ControllerReplicas), 10),
 		"--certificate-deployment-name=" + g.CertificateDeploymentName,
@@ -1401,10 +1327,6 @@ func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
 		"--runtime-deployment-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimeDeploymentConfigExpressions),
 		"--runtime-pod-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimePodConfigExpressions),
 		"--runtime-admission-contract-b64=" + g.RuntimeAdmissionContractB64,
-		// Appended rather than grouped with the other predecessor flags: every
-		// earlier position is pinned by index in the CEL the chart and this
-		// package both render, and an insertion would move all of them.
-		"--previous-controller-manager-image=" + g.PreviousControllerManagerImage,
 	}
 	if verifyControllerState {
 		args = append(args, "--verify-controller-state=true")
@@ -1424,9 +1346,8 @@ func (g *RolloutGuard) verifyDeployment(target deploymentTarget, deployment *app
 	serviceAccountName := deployment.Spec.Template.Spec.ServiceAccountName
 	switch target.component {
 	case "controller":
-		if serviceAccountName != g.ControllerServiceAccountName &&
-			(g.PreviousControllerServiceAccountName == "" || serviceAccountName != g.PreviousControllerServiceAccountName) {
-			return fmt.Errorf("controller Deployment %s/%s uses unrecognized ServiceAccount %q", g.ReleaseNamespace, target.name, serviceAccountName)
+		if serviceAccountName != g.ControllerServiceAccountName {
+			return fmt.Errorf("controller Deployment %s/%s uses ServiceAccount %q instead of %q", g.ReleaseNamespace, target.name, serviceAccountName, g.ControllerServiceAccountName)
 		}
 	case "certificate-rotation":
 		if serviceAccountName != g.CertificateDeploymentName {
@@ -1514,14 +1435,16 @@ func guardEnforcementProbePersistenceExpression() string {
 	)
 }
 
-// deploymentStopTransitionExpression permits the candidate hook to stamp and
-// stop an active Deployment without changing its executable or ownership. It
-// deliberately becomes false as soon as that candidate sequence is active.
+// deploymentStopTransitionExpression permits a release's own hook to stamp and
+// stop a Deployment without changing its executable or ownership. The hook
+// stops the runtime toward a newer release during a cutover, and in place, at
+// the active sequence, during an uninstall or a repeated upgrade of the same
+// release. It never stops the runtime toward an older release.
 func deploymentStopTransitionExpression() string {
 	stateAnnotation := strconv.Quote(ControllerStateVersionAnnotation)
 	releaseAnnotation := strconv.Quote(ReleaseSequenceAnnotation)
 	return fmt.Sprintf(
-		`variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && (variables.newRelease > variables.activeRelease || variables.teardownStop) && variables.newState > 0 && variables.isReleaseHook && has(dyn(object).spec.replicas) && dyn(object).spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && %[1]s in object.metadata.annotations && object.metadata.annotations[%[1]s] == string(variables.newState) && %[2]s in object.metadata.annotations && object.metadata.annotations[%[2]s] == string(variables.newRelease) && object.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && dyn(object).spec.template == dyn(oldObject).spec.template && dyn(object).spec.selector == dyn(oldObject).spec.selector && (has(dyn(object).spec.strategy) == has(dyn(oldObject).spec.strategy)) && (!has(dyn(object).spec.strategy) || dyn(object).spec.strategy == dyn(oldObject).spec.strategy) && (has(dyn(object).spec.minReadySeconds) == has(dyn(oldObject).spec.minReadySeconds)) && (!has(dyn(object).spec.minReadySeconds) || dyn(object).spec.minReadySeconds == dyn(oldObject).spec.minReadySeconds) && (has(dyn(object).spec.revisionHistoryLimit) == has(dyn(oldObject).spec.revisionHistoryLimit)) && (!has(dyn(object).spec.revisionHistoryLimit) || dyn(object).spec.revisionHistoryLimit == dyn(oldObject).spec.revisionHistoryLimit) && (has(dyn(object).spec.paused) == has(dyn(oldObject).spec.paused)) && (!has(dyn(object).spec.paused) || dyn(object).spec.paused == dyn(oldObject).spec.paused) && (has(dyn(object).spec.progressDeadlineSeconds) == has(dyn(oldObject).spec.progressDeadlineSeconds)) && (!has(dyn(object).spec.progressDeadlineSeconds) || dyn(object).spec.progressDeadlineSeconds == dyn(oldObject).spec.progressDeadlineSeconds)`,
+		`variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease >= variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(dyn(object).spec.replicas) && dyn(object).spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && %[1]s in object.metadata.annotations && object.metadata.annotations[%[1]s] == string(variables.newState) && %[2]s in object.metadata.annotations && object.metadata.annotations[%[2]s] == string(variables.newRelease) && object.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && dyn(object).spec.template == dyn(oldObject).spec.template && dyn(object).spec.selector == dyn(oldObject).spec.selector && (has(dyn(object).spec.strategy) == has(dyn(oldObject).spec.strategy)) && (!has(dyn(object).spec.strategy) || dyn(object).spec.strategy == dyn(oldObject).spec.strategy) && (has(dyn(object).spec.minReadySeconds) == has(dyn(oldObject).spec.minReadySeconds)) && (!has(dyn(object).spec.minReadySeconds) || dyn(object).spec.minReadySeconds == dyn(oldObject).spec.minReadySeconds) && (has(dyn(object).spec.revisionHistoryLimit) == has(dyn(oldObject).spec.revisionHistoryLimit)) && (!has(dyn(object).spec.revisionHistoryLimit) || dyn(object).spec.revisionHistoryLimit == dyn(oldObject).spec.revisionHistoryLimit) && (has(dyn(object).spec.paused) == has(dyn(oldObject).spec.paused)) && (!has(dyn(object).spec.paused) || dyn(object).spec.paused == dyn(oldObject).spec.paused) && (has(dyn(object).spec.progressDeadlineSeconds) == has(dyn(oldObject).spec.progressDeadlineSeconds)) && (!has(dyn(object).spec.progressDeadlineSeconds) || dyn(object).spec.progressDeadlineSeconds == dyn(oldObject).spec.progressDeadlineSeconds)`,
 		stateAnnotation,
 		releaseAnnotation,
 	)
@@ -1596,28 +1519,10 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 				{Name: "activeRelease", Expression: fmt.Sprintf(`params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1`, activeReleaseDataKey, activeReleaseDataKey, activeReleaseDataKey)},
 				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "activeAdmission", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
-				// A release is stopped toward a newer one during a cutover, and in
-				// place during an uninstall. The second has no newer release to move
-				// to, so it is recognised by the durable drain its own quiesce hook
-				// persisted first: the credentials are draining toward the sequence
-				// that is active, which is the sequence being stopped. Every other
-				// part of a stop transition still holds, the caller included.
 				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
 				{Name: "isCandidateHook", Expression: fmt.Sprintf(`request.userInfo.username == %q`, g.candidateHookUsername())},
 				{Name: "newAdmission", Expression: fmt.Sprintf(`variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
 				{Name: "isActiveIdentity", Expression: rolloutActiveIdentityExpression()},
-				// A release is stopped toward a newer one during a cutover, and in
-				// place during an uninstall. The second has no newer release to move
-				// to, so it is recognised by the durable drain its own quiesce hook
-				// persisted first: the credentials are draining toward the sequence
-				// that is active, which is the sequence being stopped. Every other
-				// part of a stop transition still holds, the caller included.
-				{Name: "teardownStop", Expression: fmt.Sprintf(
-					`variables.newRelease == variables.activeRelease && params != null && has(params.data) && %[1]q in params.data && params.data[%[1]q] == %[2]q && %[3]q in params.data && params.data[%[3]q] == string(variables.activeRelease)`,
-					controllerCredentialsDataKey,
-					string(ControllerCredentialsDraining),
-					controllerCredentialsTargetDataKey,
-				)},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
@@ -1858,11 +1763,6 @@ func (g *RolloutGuard) hookArgs(mode string) []string {
 		"--certificate-health-port=" + strconv.FormatInt(int64(g.CertificateHealthPort), 10),
 		"--hook-service-account-name=" + g.HookServiceAccountName,
 		"--controller-service-account-name=" + g.ControllerServiceAccountName,
-		"--controller-service-account-managed=" + strconv.FormatBool(g.ControllerServiceAccountManaged),
-		"--previous-controller-service-account-name=" + g.PreviousControllerServiceAccountName,
-		"--previous-controller-service-account-uid=" + string(g.PreviousControllerServiceAccountUID),
-		"--previous-controller-service-account-managed=" + strconv.FormatBool(g.PreviousControllerServiceAccountManaged),
-		"--previous-controller-release-sequence=" + strconv.FormatInt(int64(g.PreviousControllerReleaseSequence), 10),
 		"--controller-deployment-name=" + g.ControllerDeploymentName,
 		"--controller-replicas=" + strconv.FormatInt(int64(g.ControllerReplicas), 10),
 		"--certificate-deployment-name=" + g.CertificateDeploymentName,
@@ -1873,10 +1773,6 @@ func (g *RolloutGuard) hookArgs(mode string) []string {
 		"--runtime-deployment-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimeDeploymentConfigExpressions),
 		"--runtime-pod-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimePodConfigExpressions),
 		"--runtime-admission-contract-b64=" + g.RuntimeAdmissionContractB64,
-		// Appended rather than grouped with the other predecessor flags: every
-		// earlier position is pinned by index in the CEL the chart and this
-		// package both render, and an insertion would move all of them.
-		"--previous-controller-manager-image=" + g.PreviousControllerManagerImage,
 	}
 }
 
@@ -1894,6 +1790,23 @@ func celStringList(values []string) string {
 		panic(fmt.Sprintf("encode CEL string list: %v", err))
 	}
 	return string(encoded)
+}
+
+// hookServiceAccountBase is the prefix every release's hook ServiceAccount
+// shares: the candidate hook ServiceAccount without its sequence and digest.
+func (g *RolloutGuard) hookServiceAccountBase() (string, error) {
+	if g == nil || g.ReleaseSequence < 1 || g.ReleaseNamespace == "" || g.ReleaseName == "" || g.ManagerImage == "" || g.HookServiceAccountName == "" {
+		return "", fmt.Errorf("hook ServiceAccount identity is incomplete")
+	}
+	suffix := "-crd-v" + strconv.FormatInt(int64(g.ReleaseSequence), 10) + "-" + hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)[:12]
+	if !strings.HasSuffix(g.HookServiceAccountName, suffix) {
+		return "", fmt.Errorf("hook ServiceAccount does not match the candidate release identity")
+	}
+	base := strings.TrimSuffix(g.HookServiceAccountName, suffix)
+	if base == "" {
+		return "", fmt.Errorf("hook ServiceAccount has no stable name prefix")
+	}
+	return base, nil
 }
 
 func (g *RolloutGuard) releaseHookUsernamePrefix() string {
@@ -2077,18 +1990,6 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 				{Name: "templateState", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "templateRelease", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
 				{Name: "isActiveIdentity", Expression: runtimeActiveDeploymentIdentityExpression()},
-				// A release is stopped toward a newer one during a cutover, and in
-				// place during an uninstall. The second has no newer release to move
-				// to, so it is recognised by the durable drain its own quiesce hook
-				// persisted first: the credentials are draining toward the sequence
-				// that is active, which is the sequence being stopped. Every other
-				// part of a stop transition still holds, the caller included.
-				{Name: "teardownStop", Expression: fmt.Sprintf(
-					`variables.newRelease == variables.activeRelease && params != null && has(params.data) && %[1]q in params.data && params.data[%[1]q] == %[2]q && %[3]q in params.data && params.data[%[3]q] == string(variables.activeRelease)`,
-					controllerCredentialsDataKey,
-					string(ControllerCredentialsDraining),
-					controllerCredentialsTargetDataKey,
-				)},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: validations,

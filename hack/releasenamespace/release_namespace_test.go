@@ -264,12 +264,14 @@ func TestTheNotesWarnAboutAdministratorGrants(t *testing.T) {
 const chartIdentities = 3
 
 // The warning knows a release's own identities by the names the chart gives
-// them, not by the objects: on a retried upgrade the stable coordination
-// binding already names this sequence's manager before Helm has created that
-// ServiceAccount. So no case here has a ServiceAccount object at all. The
-// names come from the chart's own offline render, so this checks what the
-// chart runs as rather than a second copy of its naming rules, including where
-// a long name forces the helpers to truncate and at a later release sequence.
+// them, not by the objects: on a first install the bindings name the manager
+// before Helm has created its ServiceAccount. So no case here has a
+// ServiceAccount object at all. The names come from the chart's own offline
+// render, so this checks what the chart runs as rather than a second copy of
+// its naming rules, including where a long name forces the helpers to truncate
+// and at a later release sequence. The manager keeps one name in every
+// release, so the name a sequence-qualified scheme would give it is a
+// stranger's.
 func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 	t.Parallel()
 	helm := helmOrSkip(t)
@@ -316,15 +318,17 @@ func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 			if len(identities.names) != chartIdentities {
 				t.Fatalf("the chart runs as %d identities, want %d: %q", len(identities.names), chartIdentities, identities.names)
 			}
-			sequenceMarker := fmt.Sprintf("-v%d", test.sequence)
-			if !strings.Contains(identities.manager, sequenceMarker) {
-				t.Fatalf("the manager %s does not carry release sequence %d", identities.manager, test.sequence)
+			next := renderIdentities(t, helm, chartAtSequence(t, test.sequence+1), test.release, namespace, test.values)
+			if next.manager != identities.manager {
+				t.Fatalf("sequences %d and %d run the manager as %s and %s", test.sequence, test.sequence+1, identities.manager, next.manager)
 			}
 			for _, name := range identities.names {
 				if len(name) > 63 {
 					t.Errorf("identity %s is longer than a ServiceAccount name may be", name)
 				}
-				if test.truncated && strings.HasPrefix(name, test.fullname) {
+				// The manager runs as the release's full name, so only the
+				// identities that append to it have to truncate it.
+				if test.truncated && name != identities.manager && strings.HasPrefix(name, test.fullname) {
 					t.Errorf("identity %s carries the whole name %s, so this case does not reach the truncation it is for", name, test.fullname)
 				}
 			}
@@ -332,17 +336,17 @@ func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 			objects := []object{
 				role(namespace, "pod-creator", rule([]string{""}, []string{"pods"}, []string{"create"}, nil)),
 				role(namespace, "lease-writer", rule([]string{"coordination.k8s.io"}, []string{"leases"}, []string{"create"}, nil)),
-				// The coordination binding as a retried upgrade finds it.
+				// The coordination binding as the chart renders it.
 				roleBinding(namespace, "coordination", "Role", "lease-writer", subject("ServiceAccount", namespace, identities.manager)),
 			}
 			for index, name := range identities.names {
 				objects = append(objects,
 					roleBinding(namespace, fmt.Sprintf("own-%d", index), "Role", "pod-creator", subject("ServiceAccount", namespace, name)))
 			}
-			// Near misses: the manager at a release sequence this render does
-			// not run as, the manager with one more character, and the manager
-			// in another namespace.
-			otherSequence := strings.Replace(identities.manager, sequenceMarker, fmt.Sprintf("-v%d", test.sequence+1), 1)
+			// Near misses: the manager under a release-sequence suffix, the
+			// manager with one more character, and the manager in another
+			// namespace.
+			otherSequence := fmt.Sprintf("%s-v%d", identities.manager, test.sequence)
 			objects = append(objects,
 				roleBinding(namespace, "other-sequence", "Role", "pod-creator", subject("ServiceAccount", namespace, otherSequence)),
 				roleBinding(namespace, "longer-name", "Role", "pod-creator", subject("ServiceAccount", namespace, identities.manager+"x")),
@@ -362,95 +366,12 @@ func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 	}
 }
 
-// A retried upgrade to sequence 2 reads the manager it succeeds from the
-// service-account-origin guard the first attempt left, and while the bindings
-// hand over, that predecessor still holds them. The warning counts it as the
-// release's own exactly when the chart knows it as the predecessor: with the
-// guard it is quiet, and without the guard the same binding is a stranger's.
-func TestTheNotesKnowThePredecessorOnARetriedUpgrade(t *testing.T) {
-	t.Parallel()
-	helm := helmOrSkip(t)
-	const namespace = "ptah-system"
-	predecessor := renderIdentities(t, helm, chartAtSequence(t, 1), releaseName, namespace, nil)
-	chart := chartAtSequence(t, 2)
-	candidate := renderIdentities(t, helm, chart, releaseName, namespace, nil)
-	if predecessor.manager == candidate.manager {
-		t.Fatalf("sequences 1 and 2 render the same manager %s", candidate.manager)
-	}
-	guard := candidate.originGuard(t)
-	guard.body["metadata"].(map[string]any)["uid"] = "retained-origin-guard"
-	annotations := guard.body["metadata"].(map[string]any)["annotations"].(map[string]any)
-	annotations["operator.ptah.run/previous-controller-service-account-name"] = predecessor.manager
-	annotations["operator.ptah.run/previous-controller-service-account-uid"] = "predecessor-manager"
-	annotations["operator.ptah.run/previous-controller-service-account-managed"] = "true"
-	annotations["operator.ptah.run/previous-controller-release-sequence"] = "1"
-	annotations["operator.ptah.run/previous-controller-manager-image"] = predecessor.managerImage
-
-	bindings := []object{
-		role(namespace, "lease-writer", rule([]string{"coordination.k8s.io"}, []string{"leases"}, []string{"create"}, nil)),
-		roleBinding(namespace, "coordination", "Role", "lease-writer", subject("ServiceAccount", namespace, predecessor.manager)),
-		roleBinding(namespace, "coordination-next", "Role", "lease-writer", subject("ServiceAccount", namespace, candidate.manager)),
-	}
-	for _, test := range []struct {
-		name    string
-		objects []object
-		want    []string
-	}{
-		{name: "with the retained guard", objects: append([]object{guard}, bindings...)},
-		{
-			name:    "without it",
-			objects: bindings,
-			want: []string{
-				"RoleBinding ptah-system/coordination grants create on leases.coordination.k8s.io through Role lease-writer to ServiceAccount ptah-system/" + predecessor.manager,
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			cluster := newFakeCluster(t, test.objects)
-			output, err := installChartDryRun(t, helm, chart, releaseName, cluster.kubeconfig(t), namespace, nil)
-			if err != nil {
-				t.Fatalf("the install was refused: %v\n%s", err, tail(output))
-			}
-			assertSameLines(t, warnings(t, string(output)), test.want)
-		})
-	}
-}
-
 // identities is what an offline render of the chart says the release runs as.
 type identities struct {
-	// manager is the manager Deployment's ServiceAccount, and managerImage its
-	// container image.
-	manager, managerImage string
+	// manager is the manager Deployment's ServiceAccount.
+	manager string
 	// names are every ServiceAccount a Pod the chart renders runs as.
 	names []string
-	// policies are the ValidatingAdmissionPolicies the render carries. One
-	// name can occur twice: uninstall replaces a guard with a policy of the
-	// same name.
-	policies []map[string]any
-}
-
-// originGuard is the release's service-account-origin guard as the install
-// hook creates it, told apart from the uninstall policy of the same name by
-// its component.
-func (i identities) originGuard(t *testing.T) object {
-	t.Helper()
-	var found []map[string]any
-	for _, policy := range i.policies {
-		metadata, _ := policy["metadata"].(map[string]any)
-		labels, _ := metadata["labels"].(map[string]any)
-		if labels["app.kubernetes.io/component"] == "service-account-origin-guard" {
-			found = append(found, policy)
-		}
-	}
-	if len(found) != 1 {
-		t.Fatalf("the render carries %d service-account-origin guards, want 1", len(found))
-	}
-	name, _ := found[0]["metadata"].(map[string]any)["name"].(string)
-	return object{
-		groupVersion: "admissionregistration.k8s.io/v1", resource: "validatingadmissionpolicies", name: name,
-		body: found[0],
-	}
 }
 
 // renderIdentities renders the chart offline and reads which ServiceAccounts
@@ -478,30 +399,20 @@ func renderIdentities(t *testing.T, helm, chart, release, namespace string, valu
 			continue
 		}
 		metadata, _ := parsed["metadata"].(map[string]any)
-		switch parsed["kind"] {
-		case "ValidatingAdmissionPolicy":
-			result.policies = append(result.policies, parsed)
-		case "Deployment":
+		if parsed["kind"] == "Deployment" {
 			labels, _ := metadata["labels"].(map[string]any)
-			if labels["app.kubernetes.io/component"] != "controller" {
-				break
-			}
-			spec, _ := parsed["spec"].(map[string]any)
-			template, _ := spec["template"].(map[string]any)
-			podSpec, _ := template["spec"].(map[string]any)
-			result.manager, _ = podSpec["serviceAccountName"].(string)
-			containers, _ := podSpec["containers"].([]any)
-			for _, container := range containers {
-				if entry, ok := container.(map[string]any); ok && entry["name"] == "manager" {
-					result.managerImage, _ = entry["image"].(string)
-				}
+			if labels["app.kubernetes.io/component"] == "controller" {
+				spec, _ := parsed["spec"].(map[string]any)
+				template, _ := spec["template"].(map[string]any)
+				podSpec, _ := template["spec"].(map[string]any)
+				result.manager, _ = podSpec["serviceAccountName"].(string)
 			}
 		}
 		// Every Pod template names the identity it runs as.
 		collectServiceAccountNames(parsed, names)
 	}
-	if result.manager == "" || result.managerImage == "" {
-		t.Fatalf("the render has no manager Deployment with a ServiceAccount and an image")
+	if result.manager == "" {
+		t.Fatalf("the render has no manager Deployment with a ServiceAccount")
 	}
 	for name := range names {
 		result.names = append(result.names, name)
@@ -734,7 +645,7 @@ var listable = func() map[string]bool {
 }()
 
 // gettable are the resources served by name: the roles a binding names, and
-// the retained policy a retried upgrade reads its predecessor from.
+// the retained admission policies the chart looks up.
 var gettable = map[string]bool{
 	"rbac.authorization.k8s.io/v1/roles":                          true,
 	"rbac.authorization.k8s.io/v1/clusterroles":                   true,

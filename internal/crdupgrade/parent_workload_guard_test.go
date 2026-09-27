@@ -54,10 +54,11 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 	otherRollout.ReleaseSequence = 2
 	otherRollout.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("b", 64)
 	otherRollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(otherRollout.ReleaseNamespace, otherRollout.ReleaseName, otherRollout.ReleaseSequence, otherRollout.ManagerImage)[:12]
-	otherRollout.ControllerServiceAccountName = "ptah-controller-v2"
 	other := NewParentWorkloadGuard(&otherRollout)
-	if replicaSet.Name == other.replicaSetPolicy().Name || reflect.DeepEqual(replicaSet.Spec, other.replicaSetPolicy().Spec) {
-		t.Fatal("candidate ReplicaSet parent contract did not change across release identities")
+	// The ReplicaSet contract names the runtime ServiceAccounts, which every
+	// release shares, so only its name follows the release identity.
+	if replicaSet.Name == other.replicaSetPolicy().Name {
+		t.Fatal("candidate ReplicaSet parent contract name did not change across release identities")
 	}
 	if hookOrigin.Name != other.hookJobOriginPolicy().Name || !reflect.DeepEqual(hookOrigin.Spec, other.hookJobOriginPolicy().Spec) {
 		t.Fatal("stable hook Job origin contract changed across release sequences")
@@ -78,7 +79,6 @@ func TestParentOriginV2SpecsAreByteStableAcrossReleaseAttempts(t *testing.T) {
 	secondRollout.ReleaseSequence = firstRollout.ReleaseSequence + 1
 	secondRollout.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("c", 64)
 	secondRollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(secondRollout.ReleaseNamespace, secondRollout.ReleaseName, secondRollout.ReleaseSequence, secondRollout.ManagerImage)[:12]
-	secondRollout.ControllerServiceAccountName = "ptah-controller-v2"
 	first := NewParentWorkloadGuard(firstRollout)
 	second := NewParentWorkloadGuard(&secondRollout)
 
@@ -828,7 +828,7 @@ func TestParentHookIdentityProbeDeadlineLeavesTerminationMargin(t *testing.T) {
 func TestRenderedHookIdentityProbeDeadlineLeavesTerminationMargin(t *testing.T) {
 	t.Parallel()
 
-	objects := renderControllerRBACCutoverChart(t)
+	objects := renderReleaseChart(t)
 	var identityJob *unstructured.Unstructured
 	var identityArgs []string
 	for _, object := range objects {
@@ -839,7 +839,7 @@ func TestRenderedHookIdentityProbeDeadlineLeavesTerminationMargin(t *testing.T) 
 		if err != nil || !found || len(containers) != 1 {
 			continue
 		}
-		args := transitionRenderStringSlice(containers[0].(map[string]any)["args"])
+		args := renderStringSlice(containers[0].(map[string]any)["args"])
 		if !slices.Contains(args, "identity-probe") {
 			continue
 		}
@@ -1192,7 +1192,6 @@ func TestRenderedParentWorkloadGuardsMatchCompiledContracts(t *testing.T) {
 	rollout.WebhookSecretName = "ptah-e2e-ptah-operator-webhook-cert"
 	rollout.HookServiceAccountName = "ptah-e2e-ptah-operator-crd-v1-" + hookIdentityDigest("ptah-e2e", "ptah-e2e", 1, managerImage)[:12]
 	rollout.ControllerServiceAccountName = controller.Spec.Template.Spec.ServiceAccountName
-	rollout.ControllerServiceAccountManaged = true
 	rollout.ControllerDeploymentName = controller.Name
 	rollout.ControllerReplicas = *controller.Spec.Replicas
 	rollout.CertificateDeploymentName = certificate.Name

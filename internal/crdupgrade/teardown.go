@@ -325,8 +325,6 @@ func releaseTeardownGuardNames(guard *RolloutGuard) []string {
 		ParentHookJobOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
 		ParentHookPodOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
 		ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
-		ServiceAccountObjectGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
-		ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
 		ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
 		ControllerJobWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
 		ControllerChunkWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
@@ -344,8 +342,6 @@ func releaseTeardownGuardNames(guard *RolloutGuard) []string {
 
 func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error) {
 	activation := guard.releaseActivationGuard()
-	serviceAccountObject := NewServiceAccountObjectGuard(guard)
-	serviceAccount := NewServiceAccountOriginGuard(guard)
 	controllerWrite := NewControllerWriteGuard(guard)
 	controllerObjects := NewControllerObjectGuard(guard)
 	certificateWrite := NewCertificateWriteGuard(guard)
@@ -366,17 +362,11 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 	parentHookOriginName := ParentHookJobOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	parentHookPodOriginName := ParentHookPodOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	parentHookContractName := ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	serviceAccountName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	serviceAccountObjectName := ServiceAccountObjectGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	controllerWriteName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 
 	if _, err := guard.runtimePodIdentityPolicy(); err != nil {
 		return nil, fmt.Errorf("build release teardown runtime Pod contract: %w", err)
-	}
-	serviceAccountObjectPolicy, serviceAccountObjectBinding, err := serviceAccountObject.ExpectedObjects()
-	if err != nil {
-		return nil, fmt.Errorf("build release teardown ServiceAccount object contract: %w", err)
 	}
 
 	// This literal is the exact admission inventory this release installs and
@@ -430,19 +420,6 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 		parentTeardownContract(parentByName[parentHookPodOriginName]),
 		parentTeardownContract(parentByName[parentHookContractName]),
 		{
-			name: serviceAccountObjectName,
-			verifyPolicy: func(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
-				return serviceAccountObject.verifyPolicy(policy, serviceAccountObjectPolicy)
-			},
-			verifyBinding: func(binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
-				return serviceAccountObject.verifyBinding(binding, serviceAccountObjectBinding)
-			},
-		},
-		{
-			name: serviceAccountName, parameterized: true,
-			verifyPolicy: serviceAccount.verifyPolicy, verifyBinding: serviceAccount.verifyBinding,
-		},
-		{
 			name: controllerWriteName, parameterized: true,
 			verifyPolicy: controllerWrite.verifyPolicy, verifyBinding: controllerWrite.verifyBinding,
 		},
@@ -482,7 +459,7 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 			return nil, fmt.Errorf("build release teardown staging Secret guard contract: %w", stagingErr)
 		}
 		contracts = append(contracts, teardownGuardContract{
-			name: stagingPolicy.Name, parameterized: true,
+			name: stagingPolicy.Name,
 			verifyPolicy: func(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
 				return staging.verifyPolicy(policy, stagingPolicy)
 			},

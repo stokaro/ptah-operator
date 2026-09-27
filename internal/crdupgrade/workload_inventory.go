@@ -249,7 +249,7 @@ func (i *WorkloadInventory) hookIdentity() (*regexp.Regexp, string, error) {
 	if g.ReleaseSequence < 1 {
 		return nil, "", fmt.Errorf("hook workload inventory release sequence must be positive")
 	}
-	base, err := NewServiceAccountOriginGuard(g).hookServiceAccountBase()
+	base, err := g.hookServiceAccountBase()
 	if err != nil {
 		return nil, "", fmt.Errorf("derive hook workload inventory identity: %w", err)
 	}
@@ -276,14 +276,8 @@ func (i *WorkloadInventory) runtimeIdentity() error {
 			return fmt.Errorf("runtime workload inventory %s is required and must not contain surrounding whitespace", description)
 		}
 	}
-	if i.rollout.PreviousControllerServiceAccountName != strings.TrimSpace(i.rollout.PreviousControllerServiceAccountName) {
-		return fmt.Errorf("runtime workload inventory previous controller ServiceAccount name contains surrounding whitespace")
-	}
 	if g.ControllerServiceAccountName == g.CertificateDeploymentName {
 		return fmt.Errorf("runtime workload inventory ServiceAccount names must differ")
-	}
-	if g.PreviousControllerServiceAccountName != "" && g.PreviousControllerServiceAccountName == g.CertificateDeploymentName {
-		return fmt.Errorf("runtime workload inventory previous controller and certificate ServiceAccount names must differ")
 	}
 	if g.ControllerDeploymentName == g.CertificateDeploymentName {
 		return fmt.Errorf("runtime workload inventory Deployment names must differ")
@@ -505,8 +499,6 @@ func (i *WorkloadInventory) runtimeDeploymentForServiceAccount(serviceAccount st
 	switch serviceAccount {
 	case i.rollout.ControllerServiceAccountName:
 		return i.rollout.ControllerDeploymentName, "controller", true
-	case i.rollout.PreviousControllerServiceAccountName:
-		return i.rollout.ControllerDeploymentName, "controller", i.rollout.PreviousControllerServiceAccountName != ""
 	case i.rollout.CertificateDeploymentName:
 		return i.rollout.CertificateDeploymentName, "certificate-rotation", true
 	default:
@@ -569,22 +561,6 @@ func (i *WorkloadInventory) runtimeDeployment(
 	return deployment, nil
 }
 
-// retiredRuntimeReplicaSet reports whether a protected ReplicaSet is the
-// revision a cutover replaced. A Deployment keeps the ReplicaSets of its
-// earlier revisions, and a cutover changes the runtime ServiceAccount, so the
-// revision it replaced names the predecessor's. Such a ReplicaSet is the
-// Deployment's own history: this teardown has already held it to an exact
-// controller reference, it names the recorded predecessor and nothing else,
-// and it is scaled to zero with no Pod of its own. A ReplicaSet naming any
-// other identity is refused, as is one that could still run.
-func (i *WorkloadInventory) retiredRuntimeReplicaSet(replicaSet *appsv1.ReplicaSet, serviceAccount string) bool {
-	previous := i.rollout.PreviousControllerServiceAccountName
-	return previous != "" && serviceAccount == previous &&
-		replicaSet.Spec.Replicas != nil && *replicaSet.Spec.Replicas == 0 &&
-		replicaSet.Status.Replicas == 0 && replicaSet.Status.ReadyReplicas == 0 &&
-		replicaSet.Status.AvailableReplicas == 0
-}
-
 func (i *WorkloadInventory) verifyRuntimeReplicaSet(
 	replicaSet *appsv1.ReplicaSet,
 	deployment *appsv1.Deployment,
@@ -604,8 +580,7 @@ func (i *WorkloadInventory) verifyRuntimeReplicaSet(
 	}
 
 	serviceAccount := replicaSet.Spec.Template.Spec.ServiceAccountName
-	if deployment.Spec.Template.Spec.ServiceAccountName != serviceAccount &&
-		!i.retiredRuntimeReplicaSet(replicaSet, serviceAccount) {
+	if deployment.Spec.Template.Spec.ServiceAccountName != serviceAccount {
 		return fmt.Errorf("protected runtime ReplicaSet %s ServiceAccount %s does not match expected Deployment template", replicaSetObject, serviceAccount)
 	}
 	if deployment.Spec.Selector == nil || len(deployment.Spec.Selector.MatchExpressions) != 0 || len(deployment.Spec.Selector.MatchLabels) != 3 {

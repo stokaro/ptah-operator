@@ -76,16 +76,14 @@ type controllerObjectGuardEntry struct {
 // reconstruction boundary; these policies independently reject broad or
 // privileged shapes.
 type ControllerObjectGuard struct {
-	Policies                             ValidatingAdmissionPolicyReader
-	Bindings                             ValidatingAdmissionPolicyBindingReader
-	ReleaseName                          string
-	ReleaseNamespace                     string
-	ControllerServiceAccountName         string
-	PreviousControllerServiceAccountName string
-	PreviousControllerReleaseSequence    int32
-	ReleaseSequence                      int32
-	ManagerImage                         string
-	PollEvery                            time.Duration
+	Policies                     ValidatingAdmissionPolicyReader
+	Bindings                     ValidatingAdmissionPolicyBindingReader
+	ReleaseName                  string
+	ReleaseNamespace             string
+	ControllerServiceAccountName string
+	ReleaseSequence              int32
+	ManagerImage                 string
+	PollEvery                    time.Duration
 }
 
 // NewControllerObjectGuard copies the stable release and manager identity
@@ -95,16 +93,14 @@ func NewControllerObjectGuard(rollout *RolloutGuard) *ControllerObjectGuard {
 		return nil
 	}
 	return &ControllerObjectGuard{
-		Policies:                             rollout.Policies,
-		Bindings:                             rollout.Bindings,
-		ReleaseName:                          rollout.ReleaseName,
-		ReleaseNamespace:                     rollout.ReleaseNamespace,
-		ControllerServiceAccountName:         rollout.ControllerServiceAccountName,
-		PreviousControllerServiceAccountName: rollout.PreviousControllerServiceAccountName,
-		PreviousControllerReleaseSequence:    rollout.PreviousControllerReleaseSequence,
-		ReleaseSequence:                      rollout.ReleaseSequence,
-		ManagerImage:                         rollout.ManagerImage,
-		PollEvery:                            rollout.PollEvery,
+		Policies:                     rollout.Policies,
+		Bindings:                     rollout.Bindings,
+		ReleaseName:                  rollout.ReleaseName,
+		ReleaseNamespace:             rollout.ReleaseNamespace,
+		ControllerServiceAccountName: rollout.ControllerServiceAccountName,
+		ReleaseSequence:              rollout.ReleaseSequence,
+		ManagerImage:                 rollout.ManagerImage,
+		PollEvery:                    rollout.PollEvery,
 	}
 }
 
@@ -219,14 +215,8 @@ func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admiss
 		Expression: g.activationParameterExpression(),
 		Message:    entry.denialMessage,
 	}, admissionregistrationv1.Validation{
-		Expression: controllerPrincipalAuthorityExpression(
-			g.ReleaseNamespace,
-			g.ControllerServiceAccountName,
-			g.PreviousControllerServiceAccountName,
-			g.ReleaseSequence,
-			g.PreviousControllerReleaseSequence,
-		),
-		Message: controllerPrincipalGuardDenialMessage(),
+		Expression: controllerPrincipalAuthorityExpression(g.ReleaseNamespace, g.ControllerServiceAccountName, g.ReleaseSequence),
+		Message:    controllerPrincipalGuardDenialMessage(),
 	})
 	validations = append(validations, entry.validations...)
 	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
@@ -237,12 +227,8 @@ func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admiss
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(entry),
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name: "candidate-or-predecessor-controller-service-account",
-				Expression: controllerPrincipalMatchExpression(
-					g.ReleaseNamespace,
-					g.ControllerServiceAccountName,
-					g.PreviousControllerServiceAccountName,
-				),
+				Name:       "controller-service-account",
+				Expression: controllerPrincipalMatchExpression(g.ReleaseNamespace, g.ControllerServiceAccountName),
 			}},
 			Variables:   controllerObjectActivationVariables(g.ReleaseSequence),
 			Validations: validations,
@@ -399,10 +385,6 @@ func (g *ControllerObjectGuard) validate(requirePoll bool) error {
 		if value == "" || value != strings.TrimSpace(value) {
 			return fmt.Errorf("controller object guard %s is required and must not contain surrounding whitespace", description)
 		}
-	}
-	if g.PreviousControllerServiceAccountName != "" &&
-		g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
-		return fmt.Errorf("controller object guard predecessor ServiceAccount identity must not contain surrounding whitespace")
 	}
 	if g.ReleaseSequence < 1 || g.ManagerImage == "" || g.ManagerImage != strings.TrimSpace(g.ManagerImage) {
 		return fmt.Errorf("controller object guard release identity is required")

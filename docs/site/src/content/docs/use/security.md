@@ -137,8 +137,7 @@ is an ordinary failure, and these checks exist for it:
 
 None of these is a defense against an administrator acting in bad faith. The
 release machinery also carries mechanisms that assume a hostile writer inside
-the release namespace: the hook-progress policies and the per-release
-ServiceAccounts that
+the release namespace, such as the hook-progress policies that
 [Release lifecycle](../../reference/release-lifecycle/) describes. They sit
 outside this contract, and
 [#443](https://github.com/stokaro/ptah-operator/issues/443) removes them.

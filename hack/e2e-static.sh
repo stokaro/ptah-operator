@@ -2104,7 +2104,7 @@ static_require_order "$next_release_crd_source" \
 	'assert_inventory_resources_absent' \
 	'"$current_sequence_inventory" "$current_sequence_marker_name"' \
 	'assert_release_sequence_candidate_residue_absent "$current_release_sequence"' \
-	'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission and controller identity'
+	'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission inventory and kept the controller identity'
 # shellcheck disable=SC2016 # Exact helper ordering retains runtime variables literally.
 static_require_order "$next_release_crd_source" \
 	'same-candidate retry capture and authoritative Helm failure' \
@@ -5739,12 +5739,12 @@ helm template ptah-e2e-ha "$ROOT_DIR/charts/ptah-operator" \
 	--set-string webhook.caBundle=e2e-ca >"$SHARED_RBAC_RENDER"
 
 for rbac_render in "$DEFAULT_RBAC_RENDER" "$SHARED_RBAC_RENDER"; do
-	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 3 ] || {
-		printf 'e2e static: %s does not render exactly three scoped manager Roles\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 2 ] || {
+		printf 'e2e static: %s does not render exactly two scoped manager Roles\n' "$rbac_render" >&2
 		exit 1
 	}
-	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 3 ] || {
-		printf 'e2e static: %s does not render exactly three scoped manager RoleBindings\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 2 ] || {
+		printf 'e2e static: %s does not render exactly two scoped manager RoleBindings\n' "$rbac_render" >&2
 		exit 1
 	}
 	if awk '
@@ -5921,7 +5921,7 @@ controller_service_account_name=$(awk '
   }
 ' "$ADMISSION_RENDER")
 printf '%s\n' "$controller_service_account_name" |
-	grep -Eq '^ptah-e2e-ptah-operator-v1-[0-9a-f]{12}$'
+	grep -Eq '^ptah-e2e-ptah-operator$'
 [ "$(grep -Fc -- \
 	"operator.ptah.run/controller-service-account-name: \"$controller_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
@@ -6304,7 +6304,6 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/controller-object-guard.yaml \
 	--show-only templates/certificate-write-guard.yaml \
 	--show-only templates/parent-workload-guard.yaml \
-	--show-only templates/service-account-origin-guard.yaml \
 	--show-only templates/admission-convergence.yaml \
 	--show-only templates/rollout-guard.yaml \
 	--show-only templates/runtime-pod-guard.yaml \
@@ -6323,7 +6322,6 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 # Exercise API-server generated-name truncation with a maximal runtime name.
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/service-account-origin-guard.yaml \
 	--show-only templates/runtime-pod-guard.yaml \
 	--show-only templates/deployment.yaml \
 	--show-only templates/certificate-rotation.yaml \
@@ -6449,16 +6447,13 @@ done
 printf '%s\n' "$crd_role_section" | grep -F 'verbs: ["get", "update"]' >/dev/null
 printf '%s\n' "$crd_role_section" |
 	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]' >/dev/null
-[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 3 ]
-# Only the stable ClusterRoleBinding is mutable through cluster-wide RBAC.
-# Namespaced transition rules are checked against the compiled Role inventory.
-[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["get", "patch"]')" -eq 1 ]
-for crd_manager_rbac_marker in \
-	'resources: ["clusterrolebindings"]' \
-	'resources: ["rolebindings"]'; do
-	printf '%s\n' "$crd_role_section" |
-		grep -F -- "$crd_manager_rbac_marker" >/dev/null
-done
+[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 1 ]
+# The controller runs as one ServiceAccount in every release, so no binding
+# moves between releases and the hook reaches no RBAC object at all.
+if printf '%s\n' "$crd_role_section" | grep -F 'apiGroups: ["rbac.authorization.k8s.io"]' >/dev/null; then
+	printf '%s\n' 'e2e static: fresh-install CRD manager ClusterRole reaches an RBAC object' >&2
+	exit 1
+fi
 # The hook creates nothing cluster-wide. Its one create grant was the access
 # review it no longer sends, and a review grant is authority no step uses.
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["create"]')" -eq 0 ] || {
@@ -6855,7 +6850,7 @@ done
 	PTAH_PRIVILEGE_RECOVERY_RENDER="$CRD_FULL_RECOVERY_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceMarkerMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedTeardownRBACMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceMarkerMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedTeardownRBACMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
 	PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED=false \

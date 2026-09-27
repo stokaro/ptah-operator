@@ -13,30 +13,23 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
-	AdmissionConfigurationName                              = "ptah-operator-admission"
-	ReleaseNameAnnotation                                   = "operator.ptah.run/release-name"
-	ReleaseNamespaceAnnotation                              = "operator.ptah.run/release-namespace"
-	CoordinationAnnotation                                  = "operator.ptah.run/coordination-namespace"
-	LeaderElectionAnnotation                                = "operator.ptah.run/leader-election"
-	LeaderElectionIDAnnotation                              = "operator.ptah.run/leader-election-id"
-	WebhookServiceAnnotation                                = "operator.ptah.run/webhook-service-name"
-	HookServiceAccountAnnotation                            = "operator.ptah.run/hook-service-account-name"
-	ControllerServiceAccountAnnotation                      = "operator.ptah.run/controller-service-account-name"
-	ControllerServiceAccountManagedAnnotation               = "operator.ptah.run/controller-service-account-managed"
-	PreviousControllerServiceAccountAnnotation              = "operator.ptah.run/previous-controller-service-account-name"
-	PreviousControllerServiceAccountUIDAnnotation           = "operator.ptah.run/previous-controller-service-account-uid"
-	PreviousControllerServiceAccountManagedAnnotation       = "operator.ptah.run/previous-controller-service-account-managed"
-	PreviousControllerReleaseSequenceAnnotation             = "operator.ptah.run/previous-controller-release-sequence"
-	PreviousControllerManagerImageAnnotation                = "operator.ptah.run/previous-controller-manager-image"
-	ControllerDeploymentAnnotation                          = "operator.ptah.run/controller-deployment-name"
-	CertificateDeploymentAnnotation                         = "operator.ptah.run/certificate-deployment-name"
-	AdmissionContractVersionAnnotation                      = "operator.ptah.run/admission-contract-version"
-	CurrentAdmissionContractVersion                   int32 = 2
+	AdmissionConfigurationName               = "ptah-operator-admission"
+	ReleaseNameAnnotation                    = "operator.ptah.run/release-name"
+	ReleaseNamespaceAnnotation               = "operator.ptah.run/release-namespace"
+	CoordinationAnnotation                   = "operator.ptah.run/coordination-namespace"
+	LeaderElectionAnnotation                 = "operator.ptah.run/leader-election"
+	LeaderElectionIDAnnotation               = "operator.ptah.run/leader-election-id"
+	WebhookServiceAnnotation                 = "operator.ptah.run/webhook-service-name"
+	HookServiceAccountAnnotation             = "operator.ptah.run/hook-service-account-name"
+	ControllerServiceAccountAnnotation       = "operator.ptah.run/controller-service-account-name"
+	ControllerDeploymentAnnotation           = "operator.ptah.run/controller-deployment-name"
+	CertificateDeploymentAnnotation          = "operator.ptah.run/certificate-deployment-name"
+	AdmissionContractVersionAnnotation       = "operator.ptah.run/admission-contract-version"
+	CurrentAdmissionContractVersion    int32 = 2
 
 	mutatingApprovalWebhookName                    = "mapproval.operator.ptah.run"
 	validatingApprovalWebhookName                  = "vapproval.operator.ptah.run"
@@ -188,26 +181,20 @@ var storedControllerStateKinds = []storedControllerStateKind{
 // RuntimeInvariants identify the only Helm release allowed to run a manager or
 // certificate rotator against the fixed admission singleton.
 type RuntimeInvariants struct {
-	ReleaseName                             string
-	ReleaseNamespace                        string
-	CoordinationNamespace                   string
-	LeaderElection                          bool
-	LeaderElectionID                        string
-	WebhookServiceName                      string
-	WebhookTimeoutSeconds                   int32
-	HookServiceAccountName                  string
-	ControllerServiceAccountName            string
-	ControllerServiceAccountManaged         bool
-	PreviousControllerServiceAccountName    string
-	PreviousControllerServiceAccountUID     types.UID
-	PreviousControllerServiceAccountManaged bool
-	PreviousControllerReleaseSequence       int32
-	PreviousControllerManagerImage          string
-	ControllerDeploymentName                string
-	CertificateDeploymentName               string
-	ControllerStateVersion                  int32
-	AdmissionContractVersion                int32
-	ReleaseSequence                         int32
+	ReleaseName                  string
+	ReleaseNamespace             string
+	CoordinationNamespace        string
+	LeaderElection               bool
+	LeaderElectionID             string
+	WebhookServiceName           string
+	WebhookTimeoutSeconds        int32
+	HookServiceAccountName       string
+	ControllerServiceAccountName string
+	ControllerDeploymentName     string
+	CertificateDeploymentName    string
+	ControllerStateVersion       int32
+	AdmissionContractVersion     int32
+	ReleaseSequence              int32
 }
 
 func (i RuntimeInvariants) validate() error {
@@ -236,9 +223,6 @@ func (i RuntimeInvariants) validate() error {
 			return fmt.Errorf("%s is required", name)
 		}
 	}
-	if i.PreviousControllerServiceAccountName != strings.TrimSpace(i.PreviousControllerServiceAccountName) {
-		return fmt.Errorf("previous controller service account name contains surrounding whitespace")
-	}
 	if i.ControllerDeploymentName == i.CertificateDeploymentName {
 		return fmt.Errorf("controller and certificate Deployment names must differ")
 	}
@@ -262,7 +246,7 @@ func (i RuntimeInvariants) validate() error {
 	if i.ReleaseSequence < 1 {
 		return fmt.Errorf("release sequence must be positive")
 	}
-	return validatePredecessorRelease(i.PreviousControllerServiceAccountName, i.PreviousControllerReleaseSequence, i.ReleaseSequence)
+	return nil
 }
 
 func (i RuntimeInvariants) annotations() map[string]string {

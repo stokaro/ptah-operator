@@ -49,7 +49,7 @@ command arguments; please keep them out of the issue too.
 ### A feature request
 
 Say which part of the lifecycle it belongs to: resolve, verify, observe, plan,
-approve, apply, or the convergence proof after it. The safety model is the
+approve, apply, or the post-Apply verification after it. The safety model is the
 reason for most of the current shape, so a request that names the guarantee it
 needs is easier to place than one that names a field.
 
@@ -83,6 +83,7 @@ would have done. Behavior that depends on Kubernetes doing its part belongs in
 ```bash
 make build          # the four binaries
 make test           # unit contour
+make test-envtest   # CRDs, admission policies and webhooks against a real API server
 make generate       # deepcopy
 make manifests      # CRDs and RBAC from the markers
 make verify         # the checks CI runs, including the CRD schema history

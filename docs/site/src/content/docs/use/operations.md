@@ -96,14 +96,10 @@ retains them. The hooks check their stored contracts but do not probe whether
 every API server has loaded them. They are hardening beyond the contract rather
 than a replacement for it, and they cover only the hooks' own Jobs and Pods.
 
-With `serviceAccount.create=false`, `serviceAccount.name` is an identity base
-rather than a complete Kubernetes object name. Create the dedicated
-ServiceAccount `<name>-v<N>` in the release namespace before installing release
-sequence `N`, and keep the base and the external-management mode unchanged for
-every later sequence. The epoch suffix is what stops a new controller from
-reusing the UID or credentials of a retired one, and the chart refuses a
-same-name cutover. The base must be a DNS subdomain of at most 241 characters,
-which reserves room for every positive 32-bit release sequence.
+The controller runs as one ServiceAccount in every release. With
+`serviceAccount.create=false`, create the ServiceAccount `serviceAccount.name`
+names in the release namespace before the first install; every later release
+runs as the same one. The chart binds its roles to it and never deletes it.
 
 For deterministic GitOps rendering, provision the webhook TLS Secret outside
 the chart and set both `webhook.existingSecret` and the PEM-encoded
@@ -179,8 +175,7 @@ Upgrades are supported from the first published release onward.
 
 #### Before you start {#upgrade-before}
 
-You need `cluster-admin`, and enough visibility to find a RoleBinding in any
-namespace -- one naming a retired epoch blocks the upgrade wherever it lives.
+You need `cluster-admin`.
 
 The [release namespace check](../security/#release-namespace-check) runs on
 every upgrade, so a workload somebody deployed into the release namespace
@@ -197,12 +192,6 @@ Changing an established coordination namespace or leader-election mode is not
 an upgrade either. Both are pinned by the admission singletons, and connected
 Helm rendering fails when the requested values disagree with what they record.
 That is the same offline migration.
-
-Remove or migrate any RoleBinding or ClusterRoleBinding of your own that names
-an active or retained epoch, in any namespace. One that remains blocks the
-upgrade, because the operator cannot prove safe privilege retirement without
-taking ownership of user RBAC. Grants from an external authorizer are outside
-the enumerable Kubernetes RBAC contract and have to be retired by hand first.
 
 Free the quota the candidate Pods need. Before quiescing the old runtime the
 upgrade hook projects the exact candidate requests and limits through every
@@ -242,9 +231,8 @@ re-sync or a values-only change produces, leaves the runtime running. The
 preflight and reconcile hooks verify the retained guards and the durable
 activation parameter as on any upgrade, find both runtime Deployments carrying
 the active release's identity with their replicas up, and report that there is
-no stop transition to perform; the retained runtime guard admits a stop only
-toward a newer release. Helm then applies the unchanged manifests. That is what
-a converged release looks like.
+no stop transition to perform. Helm then applies the unchanged manifests. That
+is what a converged release looks like.
 
 #### Where to stop {#upgrade-stop}
 
@@ -290,17 +278,16 @@ You need `cluster-admin`, as for the upgrade this is resuming.
 Resolve the API or policy failure that interrupted the sequence. No step of
 this runbook makes progress while it stands.
 
-Find out which side of credential draining the release is on, because it
-decides what is still reversible. Before draining begins, the predecessor can
-remain running. Once the retained activation parameter records `phase=draining`
-its controller identity is fenced and its grants may already belong to the
-candidate, even while `active-release-sequence` still names the predecessor.
-Restoring old Deployment snapshots cannot reverse that state or make the
-predecessor ready.
+Find out how far the cutover got. Until the reconcile hook stops the runtime,
+the predecessor keeps running. After the stop, both Deployments sit at zero
+replicas under the candidate's release stamp, and `active-release-sequence` in
+the retained activation parameter names the predecessor until the candidate
+activates. Do not restart the predecessor by restoring old Deployment
+snapshots: its CRDs may already be the candidate's, and the retry is the
+supported way forward from any of these points.
 
-Have the identical candidate to hand. A retry is accepted only for the same
-target and the same full attempt digest; there is no cancellation and no
-backward state transition.
+Have the identical candidate to hand. The activation only moves forward, so a
+retry has to be the release it was moving to.
 
 #### Run it {#retry-run}
 
@@ -318,20 +305,19 @@ separates a retry from the no-op an already-active release produces.
 
 The same readings an upgrade ends with: `Established=True` on seven CRDs, both
 Deployments available, and manager Pods carrying the candidate image. The
-activation parameter back at `{active=T, phase=active}` is what says the
-credential phase completed rather than stalled.
+activation parameter naming the candidate's sequence is what says the cutover
+completed rather than stalled.
 
 #### Where to stop {#retry-stop}
 
-Do not manually reset the activation parameter or the controller bindings. Let
-the same candidate retry complete the forward transition; a hand-written
-rollback of that state has no supported path back.
+Do not manually reset the activation parameter. Let the same candidate retry
+complete the forward transition; a hand-written rollback of that state has no
+supported path back.
 
 A [post-activation recovery gap](https://github.com/stokaro/ptah-operator/issues/22)
 remains when activation has advanced but Helm has not replaced the stopped
 predecessor Pod template. The pre-activation probe correction does not cover
-that boundary, and resetting activation state or controller bindings is not the
-way around it.
+that boundary, and resetting activation state is not the way around it.
 
 #### If it fails {#retry-recovery}
 
@@ -775,10 +761,11 @@ the still-running predecessor rotator out of its existing CA-only updates. The
 rotator treats its configured production webhook names as required identity
 anchors, then rotates every additional entry targeting the exact production
 Service. URL and foreign-Service entries remain untouched, and so do the two
-canary entries: the rotator no longer writes them. This does not make a predecessor restartable once credential draining
-begins, including after a failure before candidate activation. The credential,
-release, and image ratchets intentionally block backward recovery; retry the
-same candidate to finish the interrupted transition. Helm
+canary entries: the rotator no longer writes them. This does not make a
+predecessor restartable once the upgrade has stopped the runtime, including
+after a failure before candidate activation. The release and image ratchets
+intentionally block backward recovery; retry the same candidate to finish the
+interrupted transition. Helm
 installs and binds these policies before granting certificate update access.
 Every hook and runtime init verifier requires their observed generations to
 have no CEL warnings before a certificate rotator can start. By default,

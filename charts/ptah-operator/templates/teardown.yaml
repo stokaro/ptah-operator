@@ -15,7 +15,6 @@
 {{- $hookProbeGuardName := include "ptah-operator.hookIdentityProbeGuardPolicyName" . -}}
 {{- $activationGuardName := include "ptah-operator.releaseActivationGuardPolicyName" . -}}
 {{- $admissionConvergenceMarkerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
-{{- $serviceAccountOriginGuardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" . -}}
 {{- $controllerWriteGuardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
 {{- $controllerJobWriteGuardName := include "ptah-operator.controllerJobWriteGuardPolicyName" . -}}
 {{- $controllerChunkWriteGuardName := include "ptah-operator.controllerChunkWriteGuardPolicyName" . -}}
@@ -30,7 +29,6 @@
 {{- $parentHookJobContractGuardName := include "ptah-operator.parentHookJobContractPolicyName" . -}}
 {{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $parentOriginReadyName := printf "ptah-operator-parent-origin-ready-v2-%s" $releaseDigest -}}
-{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
 {{/*
 The uninstall is one pre-delete Job. It stops the runtime and then deletes, by
 exact name, what the release keeps outside Helm's own deletion: the admission
@@ -83,8 +81,6 @@ rules:
       - {{ $hookIdentityGuardName }}
       - {{ $hookProbeGuardName }}
       - {{ $activationGuardName }}
-      - {{ $serviceAccountObjectGuardName }}
-      - {{ $serviceAccountOriginGuardName }}
       - {{ $controllerWriteGuardName }}
       - {{ $controllerJobWriteGuardName }}
       - {{ $controllerChunkWriteGuardName }}

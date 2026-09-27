@@ -91,9 +91,9 @@ const (
 	helmVersion     = "v4.3.0"
 
 	ciSupportMatrixTimeoutMinutes = 10
-	// The verify job outlasts go test's own timeout plus what runs before it,
-	// which verifyJobOutlastsTests holds.
-	ciVerifyTimeoutMinutes = 40
+	// The verify job outlasts both go test timeouts plus what runs before and
+	// between them, which verifyJobOutlastsTests holds.
+	ciVerifyTimeoutMinutes = 55
 	// makeTestTimeoutMinutes is the -timeout the Makefile's test target gives
 	// go test, which verifyMakeRaceTargets pins.
 	makeTestTimeoutMinutes = 30
@@ -101,7 +101,15 @@ const (
 	// starts: the job's setup steps and the checks verify-source runs ahead of
 	// test. It took four minutes on acd17c4 and 93b209b with the rolling build
 	// cache, and this is twice that, for a cold one.
-	ciVerifyBeforeTestMinutes         = 8
+	ciVerifyBeforeTestMinutes = 8
+	// makeEnvtestTimeoutMinutes is the -timeout the Makefile's test-envtest
+	// target gives go test, which verifyEnvtestPins pins. verify-source runs
+	// it after test, in the same job.
+	makeEnvtestTimeoutMinutes = 10
+	// ciEnvtestFetchMinutes is what test-envtest spends before its go test
+	// starts: building setup-envtest and, on a cache miss, downloading the
+	// control plane. Both took under a minute; this is twice that.
+	ciEnvtestFetchMinutes             = 2
 	ciRaceTimeoutMinutes              = 20
 	ciKubernetesE2ETimeoutMinutes     = 180
 	ciPrepareImagesTimeoutMinutes     = 45
@@ -220,6 +228,9 @@ func main() {
 	if err := verifyWorkflow(workflowPath); err != nil {
 		fatal(err)
 	}
+	if err := verifyEnvtestPins(makefilePath, parsed, proposal); err != nil {
+		fatal(err)
+	}
 	if err := verifyUpdateWorkflow(updateWorkflowPath); err != nil {
 		fatal(err)
 	}
@@ -294,6 +305,82 @@ func main() {
 
 func verifyKubernetesDependencyWindow(path string, releases []parsedRelease) (int, error) {
 	return verifyKubernetesDependencyWindowForMode(path, releases, false)
+}
+
+var (
+	envtestKubernetesVersion = regexp.MustCompile(`(?m)^ENVTEST_KUBERNETES_VERSION[ \t]*[:?]?=[ \t]*(\S*)[ \t]*$`)
+	setupEnvtestVersion      = regexp.MustCompile(`(?m)^SETUP_ENVTEST_VERSION[ \t]*[:?]?=[ \t]*(\S*)[ \t]*$`)
+	envtestIndex             = regexp.MustCompile(`(?m)^ENVTEST_INDEX[ \t]*[:?]?=[ \t]*(\S*)[ \t]*$`)
+	exactSemver              = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)$`)
+	commitPinnedEnvtestIndex = regexp.MustCompile(`^https://raw\.githubusercontent\.com/kubernetes-sigs/controller-tools/[0-9a-f]{40}/envtest-releases\.yaml$`)
+)
+
+// verifyEnvtestPins holds the envtest control plane to the support window and
+// to pins that are pins. The suites under test/envtest decide what the API
+// server does with the chart's policies and the CRDs; an API server from a
+// release the chart does not support measures a server nobody runs, and a
+// setup-envtest named by branch or an index read from HEAD would let two runs
+// of one commit start different binaries.
+//
+// A proposal moves the window before anyone has reviewed the envtest version,
+// so it is not held to the new window here; the ordinary verification of the
+// pull request that carries the proposal is, and names the pin to move.
+func verifyEnvtestPins(path string, releases []parsedRelease, proposal bool) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	value := func(pattern *regexp.Regexp, name string) (string, error) {
+		matches := pattern.FindAllStringSubmatch(string(contents), -1)
+		if len(matches) != 1 || matches[0][1] == "" {
+			return "", fmt.Errorf("%s: %s must be assigned exactly once, to a value", path, name)
+		}
+		return matches[0][1], nil
+	}
+	setupVersion, err := value(setupEnvtestVersion, "SETUP_ENVTEST_VERSION")
+	if err != nil {
+		return err
+	}
+	if !exactSemver.MatchString(setupVersion) || !strings.HasPrefix(setupVersion, "v") {
+		return fmt.Errorf("%s: SETUP_ENVTEST_VERSION %q is not an exact vX.Y.Z module version", path, setupVersion)
+	}
+	index, err := value(envtestIndex, "ENVTEST_INDEX")
+	if err != nil {
+		return err
+	}
+	if !commitPinnedEnvtestIndex.MatchString(index) {
+		return fmt.Errorf("%s: ENVTEST_INDEX %q is not the controller-tools envtest index at an exact commit", path, index)
+	}
+	version, err := value(envtestKubernetesVersion, "ENVTEST_KUBERNETES_VERSION")
+	if err != nil {
+		return err
+	}
+	parts := exactSemver.FindStringSubmatch(version)
+	if parts == nil || strings.HasPrefix(version, "v") {
+		return fmt.Errorf("%s: ENVTEST_KUBERNETES_VERSION %q is not an exact X.Y.Z release", path, version)
+	}
+	// The suites run inside make verify-source, after make test, under the
+	// timeout the verify job's limit is budgeted against.
+	suites := fmt.Sprintf("PTAH_REQUIRE_ENVTEST=1 $(GO) test -count=1 -timeout=%dm ./test/envtest/...", makeEnvtestTimeoutMinutes)
+	if strings.Count(string(contents), suites) != 1 {
+		return fmt.Errorf("%s: make test-envtest must run the suites exactly once as %q", path, suites)
+	}
+	if !regexp.MustCompile(`(?m)^verify-source:[^\n#]* test test-envtest(?:[ \t]|$)`).Match(contents) {
+		return fmt.Errorf("%s: verify-source must run test-envtest right after test", path)
+	}
+	if proposal {
+		return nil
+	}
+	minor := parts[1] + "." + parts[2]
+	supported := make([]string, 0, len(releases))
+	for _, release := range releases {
+		if release.Minor == minor {
+			return nil
+		}
+		supported = append(supported, release.Minor)
+	}
+	return fmt.Errorf("%s: ENVTEST_KUBERNETES_VERSION %s is outside the supported window %s; move it, and ENVTEST_INDEX, to a supported release",
+		path, version, strings.Join(supported, ", "))
 }
 
 func verifyKubernetesDependencyWindowForMode(path string, releases []parsedRelease, proposal bool) (int, error) {
@@ -756,7 +843,7 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 	}
 	verifySteps, err := requireWorkflowStepOrder(path, "verify", verifyJob, []string{
 		"checkout", "setup-go", "verify-build-cache", "verify-support", "crd-baseline", "verify-helm",
-		"shellcheck", "promtool", "client-build-config", "project-verify",
+		"shellcheck", "promtool", "envtest-assets", "client-build-config", "project-verify",
 	})
 	if err != nil {
 		return err
@@ -898,23 +985,39 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 			return fmt.Errorf("%s: the pinned promtool install does not read %q", path, required)
 		}
 	}
+	// The envtest suites start the kube-apiserver and etcd the Makefile pins,
+	// which setup-envtest fetches and checks against the digests in a
+	// commit-pinned index whether or not this cache hits. The cache only saves
+	// the download: its key follows the Makefile, where the pins live, and a
+	// miss restores the newest earlier store, which already holds the pinned
+	// release unless the pin moved. make verify-source reads the store from
+	// ENVTEST_BIN_DIR below, so the two paths are one value.
+	if verifySteps[8].Name != "Cache the envtest control plane" {
+		return fmt.Errorf("%s: verify envtest cache step has unexpected name %q", path, verifySteps[8].Name)
+	}
+	if err := verifyUpdaterActionStep(path, "verify", verifySteps[8],
+		"actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", envtestCacheInputs()); err != nil {
+		return err
+	}
 	// The client build configuration is checked where a pull request sees it:
 	// a release reads its platforms out of that file, so one goreleaser refuses
 	// is a release that cannot be cut.
-	if verifySteps[8].Name != "Check the client build configuration" ||
-		!strings.HasPrefix(verifySteps[8].Uses, "goreleaser/goreleaser-action@") ||
-		verifySteps[8].Run != "" || verifySteps[8].With["args"] != "check" {
+	if verifySteps[9].Name != "Check the client build configuration" ||
+		!strings.HasPrefix(verifySteps[9].Uses, "goreleaser/goreleaser-action@") ||
+		verifySteps[9].Run != "" || verifySteps[9].With["args"] != "check" {
 		return fmt.Errorf("%s: the client build configuration is not checked with goreleaser", path)
 	}
-	if verifySteps[9].Name != "Run project verification" ||
-		verifySteps[9].If != "" || verifySteps[9].Uses != "" || verifySteps[9].Run != "make verify-source" ||
-		verifySteps[9].Shell != "bash" || verifySteps[9].WorkingDirectory != "" ||
-		len(verifySteps[9].With) != 0 || !equalStringMap(verifySteps[9].Env, map[string]string{
+	if verifySteps[10].Name != "Run project verification" ||
+		verifySteps[10].If != "" || verifySteps[10].Uses != "" || verifySteps[10].Run != "make verify-source" ||
+		verifySteps[10].Shell != "bash" || verifySteps[10].WorkingDirectory != "" ||
+		len(verifySteps[10].With) != 0 || !equalStringMap(verifySteps[10].Env, map[string]string{
 		"CRD_SCHEMA_BASELINE_REF":              "${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE": "true",
+		"ENVTEST_BIN_DIR":                      envtestCacheInputs()["path"],
 		"PTAH_REQUIRE_PROMTOOL":                "1",
 	}) {
-		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline and require promtool", path)
+		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline, "+
+			"require promtool, and read the cached envtest store", path)
 	}
 
 	if err := verifyRaceJob(path, workflow); err != nil {
@@ -1130,14 +1233,19 @@ done
 	return nil
 }
 
-// verifyJobOutlastsTests holds the verify job's limit above go test's own
-// timeout and what runs before it. At or under that sum, the job limit ends a
-// hung test first, and the run shows a canceled job instead of the goroutine
-// dump and the name of the running test that Go's timeout prints.
+// verifyJobOutlastsTests holds the verify job's limit above both go test
+// timeouts verify-source runs and what runs before and between them: make
+// test, then the envtest control plane's fetch, then make test-envtest. At or
+// under that sum, the job limit ends a hung test first, and the run shows a
+// canceled job instead of the goroutine dump and the name of the running test
+// that Go's timeout prints.
 func verifyJobOutlastsTests(path string, limit int) error {
-	if limit <= makeTestTimeoutMinutes+ciVerifyBeforeTestMinutes {
-		return fmt.Errorf("%s: verify's %d-minute limit must exceed make test's %d-minute go test timeout plus the %d minutes before it",
-			path, limit, makeTestTimeoutMinutes, ciVerifyBeforeTestMinutes)
+	budget := ciVerifyBeforeTestMinutes + makeTestTimeoutMinutes + ciEnvtestFetchMinutes + makeEnvtestTimeoutMinutes
+	if limit <= budget {
+		return fmt.Errorf("%s: verify's %d-minute limit must exceed make test's %d-minute go test timeout plus the %d minutes before it, "+
+			"and make test-envtest's %d-minute timeout plus the %d minutes its control plane takes to fetch: %d minutes",
+			path, limit, makeTestTimeoutMinutes, ciVerifyBeforeTestMinutes,
+			makeEnvtestTimeoutMinutes, ciEnvtestFetchMinutes, budget)
 	}
 	return nil
 }
@@ -2080,6 +2188,16 @@ func verifyGoBuildCacheStep(path, jobName string, step workflowStep, scope strin
 			"restore-keys": restore,
 		},
 	)
+}
+
+// envtestCacheInputs are the envtest store cache's inputs: the store the
+// Makefile's ENVTEST_BIN_DIR names, keyed by the Makefile that pins it.
+func envtestCacheInputs() map[string]string {
+	return map[string]string{
+		"path":         "${{ runner.temp }}/envtest",
+		"key":          "envtest-${{ runner.os }}-${{ hashFiles('Makefile') }}",
+		"restore-keys": "envtest-${{ runner.os }}-\n",
+	}
 }
 
 func verifyUpdaterActionStep(
@@ -4043,16 +4161,13 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`end`,
 					`)`,
 				}),
-				exactSourceLine("late activation drain implementation", `assert_late_activation_drain() {`),
-				exactSourceLineSequence("late activation exact pending drain tuple", []string{
-					`(.data | keys | sort) == ["active-release-sequence", "controller-credentials", "controller-credentials-attempt", "controller-credentials-target-release-sequence"] and`,
-					`.data["active-release-sequence"] == $current and`,
-					`.data["controller-credentials"] == "draining" and`,
-					`.data["controller-credentials-target-release-sequence"] == $next and`,
-					`($attempt | test("^[0-9a-f]{64}$")) and`,
-					`.data["controller-credentials-attempt"] == $attempt`,
+				exactSourceLine("late activation preserved activation implementation", `assert_late_activation_preserved() {`),
+				exactSourceLineSequence("late activation exact predecessor activation", []string{
+					`.metadata.annotations["operator.ptah.run/release-sequence"] == $current and`,
+					`.metadata.annotations["operator.ptah.run/manager-image"] == $image and`,
+					`.data == {"active-release-sequence": $current}`,
 					`' >/dev/null ||`,
-					`fail "late failure did not preserve the exact predecessor sequence and candidate drain tuple"`,
+					`fail "late failure did not preserve the exact predecessor activation"`,
 				}),
 				exactSourceLineSequence("late activation immutable candidate retry inputs", []string{
 					`late_retry_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE") ||`,
@@ -4066,24 +4181,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "late activation recovery changed the candidate chart, values, image, or sequence"`,
 					`fi`,
 				}),
-				exactSourceLine("late activation exact candidate binding inventory", `fail "late failure did not leave the exact namespace-scoped candidate bindings with the predecessor removed"`),
-				exactSourceLine("late activation predecessor authorization inventory", `for late_probe in schema runtime coordination discovery; do`),
-				exactSourceLineSequence("late activation predecessor authorization denial", []string{
-					`if jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \`,
-					`"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null; then`,
-					`break`,
-					`fi`,
-					`if [ "$(date +%s)" -ge "$late_authorization_deadline" ]; then`,
-					`fail "late failure retained predecessor $late_probe authorization for 30s after the cutover; last review status: $(jq -c '.status' "$WORK_DIR/late-activation-${late_probe}-authorization.json")"`,
-					`fi`,
-				}),
 				exactSourceLine("late activation failure implementation", `prove_late_activation_failure_recovery() {`),
 				exactSourceLineSequence("late activation candidate input snapshot", []string{
 					`late_candidate_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")`,
 					`late_candidate_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE")`,
 					`late_candidate_image=$E2E_NEXT_CONTROLLER_IMAGE`,
-					`late_candidate_attempt=$(printf '%s\n%s\n%s\n%s' "$E2E_OPERATOR_NAMESPACE" \`,
-					`"$E2E_HELM_RELEASE" "$late_next_sequence" "$late_candidate_image" | stdin_sha256)`,
 				}),
 				exactSourceLineSequence("late activation dual capture arming", []string{
 					`create_late_activation_blocker`,
@@ -4163,11 +4265,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fi`,
 					`verify_late_activation_preflight_capture`,
 					`emit_late_activation_reconcile_diagnostic`,
-					`assert_late_activation_drain`,
+					`assert_late_activation_preserved`,
 				}),
-				exactSourceLine("late activation candidate cutover boundary", `assert_late_activation_cutover`),
-				exactSourceLine("late activation protected Pod absence", `' >/dev/null || fail "late failure left a protected runtime Pod after credential cutover"`),
-				exactSourceLine("late activation failed boundary completion", `printf '%s\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'`),
+				exactSourceLine("late activation protected Pod absence", `' >/dev/null || fail "late failure left a protected runtime Pod after the runtime stop"`),
+				exactSourceLine("late activation failed boundary completion", `printf '%s\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'`),
 				exactSourceLineSequence("read-only Job controller-owned failure staging", []string{
 					`failure_target_patch=$(jq -nc \`,
 					`--arg failure_target_at "$failure_target_at" \`,
@@ -4262,7 +4363,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`stage_read_only_job_completion`,
 					`set_pod_webhook_failure_policy Ignore Fail`,
 					`stage_read_only_job_uid_gap`,
-					`assert_late_activation_drain`,
+					`assert_late_activation_preserved`,
 					`assert_late_activation_candidate_unchanged`,
 					`delete_late_activation_blocker`,
 				}),
@@ -4290,7 +4391,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`[ "$after_revision" -eq $((late_revision + 1)) ] ||`,
 					`fail "same-candidate recovery did not create exactly one retry Helm revision"`,
 				}),
-				exactSourceLine("same-candidate recovery retired controller identity", `fail "sequence-$current_release_sequence controller ServiceAccount survived the sequence-$next_release_sequence activation"`),
+				exactSourceLineSequence("same-candidate recovery kept the controller identity", []string{
+					`[ "$next_sequence_service_account" = "$current_sequence_service_account" ] ||`,
+					`fail "synthetic sequence-$next_release_sequence upgrade moved the controller from ServiceAccount $current_sequence_service_account to $next_sequence_service_account"`,
+					`[ "$next_sequence_service_account_uid" = "$current_sequence_service_account_uid" ] ||`,
+				}),
 				exactSourceLineSequence("same-candidate recovery final activation and retirement", []string{
 					`assert_release_activation_sequence \`,
 					`"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE"`,
@@ -4481,9 +4586,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"verify_late_activation_preflight_capture",
 		"emit_late_activation_reconcile_diagnostic",
 		"emit_late_activation_failure_summary",
-		"assert_late_activation_drain",
+		"assert_late_activation_preserved",
 		"assert_late_activation_candidate_unchanged",
-		"assert_late_activation_cutover",
 		"prove_late_activation_failure_recovery",
 		"run_next_release_upgrade_proof",
 	} {
@@ -4491,7 +4595,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			return err
 		}
 	}
-	for _, assertion := range []string{"assert_late_activation_drain", "assert_late_activation_candidate_unchanged", "assert_late_activation_cutover"} {
+	for _, assertion := range []string{"assert_late_activation_preserved", "assert_late_activation_candidate_unchanged"} {
 		body := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(assertion) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`).Find(crdUpgradeContents)
 		if err := rejectEarlySuccessfulReturn(files.crdUpgrade+" "+assertion, body,
 			sourceLinePattern(assertion+"() {"), regexp.MustCompile(`(?m)^\}[ \t]*\r?$`)); err != nil {
@@ -4571,7 +4675,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	}
 	lateActivationFailureBody := lateActivationFailureMatches[0]
 	for _, recovery := range []struct{ function, completion string }{
-		{"prove_late_activation_failure_recovery", `printf '%s\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'`},
+		{"prove_late_activation_failure_recovery", `printf '%s\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'`},
 		{"run_next_release_upgrade_proof", `printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'`},
 	} {
 		if err := rejectEarlySuccessfulReturn(files.crdUpgrade, crdUpgradeContents,

@@ -26,7 +26,7 @@ func TestCRDBootstrapRendersOnlyWhatTheClusterDoesNotHold(t *testing.T) {
 	if err != nil {
 		t.Skip("Helm is required for live lookup render tests")
 	}
-	chart := serviceAccountObjectGuardChartPath(t)
+	chart := chartPath(t)
 
 	installed := func(names ...string) map[string]bool {
 		present := make(map[string]bool, len(names))

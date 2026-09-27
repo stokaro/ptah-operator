@@ -1,13 +1,12 @@
 {{- $controllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.serviceAccountName" .) -}}
-{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
-{{- $controllerUsernameMatch := printf `request.userInfo.username in [%q]` $controllerUsername -}}
+{{- $controllerUsernameMatch := printf `request.userInfo.username == %q` $controllerUsername -}}
 {{- $candidateSequence := include "ptah-operator.releaseSequence" . -}}
-{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- /* Every release runs the controller as the same ServiceAccount, so the
+      predecessor's runtime writes under this name until the cutover stops it,
+      and this release's once the cutover activates it. */ -}}
 {{- $controllerAuthority := printf `request.userInfo.username == %q && variables.activeRelease == %s` $controllerUsername $candidateSequence -}}
-{{- if and $previousControllerServiceAccount (ne $previousControllerServiceAccount (include "ptah-operator.serviceAccountName" .)) -}}
-{{- $previousControllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $previousControllerServiceAccount -}}
-{{- $controllerUsernameMatch = printf `request.userInfo.username in [%q, %q]` $controllerUsername $previousControllerUsername -}}
-{{- $controllerAuthority = printf `(%s) || (request.userInfo.username == %q && variables.activeRelease == %s)` $controllerAuthority $previousControllerUsername $previousSequence -}}
+{{- if gt (atoi $candidateSequence) 1 -}}
+{{- $controllerAuthority = printf `request.userInfo.username == %q && (variables.activeRelease == %s || variables.activeRelease == %s)` $controllerUsername $candidateSequence (include "ptah-operator.predecessorReleaseSequence" .) -}}
 {{- end -}}
 {{- $jobMessage := "Ptah controller Job write guard rejected an unsafe workload shape" -}}
 {{- $chunkMessage := "Ptah controller chunk write guard rejected an unsafe ConfigMap shape" -}}
@@ -115,7 +114,7 @@ spec:
         resources: [{{ $entry.resource | quote }}]
         scope: Namespaced
   matchConditions:
-    - name: candidate-or-predecessor-controller-service-account
+    - name: controller-service-account
       expression: {{ $controllerUsernameMatch | quote }}
   variables:
     - name: activeRelease

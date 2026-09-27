@@ -1,6 +1,4 @@
 {{- $coordinationNamespace := default .Release.Namespace .Values.coordination.namespace -}}
-{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
-{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -33,8 +31,6 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ $serviceAccountObjectGuardName }}
-      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
@@ -153,13 +149,6 @@ rules:
   - apiGroups: [""]
     resources: ["limitranges"]
     verbs: ["list"]
-{{- if eq .Release.Namespace "default" }}
-  # A release in the default namespace carries the EndpointSlice grant in this
-  # Role, any other in the discovery Role below.
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
-{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -179,43 +168,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "ptah-operator.certRotatorServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
-{{ if ne .Release.Namespace "default" }}
----
-# EndpointSlice read authority, kept in the one namespace that holds the
-# default Kubernetes Service. Nothing lists them any more, but the release
-# inventories still pin this grant. The controller RBAC transition moves this
-# binding with the controller ServiceAccount.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "ptah-operator.fullname" . }}-runtime-discovery
-  namespace: default
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-rules:
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "ptah-operator.fullname" . }}-runtime-discovery
-  namespace: default
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "ptah-operator.fullname" . }}-runtime-discovery
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "ptah-operator.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
-  - kind: ServiceAccount
-    name: {{ include "ptah-operator.certRotatorServiceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
-{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

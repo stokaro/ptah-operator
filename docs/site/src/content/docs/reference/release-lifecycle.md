@@ -137,31 +137,25 @@ first real CRD update. The controller init verifier repeats both CRD and state
 checks after the admission singleton becomes ready. A missing client for any
 of the three durable resource collections fails closed.
 
-## The credential phase
+## The cutover
 
-Release cutover also has a durable credential phase. The retained activation
-ConfigMap moves monotonically from `{active=A, phase=active}` to
-`{active=A, phase=draining, target=T, attempt=<full SHA-256>}` and only candidate
-activation can return it to `{active=T, phase=active}`. While draining, the
-ServiceAccount-origin guard denies both controller API writes and node-issued
-TokenRequests for the candidate and predecessor controller identities. The hook
-then stops the runtime and waits until no Pod running as a protected runtime
-identity remains in the namespace before any grant moves. A failed response at
-any transition is retried only for the same target and full attempt digest;
-there is no cancellation or backward state transition. A candidate that fails
-after the drain began leaves it in place, and rerunning the same candidate
-finishes the cutover. A fresh install can skip the drain only when the
-activation state and complete preflight prove that no predecessor, candidate
-ServiceAccount, candidate grant, protected Pod, or prior drain exists.
+The controller runs as one ServiceAccount in every release:
+`serviceAccount.name`, or the release's full name when that is empty. An
+upgrade moves no binding, because every release renders the same subjects, and
+the CRD hook holds no RBAC authority at all. The predecessor's runtime writes
+under that ServiceAccount until the cutover stops it, and the candidate's once
+the cutover activates it, so the controller-write guards admit it while the
+active release is the candidate or the one before it.
 
-For a predecessor cutover, the hook receives `bind` only on the stable
-controller ClusterRole and the exact existing controller Roles in their
-coordination, release, and discovery namespaces. A fresh install receives no
-`bind` grant. The ServiceAccount-origin guard permits only the current reconcile
-Pod to replace the predecessor subject with the candidate subject during that
-attempt's exact draining state. Role references, binding identity and metadata,
-and certificate subjects must remain unchanged. Other binding writes, including
-granting a role to the hook itself, are denied.
+The retained activation ConfigMap records the active release sequence and
+nothing else. The reconcile hook seals its admission inventory, stops the
+runtime and waits until no Pod runs as a runtime identity, then moves the
+activation from the predecessor's sequence straight to its own and retires the
+predecessor's inventory. The activation guard admits only that step, by that
+release's own hook: to the sequence after the active one, or to the sequence a
+fresh install recorded. A candidate that fails after the stop leaves the runtime
+stopped and the activation naming the predecessor, and rerunning the same
+candidate finishes the cutover.
 
 ## The admission inventory marker
 
@@ -237,12 +231,11 @@ place while it runs admit exactly that Job.
 The Job first reads every object it is about to delete and checks each one
 against the contract this release compiles, without changing anything, so an
 inventory it would refuse to delete fails before the runtime stops. It then
-stops the runtime: it records a drain toward the active sequence in the
-release activation, which is what the retained rollout guards require before
-they admit the stop, scales both runtime Deployments to zero, and waits until
-no Pod in the namespace runs as a runtime identity. Only then does it delete
-the admission guards that fence the controller's writes, so no controller runs
-once they are gone.
+stops the runtime: the retained rollout guards admit a release's own hook
+stopping the sequence that is active, so it scales both runtime Deployments to
+zero and waits until no Pod in the namespace runs as a runtime identity. Only
+then does it delete the admission guards that fence the controller's writes, so
+no controller runs once they are gone.
 
 It deletes, by exact name, what the release keeps outside Helm's own deletion:
 every admission guard binding, then every guard policy, the certificate

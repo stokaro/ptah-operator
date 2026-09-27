@@ -387,7 +387,6 @@ func predecessorRetirementPairBlueprints(rollout *RolloutGuard) ([]predecessorRe
 	hookProbeName := HookIdentityProbeGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
 	parentReplicaSetName := ParentReplicaSetGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
 	parentHookContractName := ParentHookJobContractPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
-	serviceAccountName := ServiceAccountOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
 	controllerWriteName := ControllerWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
 	runtimePodPolicy, err := rollout.runtimePodIdentityPolicy()
 	if err != nil {
@@ -412,11 +411,6 @@ func predecessorRetirementPairBlueprints(rollout *RolloutGuard) ([]predecessorRe
 		return nil, errors.New("predecessor retirement hook parent contract is missing")
 	}
 
-	serviceAccount := NewServiceAccountOriginGuard(rollout)
-	serviceAccountPolicy, err := serviceAccount.policy()
-	if err != nil {
-		return nil, fmt.Errorf("build predecessor retirement ServiceAccount-origin policy: %w", err)
-	}
 	controllerWrite := NewControllerWriteGuard(rollout)
 	controllerObjects := NewControllerObjectGuard(rollout)
 	controllerObjectByName := make(map[string]controllerObjectGuardEntry)
@@ -472,10 +466,6 @@ func predecessorRetirementPairBlueprints(rollout *RolloutGuard) ([]predecessorRe
 			verifyPolicy: parentHookContract.verifyPolicy, verifyBinding: parentHookContract.verifyBinding,
 		},
 		{
-			name: serviceAccountName, policy: serviceAccountPolicy, binding: serviceAccount.binding(),
-			verifyPolicy: serviceAccount.verifyPolicy, verifyBinding: serviceAccount.verifyBinding,
-		},
-		{
 			name: controllerWriteName, policy: controllerWrite.policy(), binding: controllerWrite.binding(),
 			verifyPolicy: controllerWrite.verifyPolicy, verifyBinding: controllerWrite.verifyBinding,
 		},
@@ -513,8 +503,11 @@ func predecessorRetirementPairBlueprints(rollout *RolloutGuard) ([]predecessorRe
 	return blueprints, nil
 }
 
-func predecessorRetirementExpectedEntries(releaseNamespace, releaseName string, sequence int32, managerImage string) []predecessorRetirementInventoryEntry {
-	pairNames := []string{
+// predecessorRetiredAdmissionGuardNames are the retained policies and bindings
+// a release sequence seals, and so what its successor retires. The chart grants
+// the retiring hook exactly these by name.
+func predecessorRetiredAdmissionGuardNames(releaseNamespace, releaseName string, sequence int32, managerImage string) []string {
+	return []string{
 		RolloutGuardPolicyName(sequence),
 		RuntimeGuardPolicyName(sequence),
 		RuntimePodGuardPolicyName(sequence),
@@ -522,13 +515,16 @@ func predecessorRetirementExpectedEntries(releaseNamespace, releaseName string, 
 		HookIdentityProbeGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ParentReplicaSetGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ParentHookJobContractPolicyName(releaseNamespace, releaseName, sequence, managerImage),
-		ServiceAccountOriginGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ControllerWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ControllerJobWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ControllerPlanWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ControllerMigrationPlanWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 	}
+}
+
+func predecessorRetirementExpectedEntries(releaseNamespace, releaseName string, sequence int32, managerImage string) []predecessorRetirementInventoryEntry {
+	pairNames := predecessorRetiredAdmissionGuardNames(releaseNamespace, releaseName, sequence, managerImage)
 	entries := make([]predecessorRetirementInventoryEntry, 0, len(pairNames)*2+1)
 	for _, name := range pairNames {
 		entries = append(entries,
@@ -770,9 +766,6 @@ func (r *PredecessorRetirement) validatedRollout() (*RolloutGuard, error) {
 	if err := copy.validateIdentity(); err != nil {
 		return nil, fmt.Errorf("validate predecessor retirement identity: %w", err)
 	}
-	if copy.PreviousControllerReleaseSequence > 0 && copy.PreviousControllerReleaseSequence+1 != copy.ReleaseSequence {
-		return nil, fmt.Errorf("candidate release sequence %d does not immediately follow predecessor %d", copy.ReleaseSequence, copy.PreviousControllerReleaseSequence)
-	}
 	return &copy, nil
 }
 
@@ -941,8 +934,11 @@ func (r *PredecessorRetirement) preflightPredecessor(ctx context.Context) (*pred
 	if err != nil {
 		return nil, err
 	}
-	sequence := rollout.PreviousControllerReleaseSequence
-	if sequence == 0 {
+	// Releases advance one sequence at a time, so the only inventory this
+	// release retires is the one the sequence before it sealed. Its sealed
+	// marker is deleted last, so an absent marker means nothing is left.
+	sequence := rollout.ReleaseSequence - 1
+	if sequence < 1 {
 		return nil, nil
 	}
 	name := AdmissionConvergenceMarkerName(rollout.ReleaseNamespace, rollout.ReleaseName, sequence)
@@ -990,7 +986,7 @@ func (r *PredecessorRetirement) preflightPredecessor(ctx context.Context) (*pred
 // predecessorRetirementPairCount is how many policy and binding pairs a
 // predecessor retires. It is named rather than repeated so a new guard changes
 // the number in one place and every check that reads it moves together.
-const predecessorRetirementPairCount = 13
+const predecessorRetirementPairCount = 12
 
 func validatePredecessorRetirementState(snapshot *predecessorRetirementSnapshot) error {
 	if snapshot == nil || snapshot.marker == nil || len(snapshot.pairs) != predecessorRetirementPairCount {

@@ -501,12 +501,12 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        run: make e2e\n      - name: Duplicate lifecycle\n        run: make e2e\n      # One chart per minor",
 		},
 		"verify timeout drift": {
-			old: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 40\n",
-			new: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 45\n",
+			old: "    # a hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 55\n",
+			new: "    # a hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 60\n",
 		},
 		"verify limit inside the test timeout": {
-			old: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 40\n",
-			new: "    # hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 35\n",
+			old: "    # a hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 55\n",
+			new: "    # a hung test ends with Go's goroutine dump rather than a canceled job.\n    timeout-minutes: 35\n",
 		},
 		"race timeout drift": {
 			old: "    # a half on #439, each on a cold build cache.\n    timeout-minutes: 20\n",
@@ -688,9 +688,14 @@ func TestVerifyJobOutlastsTheTestTimeout(t *testing.T) {
 	if err := verifyCIWorkflowSemanticsAtPath(path); err != nil {
 		t.Fatalf("verifyCIWorkflowSemantics(ci.yml) error = %v", err)
 	}
-	const limit = "    timeout-minutes: 40\n"
-	sum := makeTestTimeoutMinutes + ciVerifyBeforeTestMinutes
-	for _, minutes := range []int{20, makeTestTimeoutMinutes, 35, sum} {
+	const limit = "    timeout-minutes: 55\n"
+	sum := ciVerifyBeforeTestMinutes + makeTestTimeoutMinutes + ciEnvtestFetchMinutes + makeEnvtestTimeoutMinutes
+	// The last two are the limit that covered make test alone and the one
+	// that also counts the envtest fetch but not the suites' own timeout:
+	// both let the job cancel a hung envtest suite before Go's timeout fires.
+	withoutEnvtest := ciVerifyBeforeTestMinutes + makeTestTimeoutMinutes + 1
+	withoutSuites := withoutEnvtest + ciEnvtestFetchMinutes
+	for _, minutes := range []int{20, makeTestTimeoutMinutes, 35, withoutEnvtest, withoutSuites, sum} {
 		t.Run(strconv.Itoa(minutes), func(t *testing.T) {
 			t.Parallel()
 			mutated := writeMutatedWorkflow(t, string(contents), limit, fmt.Sprintf("    timeout-minutes: %d\n", minutes))

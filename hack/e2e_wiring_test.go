@@ -1029,7 +1029,10 @@ func TestKindHATopologyFilterHoldsTheIsolationWorkerToItsSuite(t *testing.T) {
 	}
 }
 
-func TestLateActivationDrainRequiresExactPendingTuple(t *testing.T) {
+// A late failure refuses the activation write itself, so the parameter still
+// names the predecessor, exactly, and nothing activated the candidate part of
+// the way.
+func TestLateActivationPreservesThePredecessorActivation(t *testing.T) {
 	t.Parallel()
 	shPath, err := exec.LookPath("sh")
 	if err != nil {
@@ -1039,56 +1042,48 @@ func TestLateActivationDrainRequiresExactPendingTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
-	function := extractE2EShellFunction(t, source, "assert_late_activation_drain")
+	function := extractE2EShellFunction(t, source, "assert_late_activation_preserved")
 	for _, test := range []struct {
-		name   string
-		key    string
-		value  any
-		remove bool
-		want   bool
+		name       string
+		key        string
+		value      any
+		annotation string
+		want       bool
 	}{
-		{name: "exact pending candidate", want: true},
-		{name: "active predecessor is not recovery", key: "controller-credentials", value: "active"},
+		{name: "exact predecessor", want: true},
 		{name: "candidate already activated", key: "active-release-sequence", value: "2"},
-		{name: "wrong target", key: "controller-credentials-target-release-sequence", value: "1"},
-		{name: "missing target", key: "controller-credentials-target-release-sequence", remove: true},
-		{name: "wrong attempt", key: "controller-credentials-attempt", value: strings.Repeat("b", 64)},
-		{name: "prefix collision", key: "controller-credentials-attempt", value: strings.Repeat("a", 63) + "b"},
-		{name: "short attempt", key: "controller-credentials-attempt", value: strings.Repeat("a", 12)},
-		{name: "missing attempt", key: "controller-credentials-attempt", remove: true},
-		{name: "extra key", key: "unexpected", value: "value"},
+		{name: "extra key", key: "controller-credentials", value: "active"},
+		{name: "candidate release recorded", annotation: "operator.ptah.run/release-sequence"},
+		{name: "candidate image recorded", annotation: "operator.ptah.run/manager-image"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			data := map[string]any{
-				"active-release-sequence": "1", "controller-credentials": "draining",
-				"controller-credentials-target-release-sequence": "2",
-				"controller-credentials-attempt":                 strings.Repeat("a", 64),
-			}
-			if test.remove {
-				delete(data, test.key)
-			} else if test.key != "" {
+			data := map[string]any{"active-release-sequence": "1"}
+			if test.key != "" {
 				data[test.key] = test.value
 			}
+			annotations := map[string]string{
+				"operator.ptah.run/release-name": "ptah", "operator.ptah.run/release-namespace": "operator",
+				"operator.ptah.run/release-sequence": "1", "operator.ptah.run/manager-image": "previous-image",
+			}
+			if test.annotation != "" {
+				annotations[test.annotation] = "candidate"
+			}
 			fixture, err := json.Marshal(map[string]any{
-				"metadata": map[string]any{"namespace": "operator", "annotations": map[string]string{
-					"operator.ptah.run/release-name": "ptah", "operator.ptah.run/release-namespace": "operator",
-					"operator.ptah.run/release-sequence": "1", "operator.ptah.run/manager-image": "previous-image",
-				}},
-				"data": data,
+				"metadata": map[string]any{"namespace": "operator", "annotations": annotations},
+				"data":     data,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			script := "set -eu\nfail() { printf '%s\\n' \"$*\" >&2; exit 1; }\nkube() { cat; }\n" + function + "\nassert_late_activation_drain\n"
+			script := "set -eu\nfail() { printf '%s\\n' \"$*\" >&2; exit 1; }\nkube() { cat; }\n" + function + "\nassert_late_activation_preserved\n"
 			command := exec.Command(shPath, "-c", script)
 			command.Env = append(os.Environ(), "E2E_OPERATOR_NAMESPACE=operator", "E2E_HELM_RELEASE=ptah",
-				"late_current_sequence=1", "late_next_sequence=2", "late_current_image=previous-image",
-				"late_candidate_attempt="+strings.Repeat("a", 64))
+				"late_current_sequence=1", "late_current_image=previous-image")
 			command.Stdin = bytes.NewReader(fixture)
 			output, err := command.CombinedOutput()
 			if got := err == nil; got != test.want {
-				t.Fatalf("pending drain accepted = %t, want %t: %s", got, test.want, output)
+				t.Fatalf("preserved activation accepted = %t, want %t: %s", got, test.want, output)
 			}
 		})
 	}
@@ -1143,86 +1138,6 @@ func TestLateActivationRetryRejectsChangedCandidate(t *testing.T) {
 				t.Fatalf("candidate retry accepted = %t, want %t: %s", got, want, output)
 			}
 		})
-	}
-}
-
-func TestLateActivationCutoverRequiresExactBindings(t *testing.T) {
-	t.Parallel()
-	jqPath, err := exec.LookPath("jq")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := extractE2EShellFunction(t, readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade), "assert_late_activation_cutover")
-	_, filter, found := strings.Cut(source, `--arg candidate "$late_candidate_service_account" --arg previous "$current_sequence_service_account" '`+"\n")
-	if !found {
-		t.Fatal("late activation binding filter start is missing")
-	}
-	filter, _, found = strings.Cut(filter, "' \"$WORK_DIR/late-activation-bindings.json\"")
-	if !found {
-		t.Fatal("late activation binding filter end is missing")
-	}
-	for _, topology := range []struct{ namespace, coordination string }{
-		{"operator", "coordination"}, {"operator", "operator"}, {"operator", "default"},
-		{"default", "coordination"}, {"default", "default"},
-	} {
-		for _, mutation := range []string{"none", "missing", "duplicate", "previous", "foreign previous grant", "extra subject", "missing certificate", "wrong role", "wrong namespace", "extra discovery"} {
-			t.Run(topology.namespace+"/"+topology.coordination+"/"+mutation, func(t *testing.T) {
-				t.Parallel()
-				subject := func(name string) map[string]any {
-					return map[string]any{"kind": "ServiceAccount", "name": name, "namespace": topology.namespace}
-				}
-				binding := func(kind, namespace, name, roleKind string, certificate bool) map[string]any {
-					subjects := []any{subject("candidate")}
-					if certificate {
-						subjects = append(subjects, subject("certificate"))
-					}
-					return map[string]any{"kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace},
-						"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": roleKind, "name": name}, "subjects": subjects}
-				}
-				bindings := []any{
-					binding("ClusterRoleBinding", "", "controller", "ClusterRole", false),
-					binding("RoleBinding", topology.namespace, "controller-runtime-admission", "Role", true),
-					binding("RoleBinding", topology.coordination, "controller", "Role", false),
-				}
-				if topology.namespace != "default" {
-					bindings = append(bindings, binding("RoleBinding", "default", "controller-runtime-discovery", "Role", true))
-				}
-				runtimeBinding := bindings[1].(map[string]any)
-				switch mutation {
-				case "missing":
-					bindings = bindings[:len(bindings)-1]
-				case "duplicate":
-					bindings = append(bindings, bindings[0])
-				case "previous":
-					bindings[0].(map[string]any)["subjects"] = []any{subject("previous")}
-				case "foreign previous grant":
-					foreign := binding("ClusterRoleBinding", "", "foreign", "ClusterRole", false)
-					foreign["subjects"] = []any{subject("previous")}
-					bindings = append(bindings, foreign)
-				case "extra subject":
-					runtimeBinding["subjects"] = append(runtimeBinding["subjects"].([]any), subject("extra"))
-				case "missing certificate":
-					runtimeBinding["subjects"] = []any{subject("candidate")}
-				case "wrong role":
-					runtimeBinding["roleRef"].(map[string]any)["name"] = "foreign"
-				case "wrong namespace":
-					runtimeBinding["metadata"].(map[string]any)["namespace"] = "foreign"
-				case "extra discovery":
-					bindings = append(bindings, binding("RoleBinding", "default", "controller-runtime-discovery", "Role", true))
-				}
-				fixture, err := json.Marshal(map[string]any{"items": bindings})
-				if err != nil {
-					t.Fatal(err)
-				}
-				command := exec.Command(jqPath, "-e", "--arg", "namespace", topology.namespace, "--arg", "coordination", topology.coordination,
-					"--arg", "controller", "controller", "--arg", "certificate", "certificate", "--arg", "candidate", "candidate", "--arg", "previous", "previous", filter)
-				command.Stdin = bytes.NewReader(fixture)
-				output, err := command.CombinedOutput()
-				if got, want := err == nil, mutation == "none"; got != want {
-					t.Fatalf("candidate bindings accepted = %t, want %t: %s", got, want, output)
-				}
-			})
-		}
 	}
 }
 
@@ -5436,53 +5351,25 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError: "revision classification must precede capture-success enforcement",
 		},
 		{
-			name:        "CRD late failure skips the activation marker check",
+			name:        "CRD late failure skips the activation check",
 			child:       "crd-upgrade",
-			old:         `fail "late failure did not preserve the exact predecessor sequence and candidate drain tuple"`,
-			replacement: `true # activation marker check removed`,
-			wantError:   "late activation exact pending drain tuple",
+			old:         `fail "late failure did not preserve the exact predecessor activation"`,
+			replacement: `true # activation check removed`,
+			wantError:   "late activation exact predecessor activation",
 		},
 		{
-			name:        "CRD late failure skips candidate RBAC cutover proof",
+			name:        "CRD late failure permits extra activation data",
 			child:       "crd-upgrade",
-			old:         "\tassert_late_activation_cutover\n",
-			replacement: "\t: # candidate RBAC cutover proof removed\n",
-			wantError:   "late activation candidate cutover boundary",
+			old:         `.data == {"active-release-sequence": $current}`,
+			replacement: `.data["active-release-sequence"] == $current`,
+			wantError:   "late activation exact predecessor activation",
 		},
 		{
-			name:        "CRD late failure accepts active credentials",
+			name:        "CRD late failure accepts a partly activated candidate",
 			child:       "crd-upgrade",
-			old:         `.data["controller-credentials"] == "draining" and`,
-			replacement: `.data["controller-credentials"] == "active" and`,
-			wantError:   "late activation exact pending drain tuple",
-		},
-		{
-			name:        "CRD late failure accepts the wrong drain target",
-			child:       "crd-upgrade",
-			old:         `.data["controller-credentials-target-release-sequence"] == $next and`,
-			replacement: `.data["controller-credentials-target-release-sequence"] == $current and`,
-			wantError:   "late activation exact pending drain tuple",
-		},
-		{
-			name:        "CRD late failure ignores the full drain attempt",
-			child:       "crd-upgrade",
-			old:         `.data["controller-credentials-attempt"] == $attempt`,
-			replacement: `.data["controller-credentials-attempt"] != ""`,
-			wantError:   "late activation exact pending drain tuple",
-		},
-		{
-			name:        "CRD late failure permits extra drain fields",
-			child:       "crd-upgrade",
-			old:         `(.data | keys | sort) == ["active-release-sequence", "controller-credentials", "controller-credentials-attempt", "controller-credentials-target-release-sequence"] and`,
-			replacement: `(.data | length) >= 4 and`,
-			wantError:   "late activation exact pending drain tuple",
-		},
-		{
-			name:        "CRD late failure skips predecessor authorization denial",
-			child:       "crd-upgrade",
-			old:         `jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \`,
-			replacement: `jq -e '.status.allowed != null' \`,
-			wantError:   "late activation predecessor authorization denial",
+			old:         `.metadata.annotations["operator.ptah.run/release-sequence"] == $current and`,
+			replacement: `.metadata.annotations["operator.ptah.run/release-sequence"] != "" and`,
+			wantError:   "late activation exact predecessor activation",
 		},
 		{
 			name:        "CRD recovery permits changed candidate image",
@@ -5522,8 +5409,8 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD recovery removes blocker before staging the UID gap",
 			child:       "crd-upgrade",
-			old:         "\tstage_read_only_job_uid_gap\n\tassert_late_activation_drain\n\tassert_late_activation_candidate_unchanged\n\tdelete_late_activation_blocker\n",
-			replacement: "\tdelete_late_activation_blocker\n\tstage_read_only_job_uid_gap\n\tassert_late_activation_drain\n\tassert_late_activation_candidate_unchanged\n",
+			old:         "\tstage_read_only_job_uid_gap\n\tassert_late_activation_preserved\n\tassert_late_activation_candidate_unchanged\n\tdelete_late_activation_blocker\n",
+			replacement: "\tdelete_late_activation_blocker\n\tstage_read_only_job_uid_gap\n\tassert_late_activation_preserved\n\tassert_late_activation_candidate_unchanged\n",
 			wantError:   "successor read-only Job dispatch before the late activation failure",
 		},
 		{
@@ -5532,6 +5419,13 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			old:         `[ "$after_revision" -eq $((late_revision + 1)) ] ||`,
 			replacement: `[ "$after_revision" -gt "$late_revision" ] ||`,
 			wantError:   "same-candidate recovery exactly one retry revision",
+		},
+		{
+			name:        "CRD recovery accepts a replaced controller ServiceAccount",
+			child:       "crd-upgrade",
+			old:         `[ "$next_sequence_service_account_uid" = "$current_sequence_service_account_uid" ] ||`,
+			replacement: `[ -n "$next_sequence_service_account_uid" ] ||`,
+			wantError:   "same-candidate recovery kept the controller identity",
 		},
 		{
 			name:        "CRD recovery skips candidate readiness",
@@ -5548,10 +5442,10 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "successful return",
 		},
 		{
-			name:        "CRD recovery drain helper returns before its assertions",
+			name:        "CRD recovery activation helper returns before its assertions",
 			child:       "crd-upgrade",
-			old:         "assert_late_activation_drain() {\n",
-			replacement: "assert_late_activation_drain() {\n\treturn 0\n",
+			old:         "assert_late_activation_preserved() {\n",
+			replacement: "assert_late_activation_preserved() {\n\treturn 0\n",
 			wantError:   "successful return",
 		},
 		{
@@ -5562,17 +5456,10 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "successful return",
 		},
 		{
-			name:        "CRD recovery cutover helper returns before its assertions",
-			child:       "crd-upgrade",
-			old:         "assert_late_activation_cutover() {\n",
-			replacement: "assert_late_activation_cutover() {\n\treturn 0\n",
-			wantError:   "successful return",
-		},
-		{
 			name:        "CRD recovery manually resurrects the predecessor",
 			child:       "crd-upgrade",
-			old:         "\tprintf '%s\\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'\n",
-			replacement: "\tstart_runtime_deployments\n\tprintf '%s\\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'\n",
+			old:         "\tprintf '%s\\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'\n",
+			replacement: "\tstart_runtime_deployments\n\tprintf '%s\\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'\n",
 			wantError:   "same-candidate recovery must preserve the genuine hook boundary",
 		},
 		{

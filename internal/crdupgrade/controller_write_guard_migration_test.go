@@ -414,8 +414,7 @@ func controllerWriteActivationParams() map[string]any {
 			},
 		},
 		"data": map[string]any{
-			activeReleaseDataKey:         sequence,
-			controllerCredentialsDataKey: string(ControllerCredentialsActive),
+			activeReleaseDataKey: sequence,
 		},
 	}
 }

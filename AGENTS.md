@@ -48,6 +48,7 @@ purpose.
 ```bash
 make build          # the five binaries
 make test           # unit contour
+make test-envtest   # CRDs, admission policies and webhooks against a real API server
 make generate       # deepcopy
 make manifests      # CRDs and RBAC from the markers
 make verify         # the checks CI runs, including the CRD schema history
@@ -57,6 +58,39 @@ make e2e            # the suite against kind
 `make verify` is the one that refuses a change the generators did not produce:
 `verify-source`, `verify-crd-schema-history` and `verify-kubernetes-support` are
 separate targets under it, so run it after touching `api/` or any marker.
+
+## The envtest suites
+
+`make test-envtest` runs the packages under `test/envtest` against a real
+kube-apiserver and etcd, one control plane per package, in a few minutes. No
+controller runs there, so what they prove is the API server's own verdict:
+
+- `crd` installs `config/crd/bases` and stores every example in
+  `docs/reference-examples`, then sends each kind the objects its schema and
+  CEL rules must refuse. A refusal counts only if it names the field and the
+  rule's message.
+- `admissionpolicy` renders the chart and installs what a completed install
+  leaves bound: the release activated, and every ValidatingAdmissionPolicy with
+  its binding and parameter. It sends each policy the request it exists to
+  refuse and the write it must admit, as the identity that makes it -- the
+  manager's ServiceAccount with a Pod-bound token, an ordinary user, the Job
+  controller, the release hook. Then it weakens each policy the way a regression
+  would, dropping its binding, widening its match, pointing its parameter at
+  nothing or replacing its validations, and requires the rows that name the
+  policy to fail and recover. A policy the chart installs without a refusal row
+  and a mutation fails the suite.
+- `webhook` serves the manager's admission handlers in-process behind the
+  chart's own webhook configurations, which envtest points at this process.
+
+The API server reports only the first policy that refused a request, in no
+fixed order, so a refusal row is shaped so that one policy refuses it.
+
+The Makefile pins setup-envtest, the Kubernetes release, and the index of
+archive digests by commit; `hack/verify-kubernetes-support.go` holds the release
+inside the support window. The target sets `PTAH_REQUIRE_ENVTEST=1`, so a
+missing control plane fails it. A plain `go test ./...` without
+`KUBEBUILDER_ASSETS` skips these packages and says why. CI runs the target inside
+`make verify-source`, with the binaries cached.
 
 ## What a green master says
 
@@ -203,7 +237,10 @@ was given. `hack/e2e-timing-selftest.sh` is what keeps that true, and
   refuses a kind that has none. `hack/reference_examples_test.go` validates
   every example in them against the CRD the API server enforces, so an example
   cannot quietly go on naming a field the API dropped or a value it stopped
-  accepting.
+  accepting, and `test/envtest/crd` stores every one on a real API server.
+- Give a new rule a refusal. A CEL rule or a bound nothing sends a violating
+  object to is a rule nobody has seen the API server enforce; `test/envtest/crd`
+  holds each one to an object it refuses, by field and message.
 - Prefer no default to a plausible one. An unset field that changes nothing
   keeps every stored object running exactly as it ran, and leaves the choice
   with whoever knows their database. A default is a silent edit to every

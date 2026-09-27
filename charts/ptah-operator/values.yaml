@@ -84,16 +84,14 @@ releaseNamespace:
 
 # The identity the runtime components run as.
 serviceAccount:
-  # With create=false, name is a stable base, not a complete object name. For
-  # every release sequence N, pre-create the dedicated ServiceAccount
-  # <name>-v<N>. The chart never reuses or deletes these user-owned identities.
-  # Any additional RoleBinding or ClusterRoleBinding for an active or retained
-  # epoch blocks fail-closed upgrade and uninstall.
+  # The controller runs as one ServiceAccount in every release. With
+  # create=false, pre-create the ServiceAccount named below; the chart binds
+  # its roles to it and never deletes it.
   create: true
-  # Base name for the per-sequence ServiceAccounts. Empty means the generated
-  # release name.
+  # The controller ServiceAccount's name. Empty means the generated release
+  # name.
   name: ""
-  # Annotations added to the ServiceAccounts the chart creates, which is where
+  # Annotations added to the ServiceAccount the chart creates, which is where
   # a cloud identity binding goes.
   annotations: {}
 

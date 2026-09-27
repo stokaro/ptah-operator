@@ -599,11 +599,8 @@ prove_certificate_write_guards() {
 prove_certificate_write_guards
 
 GUARD_ERROR=$UPGRADE_WORK_DIR/secret-guard.err
-# The rotator's own identity is bound to its Pod, and the service account
-# origin guard refuses a request that carries the name without that binding.
 # This proof is about the recovery contract, so it asks with the identity the
-# rotator actually has; otherwise the origin guard answers first and the
-# recovery guard is never reached.
+# rotator actually has: its ServiceAccount, bound to its running Pod.
 if rotator_kube -n "$OPERATOR_NAMESPACE" \
 	create secret generic ptah-rotator-unauthorized \
 	--from-literal=uncontrolled=value --dry-run=server -o name \

@@ -6,10 +6,8 @@ package crdupgrade
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -38,6 +36,10 @@ type releaseRBACContract struct {
 type releaseRBACInventory struct {
 	rollout  *RolloutGuard
 	contract RuntimeAdmissionContract
+	// predecessorManagerImage is the manager image the sealed admission
+	// inventory of the sequence before this one records. It is empty when a
+	// render finds no such inventory, which is also every offline render.
+	predecessorManagerImage string
 }
 
 func (t releaseRBACInventory) contracts() []releaseRBACContract {
@@ -45,32 +47,31 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 	hook := t.rollout.HookServiceAccountName
 	bootstrap := privilegeHookBindingName(hook, 53, "-bootstrap")
 	probe := privilegeHookBindingName(hook, 57, "-probe")
-	crdNames := []string{
-		"ptahmigrationapprovals.operator.ptah.run",
-		"ptahmigrationplans.operator.ptah.run",
-		"ptahmigrations.operator.ptah.run",
-		"ptahrealms.operator.ptah.run",
-		"ptahschemaapprovals.operator.ptah.run",
-		"ptahschemaplans.operator.ptah.run",
-		"ptahschemas.operator.ptah.run",
-	}
-	runtimeGuardNames := t.runtimeAdmissionGuardNames()
-	hookServiceAccounts := []string{t.contract.ControllerServiceAccountName, t.contract.CertificateServiceAccountName}
-	if t.rollout.PreviousControllerServiceAccountName != "" {
-		hookServiceAccounts = append(hookServiceAccounts, t.rollout.PreviousControllerServiceAccountName)
-	}
+	crdNames := releaseCRDNames()
+	guardNames := t.releaseAdmissionGuardNames()
+	predecessorSequence := t.rollout.ReleaseSequence - 1
 	contracts := []releaseRBACContract{
 		{
 			name: controller, cluster: true,
-			rules: currentControllerClusterRoleRules(t.rollout),
+			rules: controllerClusterRoleRules(guardNames),
 		},
 		{
 			name: controller + "-runtime-admission", namespace: t.rollout.ReleaseNamespace,
-			rules: currentControllerRuntimeRoleRules(t.rollout, t.contract),
+			rules: []rbacv1.PolicyRule{
+				privilegePolicyRule(
+					[]string{""},
+					[]string{"serviceaccounts"},
+					[]string{t.contract.ControllerServiceAccountName, t.contract.CertificateServiceAccountName},
+					[]string{"get"},
+				),
+				privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
+			},
 		},
 		{
 			name: controller, namespace: t.rollout.CoordinationNamespace,
-			rules: currentControllerCoordinationRoleRules(),
+			rules: []rbacv1.PolicyRule{
+				privilegePolicyRule([]string{"coordination.k8s.io"}, []string{"leases"}, nil, []string{"get", "create", "update"}),
+			},
 		},
 		{
 			name: hook, component: "crd-manager", cluster: true,
@@ -89,34 +90,29 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 						[]string{AdmissionConfigurationName},
 						[]string{"get", "update"},
 					),
-					privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicies"}, currentCRDManagerAdmissionGuardNames(t.rollout), []string{"get"}),
-					privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicybindings"}, currentCRDManagerAdmissionGuardNames(t.rollout), []string{"get"}),
+					privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicies"}, guardNames, []string{"get"}),
+					privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicybindings"}, guardNames, []string{"get"}),
 				}
 				// Retiring a predecessor means reading and then deleting exactly
-				// the objects it sealed, so the grant appears only where there is
-				// one and names nothing wider.
-				if names := PredecessorRetiredAdmissionGuardNames(t.rollout); len(names) != 0 {
+				// the objects it sealed, so the grant appears only where a sealed
+				// inventory names them, and names nothing wider.
+				if t.predecessorManagerImage != "" {
 					rules = append(rules, privilegePolicyRule(
 						[]string{"admissionregistration.k8s.io"},
 						[]string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"},
-						names,
+						predecessorRetiredAdmissionGuardNames(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, predecessorSequence, t.predecessorManagerImage),
 						[]string{"get", "delete"},
 					))
 				}
-				rules = append(rules,
+				return append(rules,
 					privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, nil, []string{"list"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, []string{controller}, []string{"get", "patch"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, nil, []string{"list"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, hookRoleTransitionVerbs(t.rollout.PreviousControllerServiceAccountName != "")),
 				)
-				return rules
 			}(),
 		},
 		{
 			name: hook, namespace: t.rollout.ReleaseNamespace, component: "crd-manager",
 			rules: func() []rbacv1.PolicyRule {
-				rules := append(t.hookBindingTransitionRules(t.rollout.ReleaseNamespace),
+				rules := []rbacv1.PolicyRule{
 					privilegePolicyRule(
 						[]string{"apps"}, []string{"deployments"},
 						[]string{t.rollout.ControllerDeploymentName, t.rollout.CertificateDeploymentName},
@@ -126,7 +122,7 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 					privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list"}),
 					privilegePolicyRule(
 						[]string{""}, []string{"serviceaccounts"},
-						hookServiceAccounts,
+						[]string{t.contract.ControllerServiceAccountName, t.contract.CertificateServiceAccountName},
 						[]string{"get"},
 					),
 					privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
@@ -136,29 +132,20 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 						[]string{ReleaseActivationName, AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence)},
 						[]string{"get", "update"},
 					),
-				)
-				if t.rollout.PreviousControllerReleaseSequence > 0 {
-					rules = append(rules,
-						privilegePolicyRule(
-							[]string{""}, []string{"configmaps"},
-							[]string{
-								AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence),
-							},
-							[]string{"get", "delete"},
-						),
-						privilegePolicyRule(
-							[]string{""}, []string{"configmaps"},
-							[]string{
-								HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence, t.rollout.PreviousControllerManagerImage),
-							},
-							[]string{"get", "delete"},
-						),
-					)
 				}
-				if t.rollout.ReleaseNamespace == corev1.NamespaceDefault {
+				if predecessorSequence > 0 {
 					rules = append(rules, privilegePolicyRule(
-						[]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"},
+						[]string{""}, []string{"configmaps"},
+						[]string{AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, predecessorSequence)},
+						[]string{"get", "delete"},
 					))
+					if t.predecessorManagerImage != "" {
+						rules = append(rules, privilegePolicyRule(
+							[]string{""}, []string{"configmaps"},
+							[]string{HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, predecessorSequence, t.predecessorManagerImage)},
+							[]string{"get", "delete"},
+						))
+					}
 				}
 				return rules
 			}(),
@@ -185,25 +172,6 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 			},
 		},
 	}
-	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
-		contracts = append(contracts, releaseRBACContract{
-			name: controllerDiscoveryBindingName(controller), namespace: corev1.NamespaceDefault,
-			rules: currentControllerDiscoveryRoleRules(),
-		})
-		contracts = append(contracts, releaseRBACContract{
-			name: hook, namespace: corev1.NamespaceDefault, component: "crd-manager",
-			rules: append(t.hookBindingTransitionRules(corev1.NamespaceDefault),
-				privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
-			),
-		})
-	}
-	if t.rollout.CoordinationNamespace != t.rollout.ReleaseNamespace &&
-		t.rollout.CoordinationNamespace != corev1.NamespaceDefault {
-		contracts = append(contracts, releaseRBACContract{
-			name: hook, namespace: t.rollout.CoordinationNamespace, component: "crd-manager",
-			rules: t.hookBindingTransitionRules(t.rollout.CoordinationNamespace),
-		})
-	}
 
 	if t.contract.CertificateRuntimeEnabled {
 		certificate := t.contract.CertificateServiceAccountName
@@ -211,7 +179,7 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 			privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get"}),
 			privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"mutatingwebhookconfigurations"}, []string{AdmissionConfigurationName}, []string{"get", "update"}),
 			privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingwebhookconfigurations"}, []string{AdmissionConfigurationName}, []string{"get", "update"}),
-			privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"}, runtimeGuardNames, []string{"get"}),
+			privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"}, guardNames, []string{"get"}),
 			privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
 		}
 		certificateRoleRules := []rbacv1.PolicyRule{
@@ -268,46 +236,101 @@ func (t releaseRBACInventory) contracts() []releaseRBACContract {
 	return contracts
 }
 
-// hookBindingTransitionRules keeps binding mutations in each exact namespace.
-// Bind is needed only for bindings inherited from a predecessor; the admission
-// contract separately limits the subject transition without granting its rules.
-func (t releaseRBACInventory) hookBindingTransitionRules(namespace string) []rbacv1.PolicyRule {
-	var rules []rbacv1.PolicyRule
-	appendBinding := func(name string, bind bool) {
-		rules = append(rules,
-			privilegePolicyRule([]string{rbacv1.GroupName}, []string{"roles"}, []string{name}, hookRoleTransitionVerbs(bind)),
-			privilegePolicyRule([]string{rbacv1.GroupName}, []string{"rolebindings"}, []string{name}, []string{"get", "patch"}),
-		)
+func releaseCRDNames() []string {
+	return []string{
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
+		"ptahrealms.operator.ptah.run",
+		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplans.operator.ptah.run",
+		"ptahschemas.operator.ptah.run",
 	}
-	if namespace == t.rollout.ReleaseNamespace {
-		appendBinding(t.rollout.ControllerDeploymentName+"-runtime-admission", t.rollout.PreviousControllerServiceAccountName != "")
-	}
-	if namespace == t.rollout.CoordinationNamespace {
-		appendBinding(t.rollout.ControllerDeploymentName, t.rollout.PreviousControllerServiceAccountName != "")
-	}
-	if namespace == corev1.NamespaceDefault && t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
-		appendBinding(controllerDiscoveryBindingName(t.rollout.ControllerDeploymentName), t.rollout.PreviousControllerServiceAccountName != "")
-	}
-	return rules
 }
 
-func hookRoleTransitionVerbs(bind bool) []string {
-	if bind {
-		return []string{"get", "bind"}
+// controllerClusterRoleRules is the controller ClusterRole the chart renders.
+func controllerClusterRoleRules(guardNames []string) []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{
+		privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, releaseCRDNames(), []string{"get"}),
+		privilegePolicyRule(
+			[]string{"admissionregistration.k8s.io"},
+			[]string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},
+			[]string{AdmissionConfigurationName},
+			[]string{"get"},
+		),
+		privilegePolicyRule(
+			[]string{"admissionregistration.k8s.io"},
+			[]string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"},
+			guardNames,
+			[]string{"get"},
+		),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas"}, nil, []string{"get", "list", "watch", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaplans"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaapprovals"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrations"}, nil, []string{"get", "list", "watch", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrations/finalizers"}, nil, []string{"update"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrations/status"}, nil, []string{"get", "update", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationplans"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationapprovals"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationapprovals/status"}, nil, []string{"get", "update", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahrealms"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"batch"}, []string{"jobs"}, nil, []string{"get", "list", "watch", "create", "patch"}),
+		privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{""}, []string{"pods/log"}, nil, []string{"get"}),
+		privilegePolicyRule([]string{""}, []string{"serviceaccounts"}, nil, []string{"get"}),
+		privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
+		privilegePolicyRule([]string{"node.k8s.io"}, []string{"runtimeclasses"}, nil, []string{"get"}),
+		privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
+		privilegePolicyRule([]string{""}, []string{"configmaps"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{""}, []string{"events"}, nil, []string{"create", "patch", "update"}),
 	}
-	return []string{"get"}
 }
 
-func (t releaseRBACInventory) runtimeAdmissionGuardNames() []string {
-	return currentControllerRuntimeGuardNames(t.rollout)
+func privilegePolicyRule(apiGroups, resources, resourceNames, verbs []string) rbacv1.PolicyRule {
+	return rbacv1.PolicyRule{
+		APIGroups:     apiGroups,
+		Resources:     resources,
+		ResourceNames: resourceNames,
+		Verbs:         verbs,
+	}
+}
+
+// releaseAdmissionGuardNames are the retained admission guards the release
+// keeps, in the order the chart lists them.
+func (t releaseRBACInventory) releaseAdmissionGuardNames() []string {
+	namespace, name, sequence, image := t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage
+	names := []string{
+		RolloutGuardPolicyName(sequence),
+		RuntimeGuardPolicyName(sequence),
+		RuntimePodGuardPolicyName(sequence),
+		HookIdentityGuardPolicyName(namespace, name, sequence, image),
+		HookIdentityProbeGuardPolicyName(namespace, name, sequence, image),
+		ReleaseActivationGuardPolicyName(namespace, name),
+		ControllerWriteGuardPolicyName(namespace, name, sequence, image),
+		ControllerJobWriteGuardPolicyName(namespace, name, sequence, image),
+		ControllerChunkWriteGuardPolicyName(namespace, name, sequence, image),
+		ControllerPlanWriteGuardPolicyName(namespace, name, sequence, image),
+		ControllerMigrationPlanWriteGuardPolicyName(namespace, name, sequence, image),
+		CertificateMutatingWriteGuardPolicyName(namespace, name),
+		CertificateValidatingWriteGuardPolicyName(namespace, name),
+		NamespaceDeletionGuardPolicyName(namespace, name),
+		ParentReplicaSetGuardPolicyName(namespace, name, sequence, image),
+		ParentHookPodOriginGuardPolicyName(namespace, name),
+		ParentHookJobOriginGuardPolicyName(namespace, name),
+		ParentHookJobContractPolicyName(namespace, name, sequence, image),
+	}
+	if t.contract.CertificateRuntimeEnabled {
+		names = append(names, StagingSecretGuardPolicyName(namespace, name))
+	}
+	return names
 }
 
 func (t releaseRBACInventory) bootstrapAdmissionGuardNames() []string {
 	names := []string{
 		HookIdentityGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		HookIdentityProbeGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
-		ServiceAccountObjectGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),
-		ServiceAccountOriginGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		ControllerWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		ControllerJobWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		ControllerChunkWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
@@ -502,15 +525,6 @@ func renderedReleaseRBACInventory(t *testing.T) releaseRBACInventory {
 	const controllerName = "ptah-e2e-ptah-operator"
 	attempt := hookIdentityDigest(settings.releaseNamespace, renderedRBACReleaseName, 1, renderedRBACManagerImage)
 	controllerServiceAccountName := settings.controllerServiceAccountName
-	if settings.controllerServiceAccountCreate {
-		base := strings.TrimSuffix(controllerServiceAccountName[:min(len(controllerServiceAccountName), 38)], "-")
-		principalDigest := sha256.Sum256([]byte(strings.Join([]string{
-			controllerServiceAccountName,
-			ourStateVersionString(),
-			attempt,
-		}, "\n")))
-		controllerServiceAccountName = fmt.Sprintf("%s-v1-%x", base, principalDigest)[:len(base)+4+12]
-	}
 	admissionContractVersion := int32(1)
 	certificateArgs := []string{
 		"--lease-name=" + controllerName + "-cert-rotation",
