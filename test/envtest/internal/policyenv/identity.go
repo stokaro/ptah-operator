@@ -10,9 +10,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// The user extras a projected ServiceAccount token carries. The credential
-// boundary policies read them to tell a token minted for a Pod from one that
-// was not.
+// The user extras a projected ServiceAccount token carries. No installed
+// policy reads them; the protected identities carry them so that each request
+// reaches admission as the one a real Pod's token would send.
 const (
 	podNameExtra = "authentication.kubernetes.io/pod-name"
 	podUIDExtra  = "authentication.kubernetes.io/pod-uid"
