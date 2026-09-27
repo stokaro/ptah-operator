@@ -17,7 +17,6 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/policy"
@@ -31,20 +30,16 @@ import (
 // against, so an approval that named only the plan would still be valid after
 // somebody else's run moved the database underneath it.
 type MigrationApprovalHandler struct {
-	Reader                 client.Reader
-	Decoder                cradmission.Decoder
-	Clock                  Clock
-	Mutate                 bool
-	ControllerImage        string
-	ControllerRevision     string
-	ControllerStateVersion int32
+	Reader    client.Reader
+	Decoder   cradmission.Decoder
+	Clock     Clock
+	Mutate    bool
+	Execution Execution
 }
 
 // Handle implements controller-runtime admission.Handler.
 func (h *MigrationApprovalHandler) Handle(ctx context.Context, req cradmission.Request) cradmission.Response {
-	if h.Reader == nil || h.Decoder == nil ||
-		!imageDigestPattern.MatchString(h.ControllerImage) ||
-		controllerstate.ValidateRevision(h.ControllerRevision) != nil || h.ControllerStateVersion < 1 {
+	if h.Reader == nil || h.Decoder == nil || !h.Execution.valid() {
 		return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("migration approval webhook is not initialized"))
 	}
 	if req.Operation != admissionv1.Create && req.Operation != admissionv1.Update {
@@ -123,10 +118,10 @@ func (h *MigrationApprovalHandler) hydrateMigrationBindings(
 	if plan.Spec.ContractVersion != migrationplan.ContractVersion {
 		return fmt.Errorf("referenced plan contract version %d is not the one this manager publishes", plan.Spec.ContractVersion)
 	}
-	if plan.Spec.ControllerImage != h.ControllerImage ||
-		plan.Spec.ControllerRevision != h.ControllerRevision ||
-		plan.Spec.ControllerStateVersion != h.ControllerStateVersion {
-		return fmt.Errorf("referenced plan manager identity is not current")
+	if err := h.Execution.binds(
+		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
+	); err != nil {
+		return err
 	}
 	if plan.Spec.MigrationRef != approval.Spec.MigrationRef {
 		return fmt.Errorf("approval migration reference does not match the plan")
@@ -147,11 +142,8 @@ func (h *MigrationApprovalHandler) hydrateMigrationBindings(
 		{"policy fingerprint", &approval.Spec.PolicyFingerprint, plan.Spec.PolicyFingerprint},
 		{"verification policy digest", &approval.Spec.VerificationPolicyDigest, plan.Spec.VerificationPolicyDigest},
 		{"execution binding ID", &approval.Spec.ExecutionBindingID, plan.Spec.ExecutionBindingID},
-		{"controller image", &approval.Spec.ControllerImage, plan.Spec.ControllerImage},
-		{"controller revision", &approval.Spec.ControllerRevision, plan.Spec.ControllerRevision},
 		{"Ptah version", &approval.Spec.PtahVersion, plan.Spec.PtahVersion},
 		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
-		{"runner image", &approval.Spec.RunnerImage, plan.Spec.RunnerImage},
 	} {
 		if *binding.value != "" && *binding.value != binding.want {
 			return fmt.Errorf("approval %s conflicts with the immutable plan", binding.name)
@@ -233,10 +225,10 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if plan.UID != approval.Spec.PlanRef.UID {
 		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
 	}
-	if plan.Spec.ControllerImage != h.ControllerImage ||
-		plan.Spec.ControllerRevision != h.ControllerRevision ||
-		plan.Spec.ControllerStateVersion != h.ControllerStateVersion {
-		return fmt.Errorf("referenced plan manager identity is not current")
+	if err := h.Execution.binds(
+		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
+	); err != nil {
+		return err
 	}
 
 	migration := &operatorv1alpha1.PtahMigration{}
@@ -276,12 +268,9 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	}
 	binding := migration.Status.ExecutionBinding
 	if binding == nil || binding.Epoch == "" || binding.Epoch != plan.Spec.ExecutionBindingID ||
-		binding.ControllerImage != plan.Spec.ControllerImage ||
-		binding.ControllerRevision != plan.Spec.ControllerRevision ||
 		binding.ControllerStateVersion != plan.Spec.ControllerStateVersion ||
 		binding.PtahVersion != plan.Spec.PtahVersion ||
 		binding.ExecutorImage != plan.Spec.ExecutorImage ||
-		binding.RunnerImage != plan.Spec.RunnerImage ||
 		binding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
 		return fmt.Errorf("an execution component changed after the plan was generated")
 	}
@@ -315,11 +304,8 @@ func migrationApprovalMatchesPlan(
 		"policy fingerprint":         {approval.PolicyFingerprint, plan.PolicyFingerprint},
 		"verification policy digest": {approval.VerificationPolicyDigest, plan.VerificationPolicyDigest},
 		"execution binding ID":       {approval.ExecutionBindingID, plan.ExecutionBindingID},
-		"controller image":           {approval.ControllerImage, plan.ControllerImage},
-		"controller revision":        {approval.ControllerRevision, plan.ControllerRevision},
 		"Ptah version":               {approval.PtahVersion, plan.PtahVersion},
 		"executor image":             {approval.ExecutorImage, plan.ExecutorImage},
-		"runner image":               {approval.RunnerImage, plan.RunnerImage},
 	} {
 		if pair[0] != pair[1] {
 			return fmt.Errorf("approval %s does not match the immutable plan", name)

@@ -845,9 +845,13 @@ next:
    recorded time, one atomic Secret update replaces the serving certificate,
    serving key, CA, and CA key. A lost response is accepted only after
    byte-exact readback. The delay defaults to the reconciliation interval, six
-   hours. An API server picks up a webhook configuration change within
-   seconds, so by the switch every one trusts the new CA; the delay stands in
-   for a proof that it does.
+   hours, and is at least one minute. An API server picks up a webhook
+   configuration change within seconds, so by the switch every one trusts the
+   new CA; the delay stands in for a proof that it does. The switch never
+   waits past the current certificate's life: it comes no later than
+   `certificateRotation.probeTimeout` before that certificate, or every CA
+   that verifies it, expires, which leaves the probe window for the new
+   certificate to reach the manager Pods first.
 3. **Retire.** The rotator lists the exact production Service EndpointSlices,
    rejects empty, unready, terminating, malformed, or duplicate endpoint sets,
    and performs a TLS handshake with every ready Pod IP using the Service DNS
@@ -857,26 +861,39 @@ next:
    needs no wait: an API server still holding the wider bundle trusts the
    served certificate all the same.
 
-The rotator comes back at the recorded switch time rather than a full interval
-later, and a restart neither resets nor skips the delay, because the time lives
-in the staging Secret. If an entry has lost the new CA when the rotator reads it
-again, the rotator adds it back and the delay starts over. If the recorded time
-lies ahead of the rotator's clock, the delay starts over from the clock the
-rotator has, so a clock that moved back cannot hold the switch off without
-limit.
+The rotator comes back at the switch time rather than a full interval later,
+and a restart neither resets nor skips the delay, because the expansion time
+lives in the staging Secret. If an entry has lost the new CA when the rotator
+reads it again, the rotator adds it back and the delay starts over. If the
+recorded time lies ahead of the rotator's clock, the delay starts over from the
+clock the rotator has, so a clock that moved back cannot hold the switch off
+without limit.
 
-The delay protects a serving certificate that API servers can still verify.
-When the current certificate or every CA that issued it has expired, or no
-managed entry holds such a CA, admission through it has already stopped, and
-the rotator switches without waiting. A certificate that looks not yet valid
-only means the rotator's clock runs behind the one that issued it, and does not
-shorten the delay. Renewing the serving certificate under an unchanged CA needs
+The delay is measured on the rotator's own clock, at both ends. A clock that is
+uniformly fast or slow does not change it. A clock that jumps forward during
+the delay, or a rotator Pod that moves to a node whose clock is ahead of the
+one that recorded the expansion, shortens it by that difference. Kubernetes
+certificate validity already assumes node clocks agree to within seconds;
+keep them synchronized and the delay holds with the same margin.
+
+The delay protects a serving certificate that API servers can still verify, so
+it applies to a planned CA renewal. When the current certificate or every CA
+that issued it has expired, or no managed entry holds such a CA, admission
+through it has already stopped, and the rotator switches in the same pass as
+the expansion. When the generated Secret is missing, or its `tls.crt` and
+`tls.key` cannot be read, running manager Pods keep serving the pair they last
+loaded, but a Pod that restarts cannot load one at all and the rotator cannot
+tell what is served; it switches in the same pass as well, since hours of that
+cost more than the seconds an API server may take to pick up the expansion. A
+certificate that looks not yet valid only means the rotator's clock runs behind
+the one that issued it, and does not shorten the delay. Renewing the serving certificate under an unchanged CA needs
 no delay either: the new certificate needs exactly the trust the old one had.
 
 The install's bootstrap material does not wait either. The chart renders a
 two-day CA, which is inside the renewal threshold from the start, and the
 rotator replaces any CA issued inside the threshold in its first pass, before
-it reports ready. `helm install --wait` therefore returns with the transition
+it reports ready. The chart refuses a `certificateRotation.renewalThreshold`
+under 48 hours for that reason. `helm install --wait` therefore returns with the transition
 finished. Otherwise the rotator's last bundle write would land a delay later,
 and if a `helm upgrade` were running then, between rendering the webhook
 configurations and applying them after its pre-upgrade hooks, the upgrade
@@ -916,13 +933,13 @@ paths normalize the type as part of their existing atomic material update.
 With missing-Secret recreation enabled, the rotator first appends a newly
 generated CA to each exact entry. It preserves every parseable certificate
 candidate from that entry even when neighboring bytes are malformed, without
-borrowing trust from another entry. Running manager Pods keep serving the
-certificate they last loaded, so the recreation waits out the same switch
-delay; a manager Pod that restarts in the meantime cannot start until the
-Secret exists again. The rotator then recreates only the policy-constrained
+borrowing trust from another entry. A manager Pod that restarts while the
+Secret is gone cannot mount its certificate, so the rotator does not wait out
+the switch delay: in the same pass it recreates only the policy-constrained
 Secret, accepts an uncertain or racing create only after byte-exact read-back,
 proves the new leaf at every stable endpoint, and contracts every entry to the
-new CA. Admission remains fail-closed while Pods reload the recreated
+new CA. An API server that has not yet picked up the expanded bundle refuses
+the matching requests until it does, usually for seconds. Admission remains fail-closed while Pods reload the recreated
 certificate. Manager readiness is tied to the webhook
 server's started checker rather than a process-only ping.
 
@@ -936,8 +953,9 @@ states on `/healthz` and `/readyz` without serving certificate or key material.
 The binary accepts those timings only when the operation deadline strictly
 exceeds Lease acquisition plus two endpoint-probe windows, and when the
 interval, the operation deadline, and the CA switch delay together stay below
-the renewal threshold, so a transition noticed a whole interval late still
-switches before the certificate that started it expires. Invalid or
+the renewal threshold. That keeps a planned renewal noticed a whole interval
+late from ever needing its full delay past the threshold; the switch deadline
+above is what keeps it ahead of the certificate's expiry. Invalid or
 overflowing timing combinations fail at process startup instead of creating a
 permanently unready rotator.
 
@@ -1021,11 +1039,10 @@ durable Apply claim is the one-shot authorization boundary: dispatch, lock
 contention, and controller restarts continue the claimed operation instead of
 letting a later timer reinterpret it.
 
-The plan contract also binds the manager's complete execution identity:
-manager image digest, controller source revision, controller state version,
-Ptah version, executor image digest, runner image digest, and runner protocol.
-If that identity changes before a mutating Job is dispatched, the current plan
-is no longer executable. A recorded approval becomes stale with reason
+The plan contract also binds what decides a plan's meaning when it runs: the
+controller state version, the Ptah version, the executor image digest, and the
+runner protocol. If any of them changes before a mutating Job is dispatched,
+the current plan is no longer executable. A recorded approval becomes stale with reason
 `ExecutionBindingChanged`. A claimed but undispatched Apply releases its old
 authorization and database lock, the plan is cleared, and the replacement
 manager runs Resolve, Verify, Observe, and Plan again. Approve only the
@@ -1033,12 +1050,50 @@ replacement plan; do not recreate an approval against the old UID or
 fingerprint. A dispatched Apply is never recreated under the new binding; its
 outcome is handled conservatively and requires post-Apply observation.
 
-The audit-visible `status.executionBinding` records that component tuple plus
-an opaque `epoch`. The epoch changes for every observed component transition,
-including a rollback to a byte-identical tuple. A plan and approval carry the
-epoch as `spec.executionBindingID`, so approval is one-shot for that exact
-transition: it cannot become valid again after a later rollout or rollback,
-even if all seven component fields return to their previous values.
+The manager's own image digest and source revision, and the runner image
+digest, are recorded and not bound. A plan records the manager that published
+it and a Job the manager that dispatched it; neither is in a plan fingerprint
+or an approval. A Job is collected five minutes after it is harvested, so the
+harvest copies its dispatcher into status, beside the publisher the plan
+names: `status.pendingObservation.dispatchedBy` and then
+`status.applied.dispatchedBy` for a schema, `status.lastRun.dispatchedBy` and
+`status.unresolvedRun.dispatchedBy` for a migration. A manager release that changes only these -- a patch or a
+security fix -- keeps the execution epoch. A pending approval stays valid and
+is applied, and a published plan stays current.
+
+Work the previous manager already dispatched is adopted under one rule: the
+replacement has to build the same Job, apart from the recorded manager
+identity. A `PtahSchema` claim's live Job is compared with the Job the
+replacement builds for it, with the manager identity taken from the live Pod
+template and the template held to the admission snapshot the claim persisted
+before dispatch. A release that changed nothing else in the Job adopts it. A
+release that also changed the Job or its Pod template -- an environment
+variable, an annotation, a security setting -- cannot confirm it: a dispatched
+Apply is settled as outcome unknown and the database is observed before
+anything else runs, and a dispatched read-only Job is run again under a new
+attempt. A `PtahMigration` run is read from its own Job and Pods and is never
+rebuilt, so a change to the Job template does not affect it.
+
+A claim that had not dispatched yet resolves its admission snapshot again from
+the template the replacement builds, and the `AdmissionSnapshotRefreshed` Event
+says so. That happens once per claim: a template that changes again retires
+the claim, because a builder that does not build the same Job twice would
+otherwise refresh it forever.
+
+The runner is built from the operator's source and ships in the manager's
+release, so its digest changes with every release, and binding it would bind the
+manager by another name. What the runner enforces inside the Pod -- the
+arguments and environment it accepts, the checks around the executor, and the
+result frame it returns -- is versioned by the runner protocol instead. A
+release that changes any of it bumps the protocol, and that retires the plans
+and approvals made under the old one.
+
+The audit-visible `status.executionBinding` records those four components plus
+an opaque `epoch`. The epoch changes whenever one of them changes, including a
+rollback to a byte-identical set. A plan and approval carry the epoch as
+`spec.executionBindingID`, so approval is one-shot for that exact transition: it
+cannot become valid again after a later rollout or rollback, even if all four
+components return to their previous values.
 
 A normal chart upgrade has a hard revision boundary: the `Recreate` strategy
 terminates every old manager Pod before any replacement manager Pod starts.
@@ -1048,8 +1103,10 @@ consistent and is never changed to the replacement binding. If an upgrade
 maintenance window requires that no new Apply be dispatched after the window
 begins, first scale the manager Deployment to zero and wait until all manager
 Pods have terminated. Then run `helm upgrade --wait`; the chart restores the
-configured replica count and the replacement manager invalidates every
-undispatched old-binding authorization before it can mutate a database.
+configured replica count. When the release changes the execution binding, the
+replacement manager invalidates every undispatched old-binding authorization
+before it can mutate a database. When it does not, those authorizations carry
+over, and the scale-down only holds dispatch for the length of the window.
 
 ## Mutable tags and registry outages
 

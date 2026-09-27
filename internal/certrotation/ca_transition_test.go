@@ -18,9 +18,11 @@ import (
 	"testing"
 	"time"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -213,23 +215,40 @@ func TestCATransitionContinuesWhenAThresholdIsReachedDuringIt(t *testing.T) {
 		}
 	})
 
-	t.Run("serving certificate expires while the switch waits", func(t *testing.T) {
+	t.Run("serving certificate would expire before the delay ends", func(t *testing.T) {
 		t.Parallel()
 		fixture := newCATransitionFixture(t)
 		start := fixture.original.leaf.NotAfter.Add(-3 * time.Hour).Truncate(time.Second)
-		delay := fixture.config.CASwitchDelay
-		fixture.mustPass(t, start, delay)
+		lastSafe := fixture.original.leaf.NotAfter.Add(-fixture.config.ProbeTimeout)
+		if !lastSafe.Before(start.Add(fixture.config.CASwitchDelay)) {
+			t.Fatal("test precondition: the old certificate outlives the delay")
+		}
+
+		// The expansion pass asks to come back one probe window before the old
+		// certificate expires, not when the delay would end. The supervisor
+		// schedules that pass, and it switches while the old one still serves.
+		fixture.mustPass(t, start, lastSafe.Sub(start))
+		staged := fixture.staged(t)
+		fixture.mustPass(t, lastSafe.Add(-time.Second), time.Second)
+		fixture.assertSourceUnchanged(t)
+		fixture.mustPass(t, lastSafe, 0)
+		if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), staged.material) {
+			t.Fatal("the switch did not happen before the old certificate expired")
+		}
+	})
+
+	t.Run("serving certificate already expired when the pass runs", func(t *testing.T) {
+		t.Parallel()
+		fixture := newCATransitionFixture(t)
+		start := fixture.original.leaf.NotAfter.Add(-3 * time.Hour).Truncate(time.Second)
+		fixture.mustPass(t, start, fixture.original.leaf.NotAfter.Add(-fixture.config.ProbeTimeout).Sub(start))
 		staged := fixture.staged(t)
 
-		// Once nothing verifies the old certificate, admission through it has
-		// stopped, and waiting out the rest of the delay only prolongs that.
-		expired := fixture.original.leaf.NotAfter.Add(time.Second)
-		fixture.mustPass(t, expired, 0)
+		// A pass that runs late, after the old certificate died, switches at
+		// once: admission through it has stopped, and waiting prolongs that.
+		fixture.mustPass(t, fixture.original.leaf.NotAfter.Add(time.Second), 0)
 		if !secretContainsMaterial(mustGetSecret(t, fixture.client, fixture.config), staged.material) {
 			t.Fatal("the switch did not happen once the old certificate expired")
-		}
-		if !expired.Before(start.Add(delay)) {
-			t.Fatal("test precondition: the old certificate expired after the switch was due anyway")
 		}
 	})
 
@@ -472,12 +491,102 @@ func TestIssuedInsideRenewalThreshold(t *testing.T) {
 	}
 }
 
-func TestStillServingCountsOnlyExpiry(t *testing.T) {
+func TestCATransitionRecreatesADeletedSecretRightAfterTheExpansion(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+	installEstablishedSecretCreateGuard(t, client, config)
+	installSecretCreateAdmission(t, client, config)
+	fixture := &caTransitionFixture{client: client, config: config, prober: &recordingProber{}}
+
+	// At the moment of the create, every managed entry must already trust
+	// both the CA the running managers still serve and the one being created.
+	createChecked := false
+	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		created := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret)
+		if len(action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions().DryRun) != 0 ||
+			created.Name != config.SecretName {
+			return false, nil, nil
+		}
+		createChecked = true
+		// A reactor runs under the fake client's lock, so it reads the tracker.
+		for index, bundle := range trackedEntryBundles(t, client, config) {
+			if !caBundleContainsCertificate(bundle, old.caPEM) || !caBundleContainsCertificate(bundle, created.Data[CACertificateKey]) {
+				t.Errorf("managed entry %d did not trust both CAs when the Secret was created", index)
+			}
+		}
+		staged, err := decodePendingCandidate(mustGetTrackedSecret(t, client, config.Namespace, config.StagingSecretName).Data, config)
+		if err != nil || staged.phase != stagingPhaseExpanded || !staged.expandedAt.Equal(now) {
+			t.Errorf("the expansion was not recorded before the create: %v", err)
+		}
+		return false, nil, nil
+	})
+	trace := fixture.traceWrites()
+
+	fixture.mustPass(t, now, 0)
+	if !createChecked {
+		t.Fatal("the pass did not recreate the Secret")
+	}
+	want := []string{
+		"update secrets/" + config.StagingSecretName,
+		"update mutatingwebhookconfigurations/" + config.MutatingWebhookConfiguration,
+		"update validatingwebhookconfigurations/" + config.ValidatingWebhookConfiguration,
+		"update secrets/" + config.StagingSecretName,
+		"create secrets/" + config.SecretName,
+		"update mutatingwebhookconfigurations/" + config.MutatingWebhookConfiguration,
+		"update validatingwebhookconfigurations/" + config.ValidatingWebhookConfiguration,
+		"update secrets/" + config.StagingSecretName,
+	}
+	if got := trace.snapshot(); !slices.Equal(got, want) {
+		t.Fatalf("recreation writes = %v, want %v", got, want)
+	}
+	assertFinalBundles(t, client, config, mustGetSecret(t, client, config).Data[CACertificateKey])
+}
+
+func TestCATransitionDoesNotHoldBackARecordedSecretRecreation(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+	installEstablishedSecretCreateGuard(t, client, config)
+	installSecretCreateAdmission(t, client, config)
+	fixture := &caTransitionFixture{client: client, config: config, prober: &recordingProber{}}
+
+	// A recreation interrupted after its expansion was recorded, and resumed
+	// well inside what would be the switch delay, creates the Secret at once
+	// and with the material it staged.
+	failed := false
+	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
+		if failed || len(options.DryRun) != 0 {
+			return false, nil, nil
+		}
+		failed = true
+		return true, nil, errors.New("injected create failure")
+	})
+	if _, err := fixture.pass(now, fixture.prober); err == nil {
+		t.Fatal("the interrupted recreation pass succeeded")
+	}
+	staged := fixture.staged(t)
+	if staged.phase != stagingPhaseExpanded || staged.sourceState != stagingSourceMissing {
+		t.Fatalf("interrupted recreation left phase %q for source %q", staged.phase, staged.sourceState)
+	}
+	fixture.mustPass(t, now.Add(time.Minute), 0)
+	if !secretContainsMaterial(mustGetSecret(t, client, config), staged.material) {
+		t.Fatal("the resumed recreation did not create the staged material")
+	}
+	assertFinalBundles(t, client, config, staged.material.caPEM)
+}
+
+func TestServingUntilCountsOnlyExpiry(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	material := mustGenerateMaterial(t, now, config)
-	// stillServing takes the leaf and bundle as already proved to belong
+	// servingUntil takes the leaf and bundle as already proved to belong
 	// together, so an unrelated short-lived CA stands in for one that expires
 	// before the leaf does.
 	shortLived := config
@@ -490,16 +599,17 @@ func TestStillServingCountsOnlyExpiry(t *testing.T) {
 		leaf   *certificateMaterial
 		bundle []byte
 		at     time.Time
-		want   bool
+		want   time.Time
 	}{
-		{name: "valid leaf and CA", leaf: &material, bundle: material.caPEM, at: now, want: true},
+		{name: "valid leaf and CA", leaf: &material, bundle: material.caPEM, at: now, want: material.leaf.NotAfter},
+		{name: "CA expires before the leaf", leaf: &material, bundle: short.caPEM, at: now, want: short.ca.NotAfter},
 		{name: "only CA expired", leaf: &material, bundle: short.caPEM, at: afterShort},
-		{name: "one CA of several still valid", leaf: &material, bundle: mustCombine(t, short.caPEM, material.caPEM), at: afterShort, want: true},
+		{name: "one CA of several still valid", leaf: &material, bundle: mustCombine(t, short.caPEM, material.caPEM), at: afterShort, want: material.leaf.NotAfter},
 		{name: "leaf expired", leaf: &material, bundle: material.caPEM, at: material.leaf.NotAfter},
-		{name: "leaf one nanosecond from expiry", leaf: &material, bundle: material.caPEM, at: material.leaf.NotAfter.Add(-time.Nanosecond), want: true},
+		{name: "leaf one nanosecond from expiry", leaf: &material, bundle: material.caPEM, at: material.leaf.NotAfter.Add(-time.Nanosecond), want: material.leaf.NotAfter},
 		// A leaf that looks not yet valid means this clock runs behind the one
 		// that issued it; that must not shorten the delay.
-		{name: "leaf not yet valid by this clock", leaf: &material, bundle: material.caPEM, at: material.leaf.NotBefore.Add(-time.Hour), want: true},
+		{name: "leaf not yet valid by this clock", leaf: &material, bundle: material.caPEM, at: material.leaf.NotBefore.Add(-time.Hour), want: material.leaf.NotAfter},
 		{name: "no CA known", leaf: &material, at: now},
 		{name: "no leaf", bundle: material.caPEM, at: now},
 	}
@@ -510,12 +620,12 @@ func TestStillServingCountsOnlyExpiry(t *testing.T) {
 			if test.leaf != nil {
 				leaf = test.leaf.leaf
 			}
-			got, err := stillServing(leaf, test.bundle, test.at)
+			got, err := servingUntil(leaf, test.bundle, test.at)
 			if err != nil {
-				t.Fatalf("stillServing() error = %v", err)
+				t.Fatalf("servingUntil() error = %v", err)
 			}
-			if got != test.want {
-				t.Fatalf("stillServing() = %v, want %v", got, test.want)
+			if !got.Equal(test.want) {
+				t.Fatalf("servingUntil() = %s, want %s", got, test.want)
 			}
 		})
 	}
@@ -663,7 +773,7 @@ func (fixture *caTransitionFixture) traceWrites() *writeTrace {
 				return false, nil, nil
 			}
 			written, ok := action.(interface{ GetObject() runtime.Object })
-			if !ok {
+			if !ok || dryRunAction(action) {
 				return false, nil, nil
 			}
 			name := written.GetObject().(metav1.Object).GetName()
@@ -692,6 +802,54 @@ func validatingEntryBundle(t *testing.T, fixture *caTransitionFixture, index int
 	}
 	t.Fatalf("validating webhook %q not found", name)
 	return nil
+}
+
+// dryRunAction reports whether a create or update only asked for admission,
+// like the Secret CREATE guard's probes, and so persisted nothing.
+func dryRunAction(action k8stesting.Action) bool {
+	switch typed := action.(type) {
+	case interface{ GetCreateOptions() metav1.CreateOptions }:
+		return len(typed.GetCreateOptions().DryRun) != 0
+	case interface{ GetUpdateOptions() metav1.UpdateOptions }:
+		return len(typed.GetUpdateOptions().DryRun) != 0
+	default:
+		return false
+	}
+}
+
+// trackedEntryBundles reads every managed entry's bundle straight from the
+// fake client's tracker, which a reactor can do without deadlocking.
+func trackedEntryBundles(t *testing.T, client *fake.Clientset, config Config) [][]byte {
+	t.Helper()
+	mutating, err := client.Tracker().Get(
+		schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "mutatingwebhookconfigurations"},
+		"", config.MutatingWebhookConfiguration,
+	)
+	if err != nil {
+		t.Fatalf("get tracked MutatingWebhookConfiguration: %v", err)
+	}
+	validating, err := client.Tracker().Get(
+		schema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingwebhookconfigurations"},
+		"", config.ValidatingWebhookConfiguration,
+	)
+	if err != nil {
+		t.Fatalf("get tracked ValidatingWebhookConfiguration: %v", err)
+	}
+	var bundles [][]byte
+	for _, webhook := range mutating.(*admissionregistrationv1.MutatingWebhookConfiguration).Webhooks {
+		if slices.Contains(config.MutatingWebhookNames, webhook.Name) {
+			bundles = append(bundles, webhook.ClientConfig.CABundle)
+		}
+	}
+	for _, webhook := range validating.(*admissionregistrationv1.ValidatingWebhookConfiguration).Webhooks {
+		if slices.Contains(config.ValidatingWebhookNames, webhook.Name) {
+			bundles = append(bundles, webhook.ClientConfig.CABundle)
+		}
+	}
+	if len(bundles) != len(config.MutatingWebhookNames)+len(config.ValidatingWebhookNames) {
+		t.Fatalf("read %d managed entries, want %d", len(bundles), len(config.MutatingWebhookNames)+len(config.ValidatingWebhookNames))
+	}
+	return bundles
 }
 
 func mustCombine(t *testing.T, bundles ...[]byte) []byte {

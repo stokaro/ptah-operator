@@ -27,12 +27,9 @@ func completeBinding() migrationplan.Binding {
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: digest('0'),
 		ExecutionBindingID:       "v1-" + strings.Repeat("1", 32),
-		ControllerImage:          "example.invalid/manager@" + digest('2'),
-		ControllerRevision:       "controller-revision",
 		ControllerStateVersion:   1,
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@" + digest('3'),
-		RunnerImage:              "example.invalid/operator@" + digest('4'),
 		RunnerProtocolVersion:    5,
 	}
 }

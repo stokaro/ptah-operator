@@ -25,6 +25,13 @@ import (
 // presents a certificate only the new CA verifies. Nothing proves it now; the
 // delay makes it true with a wide margin, since an API server sees a webhook
 // configuration change within seconds and the default delay is hours.
+//
+// The delay protects a serving certificate that still works, and never runs
+// past the moment it stops working: the switch comes no later than one probe
+// window before that certificate or every CA verifying it expires. An expired
+// serving certificate, one no managed entry can verify, a missing or
+// unreadable serving key pair, and the install's bootstrap CA have nothing to
+// protect, and the switch follows the expansion in the same pass.
 
 // runPendingCATransition takes one durable pending transition as far as the
 // clock allows. It returns a positive RequeueAfter while the switch waits.
@@ -91,15 +98,25 @@ func (r *Rotator) runPendingCATransition(
 	}
 
 	switchAt := pending.expandedAt.Add(r.config.CASwitchDelay)
-	if current.serving && now.Before(switchAt) {
-		r.logStep("CA transition waits for its switch", "switchAt", switchAt.Format(time.RFC3339))
-		return Result{RequeueAfter: switchAt.Sub(now)}, nil
+	if current.serving {
+		// The delay must not outlast the certificate it protects. Switch no
+		// later than one probe window before that certificate stops
+		// verifying, which is the time the switch pass allows for the new one
+		// to be projected into the manager Pods and served.
+		if lastSafe := current.until.Add(-r.config.ProbeTimeout); lastSafe.Before(switchAt) {
+			switchAt = lastSafe
+		}
+		if now.Before(switchAt) {
+			r.logStep("CA transition waits for its switch", "switchAt", switchAt.Format(time.RFC3339))
+			return Result{RequeueAfter: switchAt.Sub(now)}, nil
+		}
 	}
 	if !current.serving {
-		// The current serving certificate has expired, no managed entry holds
-		// a CA that issued it, or it is the install's bootstrap material, so
-		// there is nothing the delay would protect.
-		r.logStep("current serving certificate is expired, unverifiable, or bootstrap; switching without the delay")
+		// The generated Secret or its serving key pair is missing or
+		// unreadable, the serving certificate has expired, no managed entry
+		// holds a CA that issued it, or it is the install's bootstrap
+		// material. There is nothing the delay would protect.
+		r.logStep("current serving certificate is missing, unreadable, expired, unverifiable, or bootstrap; switching without the delay")
 	}
 	if err := r.switchToNewCA(ctx, primary, pending); err != nil {
 		return Result{}, err
@@ -116,15 +133,21 @@ type servingTrust struct {
 	// serving certificate through a CA in bundle. The switch delay protects
 	// only a certificate that it can.
 	serving bool
+	// until is when the current serving certificate stops verifying: the
+	// earlier of its own expiry and the latest expiry among the CAs in
+	// bundle. It is set only while serving is.
+	until time.Time
 }
 
 func (r *Rotator) currentServingTrust(ctx context.Context, primary *corev1.Secret) (servingTrust, error) {
 	if primary == nil {
-		// The Secret is gone, but running manager Pods keep the certificate
-		// they last loaded, and the managed entries keep the CA that issued it.
-		// Every parseable certificate in an entry is preserved by the expansion,
-		// so treat that certificate as serving and let the delay protect it.
-		return servingTrust{serving: true}, nil
+		// The Secret is gone. Running manager Pods keep the certificate they
+		// last loaded, but a Pod that restarts cannot mount one at all, and the
+		// rotator can no longer tell what is served. That is already broken:
+		// hours of it cost more than the seconds an API server may take to
+		// pick up the expansion, so the recreation does not wait. Every
+		// parseable certificate in an entry is still kept by the expansion.
+		return servingTrust{}, nil
 	}
 	now := r.now()
 	state, err := inspectSecret(primary, r.config, now)
@@ -160,11 +183,17 @@ func (r *Rotator) currentServingTrust(ctx context.Context, primary *corev1.Secre
 			trust.bundle = recovered
 		}
 	}
-	serving, err := stillServing(state.current.leaf, trust.bundle, now)
+	// A serving key pair the rotator cannot read leaves no leaf here, and
+	// takes the same path as a missing Secret: running manager Pods keep the
+	// pair they last loaded, but a Pod that restarts cannot load one at all.
+	until, err := servingUntil(state.current.leaf, trust.bundle, now)
 	if err != nil {
 		return servingTrust{}, err
 	}
-	trust.serving = serving && !issuedInsideRenewalThreshold(trust.bundle, r.config.RenewalThreshold)
+	if !until.IsZero() && !issuedInsideRenewalThreshold(trust.bundle, r.config.RenewalThreshold) {
+		trust.serving = true
+		trust.until = until
+	}
 	return trust, nil
 }
 
@@ -189,25 +218,33 @@ func issuedInsideRenewalThreshold(bundle []byte, threshold time.Duration) bool {
 	return true
 }
 
-// stillServing reports whether an API server could still verify the leaf
-// through a CA in the bundle, both already proved to belong together. Only
-// expiry counts against it: a certificate that looks not yet valid means this
-// clock runs behind the one that issued it, and switching early on the word
-// of a slow clock is exactly what the delay is there to prevent.
-func stillServing(leaf *x509.Certificate, bundle []byte, now time.Time) (bool, error) {
+// servingUntil returns when an API server stops being able to verify the leaf
+// through a CA in the bundle, both already proved to belong together, or the
+// zero time when it already cannot. Only expiry counts: a certificate that
+// looks not yet valid means this clock runs behind the one that issued it,
+// and switching early on the word of a slow clock is exactly what the delay
+// is there to prevent.
+func servingUntil(leaf *x509.Certificate, bundle []byte, now time.Time) (time.Time, error) {
 	if leaf == nil || len(bundle) == 0 || !now.Before(leaf.NotAfter) {
-		return false, nil
+		return time.Time{}, nil
 	}
 	certificates, err := parseCertificateBundle(bundle)
 	if err != nil {
-		return false, fmt.Errorf("parse current serving trust: %w", err)
+		return time.Time{}, fmt.Errorf("parse current serving trust: %w", err)
 	}
+	var latestCA time.Time
 	for _, certificate := range certificates {
-		if now.Before(certificate.NotAfter) {
-			return true, nil
+		if now.Before(certificate.NotAfter) && certificate.NotAfter.After(latestCA) {
+			latestCA = certificate.NotAfter
 		}
 	}
-	return false, nil
+	if latestCA.IsZero() {
+		return time.Time{}, nil
+	}
+	if leaf.NotAfter.Before(latestCA) {
+		return leaf.NotAfter, nil
+	}
+	return latestCA, nil
 }
 
 // candidateTrustedEverywhere reports whether every managed entry already

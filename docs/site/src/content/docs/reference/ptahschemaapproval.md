@@ -48,8 +48,11 @@ spec:
 An approval that names a plan the schema has moved past is refused. So is one
 whose fingerprint does not match the plan it names: the fingerprint binds the
 artifact, the observed and desired state, the policy, the target identity and
-the executing images, so a change to any of them retires the approval rather
-than letting it carry over.
+the execution binding -- the executor image, the Ptah version, the runner
+protocol and the controller-state version -- so a change to any of them retires
+the approval rather than letting it carry over. The manager's own image and
+revision are not in it: a manager release that changes only those, a patch or
+a security fix, keeps the approval and applies the plan it names.
 
 ### What the cluster stores
 
@@ -89,11 +92,8 @@ spec:
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
   ptahVersion: v0.9.0-34-gdac0872ac
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
-  runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
+  # What the runner enforces and returns, versioned; not the runner's image.
   runnerProtocolVersion: 5
-  controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  # The exact manager build, not a number.
-  controllerRevision: a7d0119c0bd0d34e0b73f1d9e0e5c6aa0d9ff2b1
   controllerStateVersion: 2
 ```
 
@@ -108,12 +108,10 @@ spec:
 | `spec.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
 | `spec.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `spec.artifactDigest` | `string`, required | ArtifactDigest is the OCI artifact the approved plan was computed from. |
-| `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager the approved apply must be dispatched by. |
-| `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
-| `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it writes. |
+| `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the controller-state semantics the approved apply must be dispatched under. |
 | `spec.coordinationDigest` | `string`, required | CoordinationDigest is the database realm the approved apply takes its turn in. |
 | `spec.desiredStateFingerprint` | `string`, required | DesiredStateFingerprint is the state the artifact declared. |
-| `spec.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch the approved plan belongs to. It changes on every operator transition, including one that returns to byte-identical versions, so an approval cannot survive a rollout unseen. |
+| `spec.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch the approved plan belongs to. It changes whenever a component that decides what the plan means when it runs changes, including a change back to byte-identical versions, so an approval cannot survive such a rollout unseen. A manager upgrade that changes none of them keeps the epoch and this approval. |
 | `spec.executorImage` | `string`, required | ExecutorImage is the digest-pinned image it must run in. |
 | `spec.mutationRequestUID` | `string`, required | MutationRequestUID records the mutating AdmissionReview that stamped the authenticated identity. Kubernetes creates a distinct AdmissionReview UID for the later validating webhook, so the validator checks this field is present while matching identity against its own authenticated UserInfo. |
 | `spec.planFingerprint` | `string`, required | PlanFingerprint is the plan's complete approval identity. Everything below is the same identity written out, so a reader can see what was approved without fetching the plan, and the admission that accepts this approval checks each part against the live plan. |
@@ -122,8 +120,7 @@ spec:
 | `spec.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `spec.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy the plan was computed under, so an edited policy retires this decision instead of inheriting it. |
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build the approved apply must run. |
-| `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervises it. |
-| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the protocol the runner that supervises it must speak: what the runner enforces inside the Pod and the result frame it returns. |
 | `spec.schemaRef` | `object`, required | SchemaRef is the resource the approved change belongs to. |
 | `spec.schemaRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `spec.schemaRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |

@@ -225,25 +225,23 @@ func main() {
 	}
 
 	decoder := cradmission.NewDecoder(manager.GetScheme())
+	// Approvals are judged against what this manager executes with, and not
+	// against its own release: a plan an earlier release published stays
+	// approvable while the execution binding is the same.
+	var execution approvaladmission.Execution
+	execution.ControllerStateVersion, execution.PtahVersion, execution.ExecutorImage,
+		execution.RunnerProtocolVersion = builder.ExecutionBinding()
 	manager.GetWebhookServer().Register(mutateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
-		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true,
-		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
-		ControllerStateVersion: controllerstate.CurrentVersion,
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true, Execution: execution,
 	}})
 	manager.GetWebhookServer().Register(validateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
-		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false,
-		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
-		ControllerStateVersion: controllerstate.CurrentVersion,
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false, Execution: execution,
 	}})
 	manager.GetWebhookServer().Register(mutateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
-		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true,
-		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
-		ControllerStateVersion: controllerstate.CurrentVersion,
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true, Execution: execution,
 	}})
 	manager.GetWebhookServer().Register(validateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
-		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false,
-		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
-		ControllerStateVersion: controllerstate.CurrentVersion,
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false, Execution: execution,
 	}})
 	manager.GetWebhookServer().Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder,

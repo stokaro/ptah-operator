@@ -227,10 +227,10 @@ func migrationHandlerFixture(
 func migrationJobBuilder() workload.Builder {
 	return workload.Builder{
 		ExecutorImage:          "example.test/executor@" + digest('2'),
-		RunnerImage:            "example.test/runner@" + digest('3'),
+		RunnerImage:            testRunnerImage,
 		PtahVersion:            "v0.3.0",
-		ControllerImage:        "example.test/controller@" + digest('1'),
-		ControllerRevision:     "test-revision",
+		ControllerImage:        testControllerImage,
+		ControllerRevision:     testControllerRevision,
 		ControllerStateVersion: 1,
 	}
 }
@@ -270,12 +270,9 @@ func migrationJobFixture(
 		Status: operatorv1alpha1.PtahMigrationStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 				Epoch:                  "v1-11111111111111111111111111111111",
-				ControllerImage:        "example.test/controller@" + digest('1'),
-				ControllerRevision:     "test-revision",
 				ControllerStateVersion: 1,
 				PtahVersion:            "v0.3.0",
 				ExecutorImage:          "example.test/executor@" + digest('2'),
-				RunnerImage:            "example.test/runner@" + digest('3'),
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
 		},

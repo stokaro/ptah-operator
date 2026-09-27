@@ -171,15 +171,15 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		"VerificationPolicyUID":    func(v *fingerprint.PlanBinding) { v.VerificationPolicyUID += "-new" },
 		"VerificationPolicyDigest": func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
 		"ExecutionBindingID":       func(v *fingerprint.PlanBinding) { v.ExecutionBindingID = "v1-44444444444444444444444444444444" },
-		"ControllerImage": func(v *fingerprint.PlanBinding) {
-			v.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("d", 64)
+		"ControllerStateVersion":   func(v *fingerprint.PlanBinding) { v.ControllerStateVersion++ },
+		"PtahVersion":              func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
+		"ExecutorImage":            func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
+		"RunnerProtocolVersion":    func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+		"Destructive":              func(v *fingerprint.PlanBinding) { v.Destructive = !v.Destructive },
+		"PrivilegeChanges": func(v *fingerprint.PlanBinding) {
+			v.PrivilegeChanges = append(append([]string(nil), v.PrivilegeChanges...), "Role")
 		},
-		"ControllerRevision":     func(v *fingerprint.PlanBinding) { v.ControllerRevision += "-new" },
-		"ControllerStateVersion": func(v *fingerprint.PlanBinding) { v.ControllerStateVersion++ },
-		"PtahVersion":            func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
-		"ExecutorImage":          func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
-		"RunnerImage":            func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
-		"RunnerProtocolVersion":  func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+		"StatementCount": func(v *fingerprint.PlanBinding) { v.StatementCount++ },
 	}
 	// Keyed by field name, and checked against the type: a field added to the
 	// binding with no case here fails instead of going unmeasured. Prose keys
@@ -210,6 +210,79 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 				t.Fatalf("mutation %q did not change fingerprint %s", name, got)
 			}
 		})
+	}
+}
+
+// TestPlanBindingReadsPrivilegeChangesAsASet holds the privilege kinds to what
+// they mean: which kinds of authority the plan changes. The order the
+// classifier found them in, and a kind found twice, change nothing; a kind
+// dropped does.
+func TestPlanBindingReadsPrivilegeChangesAsASet(t *testing.T) {
+	t.Parallel()
+
+	base := completePlanBinding()
+	base.PrivilegeChanges = []string{"Grant", "Role"}
+	want, err := base.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, kinds := range map[string][]string{
+		"reordered":  {"Role", "Grant"},
+		"duplicated": {"Grant", "Role", "Grant"},
+	} {
+		same := base
+		same.PrivilegeChanges = kinds
+		got, err := same.Fingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s privilege kinds changed the fingerprint", name)
+		}
+	}
+	for name, kinds := range map[string][]string{
+		"one kind dropped": {"Grant"},
+		"none":             nil,
+	} {
+		other := base
+		other.PrivilegeChanges = kinds
+		got, err := other.Fingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == want {
+			t.Errorf("%s privilege kinds kept the fingerprint", name)
+		}
+	}
+	if len(base.PrivilegeChanges) != 2 || base.PrivilegeChanges[0] != "Grant" || base.PrivilegeChanges[1] != "Role" {
+		t.Fatalf("Fingerprint() rewrote the caller's slice: %v", base.PrivilegeChanges)
+	}
+
+	empty := completePlanBinding()
+	empty.StatementCount = 0
+	if _, err := empty.Fingerprint(); err == nil {
+		t.Fatal("Fingerprint() accepted a plan with no statements")
+	}
+}
+
+// TestPlanBindingLeavesTheManagerOut holds the binding to what decides a plan's
+// meaning when it runs. The manager's image and revision, and the runner image
+// built beside it, change with every release of the operator; a fingerprint
+// that held them would retire every pending approval on a patch release. The
+// runner's enforcement is bound through RunnerProtocolVersion instead.
+func TestPlanBindingLeavesTheManagerOut(t *testing.T) {
+	t.Parallel()
+
+	bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
+	for _, name := range []string{"ControllerImage", "ControllerRevision", "RunnerImage"} {
+		if _, found := bindingType.FieldByName(name); found {
+			t.Errorf("PlanBinding carries %s, so a manager release would change every plan's fingerprint", name)
+		}
+	}
+	for _, name := range []string{"ControllerStateVersion", "PtahVersion", "ExecutorImage", "RunnerProtocolVersion"} {
+		if _, found := bindingType.FieldByName(name); !found {
+			t.Errorf("PlanBinding lost %s, which decides what the plan means when it runs", name)
+		}
 	}
 }
 
@@ -253,14 +326,6 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 			mutate: func(b *fingerprint.PlanBinding) { b.ExecutionBindingID = "retired-epoch" },
 			want:   "valid execution binding ID",
 		},
-		"tag-pinned manager image": {
-			mutate: func(b *fingerprint.PlanBinding) { b.ControllerImage = "example.invalid/manager:latest" },
-			want:   "controller image",
-		},
-		"control-character revision": {
-			mutate: func(b *fingerprint.PlanBinding) { b.ControllerRevision = "release\ncandidate" },
-			want:   "control characters",
-		},
 		"negative state version": {
 			mutate: func(b *fingerprint.PlanBinding) { b.ControllerStateVersion = -1 },
 			want:   "controller state version",
@@ -277,7 +342,7 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 	}
 }
 
-const currentPlanBindingFingerprint = "sha256:9f0c4f01e635cb3d36229ce273efbc4b6eeea56d08a83a38027ffa222157ea0b"
+const currentPlanBindingFingerprint = "sha256:70aa6bacc97510cb2a14105915a4f083efbb0dc3379fbc46f405498f63dffa0e"
 
 func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 	t.Parallel()
@@ -316,9 +381,15 @@ func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 func TestPlanBindingRefusesAnIncompleteBinding(t *testing.T) {
 	t.Parallel()
 
+	// A plan that is not destructive and changes no privilege is the common
+	// case, so the zero value of these two is a reading, not a gap.
+	readings := map[string]bool{"Destructive": true, "PrivilegeChanges": true}
 	bindingType := reflect.TypeOf(fingerprint.PlanBinding{})
 	for index := range bindingType.NumField() {
 		field := bindingType.Field(index)
+		if readings[field.Name] {
+			continue
+		}
 		t.Run(field.Name, func(t *testing.T) {
 			t.Parallel()
 
@@ -347,12 +418,11 @@ func completePlanBinding() fingerprint.PlanBinding {
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
 		ExecutionBindingID:       "v1-33333333333333333333333333333333",
-		ControllerImage:          "example.invalid/manager@sha256:" + strings.Repeat("c", 64),
-		ControllerRevision:       "controller-test-revision",
 		ControllerStateVersion:   1,
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
-		RunnerImage:              "example.invalid/operator@sha256:runner",
 		RunnerProtocolVersion:    1,
+		PrivilegeChanges:         []string{"Grant"},
+		StatementCount:           3,
 	}
 }

@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "21"
-    operator.ptah.run/crd-schema-digest: "sha256:1d4a834cd94281a224328fb83f77b42b5a543b031a57560430078c9e33427691"
+    operator.ptah.run/crd-schema-version: "22"
+    operator.ptah.run/crd-schema-digest: "sha256:77b58e846d82d2e416e9786a1b1f1dbe4ad55330a1d1932fc465d3fb4cd30282"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -979,6 +979,8 @@ spec:
                     - templateDigest
                     - version
                     type: object
+                  admissionSnapshotRefreshed:
+                    type: boolean
                   approvalRef:
                     properties:
                       name:
@@ -1247,14 +1249,6 @@ spec:
                 x-kubernetes-list-type: map
               executionBinding:
                 properties:
-                  controllerImage:
-                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
-                    type: string
-                  controllerRevision:
-                    maxLength: 128
-                    minLength: 1
-                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
-                    type: string
                   controllerStateVersion:
                     format: int32
                     minimum: 1
@@ -1269,21 +1263,15 @@ spec:
                     maxLength: 128
                     minLength: 1
                     type: string
-                  runnerImage:
-                    minLength: 1
-                    type: string
                   runnerProtocolVersion:
                     format: int32
                     minimum: 1
                     type: integer
                 required:
-                - controllerImage
-                - controllerRevision
                 - controllerStateVersion
                 - epoch
                 - executorImage
                 - ptahVersion
-                - runnerImage
                 - runnerProtocolVersion
                 type: object
               history:
@@ -1351,6 +1339,26 @@ spec:
                     maxItems: 256
                     type: array
                     x-kubernetes-list-type: set
+                  dispatchedBy:
+                    properties:
+                      controllerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      runnerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - controllerImage
+                    - controllerRevision
+                    - runnerImage
+                    type: object
                   finishedAt:
                     format: date-time
                     type: string
@@ -1432,6 +1440,26 @@ spec:
                 type: object
               unresolvedRun:
                 properties:
+                  dispatchedBy:
+                    properties:
+                      controllerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      runnerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - controllerImage
+                    - controllerRevision
+                    - runnerImage
+                    type: object
                   jobName:
                     maxLength: 253
                     type: string

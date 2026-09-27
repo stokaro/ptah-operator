@@ -281,6 +281,35 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 	}
 }
 
+// TestBuildMigrationAcceptsAManagerOnlyChange is the migration builder's half of
+// a manager release that shares the execution binding: the status was written
+// under one manager, a manager with another image, revision and runner image
+// builds the Apply, and the Job records the manager that built it.
+func TestBuildMigrationAcceptsAManagerOnlyChange(t *testing.T) {
+	t.Parallel()
+
+	next := builderFixture()
+	next.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("8", 64)
+	next.ControllerRevision = "controller-next-revision"
+	next.RunnerImage = "example.invalid/operator@sha256:" + strings.Repeat("9", 64)
+	operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+	job, err := next.BuildMigration(migrationFixture(), operation, migrationPlanFixture())
+	if err != nil {
+		t.Fatalf("BuildMigration() refused a manager that shares the execution binding: %v", err)
+	}
+	controllerImage, controllerRevision, runnerImage := ManagerIdentityOf(job)
+	if controllerImage != next.ControllerImage || controllerRevision != next.ControllerRevision || runnerImage != next.RunnerImage {
+		t.Fatalf("Job records manager %q, %q, runner %q; want the manager that built it", controllerImage, controllerRevision, runnerImage)
+	}
+
+	moved := builderFixture()
+	moved.ExecutorImage = "example.invalid/ptah@" + digest('9')
+	if _, err := moved.BuildMigration(migrationFixture(), operation, migrationPlanFixture()); err == nil ||
+		!strings.Contains(err.Error(), "execution binding is stale") {
+		t.Fatalf("BuildMigration() with another executor = %v, want a stale-binding refusal", err)
+	}
+}
+
 func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 	t.Parallel()
 	builder := builderFixture()
@@ -519,12 +548,9 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 		Status: operatorv1alpha1.PtahMigrationStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 				Epoch:                  "v1-33333333333333333333333333333333",
-				ControllerImage:        "example.invalid/manager@" + digest('f'),
-				ControllerRevision:     "controller-test-revision",
 				ControllerStateVersion: 1,
 				PtahVersion:            "v0.3.0",
 				ExecutorImage:          "example.invalid/ptah@" + digest('d'),
-				RunnerImage:            "example.invalid/operator@" + digest('e'),
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
 			Artifact: &operatorv1alpha1.OCIArtifactAccessBinding{

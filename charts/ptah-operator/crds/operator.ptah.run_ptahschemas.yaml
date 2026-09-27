@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "21"
-    operator.ptah.run/crd-schema-digest: "sha256:0b4a5185926fa1bfd8f3baab684533da6a430a5ed114e77fc70db56ba2226b2f"
+    operator.ptah.run/crd-schema-version: "22"
+    operator.ptah.run/crd-schema-digest: "sha256:9123c02a4f3c983f4c30859ba2ea2f850b3d183fb08502c62f8c1b2c63dccda3"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1032,6 +1032,8 @@ spec:
                     - templateDigest
                     - version
                     type: object
+                  admissionSnapshotRefreshed:
+                    type: boolean
                   attempt:
                     format: int32
                     type: integer
@@ -1236,6 +1238,26 @@ spec:
                     type: integer
                   coordinationDigest:
                     type: string
+                  dispatchedBy:
+                    properties:
+                      controllerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      runnerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - controllerImage
+                    - controllerRevision
+                    - runnerImage
+                    type: object
                   executionBindingID:
                     pattern: ^v1-[0-9a-f]{32}$
                     type: string
@@ -1316,14 +1338,6 @@ spec:
                 type: array
               executionBinding:
                 properties:
-                  controllerImage:
-                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
-                    type: string
-                  controllerRevision:
-                    maxLength: 128
-                    minLength: 1
-                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
-                    type: string
                   controllerStateVersion:
                     format: int32
                     minimum: 1
@@ -1338,21 +1352,15 @@ spec:
                     maxLength: 128
                     minLength: 1
                     type: string
-                  runnerImage:
-                    minLength: 1
-                    type: string
                   runnerProtocolVersion:
                     format: int32
                     minimum: 1
                     type: integer
                 required:
-                - controllerImage
-                - controllerRevision
                 - controllerStateVersion
                 - epoch
                 - executorImage
                 - ptahVersion
-                - runnerImage
                 - runnerProtocolVersion
                 type: object
               lastAttemptTime:
@@ -1646,6 +1654,26 @@ spec:
                         x-kubernetes-map-type: atomic
                     required:
                     - urlFrom
+                    type: object
+                  dispatchedBy:
+                    properties:
+                      controllerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      runnerImage:
+                        maxLength: 512
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - controllerImage
+                    - controllerRevision
+                    - runnerImage
                     type: object
                   driftSeverity:
                     type: string

@@ -5538,7 +5538,7 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			child:       "crd-upgrade",
 			old:         "\twait_runtime_ready\n\twait_for_read_only_job_cleanup\n\tquiesce_read_only_job_schema\n\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n\twait_for_predecessor_apply_job_terminal\n\twait_for_predecessor_apply_job_cleanup\n\tafter_revision=",
 			replacement: "\twait_for_read_only_job_cleanup\n\tquiesce_read_only_job_schema\n\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n\twait_for_predecessor_apply_job_terminal\n\twait_for_predecessor_apply_job_cleanup\n\tafter_revision=",
-			wantError:   "successor read-only Job cleanup and running Apply retirement after activation",
+			wantError:   "successor read-only Job cleanup and running Apply adoption after activation",
 		},
 		{
 			name:        "CRD recovery returns successfully before doing any work",
@@ -5636,7 +5636,7 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			child:       "crd-upgrade",
 			old:         "\twait_for_read_only_job_cleanup\n\tquiesce_read_only_job_schema\n\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n\twait_for_predecessor_apply_job_terminal\n\twait_for_predecessor_apply_job_cleanup\n\tafter_revision=",
 			replacement: "\tquiesce_read_only_job_schema\n\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n\twait_for_predecessor_apply_job_terminal\n\twait_for_predecessor_apply_job_cleanup\n\tafter_revision=",
-			wantError:   "successor read-only Job cleanup and running Apply retirement after activation",
+			wantError:   "successor read-only Job cleanup and running Apply adoption after activation",
 		},
 		{
 			name:        "CRD read-only Job terminal fixture accepts partial invariant",
@@ -5689,14 +5689,21 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			child:       "crd-upgrade",
 			old:         "\tassert_predecessor_apply_remains_exclusive_while_running\n",
 			replacement: "\ttrue # running Apply exclusivity proof removed\n",
-			wantError:   "successor read-only Job cleanup and running Apply retirement after activation",
+			wantError:   "successor read-only Job cleanup and running Apply adoption after activation",
+		},
+		{
+			name:        "CRD manager-only upgrade stops holding the schema unchanged",
+			child:       "crd-upgrade",
+			old:         "retires nothing.\n\tfor resource in ptahschema ptahschemaplan ptahschemaapproval; do\n",
+			replacement: "retires nothing.\n\tfor resource in ptahschemaplan ptahschemaapproval; do\n",
+			wantError:   "manager-only upgrade leaves the schema, its plan and its approval unchanged",
 		},
 		{
 			name:        "CRD running Apply barrier released before the proof",
 			child:       "crd-upgrade",
 			old:         "\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n",
 			replacement: "\trelease_running_apply_barrier\n\tassert_predecessor_apply_remains_exclusive_while_running\n",
-			wantError:   "successor read-only Job cleanup and running Apply retirement after activation",
+			wantError:   "successor read-only Job cleanup and running Apply adoption after activation",
 		},
 		{
 			name:        "CRD controller guarded-field proof removed",

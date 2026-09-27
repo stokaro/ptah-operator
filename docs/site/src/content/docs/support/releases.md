@@ -453,8 +453,8 @@ that pair in plans, approvals, operation Jobs, and applied status, so an
 executor change is an explicit new execution binding even when the operator
 release is unchanged. Release builds also inject the exact manager source
 revision. The manager refuses to start without both a digest-pinned manager
-image identity and that revision, and records them together with the
-controller-state contract version in every new execution binding.
+image identity and that revision, and records them on every plan it publishes
+and every Job it dispatches. They are a record, not a binding.
 
 The retained rollout guards pin that contract for the life of a release
 sequence. The runtime Pod guard carries a digest of the manager's own arguments,
@@ -465,25 +465,38 @@ while the sequence is unchanged: the guard reports that it pins the executable
 contract of that sequence. Ship such a change as a chart version, which advances
 the sequence and creates guards for the new contract.
 
-Changing `execution.ptahVersion`, `execution.executorImage`, or
-`execution.runnerImage`, or rolling out a different manager image, manager
-revision, or controller-state contract, intentionally invalidates a plan and
-recorded approval until a mutating Job has been dispatched. A claimed but
-undispatched Apply also returns to read-only reconciliation. Wait for the
-replacement manager to finish Resolve, Verify, Observe, and Plan, review the
-new plan UID and fingerprint, and issue a new approval. Do not carry approval
-objects across an execution-binding upgrade as deployment automation. A
-dispatched Apply remains bound to its captured execution identity and proceeds
-through conservative outcome classification and post-Apply observation; the
-upgrade never recreates it with different binaries.
+Changing `execution.ptahVersion` or `execution.executorImage`, or rolling out a
+release with a different controller-state contract or runner protocol,
+intentionally invalidates a plan and recorded approval until a mutating Job has
+been dispatched. A claimed but undispatched Apply also returns to read-only
+reconciliation. Wait for the replacement manager to finish Resolve, Verify,
+Observe, and Plan, review the new plan UID and fingerprint, and issue a new
+approval. Do not carry approval objects across an execution-binding upgrade as
+deployment automation. A dispatched Apply remains bound to its captured
+execution identity and proceeds through conservative outcome classification and
+post-Apply observation; the upgrade never recreates it with different binaries.
 
-`status.executionBinding` exposes the manager image, manager revision,
-controller-state contract, Ptah version, executor image, runner image, runner
-protocol, and its opaque `epoch` for audit. Every observed component transition
-creates a new epoch, including rollback to an identical tuple. Current plan
-contract v3 binds the manager fields explicitly. Plans and approvals reference
-the epoch as `spec.executionBindingID`; therefore an approval is valid for only
-one transition and cannot be reused after rollout or rollback.
+A release that changes only the manager image, the manager revision and
+`execution.runnerImage` -- which the release builds together, from one source
+tree -- invalidates nothing. The execution epoch, the current plan and any
+pending approval carry over, and the replacement manager applies the approval.
+It adopts a Job its predecessor dispatched only when it builds the same Job
+apart from the recorded manager identity. A release that also changes the Job
+or its Pod template settles a dispatched `PtahSchema` Apply as outcome unknown,
+which a read-only observation then resolves, and runs a dispatched read-only
+Job again; a `PtahMigration` run is read from its own Job and is not affected.
+[Normal status progression](../../use/operations/#normal-status-progression)
+states the rule. The runner's enforcement is bound through the runner protocol
+version rather than its digest, and a release that changes what the runner
+enforces bumps that version.
+
+`status.executionBinding` exposes the controller-state contract, Ptah version,
+executor image, runner protocol, and its opaque `epoch` for audit. Every
+transition of those components creates a new epoch, including rollback to an
+identical set. Current plan contract v3 binds exactly those, and records the
+publishing manager on the plan without binding it. Plans and approvals
+reference the epoch as `spec.executionBindingID`; therefore an approval is
+valid for only one transition and cannot be reused after rollout or rollback.
 
 The invalidation boundary starts when the replacement manager owns
 reconciliation, not when `helm upgrade` is invoked. The `Recreate` strategy

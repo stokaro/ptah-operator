@@ -50,9 +50,11 @@ folgt eine neue, ausschließlich lesende Beobachtung.
 Sicherheitseigenschaften:
 
 - OCI-Tags werden einmal aufgelöst. Alle weiteren Artefaktzugriffe verwenden den Digest.
-- Pläne binden die exakten Bytes an Artefakt, Ziel, beobachteten Zustand, Richtlinie,
-  per Digest festgelegtes Manager-Image, Manager-Revision und Zustandssemantik,
-  Ptah-Version, Executor-Image, Runner-Image und Runner-Protokoll.
+- Pläne binden die exakten Bytes an Artefakt, Ziel, beobachteten Zustand, Richtlinie
+  und an das, was ihre Ausführung bestimmt: Zustandssemantik des Controllers,
+  Ptah-Version, Executor-Image und Runner-Protokoll. Image und Revision des
+  Managers werden aufgezeichnet, aber nicht gebunden, sodass ein Patch-Release
+  des Operators ausstehende Freigaben behält.
 - Freigaben sind eigene unveränderliche Ressourcen. Die Admission-Prüfung
   versieht sie mit der authentifizierten Identität.
 - Destruktive Pläne sind standardmäßig deaktiviert. Auch nach der Aktivierung

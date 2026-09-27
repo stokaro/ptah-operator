@@ -1505,6 +1505,12 @@ the objects it names, so it counts for pods/exec and serviceaccounts/token.
 {{- $granted | toJson -}}
 {{- end -}}
 
+{{- /* bootstrapCADays is the life of the CA webhookCertificateMaterialJSON
+      generates when no webhook Secret exists yet.
+      validateCertificateRenewalThreshold holds the renewal threshold to at
+      least this, so both read it here and cannot drift apart. */ -}}
+{{- define "ptah-operator.bootstrapCADays" -}}2{{- end -}}
+
 {{/*
 The certificate material the webhook Secret carries: read from the Secret the
 release already holds, or generated when it holds none. The caller does the
@@ -1541,7 +1547,7 @@ Secret it has to refuse.
 {{- $_ := set $material "tlsKey" (required "generated webhook Secret must contain tls.key" (index $existing.data "tls.key")) -}}
 {{- else -}}
 {{- /* Bootstrap material is deliberately short-lived. The rotator promptly replaces it with certificates matching the configured policy. */ -}}
-{{- $ca := genCA (printf "%s-ca" (include "ptah-operator.fullname" $root)) 2 -}}
+{{- $ca := genCA (printf "%s-ca" (include "ptah-operator.fullname" $root)) (int (include "ptah-operator.bootstrapCADays" $root)) -}}
 {{- $service := include "ptah-operator.webhookServiceName" $root -}}
 {{- $dnsNames := list $service (printf "%s.%s" $service $root.Release.Namespace) (printf "%s.%s.svc" $service $root.Release.Namespace) (printf "%s.%s.svc.cluster.local" $service $root.Release.Namespace) -}}
 {{- $cert := genSignedCert $service nil $dnsNames 1 $ca -}}
@@ -1612,6 +1618,41 @@ Secret it has to refuse.
 {{- define "ptah-operator.validateLeaderElection" -}}
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.leaderElection) -}}
 {{- fail "leaderElection must be true when replicaCount is greater than 1" -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* durationSeconds turns a chart duration ("720h", "15m", "30s", "500ms")
+      into whole seconds, rounding milliseconds down. The schema already
+      holds every duration value to that shape. */ -}}
+{{- define "ptah-operator.durationSeconds" -}}
+{{- $value := toString . -}}
+{{- $number := regexFind "^[0-9]+" $value -}}
+{{- $unit := trimPrefix $number $value -}}
+{{- if eq $unit "h" -}}{{- mul (atoi $number) 3600 -}}
+{{- else if eq $unit "m" -}}{{- mul (atoi $number) 60 -}}
+{{- else if eq $unit "s" -}}{{- atoi $number -}}
+{{- else if eq $unit "ms" -}}{{- div (atoi $number) 1000 -}}
+{{- else -}}{{- fail (printf "%q is not a chart duration" $value) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The rotator replaces a CA issued inside the renewal threshold in its
+      first pass, before it reports ready, so `helm install --wait` covers the
+      replacement of the bootstrap CA webhookCertificateMaterialJSON generates.
+      A shorter threshold would put that replacement behind the CA switch
+      delay, after the install returns, where its last write to the webhook
+      bundles can land inside a later upgrade and fail its server-side apply.
+
+      The check reads only values. The helper generates bootstrap material
+      only when its lookup finds no Secret, which `helm template` always sees
+      and an upgrade never does, so a refusal there would pass the same
+      values in one and refuse them in the other. */ -}}
+{{- define "ptah-operator.validateCertificateRenewalThreshold" -}}
+{{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
+{{- $bootstrapCAHours := mul (int (include "ptah-operator.bootstrapCADays" .)) 24 -}}
+{{- if lt (int (include "ptah-operator.durationSeconds" .Values.certificateRotation.renewalThreshold)) (mul $bootstrapCAHours 3600) -}}
+{{- fail (printf "certificateRotation.renewalThreshold must be at least %dh, the lifetime of the bootstrap CA the chart renders, so the rotator replaces that CA before it reports ready" $bootstrapCAHours) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

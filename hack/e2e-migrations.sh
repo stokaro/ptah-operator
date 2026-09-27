@@ -968,8 +968,6 @@ assert_awaiting_approval() {
       ($status.history.modifiedVersions // []) == [] and
       ($status.history.fingerprint | test("^sha256:[0-9a-f]{64}$")) and
       ($status.history.targetIdentityDigest | test("^sha256:[0-9a-f]{64}$")) and
-      $status.executionBinding.controllerImage == $controllerImage and
-      $status.executionBinding.controllerRevision == $controllerRevision and
       $status.executionBinding.controllerStateVersion == $controllerStateVersion and
       ($status.plan.name | startswith("ptah-mplan-")) and
       ($status.lastRun // null) == null and
@@ -1068,11 +1066,9 @@ assert_approval_hydrated() {
       $spec.policyFingerprint != "" and $spec.verificationPolicyDigest != "" and
       $spec.ptahVersion != "" and
       ($spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-      $spec.controllerImage == $controllerImage and
-      $spec.controllerRevision == $controllerRevision and
+      ($spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
       $spec.controllerStateVersion == $controllerStateVersion and
       ($spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
-      ($spec.runnerImage | test("@sha256:[0-9a-f]{64}$")) and
       $spec.approver.username != "" and $spec.approvedAt != null and
       $spec.mutationRequestUID != ""
     ' "$WORK_DIR/approval.json" >/dev/null ||
@@ -1252,6 +1248,17 @@ grant_rival_author_role() {
 		fail "the desired-state author example is not the Role and RoleBinding this row adapts"
 	k apply -f "$WORK_DIR/rival-author-role-applied.json" >/dev/null ||
 		fail "the desired-state author Role could not be installed in $MIGRATION_RIVAL_NAMESPACE"
+	# A new RoleBinding reaches each API server's authorizer through its own
+	# watch, so the first request after the apply can still be refused. Wait
+	# until the author may create a PtahSchema there, so the rows that follow
+	# measure the operator and not RBAC propagation.
+	rival_grant_deadline=$(($(date +%s) + 60))
+	until [ "$(k_as "$RIVAL_AUTHOR" "$RIVAL_AUTHOR_GROUP" auth can-i create \
+		ptahschemas.operator.ptah.run -n "$MIGRATION_RIVAL_NAMESPACE" 2>/dev/null)" = yes ]; do
+		[ "$(date +%s)" -lt "$rival_grant_deadline" ] ||
+			fail "the desired-state author Role did not take effect in $MIGRATION_RIVAL_NAMESPACE within 60s"
+		sleep 1
+	done
 }
 
 # The ownership row of the matrix, and the authority one: who may claim a

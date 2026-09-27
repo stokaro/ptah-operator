@@ -42,27 +42,21 @@ type PtahMigrationApprovalSpec struct {
 	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
 
 	// ExecutionBindingID is the execution epoch the approved plan belongs to,
-	// which changes on every operator transition.
+	// which changes whenever a component that decides what the run means
+	// changes. A manager upgrade that changes none of them keeps it.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
-	// ControllerImage is the digest-pinned manager that must dispatch the run.
-	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage"`
-	// ControllerRevision is that manager's revision.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision"`
-	// ControllerStateVersion is the state semantics it writes.
+	// ControllerStateVersion is the controller-state semantics the approved
+	// run must be dispatched under.
 	// +kubebuilder:validation:Minimum=1
 	ControllerStateVersion int32 `json:"controllerStateVersion"`
 	// PtahVersion is the Ptah build the approved run must use.
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image it runs in.
 	ExecutorImage string `json:"executorImage"`
-	// RunnerImage is the digest-pinned image that supervises it.
-	RunnerImage string `json:"runnerImage"`
-	// RunnerProtocolVersion is the result-frame protocol that runner speaks.
+	// RunnerProtocolVersion is the protocol the runner that supervises it must
+	// speak: what the runner enforces inside the Pod and the result frame it
+	// returns.
 	// +kubebuilder:validation:Minimum=1
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 

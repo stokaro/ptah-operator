@@ -4393,7 +4393,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				// barrier is released only once exclusivity has been proven: an
 				// Apply released earlier would have finished on its own, and the
 				// proof would be about an Apply that was never interrupted.
-				exactSourceLineSequence("successor read-only Job cleanup and running Apply retirement after activation", []string{
+				exactSourceLineSequence("successor read-only Job cleanup and running Apply adoption after activation", []string{
 					`wait_runtime_ready`,
 					`wait_for_read_only_job_cleanup`,
 					`quiesce_read_only_job_schema`,
@@ -4418,9 +4418,12 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`assert_inventory_resources_absent \`,
 					`"$current_sequence_inventory" "$current_sequence_marker_name"`,
 					`assert_release_sequence_candidate_residue_absent "$current_release_sequence"`,
-					`assert_object_execution_binding_refreshed ptahschema "$PROOF_SCHEMA" \`,
-					`"$WORK_DIR/ptahschema-before.json" "$E2E_NEXT_CONTROLLER_IMAGE"`,
-					`for resource in ptahschemaplan ptahschemaapproval; do`,
+				}),
+				// The synthetic next release changes the manager image and nothing
+				// the execution binding holds, so the schema keeps its epoch and
+				// its plan and approval carry over: the whole object is unchanged.
+				exactSourceLineSequence("manager-only upgrade leaves the schema, its plan and its approval unchanged", []string{
+					`for resource in ptahschema ptahschemaplan ptahschemaapproval; do`,
 					`assert_object_unchanged "$resource" "$PROOF_SCHEMA" \`,
 					`"$WORK_DIR/${resource}-before.json"`,
 					`done`,

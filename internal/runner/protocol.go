@@ -18,8 +18,18 @@ import (
 )
 
 const (
-	// ProtocolVersion is part of the controller-to-Job approval binding. Any
-	// incompatible result format must use a new version.
+	// ProtocolVersion is what binds the runner into a plan and its approval.
+	// The runner image is built from the operator's own source and ships with
+	// every manager release, so its digest is recorded and not bound: a patch
+	// release of the operator keeps every pending approval. This number is
+	// what stands for the runner instead, and it must change whenever the
+	// runner's side of the contract does -- the arguments and environment it
+	// accepts, any check it enforces inside the Pod before or around the
+	// executor, and the result frame it returns. A change to runner
+	// enforcement that keeps this number lets an approval granted under the
+	// old checks run under the new ones. The rule starts with the first
+	// tagged release: until one ships, no installation holds an approval to
+	// carry over, and the contract changes in place.
 	ProtocolVersion = 5
 
 	// JSON escaping can expand a bounded plan payload. This shared cap includes

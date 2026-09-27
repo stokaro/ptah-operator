@@ -101,12 +101,9 @@ func (r *MigrationReconciler) currentMigrationPlan(
 		return nil, errors.New("the resolved artifact changed after the plan was published")
 	}
 	if plan.Spec.ExecutionBindingID != binding.Epoch ||
-		plan.Spec.ControllerImage != binding.ControllerImage ||
-		plan.Spec.ControllerRevision != binding.ControllerRevision ||
 		plan.Spec.ControllerStateVersion != binding.ControllerStateVersion ||
 		plan.Spec.PtahVersion != binding.PtahVersion ||
 		plan.Spec.ExecutorImage != binding.ExecutorImage ||
-		plan.Spec.RunnerImage != binding.RunnerImage ||
 		plan.Spec.RunnerProtocolVersion != binding.RunnerProtocolVersion {
 		return nil, errors.New("an execution component changed after the plan was published")
 	}
@@ -503,6 +500,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 		StartedAt:       operation.StartedAt,
 		FinishedAt:      &finishedAt,
 		AppliedVersions: run.applied,
+		DispatchedBy:    dispatcherRecord(job),
 		Message:         bounded(message, 1024),
 	}
 	migration.Status.ActiveOperation = nil
@@ -650,12 +648,13 @@ func recordUnresolvedMigrationRun(
 		return
 	}
 	unresolved := &operatorv1alpha1.UnresolvedMigrationRunStatus{
-		Outcome:     run.Outcome,
-		OperationID: operation.ID,
-		JobName:     run.JobName,
-		JobUID:      run.JobUID,
-		PlanRef:     *operation.PlanRef,
-		RecordedAt:  metav1.NewTime(now),
+		Outcome:      run.Outcome,
+		OperationID:  operation.ID,
+		JobName:      run.JobName,
+		JobUID:       run.JobUID,
+		PlanRef:      *operation.PlanRef,
+		DispatchedBy: run.DispatchedBy.DeepCopy(),
+		RecordedAt:   metav1.NewTime(now),
 	}
 	// Which database to name is the whole point of the record, so the run's own
 	// account of it wins. A result frame reports the target the executor opened,
@@ -958,6 +957,7 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 	case job != nil && (operation.JobUID == "" || job.UID == operation.JobUID):
 		run.JobName = job.Name
 		run.JobUID = job.UID
+		run.DispatchedBy = dispatcherRecord(job)
 	case operation.JobUID != "":
 		// Either no Job was handed in, or the one that was is not this claim's.
 		// A Job that took the reserved name after this claim's was gone is a

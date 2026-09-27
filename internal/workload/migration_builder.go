@@ -91,12 +91,9 @@ func (b Builder) BuildMigration(
 		return nil, err
 	}
 	binding := migration.Status.ExecutionBinding
-	if binding.ControllerImage != b.ControllerImage ||
-		binding.ControllerRevision != b.ControllerRevision ||
-		binding.ControllerStateVersion != b.ControllerStateVersion ||
+	if binding.ControllerStateVersion != b.ControllerStateVersion ||
 		binding.PtahVersion != b.PtahVersion ||
 		binding.ExecutorImage != b.ExecutorImage ||
-		binding.RunnerImage != b.RunnerImage ||
 		binding.RunnerProtocolVersion != int32(runner.ProtocolVersion) ||
 		operation.ExecutionBindingID != binding.Epoch {
 		return nil, errors.New("migration operation execution binding is stale")

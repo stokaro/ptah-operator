@@ -13,7 +13,10 @@ names something the operator must not guess.
 accepted, and a Docker image ID is not a registry manifest digest.
 
 `execution.executorImage` is the Ptah build the operator runs, by digest.
-`execution.runnerImage` is the runner beside it, also by digest. Each release
+`execution.runnerImage` is the runner beside it, also by digest. The executor
+is bound into every plan and approval; the runner is built from the operator's
+own source, so its digest is recorded and its enforcement is bound through the
+runner protocol version instead. Each release
 builds an executor from the Ptah commit it was tested with and names its digest
 in the release manifest, as [the executor](../../support/releases/#the-executor)
 describes; the chart still takes it only as an explicit value.
@@ -109,7 +112,7 @@ reader of a converged schema can see exactly what produced it.
 | `certificateRotation.enabled` | `true` | Built-in management is automatically omitted when webhook.existingSecret is set. The manager never receives Secret-read permission. |
 | `certificateRotation.recreateMissingSecret` | `false` | Opt in to recreating a deleted chart-generated Secret. This necessarily grants the rotator namespace-wide Secret CREATE in RBAC; a fail-closed admission policy narrows its use to the exact generated TLS Secret. |
 | `certificateRotation.interval` | `"6h"` | How long the rotator waits after a reconciliation that changed nothing. |
-| `certificateRotation.caSwitchDelay` | `""` | How long every webhook entry trusts both the old and the new CA before the serving certificate moves to the new one. Empty means the interval. |
+| `certificateRotation.caSwitchDelay` | `""` | How long every webhook entry trusts both the old and the new CA before a planned CA renewal moves the serving certificate to the new one. At least 1m; empty means the interval. |
 | `certificateRotation.operationTimeout` | `"15m"` | Ceiling on one reconciliation, including the probes that prove every endpoint serves the new certificate. |
 | `certificateRotation.retryInitial` | `"5s"` | First backoff delay after a failed reconciliation. |
 | `certificateRotation.retryMax` | `"5m"` | Ceiling on the backoff after repeated failures. |
@@ -119,7 +122,7 @@ reader of a converged schema can see exactly what produced it.
 | `certificateRotation.admissionConvergence.stabilityDuration` | `"10s"` | Unused. |
 | `certificateRotation.admissionConvergence.pollInterval` | `"1s"` | Unused. |
 | `certificateRotation.admissionConvergence.requestTimeout` | `"5s"` | Unused. |
-| `certificateRotation.renewalThreshold` | `"720h"` | Rotate a certificate once no more than this much validity remains. |
+| `certificateRotation.renewalThreshold` | `"720h"` | Rotate a certificate once no more than this much validity remains. At least 48h, the life of the bootstrap CA the chart renders. |
 | `certificateRotation.servingCertificateValidity` | `"2160h"` | Validity of a newly issued serving certificate. |
 | `certificateRotation.caCertificateValidity` | `"26280h"` | Validity of a newly issued CA certificate. |
 | `certificateRotation.probeTimeout` | `"5m"` | Ceiling on waiting for every webhook endpoint to serve a replacement certificate before the rotation is abandoned. |

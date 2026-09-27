@@ -244,8 +244,9 @@ certificateRotation:
   recreateMissingSecret: false
   # How long the rotator waits after a reconciliation that changed nothing.
   interval: "6h"
-  # How long every webhook entry trusts both the old and the new CA before the
-  # serving certificate moves to the new one. Empty means the interval.
+  # How long every webhook entry trusts both the old and the new CA before a
+  # planned CA renewal moves the serving certificate to the new one. At least
+  # 1m; empty means the interval.
   caSwitchDelay: ""
   # Ceiling on one reconciliation, including the probes that prove every
   # endpoint serves the new certificate.
@@ -267,7 +268,8 @@ certificateRotation:
     pollInterval: "1s"
     # Unused.
     requestTimeout: "5s"
-  # Rotate a certificate once no more than this much validity remains.
+  # Rotate a certificate once no more than this much validity remains. At
+  # least 48h, the life of the bootstrap CA the chart renders.
   renewalThreshold: "720h"
   # Validity of a newly issued serving certificate.
   servingCertificateValidity: "2160h"
