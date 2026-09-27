@@ -66,10 +66,14 @@ The notes Helm prints after an install or upgrade warn, and refuse nothing,
 about RoleBindings in the release namespace, and in a separate coordination
 namespace, that give a subject other than this release's ServiceAccounts
 `create` on `pods`, `pods/exec`, `serviceaccounts/token`, a workload kind or
-`leases`, or that bind the `admin`, `edit` or `cluster-admin` ClusterRole. A
-ClusterRole is judged by the rules it carries. For an aggregated ClusterRole
-those are the rules the aggregation controller wrote into it, so a grant that
-arrives through aggregation is warned about too.
+`leases`, or that bind the `admin`, `edit` or `cluster-admin` ClusterRole.
+This release's ServiceAccounts are the ones its Pods run as: the manager, and
+during an upgrade the manager it succeeds, the certificate rotator, and the
+install and uninstall hooks. The chart knows them by the names it gives them,
+so a binding the release made for a ServiceAccount it has not created yet is
+still its own. A ClusterRole is judged by the rules it carries. For an
+aggregated ClusterRole those are the rules the aggregation controller wrote
+into it, so a grant that arrives through aggregation is warned about too.
 
 The check catches plain mistakes. It is not the boundary, and the contract
 above holds whether the check runs or not. It cannot see:

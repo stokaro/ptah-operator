@@ -609,6 +609,12 @@ wrote; crdupgrade builds the same names from the same identity.
 {{- printf "%s-cleanup-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
+{{- /* The uninstall bootstrap identity: its ServiceAccount, Role, RoleBinding
+      and Jobs share the name, which is stable across release sequences. */ -}}
+{{- define "ptah-operator.teardownBootstrapName" -}}
+{{- printf "ptah-teardown-bootstrap-v1-%s" (printf "1\n%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
 {{- define "ptah-operator.teardownPrivilegeRoleName" -}}
 {{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
 {{- printf "%s-cleanup-priv-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
@@ -1440,11 +1446,14 @@ workload controller or a Lease, or everything admin, edit or cluster-admin
 grants. NOTES.txt prints them as a warning and refuses nothing.
 
 A ServiceAccount is this release's when it lives in the release namespace and
-carries the release's app.kubernetes.io/instance label, or, with
-serviceAccount.create=false, when it is one of the per-sequence names the chart
-binds. A ClusterRole is read from its rules, which for an aggregated role are
-the aggregated rules: the aggregation controller writes them into the object.
-An offline render reads nothing and lists nothing.
+carries one of the names the chart runs Pods as, computed by the same helpers
+that name them: the manager at this release sequence, the predecessor manager
+this release succeeds, the certificate rotator, the CRD and teardown hooks and
+the uninstall bootstrap. Names rather than the objects: on a retried upgrade the
+stable bindings already name this sequence's manager before Helm has created
+it. A ClusterRole is read from its rules, which for an aggregated role are the
+aggregated rules: the aggregation controller writes them into the object. An
+offline render reads nothing and lists nothing.
 */}}
 {{- define "ptah-operator.releaseNamespaceGrantWarnings" -}}
 {{- $root := . -}}
@@ -1454,16 +1463,16 @@ An offline render reads nothing and lists nothing.
 {{- $namespaces = append $namespaces $coordination -}}
 {{- end -}}
 {{- $own := dict -}}
-{{- $serviceAccounts := lookup "v1" "ServiceAccount" .Release.Namespace "" -}}
-{{- range $serviceAccount := default (list) $serviceAccounts.items -}}
-{{- $labels := default (dict) $serviceAccount.metadata.labels -}}
-{{- if eq (default "" (index $labels "app.kubernetes.io/instance")) $root.Release.Name -}}
-{{- $_ := set $own $serviceAccount.metadata.name true -}}
+{{- range $name := list
+      (include "ptah-operator.serviceAccountName" .)
+      (include "ptah-operator.previousControllerServiceAccountName" .)
+      (include "ptah-operator.certRotatorServiceAccountName" .)
+      (include "ptah-operator.crdManagerServiceAccountName" .)
+      (include "ptah-operator.teardownServiceAccountName" .)
+      (include "ptah-operator.teardownBootstrapName" .) -}}
+{{- if $name -}}
+{{- $_ := set $own $name true -}}
 {{- end -}}
-{{- end -}}
-{{- $externalPattern := "" -}}
-{{- if not .Values.serviceAccount.create -}}
-{{- $externalPattern = printf "^%s-v[1-9][0-9]*$" (regexQuoteMeta (include "ptah-operator.serviceAccountBaseName" .)) -}}
 {{- end -}}
 {{- $warnings := list -}}
 {{- range $namespace := $namespaces -}}
@@ -1473,10 +1482,8 @@ An offline render reads nothing and lists nothing.
 {{- range $subject := default (list) $binding.subjects -}}
 {{- $subjectNamespace := default $namespace $subject.namespace -}}
 {{- $ownSubject := false -}}
-{{- if and (eq $subject.kind "ServiceAccount") (eq $subjectNamespace $root.Release.Namespace) -}}
-{{- if or (hasKey $own $subject.name) (and $externalPattern (regexMatch $externalPattern $subject.name)) -}}
+{{- if and (eq $subject.kind "ServiceAccount") (eq $subjectNamespace $root.Release.Namespace) (hasKey $own $subject.name) -}}
 {{- $ownSubject = true -}}
-{{- end -}}
 {{- end -}}
 {{- if not $ownSubject -}}
 {{- if eq $subject.kind "ServiceAccount" -}}
