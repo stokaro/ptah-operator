@@ -9,7 +9,8 @@
 // both refused: the first publishes pages no catalog knows about, and the
 // second is the missing link the matrix would otherwise render.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -55,6 +56,52 @@ export function computeDefault(names) {
   const release = ordered.find((name) => parseSemver(name) !== null);
   return release ?? (names.includes(EDGE) ? EDGE : null);
 }
+
+// latestRelease names the newest release, or undefined before the first one.
+// The version picker badges it, and a page from an older release links to it.
+export function latestRelease(names) {
+  return order(names).find((name) => parseSemver(name) !== null);
+}
+
+// releaseDates reads the day each release tag was made, as YYYY-MM-DD. The
+// picker shows it beside the release, so a reader can tell how old a version
+// is without leaving the page.
+export function releaseDates(repository = repositoryRoot) {
+  const output = execFileSync(
+    'git',
+    ['-C', repository, 'for-each-ref', '--format=%(refname:short)%09%(creatordate:iso-strict)', 'refs/tags/v*'],
+    { encoding: 'utf8' },
+  );
+  const dates = new Map();
+  for (const line of output.split('\n')) {
+    const [name, stamp] = line.split('\t');
+    if (!name || !stamp || parseSemver(name) === null) continue;
+    dates.set(name, new Date(stamp).toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+// buildIndex is versions.json: the version the apex serves, the newest
+// release, and every version in the picker's order with each release's date.
+// {slug, label} entries are the shape Ptah's own index has, and the picker is
+// the same script on both sites.
+export function buildIndex(names, released = new Map()) {
+  const latest = latestRelease(names);
+  return {
+    default: computeDefault(names),
+    ...(latest ? { latest } : {}),
+    versions: order(names).map((name) =>
+      released.has(name) ? { slug: name, label: name, released: released.get(name) } : { slug: name, label: name },
+    ),
+  };
+}
+
+// ROOT_ASSETS are the files every version loads from the site root rather
+// than from its own directory: the version picker. They are copied from the
+// public/ of the revision the deploy runs, so a change to them reaches every
+// published version at once.
+export const ROOT_ASSETS = ['version-picker.js', 'version-picker.css'];
+export const publicDir = join(scriptDir, '..', 'public');
 
 // declaredVersions reads the catalog for the versions whose guide is
 // published, so the assembled root and the compatibility claim cannot disagree.
@@ -214,6 +261,15 @@ function selftest() {
   if (aliasVersion(compatibility, 'v0.1.0') !== EDGE) {
     throw new Error('the compatibility alias follows the apex instead of the current catalog');
   }
+  const dated = buildIndex([EDGE, 'v0.2.0', 'v0.10.0'], new Map([['v0.2.0', '2030-01-01'], ['v0.10.0', '2030-02-01']]));
+  if (dated.latest !== 'v0.10.0') throw new Error(`the index names ${dated.latest} latest; the newest release compares by number`);
+  if (JSON.stringify(dated.versions.map((entry) => entry.released ?? null)) !== JSON.stringify([null, '2030-02-01', '2030-01-01'])) {
+    throw new Error(`the index dates the versions as ${JSON.stringify(dated.versions)}`);
+  }
+  if ('latest' in buildIndex([EDGE])) throw new Error('the index names a latest release before the first one');
+  for (const name of ROOT_ASSETS) {
+    if (!existsSync(join(publicDir, name))) throw new Error(`public/${name} is missing, so the root would not carry the picker`);
+  }
   const alias = aliasHTML('v0.1.0', 'demo');
   if (!alias.includes('/v0.1.0/demo/')) throw new Error('a root alias did not address the default version');
   // Every redirect at the root leaves before it is drawn. Without the script a
@@ -231,7 +287,7 @@ function selftest() {
   }
   console.log(
     'gen-versions.mjs --selftest: OK (order, default, both reconcile directions, folder shape, ' +
-      'root aliases, and a redirect that leaves before it is drawn)',
+      'latest and release dates, root assets, root aliases, and a redirect that leaves before it is drawn)',
   );
 }
 
@@ -264,15 +320,15 @@ function main() {
     console.error('gen-versions.mjs: no version directory was assembled');
     process.exit(1);
   }
-  // {slug, label} rather than bare strings: the version pill in
-  // SiteTitle.astro reads this file at runtime and builds its options from
-  // those two fields, and Ptah's own version index has the same shape, so one
-  // reader can be written against both.
-  const index = {
-    default: defaultVersion,
-    versions: versions.map((name) => ({ slug: name, label: name })),
-  };
+  const released = releaseDates();
+  const undated = built.filter((name) => parseSemver(name) !== null && !released.has(name));
+  if (undated.length > 0) {
+    console.error(`gen-versions.mjs: no tag dates ${undated.join(', ')}, and the version picker shows each release's day`);
+    process.exit(1);
+  }
+  const index = buildIndex(built, released);
   writeFileSync(join(root, 'versions.json'), `${JSON.stringify(index, null, 2)}\n`);
+  for (const name of ROOT_ASSETS) copyFileSync(join(publicDir, name), join(root, name));
   writeFileSync(join(root, 'index.html'), indexHTML(defaultVersion, versions));
   for (const alias of ROOT_ALIASES) {
     const { route } = alias;
@@ -287,7 +343,7 @@ function main() {
   }
   console.log(
     `gen-versions.mjs: ${versions.length} version(s), apex serves ${defaultVersion}, ` +
-      `${ROOT_ALIASES.length} root alias(es)`,
+      `latest release ${index.latest ?? 'none yet'}, ${ROOT_ASSETS.length} root asset(s), ${ROOT_ALIASES.length} root alias(es)`,
   );
 }
 

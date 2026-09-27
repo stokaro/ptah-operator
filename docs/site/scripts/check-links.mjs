@@ -9,6 +9,8 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync,
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { publicDir, ROOT_ASSETS } from './gen-versions.mjs';
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const distinct = (values) => [...new Set(values)];
 
@@ -65,10 +67,23 @@ export function anchors(html) {
   return new Set([...html.matchAll(/id="([^"]+)"/g)].map((match) => match[1]));
 }
 
+// rootAsset is the source of a file the deploy serves at the site root rather
+// than inside a version: gen-versions.mjs copies each of ROOT_ASSETS from
+// public/ into the root, and every version's header loads the version picker
+// from there.
+export function rootAsset(path) {
+  const name = path.startsWith('/') ? path.slice(1) : '';
+  const source = join(publicDir, name);
+  return ROOT_ASSETS.includes(name) && existsSync(source) ? source : undefined;
+}
+
 // resolveTarget maps a site-absolute href onto the file the deploy serves.
 export function resolveTarget(root, base, href) {
   const [path, fragment] = href.split('#');
-  if (!path.startsWith(base)) return { missing: true, path, fragment };
+  if (!path.startsWith(base)) {
+    const file = rootAsset(path);
+    return { file, missing: file === undefined, path, fragment };
+  }
   const withinVersion = path.slice(base.length);
   const candidates = withinVersion === '' || withinVersion.endsWith('/')
     ? [join(root, withinVersion, 'index.html')]
@@ -99,6 +114,10 @@ function selftestOver(root) {
   if (links.length !== 3) throw new Error(`found ${links.length} links`);
   if (resolveTarget(root, '/edge/', '/edge/page/').missing) throw new Error('a real page was reported missing');
   if (!resolveTarget(root, '/edge/', '/edge/gone/').missing) throw new Error('a missing page was reported present');
+  // The version picker is served at the root, beside the versions; any other
+  // root address is still outside what the deploy serves.
+  if (resolveTarget(root, '/edge/', `/${ROOT_ASSETS[0]}`).missing) throw new Error('a root asset was reported missing');
+  if (!resolveTarget(root, '/edge/', '/stray.css').missing) throw new Error('a root address the deploy does not serve was accepted');
   const target = resolveTarget(root, '/edge/', '/edge/page/#here');
   if (!anchors(readFileSync(target.file, 'utf8')).has('here')) throw new Error('a real anchor was not found');
   // A relative link is followed from the page holding it, and a link to a
@@ -119,7 +138,7 @@ function selftestOver(root) {
     throw new Error('link extraction took something a reader cannot follow inside the build');
   }
 
-  console.log('check-links.mjs --selftest: OK (extraction, resolution both ways, anchors, relative links, source-file links)');
+  console.log('check-links.mjs --selftest: OK (extraction, resolution both ways, root assets, anchors, relative links, source-file links)');
 }
 
 function main() {
