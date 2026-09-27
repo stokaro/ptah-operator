@@ -2671,7 +2671,6 @@ func TestVerifyMakeE2ETargetRejectsMutations(t *testing.T) {
 func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 	t.Parallel()
 
-	shard := activeMutationTestShard(t)
 	files := repositoryE2EWiringFiles()
 	harness := files.harness
 	source := readE2ESource(t, harness)
@@ -3729,11 +3728,7 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "top-level fail-fast mode is disabled",
 		},
 	}
-	shard.requireNonemptyTable(t, len(tests))
-	for index, test := range tests {
-		if !shard.includes(index) {
-			continue
-		}
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
@@ -3749,7 +3744,6 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 	t.Parallel()
 
-	shard := activeMutationTestShard(t)
 	files := repositoryE2EWiringFiles()
 	dataPlane := files.dataPlane
 	source := readE2ESource(t, dataPlane)
@@ -4341,11 +4335,7 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 			wantError:   "top-level fail-fast mode is disabled",
 		},
 	}
-	shard.requireNonemptyTable(t, len(tests))
-	for index, test := range tests {
-		if !shard.includes(index) {
-			continue
-		}
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
@@ -4361,7 +4351,6 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
 	t.Parallel()
 
-	shard := activeMutationTestShard(t)
 	files := repositoryE2EWiringFiles()
 	source := readE2ESource(t, files.crdUpgrade)
 	tests := []struct {
@@ -4461,11 +4450,7 @@ func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
 			wantError: "must flow only from the explicitly retrieved structured revision status",
 		},
 	}
-	shard.requireNonemptyTable(t, len(tests))
-	for index, test := range tests {
-		if !shard.includes(index) {
-			continue
-		}
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
@@ -5073,7 +5058,6 @@ func TestVerifySQLStatementGuardsRejectValueHelperCallSites(t *testing.T) {
 func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 	t.Parallel()
 
-	shard := activeMutationTestShard(t)
 	tests := []struct {
 		name        string
 		child       string
@@ -5949,11 +5933,7 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "terminal certificate lifecycle evidence",
 		},
 	}
-	shard.requireNonemptyTable(t, len(tests))
-	for index, test := range tests {
-		if !shard.includes(index) {
-			continue
-		}
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			files := repositoryE2EWiringFiles()
@@ -5972,7 +5952,6 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 func TestUpgradeHookProgressProofRejectsCriticalMutations(t *testing.T) {
 	t.Parallel()
 
-	shard := activeMutationTestShard(t)
 	path := repositoryE2EWiringFiles().crdUpgrade
 	source := readE2ESource(t, path)
 	tests := []struct {
@@ -6078,11 +6057,7 @@ func TestUpgradeHookProgressProofRejectsCriticalMutations(t *testing.T) {
 			wantError:   "early successful return",
 		},
 	}
-	shard.requireNonemptyTable(t, len(tests))
-	for index, test := range tests {
-		if !shard.includes(index) {
-			continue
-		}
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			mutated := writeMutatedE2ESource(t, "e2e-crd-upgrade.sh", source, test.old, test.replacement)

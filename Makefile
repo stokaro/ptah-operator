@@ -4,14 +4,12 @@ GO ?= go
 CONTROLLER_GEN_VERSION ?= v0.22.0
 CRD_SCHEMA_VERSION := 21
 CONTROLLER_STATE_VERSION := 2
-RACE_MUTATION_SHARDS ?= 8
-RACE_MUTATION_SHARD ?=
 override RACE_MUTATION_TESTS := TestVerifyE2EHarnessRejectsCriticalMutations|TestVerifyE2EDataPlaneRejectsCriticalMutations|TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|TestVerifyE2EChildScriptsRejectCriticalMutations
 DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
+.PHONY: all build test test-race vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -25,48 +23,18 @@ build:
 	@# a binary nothing builds. Non-main packages type-check and write nothing.
 	$(GO) build ./...
 
+# ./hack took 331 and 338 seconds in the verify job on acd17c4 and 93b209b, and
+# a loaded machine runs it past go test's default of ten minutes. The shell
+# mutation suites in it run nowhere else.
 test:
-	$(GO) test ./...
+	$(GO) test -timeout=30m ./...
 
-validate-race-shards:
-	@case "$(RACE_MUTATION_SHARDS)" in \
-		[1-8]) ;; \
-		*) \
-			printf '%s\n' 'RACE_MUTATION_SHARDS must be an integer between 1 and 8' >&2; \
-			exit 1; \
-			;; \
-	esac
-
-test-race-base: validate-race-shards
+test-race:
+	@# The skipped suites are the shell mutation tables. Each row rewrites a
+	@# fixture and runs the static verifier over it, which other ./hack tests
+	@# already do under the detector. The test target, and so verify-source,
+	@# runs them without it.
 	$(GO) test -race -count=1 -timeout=10m -skip '^($(RACE_MUTATION_TESTS))$$' ./...
-
-test-race-mutation: validate-race-shards
-	@case "$(RACE_MUTATION_SHARD)" in \
-		[0-7]) ;; \
-		*) \
-			printf '%s\n' 'RACE_MUTATION_SHARD must be an integer between 0 and 7' >&2; \
-			exit 1; \
-			;; \
-	esac; \
-	if [ "$(RACE_MUTATION_SHARD)" -ge "$(RACE_MUTATION_SHARDS)" ]; then \
-		printf 'RACE_MUTATION_SHARD must be less than %s\n' "$(RACE_MUTATION_SHARDS)" >&2; \
-		exit 1; \
-	fi
-	PTAH_MUTATION_TEST_SHARD="$(RACE_MUTATION_SHARD)/$(RACE_MUTATION_SHARDS)" \
-		$(GO) test -race -count=1 -timeout=10m \
-		-run '^($(RACE_MUTATION_TESTS))$$' ./hack
-
-test-race: validate-race-shards test-race-base
-	@# The mutation suites repeatedly inspect large shell fixtures. Partitioning
-	@# every table by ordinal keeps complete race coverage within Go's bounded
-	@# per-package timeout on low-core CI runners.
-	@shard=0; \
-	while [ "$$shard" -lt "$(RACE_MUTATION_SHARDS)" ]; do \
-		printf 'race mutation shard %s/%s\n' "$$((shard + 1))" "$(RACE_MUTATION_SHARDS)"; \
-		$(MAKE) --no-print-directory test-race-mutation \
-			RACE_MUTATION_SHARD="$$shard" || exit $$?; \
-		shard=$$((shard + 1)); \
-	done
 
 vet:
 	$(GO) vet ./...
