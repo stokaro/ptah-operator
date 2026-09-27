@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 GO ?= go
 CONTROLLER_GEN_VERSION ?= v0.22.0
-CRD_SCHEMA_VERSION := 22
+CRD_SCHEMA_VERSION := 23
 CONTROLLER_STATE_VERSION := 2
 override RACE_MUTATION_TESTS := TestVerifyE2EHarnessRejectsCriticalMutations|TestVerifyE2EDataPlaneRejectsCriticalMutations|TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|TestVerifyE2EChildScriptsRejectCriticalMutations
 DOCKER_CONTEXT ?= remote-dev-container

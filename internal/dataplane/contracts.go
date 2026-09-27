@@ -29,7 +29,7 @@ const (
 	// vocabulary itself, at both ends: a controller decoding a report and a
 	// controller parsing a result frame each ask IsKnownDriftFindingCategory,
 	// and an unknown category is refused there rather than compared here.
-	DriftFindingVocabularyVersion = 2
+	DriftFindingVocabularyVersion = 3
 )
 
 var (
@@ -58,6 +58,8 @@ var (
 		"indexes_removed",
 		"rls_enabled_tables_added",
 		"rls_enabled_tables_removed",
+		"rls_force_added",
+		"rls_force_removed",
 		"rls_policies_added",
 		"rls_policies_modified",
 		"rls_policies_removed",
@@ -80,9 +82,18 @@ var (
 	}()
 )
 
-// DriftFindingCategories returns a copy of the closed v1 machine vocabulary.
-// Extending this list requires a runner protocol bump and synchronized CRD
-// schema changes.
+// DriftFindingCategories returns a copy of the closed machine vocabulary.
+//
+// It is the list the pinned Ptah can emit: support/ptah-drift-categories.json
+// records that list, and hack/ptahdriftcategories holds the record to the
+// pinned source. An unknown category is refused rather than published or
+// dropped. The status enum could not store it, and leaving it out would
+// understate the report's count and its highest severity.
+//
+// Extending the list moves DriftFindingVocabularyVersion, the PtahSchema
+// status enum and the CRD schema version together. The frame version stays:
+// a controller that predates a category refuses a frame carrying it, which is
+// the refusal a version mismatch would give.
 func DriftFindingCategories() []string {
 	return append([]string(nil), driftFindingCategories...)
 }

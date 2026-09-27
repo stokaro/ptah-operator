@@ -123,6 +123,22 @@ plus its `ptahDescribe`, and the matrix jobs then run against that build. Do not
 raise `lastVerified` without a run behind it; the field records when the claim
 was last measured, not when the file was last touched.
 
+The drift finding categories the pinned build can emit are recorded in
+`support/ptah-drift-categories.json`, with the digests of the Ptah files that
+produce them. The job that builds the executor compares the record with the
+pinned source. A new pin whose drift command, row summary or schema classifier
+changed fails there until the record is rewritten:
+
+```sh
+go run ./hack/ptahdriftcategories -ptah <Ptah checkout> -write
+```
+
+A unit test holds the operator's vocabulary to the recorded list, because the
+operator refuses a drift report that names a category it does not know. A
+category the new build adds therefore joins the vocabulary, the `PtahSchema`
+status enum and the CRD schema version in the same change. A pin that leaves
+those files alone needs no edit.
+
 Any change to the file changes the table, so regenerate it in the same commit:
 
 ```sh

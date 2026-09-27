@@ -1,0 +1,55 @@
+{
+  "comment": "The drift finding categories the Ptah build pinned in support/ptah.json can emit, and the digests of the files that produce them. Written by `go run ./hack/ptahdriftcategories -ptah <checkout> -write`; CI compares it with the pinned source. internal/dataplane's vocabulary and the PtahSchema status enum have to equal this list.",
+  "sources": [
+    {
+      "path": "internal/cli/drift/drift.go",
+      "sha256": "6a88eab8354811cb6787409d5735bde165e759639f074bcdb123ad8de448df3e"
+    },
+    {
+      "path": "internal/datamigrate/datamigrate.go",
+      "sha256": "ec5375e88d22b60e08f8fb5553bd56bef7688ece68bcb7ad60e76abea20f29bb"
+    },
+    {
+      "path": "migration/safety/safety.go",
+      "sha256": "e6ec6712c01e9c4895be84ec8af6b52469a7abc5273c8a03629c628a2131e0be"
+    }
+  ],
+  "categories": [
+    "columns_added",
+    "columns_modified",
+    "columns_removed",
+    "constraints_added",
+    "constraints_removed",
+    "data_rows_deleted",
+    "data_rows_inserted",
+    "data_rows_updated",
+    "enum_values_added",
+    "enum_values_removed",
+    "enums_added",
+    "enums_removed",
+    "extensions_added",
+    "extensions_modified",
+    "extensions_removed",
+    "functions_added",
+    "functions_modified",
+    "functions_removed",
+    "indexes_added",
+    "indexes_removed",
+    "rls_enabled_tables_added",
+    "rls_enabled_tables_removed",
+    "rls_force_added",
+    "rls_force_removed",
+    "rls_policies_added",
+    "rls_policies_modified",
+    "rls_policies_removed",
+    "roles_added",
+    "roles_modified",
+    "roles_removed",
+    "table_constraints_added",
+    "table_constraints_removed",
+    "tables_added",
+    "tables_removed",
+    "unique_protections_removed",
+    "vector_dimension_changed"
+  ]
+}

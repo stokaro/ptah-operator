@@ -298,6 +298,39 @@ func TestFrameRefusesDriftWithoutFindingsThatClaimsSome(t *testing.T) {
 	}
 }
 
+// The two FORCE ROW LEVEL SECURITY categories cross the boundary both ways: a
+// runner frames them, and a manager reads a frame that carries them.
+func TestFrameCarriesTheForcedRowSecurityCategories(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ category, severity string }{
+		{category: "rls_force_added", severity: "safe"},
+		{category: "rls_force_removed", severity: "destructive"},
+	} {
+		t.Run(test.category, func(t *testing.T) {
+			t.Parallel()
+			result := Result{
+				ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-" + test.category,
+				ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+				TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+				DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+				ObservedDrift: true, HighestDriftSeverity: test.severity, DriftFindingCount: 2,
+				DriftFindings: []DriftFindingSummary{{Category: test.category, Count: 2, Severity: test.severity}},
+			}
+			if _, err := MarshalFrame(result); err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			parsed, err := ParseResultFor(handcraftedIntegrityValidFrame(t, result), result.Operation, result.OperationID)
+			if err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+			if !reflect.DeepEqual(parsed, result) {
+				t.Fatalf("parsed frame = %#v, want %#v", parsed, result)
+			}
+		})
+	}
+}
+
 func TestFrameRejectsInconsistentStructuredDriftFindings(t *testing.T) {
 	t.Parallel()
 

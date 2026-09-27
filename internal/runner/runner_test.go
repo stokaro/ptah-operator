@@ -698,6 +698,99 @@ func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
 	}
 }
 
+// Ptah counts FORCE ROW LEVEL SECURITY apart from ENABLE. Turning it on rates
+// safe; turning it off rates destructive, because the table's owner then reads
+// and writes past every policy. The operator knew neither category, and a
+// report of either failed Observe.
+func TestObserveFramesTheForcedRowSecurityCategories(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ category, severity string }{
+		{category: "rls_force_added", severity: "safe"},
+		{category: "rls_force_removed", severity: "destructive"},
+	} {
+		t.Run(test.category, func(t *testing.T) {
+			t.Parallel()
+			operationID := "observe-" + strings.ReplaceAll(test.category, "_", "-")
+			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":%q,"dialect":"postgres","findings":[{"category":%q,"count":1,"severity":%q}],"diff":{"changed":true}}`,
+				test.severity, test.category, test.severity)
+			result := Run(context.Background(), Config{
+				Operation: OperationObserve, Environment: databaseEnvironment(operationID),
+				Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
+			})
+			want := []DriftFindingSummary{{Category: test.category, Count: 1, Severity: test.severity}}
+			if result.Error != nil || !result.ObservedDrift || result.HighestDriftSeverity != test.severity ||
+				result.DriftFindingCount != 1 || !reflect.DeepEqual(result.DriftFindings, want) {
+				t.Fatalf("Run() = error %#v, drift %t, highest %q, count %d, findings %#v; want %#v",
+					result.Error, result.ObservedDrift, result.HighestDriftSeverity, result.DriftFindingCount,
+					result.DriftFindings, want)
+			}
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			parsed, err := ParseResultFor(frame, OperationObserve, operationID)
+			if err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+			if !reflect.DeepEqual(parsed.DriftFindings, want) {
+				t.Fatalf("parsed findings = %#v, want %#v", parsed.DriftFindings, want)
+			}
+		})
+	}
+}
+
+// Every category the pinned Ptah can emit passes the runner and the frame on
+// its own. The list is support/ptah-drift-categories.json, which
+// hack/ptahdriftcategories holds to the pinned source, so a category a Ptah
+// bump adds fails here by name until the vocabulary takes it.
+func TestObserveFramesEveryCategoryThePinnedPtahEmits(t *testing.T) {
+	t.Parallel()
+
+	for _, category := range pinnedPtahDriftCategories(t) {
+		t.Run(category, func(t *testing.T) {
+			t.Parallel()
+			operationID := "observe-pinned-" + strings.ReplaceAll(category, "_", "-")
+			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":%q,"count":3,"severity":"warning"}],"diff":{"changed":true}}`,
+				category)
+			result := Run(context.Background(), Config{
+				Operation: OperationObserve, Environment: databaseEnvironment(operationID),
+				Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
+			})
+			if result.Error != nil || len(result.DriftFindings) != 1 || result.DriftFindings[0].Category != category {
+				t.Fatalf("Run() = error %#v, findings %#v; want %s framed", result.Error, result.DriftFindings, category)
+			}
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			if _, err := ParseResultFor(frame, OperationObserve, operationID); err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+		})
+	}
+}
+
+// pinnedPtahDriftCategories reads the categories the pinned Ptah can emit, and
+// refuses a list with nothing in it: a loop over no category proves nothing.
+func pinnedPtahDriftCategories(t *testing.T) []string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("..", "..", "support", "ptah-drift-categories.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vendored struct {
+		Categories []string `json:"categories"`
+	}
+	if err := json.Unmarshal(content, &vendored); err != nil {
+		t.Fatal(err)
+	}
+	if len(vendored.Categories) == 0 {
+		t.Fatal("support/ptah-drift-categories.json lists no category")
+	}
+	return vendored.Categories
+}
+
 func TestObserveRejectsUnknownIdentifierFindingCategory(t *testing.T) {
 	t.Parallel()
 
