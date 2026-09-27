@@ -1,27 +1,27 @@
 {
-  "recordedAt": "2026-09-26T00:39:17Z",
+  "recordedAt": "2026-09-27T16:52:23Z",
   "lab": {
-    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36201791957-1-5b26f2f1a8.svc.cluster.local:5000/ptah-operator@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273",
-    "CONTROLLER_REVISION": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36201791957-1-5b26f2f1a8.svc.cluster.local:5000/ptah-executor@sha256:df4f1977e574ed676809606de15f5dcf53a17b2e8009a0700a1d9f8762e8e0a2",
-    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-36201791-5b26f2f1a8",
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36334001561-1-35380bcf54.svc.cluster.local:5000/ptah-operator@sha256:b5138f8bec74e4c3dab364f72b90536a901280de0c6cf2301b9af0db20ab0eca",
+    "CONTROLLER_REVISION": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36334001561-1-35380bcf54.svc.cluster.local:5000/ptah-executor@sha256:fed1859238e3fcfd702437e6b5c392d217ecbfba06b1cc7b8609168efff2569b",
+    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-36334001-35380bcf54",
     "KUBERNETES_VERSION": "1.37.0",
-    "PTAH_REVISION": "127aa247772027f9ac8f5b16107552a7e1b541ed",
-    "PTAH_VERSION": "127aa24",
-    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36201791957-1-5b26f2f1a8.svc.cluster.local:5000/ptah-runner@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273"
+    "PTAH_REVISION": "dac0872ac5952dd9a9df38479834853701f4b586",
+    "PTAH_VERSION": "dac0872",
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-36334001561-1-35380bcf54.svc.cluster.local:5000/ptah-runner@sha256:b5138f8bec74e4c3dab364f72b90536a901280de0c6cf2301b9af0db20ab0eca"
   },
   "source": {
-    "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-    "describe": "5f4a991"
+    "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+    "describe": "2fd090b"
   },
   "scenarios": [
     {
       "id": "adopt-existing-database",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:064fa6a9111045e5df4049f1c43f21fd32037ea6c55aa0c797c06ef691093537",
+      "definitionDigest": "sha256:1bb21db084e1bfdafbc0d49fb79a4a26597ef061529e6dc80c1a975e9cdd7979",
       "title": "Adopt a database that already has a schema",
       "tagline": "Record the history a database already earned, and let the operator carry on from there.",
       "learn": "How baseline proves a database matches its migrations before recording anything, and what it refuses.",
@@ -466,10 +466,10 @@
     {
       "id": "checkpoint-bootstrap",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:f80b8faacab970b5cab95bdc88a81c1797f1f28f3ccc48d076316404ad866cd0",
+      "definitionDigest": "sha256:68aba27daa17460f4ddd55626466f858ba3f1756efed6e298d7f4a3dddf8c994",
       "title": "Start a new database from a checkpoint",
       "tagline": "A fresh database runs the snapshot and what came after it, and ends up where the long way ends.",
       "learn": "What a checkpoint replaces, who selects it, and how the operator proves the shortcut arrived at the same place.",
@@ -477,7 +477,7 @@
         "Lifecycle"
       ],
       "commands": 7,
-      "lines": 86,
+      "lines": 85,
       "events": [
         [
           "note",
@@ -593,7 +593,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:129b985815a3cb877da8c9bec4e0c724b8f7161a43b448d13ef3ef17dd48f4d2"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:a99d8c9d57602dfb0b2c7ed9def59be71b3957031f4b8f2d77c024d959feefe0"
         ],
         [
           "out",
@@ -614,10 +614,6 @@
         [
           "out",
           "      passwordKey: password"
-        ],
-        [
-          "out",
-          "      registryKey: registry"
         ],
         [
           "out",
@@ -713,7 +709,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:129b985815a3cb877da8c9bec4e0c724b8f7161a43b448d13ef3ef17dd48f4d2"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:a99d8c9d57602dfb0b2c7ed9def59be71b3957031f4b8f2d77c024d959feefe0"
         ],
         [
           "out",
@@ -886,10 +882,10 @@
     {
       "id": "destructive-block",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:9d6621c903714e4f5f1a3b644948a54d62c87fbb6abcd265646e8d63f5fc2395",
+      "definitionDigest": "sha256:6adcd11f2ca5b89dabd0a3c2771817089e9750760c976d315ce5fe118a52dbb0",
       "title": "Refuse a destructive change",
       "tagline": "The third revision drops a column. The policy says no, and says so before anything runs.",
       "learn": "How a policy stops a plan, and where to read what it stopped.",
@@ -945,11 +941,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v2.sql\t2026-09-26 00:24:23.462956405 +0000"
+          "--- demo/schemas/v2.sql\t2026-09-27 16:39:09.922477933 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v3.sql\t2026-09-26 00:24:23.462956405 +0000"
+          "+++ demo/schemas/v3.sql\t2026-09-27 16:39:09.922477933 +0000"
         ],
         [
           "out",
@@ -1061,15 +1057,15 @@
         ],
         [
           "out",
-          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   PRIVILEGES   AGE"
         ],
         [
           "out",
-          "ptah-plan-67fb5a0a5f776d4655765e7a   storefront   sha256:67fb5a0a5f776d4655765e7a5d6485f10702aacbf6a0d37978364d1cb45c45a5   2            true          2s"
+          "ptah-plan-87aa4db665f5722eacdf2eea   storefront   sha256:87aa4db665f5722eacdf2eea458767e3c46e58da157e98d01ccdfa56e9519e8a   3            false                      42s"
         ],
         [
           "out",
-          "ptah-plan-a1a8d111bb1bfef2613f8eb4   storefront   sha256:a1a8d111bb1bfef2613f8eb460c27af1221c42f8044199b74e176c83526d1b00   3            false         42s"
+          "ptah-plan-b4a1d6ef13d6cc0457c1242f   storefront   sha256:b4a1d6ef13d6cc0457c1242f44236d54c35a1b6e3adc117e0897e5dd7e61f2b7   2            true                       1s"
         ],
         [
           "note",
@@ -1190,10 +1186,10 @@
     {
       "id": "drift",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:e5525b347bb5076e23c2f8fd35468516e8948c7a8d25a6da88aab3b8fb1b79d3",
+      "definitionDigest": "sha256:dde57eff0bb96c853d1dcdb74201745336664cbb120b6154f488005c41cd26a8",
       "title": "Close the drift",
       "tagline": "Someone changes the database by hand. The operator notices and puts it back.",
       "learn": "What drift detection reads, and what it does about what it finds.",
@@ -1285,7 +1281,7 @@
         ],
         [
           "out",
-          "    TABLE \"orders\" CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
+          "    TABLE \"orders\" CONSTRAINT \"orders_customer_id_fkey\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
         ],
         [
           "sync",
@@ -1337,7 +1333,7 @@
         ],
         [
           "out",
-          "    TABLE \"orders\" CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
+          "    TABLE \"orders\" CONSTRAINT \"orders_customer_id_fkey\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
         ],
         [
           "note",
@@ -1349,15 +1345,15 @@
         ],
         [
           "out",
-          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   PRIVILEGES   AGE"
         ],
         [
           "out",
-          "ptah-plan-0d69f09b27b0800fbcd2ad68   storefront   sha256:0d69f09b27b0800fbcd2ad688e367947b5ac5f69c2aa0070c2e5c22b7e7f8c86   3            false         117s"
+          "ptah-plan-484e67a2f67e5aa6bb74ed21   storefront   sha256:484e67a2f67e5aa6bb74ed214c3c4afaa96bb894786edccfd87f1bc00e80088e   3            false                      2m"
         ],
         [
           "out",
-          "ptah-plan-425551340010b1eb20e6dbdf   storefront   sha256:425551340010b1eb20e6dbdfaff8aae796871cc6db40df10a82fff3c1e6c2282   1            false         18s"
+          "ptah-plan-868c15f418c34bcdc446d67c   storefront   sha256:868c15f418c34bcdc446d67c7f55209a7a6ca780f1ab661c7345e626211a18a4   1            false                      21s"
         ]
       ],
       "checks": [
@@ -1402,10 +1398,10 @@
     {
       "id": "failure-recovery",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:8ffccfb6b4a23d93d1dab81521535882f0b1184920bb3d02e4353513600f35c6",
+      "definitionDigest": "sha256:2ec342d2da063f7a1c29f20b57c51c729f047a3102bdaa433989d498b5b7be18",
       "title": "Fail, then recover",
       "tagline": "Point it at a database that is not there. It says so, keeps trying, and converges when it is.",
       "learn": "What a failure looks like in the status, and that recovery needs no intervention beyond the fix.",
@@ -1413,7 +1409,7 @@
         "Operations"
       ],
       "commands": 6,
-      "lines": 44,
+      "lines": 47,
       "events": [
         [
           "sync",
@@ -1473,23 +1469,23 @@
         ],
         [
           "out",
-          "11s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
+          "12s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
         ],
         [
           "out",
-          "11s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-d449750248781d89 started"
+          "12s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-5524a79b1b8da6a2 started"
         ],
         [
           "out",
-          "8s          Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
+          "9s          Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
         ],
         [
           "out",
-          "8s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-7fe7c217070629ee started"
+          "9s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-9246e55f20471818 started"
         ],
         [
           "out",
-          "1s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
+          "2s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
         ],
         [
           "note",
@@ -1497,7 +1493,19 @@
         ],
         [
           "cmd",
-          "status=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json | jq -c '.status')"
+          "status=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json | jq -ce '.status | objects') || {"
+        ],
+        [
+          "cont",
+          "  printf 'could not read the status, so nothing was checked\\n' \u003e\u00262"
+        ],
+        [
+          "cont",
+          "  exit 1"
+        ],
+        [
+          "cont",
+          "}"
         ],
         [
           "cont",
@@ -1545,7 +1553,7 @@
         ],
         [
           "out",
-          "checked the whole status, 3909 bytes, no credential in it"
+          "checked the whole status, 3444 bytes, no credential in it"
         ],
         [
           "out",
@@ -1668,10 +1676,10 @@
     {
       "id": "first-apply",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:4172d067edc163f1eb94ef7c8c420bb660d79c9083f5376ebca8cdb67646cc69",
+      "definitionDigest": "sha256:95cea7b87ae4e7e0601417cac363e36502a4e97729adc08174cc9934669431e6",
       "title": "Apply a schema",
       "tagline": "Publish a schema as an artifact, point the operator at it, and watch it converge.",
       "learn": "What the operator does between a desired state and a database, and how it says it is done.",
@@ -1679,7 +1687,7 @@
         "Lifecycle"
       ],
       "commands": 10,
-      "lines": 111,
+      "lines": 110,
       "events": [
         [
           "sync",
@@ -1731,7 +1739,7 @@
         ],
         [
           "out",
-          "registry: 127.0.0.1:27188"
+          "registry: 127.0.0.1:23630"
         ],
         [
           "note",
@@ -1759,11 +1767,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:27188/schemas/demo:v1-97921"
+          "Pushed schema as oci://127.0.0.1:23630/schemas/demo:v1-98408"
         ],
         [
           "err",
-          "Digest: sha256:9e58cef68700ac65a34498b5926904a8130fbdf211451bd4883b9a04351614ca"
+          "Digest: sha256:d7c6ded682c74bdfefeb47c04d335d308a53cd287efc37b3b1225c47ed2a29ad"
         ],
         [
           "err",
@@ -1771,7 +1779,7 @@
         ],
         [
           "err",
-          "Tags: [v1-97921]"
+          "Tags: [v1-98408]"
         ],
         [
           "sync",
@@ -1879,7 +1887,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:9e58cef68700ac65a34498b5926904a8130fbdf211451bd4883b9a04351614ca"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:d7c6ded682c74bdfefeb47c04d335d308a53cd287efc37b3b1225c47ed2a29ad"
         ],
         [
           "out",
@@ -1900,10 +1908,6 @@
         [
           "out",
           "      passwordKey: password"
-        ],
-        [
-          "out",
-          "      registryKey: registry"
         ],
         [
           "out",
@@ -2071,11 +2075,11 @@
         ],
         [
           "out",
-          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   PRIVILEGES   AGE"
         ],
         [
           "out",
-          "ptah-plan-c7bc2277b623495feb286466   storefront   sha256:c7bc2277b623495feb2864662bf966142be40ef11645fa75a5cd8fb08bff8d98   1            false         19s"
+          "ptah-plan-0898695dc57f697b6e3ffb41   storefront   sha256:0898695dc57f697b6e3ffb41f4a09c7d9653fc4096001a6fb8167c20f8722fcb   1            false                      22s"
         ],
         [
           "note",
@@ -2226,10 +2230,10 @@
     {
       "id": "lab-setup",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:be13eed696e35722fe8a0da930c025079f585e60664097e494a373e8a2196c61",
+      "definitionDigest": "sha256:8ed5624551701ed24deb2db822c70abf5f3ad50a6f97db4ed7def5759769c9cc",
       "title": "Stand up the lab",
       "tagline": "A four-node kind cluster, the chart from a package, and every image pinned by digest.",
       "learn": "What the other runs are against, and how to tell an install that finished from one that started.",
@@ -2261,15 +2265,15 @@
         ],
         [
           "out",
-          "operator    5f4a9917505738337bf42c9d9e48f471c54e09f4"
+          "operator    2fd090b303bcbfb51f84ae2a09d3023283be1917"
         ],
         [
           "out",
-          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:df4f1977e574ed676809606de15f5dcf53a17b2e8009a0700a1d9f8762e8e0a2"
+          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:fed1859238e3fcfd702437e6b5c392d217ecbfba06b1cc7b8609168efff2569b"
         ],
         [
           "out",
-          "ptah        127aa24"
+          "ptah        dac0872"
         ],
         [
           "note",
@@ -2285,11 +2289,11 @@
         ],
         [
           "out",
-          "ptah-operator-cert-rotator                                     1/1     1            1           10m"
+          "ptah-operator-cert-rotator                                     1/1     1            1           9m17s"
         ],
         [
           "out",
-          "ptah-operator                                                  2/2     2            2           10m"
+          "ptah-operator                                                  2/2     2            2           9m17s"
         ],
         [
           "note",
@@ -2305,11 +2309,11 @@
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:b5138f8bec74e4c3dab364f72b90536a901280de0c6cf2301b9af0db20ab0eca"
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e6302233f587912664d31c9e6b20e7e1123df425cd3d849a6a866c8a044c6273"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:b5138f8bec74e4c3dab364f72b90536a901280de0c6cf2301b9af0db20ab0eca"
         ],
         [
           "note",
@@ -2353,27 +2357,27 @@
         ],
         [
           "out",
-          "secret/demo-database          Opaque                           6      8m37s"
+          "secret/demo-database          Opaque                           6      8m58s"
         ],
         [
           "out",
-          "secret/demo-database-broken   Opaque                           1      104s"
+          "secret/demo-database-broken   Opaque                           1      108s"
         ],
         [
           "out",
-          "secret/demo-mysql-database    Opaque                           5      8m35s"
+          "secret/demo-mysql-database    Opaque                           5      8m55s"
         ],
         [
           "out",
-          "secret/demo-registry          Opaque                           4      8m37s"
+          "secret/demo-registry          Opaque                           4      8m58s"
         ],
         [
           "out",
-          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      8m37s"
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      8m58s"
         ],
         [
           "out",
-          "secret/demo-shadow-database   Opaque                           2      8m16s"
+          "secret/demo-shadow-database   Opaque                           2      8m36s"
         ],
         [
           "blank",
@@ -2385,19 +2389,19 @@
         ],
         [
           "out",
-          "configmap/demo-migration-verification-policy   1      8m13s"
+          "configmap/demo-migration-verification-policy   1      8m32s"
         ],
         [
           "out",
-          "configmap/demo-verification-policy             1      8m13s"
+          "configmap/demo-verification-policy             1      8m32s"
         ],
         [
           "out",
-          "configmap/e2e-verification-policy              1      11m"
+          "configmap/e2e-verification-policy              1      9m25s"
         ],
         [
           "out",
-          "configmap/kube-root-ca.crt                     1      11m"
+          "configmap/kube-root-ca.crt                     1      9m26s"
         ]
       ],
       "checks": [
@@ -2442,10 +2446,10 @@
     {
       "id": "manual-approval",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:5d0a4918907a2dc44664b565a91df5bc85d2d97c3bb6b09c7fc630fc70c5279b",
+      "definitionDigest": "sha256:a72b55b393d08f59fce48c831c14c4fd93b1da92143cf7bdf9d47982164bda45",
       "title": "Approve a plan",
       "tagline": "With apply set to OnApproval, nothing runs until a person approves that exact plan.",
       "learn": "What an approval is bound to, and how much of that binding you never type.",
@@ -2453,7 +2457,7 @@
         "Safety"
       ],
       "commands": 10,
-      "lines": 107,
+      "lines": 106,
       "events": [
         [
           "sync",
@@ -2561,7 +2565,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:f4a1f46277012efe4c8d62a4f4490b950c2105dabc5a98cb680570043715031f"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:5f6b4ee952416d68197d95018c517a583c2737ff8ff289c4488d55c36291f3ab"
         ],
         [
           "out",
@@ -2582,10 +2586,6 @@
         [
           "out",
           "      passwordKey: password"
-        ],
-        [
-          "out",
-          "      registryKey: registry"
         ],
         [
           "out",
@@ -2785,7 +2785,7 @@
         ],
         [
           "out",
-          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-c0f1a6e9db104ab881b9f564\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:c0f1a6e9db104ab881b9f564c4ea784916f6c60ee0adc102d0ddf763b031212d\"}"
+          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-3e60e85e4880dcafbcbad7fe\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:3e60e85e4880dcafbcbad7fe8d706eaf9dfe85df92dd0c2ae9accb8c4a950d05\"}"
         ],
         [
           "sync",
@@ -2825,19 +2825,19 @@
         ],
         [
           "out",
-          "  \"ptahVersion\": \"127aa24\","
+          "  \"ptahVersion\": \"dac0872\","
         ],
         [
           "out",
-          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:df4f1977e574ed676809606de15f5dcf53a17b2e8009a0700a1d9f8762e8e0a2\","
+          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:fed1859238e3fcfd702437e6b5c392d217ecbfba06b1cc7b8609168efff2569b\","
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:f4a1f46277012efe4c8d62a4f4490b950c2105dabc5a98cb680570043715031f\","
+          "  \"artifactDigest\": \"sha256:5f6b4ee952416d68197d95018c517a583c2737ff8ff289c4488d55c36291f3ab\","
         ],
         [
           "out",
-          "  \"executionBindingID\": \"v1-f2745c75876e38e3a49f2712ee82592a\""
+          "  \"executionBindingID\": \"v1-0b33da51ef4642154d0e5b32c7386c93\""
         ],
         [
           "out",
@@ -2990,10 +2990,10 @@
     {
       "id": "mysql-partial-failure",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:60303ec3910cfd37679ee0123cbbb0b24d37a4c7b843832858834eddf419c312",
+      "definitionDigest": "sha256:969e62410902d6ca0554cde6dd539b796c1498fd230fb944ecf394363b77d7df",
       "title": "Recover a MySQL migration that stopped halfway",
       "tagline": "DDL that committed, a run nobody can retry, and a repair decided by what the database holds.",
       "learn": "How to find out what a partial MySQL migration left behind before choosing how to repair it.",
@@ -3552,10 +3552,10 @@
     {
       "id": "reference-data",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:a5646184d99358962a58f2dcc1deccf8afb96a0e0c7d4c3e9c118cb9e628e254",
+      "definitionDigest": "sha256:7290e8f91ab160e4ee5ff81e8ea942e173e3f4c59d6d383ec6bed8b6b74df8d9",
       "title": "Manage reference data",
       "tagline": "Rows declared beside the tables that hold them, reconciled through the same plan.",
       "learn": "What a declared row set owns, how a change to rows alone reaches the database, and why removing a declaration is not a delete.",
@@ -3703,11 +3703,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v1/catalog.go\t2026-09-26 00:24:23.461623159 +0000"
+          "--- demo/reference/v1/catalog.go\t2026-09-27 16:39:09.921162173 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v2/catalog.go\t2026-09-26 00:24:23.461706585 +0000"
+          "+++ demo/reference/v2/catalog.go\t2026-09-27 16:39:09.921245339 +0000"
         ],
         [
           "out",
@@ -3855,11 +3855,11 @@
         ],
         [
           "out",
-          "--- demo/reference/v2/catalog.go\t2026-09-26 00:24:23.461706585 +0000"
+          "--- demo/reference/v2/catalog.go\t2026-09-27 16:39:09.921245339 +0000"
         ],
         [
           "out",
-          "+++ demo/reference/v3/catalog.go\t2026-09-26 00:24:23.461794429 +0000"
+          "+++ demo/reference/v3/catalog.go\t2026-09-27 16:39:09.921335427 +0000"
         ],
         [
           "out",
@@ -4142,10 +4142,10 @@
     {
       "id": "schema-update",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:1c22d4b2f9b952ea1f675ec8615a9511a353e632ee31e885a44c01f856484a7d",
+      "definitionDigest": "sha256:6f73d2d06f82c1be447d0019cb3f268e80e622b560f6fa540681d4e81d7567b2",
       "title": "Change the schema",
       "tagline": "A second revision, a new digest, and the difference applied as one plan.",
       "learn": "How a change reaches a database, and why the plan is the thing to review.",
@@ -4197,11 +4197,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v1.sql\t2026-09-26 00:24:23.462956405 +0000"
+          "--- demo/schemas/v1.sql\t2026-09-27 16:39:09.922477933 +0000"
         ],
         [
           "out",
-          "+++ demo/schemas/v2.sql\t2026-09-26 00:24:23.462956405 +0000"
+          "+++ demo/schemas/v2.sql\t2026-09-27 16:39:09.922477933 +0000"
         ],
         [
           "out",
@@ -4285,11 +4285,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:27188/schemas/demo:v2-128433"
+          "Pushed schema as oci://127.0.0.1:23630/schemas/demo:v2-129528"
         ],
         [
           "err",
-          "Digest: sha256:185569293dbe766d402512d9612c7372ce01c7a146c89f776c81358d0caebaa6"
+          "Digest: sha256:25d335dfc5c85cc8c367ed6a01365fedda345d10c7686e397cdf77c16c57fc23"
         ],
         [
           "err",
@@ -4297,7 +4297,7 @@
         ],
         [
           "err",
-          "Tags: [v2-128433]"
+          "Tags: [v2-129528]"
         ],
         [
           "sync",
@@ -4333,15 +4333,15 @@
         ],
         [
           "out",
-          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   PRIVILEGES   AGE"
         ],
         [
           "out",
-          "ptah-plan-b6d501a1e2ba08af8e07252e   storefront   sha256:b6d501a1e2ba08af8e07252e04e1cac9b0855e8e7cceacb80673caa38c68c715   1            false         60s"
+          "ptah-plan-143112f686331dbd22f9c8e3   storefront   sha256:143112f686331dbd22f9c8e3a61545e78ca9c73f376e948cfd48ff7b38ed2f6f   1            false                      60s"
         ],
         [
           "out",
-          "ptah-plan-bbbe6e730ab74ade2ad72d8d   storefront   sha256:bbbe6e730ab74ade2ad72d8d5bde0c574c4c81780f672fcd322f7cc4f5a9b1ee   3            false         20s"
+          "ptah-plan-813244be7731462b4a15d779   storefront   sha256:813244be7731462b4a15d779c4866e4d640c65923a6bbc33e8fd18fc436f93ff   3            false                      20s"
         ],
         [
           "note",
@@ -4393,7 +4393,7 @@
         ],
         [
           "sql",
-          "ALTER TABLE \"orders\" ADD CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (\"customer_id\") REFERENCES \"customers\"(\"id\");"
+          "ALTER TABLE \"orders\" ADD CONSTRAINT \"orders_customer_id_fkey\" FOREIGN KEY (\"customer_id\") REFERENCES \"customers\"(\"id\");"
         ],
         [
           "note",
@@ -4441,7 +4441,7 @@
         ],
         [
           "out",
-          "    \"fk_orders_customer_id\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
+          "    \"orders_customer_id_fkey\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
         ]
       ],
       "checks": [
@@ -4504,10 +4504,10 @@
     {
       "id": "second-release",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:325815cdbf4deb51ec49f736f3a35ec6b425974b2412eb7e29e33d7180db9e31",
+      "definitionDigest": "sha256:fddc808a9e65a5dd29c043325aacda017c2014f119a925b43fe74733be4f997e",
       "title": "Ship a second release onto rows that already exist",
       "tagline": "A backfill that runs against real data, and a history that says it ran once.",
       "learn": "What a release adds when the database already has a history, and how to tell it did not run twice.",
@@ -4551,7 +4551,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:8fe5744919df16d5e4fe97cab880a8d0db22b870db524f4155423135a8f28f86"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:e944bc402906a77b5e330bf0e52a305a43740e39bb5c19a814ec4ba14d492351"
         ],
         [
           "out",
@@ -5002,10 +5002,10 @@
     {
       "id": "stale-approval",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:dafd81756f2133d7d05b6376b82df2ada901a788bcf06f683a10f2f2f6f1ed7f",
+      "definitionDigest": "sha256:64a93b6e936918ecb5346d5c4ec37a88b14e3d2f588a3ba9fa1508dc8aee8dc4",
       "title": "Retire a used approval",
       "tagline": "An approval describes one plan against one observed state. Applying it moves that state.",
       "learn": "Why a signature cannot authorize twice, and what the operator does with one that no longer fits.",
@@ -5033,7 +5033,7 @@
         ],
         [
           "out",
-          "sha256:0ef1e1216328b20cd2cc6f1397c6179caf9cbe8efddd3416a715098607e25997"
+          "sha256:7fc3541331b5780944111c65fe539858fc266e5d0736dc1ecb3473529a717156"
         ],
         [
           "sync",
@@ -5209,7 +5209,7 @@
         ],
         [
           "out",
-          "sha256:b251dab6be39ca365351c35f1e73a015b458e8382098cb0a650b7242f3d53db1"
+          "sha256:02b41b8be10be780918d81d48df3131a7d87019c261198773766bfa9ab360d7d"
         ],
         [
           "note",
@@ -5320,10 +5320,10 @@
     {
       "id": "suspend-resume",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:e8472ad4b441e937c22b31b73035825f4c979bdb9c58fd4618a7883c0f3e2de4",
+      "definitionDigest": "sha256:81f7b7d37d98544d7ea1db6d499e37c78339003bab09fc57d3e3d251b460ce64",
       "title": "Suspend and resume",
       "tagline": "One field stops reconciliation without deleting anything, and resuming picks up where it stopped.",
       "learn": "How to take a database out of the operator's hands during an incident, and give it back.",
@@ -5564,10 +5564,10 @@
     {
       "id": "versioned-migration",
       "source": {
-        "commit": "5f4a9917505738337bf42c9d9e48f471c54e09f4",
-        "describe": "5f4a991"
+        "commit": "2fd090b303bcbfb51f84ae2a09d3023283be1917",
+        "describe": "2fd090b"
       },
-      "definitionDigest": "sha256:4c2c169c1cda2156dc2252dd79eec097ccb318d8ff7e975250dd94fb7395ff96",
+      "definitionDigest": "sha256:52b5e06a2d651a7e1f66be93aa2da0ac29f5ad1d3f127d4f4bacf1e33c1c3080",
       "title": "Run a prepared migration sequence",
       "tagline": "Numbered SQL files in an artifact, matched against the database's own record of what has run.",
       "learn": "How the versioned workflow differs from the declarative one, and what the database is asked before anything executes.",
@@ -5575,7 +5575,7 @@
         "Lifecycle"
       ],
       "commands": 12,
-      "lines": 153,
+      "lines": 152,
       "events": [
         [
           "note",
@@ -5747,7 +5747,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:27ccfd3f0ee5cf4d70fa905666c6dae00624bcb0deda9adedbd63186a3b97a85"
         ],
         [
           "out",
@@ -5768,10 +5768,6 @@
         [
           "out",
           "      passwordKey: password"
-        ],
-        [
-          "out",
-          "      registryKey: registry"
         ],
         [
           "out",
@@ -5887,7 +5883,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:27ccfd3f0ee5cf4d70fa905666c6dae00624bcb0deda9adedbd63186a3b97a85"
         ],
         [
           "out",
@@ -5923,7 +5919,7 @@
         ],
         [
           "out",
-          "Plan ptah-mplan-4fd3bca950f6ef41c3e29e85, 2 migrations from version 0:"
+          "Plan ptah-mplan-8a23ed8ce0b2230392283c93, 2 migrations from version 0:"
         ],
         [
           "out",
@@ -6019,7 +6015,7 @@
         ],
         [
           "out",
-          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-4fd3bca950f6ef41c3e29e85\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:4fd3bca950f6ef41c3e29e85ab9d376913fbe8cf3d684c037a47fb9f0d410883\"}"
+          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-8a23ed8ce0b2230392283c93\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:8a23ed8ce0b2230392283c93b148520889475123b628f2c2ff7f8fedb633091e\"}"
         ],
         [
           "sync",
@@ -6063,11 +6059,11 @@
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5\","
+          "  \"artifactDigest\": \"sha256:27ccfd3f0ee5cf4d70fa905666c6dae00624bcb0deda9adedbd63186a3b97a85\","
         ],
         [
           "out",
-          "  \"ptahVersion\": \"127aa24\""
+          "  \"ptahVersion\": \"dac0872\""
         ],
         [
           "out",
@@ -6135,7 +6131,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:e7d1ece18737646d184a426cac9c7bf7bf7dc0090c3a7a26c4a03626459288e5"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:27ccfd3f0ee5cf4d70fa905666c6dae00624bcb0deda9adedbd63186a3b97a85"
         ],
         [
           "out",
