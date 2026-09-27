@@ -14,7 +14,7 @@
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
 {{- $existingMutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $configurationName -}}
 {{- $existingValidating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $configurationName -}}
-{{- $entryBundles := dict "mutating" $caBundle "migrationMutating" $caBundle "approvalValidating" $caBundle "migrationApprovalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle -}}
+{{- $entryBundles := dict "mutating" $caBundle "migrationMutating" $caBundle "schemaWriterMutating" $caBundle "migrationWriterMutating" $caBundle "approvalValidating" $caBundle "migrationApprovalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle -}}
 {{- if not .Values.webhook.existingSecret -}}
 {{- if $existingMutating -}}
 {{- range $existingMutating.webhooks -}}
@@ -22,6 +22,10 @@
 {{- $_ := set $entryBundles "mutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- else if and (eq .name "mmigrationapproval.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
 {{- $_ := set $entryBundles "migrationMutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if and (eq .name "mschemawriter.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- $_ := set $entryBundles "schemaWriterMutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if and (eq .name "mmigrationwriter.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- $_ := set $entryBundles "migrationWriterMutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -121,6 +125,46 @@ webhooks:
         apiVersions: ["v1alpha1"]
         operations: ["CREATE"]
         resources: ["ptahmigrationapprovals"]
+        scope: Namespaced
+  - name: mschemawriter.operator.ptah.run
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    reinvocationPolicy: Never
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ index $entryBundles "schemaWriterMutating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /mutate-operator-ptah-run-v1alpha1-ptahschema
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahschemas"]
+        scope: Namespaced
+  - name: mmigrationwriter.operator.ptah.run
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    reinvocationPolicy: Never
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ index $entryBundles "migrationWriterMutating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /mutate-operator-ptah-run-v1alpha1-ptahmigration
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahmigrations"]
         scope: Namespaced
 ---
 apiVersion: admissionregistration.k8s.io/v1

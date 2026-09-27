@@ -171,7 +171,7 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	for _, want := range []string{
 		"--release-name=" + releaseName,
 		"--staging-secret-name=" + stagingSecretName,
-		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run",
+		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run",
 		"--validating-webhook-names=vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
 		"--run-interval=6h",
 		"--ca-switch-delay=6h",
@@ -191,7 +191,10 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 			t.Fatalf("%s admission contract version = %q, want 2", configuration.GetKind(), got)
 		}
 	}
-	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run"}; !slices.Equal(got, want) {
+	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{
+		"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run",
+		"mschemawriter.operator.ptah.run", "mmigrationwriter.operator.ptah.run",
+	}; !slices.Equal(got, want) {
 		t.Fatalf("rotator mutating production webhook inventory = %v, want %v", got, want)
 	}
 	if got, want := strings.Split(requiredArgumentValue(t, args, "--validating-webhook-names="), ","), []string{

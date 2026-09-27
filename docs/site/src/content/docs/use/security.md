@@ -151,7 +151,10 @@ The operator separates five authorities:
    [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off).
 2. An approver may read schemas, migrations and their plans, and create
    immutable approvals for either family. The chart creates an optional
-   ClusterRole but never binds it automatically.
+   ClusterRole but never binds it automatically. RBAC decides who may
+   approve; it does not by itself decide that the approver is a second
+   person rather than the author. See
+   [Refusing a self-approval](#refusing-a-self-approval).
 3. The controller may manage plans, Jobs, ConfigMaps, Leases, status, and
    Events. Its shipped ClusterRole contains no Secret permission. Typed
    admission policies that ship with the release constrain its main-resource
@@ -279,6 +282,49 @@ Memory-backed `emptyDir` usage is charged to the writing container by
 Kubernetes. The chart defaults bound each volume, but production resource
 limits must also leave headroom for the runner binary, fetched schema, plan,
 and client scratch data in addition to the process heap.
+
+### Refusing a self-approval {#refusing-a-self-approval}
+
+An approval proves an authenticated approver. On its own it proves nothing
+about that approver being a second person, so an author with a Role broad
+enough to also approve -- or a deployment that never separated the two Roles
+at all -- could approve their own plan. `spec.policy.requireDistinctApprover`
+closes that gap where a resource asks for it; it defaults to false, so an
+existing schema or migration that never sets it keeps admitting the approvals
+it always did, and turning it on is itself a spec edit, which is what first
+records a writer for the check to compare against.
+
+A mutating webhook on `PtahSchema` and `PtahMigration` records the
+authenticated identity behind every `CREATE` and every `UPDATE` that changes
+`spec`, in two annotations only that webhook ever writes: it overwrites
+whatever a request carried for them, the same way the approval webhook
+overwrites a forged `spec.approver`, so an author cannot name someone else as
+the resource's writer any more than they can name someone else as the
+approver. An update that leaves `spec` alone -- a label, the finalizer the
+controller itself adds and removes, a status write, which is a separate
+subresource the annotations cannot reach at all -- leaves the recorded
+identity untouched. The approval webhook then refuses an approval whose
+approver is exactly that identity.
+
+The record is metadata rather than `spec` or `status` on purpose. `status` is
+a subresource on both kinds, and the API server resets it to its previous
+value on every write through the main resource and drops it outright on
+create, so a mutating webhook on the main resource can never persist anything
+there. `spec` is the author's own field to write; recording the mutation
+there would tie the two together in the one place meant to hold only their
+own intent.
+
+Group membership plays no part in the comparison, and a ServiceAccount is one
+identity like any other: the same ServiceAccount that wrote the spec and later
+submits the approval is refused exactly as a person doing both would be. What
+the check compares is exactly what the cluster's authenticator put on the
+request -- a username, and a UID where the authenticator supplies one -- and
+that is also its limit. Impersonation, or a credential more than one person
+holds, is indistinguishable at that layer from two different people, and this
+control cannot see past it: identity here is only as good as the cluster's own
+authentication. Where that gap matters, pair it with the RBAC separation in
+[Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off)
+rather than relying on either alone.
 
 ### Who may claim a database {#who-may-claim-a-database}
 

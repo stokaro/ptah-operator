@@ -38,12 +38,16 @@ const (
 	validatingApprovalWebhookName          = "vapproval.operator.ptah.run"
 	mutatingMigrationApprovalWebhookName   = "mmigrationapproval.operator.ptah.run"
 	validatingMigrationApprovalWebhookName = "vmigrationapproval.operator.ptah.run"
+	mutatingSchemaWriterWebhookName        = "mschemawriter.operator.ptah.run"
+	mutatingMigrationWriterWebhookName     = "mmigrationwriter.operator.ptah.run"
 	podIntentWebhookName                   = "vpodintent.operator.ptah.run"
 	controllerWriteWebhookName             = "vcontrollerwrite.operator.ptah.run"
 	mutatingApprovalPath                   = "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	validatingApprovalPath                 = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	mutatingMigrationApprovalPath          = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
 	validatingMigrationApprovalPath        = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	mutatingSchemaWriterPath               = "/mutate-operator-ptah-run-v1alpha1-ptahschema"
+	mutatingMigrationWriterPath            = "/mutate-operator-ptah-run-v1alpha1-ptahmigration"
 	podIntentPath                          = "/validate-v1-pod-ptah-operation-intent"
 	controllerWritePath                    = "/validate-operator-controller-write"
 	podIntentMatchConditionName            = "managed-or-operation-job-pod"
@@ -376,6 +380,8 @@ func verifyMutatingWebhookContract(configuration *admissionregistrationv1.Mutati
 	return verifyMutatingWebhookContracts(configuration, []webhookContract{
 		currentMutatingApprovalWebhookContract(expected),
 		currentMutatingMigrationApprovalWebhookContract(expected),
+		currentMutatingSchemaWriterWebhookContract(expected),
+		currentMutatingMigrationWriterWebhookContract(expected),
 	})
 }
 
@@ -546,6 +552,39 @@ func currentValidatingMigrationApprovalWebhookContract(expected RuntimeInvariant
 	contract.name = validatingMigrationApprovalWebhookName
 	contract.path = validatingMigrationApprovalPath
 	contract.rules[0].Rule.Resources = []string{"ptahmigrationapprovals"}
+	return contract
+}
+
+// The spec-writer entries stamp the identity that last changed a resource's
+// spec; they carry no decision of their own, unlike the approval entries, so
+// they need no validating counterpart. See internal/admission/specwriter.go.
+func currentMutatingSchemaWriterWebhookContract(expected RuntimeInvariants) webhookContract {
+	scope := admissionregistrationv1.NamespacedScope
+	never := admissionregistrationv1.NeverReinvocationPolicy
+	return webhookContract{
+		name: mutatingSchemaWriterWebhookName, path: mutatingSchemaWriterPath,
+		serviceNamespace: expected.ReleaseNamespace, serviceName: expected.WebhookServiceName, servicePort: 443,
+		requireNonemptyCABundle: true,
+		admissionReviewVersions: []string{"v1"},
+		rules: []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
+			Rule: admissionregistrationv1.Rule{
+				APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
+				Resources: []string{"ptahschemas"}, Scope: &scope,
+			},
+		}},
+		failurePolicy: admissionregistrationv1.Fail, matchPolicy: admissionregistrationv1.Equivalent,
+		namespaceSelector: &metav1.LabelSelector{}, objectSelector: &metav1.LabelSelector{},
+		sideEffects: admissionregistrationv1.SideEffectClassNone, timeoutSeconds: expected.WebhookTimeoutSeconds,
+		matchConditions: []admissionregistrationv1.MatchCondition{}, reinvocationPolicy: &never,
+	}
+}
+
+func currentMutatingMigrationWriterWebhookContract(expected RuntimeInvariants) webhookContract {
+	contract := currentMutatingSchemaWriterWebhookContract(expected)
+	contract.name = mutatingMigrationWriterWebhookName
+	contract.path = mutatingMigrationWriterPath
+	contract.rules[0].Rule.Resources = []string{"ptahmigrations"}
 	return contract
 }
 

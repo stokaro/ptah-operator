@@ -219,7 +219,7 @@ singleton written by this sequence or by the one before it.
 
 {{- define "ptah-operator.certificateRuntimeArgsJSON" -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
-{{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run" -}}
+{{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run" -}}
 {{- $validatingWebhookNames := "vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run" -}}
 {{- $args := list
       (printf "--namespace=%s" .Release.Namespace)

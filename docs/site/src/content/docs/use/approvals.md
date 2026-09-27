@@ -92,3 +92,34 @@ migrations, their plan metadata and approvals, plus create access to
 ConfigMap permission and no Pod log permission. Bind approval permission only
 to authenticated identities that are independent from routine desired-state
 writers, and grant plan-chunk access separately in each application namespace.
+
+## Refusing a self-approval
+
+RBAC decides who *may* approve; on its own, an accepted approval proves an
+authenticated approver, not a second person. `spec.policy.requireDistinctApprover`
+closes that gap for a resource that asks for it. It defaults to false, so an
+existing schema or migration that never sets it keeps admitting the approvals
+it always did.
+
+A mutating webhook always keeps a record of who created the resource, or who
+last changed its spec, in two annotations
+(`operator.ptah.run/last-spec-writer-username` and `-uid`) that only that
+webhook ever writes: it overwrites whatever a request carried for them, so an
+author cannot name someone else, and it leaves them untouched on an update
+that does not change spec, so the manager's own finalizer and status writes
+never move the recorded name. When `requireDistinctApprover` is true, the
+approval webhook refuses an approval whose approver is exactly that identity,
+with a reason that says so.
+
+Editing spec after a plan is awaiting approval already retires that plan and
+its binding, so a fresh plan is always judged against whoever most recently
+touched the spec it was computed from.
+
+Identity here is exactly what the cluster's authentication reports for a
+request. A ServiceAccount counts like any other identity: the same
+ServiceAccount writing the spec and later approving it is refused exactly like
+a person doing both. Group membership plays no part in the comparison. This is
+a limit worth stating plainly: impersonation, or a credential more than one
+person uses, defeats the control, because the cluster's own audit trail cannot
+tell those requests apart. Where that matters, pair it with the RBAC
+separation above rather than relying on either alone.

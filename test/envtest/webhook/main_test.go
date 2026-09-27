@@ -47,6 +47,8 @@ const (
 	validateApprovalPath          = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	mutateMigrationApprovalPath   = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
 	validateMigrationApprovalPath = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	mutateSchemaSpecWriterPath    = "/mutate-operator-ptah-run-v1alpha1-ptahschema"
+	mutateMigrationSpecWriterPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigration"
 	validatePodIntentPath         = "/validate-v1-pod-ptah-operation-intent"
 	validateControllerWritePath   = "/validate-operator-controller-write"
 )
@@ -277,6 +279,7 @@ func servedPaths() map[string]bool {
 	return map[string]bool{
 		mutateApprovalPath: true, validateApprovalPath: true,
 		mutateMigrationApprovalPath: true, validateMigrationApprovalPath: true,
+		mutateSchemaSpecWriterPath: true, mutateMigrationSpecWriterPath: true,
 		validatePodIntentPath: true, validateControllerWritePath: true,
 	}
 }
@@ -347,6 +350,12 @@ func serveManagerHandlers() (func(), error) {
 	server.Register(validateApprovalPath, &cradmission.Webhook{Handler: approval(false)})
 	server.Register(mutateMigrationApprovalPath, &cradmission.Webhook{Handler: migrationApproval(true)})
 	server.Register(validateMigrationApprovalPath, &cradmission.Webhook{Handler: migrationApproval(false)})
+	server.Register(mutateSchemaSpecWriterPath, &cradmission.Webhook{Handler: &approvaladmission.SchemaSpecWriterHandler{
+		Decoder: decoder,
+	}})
+	server.Register(mutateMigrationSpecWriterPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationSpecWriterHandler{
+		Decoder: decoder,
+	}})
 	server.Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: admin, Decoder: decoder,
 	}})

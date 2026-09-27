@@ -288,6 +288,11 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
 		return fmt.Errorf("the verification policy changed after the plan was generated")
 	}
+	if migration.Spec.Policy.RequireDistinctApprover {
+		if err := refuseSelfApproval("migration", migration.Annotations, approval.Spec.Approver); err != nil {
+			return err
+		}
+	}
 	return migrationApprovalMatchesPlan(approval.Spec, plan.Spec)
 }
 
