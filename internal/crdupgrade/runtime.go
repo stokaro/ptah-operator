@@ -188,6 +188,11 @@ type RuntimeInvariants struct {
 	ControllerStateVersion       int32
 	AdmissionContractVersion     int32
 	ReleaseSequence              int32
+	// RequireDistinctApprover mirrors the chart's approvals.requireDistinctApprover
+	// value: whether the fixed MutatingWebhookConfiguration is expected to carry
+	// the two spec-writer entries. It decides shape, not ownership, so it is not
+	// one of the annotations() the singleton is stamped and checked against.
+	RequireDistinctApprover bool
 }
 
 func (i RuntimeInvariants) validate() error {
@@ -377,12 +382,22 @@ type webhookView struct {
 }
 
 func verifyMutatingWebhookContract(configuration *admissionregistrationv1.MutatingWebhookConfiguration, expected RuntimeInvariants) error {
-	return verifyMutatingWebhookContracts(configuration, []webhookContract{
+	want := []webhookContract{
 		currentMutatingApprovalWebhookContract(expected),
 		currentMutatingMigrationApprovalWebhookContract(expected),
-		currentMutatingSchemaWriterWebhookContract(expected),
-		currentMutatingMigrationWriterWebhookContract(expected),
-	})
+	}
+	// The spec-writer entries exist only when the four-eyes control is on: they
+	// record the identity refuseSelfApproval compares against, and a control
+	// that is off reads no such record. Chart-side, webhook.yaml renders the
+	// same two entries under the same condition, so a chart and a manager
+	// disagreeing about it is exactly the shape this refuses.
+	if expected.RequireDistinctApprover {
+		want = append(want,
+			currentMutatingSchemaWriterWebhookContract(expected),
+			currentMutatingMigrationWriterWebhookContract(expected),
+		)
+	}
+	return verifyMutatingWebhookContracts(configuration, want)
 }
 
 func verifyMutatingWebhookContracts(

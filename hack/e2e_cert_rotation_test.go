@@ -139,6 +139,65 @@ func TestCertificateE2EManagedWebhookInventory(t *testing.T) {
 	}
 }
 
+// TestCertificateE2EManagedWebhookInventoryFollowsFourEyesFlag proves
+// uniform_service_bundle follows REQUIRE_DISTINCT_APPROVER for the mutating
+// configuration: with the control off, the two spec-writer entries are not
+// part of the expected inventory, so an installation without them still
+// reads as uniform, and one that still carries them reads as a mismatch.
+func TestCertificateE2EManagedWebhookInventoryFollowsFourEyesFlag(t *testing.T) {
+	t.Parallel()
+	mutatingEntries := func(names ...string) []map[string]any {
+		paths := map[string]string{
+			"mapproval.operator.ptah.run":          "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval",
+			"mmigrationapproval.operator.ptah.run": "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval",
+			"mschemawriter.operator.ptah.run":      "/mutate-operator-ptah-run-v1alpha1-ptahschema",
+			"mmigrationwriter.operator.ptah.run":   "/mutate-operator-ptah-run-v1alpha1-ptahmigration",
+		}
+		webhooks := make([]map[string]any, 0, len(names))
+		for _, name := range names {
+			webhooks = append(webhooks, map[string]any{"name": name, "clientConfig": map[string]any{
+				"caBundle": "current-ca", "service": map[string]any{
+					"name": "webhook", "namespace": "operator", "port": 443, "path": paths[name],
+				},
+			}})
+		}
+		return webhooks
+	}
+	for _, test := range []struct {
+		name        string
+		webhooks    []map[string]any
+		wantUniform bool
+	}{
+		{
+			name:        "off, only the two approval entries",
+			webhooks:    mutatingEntries("mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run"),
+			wantUniform: true,
+		},
+		{
+			name: "off, the spec-writer entries are still present",
+			webhooks: mutatingEntries(
+				"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run",
+				"mschemawriter.operator.ptah.run", "mmigrationwriter.operator.ptah.run",
+			),
+			wantUniform: false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newCertificateShellFixture(t)
+			fixture.writeJSON("api-secret.json", map[string]any{"webhooks": test.webhooks})
+			output, err := fixture.run("uniform_service_bundle mutatingwebhookconfiguration admission\n",
+				"REQUIRE_DISTINCT_APPROVER=false")
+			if err != nil {
+				t.Fatalf("bundle inspection: %v\n%s", err, output)
+			}
+			if (strings.TrimSpace(output) == "current-ca") != test.wantUniform {
+				t.Fatalf("bundle result %q, want uniform %v", output, test.wantUniform)
+			}
+		})
+	}
+}
+
 func TestCertificateE2EExpandedTransitionTime(t *testing.T) {
 	t.Parallel()
 	encode := func(value string) string { return base64.StdEncoding.EncodeToString([]byte(value)) }
@@ -554,7 +613,7 @@ func (fixture *certificateShellFixture) writeJSON(name string, value any) {
 	fixture.write(name, string(contents))
 }
 
-func (fixture *certificateShellFixture) run(body string) (string, error) {
+func (fixture *certificateShellFixture) run(body string, extraEnv ...string) (string, error) {
 	fixture.t.Helper()
 	fixture.write("run.sh", `set -eu
 umask 077
@@ -563,6 +622,7 @@ OPERATOR_NAMESPACE=operator
 HELM_RELEASE=ptah
 KUBECONFIG_FILE=unused
 SERVICE=webhook
+REQUIRE_DISTINCT_APPROVER=${REQUIRE_DISTINCT_APPROVER:-true}
 STAGING_SECRET_NAME=cert-stage
 SECRET_BEFORE=$UPGRADE_WORK_DIR/secret-before.json
 SECRET_ERROR=$UPGRADE_WORK_DIR/secret-error.log
@@ -578,6 +638,7 @@ fail() {
 	command.Env = append(os.Environ(), "UPGRADE_WORK_DIR="+fixture.directory,
 		"PATH="+fixture.directory+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"TMPDIR="+filepath.Dir(fixture.directory))
+	command.Env = append(command.Env, extraEnv...)
 	output, err := command.CombinedOutput()
 	return string(output), err
 }

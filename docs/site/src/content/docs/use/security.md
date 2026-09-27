@@ -306,7 +306,7 @@ approval control, [the apply-mode
 guard](#who-may-turn-the-approval-requirement-off): put the switch where the
 author's own RBAC over their namespace cannot reach it.
 
-A mutating webhook on `PtahSchema` and `PtahMigration` still records the
+A mutating webhook on `PtahSchema` and `PtahMigration` records the
 authenticated identity behind every `CREATE` and every `UPDATE` that changes
 `spec`, in two annotations only that webhook ever writes: it overwrites
 whatever a request carried for them, the same way the approval webhook
@@ -318,6 +318,20 @@ subresource the annotations cannot reach at all -- leaves the recorded
 identity untouched. When the installation's flag is true, the approval webhook
 refuses an approval whose approver is exactly that identity, or whose resource
 carries no recorded identity at all.
+
+The chart installs that mutating webhook's two entries under the same flag,
+rather than leaving them bound whatever the flag says. An entry with
+`failurePolicy: Fail` refuses every `PtahSchema` and `PtahMigration` write
+while the manager is unreachable, including across an upgrade under a
+`Recreate` strategy; with the switch off, which is the default, nothing reads
+the recorded identity, so paying that coupling on every write buys nothing.
+One consequence follows directly: a resource written while the switch was off
+carries no recorded writer, and turning the switch on does not retroactively
+supply one. Its approvals are refused, by the same "no spec writer is
+recorded" reason a missing annotation always produces, until its spec is next
+changed and the now-installed webhook has a write to stamp. An installer
+turning this on should expect that gap, not read it as the control
+misbehaving.
 
 The record is metadata rather than `spec` or `status` on purpose. `status` is
 a subresource on both kinds, and the API server resets it to its previous

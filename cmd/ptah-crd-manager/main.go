@@ -94,6 +94,7 @@ var modeFlags = map[string][]string{
 		"certificate-deployment-name",
 		"release-sequence",
 		"verify-controller-state",
+		"require-distinct-approver",
 	},
 }
 
@@ -123,6 +124,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	managerImage := flags.String("manager-image", "", "exact manager image this release runs")
 	controllerStateVersion := flags.Int64("controller-state-version", 0, "controller-state version the chart was published with")
 	verifyControllerState := flags.Bool("verify-controller-state", false, "reject controller downgrades incompatible with stored PtahSchema state")
+	requireDistinctApprover := flags.Bool("require-distinct-approver", false, "whether the fixed admission singleton is expected to carry the spec-writer webhook entries")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -159,6 +161,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*controllerDeploymentName,
 			*certificateDeploymentName,
 			int32(*releaseSequence),
+			*requireDistinctApprover,
 		)
 		if err != nil {
 			return err
@@ -275,7 +278,7 @@ func runtimeInvariants(
 	releaseName, releaseNamespace, coordinationNamespace, leaderElection,
 	leaderElectionID, webhookServiceName string, webhookTimeoutSeconds int,
 	hookServiceAccountName, controllerServiceAccountName, controllerDeploymentName,
-	certificateDeploymentName string, releaseSequence int32,
+	certificateDeploymentName string, releaseSequence int32, requireDistinctApprover bool,
 ) (crdupgrade.RuntimeInvariants, error) {
 	if leaderElection != "true" && leaderElection != "false" {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("leader-election must be exactly true or false")
@@ -302,6 +305,7 @@ func runtimeInvariants(
 		ControllerStateVersion:       controllerstate.CurrentVersion,
 		AdmissionContractVersion:     crdupgrade.CurrentAdmissionContractVersion,
 		ReleaseSequence:              releaseSequence,
+		RequireDistinctApprover:      requireDistinctApprover,
 	}, nil
 }
 

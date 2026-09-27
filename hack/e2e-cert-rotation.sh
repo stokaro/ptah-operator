@@ -45,6 +45,50 @@ fail() {
 	exit 1
 }
 
+# The spec-writer mutating entries exist only when the release has
+# approvals.requireDistinctApprover on; charts/ptah-operator/templates/webhook.yaml
+# renders them under the same condition. This phase never changes that value,
+# but it reads the live release rather than assuming its default, so every
+# place below that enumerates the mutating inventory follows what is actually
+# installed.
+REQUIRE_DISTINCT_APPROVER=$(helm --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	get values "$HELM_RELEASE" --all -o json |
+	jq -r '.approvals.requireDistinctApprover // false') ||
+	fail "could not read approvals.requireDistinctApprover from the live release"
+case "$REQUIRE_DISTINCT_APPROVER" in
+true | false) ;;
+*) fail "approvals.requireDistinctApprover on the live release is not a boolean: $REQUIRE_DISTINCT_APPROVER" ;;
+esac
+
+# mutating_managed_entries and validating_managed_entries print, one per line,
+# the exact mutating and validating webhook names this release's admission
+# singleton carries. Fed to a `while read` loop, together they are every
+# managed entry; alone, mutating_managed_entries is what the four-eyes flag
+# adds or removes.
+mutating_managed_entries() {
+	printf '%s\n' \
+		"mutatingwebhookconfiguration $MUTATING_CONFIGURATION mapproval.operator.ptah.run" \
+		"mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationapproval.operator.ptah.run"
+	if [ "$REQUIRE_DISTINCT_APPROVER" = true ]; then
+		printf '%s\n' \
+			"mutatingwebhookconfiguration $MUTATING_CONFIGURATION mschemawriter.operator.ptah.run" \
+			"mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationwriter.operator.ptah.run"
+	fi
+}
+
+validating_managed_entries() {
+	printf '%s\n' \
+		"validatingwebhookconfiguration $VALIDATING_CONFIGURATION vapproval.operator.ptah.run" \
+		"validatingwebhookconfiguration $VALIDATING_CONFIGURATION vmigrationapproval.operator.ptah.run" \
+		"validatingwebhookconfiguration $VALIDATING_CONFIGURATION vpodintent.operator.ptah.run" \
+		"validatingwebhookconfiguration $VALIDATING_CONFIGURATION vcontrollerwrite.operator.ptah.run"
+}
+
+managed_webhook_entries() {
+	mutating_managed_entries
+	validating_managed_entries
+}
+
 # A Pod deletion leaves the replaced Pod terminating while its replacement is
 # already available, so a rollout that returns still has two Pods carrying the
 # component label for a moment. Ask for the live one and wait for the other to
@@ -109,13 +153,17 @@ uniform_service_bundle() {
 	kind=$1
 	configuration=$2
 	kubectl --kubeconfig "$KUBECONFIG_FILE" get "$kind" "$configuration" -o json |
-		jq -r --arg kind "$kind" --arg service "$SERVICE" --arg namespace "$OPERATOR_NAMESPACE" '
-          (if $kind == "mutatingwebhookconfiguration" then {
-            "mapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
-            "mmigrationapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
-            "mschemawriter.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschema"],
-            "mmigrationwriter.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigration"]
-          } else {
+		jq -r --arg kind "$kind" --arg service "$SERVICE" --arg namespace "$OPERATOR_NAMESPACE" \
+			--argjson requireDistinctApprover "$REQUIRE_DISTINCT_APPROVER" '
+          (if $kind == "mutatingwebhookconfiguration" then
+            {
+              "mapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
+              "mmigrationapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"]
+            } + (if $requireDistinctApprover then {
+              "mschemawriter.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschema"],
+              "mmigrationwriter.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigration"]
+            } else {} end)
+          else {
             "vapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
             "vmigrationapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
             "vpodintent.operator.ptah.run": [$service, "/validate-v1-pod-ptah-operation-intent"],
@@ -324,14 +372,7 @@ observe_expanded_trust() {
 		assert_entry_trusts "$entry_kind" "$entry_configuration" "$entry_name" \
 			"$serving_ca_file" "$STAGED_CA_FILE"
 	done <<EOF
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mapproval.operator.ptah.run
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationapproval.operator.ptah.run
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mschemawriter.operator.ptah.run
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationwriter.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vapproval.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vmigrationapproval.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vpodintent.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vcontrollerwrite.operator.ptah.run
+$(managed_webhook_entries)
 EOF
 	after_state=$(primary_secret_state)
 	[ "$after_state" = "$before_state" ] ||
@@ -779,14 +820,7 @@ RECREATED_AT=$(jq -r '.metadata.creationTimestamp' "$PRIMARY_OBSERVATION")
 while read -r entry_kind entry_configuration entry_name; do
 	assert_entry_trusts "$entry_kind" "$entry_configuration" "$entry_name" "$FIRST_SEEN_CA_FILE"
 done <<EOF
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mapproval.operator.ptah.run
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationapproval.operator.ptah.run
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mschemawriter.operator.ptah.run
-mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationwriter.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vapproval.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vmigrationapproval.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vpodintent.operator.ptah.run
-validatingwebhookconfiguration $VALIDATING_CONFIGURATION vcontrollerwrite.operator.ptah.run
+$(managed_webhook_entries)
 EOF
 
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \

@@ -123,6 +123,16 @@ Editing spec after a plan is awaiting approval already retires that plan and
 its binding, so a fresh plan is always judged against whoever most recently
 touched the spec it was computed from.
 
+The mutating webhook that stamps the two annotations is itself installed only
+while the switch is on, so a schema or migration written before an
+installation turned it on carries no recorded writer. Turning the switch on
+does not retroactively identify who wrote an existing resource's spec: its
+approvals are refused, by the same "no spec writer is recorded" reason a
+missing annotation always gets, until its spec is next changed and the
+webhook has a create or update to stamp. Plan for that gap when turning the
+switch on: an existing schema or migration stops taking approvals until an
+edit, however small, records its first writer.
+
 Identity here is exactly what the cluster's authentication reports for a
 request: a username, and a UID where the authenticator supplies one. A
 ServiceAccount counts like any other identity: the same ServiceAccount writing

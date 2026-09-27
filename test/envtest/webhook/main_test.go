@@ -284,14 +284,23 @@ func managerConfigFrom(deployments []*appsv1.Deployment) (managerConfig, error) 
 	return config, nil
 }
 
-// servedPaths is every path the manager registers.
+// servedPaths is every path the manager registers that the chart routes to
+// unconditionally, plus the two spec-writer paths exactly when the rendered
+// release turns the four-eyes control on: charts/ptah-operator/templates/webhook.yaml
+// renders those two entries under the same condition, and the manager
+// registers their handlers regardless, so a disagreement about them is only
+// real when the flag says the chart should have routed to them.
 func servedPaths() map[string]bool {
-	return map[string]bool{
+	served := map[string]bool{
 		mutateApprovalPath: true, validateApprovalPath: true,
 		mutateMigrationApprovalPath: true, validateMigrationApprovalPath: true,
-		mutateSchemaSpecWriterPath: true, mutateMigrationSpecWriterPath: true,
 		validatePodIntentPath: true, validateControllerWritePath: true,
 	}
+	if manager.requireDistinctApprover {
+		served[mutateSchemaSpecWriterPath] = true
+		served[mutateMigrationSpecWriterPath] = true
+	}
+	return served
 }
 
 // unservedManagerPaths names every disagreement between the chart's routing

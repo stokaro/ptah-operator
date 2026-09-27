@@ -69,6 +69,14 @@ approvals:
   # binding one resource an author could edit back off. It defaults to false,
   # so an existing installation that never sets it keeps admitting the
   # approvals it always did.
+  #
+  # The mutating webhook that records the identity exists only while this is
+  # on. Off, a PtahSchema or PtahMigration write never depends on the manager
+  # being reachable for it; a webhook with failurePolicy Fail would otherwise
+  # block every write, including across an upgrade under Recreate, to pay for
+  # a record nothing reads. A resource written before this was turned on
+  # carries no recorded writer, so its approvals are refused until its spec is
+  # next changed and the now-installed webhook has a write to stamp.
   requireDistinctApprover: false
 
 # Required whenever replicaCount is greater than one. Disable only for an

@@ -2,8 +2,10 @@ package webhook_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -53,6 +55,78 @@ func requireDistinctApproverForTest(t *testing.T) {
 	})
 }
 
+// installSpecWriterWebhookRouting adds the two spec-writer mutating webhook
+// entries to the live MutatingWebhookConfiguration, and removes them again
+// when t ends. This process rendered the chart once, at its default
+// (approvals.requireDistinctApprover off), so the routing to
+// SchemaSpecWriterHandler and MigrationSpecWriterHandler that
+// charts/ptah-operator/templates/webhook.yaml only renders with the control
+// on does not exist here; proving the control on needs a real PATCH to reach
+// those handlers, and that needs the routing installed directly rather than a
+// second chart render and a second webhook server.
+//
+// Each new entry clones mapproval's already-envtest-rewritten clientConfig --
+// the local serving address and CA bundle this process actually presents --
+// rather than the chart's own Service-shaped one, which envtest replaces with
+// a direct URL on install and which a freshly rendered entry would not carry.
+func installSpecWriterWebhookRouting(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	configuration := &admissionregistrationv1.MutatingWebhookConfiguration{}
+	if err := admin.Get(ctx, client.ObjectKey{Name: validatingConfigurationName}, configuration); err != nil {
+		t.Fatal(err)
+	}
+	var template *admissionregistrationv1.MutatingWebhook
+	for index := range configuration.Webhooks {
+		if configuration.Webhooks[index].Name == "mapproval.operator.ptah.run" {
+			template = configuration.Webhooks[index].DeepCopy()
+			break
+		}
+	}
+	if template == nil || template.ClientConfig.URL == nil {
+		t.Fatal("the live MutatingWebhookConfiguration has no envtest-rewritten mapproval entry to clone routing from")
+	}
+	hostPort := strings.TrimSuffix(*template.ClientConfig.URL, mutateApprovalPath)
+	scope := admissionregistrationv1.NamespacedScope
+	newEntry := func(name, path, resource string) admissionregistrationv1.MutatingWebhook {
+		entry := *template.DeepCopy()
+		entry.Name = name
+		url := hostPort + path
+		entry.ClientConfig.URL = &url
+		entry.Rules = []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
+			Rule: admissionregistrationv1.Rule{
+				APIGroups: []string{operatorv1alpha1.GroupVersion.Group}, APIVersions: []string{operatorv1alpha1.GroupVersion.Version},
+				Resources: []string{resource}, Scope: &scope,
+			},
+		}}
+		return entry
+	}
+	configuration.Webhooks = append(configuration.Webhooks,
+		newEntry("mschemawriter.operator.ptah.run", mutateSchemaSpecWriterPath, "ptahschemas"),
+		newEntry("mmigrationwriter.operator.ptah.run", mutateMigrationSpecWriterPath, "ptahmigrations"),
+	)
+	if err := admin.Update(ctx, configuration); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		current := &admissionregistrationv1.MutatingWebhookConfiguration{}
+		if err := admin.Get(ctx, client.ObjectKey{Name: validatingConfigurationName}, current); err != nil {
+			t.Fatal(err)
+		}
+		kept := current.Webhooks[:0]
+		for _, webhook := range current.Webhooks {
+			if webhook.Name != "mschemawriter.operator.ptah.run" && webhook.Name != "mmigrationwriter.operator.ptah.run" {
+				kept = append(kept, webhook)
+			}
+		}
+		current.Webhooks = kept
+		if err := admin.Update(ctx, current); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 // TestSpecWriterStampingAndFourEyes exercises the mutating webhook that
 // records the last spec writer, and the approval webhook's refusal of a
 // self-approval once the installation requires a distinct one. It reuses
@@ -61,12 +135,15 @@ func requireDistinctApproverForTest(t *testing.T) {
 // identity path, and the binding checks are already proven in
 // TestApprovalWebhooks. It does not run in parallel with the rest of this
 // package, because requireDistinctApproverForTest changes what every
-// approval handler in this process refuses for as long as it runs.
+// approval handler in this process refuses for as long as it runs, and
+// installSpecWriterWebhookRouting changes which paths the live admission
+// singleton routes to for as long as it runs.
 func TestSpecWriterStampingAndFourEyes(t *testing.T) {
 	plane.Require(t)
 	ctx := context.Background()
 	fixture := newApprovalFixture(t)
 	requireDistinctApproverForTest(t)
+	installSpecWriterWebhookRouting(t)
 
 	grant(t, fixture.namespace, "schema-author",
 		rbacv1.Subject{Kind: rbacv1.UserKind, APIGroup: rbacv1.GroupName, Name: specAuthorName},

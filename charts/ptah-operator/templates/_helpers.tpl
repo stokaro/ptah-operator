@@ -220,7 +220,13 @@ singleton written by this sequence or by the one before it.
 
 {{- define "ptah-operator.certificateRuntimeArgsJSON" -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
-{{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run" -}}
+{{- /* The spec-writer entries exist only when the four-eyes control is on;
+      webhook.yaml renders them under the same condition, and the rotator
+      must probe exactly the entries that exist to serve a canary at each. */ -}}
+{{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run" -}}
+{{- if .Values.approvals.requireDistinctApprover -}}
+{{- $mutatingWebhookNames = printf "%s,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run" $mutatingWebhookNames -}}
+{{- end -}}
 {{- $validatingWebhookNames := "vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run" -}}
 {{- $args := list
       (printf "--namespace=%s" .Release.Namespace)
@@ -306,7 +312,8 @@ manager also refuses stored state it cannot read.
       (printf "--controller-service-account-name=%s" (include "ptah-operator.serviceAccountName" $root))
       (printf "--controller-deployment-name=%s" (include "ptah-operator.fullname" $root))
       (printf "--certificate-deployment-name=%s" (include "ptah-operator.certRotatorServiceAccountName" $root))
-      (printf "--release-sequence=%s" (include "ptah-operator.releaseSequence" $root)) -}}
+      (printf "--release-sequence=%s" (include "ptah-operator.releaseSequence" $root))
+      (printf "--require-distinct-approver=%t" $root.Values.approvals.requireDistinctApprover) -}}
 {{- if .verifyControllerState -}}
 {{- $args = append $args "--verify-controller-state=true" -}}
 {{- end -}}

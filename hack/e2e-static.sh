@@ -5872,10 +5872,83 @@ finalizer_verbs=$(awk '
 }
 [ "$(grep -c '^kind: MutatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
 [ "$(grep -c '^kind: ValidatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
-[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 8 ]
+# approvals.requireDistinctApprover defaults to false, and the spec-writer
+# entries exist only when it is on: 2 mutating (approval, migration approval)
+# plus 4 validating, none of them failurePolicy anything but Fail.
+[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 6 ]
+if grep -Fq 'name: mschemawriter.operator.ptah.run' "$ADMISSION_RENDER" ||
+	grep -Fq 'name: mmigrationwriter.operator.ptah.run' "$ADMISSION_RENDER"; then
+	printf '%s\n' 'e2e static: the default-off release renders the spec-writer webhook entries' >&2
+	exit 1
+fi
 grep -F 'name: mmigrationapproval.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: vmigrationapproval.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["ptahmigrationapprovals"]' "$ADMISSION_RENDER" >/dev/null
+
+# The two spec-writer entries render only when approvals.requireDistinctApprover
+# is on, and the manager's own --require-distinct-approver flag, the CRD hook's
+# runtime-verify flag of the same name (once for the manager Deployment's own
+# init container, once for the rotator's), and the rotator's probed webhook
+# names all move with it. webhook.existingSecret omits certificate-rotation.yaml
+# entirely (built-in rotation is "automatically omitted" then), so this reads
+# the built-in-rotation render instead of $RENDERED_WEBHOOKS/$ADMISSION_RENDER.
+DISTINCT_APPROVER_OFF_RENDER=$WORK_DIR/full-distinct-approver-off.yaml
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	>"$DISTINCT_APPROVER_OFF_RENDER"
+DISTINCT_APPROVER_ON_RENDER=$WORK_DIR/full-distinct-approver-on.yaml
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set approvals.requireDistinctApprover=true >"$DISTINCT_APPROVER_ON_RENDER"
+DISTINCT_APPROVER_ON_ADMISSION_RENDER=$WORK_DIR/admission-distinct-approver-on.yaml
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--show-only templates/webhook.yaml \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set-string webhook.existingSecret=e2e-webhook-cert \
+	--set-string webhook.caBundle=ZTJlLWNh \
+	--set approvals.requireDistinctApprover=true >"$DISTINCT_APPROVER_ON_ADMISSION_RENDER"
+[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER")" -eq 8 ]
+grep -F 'name: mschemawriter.operator.ptah.run' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER" >/dev/null
+grep -F 'path: /mutate-operator-ptah-run-v1alpha1-ptahschema' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER" >/dev/null
+grep -F 'name: mmigrationwriter.operator.ptah.run' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER" >/dev/null
+grep -F 'path: /mutate-operator-ptah-run-v1alpha1-ptahmigration' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER" >/dev/null
+[ "$(grep -Fc -- '--require-distinct-approver=false' "$DISTINCT_APPROVER_OFF_RENDER")" -eq 3 ] || {
+	printf '%s\n' 'e2e static: --require-distinct-approver=false does not reach the manager and both runtime-verify hooks' >&2
+	exit 1
+}
+[ "$(grep -Fc -- '--require-distinct-approver=true' "$DISTINCT_APPROVER_ON_RENDER")" -eq 3 ] || {
+	printf '%s\n' 'e2e static: --require-distinct-approver=true does not reach the manager and both runtime-verify hooks' >&2
+	exit 1
+}
+grep -F -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run' \
+	"$DISTINCT_APPROVER_ON_RENDER" >/dev/null ||
+	{
+		printf '%s\n' 'e2e static: the rotator does not probe the spec-writer entries when the four-eyes control is on' >&2
+		exit 1
+	}
+if grep -Fq -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run' \
+	"$DISTINCT_APPROVER_OFF_RENDER"; then
+	printf '%s\n' 'e2e static: the rotator still probes the spec-writer entries with the four-eyes control off' >&2
+	exit 1
+fi
+grep -F -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run"' \
+	"$DISTINCT_APPROVER_OFF_RENDER" >/dev/null ||
+	{
+		printf '%s\n' 'e2e static: the rotator does not probe exactly the two approval entries with the four-eyes control off' >&2
+		exit 1
+	}
 controller_service_account_name=$(awk '
   $1 == "operator.ptah.run/controller-service-account-name:" {
     gsub(/"/, "", $2)

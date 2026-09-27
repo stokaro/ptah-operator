@@ -122,6 +122,19 @@ h() {
 	helm --kubeconfig "$KUBECONFIG_FILE" "$@"
 }
 
+# The spec-writer mutating entries exist only when the release has
+# approvals.requireDistinctApprover on; charts/ptah-operator/templates/webhook.yaml
+# renders them under the same condition. This phase never changes that value,
+# but it reads the live release rather than assuming its default, so the
+# admission-shape check below follows what is actually installed.
+REQUIRE_DISTINCT_APPROVER=$(h -n "$OPERATOR_NAMESPACE" get values "$HELM_RELEASE" --all -o json |
+	jq -r '.approvals.requireDistinctApprover // false') ||
+	fail "could not read approvals.requireDistinctApprover from the live release"
+case "$REQUIRE_DISTINCT_APPROVER" in
+true | false) ;;
+*) fail "approvals.requireDistinctApprover on the live release is not a boolean: $REQUIRE_DISTINCT_APPROVER" ;;
+esac
+
 expect_denied() {
 	description=$1
 	pattern=$2
@@ -242,14 +255,15 @@ done
 
 printf '%s\n' 'e2e assertions: checking webhook failure policy and scope'
 k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
-	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" '
+	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" \
+		--argjson requireDistinctApprover "$REQUIRE_DISTINCT_APPROVER" '
       .webhooks |
-      (map(.name) | sort) == [
-        "mapproval.operator.ptah.run",
-        "mmigrationapproval.operator.ptah.run",
-        "mmigrationwriter.operator.ptah.run",
-        "mschemawriter.operator.ptah.run"
-      ] and
+      (map(.name) | sort) == (
+        ["mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run"] +
+        (if $requireDistinctApprover then
+          ["mmigrationwriter.operator.ptah.run", "mschemawriter.operator.ptah.run"]
+        else [] end) | sort
+      ) and
       (map(select(.name == "mapproval.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
@@ -268,7 +282,8 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
           apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"
         }])) and
-      (map(select(.name == "mschemawriter.operator.ptah.run")) | all(.[];
+      (($requireDistinctApprover | not) or
+        (map(select(.name == "mschemawriter.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
 	        .reinvocationPolicy == "Never" and .timeoutSeconds == 5 and
@@ -285,8 +300,9 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
         .rules == [{
           apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE", "UPDATE"], resources: ["ptahschemas"], scope: "Namespaced"
-        }])) and
-      (map(select(.name == "mmigrationwriter.operator.ptah.run")) | all(.[];
+        }]))) and
+      (($requireDistinctApprover | not) or
+        (map(select(.name == "mmigrationwriter.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
 	        .reinvocationPolicy == "Never" and .timeoutSeconds == 5 and
@@ -303,7 +319,7 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
         .rules == [{
           apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE", "UPDATE"], resources: ["ptahmigrations"], scope: "Namespaced"
-        }]))
+        }])))
     ' >/dev/null || fail "approval mutating webhook is not exact and fail-closed"
 k get validatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" \
