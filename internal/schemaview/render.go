@@ -97,6 +97,13 @@ func renderObservation(text *strings.Builder, observation *ObservationView) {
 		fmt.Fprintf(text, "%-18s%s\n", "Drift:", "none")
 		return
 	}
+	if observation.FindingCount == 0 && len(observation.Findings) == 0 {
+		// A grant, a default privilege, a view or a trigger: the report found
+		// the difference and has no category to count it in. A severity rated
+		// over no category says nothing, so none is printed.
+		fmt.Fprintf(text, "%-18s%s\n", "Drift:", "found, in no category the report counts; the plan says what changes")
+		return
+	}
 	fmt.Fprintf(text, "%-18s%s\n", "Drift:",
 		fmt.Sprintf("%d in %d categories, highest %s",
 			observation.FindingCount, len(observation.Findings), observation.HighestSeverity))

@@ -1003,6 +1003,15 @@ observation summary: the `DriftDetected` condition describes the authoritative
 managed scope, while `status.target` remains evidence for the observation
 identified by `driftReportDigest` and `lastObservedAt`.
 
+Drift does not imply a finding. The report has no category for some objects it
+compares: grants, default privileges, views and triggers among them. A change
+to one of those alone is observed as drift with no `driftFindings`, a
+`driftFindingCount` of zero and a `highestDriftSeverity` of `safe`, which is
+what the report rates a list with nothing in it. `highestDriftSeverity` is set
+whenever the report found drift and absent when it found none, so read it, not
+the count, to tell the two apart. Planning runs either way, and the plan names
+the statements and the privilege kinds they change.
+
 Those categories describe structure. A reference row that someone changed in
 the database is real drift and is reconciled like any other, but it appears in
 the plan rather than in `driftFindings`: the drift report has no managed-data

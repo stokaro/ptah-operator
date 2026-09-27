@@ -755,10 +755,14 @@ type TargetStatus struct {
 	DriftReportDigest string `json:"driftReportDigest,omitempty"`
 	// LastObservedAt is when that observation ran.
 	LastObservedAt *metav1.Time `json:"lastObservedAt,omitempty"`
-	// HighestDriftSeverity is the worst category the report found.
+	// HighestDriftSeverity is the worst category the report found. It is set
+	// whenever the report found drift and empty when it found none, so it also
+	// says which. A difference the report has no category for -- a grant, a
+	// default privilege, a view or a trigger -- is drift that reads safe here,
+	// with no findings and a zero count; the plan says what it changes.
 	HighestDriftSeverity string `json:"highestDriftSeverity,omitempty"`
 	// DriftFindingCount is how many findings the complete report held, whether
-	// or not the list below was truncated.
+	// or not the list below was truncated. Drift in no category counts none.
 	DriftFindingCount int32 `json:"driftFindingCount,omitempty"`
 	// DriftFindings contains only category-level aggregates. The total count
 	// above covers the complete report even when this list is truncated.

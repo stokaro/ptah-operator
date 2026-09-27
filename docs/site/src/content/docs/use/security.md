@@ -491,7 +491,9 @@ severity. A syntactically valid but unknown category fails the operation; adding
 a category requires an explicit runner protocol update. The frame never carries
 object names, SQL, schema literals, or the native diff. `driftFindingCount`
 remains the complete aggregate count; `driftFindingsTruncated=true` explicitly
-reports that additional categories were omitted.
+reports that additional categories were omitted. Drift the report has no
+category for, such as a grant, crosses as drift with no aggregates at all: a
+zero count and a `safe` highest severity, and nothing that names the grant.
 Resolve and Verify follow the same boundary: native stdout is strictly decoded
 before a small typed descriptor or requirement-name set is emitted, arbitrary
 verification details and inspection metadata are discarded, and native stderr

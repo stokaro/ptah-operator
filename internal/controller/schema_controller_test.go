@@ -2252,6 +2252,86 @@ func TestObservePersistsCredentialFreeDriftFindings(t *testing.T) {
 	}
 }
 
+// A grant is drift the native report has no category for: it says drift and
+// lists no finding. The Observe frame arrives through the Pod log the way a
+// runner writes it, and the schema has to move on to the Plan that decides
+// what the grant needs, with status recording drift and a zero count. What a
+// plan holding a GRANT does under Always is
+// TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically's to show.
+func TestGrantOnlyDriftGoesFromObserveToPlan(t *testing.T) {
+	t.Parallel()
+
+	policyBytes := "policy"
+	schema := schemaFixture()
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseObserving
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+		ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
+		Digest:                   testDigest,
+		ArtifactType:             dataplane.SchemaArtifactType,
+		Verified:                 true,
+		VerificationPolicyUID:    testPolicyUID,
+		VerificationPolicyDigest: fingerprint.DigestBytes([]byte(policyBytes)),
+	}
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationObserve, ID: "observe-grant-only",
+		JobName: "observe-grant-only-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
+	}
+	bindActiveInput(t, schema)
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	frame := safetyRunnerFrame(t, runner.Result{
+		ProtocolVersion:      runner.ProtocolVersion,
+		Operation:            runner.OperationObserve,
+		OperationID:          schema.Status.ActiveOperation.ID,
+		ChildExitCode:        0,
+		CoordinationDigest:   testCoordinationDigest,
+		TargetIdentityDigest: testDigest,
+		DriftReportDigest:    safetyOtherDigest,
+		ObservedDialect:      "postgres",
+		ObservedDrift:        true,
+		HighestDriftSeverity: "safe",
+	})
+	policyConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: testPolicyUID,
+		},
+		Immutable: ptr(true),
+		Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: policyBytes},
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("Reconcile() harvesting Observe error = %v", err)
+	}
+	observed := safetyGetSchema(t, api, schema)
+	target := observed.Status.Target
+	if observed.Status.ActiveOperation != nil || observed.Status.Phase != operatorv1alpha1.PhasePlanning {
+		t.Fatalf("after Observe: phase %q, active operation %#v; want Planning with nothing claimed",
+			observed.Status.Phase, observed.Status.ActiveOperation)
+	}
+	if target.LastObservedAt == nil || target.DriftReportDigest != safetyOtherDigest ||
+		target.HighestDriftSeverity != "safe" || target.DriftFindingCount != 0 ||
+		len(target.DriftFindings) != 0 || target.DriftFindingsTruncated {
+		t.Fatalf("status.target = %#v, want drift recorded with a safe severity and no findings", target)
+	}
+	if !conditionMatches(observed.Status.Conditions, operatorv1alpha1.ConditionDriftDetected,
+		metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending) {
+		t.Fatalf("DriftDetected = %#v, want Unknown until the scoped plan decides",
+			findCondition(observed.Status.Conditions, operatorv1alpha1.ConditionDriftDetected))
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("Reconcile() claiming Plan error = %v", err)
+	}
+	planning := safetyGetSchema(t, api, schema)
+	if planning.Status.ActiveOperation == nil || planning.Status.ActiveOperation.Type != operatorv1alpha1.OperationPlan {
+		t.Fatalf("after the next pass: phase %q, active operation %#v; want a Plan claim",
+			planning.Status.Phase, planning.Status.ActiveOperation)
+	}
+}
+
 func TestPostApplyProofUsesImmutableTargetBeforeBlockingUnsupportedEngine(t *testing.T) {
 	t.Parallel()
 

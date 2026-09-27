@@ -151,6 +151,11 @@ kubectl ptah plan prints the SQL this plan holds.
 `Observed: not yet` and `Drift: none` are different answers. The first is a
 schema nothing has read; the second is a database that matches its declaration.
 
+A change the drift report has no category for, such as a grant, prints
+`Drift: found, in no category the report counts; the plan says what changes`.
+The report saw a difference and counted nothing, so there is no count and no
+severity to show; the plan below names the privilege kinds it changes.
+
 ### The reference-data line {#reference-data}
 
 `Reference data` is how far the declared rows sit from the database, in counts:

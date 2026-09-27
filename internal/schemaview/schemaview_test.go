@@ -108,6 +108,44 @@ func TestLoadSeparatesAnUnobservedSchemaFromAConvergedOne(t *testing.T) {
 	}
 }
 
+// A grant is drift the report has no category for. The observation holds a
+// severity and no finding, and the view has to call it drift rather than read
+// the missing findings as a converged database.
+func TestLoadReportsDriftInNoCategory(t *testing.T) {
+	t.Parallel()
+
+	schema := fixture()
+	schema.Status.Target.DriftFindings = nil
+	schema.Status.Target.DriftFindingCount = 0
+	schema.Status.Target.HighestDriftSeverity = "safe"
+	view, err := schemaview.Load(context.Background(), readerWith(t, schema), "team-a", "storefront")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Observation == nil || !view.Observation.Drift || view.Observation.FindingCount != 0 ||
+		len(view.Observation.Findings) != 0 || view.Observation.ReferenceData != nil {
+		t.Fatalf("observation = %#v, want drift with no findings", view.Observation)
+	}
+	var text, encoded bytes.Buffer
+	if err := schemaview.Render(&text, view, schemaview.Text); err != nil {
+		t.Fatal(err)
+	}
+	if err := schemaview.Render(&encoded, view, schemaview.JSON); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Drift:            found, in no category the report counts; the plan says what changes\n"; !strings.Contains(text.String(), want) {
+		t.Fatalf("text view is missing %q:\n%s", want, text.String())
+	}
+	for _, unwanted := range []string{"Drift:            none", "0 in 0 categories"} {
+		if strings.Contains(text.String(), unwanted) {
+			t.Fatalf("text view printed %q:\n%s", unwanted, text.String())
+		}
+	}
+	if !strings.Contains(encoded.String(), `"drift": true`) {
+		t.Fatalf("json view does not say drift:\n%s", encoded.String())
+	}
+}
+
 func TestLoadFailurePath(t *testing.T) {
 	t.Parallel()
 

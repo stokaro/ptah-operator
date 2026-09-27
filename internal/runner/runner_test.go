@@ -763,6 +763,82 @@ func TestObservePreservesSafeSeverityForRealDrift(t *testing.T) {
 	}
 }
 
+// A grant is drift the report has no category for. Ptah says drift, rates the
+// empty list safe, and lists no finding; the pinned build leaves the list out
+// altogether. The observation is framed as drift with a zero count, so Plan
+// still runs, and the frame carries nothing the grant says.
+func TestObserveFramesDriftTheReportHasNoCategoryFor(t *testing.T) {
+	t.Parallel()
+
+	const grantOnlyDiff = `{"grants_added":[{"role":"reporting","privilege":"SELECT","object_type":"TABLE","object_name":"orders","with_option":false}]}`
+	tests := []struct {
+		name   string
+		report string
+	}{
+		{
+			name:   "findings absent",
+			report: `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","diff":` + grantOnlyDiff + `}`,
+		},
+		{
+			name:   "findings empty",
+			report: `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[],"diff":` + grantOnlyDiff + `}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			operationID := "observe-grant-only-" + strings.ReplaceAll(test.name, " ", "-")
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: test.report, exitCode: 1}}}
+			result := Run(context.Background(), Config{
+				Operation: OperationObserve, Environment: databaseEnvironment(operationID), Executor: executor,
+			})
+			if result.Error != nil || result.ChildExitCode != 0 || result.DriftReportDigest == "" || result.Stdout != "" {
+				t.Fatalf("Run() = %#v, want a framed observation of drift", result)
+			}
+			if !result.ObservedDrift || result.HighestDriftSeverity != "safe" || result.DriftFindingCount != 0 ||
+				len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
+				t.Fatalf("drift summary = drift %t, highest %q, count %d, findings %#v, truncated %t; want drift in no category",
+					result.ObservedDrift, result.HighestDriftSeverity, result.DriftFindingCount,
+					result.DriftFindings, result.DriftFindingsTruncated)
+			}
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			for _, disclosed := range []string{"reporting", "orders", "SELECT", "grants_added"} {
+				if bytes.Contains(frame, []byte(disclosed)) {
+					t.Fatalf("frame carries %q from the drift report:\n%s", disclosed, frame)
+				}
+			}
+			parsed, err := ParseResultFor(frame, OperationObserve, operationID)
+			if err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+			if !parsed.ObservedDrift || parsed.HighestDriftSeverity != "safe" || parsed.DriftFindingCount != 0 ||
+				len(parsed.DriftFindings) != 0 || parsed.DriftReportDigest != result.DriftReportDigest {
+				t.Fatalf("parsed result = %#v", parsed)
+			}
+		})
+	}
+}
+
+// A report with no findings has nothing to rate above safe. One that claims a
+// higher severity describes findings it does not hold, and is refused the way a
+// list whose first entry disagrees with the highest severity is.
+func TestObserveRefusesAnUncategorizedDriftAboveSafe(t *testing.T) {
+	t.Parallel()
+
+	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","diff":{"grants_added":[]}}`
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: databaseEnvironment("observe-uncategorized-warning"),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
+	})
+	if result.Error == nil || result.Error.Code != "invalid_observed_state" || result.ObservedDrift ||
+		result.HighestDriftSeverity != "" || result.DriftReportDigest != "" {
+		t.Fatalf("Run() = %#v, want an invalid_observed_state with no summary", result)
+	}
+}
+
 func TestObserveFramesInconsistentConvergedSummaryAsInvalid(t *testing.T) {
 	t.Parallel()
 
