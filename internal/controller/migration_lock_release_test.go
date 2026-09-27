@@ -79,8 +79,9 @@ func TestAPassThatOwesADatabaseDoesNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatal("the pass that released the database did not ask to look again")
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("the pass that released the database result = %#v, want the next pass after %s",
+			result, statusPatchRequeue)
 	}
 	jobs := &batchv1.JobList{}
 	if err := api.List(context.Background(), jobs); err != nil {

@@ -2488,7 +2488,7 @@ func TestAnUncertainApplyWithNoJobAsksForTheReadingThatClearsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finishUncertainMigrationApply() error = %v", err)
 	}
-	if result.RequeueAfter <= 0 && !result.Requeue {
+	if result.RequeueAfter <= 0 {
 		t.Fatal("nothing asked for another pass, so the record waits for an edit nobody knows to make")
 	}
 

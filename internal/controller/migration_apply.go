@@ -233,7 +233,11 @@ func (r *MigrationReconciler) claimMigrationApply(
 	approval *operatorv1alpha1.PtahMigrationApproval,
 ) (ctrl.Result, error) {
 	if migration.Status.ActiveOperation != nil {
-		return ctrl.Result{Requeue: true}, nil
+		// Unreachable in the normal dispatch: reconcile's own ActiveOperation
+		// check sends a resource carrying one to reconcileActiveMigration before
+		// this function is ever called. Requeuing rather than erroring keeps
+		// that true if it ever stops being true.
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	// A run nobody accounted for refuses the next one here, where the claim is
 	// taken, rather than only through the state the History reading leaves
@@ -307,7 +311,7 @@ func (r *MigrationReconciler) claimMigrationApply(
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // acquireMigrationApplyLock serializes execution against every other operator
@@ -539,7 +543,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome, bounded(message, 256))
 	r.observeMigrationRun(operation, outcome)
 	r.settleOwedMigrationRelease(ctx, migration)
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // sequenceRefusal names the selection Ptah refused to run.
@@ -1050,7 +1054,7 @@ func (r *MigrationReconciler) discardMigrationPlan(
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // consumeMigrationApproval records that the decision was acted on. An approval

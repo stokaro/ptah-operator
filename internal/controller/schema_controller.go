@@ -67,6 +67,21 @@ const (
 	// itself, and the next pass reads the object through the API reader rather
 	// than a cache that may not have seen the write yet.
 	statusPatchRequeue = time.Millisecond
+	// dueRequeue is what requeueAtDeadline returns for a deadline that has
+	// already passed, or was never set: the next pass should run at once, the
+	// same intent as statusPatchRequeue but for a different reason, so it gets
+	// its own name rather than borrowing that comment.
+	//
+	// It has to be RequeueAfter and not Result{Requeue: true}. In the pinned
+	// controller-runtime (pkg/internal/controller/controller.go), the
+	// RequeueAfter branch calls Queue.Forget before re-adding the item, and the
+	// Requeue branch does not; Requeue adds it through the rate limiter with no
+	// Forget in between. A resource sitting at a due-now deadline calls this on
+	// every pass, so the per-item exponential backoff that limiter applies
+	// would grow on every one of those passes instead of resetting, turning
+	// "check again at once" into a wait that gets longer each time nothing else
+	// changed.
+	dueRequeue = time.Millisecond
 	// applyTerminationGrace is recorded on every Apply claim. The builder
 	// gives the Apply Pod this grace and tells the runner the same number, and
 	// the controller dates the end of the Apply's execution horizon by it.
@@ -139,7 +154,6 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 		} else {
 			logger.V(1).Info(
 				"reconciliation completed",
-				"requeue", result.Requeue,
 				"requeueAfter", result.RequeueAfter,
 			)
 		}
@@ -345,7 +359,7 @@ func (r *SchemaReconciler) reconcileEngineSupport(
 		if err := r.patchStatus(ctx, before, schema); err != nil {
 			return ctrl.Result{}, true, err
 		}
-		return ctrl.Result{Requeue: true}, true, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, true, nil
 	}
 
 	message := fmt.Sprintf("Database engine %q is not supported", schema.Spec.Target.Engine)
@@ -371,7 +385,7 @@ func (r *SchemaReconciler) reconcileEngineSupport(
 		if err := r.patchStatus(ctx, before, schema); err != nil {
 			return ctrl.Result{}, true, err
 		}
-		return ctrl.Result{Requeue: true}, true, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, true, nil
 	}
 	marked, err := r.markOneSchemaApprovalStaleWithReason(
 		ctx,
@@ -383,7 +397,7 @@ func (r *SchemaReconciler) reconcileEngineSupport(
 		return ctrl.Result{}, true, err
 	}
 	if marked {
-		return ctrl.Result{Requeue: true}, true, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, true, nil
 	}
 	if schema.Status.Plan == nil {
 		return ctrl.Result{}, true, nil
@@ -393,7 +407,7 @@ func (r *SchemaReconciler) reconcileEngineSupport(
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, true, err
 	}
-	return ctrl.Result{Requeue: true}, true, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, true, nil
 }
 
 func databaseEngineSupported(engine operatorv1alpha1.DatabaseEngine) bool {
@@ -576,7 +590,7 @@ func (r *SchemaReconciler) reconcileExecutionBinding(
 		if err := r.patchStatus(ctx, before, schema); err != nil {
 			return ctrl.Result{}, true, err
 		}
-		return ctrl.Result{Requeue: true}, true, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, true, nil
 	}
 
 	result, err := r.executionBindingChanged(
@@ -1591,7 +1605,7 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 			return ctrl.Result{}, err
 		}
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) verificationResultPolicyError(
@@ -2147,7 +2161,7 @@ func (r *SchemaReconciler) consumeResult(
 		}
 	}
 	r.event(schema, corev1.EventTypeNormal, "OperationCompleted", "%s operation completed", result.Operation)
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) expectedJob(
@@ -2310,7 +2324,7 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 		// Approval reservation and Apply claim are separate reconciliation
 		// boundaries. A fresh pass must re-enter the generation gate and validate
 		// the plan against one current resource snapshot before any mutation.
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if requiresApproval {
 		valid, err := r.ensureCurrentApproval(ctx, schema, plan, false)
@@ -2341,7 +2355,11 @@ func (r *SchemaReconciler) claimAt(
 	claimedAt time.Time,
 ) (ctrl.Result, error) {
 	if schema.Status.ActiveOperation != nil {
-		return ctrl.Result{Requeue: true}, nil
+		// Unreachable in the normal dispatch: reconcile's own ActiveOperation
+		// check sends a resource carrying one to reconcileActive before this
+		// function is ever called. Requeuing rather than erroring keeps that
+		// true if it ever stops being true.
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	inputs, err := operationInputs(schema, operation)
 	if err != nil {
@@ -2518,7 +2536,7 @@ func (r *SchemaReconciler) claimAt(
 		"attempt", active.Attempt,
 		"phase", schema.Status.Phase,
 	)
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, failure error) (ctrl.Result, error) {
@@ -2730,7 +2748,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	}
 	r.observeOperation(operation, telemetry.OperationUncertain)
 	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "Apply outcome is uncertain; observing database state")
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) consumeRecordedApprovalAtDispatch(ctx context.Context, schema *operatorv1alpha1.PtahSchema) error {
@@ -2859,7 +2877,7 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 			return ctrl.Result{}, err
 		}
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) executionBindingChanged(
@@ -2961,7 +2979,7 @@ func (r *SchemaReconciler) executionBindingChanged(
 		}
 		r.observeOperation(operation, telemetry.OperationStale)
 		r.event(schema, corev1.EventTypeWarning, "ExecutionBindingChanged", "The previous execution binding was retired; closing its approval boundary before starting a complete read-only refresh")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if err := r.markPlanApprovalsStaleWithReason(
 		ctx,
@@ -2982,7 +3000,7 @@ func (r *SchemaReconciler) executionBindingChanged(
 			return ctrl.Result{}, err
 		}
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func isReadOnlyOperation(operation *operatorv1alpha1.ActiveOperationStatus) bool {
@@ -3033,7 +3051,7 @@ func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
 			if err := r.patchStatus(ctx, before, schema); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 		case err == nil && retiredReadOnlyJobMatches(schema, operation, job):
 			// Scheduling cleanup is not result consumption. Do not inspect Pods or logs:
 			// the old epoch can no longer produce current evidence.
@@ -3058,7 +3076,7 @@ func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // readOnlyJobEnvelopeMatches holds a retired read-only Job to the exact
@@ -3348,7 +3366,7 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 		}
 	}
 	r.event(schema, corev1.EventTypeWarning, "PlanStale", "Database state changed while the plan was generated; observing again")
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema *operatorv1alpha1.PtahSchema, failure error) (ctrl.Result, error) {
@@ -3398,7 +3416,7 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) operationFailure(ctx context.Context, schema *operatorv1alpha1.PtahSchema, failure error) (ctrl.Result, error) {
@@ -3442,7 +3460,7 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 		// PendingObservation still owns the database-realm Lease and deletion
 		// safety boundary. Only its terminal proof transition may remove the
 		// finalizer.
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 		return ctrl.Result{}, err
@@ -3483,7 +3501,7 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1alpha1.PtahSchema, decoded dataplane.PlanFile, content []byte) (*operatorv1alpha1.PtahSchemaPlan, error) {
@@ -4367,7 +4385,7 @@ func (r *SchemaReconciler) reconcilePendingLockRelease(
 	if err := r.completePendingLockRelease(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *SchemaReconciler) completePendingLockRelease(
@@ -5068,7 +5086,7 @@ func until(next *metav1.Time, now time.Time) time.Duration {
 func requeueAtDeadline(next *metav1.Time, now time.Time) ctrl.Result {
 	remaining := until(next, now)
 	if remaining <= 0 {
-		return ctrl.Result{Requeue: true}
+		return ctrl.Result{RequeueAfter: dueRequeue}
 	}
 	return ctrl.Result{RequeueAfter: remaining}
 }
