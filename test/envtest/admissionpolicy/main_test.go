@@ -2,7 +2,7 @@
 // and their bindings into a real kube-apiserver, in the state a completed
 // install leaves them, and holds each policy to what it exists for: the
 // requests it refuses, the writes it lets through, and the mutations of its
-// match, binding or parameter reference that would let it fail open.
+// match or binding that would let it fail open.
 package admissionpolicy_test
 
 import (
@@ -28,8 +28,8 @@ func TestMain(m *testing.M) {
 }
 
 // setup installs the release and the tenant the rows write into. The API
-// server compiles the policies and syncs the parameters they read
-// asynchronously; TestAdmissionPolicies waits for that before it judges.
+// server compiles the policies asynchronously; TestAdmissionPolicies waits for
+// that before it judges.
 func setup() error {
 	ctx := context.Background()
 	chart, err := policyenv.Render(ctx, harness.DefaultRelease())

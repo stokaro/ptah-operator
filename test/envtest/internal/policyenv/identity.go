@@ -53,13 +53,9 @@ func ServiceAccount(namespace, name string) Identity {
 	return Identity{Username: serviceaccount.MakeUsername(namespace, name)}
 }
 
-// The Pods the protected identities run in. Only the shape of each name
-// matters to the policies: the Deployment or Job name, and the suffixes the
-// ReplicaSet and Job controllers generate.
-const (
-	replicaSuffix = "-7d9c5b8f4-x2k9q"
-	jobPodSuffix  = "-h4k9z"
-)
+// replicaSuffix is what the ReplicaSet controller appends to the name of a
+// Deployment's Pod.
+const replicaSuffix = "-7d9c5b8f4-x2k9q"
 
 // Manager is the manager's ServiceAccount as its own Pod presents it.
 func (env *Env) Manager() Identity {
@@ -68,31 +64,10 @@ func (env *Env) Manager() Identity {
 		BoundTo(names.ManagerDeployment+replicaSuffix, "7f6c1d0e-0000-4000-8000-000000000001")
 }
 
-// Certificate is the certificate rotator as its own Pod presents it.
-func (env *Env) Certificate() Identity {
-	names := env.Chart.Names
-	return ServiceAccount(names.Namespace, names.Certificate).
-		BoundTo(names.CertificateDeployment+replicaSuffix, "7f6c1d0e-0000-4000-8000-000000000002")
-}
-
-// Hook is the CRD manager hook as the Pod of its reconcile Job presents it.
-// The hook Job carries the ServiceAccount's name.
-func (env *Env) Hook() Identity {
-	names := env.Chart.Names
-	return ServiceAccount(names.Namespace, names.Hook).
-		BoundTo(names.Hook+jobPodSuffix, "7f6c1d0e-0000-4000-8000-000000000003")
-}
-
 // User is an ordinary user: RBAC lets it write, and nothing makes it an
 // administrator of admission.
 func User() Identity {
 	return Identity{Username: OrdinaryUser}
-}
-
-// JobController is the Job controller, the one identity that creates a Job's
-// Pods.
-func JobController() Identity {
-	return ServiceAccount("kube-system", "job-controller")
 }
 
 // As returns a client that acts as identity. Clients are cached: each one

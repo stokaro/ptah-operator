@@ -117,7 +117,15 @@ func setupTenant(ctx context.Context) error {
 // resolveJob is the Job the manager dispatches to resolve the tenant schema's
 // artifact, built by the manager's own builder from the stored resource.
 func resolveJob() (*batchv1.Job, error) {
+	return resolveJobBuiltBy(managerBuilder())
+}
+
+// resolveJobBuiltBy is the same Job built by builder, which a row sets to
+// another manager release. The builder refuses a binding recorded at another
+// controller-state version, so the copy it builds from records the builder's.
+func resolveJobBuiltBy(builder workload.Builder) (*batchv1.Job, error) {
 	schema := tenantSchema.DeepCopy()
+	schema.Status.ExecutionBinding.ControllerStateVersion = builder.ControllerStateVersion
 	operation := operatorv1alpha1.ActiveOperationStatus{
 		Type:               operatorv1alpha1.OperationResolve,
 		ID:                 "operation-01",
@@ -127,7 +135,7 @@ func resolveJob() (*batchv1.Job, error) {
 		Attempt:            1,
 		AdmissionSnapshot:  &operatorv1alpha1.PodAdmissionSnapshot{Digest: digest("b"), TemplateDigest: digest("c")},
 	}
-	return managerBuilder().Build(schema, operation, nil)
+	return builder.Build(schema, operation, nil)
 }
 
 // migrationResolveJob is the migration family's Job for the same step.

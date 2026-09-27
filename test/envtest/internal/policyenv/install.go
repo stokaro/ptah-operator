@@ -24,7 +24,7 @@ import (
 // webhooks point at a Service no envtest process serves, and a webhook that
 // fails closed would otherwise refuse every request it matches before a
 // policy is asked. The webhook suite serves them for real; here they exist
-// only as the objects the certificate and rollout guards protect.
+// because a completed install leaves them.
 const WebhookDisabledLabel = "policyenv.envtest.operator.ptah.run/webhook-disabled"
 
 // OrdinaryUser is a person with write access and no admission authority.
@@ -57,9 +57,9 @@ func Scheme() (*runtime.Scheme, error) {
 	return scheme, nil
 }
 
-// Install puts chart into the state a completed install leaves: every
-// install-time object, the release activated, and the policies bound. It
-// installs the policies last, so nothing it creates is judged by them.
+// Install puts chart into the state a completed install leaves: every object
+// of the release, and the policies bound. It installs the policies last, so
+// nothing it creates is judged by them.
 func Install(ctx context.Context, plane *harness.ControlPlane, chart *Chart) (*Env, error) {
 	scheme, err := Scheme()
 	if err != nil {
@@ -102,13 +102,10 @@ func Install(ctx context.Context, plane *harness.ControlPlane, chart *Chart) (*E
 	return env, nil
 }
 
-// prepare adjusts a rendered object to the installed state: the activation
-// parameter records the release as active, as the CRD manager hook leaves it
-// once the runtime is proven, and the webhook entries select nothing.
+// prepare adjusts a rendered object to the installed state: the webhook
+// entries select nothing.
 func (chart *Chart) prepare(object *unstructured.Unstructured) error {
 	switch {
-	case object.GetKind() == "ConfigMap" && object.GetName() == chart.Names.Activation:
-		return unstructured.SetNestedField(object.Object, chart.Names.ReleaseSequence, "data", activeSequenceKey)
 	case object.GetKind() == "MutatingWebhookConfiguration" || object.GetKind() == "ValidatingWebhookConfiguration":
 		webhooks, _, err := unstructured.NestedSlice(object.Object, "webhooks")
 		if err != nil {
