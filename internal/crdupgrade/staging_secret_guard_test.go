@@ -16,7 +16,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,8 +37,8 @@ func TestStagingSecretGuardAdmissionContract(t *testing.T) {
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Fatalf("failurePolicy = %v, want Fail", policy.Spec.FailurePolicy)
 	}
-	if policy.Spec.ParamKind == nil || policy.Spec.ParamKind.APIVersion != "v1" || policy.Spec.ParamKind.Kind != "ConfigMap" {
-		t.Fatalf("paramKind = %#v, want v1 ConfigMap", policy.Spec.ParamKind)
+	if policy.Spec.ParamKind != nil {
+		t.Fatalf("paramKind = %#v, want none: the guard reads no parameter", policy.Spec.ParamKind)
 	}
 	if policy.Spec.MatchConstraints == nil || policy.Spec.MatchConstraints.MatchPolicy == nil ||
 		*policy.Spec.MatchConstraints.MatchPolicy != admissionregistrationv1.Exact {
@@ -63,11 +62,8 @@ func TestStagingSecretGuardAdmissionContract(t *testing.T) {
 	if !reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
 		t.Fatalf("validationActions = %v, want [Deny]", binding.Spec.ValidationActions)
 	}
-	if binding.Spec.ParamRef == nil || binding.Spec.ParamRef.Name != ReleaseActivationName ||
-		binding.Spec.ParamRef.Namespace != guard.rollout.ReleaseNamespace ||
-		binding.Spec.ParamRef.ParameterNotFoundAction == nil ||
-		*binding.Spec.ParamRef.ParameterNotFoundAction != admissionregistrationv1.DenyAction {
-		t.Fatalf("paramRef = %#v, want exact fail-closed release activation parameter", binding.Spec.ParamRef)
+	if binding.Spec.ParamRef != nil {
+		t.Fatalf("paramRef = %#v, want none", binding.Spec.ParamRef)
 	}
 
 	oldWithData := stagingSecretCELObject(guard, map[string]any{"candidate": "credential-material"})
@@ -75,13 +71,7 @@ func TestStagingSecretGuardAdmissionContract(t *testing.T) {
 	rotated := stagingSecretCELObject(guard, map[string]any{"candidate": "replacement"})
 	createEmpty := stagingSecretCreateCELObject(guard, nil)
 	createWithData := stagingSecretCreateCELObject(guard, map[string]any{"candidate": "credential-material"})
-	params := stagingSecretActivationCELObject(guard, guard.rollout.ReleaseSequence, hookIdentityDigest(
-		guard.rollout.ReleaseNamespace,
-		guard.rollout.ReleaseName,
-		guard.rollout.ReleaseSequence,
-		guard.rollout.ManagerImage,
-	))
-	cleanup := stagingSecretRequest(guard, "DELETE", stagingCleanupUsername(guard))
+	hook := stagingSecretRequest(guard, "DELETE", "system:serviceaccount:"+guard.rollout.ReleaseNamespace+":"+guard.rollout.HookServiceAccountName)
 	rotator := stagingSecretRequest(guard, "UPDATE", "system:serviceaccount:ptah-system:ptah-cert-rotator")
 	foreign := stagingSecretRequest(guard, "UPDATE", "system:serviceaccount:ptah-system:foreign")
 	wrongManager := stagingSecretCELObject(guard, map[string]any{"candidate": "credential-material"})
@@ -94,7 +84,6 @@ func TestStagingSecretGuardAdmissionContract(t *testing.T) {
 		object    map[string]any
 		oldObject map[string]any
 		request   map[string]any
-		params    map[string]any
 		want      bool
 	}{
 		{name: "exact empty create", object: createEmpty, request: stagingSecretRequest(guard, "CREATE", "helm"), want: true},
@@ -102,17 +91,13 @@ func TestStagingSecretGuardAdmissionContract(t *testing.T) {
 		{name: "rotator exact data update", object: rotated, oldObject: oldWithData, request: rotator, want: true},
 		{name: "foreign data update", object: rotated, oldObject: oldWithData, request: foreign, want: false},
 		{name: "foreign unchanged update", object: oldWithData, oldObject: oldWithData, request: foreign, want: true},
-		{name: "cleanup atomically empties data", object: empty, oldObject: oldWithData, request: stagingSecretRequest(guard, "UPDATE", stagingCleanupUsername(guard)), want: true},
-		{name: "cleanup cannot replace nonempty data", object: rotated, oldObject: oldWithData, request: stagingSecretRequest(guard, "UPDATE", stagingCleanupUsername(guard)), want: false},
-		{name: "nonempty delete denied", oldObject: oldWithData, request: cleanup, want: false},
-		{name: "empty exact cleanup delete allowed", oldObject: empty, request: cleanup, want: true},
-		{
-			name:      "stale cleanup identity denied",
-			oldObject: empty,
-			request:   cleanup,
-			params:    stagingSecretActivationCELObject(guard, guard.rollout.ReleaseSequence+1, strings.Repeat("f", 64)),
-			want:      false,
-		},
+		// The uninstall deletes the Secret after it has deleted this guard, so
+		// no principal the guard sees may empty or delete it, the release's own
+		// hook included.
+		{name: "hook cannot empty the data", object: empty, oldObject: oldWithData, request: stagingSecretRequest(guard, "UPDATE", hook["userInfo"].(map[string]any)["username"].(string)), want: false},
+		{name: "nonempty delete denied", oldObject: oldWithData, request: hook, want: false},
+		{name: "empty hook delete denied", oldObject: empty, request: hook, want: false},
+		{name: "empty rotator delete denied", oldObject: empty, request: stagingSecretRequest(guard, "DELETE", "system:serviceaccount:ptah-system:ptah-cert-rotator"), want: false},
 		{name: "empty foreign delete denied", oldObject: empty, request: stagingSecretRequest(guard, "DELETE", "system:serviceaccount:ptah-system:foreign"), want: false},
 		{name: "metadata mutation denied", object: stagingSecretCELObjectWithAnnotation(guard), oldObject: oldWithData, request: foreign, want: false},
 		{name: "foreign Helm manager denied", object: wrongManager, oldObject: oldWithData, request: foreign, want: false},
@@ -121,14 +106,10 @@ func TestStagingSecretGuardAdmissionContract(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			parameter := params
-			if test.params != nil {
-				parameter = test.params
-			}
-			if !evaluatePolicyMatchConditions(t, policy, test.object, test.oldObject, test.request, parameter) {
+			if !evaluatePolicyMatchConditions(t, policy, test.object, test.oldObject, test.request, nil) {
 				t.Fatal("exact staging Secret request did not match its policy")
 			}
-			results := evaluatePolicyValidations(t, policy, test.object, test.oldObject, test.request, parameter)
+			results := evaluatePolicyValidations(t, policy, test.object, test.oldObject, test.request, nil)
 			got := true
 			for _, result := range results {
 				got = got && result
@@ -152,8 +133,8 @@ func TestStagingSecretGuardWiresExactTeardownInventories(t *testing.T) {
 	for _, contract := range contracts {
 		if contract.name == guardName {
 			count++
-			if !contract.parameterized {
-				t.Fatal("staging Secret guard teardown contract must retire before its activation parameter")
+			if contract.parameterized {
+				t.Fatal("staging Secret guard reads no parameter, so its teardown contract must not claim one")
 			}
 		}
 	}
@@ -206,13 +187,13 @@ func TestRenderedStagingSecretGuardRejectsMutatedLiveContract(t *testing.T) {
 		t.Fatalf("render expected staging Secret guard: %v\n%s", err, rendered)
 	}
 	policy, binding := renderedStagingSecretGuardPair(t, rendered)
-	policy = persistedServiceAccountObjectPolicy(policy)
-	binding = persistedServiceAccountObjectBinding(binding)
+	policy = persistedPolicy(policy)
+	binding = persistedBinding(binding)
 	ignore := admissionregistrationv1.Ignore
 	policy.Spec.FailurePolicy = &ignore
 
 	var policyRead atomic.Bool
-	server := httptest.NewServer(serviceAccountObjectGuardAPIServer(t, policy, binding, &policyRead))
+	server := httptest.NewServer(retainedGuardAPIServer(t, policy, binding, &policyRead))
 	t.Cleanup(server.Close)
 	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
 	config := fmt.Sprintf(`apiVersion: v1
@@ -258,8 +239,8 @@ func newReadyStagingSecretGuard(t *testing.T) *StagingSecretGuard {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies.objects[policy.Name] = persistedServiceAccountObjectPolicy(readyPolicy(policy))
-	bindings.objects[binding.Name] = persistedServiceAccountObjectBinding(binding)
+	policies.objects[policy.Name] = persistedPolicy(readyPolicy(policy))
+	bindings.objects[binding.Name] = persistedBinding(binding)
 	return guard
 }
 
@@ -306,25 +287,6 @@ func stagingSecretCELObjectWithAnnotation(guard *StagingSecretGuard) map[string]
 	return object
 }
 
-func stagingSecretActivationCELObject(guard *StagingSecretGuard, target int32, attempt string) map[string]any {
-	return map[string]any{
-		"apiVersion": "v1",
-		"kind":       "ConfigMap",
-		"metadata": map[string]any{
-			"name":            ReleaseActivationName,
-			"namespace":       guard.rollout.ReleaseNamespace,
-			"uid":             "activation-uid",
-			"resourceVersion": "1",
-		},
-		"data": map[string]any{
-			activeReleaseDataKey:                "0",
-			controllerCredentialsDataKey:        string(ControllerCredentialsDraining),
-			controllerCredentialsTargetDataKey:  strconv.FormatInt(int64(target), 10),
-			controllerCredentialsAttemptDataKey: attempt,
-		},
-	}
-}
-
 func stagingSecretRequest(guard *StagingSecretGuard, operation, username string) map[string]any {
 	return map[string]any{
 		"operation": operation,
@@ -347,11 +309,6 @@ func stagingSecretRequest(guard *StagingSecretGuard, operation, username string)
 	}
 }
 
-func stagingCleanupUsername(guard *StagingSecretGuard) string {
-	name, _ := TeardownServiceAccountName(guard.rollout.HookServiceAccountName, guard.rollout.ReleaseSequence)
-	return "system:serviceaccount:" + guard.rollout.ReleaseNamespace + ":" + name
-}
-
 func renderedStagingSecretRollout(t *testing.T) *RolloutGuard {
 	t.Helper()
 	rollout := runtimePodGuardFixture()
@@ -361,8 +318,7 @@ func renderedStagingSecretRollout(t *testing.T) *RolloutGuard {
 	rollout.ManagerImage = renderedGuardManagerImage
 	rollout.ControllerDeploymentName = "ptah-e2e-ptah-operator"
 	rollout.CertificateDeploymentName = "ptah-e2e-ptah-operator-cert-rotator"
-	rollout.ControllerServiceAccountName = "ptah-e2e-ptah-operator-v1-" + hookIdentityDigest(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)[:12]
-	rollout.ControllerServiceAccountManaged = true
+	rollout.ControllerServiceAccountName = "ptah-e2e-ptah-operator"
 	rollout.HookServiceAccountName = "ptah-e2e-ptah-operator-crd-v1-" + hookIdentityDigest(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)[:12]
 	rollout.WebhookSecretName = "ptah-e2e-ptah-operator-webhook-cert"
 	rollout.CertificateRuntimeEnabled = true
@@ -373,7 +329,7 @@ func renderedStagingSecretRollout(t *testing.T) *RolloutGuard {
 func runStagingSecretGuardHelm(t *testing.T, helm, dryRun, kubeconfig string) ([]byte, error) {
 	t.Helper()
 	args := []string{
-		"template", "ptah-e2e", serviceAccountObjectGuardChartPath(t),
+		"template", "ptah-e2e", chartPath(t),
 		"--namespace", "ptah-e2e",
 		"--dry-run=" + dryRun,
 		"--show-only", "templates/staging-secret-guard.yaml",

@@ -1,14 +1,13 @@
 {{- $guardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
 {{- $controllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.serviceAccountName" .) -}}
-{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
-{{- $controllerUsernameMatch := printf `request.userInfo.username in [%q]` $controllerUsername -}}
+{{- $controllerUsernameMatch := printf `request.userInfo.username == %q` $controllerUsername -}}
 {{- $candidateSequence := include "ptah-operator.releaseSequence" . -}}
-{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- /* Every release runs the controller as the same ServiceAccount, so the
+      predecessor's runtime writes under this name until the cutover stops it,
+      and this release's once the cutover activates it. */ -}}
 {{- $controllerAuthority := printf `request.userInfo.username == %q && variables.activeRelease == %s` $controllerUsername $candidateSequence -}}
-{{- if and $previousControllerServiceAccount (ne $previousControllerServiceAccount (include "ptah-operator.serviceAccountName" .)) -}}
-{{- $previousControllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $previousControllerServiceAccount -}}
-{{- $controllerUsernameMatch = printf `request.userInfo.username in [%q, %q]` $controllerUsername $previousControllerUsername -}}
-{{- $controllerAuthority = printf `(%s) || (request.userInfo.username == %q && variables.activeRelease == %s)` $controllerAuthority $previousControllerUsername $previousSequence -}}
+{{- if gt (atoi $candidateSequence) 1 -}}
+{{- $controllerAuthority = printf `request.userInfo.username == %q && (variables.activeRelease == %s || variables.activeRelease == %s)` $controllerUsername $candidateSequence (include "ptah-operator.predecessorReleaseSequence" .) -}}
 {{- end -}}
 {{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
 {{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $guardName -}}
@@ -62,7 +61,7 @@ spec:
         resources: ["ptahschemas", "ptahmigrations"]
         scope: Namespaced
   matchConditions:
-    - name: candidate-or-predecessor-controller-service-account
+    - name: controller-service-account
       expression: {{ $controllerUsernameMatch | quote }}
   variables:
     - name: activeRelease

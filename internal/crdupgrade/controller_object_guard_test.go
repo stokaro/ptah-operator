@@ -95,9 +95,9 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			}
 			assertExactControllerObjectMatch(t, native.Spec.MatchConstraints, entry)
 			assertExactControllerObjectMatch(t, binding.Spec.MatchResources, entry)
-			wantUsername := `request.userInfo.username in ["system:serviceaccount:ptah-system:ptah-controller"]`
+			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-controller"`
 			if !reflect.DeepEqual(native.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
-				Name: "candidate-or-predecessor-controller-service-account", Expression: wantUsername,
+				Name: "controller-service-account", Expression: wantUsername,
 			}}) {
 				t.Fatalf("controller caller match is not exact: %#v", native.Spec.MatchConditions)
 			}

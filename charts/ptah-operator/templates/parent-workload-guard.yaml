@@ -205,10 +205,6 @@
 {{- $hookServiceAccountUsernamePattern := printf "^system:serviceaccount:%s:%s" (regexQuoteMeta .Release.Namespace) (trimPrefix "^" $hookPattern) -}}
 {{- $teardownPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-cleanup-v" $hookBase)) -}}
 {{- $teardownServiceAccountUsernamePattern := printf "^system:serviceaccount:%s:%s" (regexQuoteMeta .Release.Namespace) (trimPrefix "^" $teardownPattern) -}}
-{{- $controllerServiceAccountBase := include "ptah-operator.serviceAccountBaseName" . -}}
-{{- if .Values.serviceAccount.create -}}
-{{- $controllerServiceAccountBase = $controllerServiceAccountBase | trunc 38 | trimSuffix "-" -}}
-{{- end -}}
 {{- $controllerServiceAccount := include "ptah-operator.serviceAccountName" . -}}
 {{- $controllerDeployment := include "ptah-operator.fullname" . -}}
 {{- $certificateServiceAccount := include "ptah-operator.certRotatorServiceAccountName" . -}}
@@ -221,15 +217,13 @@
 {{- $teardownServiceAccount := include "ptah-operator.teardownServiceAccountName" . -}}
 {{- $teardownJob := $teardownServiceAccount -}}
 {{- $parentOriginReadyData := dict
-      "contract-version" "2"
-      "controller-service-account-base" $controllerServiceAccountBase
-      "controller-service-account-managed" (printf "%t" .Values.serviceAccount.create)
+      "contract-version" "3"
+      "controller-service-account-name" $controllerServiceAccount
       "hook-service-account-base" $hookBase
       "certificate-service-account-name" $certificateServiceAccount -}}
 {{- $stableMarkerPattern := printf "^ptah-admission-convergence-v1-[1-9][0-9]*-%s$" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- $stableMarkerReleaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $parentOriginReadyName := printf "ptah-operator-parent-origin-ready-v2-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $stableMarkerReleaseDigest -}}
 {{- $parentOriginReadyMatch := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && ((request.operation in ["CREATE", "UPDATE"] && request.name == %q) || (request.operation == "DELETE" && oldObject != null && oldObject.metadata.name == %q))` .Release.Namespace $parentOriginReadyName $parentOriginReadyName -}}
 {{- $stableMarkerObjectMatch := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && ((request.operation in ["CREATE", "UPDATE"] && request.name.matches(%q)) || (request.operation == "DELETE" && oldObject != null && oldObject.metadata.name.matches(%q)))` .Release.Namespace $stableMarkerPattern $stableMarkerPattern -}}
 {{- $parentOriginReadyCreateShape := include "ptah-operator.parentOriginReadyShapeExpression" (dict "root" . "name" $parentOriginReadyName "markerData" $parentOriginReadyData "object" "object" "persisted" false) -}}
@@ -479,7 +473,7 @@
       (eq (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (eq (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
       (eq (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard")
-      (deepEqual $data (dict "active-release-sequence" "0" "controller-credentials" "active"))
+      (deepEqual $data (dict "active-release-sequence" "0"))
       (eq (len (default (dict) .binaryData)) 0)
       (not (default false .immutable))
       (eq (len (default (list) .metadata.ownerReferences)) 0)

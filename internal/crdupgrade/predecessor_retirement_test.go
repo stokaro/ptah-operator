@@ -37,17 +37,17 @@ func TestPredecessorRetirementSealCurrentBuildsExactCanonicalInventory(t *testin
 	if marker.Immutable == nil || !*marker.Immutable {
 		t.Fatal("sealed marker is mutable")
 	}
-	if len(inventory.Entries) != 27 {
-		t.Fatalf("sealed inventory entry count = %d, want 27", len(inventory.Entries))
+	if len(inventory.Entries) != 2*predecessorRetirementPairCount+1 {
+		t.Fatalf("sealed inventory entry count = %d, want %d", len(inventory.Entries), 2*predecessorRetirementPairCount+1)
 	}
-	for index := 0; index < 26; index += 2 {
+	for index := 0; index < 2*predecessorRetirementPairCount; index += 2 {
 		if inventory.Entries[index].Kind != "ValidatingAdmissionPolicy" ||
 			inventory.Entries[index+1].Kind != "ValidatingAdmissionPolicyBinding" ||
 			inventory.Entries[index].Name != inventory.Entries[index+1].Name {
 			t.Fatalf("sealed pair %d = %#v / %#v", index/2, inventory.Entries[index], inventory.Entries[index+1])
 		}
 	}
-	if got := inventory.Entries[26]; got.Kind != "ConfigMap" || got.Name != fixture.probeName {
+	if got := inventory.Entries[2*predecessorRetirementPairCount]; got.Kind != "ConfigMap" || got.Name != fixture.probeName {
 		t.Fatalf("sealed hook probe = %#v", got)
 	}
 	raw := marker.Data[PredecessorRetirementInventoryDataKey]
@@ -386,11 +386,7 @@ func newSealedPredecessorRetirementFixture(t *testing.T) *predecessorRetirementF
 
 func (f *predecessorRetirementFixture) advanceToNextRelease(t *testing.T) {
 	t.Helper()
-	previous := f.rollout.ReleaseSequence
 	f.rollout.ReleaseSequence++
-	f.rollout.PreviousControllerReleaseSequence = previous
-	f.rollout.PreviousControllerServiceAccountName = "previous-controller"
-	f.rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
 	f.rollout.ManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	f.rollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(
 		f.rollout.ReleaseNamespace, f.rollout.ReleaseName, f.rollout.ReleaseSequence, f.rollout.ManagerImage,
@@ -543,12 +539,7 @@ func TestPredecessorRetiredAdmissionGuardNamesCoverTheSealedInventory(t *testing
 		sealed = append(sealed, blueprint.name)
 	}
 
-	candidate, _, _, _ := readyRolloutGuard()
-	candidate.ReleaseSequence = predecessor.ReleaseSequence + 1
-	candidate.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("e", 64)
-	candidate.PreviousControllerReleaseSequence = predecessor.ReleaseSequence
-	candidate.PreviousControllerManagerImage = predecessor.ManagerImage
-	granted := PredecessorRetiredAdmissionGuardNames(candidate)
+	granted := predecessorRetiredAdmissionGuardNames(predecessor.ReleaseNamespace, predecessor.ReleaseName, predecessor.ReleaseSequence, predecessor.ManagerImage)
 
 	slices.Sort(sealed)
 	slices.Sort(granted)

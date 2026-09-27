@@ -18,7 +18,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -91,12 +90,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	certificateHealthPort := flags.Int("certificate-health-port", 0, "exact certificate rotator health port")
 	hookServiceAccountName := flags.String("hook-service-account-name", "", "exact preflight hook ServiceAccount name")
 	controllerServiceAccountName := flags.String("controller-service-account-name", "", "exact controller ServiceAccount name")
-	controllerServiceAccountManagedFlag := flags.String("controller-service-account-managed", "", "whether Helm creates the candidate controller ServiceAccount, exactly true or false")
-	previousControllerServiceAccountName := flags.String("previous-controller-service-account-name", "", "controller ServiceAccount active before candidate cutover")
-	previousControllerServiceAccountUID := flags.String("previous-controller-service-account-uid", "", "immutable UID of the controller ServiceAccount active before candidate cutover")
-	previousControllerServiceAccountManagedFlag := flags.String("previous-controller-service-account-managed", "", "whether Helm safely owns the previous controller ServiceAccount, exactly true or false")
-	previousControllerReleaseSequence := flags.Int64("previous-controller-release-sequence", 0, "release sequence active before candidate cutover")
-	previousControllerManagerImage := flags.String("previous-controller-manager-image", "", "manager image of the release sequence active before candidate cutover")
 	controllerDeploymentName := flags.String("controller-deployment-name", "", "exact controller Deployment name")
 	controllerReplicas := flags.Int64("controller-replicas", 0, "exact candidate controller replica count")
 	certificateDeploymentName := flags.String("certificate-deployment-name", "", "exact certificate-rotator Deployment name")
@@ -127,18 +120,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		return fmt.Errorf("verify-controller-state is valid only in runtime-verify mode")
 	}
 	var err error
-	controllerServiceAccountManaged := false
-	previousControllerServiceAccountManaged := false
-	if mode != "image-check" && mode != "verify" {
-		controllerServiceAccountManaged, err = parseExactBooleanFlag(*controllerServiceAccountManagedFlag, "controller-service-account-managed")
-		if err != nil {
-			return err
-		}
-		previousControllerServiceAccountManaged, err = parseExactBooleanFlag(*previousControllerServiceAccountManagedFlag, "previous-controller-service-account-managed")
-		if err != nil {
-			return err
-		}
-	}
 	if mode != "verify" {
 		if *releaseSequence != int64(crdupgrade.CurrentReleaseSequence) {
 			return fmt.Errorf("release-sequence must equal the binary contract %d", crdupgrade.CurrentReleaseSequence)
@@ -210,15 +191,9 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*webhookTimeoutSeconds,
 			*hookServiceAccountName,
 			*controllerServiceAccountName,
-			controllerServiceAccountManaged,
-			*previousControllerServiceAccountName,
-			types.UID(*previousControllerServiceAccountUID),
-			previousControllerServiceAccountManaged,
 			*controllerDeploymentName,
 			*certificateDeploymentName,
 			int32(*releaseSequence),
-			int32(*previousControllerReleaseSequence),
-			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -228,17 +203,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
-		serviceAccountObjectGuard := crdupgrade.NewServiceAccountObjectGuard(rollout)
-		origin := crdupgrade.NewServiceAccountOriginGuard(rollout)
 		inventory := newWorkloadInventory(clientset, rollout)
-		if err = serviceAccountObjectGuard.WaitReady(ctx); err != nil {
-			err = fmt.Errorf("wait for stable ServiceAccount object guard: %w", err)
-			break
-		}
-		if err = origin.Prepare(ctx); err != nil {
-			err = fmt.Errorf("prepare service account origin guard: %w", err)
-			break
-		}
 		if err = inventory.VerifyHookBootstrap(ctx); err != nil {
 			err = fmt.Errorf("verify pre-staged hook workloads: %w", err)
 			break
@@ -255,15 +220,9 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*webhookTimeoutSeconds,
 			*hookServiceAccountName,
 			*controllerServiceAccountName,
-			controllerServiceAccountManaged,
-			*previousControllerServiceAccountName,
-			types.UID(*previousControllerServiceAccountUID),
-			previousControllerServiceAccountManaged,
 			*controllerDeploymentName,
 			*certificateDeploymentName,
 			int32(*releaseSequence),
-			int32(*previousControllerReleaseSequence),
-			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -273,7 +232,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
-		serviceAccountObjectGuard := crdupgrade.NewServiceAccountObjectGuard(rollout)
 		inventory := newWorkloadInventory(clientset, rollout)
 		admissionPreflight, preflightErr := newRuntimeAdmissionPreflight(clientset, expected, runtimeAdmissionContract)
 		if preflightErr != nil {
@@ -286,10 +244,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		}
 		if err = rollout.VerifyHookIdentity(ctx); err != nil {
 			err = fmt.Errorf("verify privileged hook identity guard: %w", err)
-			break
-		}
-		if err = serviceAccountObjectGuard.WaitReady(ctx); err != nil {
-			err = fmt.Errorf("wait for stable ServiceAccount object guard: %w", err)
 			break
 		}
 		if err = inventory.VerifyRuntimeBeforeQuiesce(ctx); err != nil {
@@ -314,8 +268,8 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		}
 		if converged {
 			// The candidate is already the active release and its runtime is
-			// up, so there is no stop transition to dry-run: the retained
-			// runtime guard admits a stop only toward a newer release.
+			// up. The reconcile hook leaves such a runtime running, so there is
+			// no stop transition to dry-run.
 			_, err = fmt.Fprintf(output, "candidate release %d is already active with a converged runtime; no stop transition to preflight\n", expected.ReleaseSequence)
 			break
 		}
@@ -331,15 +285,9 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*webhookTimeoutSeconds,
 			*hookServiceAccountName,
 			*controllerServiceAccountName,
-			controllerServiceAccountManaged,
-			*previousControllerServiceAccountName,
-			types.UID(*previousControllerServiceAccountUID),
-			previousControllerServiceAccountManaged,
 			*controllerDeploymentName,
 			*certificateDeploymentName,
 			int32(*releaseSequence),
-			int32(*previousControllerReleaseSequence),
-			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -349,7 +297,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
-		serviceAccountObjectGuard := crdupgrade.NewServiceAccountObjectGuard(rollout)
 		predecessorRetirement := crdupgrade.NewPredecessorRetirement(
 			rollout,
 			clientset.AdmissionregistrationV1().ValidatingAdmissionPolicies(),
@@ -362,14 +309,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			return preflightErr
 		}
 		quotaPreflight := newRuntimeResourceQuotaPreflight(clientset, expected, runtimeAdmissionContract, int32(*controllerReplicas))
-		controllerRBACTransition, transitionErr := crdupgrade.NewControllerRBACTransition(
-			rollout,
-			runtimeAdmissionContract,
-			newControllerRBACClient(clientset),
-		)
-		if transitionErr != nil {
-			return fmt.Errorf("configure controller RBAC transition: %w", transitionErr)
-		}
 		stateClients, stateClientErr := newStoredControllerStateClients(config)
 		if stateClientErr != nil {
 			return stateClientErr
@@ -379,9 +318,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			stateClients,
 			int64(controllerstate.CurrentVersion),
 			func(prepareCtx context.Context) error {
-				if readyErr := serviceAccountObjectGuard.WaitReady(prepareCtx); readyErr != nil {
-					return fmt.Errorf("wait for stable ServiceAccount object guard: %w", readyErr)
-				}
 				if inventoryErr := inventory.VerifyRuntimeBeforeQuiesce(prepareCtx); inventoryErr != nil {
 					return fmt.Errorf("verify pre-staged runtime workloads: %w", inventoryErr)
 				}
@@ -394,20 +330,11 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				if prepareErr := rollout.Prepare(prepareCtx); prepareErr != nil {
 					return prepareErr
 				}
-				activationState, stateErr := rollout.ReleaseActivationState(prepareCtx)
-				if stateErr != nil {
-					return fmt.Errorf("read release activation state before cutover: %w", stateErr)
-				}
-				if preflightErr := controllerRBACTransition.Preflight(prepareCtx); preflightErr != nil {
-					return fmt.Errorf("preflight exact controller RBAC transition: %w", preflightErr)
-				}
 				// A repeated upgrade with the same chart finds the candidate
 				// already active with its runtime up. Nothing below applies to
-				// it: the credential drain, the stop, the cutover and the
-				// activation all move an older release toward this one, and
-				// the retained runtime guard refuses to stop the active
-				// release. Leave the runtime running and let Helm apply the
-				// unchanged manifests.
+				// it: the stop, the cutover and the activation all move an
+				// older or stopped release toward this one. Leave the runtime
+				// running and let Helm apply the unchanged manifests.
 				converged, convergedErr := rollout.CandidateRuntimeConverged(prepareCtx)
 				if convergedErr != nil {
 					return fmt.Errorf("inspect candidate runtime convergence: %w", convergedErr)
@@ -415,19 +342,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				if converged {
 					_, printErr := fmt.Fprintf(output, "candidate release %d is already active with a converged runtime; leaving it running\n", expected.ReleaseSequence)
 					return printErr
-				}
-				protectedPodsRemain, podInventoryErr := inventory.ProtectedRuntimePodsRemain(prepareCtx)
-				if podInventoryErr != nil {
-					return fmt.Errorf("inventory protected runtime Pods before credential decision: %w", podInventoryErr)
-				}
-				requiresCredentialDrain, drainErr := controllerRBACTransition.RequiresCredentialDrain(activationState, protectedPodsRemain)
-				if drainErr != nil {
-					return fmt.Errorf("decide controller credential drain from durable preflight state: %w", drainErr)
-				}
-				if requiresCredentialDrain {
-					if _, drainErr = rollout.BeginControllerCredentialDrain(prepareCtx); drainErr != nil {
-						return fmt.Errorf("begin controller credential drain: %w", drainErr)
-					}
 				}
 				if sealErr := predecessorRetirement.SealCurrent(prepareCtx); sealErr != nil {
 					return fmt.Errorf("seal current admission inventory: %w", sealErr)
@@ -441,26 +355,16 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				if quiesceErr := rollout.Quiesce(prepareCtx); quiesceErr != nil {
 					return quiesceErr
 				}
-				if cutoverErr := completeControllerRBACCutover(
-					prepareCtx,
-					func(cutoverCtx context.Context) error {
-						return waitForNoProtectedRuntimePods(cutoverCtx, inventory, rollout.PollEvery)
-					},
-					controllerRBACTransition,
-				); cutoverErr != nil {
-					return cutoverErr
+				if stopErr := waitForNoProtectedRuntimePods(prepareCtx, inventory, rollout.PollEvery); stopErr != nil {
+					return fmt.Errorf("wait for the stopped runtime's Pods to be gone: %w", stopErr)
 				}
 				// Re-read quota and admission inputs after the old runtime is fully
-				// stopped. Activation remains strictly after the RBAC identity
-				// snapshot has been reverified.
+				// stopped.
 				if quotaErr := quotaPreflight.WaitForCapacityAfterQuiesce(prepareCtx, rollout.PollEvery); quotaErr != nil {
 					return fmt.Errorf("recheck runtime ResourceQuota capacity before activation: %w", quotaErr)
 				}
 				if admissionErr := admissionPreflight.Check(prepareCtx); admissionErr != nil {
 					return fmt.Errorf("recheck runtime Pod admission before activation: %w", admissionErr)
-				}
-				if verifyErr := serviceAccountObjectGuard.Verify(prepareCtx); verifyErr != nil {
-					return fmt.Errorf("re-verify stable ServiceAccount object guard before activation: %w", verifyErr)
 				}
 				if verifyErr := predecessorRetirement.VerifyCurrentSealed(prepareCtx); verifyErr != nil {
 					return fmt.Errorf("re-verify sealed current admission inventory before activation: %w", verifyErr)
@@ -489,15 +393,9 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*webhookTimeoutSeconds,
 			*hookServiceAccountName,
 			*controllerServiceAccountName,
-			controllerServiceAccountManaged,
-			*previousControllerServiceAccountName,
-			types.UID(*previousControllerServiceAccountUID),
-			previousControllerServiceAccountManaged,
 			*controllerDeploymentName,
 			*certificateDeploymentName,
 			int32(*releaseSequence),
-			int32(*previousControllerReleaseSequence),
-			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -521,15 +419,9 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*webhookTimeoutSeconds,
 			*hookServiceAccountName,
 			*controllerServiceAccountName,
-			controllerServiceAccountManaged,
-			*previousControllerServiceAccountName,
-			types.UID(*previousControllerServiceAccountUID),
-			previousControllerServiceAccountManaged,
 			*controllerDeploymentName,
 			*certificateDeploymentName,
 			int32(*releaseSequence),
-			int32(*previousControllerReleaseSequence),
-			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -541,10 +433,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		if verifyErr := rollout.Verify(ctx); verifyErr != nil {
 			return fmt.Errorf("verify persistent rollout guards: %w", verifyErr)
-		}
-		serviceAccountObjectGuard := crdupgrade.NewServiceAccountObjectGuard(rollout)
-		if verifyErr := serviceAccountObjectGuard.WaitReady(ctx); verifyErr != nil {
-			return fmt.Errorf("wait for stable ServiceAccount object guard: %w", verifyErr)
 		}
 		admissionPreflight, preflightErr := newRuntimeAdmissionPreflight(clientset, expected, runtimeAdmissionContract)
 		if preflightErr != nil {
@@ -607,11 +495,8 @@ func run(parent context.Context, args []string, output io.Writer) error {
 func runtimeInvariants(
 	releaseName, releaseNamespace, coordinationNamespace, leaderElection,
 	leaderElectionID, webhookServiceName string, webhookTimeoutSeconds int,
-	hookServiceAccountName, controllerServiceAccountName string, controllerServiceAccountManaged bool,
-	previousControllerServiceAccountName string, previousControllerServiceAccountUID types.UID,
-	previousControllerServiceAccountManaged bool, controllerDeploymentName,
-	certificateDeploymentName string, releaseSequence, previousControllerReleaseSequence int32,
-	previousControllerManagerImage string,
+	hookServiceAccountName, controllerServiceAccountName, controllerDeploymentName,
+	certificateDeploymentName string, releaseSequence int32,
 ) (crdupgrade.RuntimeInvariants, error) {
 	if leaderElection != "true" && leaderElection != "false" {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("leader-election must be exactly true or false")
@@ -623,52 +508,21 @@ func runtimeInvariants(
 	if err != nil {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("parse leader-election: %w", err)
 	}
-	if previousControllerServiceAccountName != "" && previousControllerServiceAccountName == controllerServiceAccountName {
-		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("candidate and previous controller ServiceAccount names must differ")
-	}
-	if previousControllerServiceAccountName == "" {
-		if previousControllerServiceAccountUID != "" || previousControllerServiceAccountManaged {
-			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount UID and ownership require a previous name")
-		}
-	} else if previousControllerServiceAccountUID == "" {
-		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount UID is required")
-	}
-	if previousControllerReleaseSequence == 0 {
-		if previousControllerManagerImage != "" {
-			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image requires a previous release sequence")
-		}
-		if previousControllerServiceAccountName != "" {
-			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount requires a previous release sequence")
-		}
-	} else {
-		if previousControllerManagerImage == "" {
-			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image is required with a previous release sequence")
-		}
-		if previousControllerServiceAccountName == "" {
-			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount is required with a previous release sequence")
-		}
-	}
 	return crdupgrade.RuntimeInvariants{
-		ReleaseName:                             releaseName,
-		ReleaseNamespace:                        releaseNamespace,
-		CoordinationNamespace:                   coordinationNamespace,
-		LeaderElection:                          leaderElectionEnabled,
-		LeaderElectionID:                        leaderElectionID,
-		WebhookServiceName:                      webhookServiceName,
-		WebhookTimeoutSeconds:                   int32(webhookTimeoutSeconds),
-		HookServiceAccountName:                  hookServiceAccountName,
-		ControllerServiceAccountName:            controllerServiceAccountName,
-		ControllerServiceAccountManaged:         controllerServiceAccountManaged,
-		PreviousControllerServiceAccountName:    previousControllerServiceAccountName,
-		PreviousControllerServiceAccountUID:     previousControllerServiceAccountUID,
-		PreviousControllerServiceAccountManaged: previousControllerServiceAccountManaged,
-		PreviousControllerReleaseSequence:       previousControllerReleaseSequence,
-		PreviousControllerManagerImage:          previousControllerManagerImage,
-		ControllerDeploymentName:                controllerDeploymentName,
-		CertificateDeploymentName:               certificateDeploymentName,
-		ControllerStateVersion:                  controllerstate.CurrentVersion,
-		AdmissionContractVersion:                crdupgrade.CurrentAdmissionContractVersion,
-		ReleaseSequence:                         releaseSequence,
+		ReleaseName:                  releaseName,
+		ReleaseNamespace:             releaseNamespace,
+		CoordinationNamespace:        coordinationNamespace,
+		LeaderElection:               leaderElectionEnabled,
+		LeaderElectionID:             leaderElectionID,
+		WebhookServiceName:           webhookServiceName,
+		WebhookTimeoutSeconds:        int32(webhookTimeoutSeconds),
+		HookServiceAccountName:       hookServiceAccountName,
+		ControllerServiceAccountName: controllerServiceAccountName,
+		ControllerDeploymentName:     controllerDeploymentName,
+		CertificateDeploymentName:    certificateDeploymentName,
+		ControllerStateVersion:       controllerstate.CurrentVersion,
+		AdmissionContractVersion:     crdupgrade.CurrentAdmissionContractVersion,
+		ReleaseSequence:              releaseSequence,
 	}, nil
 }
 
@@ -682,45 +536,39 @@ func newRolloutGuard(
 	runtimeAdmissionContractB64 string,
 ) *crdupgrade.RolloutGuard {
 	return &crdupgrade.RolloutGuard{
-		Policies:                                clientset.AdmissionregistrationV1().ValidatingAdmissionPolicies(),
-		Bindings:                                clientset.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings(),
-		Deployments:                             clientset.AppsV1().Deployments(expected.ReleaseNamespace),
-		Pods:                                    clientset.CoreV1().Pods(expected.ReleaseNamespace),
-		ConfigMaps:                              clientset.CoreV1().ConfigMaps(expected.ReleaseNamespace),
-		ConfigMapDeleter:                        clientset.CoreV1().ConfigMaps(expected.ReleaseNamespace),
-		ReleaseName:                             expected.ReleaseName,
-		ReleaseNamespace:                        expected.ReleaseNamespace,
-		CoordinationNamespace:                   expected.CoordinationNamespace,
-		LeaderElection:                          expected.LeaderElection,
-		LeaderElectionID:                        expected.LeaderElectionID,
-		WebhookServiceName:                      expected.WebhookServiceName,
-		WebhookTimeoutSeconds:                   expected.WebhookTimeoutSeconds,
-		WebhookSecretName:                       webhookSecretName,
-		WebhookPort:                             webhookPort,
-		CertificateHealthPort:                   certificateHealthPort,
-		CertificateRuntimeEnabled:               runtimeAdmissionContract.CertificateRuntimeEnabled,
-		HookServiceAccountName:                  expected.HookServiceAccountName,
-		ControllerServiceAccountName:            expected.ControllerServiceAccountName,
-		ControllerServiceAccountManaged:         expected.ControllerServiceAccountManaged,
-		PreviousControllerServiceAccountName:    expected.PreviousControllerServiceAccountName,
-		PreviousControllerServiceAccountUID:     expected.PreviousControllerServiceAccountUID,
-		PreviousControllerServiceAccountManaged: expected.PreviousControllerServiceAccountManaged,
-		PreviousControllerReleaseSequence:       expected.PreviousControllerReleaseSequence,
-		PreviousControllerManagerImage:          expected.PreviousControllerManagerImage,
-		ControllerDeploymentName:                expected.ControllerDeploymentName,
-		ControllerReplicas:                      controllerReplicas,
-		CertificateDeploymentName:               expected.CertificateDeploymentName,
-		ControllerStateVersion:                  expected.ControllerStateVersion,
-		AdmissionContractVersion:                expected.AdmissionContractVersion,
-		ReleaseSequence:                         expected.ReleaseSequence,
-		ManagerImage:                            managerImage,
-		ControllerArgs:                          append([]string(nil), controllerArgs...),
-		CertificateArgs:                         append([]string(nil), certificateArgs...),
-		RuntimeDeploymentConfigExpressions:      append([]string(nil), runtimeDeploymentConfigExpressions...),
-		RuntimePodConfigExpressions:             append([]string(nil), runtimePodConfigExpressions...),
-		PriorityClassName:                       runtimeAdmissionContract.PriorityClassName,
-		RuntimeAdmissionContractB64:             runtimeAdmissionContractB64,
-		PollEvery:                               500 * time.Millisecond,
+		Policies:                           clientset.AdmissionregistrationV1().ValidatingAdmissionPolicies(),
+		Bindings:                           clientset.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings(),
+		Deployments:                        clientset.AppsV1().Deployments(expected.ReleaseNamespace),
+		Pods:                               clientset.CoreV1().Pods(expected.ReleaseNamespace),
+		ConfigMaps:                         clientset.CoreV1().ConfigMaps(expected.ReleaseNamespace),
+		ConfigMapDeleter:                   clientset.CoreV1().ConfigMaps(expected.ReleaseNamespace),
+		ReleaseName:                        expected.ReleaseName,
+		ReleaseNamespace:                   expected.ReleaseNamespace,
+		CoordinationNamespace:              expected.CoordinationNamespace,
+		LeaderElection:                     expected.LeaderElection,
+		LeaderElectionID:                   expected.LeaderElectionID,
+		WebhookServiceName:                 expected.WebhookServiceName,
+		WebhookTimeoutSeconds:              expected.WebhookTimeoutSeconds,
+		WebhookSecretName:                  webhookSecretName,
+		WebhookPort:                        webhookPort,
+		CertificateHealthPort:              certificateHealthPort,
+		CertificateRuntimeEnabled:          runtimeAdmissionContract.CertificateRuntimeEnabled,
+		HookServiceAccountName:             expected.HookServiceAccountName,
+		ControllerServiceAccountName:       expected.ControllerServiceAccountName,
+		ControllerDeploymentName:           expected.ControllerDeploymentName,
+		ControllerReplicas:                 controllerReplicas,
+		CertificateDeploymentName:          expected.CertificateDeploymentName,
+		ControllerStateVersion:             expected.ControllerStateVersion,
+		AdmissionContractVersion:           expected.AdmissionContractVersion,
+		ReleaseSequence:                    expected.ReleaseSequence,
+		ManagerImage:                       managerImage,
+		ControllerArgs:                     append([]string(nil), controllerArgs...),
+		CertificateArgs:                    append([]string(nil), certificateArgs...),
+		RuntimeDeploymentConfigExpressions: append([]string(nil), runtimeDeploymentConfigExpressions...),
+		RuntimePodConfigExpressions:        append([]string(nil), runtimePodConfigExpressions...),
+		PriorityClassName:                  runtimeAdmissionContract.PriorityClassName,
+		RuntimeAdmissionContractB64:        runtimeAdmissionContractB64,
+		PollEvery:                          500 * time.Millisecond,
 	}
 }
 
@@ -747,12 +595,6 @@ func validateModeFlags(mode string, flags *flag.FlagSet) error {
 			"certificate-health-port",
 			"hook-service-account-name",
 			"controller-service-account-name",
-			"controller-service-account-managed",
-			"previous-controller-service-account-name",
-			"previous-controller-service-account-uid",
-			"previous-controller-service-account-managed",
-			"previous-controller-release-sequence",
-			"previous-controller-manager-image",
 			"controller-deployment-name",
 			"controller-replicas",
 			"certificate-deployment-name",
@@ -788,7 +630,7 @@ func newRuntimeResourceQuotaPreflight(
 	contract crdupgrade.RuntimeAdmissionContract,
 	controllerReplicas int32,
 ) *crdupgrade.RuntimeResourceQuotaPreflight {
-	preflight := crdupgrade.NewRuntimeResourceQuotaPreflight(
+	return crdupgrade.NewRuntimeResourceQuotaPreflight(
 		contract,
 		controllerReplicas,
 		expected.ReleaseName,
@@ -798,8 +640,6 @@ func newRuntimeResourceQuotaPreflight(
 		clientset.CoreV1().ResourceQuotas(expected.ReleaseNamespace),
 		clientset.CoreV1().Pods(expected.ReleaseNamespace),
 	)
-	preflight.PreviousControllerServiceAccountName = expected.PreviousControllerServiceAccountName
-	return preflight
 }
 
 func newRuntimeAdmissionPreflight(
@@ -840,17 +680,6 @@ func waitForNoProtectedRuntimePods(ctx context.Context, inventory *crdupgrade.Wo
 		remaining, err := inventory.ProtectedRuntimePodsRemain(pollCtx)
 		return !remaining, err
 	})
-}
-
-func parseExactBooleanFlag(value, name string) (bool, error) {
-	switch value {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return false, fmt.Errorf("%s must be exactly true or false", name)
-	}
 }
 
 func decodeRuntimeArgs(encoded, component string) ([]string, error) {

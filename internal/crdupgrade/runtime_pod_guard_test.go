@@ -798,7 +798,6 @@ func testRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T, environmen
 	guard.WebhookSecretName = truncateTestResourceBase(controllerName, 50) + "-webhook-cert"
 	guard.HookServiceAccountName = hookBase + "-crd-v1-" + hookIdentityDigest("ptah-e2e", "ptah-e2e", 1, managerImage)[:12]
 	guard.ControllerServiceAccountName = controller.Spec.Template.Spec.ServiceAccountName
-	guard.ControllerServiceAccountManaged = true
 	guard.ControllerDeploymentName = controller.Name
 	guard.ControllerReplicas = *controller.Spec.Replicas
 	guard.CertificateDeploymentName = certificate.Name

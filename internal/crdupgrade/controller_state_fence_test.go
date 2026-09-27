@@ -207,7 +207,6 @@ func TestTheReleaseRatchetAdmitsTheBumpAndRefusesItsReverse(t *testing.T) {
 				state:     uint64(test.active),
 				admission: uint64(CurrentAdmissionContractVersion),
 				image:     image,
-				phase:     ControllerCredentialsActive,
 			}
 			err := guard.verifyCandidateCompatibility(identity)
 			if test.wantRefusal == "" {

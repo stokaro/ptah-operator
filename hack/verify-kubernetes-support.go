@@ -4161,16 +4161,13 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`end`,
 					`)`,
 				}),
-				exactSourceLine("late activation drain implementation", `assert_late_activation_drain() {`),
-				exactSourceLineSequence("late activation exact pending drain tuple", []string{
-					`(.data | keys | sort) == ["active-release-sequence", "controller-credentials", "controller-credentials-attempt", "controller-credentials-target-release-sequence"] and`,
-					`.data["active-release-sequence"] == $current and`,
-					`.data["controller-credentials"] == "draining" and`,
-					`.data["controller-credentials-target-release-sequence"] == $next and`,
-					`($attempt | test("^[0-9a-f]{64}$")) and`,
-					`.data["controller-credentials-attempt"] == $attempt`,
+				exactSourceLine("late activation preserved activation implementation", `assert_late_activation_preserved() {`),
+				exactSourceLineSequence("late activation exact predecessor activation", []string{
+					`.metadata.annotations["operator.ptah.run/release-sequence"] == $current and`,
+					`.metadata.annotations["operator.ptah.run/manager-image"] == $image and`,
+					`.data == {"active-release-sequence": $current}`,
 					`' >/dev/null ||`,
-					`fail "late failure did not preserve the exact predecessor sequence and candidate drain tuple"`,
+					`fail "late failure did not preserve the exact predecessor activation"`,
 				}),
 				exactSourceLineSequence("late activation immutable candidate retry inputs", []string{
 					`late_retry_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE") ||`,
@@ -4184,24 +4181,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "late activation recovery changed the candidate chart, values, image, or sequence"`,
 					`fi`,
 				}),
-				exactSourceLine("late activation exact candidate binding inventory", `fail "late failure did not leave the exact namespace-scoped candidate bindings with the predecessor removed"`),
-				exactSourceLine("late activation predecessor authorization inventory", `for late_probe in schema runtime coordination discovery; do`),
-				exactSourceLineSequence("late activation predecessor authorization denial", []string{
-					`if jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \`,
-					`"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null; then`,
-					`break`,
-					`fi`,
-					`if [ "$(date +%s)" -ge "$late_authorization_deadline" ]; then`,
-					`fail "late failure retained predecessor $late_probe authorization for 30s after the cutover; last review status: $(jq -c '.status' "$WORK_DIR/late-activation-${late_probe}-authorization.json")"`,
-					`fi`,
-				}),
 				exactSourceLine("late activation failure implementation", `prove_late_activation_failure_recovery() {`),
 				exactSourceLineSequence("late activation candidate input snapshot", []string{
 					`late_candidate_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")`,
 					`late_candidate_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE")`,
 					`late_candidate_image=$E2E_NEXT_CONTROLLER_IMAGE`,
-					`late_candidate_attempt=$(printf '%s\n%s\n%s\n%s' "$E2E_OPERATOR_NAMESPACE" \`,
-					`"$E2E_HELM_RELEASE" "$late_next_sequence" "$late_candidate_image" | stdin_sha256)`,
 				}),
 				exactSourceLineSequence("late activation dual capture arming", []string{
 					`create_late_activation_blocker`,
@@ -4281,11 +4265,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fi`,
 					`verify_late_activation_preflight_capture`,
 					`emit_late_activation_reconcile_diagnostic`,
-					`assert_late_activation_drain`,
+					`assert_late_activation_preserved`,
 				}),
-				exactSourceLine("late activation candidate cutover boundary", `assert_late_activation_cutover`),
-				exactSourceLine("late activation protected Pod absence", `' >/dev/null || fail "late failure left a protected runtime Pod after credential cutover"`),
-				exactSourceLine("late activation failed boundary completion", `printf '%s\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'`),
+				exactSourceLine("late activation protected Pod absence", `' >/dev/null || fail "late failure left a protected runtime Pod after the runtime stop"`),
+				exactSourceLine("late activation failed boundary completion", `printf '%s\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'`),
 				exactSourceLineSequence("read-only Job controller-owned failure staging", []string{
 					`failure_target_patch=$(jq -nc \`,
 					`--arg failure_target_at "$failure_target_at" \`,
@@ -4380,7 +4363,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`stage_read_only_job_completion`,
 					`set_pod_webhook_failure_policy Ignore Fail`,
 					`stage_read_only_job_uid_gap`,
-					`assert_late_activation_drain`,
+					`assert_late_activation_preserved`,
 					`assert_late_activation_candidate_unchanged`,
 					`delete_late_activation_blocker`,
 				}),
@@ -4408,7 +4391,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`[ "$after_revision" -eq $((late_revision + 1)) ] ||`,
 					`fail "same-candidate recovery did not create exactly one retry Helm revision"`,
 				}),
-				exactSourceLine("same-candidate recovery retired controller identity", `fail "sequence-$current_release_sequence controller ServiceAccount survived the sequence-$next_release_sequence activation"`),
+				exactSourceLineSequence("same-candidate recovery kept the controller identity", []string{
+					`[ "$next_sequence_service_account" = "$current_sequence_service_account" ] ||`,
+					`fail "synthetic sequence-$next_release_sequence upgrade moved the controller from ServiceAccount $current_sequence_service_account to $next_sequence_service_account"`,
+					`[ "$next_sequence_service_account_uid" = "$current_sequence_service_account_uid" ] ||`,
+				}),
 				exactSourceLineSequence("same-candidate recovery final activation and retirement", []string{
 					`assert_release_activation_sequence \`,
 					`"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE"`,
@@ -4599,9 +4586,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"verify_late_activation_preflight_capture",
 		"emit_late_activation_reconcile_diagnostic",
 		"emit_late_activation_failure_summary",
-		"assert_late_activation_drain",
+		"assert_late_activation_preserved",
 		"assert_late_activation_candidate_unchanged",
-		"assert_late_activation_cutover",
 		"prove_late_activation_failure_recovery",
 		"run_next_release_upgrade_proof",
 	} {
@@ -4609,7 +4595,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			return err
 		}
 	}
-	for _, assertion := range []string{"assert_late_activation_drain", "assert_late_activation_candidate_unchanged", "assert_late_activation_cutover"} {
+	for _, assertion := range []string{"assert_late_activation_preserved", "assert_late_activation_candidate_unchanged"} {
 		body := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(assertion) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`).Find(crdUpgradeContents)
 		if err := rejectEarlySuccessfulReturn(files.crdUpgrade+" "+assertion, body,
 			sourceLinePattern(assertion+"() {"), regexp.MustCompile(`(?m)^\}[ \t]*\r?$`)); err != nil {
@@ -4689,7 +4675,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	}
 	lateActivationFailureBody := lateActivationFailureMatches[0]
 	for _, recovery := range []struct{ function, completion string }{
-		{"prove_late_activation_failure_recovery", `printf '%s\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'`},
+		{"prove_late_activation_failure_recovery", `printf '%s\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'`},
 		{"run_next_release_upgrade_proof", `printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'`},
 	} {
 		if err := rejectEarlySuccessfulReturn(files.crdUpgrade, crdUpgradeContents,

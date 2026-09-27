@@ -114,7 +114,7 @@ Five programs ship from `cmd/`:
 | `manager` | The reconcilers for both resource families, plus the admission webhook server |
 | `ptah-runner` | Runs inside every operation Pod: validates inputs, bounds output, redacts credentials, frames the result |
 | `ptah-cert-rotator` | Issues and replaces the webhook serving certificates |
-| `ptah-crd-manager` | The Helm hooks: install preflight, CRD reconcile, upgrade retirement, uninstall teardown |
+| `ptah-crd-manager` | The Helm hooks and the runtime verifier: the install and upgrade preflight, the reconcile that stops the previous runtime, updates the CRDs and activates the release, the uninstall Job, and the init container that holds a manager until its CRDs and admission singleton match |
 | `kubectl-ptah` | A read-only plugin that reconstructs a published plan for a person to read |
 
 ### What the manager keeps in memory

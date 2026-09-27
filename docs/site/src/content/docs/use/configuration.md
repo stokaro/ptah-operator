@@ -60,9 +60,9 @@ reader of a converged schema can see exactly what produced it.
 | `releaseNamespace` |  | The release namespace is part of the operator's trusted computing base: whoever can create a workload there can run it as the operator's ServiceAccounts. When Helm can read the cluster, the chart refuses to install into default or a kube-* namespace, or into one that runs Pods or workload controllers without this release's app.kubernetes.io/instance label. helm template, and a GitOps tool that renders with it, cannot read the cluster and skip the check. |
 | `releaseNamespace.allowSharedNamespace` | `false` | Install into such a namespace anyway. Set it only when everyone who can create workloads there is trusted to administer Ptah. |
 | `serviceAccount` |  | The identity the runtime components run as. |
-| `serviceAccount.create` | `true` | With create=false, name is a stable base, not a complete object name. For every release sequence N, pre-create the dedicated ServiceAccount <name>-v<N>. The chart never reuses or deletes these user-owned identities. Any additional RoleBinding or ClusterRoleBinding for an active or retained epoch blocks fail-closed upgrade and uninstall. |
-| `serviceAccount.name` | `""` | Base name for the per-sequence ServiceAccounts. Empty means the generated release name. |
-| `serviceAccount.annotations` | `{}` | Annotations added to the ServiceAccounts the chart creates, which is where a cloud identity binding goes. |
+| `serviceAccount.create` | `true` | The controller runs as one ServiceAccount in every release. With create=false, pre-create the ServiceAccount named below; the chart binds its roles to it and never deletes it. |
+| `serviceAccount.name` | `""` | The controller ServiceAccount's name. Empty means the generated release name. |
+| `serviceAccount.annotations` | `{}` | Annotations added to the ServiceAccount the chart creates, which is where a cloud identity binding goes. |
 | `podAnnotations` | `{}` | Annotations added to the manager and rotator Pods. |
 | `podLabels` | `{}` | Labels added to the manager and rotator Pods, beside the chart's own. |
 | `resources` |  | Manager container resources. The manager reconciles and dispatches; the database work happens in task Pods with resources of their own. |

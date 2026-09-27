@@ -44,16 +44,14 @@ func admissionConvergenceReleaseDigest(releaseNamespace, releaseName string) str
 // form that carries the release's admission inventory for predecessor
 // retirement.
 type AdmissionConvergenceGuard struct {
-	ReleaseName                          string
-	ReleaseNamespace                     string
-	HookServiceAccountName               string
-	CleanupServiceAccountName            string
-	ControllerServiceAccountName         string
-	CertificateServiceAccountName        string
-	PreviousControllerServiceAccountName string
-	PreviousControllerReleaseSequence    int32
-	ReleaseSequence                      int32
-	ManagerImage                         string
+	ReleaseName                   string
+	ReleaseNamespace              string
+	HookServiceAccountName        string
+	CleanupServiceAccountName     string
+	ControllerServiceAccountName  string
+	CertificateServiceAccountName string
+	ReleaseSequence               int32
+	ManagerImage                  string
 }
 
 // NewAdmissionConvergenceGuard derives the marker contract from a rollout
@@ -65,16 +63,14 @@ func NewAdmissionConvergenceGuard(rollout *RolloutGuard) *AdmissionConvergenceGu
 	}
 	cleanupServiceAccountName, _ := TeardownServiceAccountName(rollout.HookServiceAccountName, rollout.ReleaseSequence)
 	return &AdmissionConvergenceGuard{
-		ReleaseName:                          rollout.ReleaseName,
-		ReleaseNamespace:                     rollout.ReleaseNamespace,
-		HookServiceAccountName:               rollout.HookServiceAccountName,
-		CleanupServiceAccountName:            cleanupServiceAccountName,
-		ControllerServiceAccountName:         rollout.ControllerServiceAccountName,
-		CertificateServiceAccountName:        rollout.CertificateDeploymentName,
-		PreviousControllerServiceAccountName: rollout.PreviousControllerServiceAccountName,
-		PreviousControllerReleaseSequence:    rollout.PreviousControllerReleaseSequence,
-		ReleaseSequence:                      rollout.ReleaseSequence,
-		ManagerImage:                         rollout.ManagerImage,
+		ReleaseName:                   rollout.ReleaseName,
+		ReleaseNamespace:              rollout.ReleaseNamespace,
+		HookServiceAccountName:        rollout.HookServiceAccountName,
+		CleanupServiceAccountName:     cleanupServiceAccountName,
+		ControllerServiceAccountName:  rollout.ControllerServiceAccountName,
+		CertificateServiceAccountName: rollout.CertificateDeploymentName,
+		ReleaseSequence:               rollout.ReleaseSequence,
+		ManagerImage:                  rollout.ManagerImage,
 	}
 }
 
@@ -98,12 +94,6 @@ func (g *AdmissionConvergenceGuard) validate() error {
 	if g.ReleaseSequence < 1 {
 		return errors.New("admission convergence release sequence must be positive")
 	}
-	if err := validatePredecessorRelease(g.PreviousControllerServiceAccountName, g.PreviousControllerReleaseSequence, g.ReleaseSequence); err != nil {
-		return fmt.Errorf("admission convergence: %w", err)
-	}
-	if g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
-		return errors.New("admission convergence predecessor ServiceAccount name is padded")
-	}
 	wantCleanup, err := TeardownServiceAccountName(g.HookServiceAccountName, g.ReleaseSequence)
 	if err != nil {
 		return fmt.Errorf("derive admission convergence cleanup ServiceAccount: %w", err)
@@ -124,9 +114,6 @@ func (g *AdmissionConvergenceGuard) validate() error {
 		g.CleanupServiceAccountName,
 		g.ControllerServiceAccountName,
 		g.CertificateServiceAccountName,
-	}
-	if g.PreviousControllerServiceAccountName != "" {
-		serviceAccounts = append(serviceAccounts, g.PreviousControllerServiceAccountName)
 	}
 	slices.Sort(serviceAccounts)
 	if len(slices.Compact(serviceAccounts)) != len(serviceAccounts) {
