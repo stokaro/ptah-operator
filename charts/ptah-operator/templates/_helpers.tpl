@@ -1433,8 +1433,7 @@ offline render reads nothing and lists nothing.
       (include "ptah-operator.previousControllerServiceAccountName" .)
       (include "ptah-operator.certRotatorServiceAccountName" .)
       (include "ptah-operator.crdManagerServiceAccountName" .)
-      (include "ptah-operator.teardownServiceAccountName" .)
-      (include "ptah-operator.teardownBootstrapName" .) -}}
+      (include "ptah-operator.teardownServiceAccountName" .) -}}
 {{- if $name -}}
 {{- $_ := set $own $name true -}}
 {{- end -}}
