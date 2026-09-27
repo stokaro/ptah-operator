@@ -192,13 +192,13 @@ spec:
 | --- | --- | --- |
 | `spec.artifactDigest` | `string`, required | ArtifactDigest is the OCI migration artifact this plan reads its files from, pinned to content rather than to the tag it was resolved through. |
 | `spec.contractVersion` | `integer`, required | ContractVersion versions plan publication separately from the Kubernetes API version. |
-| `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published this plan. |
-| `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision, which distinguishes two deployments of the same image. |
+| `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published this plan. It is a record, not a binding: the fingerprint leaves it out, and a later manager may apply the plan. |
+| `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision, recorded the same way. |
 | `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics that manager writes. |
 | `spec.coordinationDigest` | `string`, required | CoordinationDigest is the database realm this plan takes its turn in. |
 | `spec.createdAt` | `string`, required | CreatedAt is when the controller published this plan. |
 | `spec.currentVersion` | `integer`, required | CurrentVersion is the version the history stood at when the plan was made, published so an operator can read the plan's premise. |
-| `spec.executionBindingID` | `string`, required | ExecutionBindingID is a per-transition epoch. It changes even when an operator rollout returns to byte-identical component versions. |
+| `spec.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch the plan was computed under. It changes whenever a component that decides what the run means changes -- the controller-state version, the Ptah version, the executor image or the runner protocol -- even when a rollout returns to byte-identical versions. A manager upgrade that changes none of them keeps it. |
 | `spec.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran Ptah. |
 | `spec.fingerprint` | `string`, required | Fingerprint binds this plan to everything that decided it. An approval names it, and a changed input produces a different plan rather than a changed one. |
 | `spec.historyFingerprint` | `string`, required | HistoryFingerprint is the history this plan was computed against. A history that changed between planning and execution invalidates the plan rather than being applied to. |
@@ -214,8 +214,8 @@ spec:
 | `spec.migrations[].versionKey` | `string` | VersionKey is the exact revision identity. A version does not identify a row on its own: an Atlas repeatable migration carries an opaque token rather than a decimal spelling. |
 | `spec.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy the plan was computed under, so an edited policy retires a plan waiting for a person. |
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the sequence. |
-| `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
-| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image of the manager that published this plan, recorded and not bound. |
+| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds: what the runner enforces inside the Pod and the result frame it returns. |
 | `spec.targetIdentityDigest` | `string`, required | TargetIdentityDigest identifies the database it was computed against without carrying anything that could reach it. |
 | `spec.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
 | `spec.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |

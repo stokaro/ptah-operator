@@ -18,13 +18,14 @@ full on the resource's own status and in the operation's Job.
 
 | Reason | Type | Recorded on | What it says |
 | --- | --- | --- | --- |
+| `AdmissionSnapshotRefreshed` | Normal | `PtahSchema`, `PtahMigration` | A claim that had not dispatched found the Pod template it would dispatch different from the one its admission snapshot recorded, usually because a new manager release took over. The claim stands, and the snapshot is resolved again before its Job is created. This happens once per claim; a template that changes again retires the claim. |
 | `ApplyOutcomeUnknown` | Warning | `PtahSchema` | An Apply ended with no proof of whether it changed the database, so a read-only observation starts to establish what happened. |
 | `ApprovalAccepted` | Normal | `PtahSchema` | An authenticated approval was accepted for the current immutable plan. |
 | `ApprovalRequired` | Normal | `PtahSchema` | The current immutable plan needs an approval before anything applies it. |
 | `ApprovalRevoked` | Warning | `PtahSchema` | The recorded approval became invalid before the Apply Job was created, so no Job was created. |
 | `ApprovalStale` | Warning | `PtahSchemaApproval` | This approval no longer matches the plan it was written for, and will not be consumed. |
 | `ArtifactVerificationRefused` | Warning | `PtahSchema` | Verification refused the resolved artifact, so no plan is produced from it. |
-| `ExecutionBindingChanged` | Warning | `PtahSchema`, `PtahMigration` | The runtime identity the evidence was produced under was retired. A schema closes the approval boundary and refreshes read-only; a migration discards the operation claim. |
+| `ExecutionBindingChanged` | Warning | `PtahSchema`, `PtahMigration` | The execution binding the evidence was produced under was retired: the executor image, the Ptah version, the runner protocol or the controller-state version changed. A schema closes the approval boundary and refreshes read-only; a migration discards the operation claim. A manager release that changes none of them records no such Event. |
 | `LeaseContinuityLost` | Warning | `PtahSchema` | Database lock ownership was not continuous, so the result it covered is discarded and the proof restarts. |
 | `MigrationJobCleanupDeferred` | Warning | `PtahMigration` | A Job's cleanup could not be scheduled, so the Job keeps its own deadline rather than relying on one. |
 | `MigrationRunFinished` | Normal or Warning | `PtahMigration` | An Apply finished and the message names what it did. The type follows the outcome: Applied and UpToDate are Normal, and Failed, Partial and Unknown are Warnings. |

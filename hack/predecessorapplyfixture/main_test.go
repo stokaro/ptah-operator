@@ -5,13 +5,17 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // testDatabaseURL is the exact URL the Apply Job resolves; the target identity
@@ -41,12 +45,20 @@ func fixtureSchema() *operatorv1alpha1.PtahSchema {
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 			Epoch: "v1-11111111111111111111111111111111", PtahVersion: "v1.2.3",
-			ControllerImage:        "registry.invalid/controller@" + digest('f'),
-			ControllerRevision:     "0123456789abcdef0123456789abcdef01234567",
 			ControllerStateVersion: 1,
 			ExecutorImage:          "registry.invalid/ptah@" + digest('a'),
-			RunnerImage:            "registry.invalid/runner@" + digest('b'), RunnerProtocolVersion: 4,
+			RunnerProtocolVersion:  4,
 		}},
+	}
+}
+
+// fixtureManager is the release of the manager that published the plan, read
+// from a Job it dispatched.
+func fixtureManager() managerIdentity {
+	return managerIdentity{
+		controllerImage:    "registry.invalid/controller@" + digest('f'),
+		controllerRevision: "0123456789abcdef0123456789abcdef01234567",
+		runnerImage:        "registry.invalid/runner@" + digest('b'),
 	}
 }
 
@@ -67,7 +79,8 @@ func TestBuildFixtureBindsTheCurrentPlanContract(t *testing.T) {
 	schema := fixtureSchema()
 	planData := fixturePlanData()
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	bundle, err := buildFixture(schema, planData, "policy-uid", []byte("version: 1\n"), testDatabaseURL, now)
+	manager := fixtureManager()
+	bundle, err := buildFixture(schema, manager, planData, "policy-uid", []byte("version: 1\n"), testDatabaseURL, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +98,9 @@ func TestBuildFixtureBindsTheCurrentPlanContract(t *testing.T) {
 
 	binding := schema.Status.ExecutionBinding
 	if bundle.Plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion ||
-		bundle.Plan.Spec.ControllerImage != binding.ControllerImage ||
-		bundle.Plan.Spec.ControllerRevision != binding.ControllerRevision ||
+		bundle.Plan.Spec.ControllerImage != manager.controllerImage ||
+		bundle.Plan.Spec.ControllerRevision != manager.controllerRevision ||
+		bundle.Plan.Spec.RunnerImage != manager.runnerImage ||
 		bundle.Plan.Spec.ControllerStateVersion != binding.ControllerStateVersion {
 		t.Fatalf("plan does not carry the current manager contract: %#v", bundle.Plan.Spec)
 	}
@@ -108,18 +122,10 @@ func TestBuildFixtureBindsTheCurrentPlanContract(t *testing.T) {
 		t.Fatalf("policy fingerprint = %q, want the controller's %q", bundle.Plan.Spec.PolicyFingerprint, wantPolicy)
 	}
 
-	wantFingerprint, err := (fingerprint.PlanBinding{
-		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaUID: string(schema.UID),
-		PlanContentDigest: bundle.Plan.Spec.ContentDigest, ArtifactDigest: bundle.Plan.Spec.ArtifactDigest,
-		CoordinationDigest: bundle.Plan.Spec.CoordinationDigest, TargetIdentityDigest: bundle.Plan.Spec.TargetIdentityDigest,
-		ActualStateFingerprint: bundle.Plan.Spec.ActualStateFingerprint, DesiredStateFingerprint: bundle.Plan.Spec.DesiredStateFingerprint,
-		PolicyFingerprint: bundle.Plan.Spec.PolicyFingerprint, VerificationPolicyUID: string(bundle.Plan.Spec.VerificationPolicyUID),
-		VerificationPolicyDigest: bundle.Plan.Spec.VerificationPolicyDigest, ExecutionBindingID: bundle.Plan.Spec.ExecutionBindingID,
-		ControllerImage: bundle.Plan.Spec.ControllerImage, ControllerRevision: bundle.Plan.Spec.ControllerRevision,
-		ControllerStateVersion: bundle.Plan.Spec.ControllerStateVersion,
-		PtahVersion:            bundle.Plan.Spec.PtahVersion, ExecutorImage: bundle.Plan.Spec.ExecutorImage,
-		RunnerImage: bundle.Plan.Spec.RunnerImage, RunnerProtocolVersion: bundle.Plan.Spec.RunnerProtocolVersion,
-	}).Fingerprint()
+	// The webhook recomputes the fingerprint from the published spec through
+	// planstore.Binding; the fixture computes it on its own, and the two must
+	// agree or the plan is refused on admission.
+	wantFingerprint, err := planstore.Binding(schema.UID, bundle.Plan.Spec).Fingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,17 +137,58 @@ func TestBuildFixtureBindsTheCurrentPlanContract(t *testing.T) {
 	}
 }
 
-// TestBuildFixtureRefusesABindingWithoutTheManager is the control on the check
+// TestBuildFixtureRefusesAPlanWithoutItsPublisher is the control on the check
 // above: a plan whose manager fields are empty is refused by the admission
 // guard over plan writes, so the fixture refuses to write one at all.
-func TestBuildFixtureRefusesABindingWithoutTheManager(t *testing.T) {
+func TestBuildFixtureRefusesAPlanWithoutItsPublisher(t *testing.T) {
 	t.Parallel()
 
-	schema := fixtureSchema()
-	schema.Status.ExecutionBinding.ControllerImage = ""
-	_, err := buildFixture(schema, fixturePlanData(), "policy", []byte("policy"), testDatabaseURL, time.Now())
-	if err == nil || !strings.Contains(err.Error(), "carries no manager identity") {
-		t.Fatalf("buildFixture() error = %v", err)
+	for name, mutate := range map[string]func(*managerIdentity){
+		"controller image":    func(manager *managerIdentity) { manager.controllerImage = "" },
+		"controller revision": func(manager *managerIdentity) { manager.controllerRevision = "" },
+		"runner image":        func(manager *managerIdentity) { manager.runnerImage = "" },
+	} {
+		mutate := mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			manager := fixtureManager()
+			mutate(&manager)
+			_, err := buildFixture(fixtureSchema(), manager, fixturePlanData(), "policy", []byte("policy"),
+				testDatabaseURL, time.Now())
+			if err == nil || !strings.Contains(err.Error(), "identity is incomplete") {
+				t.Fatalf("buildFixture() error = %v", err)
+			}
+		})
+	}
+}
+
+// TestManagerIdentityOfReadsTheDispatchingManager reads the publisher's
+// identity from a Job the manager dispatched, and refuses a Job that records
+// none of it.
+func TestManagerIdentityOfReadsTheDispatchingManager(t *testing.T) {
+	t.Parallel()
+
+	// The identity is read from the Pod template, which the admission
+	// snapshot pins; the builder writes the same values on the Job itself.
+	job := &batchv1.Job{}
+	job.Spec.Template.Annotations = map[string]string{
+		workload.AnnotationControllerImage:    "registry.invalid/controller@" + digest('f'),
+		workload.AnnotationControllerRevision: "release-1",
+	}
+	job.Spec.Template.Spec.InitContainers = []corev1.Container{{
+		Name: "install-runner", Image: "registry.invalid/runner@" + digest('b'),
+	}}
+	manager, err := managerIdentityOf(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manager.controllerImage != "registry.invalid/controller@"+digest('f') ||
+		manager.controllerRevision != "release-1" || manager.runnerImage != "registry.invalid/runner@"+digest('b') {
+		t.Fatalf("managerIdentityOf() = %#v", manager)
+	}
+	job.Spec.Template.Spec.InitContainers = nil
+	if _, err := managerIdentityOf(job); err == nil {
+		t.Fatal("managerIdentityOf() accepted a Job that records no runner image")
 	}
 }
 
@@ -153,7 +200,8 @@ func TestBuildFixtureRefusesADestructivePlan(t *testing.T) {
 	destructive := []byte(`{"format_version":1,"name":"upgrade-proof","dialect":"postgres","from_fingerprint":"` +
 		digest('c') + `","to_fingerprint":"` + digest('d') +
 		`","destructive":true,"statements":[{"sql":"DROP TABLE widgets","severity":"destructive","reason":"proof"}]}` + "\n")
-	_, err := buildFixture(fixtureSchema(), destructive, "policy-uid", []byte("version: 1\n"), testDatabaseURL, time.Now())
+	_, err := buildFixture(fixtureSchema(), fixtureManager(), destructive, "policy-uid", []byte("version: 1\n"),
+		testDatabaseURL, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "non-destructive") {
 		t.Fatalf("buildFixture() error = %v", err)
 	}
@@ -168,7 +216,7 @@ func TestBuildFixtureRefusesAPrivilegedPlan(t *testing.T) {
 	privileged := []byte(`{"format_version":1,"name":"upgrade-proof","dialect":"postgres","from_fingerprint":"` +
 		digest('c') + `","to_fingerprint":"` + digest('d') +
 		`","destructive":false,"statements":[{"sql":"GRANT SELECT ON widgets TO PUBLIC","severity":"safe","reason":"proof"}]}` + "\n")
-	_, err := buildFixture(fixtureSchema(), privileged, "policy-uid", []byte("version: 1\n"), testDatabaseURL, time.Now())
+	_, err := buildFixture(fixtureSchema(), fixtureManager(), privileged, "policy-uid", []byte("version: 1\n"), testDatabaseURL, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "must change no privilege") {
 		t.Fatalf("buildFixture() error = %v", err)
 	}

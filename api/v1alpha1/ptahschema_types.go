@@ -425,10 +425,11 @@ type PtahSchemaStatus struct {
 	// passes through several phases while one refusal stays true.
 	Phase ReconciliationPhase `json:"phase,omitempty"`
 
-	// ExecutionBinding is the durable identity of the controller/runtime epoch
+	// ExecutionBinding is the durable identity of the execution epoch
 	// authorized to produce new reconciliation evidence. Retained evidence stays
-	// historical until refreshed. Epoch changes on every component transition,
-	// including a rollback to identical values.
+	// historical until refreshed. Epoch changes whenever a bound component
+	// changes, including a rollback to identical values; a manager upgrade
+	// that changes no bound component keeps it.
 	ExecutionBinding *ExecutionBindingStatus `json:"executionBinding,omitempty"`
 
 	// Source is what the desired artifact resolved and verified to.
@@ -472,27 +473,24 @@ type PtahSchemaStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// ExecutionBindingStatus identifies one uninterrupted controller/runtime
-// evidence epoch. The explicit component fields are audit evidence; Epoch
-// prevents approvals from becoming current again after a later rollback.
+// ExecutionBindingStatus identifies one uninterrupted execution epoch: the
+// components that decide what a plan means when it runs. The explicit
+// component fields are audit evidence; Epoch prevents approvals from becoming
+// current again after a later rollback.
+//
+// The manager's own image and revision, and the runner image built beside
+// it, are deliberately absent. They are recorded on every Job and plan, and a
+// release that changes only them -- a patch or security fix -- keeps the
+// epoch, so a pending approval stays valid and a plan stays applicable. What
+// the runner enforces is bound through RunnerProtocolVersion instead, which
+// changes whenever that enforcement does.
 type ExecutionBindingStatus struct {
-	// Epoch is this binding's identity. It changes on every component
-	// transition, a rollback to identical versions included, so evidence from
-	// before a rollout is historical rather than current.
+	// Epoch is this binding's identity. It changes whenever a component below
+	// changes, a rollback to identical versions included, so evidence from
+	// before such a rollout is historical rather than current.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	Epoch string `json:"epoch"`
 
-	// ControllerImage identifies the exact manager container content that
-	// interpreted controller state and authorized this evidence epoch.
-	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage"`
-	// ControllerRevision identifies the exact manager build that interpreted
-	// controller state. It is provenance metadata in addition to ControllerImage,
-	// not a substitute for the image content digest.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision"`
 	// ControllerStateVersion versions manager-side reconciliation semantics
 	// independently of the data-plane runner protocol.
 	// +kubebuilder:validation:Minimum=1
@@ -505,12 +503,32 @@ type ExecutionBindingStatus struct {
 	// ExecutorImage is the digest-pinned image carrying that build.
 	// +kubebuilder:validation:MinLength=1
 	ExecutorImage string `json:"executorImage"`
-	// RunnerImage is the digest-pinned image that supervises it.
-	// +kubebuilder:validation:MinLength=1
-	RunnerImage string `json:"runnerImage"`
-	// RunnerProtocolVersion is the result-frame protocol that runner speaks.
+	// RunnerProtocolVersion is the runner protocol this epoch binds: what the
+	// runner enforces inside the Pod and the result frame it returns.
 	// +kubebuilder:validation:Minimum=1
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
+}
+
+// ManagerRecord names one release of the manager: its image, its revision and
+// the runner image built from the same source. It is audit evidence and binds
+// nothing -- a release that changes only these values keeps every plan and
+// approval -- so it is written where a reader needs to know which build did
+// something after the Job that ran it has been collected.
+type ManagerRecord struct {
+	// ControllerImage is the digest-pinned manager image.
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	// +kubebuilder:validation:MaxLength=512
+	ControllerImage string `json:"controllerImage"`
+	// ControllerRevision is the source revision the manager was built from.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
+	ControllerRevision string `json:"controllerRevision"`
+	// RunnerImage is the digest-pinned runner image the manager installed in
+	// the task Pod.
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	// +kubebuilder:validation:MaxLength=512
+	RunnerImage string `json:"runnerImage"`
 }
 
 // TargetLockReleaseStatus is the complete credential-free request required to
@@ -784,7 +802,8 @@ type CurrentPlanStatus struct {
 	// ExecutionBindingID is the execution epoch it belongs to.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
-	// ControllerImage is the digest-pinned manager that published it.
+	// ControllerImage is the digest-pinned manager that published it,
+	// recorded and not bound.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
 	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision is that manager's revision.
@@ -799,9 +818,10 @@ type CurrentPlanStatus struct {
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image that ran it.
 	ExecutorImage string `json:"executorImage"`
-	// RunnerImage is the digest-pinned image that supervised it.
+	// RunnerImage is the runner image of the manager that published it,
+	// recorded and not bound.
 	RunnerImage string `json:"runnerImage"`
-	// RunnerProtocolVersion is the result-frame protocol that runner speaks.
+	// RunnerProtocolVersion is the runner protocol the plan binds.
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 	// Destructive says the plan drops or rewrites something.
 	Destructive bool `json:"destructive"`
@@ -856,7 +876,8 @@ type AppliedStatus struct {
 	// ExecutionBindingID is the epoch the apply ran under.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
-	// ControllerImage is the digest-pinned manager that dispatched it.
+	// ControllerImage is the digest-pinned manager that published the plan
+	// this apply ran. The manager that dispatched the Job is DispatchedBy.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
 	ControllerImage string `json:"controllerImage"`
 	// ControllerRevision is that manager's revision.
@@ -871,10 +892,17 @@ type AppliedStatus struct {
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image it ran in.
 	ExecutorImage string `json:"executorImage"`
-	// RunnerImage is the digest-pinned image that supervised it.
+	// RunnerImage is the runner image of the manager that published the plan.
 	RunnerImage string `json:"runnerImage"`
-	// RunnerProtocolVersion is the result-frame protocol that runner spoke.
+	// RunnerProtocolVersion is the runner protocol the apply ran under.
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
+	// DispatchedBy is the manager that built and dispatched the Apply Job,
+	// read from the Job's Pod template when the Apply was harvested. It can
+	// differ from the publisher above: a later release of the manager that
+	// shares the execution binding applies the plans an earlier one
+	// published. It is absent when the Apply was settled without its Job.
+	// +optional
+	DispatchedBy *ManagerRecord `json:"dispatchedBy,omitempty"`
 	// CompletedAt is when convergence was independently observed, not when the
 	// Job exited.
 	CompletedAt metav1.Time `json:"completedAt"`
@@ -926,8 +954,15 @@ type PendingObservationStatus struct {
 	ObserveAfter *metav1.Time `json:"observeAfter,omitempty"`
 
 	// Plan is the plan the apply carried out, kept here after the active
-	// operation is cleared so the proof knows what it is proving.
+	// operation is cleared so the proof knows what it is proving. Its manager
+	// fields name the manager that published it.
 	Plan CurrentPlanStatus `json:"plan"`
+	// DispatchedBy is the manager that built and dispatched the Apply Job,
+	// read from the Job's Pod template when the Apply was harvested, and
+	// carried into status.applied when the proof completes. It is absent when
+	// the Apply was settled without its Job.
+	// +optional
+	DispatchedBy *ManagerRecord `json:"dispatchedBy,omitempty"`
 	// Target is the key-free binding the proof reads the database through.
 	Target DatabaseTargetBinding `json:"target"`
 	// CoordinationDigest is the realm the apply held, kept so the proof runs
@@ -996,6 +1031,14 @@ type ActiveOperationStatus struct {
 	// admission mutations while retaining exact validation for executable and
 	// security-sensitive Pod fields.
 	AdmissionSnapshot *PodAdmissionSnapshot `json:"admissionSnapshot,omitempty"`
+	// AdmissionSnapshotRefreshed records that this claim's admission snapshot
+	// was resolved a second time, because the Job template this manager
+	// builds differed from the one the snapshot recorded before anything was
+	// dispatched. That happens once, when a manager release that shares the
+	// execution binding takes over an undispatched claim. It happens at most
+	// once per claim: a template that differs again comes from a builder that
+	// does not build the same Job twice, and the claim is retired instead.
+	AdmissionSnapshotRefreshed bool `json:"admissionSnapshotRefreshed,omitempty"`
 
 	// DispatchStarted is persisted immediately before the one permitted Job
 	// create attempt. A missing Apply Job after this boundary is outcome-unknown

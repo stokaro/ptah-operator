@@ -74,6 +74,9 @@ type JobBuilder interface {
 		operation operatorv1alpha1.MigrationOperationStatus,
 		plan *operatorv1alpha1.PtahMigrationPlan,
 	) (*batchv1.Job, error)
+	// ManagerIdentity is the manager's own release, which a plan it creates
+	// records.
+	ManagerIdentity() (controllerImage, controllerRevision, runnerImage string)
 }
 
 var _ JobBuilder = workload.Builder{}
@@ -369,10 +372,11 @@ func validatePendingApplyJobCleanup(
 	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
 		return err
 	}
+	// The plan names the manager that published it and the Job the one that
+	// dispatched it, which may be a later release of the same binding. The
+	// Job's own record is taken and pinned by the template digest below.
 	if pending.Plan.Name == "" || pending.Plan.UID == "" || !isSHA256Digest(pending.Plan.Fingerprint) ||
 		!isSHA256Digest(pending.Plan.ContentDigest) ||
-		pending.Plan.ControllerImage != job.Annotations[workload.AnnotationControllerImage] ||
-		pending.Plan.ControllerRevision != job.Annotations[workload.AnnotationControllerRevision] ||
 		strconv.FormatInt(int64(pending.Plan.ControllerStateVersion), 10) !=
 			job.Annotations[workload.AnnotationControllerStateVersion] ||
 		pending.Plan.PtahVersion != job.Annotations[workload.AnnotationPtahVersion] {
@@ -387,8 +391,8 @@ func validatePendingApplyJobCleanup(
 		workload.AnnotationInputFingerprint:        inputFingerprint,
 		workload.AnnotationPtahVersion:             pending.Plan.PtahVersion,
 		workload.AnnotationExecutionBindingID:      pending.Plan.ExecutionBindingID,
-		workload.AnnotationControllerImage:         pending.Plan.ControllerImage,
-		workload.AnnotationControllerRevision:      pending.Plan.ControllerRevision,
+		workload.AnnotationControllerImage:         job.Annotations[workload.AnnotationControllerImage],
+		workload.AnnotationControllerRevision:      job.Annotations[workload.AnnotationControllerRevision],
 		workload.AnnotationControllerStateVersion:  strconv.FormatInt(int64(pending.Plan.ControllerStateVersion), 10),
 		workload.AnnotationPlanFingerprint:         pending.Plan.Fingerprint,
 		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
@@ -487,8 +491,6 @@ func validateClaimBoundJobCleanup(
 		plan := schema.Status.Plan
 		if plan == nil || plan.Name == "" || plan.UID == "" || !isSHA256Digest(plan.Fingerprint) ||
 			!isSHA256Digest(plan.ContentDigest) || plan.ExecutionBindingID != operation.ExecutionBindingID ||
-			plan.ControllerImage != wantAnnotations[workload.AnnotationControllerImage] ||
-			plan.ControllerRevision != wantAnnotations[workload.AnnotationControllerRevision] ||
 			strconv.FormatInt(int64(plan.ControllerStateVersion), 10) !=
 				wantAnnotations[workload.AnnotationControllerStateVersion] ||
 			plan.PtahVersion != wantAnnotations[workload.AnnotationPtahVersion] {
@@ -525,10 +527,11 @@ func validateCurrentExecutionEnvelope(
 	binding *operatorv1alpha1.ExecutionBindingStatus,
 	annotations map[string]string,
 ) error {
+	// The manager image and revision annotations are not compared: they
+	// record which manager of this binding dispatched the Job, and the
+	// caller holds them to the persisted Pod template digest.
 	if binding == nil || !isExecutionBindingID(binding.Epoch) ||
 		annotations[workload.AnnotationExecutionBindingID] != binding.Epoch ||
-		annotations[workload.AnnotationControllerImage] != binding.ControllerImage ||
-		annotations[workload.AnnotationControllerRevision] != binding.ControllerRevision ||
 		annotations[workload.AnnotationControllerStateVersion] !=
 			strconv.FormatInt(int64(binding.ControllerStateVersion), 10) ||
 		annotations[workload.AnnotationPtahVersion] != binding.PtahVersion {
@@ -893,6 +896,13 @@ func (v *Validator) validatePlanCreate(ctx context.Context, req admissionv1.Admi
 	if err := validatePlanPublicationContext(plan, schema); err != nil {
 		return denyf("PtahSchemaPlan does not match the active Plan operation: %v", err)
 	}
+	// The plan records the manager that publishes it, and only this one is
+	// publishing. Its chunks are held to the plan as it stands instead, so a
+	// successor can finish a publication its predecessor began.
+	if controllerImage, controllerRevision, runnerImage := v.Jobs.ManagerIdentity(); plan.Spec.ControllerImage != controllerImage ||
+		plan.Spec.ControllerRevision != controllerRevision || plan.Spec.RunnerImage != runnerImage {
+		return denyf("PtahSchemaPlan does not record the manager that publishes it")
+	}
 	if err := v.validatePlanSourceJob(ctx, schema); err != nil {
 		return err
 	}
@@ -1038,28 +1048,7 @@ func validatePlanShape(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1
 	if err != nil || policyDigest != plan.Spec.PolicyFingerprint {
 		return errors.New("plan policy fingerprint does not match the current schema policy")
 	}
-	binding := fingerprint.PlanBinding{
-		ContractVersion:          plan.Spec.ContractVersion,
-		SchemaUID:                string(schema.UID),
-		PlanContentDigest:        plan.Spec.ContentDigest,
-		ArtifactDigest:           plan.Spec.ArtifactDigest,
-		CoordinationDigest:       plan.Spec.CoordinationDigest,
-		TargetIdentityDigest:     plan.Spec.TargetIdentityDigest,
-		ActualStateFingerprint:   plan.Spec.ActualStateFingerprint,
-		DesiredStateFingerprint:  plan.Spec.DesiredStateFingerprint,
-		PolicyFingerprint:        plan.Spec.PolicyFingerprint,
-		VerificationPolicyUID:    string(plan.Spec.VerificationPolicyUID),
-		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
-		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-		ControllerImage:          plan.Spec.ControllerImage,
-		ControllerRevision:       plan.Spec.ControllerRevision,
-		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
-		PtahVersion:              plan.Spec.PtahVersion,
-		ExecutorImage:            plan.Spec.ExecutorImage,
-		RunnerImage:              plan.Spec.RunnerImage,
-		RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
-	}
-	wantFingerprint, err := binding.Fingerprint()
+	wantFingerprint, err := planstore.Binding(schema.UID, plan.Spec).Fingerprint()
 	if err != nil || wantFingerprint != plan.Spec.Fingerprint {
 		return errors.New("plan fingerprint does not match its complete approval binding")
 	}
@@ -1079,9 +1068,8 @@ func validatePlanPublicationContext(plan *operatorv1alpha1.PtahSchemaPlan, schem
 	}
 	binding := schema.Status.ExecutionBinding
 	if binding == nil || binding.Epoch != plan.Spec.ExecutionBindingID ||
-		binding.ControllerImage != plan.Spec.ControllerImage || binding.ControllerRevision != plan.Spec.ControllerRevision ||
 		binding.ControllerStateVersion != plan.Spec.ControllerStateVersion || binding.PtahVersion != plan.Spec.PtahVersion ||
-		binding.ExecutorImage != plan.Spec.ExecutorImage || binding.RunnerImage != plan.Spec.RunnerImage ||
+		binding.ExecutorImage != plan.Spec.ExecutorImage ||
 		binding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
 		return errors.New("plan differs from the schema's durable execution binding")
 	}
@@ -1113,11 +1101,15 @@ func (v *Validator) validatePlanSourceJob(ctx context.Context, schema *operatorv
 	if err != nil {
 		return denyf("active Plan operation cannot reconstruct its source Job: %v", err)
 	}
+	harvested := job.DeepCopy()
+	harvested.Spec.TTLSecondsAfterFinished = nil
+	// An earlier manager of the same execution binding may have dispatched the
+	// Plan Job. Its recorded identity is taken from the Job, and the snapshot
+	// check that follows holds what was taken to the claim.
+	workload.CarryManagerIdentity(expected, harvested)
 	if err := validateAdmissionSnapshot(operation, expected); err != nil {
 		return denyf("active Plan operation Pod admission snapshot is invalid: %v", err)
 	}
-	harvested := job.DeepCopy()
-	harvested.Spec.TTLSecondsAfterFinished = nil
 	if err := validateJobIntent(harvested, expected, schemaSubject(schema), true); err != nil {
 		return denyf("terminal Plan Job is outside its immutable operation intent: %v", err)
 	}

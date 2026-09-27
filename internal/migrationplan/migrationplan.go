@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -41,11 +40,15 @@ const (
 var (
 	sha256Pattern             = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
-	imageDigestPattern        = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 )
 
 // Binding is everything a migration plan is decided from. A changed input
 // produces a different plan rather than a changed one.
+//
+// The manager that publishes the plan is not an input. Its image, its
+// revision and the runner image built beside it are recorded on the plan and
+// left out of here, so a manager release that changes only them finds the
+// same fingerprint, the same plan name and the same approvals.
 type Binding struct {
 	MigrationUID             types.UID
 	HistoryFingerprint       string
@@ -57,12 +60,9 @@ type Binding struct {
 	VerificationPolicyUID    types.UID
 	VerificationPolicyDigest string
 	ExecutionBindingID       string
-	ControllerImage          string
-	ControllerRevision       string
 	ControllerStateVersion   int32
 	PtahVersion              string
 	ExecutorImage            string
-	RunnerImage              string
 	RunnerProtocolVersion    int32
 }
 
@@ -81,7 +81,6 @@ func (b Binding) Fingerprint() (string, error) {
 		"verification policy digest": b.VerificationPolicyDigest,
 		"Ptah version":               b.PtahVersion,
 		"executor image":             b.ExecutorImage,
-		"runner image":               b.RunnerImage,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return "", fmt.Errorf("%s is required", name)
@@ -89,12 +88,6 @@ func (b Binding) Fingerprint() (string, error) {
 	}
 	if !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
 		return "", errors.New("a valid execution binding ID is required")
-	}
-	if !imageDigestPattern.MatchString(b.ControllerImage) {
-		return "", errors.New("controller image must be pinned by a lowercase SHA-256 digest")
-	}
-	if err := controllerstate.ValidateRevision(b.ControllerRevision); err != nil {
-		return "", fmt.Errorf("invalid controller revision: %w", err)
 	}
 	if b.ControllerStateVersion < 1 {
 		return "", errors.New("controller state version must be positive")
@@ -114,12 +107,9 @@ func (b Binding) Fingerprint() (string, error) {
 		"verification_policy_uid":    string(b.VerificationPolicyUID),
 		"verification_policy_digest": b.VerificationPolicyDigest,
 		"execution_binding_id":       b.ExecutionBindingID,
-		"controller_image":           b.ControllerImage,
-		"controller_revision":        b.ControllerRevision,
 		"controller_state_version":   b.ControllerStateVersion,
 		"ptah_version":               b.PtahVersion,
 		"executor_image":             b.ExecutorImage,
-		"runner_image":               b.RunnerImage,
 		"runner_protocol_version":    b.RunnerProtocolVersion,
 	})
 }

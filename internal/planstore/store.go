@@ -54,6 +54,38 @@ func Name(planFingerprint string) (string, error) {
 	return namePrefix + planFingerprint[len("sha256:"):len("sha256:")+24], nil
 }
 
+// Binding returns the approval identity a plan spec stands for, read from the
+// spec as published. The manager computes a plan's fingerprint from it before
+// publishing, and the controller-write webhook recomputes it before admitting
+// the plan, so the two cannot disagree about what a field means.
+func Binding(schemaUID types.UID, spec operatorv1alpha1.PtahSchemaPlanSpec) fingerprint.PlanBinding {
+	privileges := make([]string, 0, len(spec.PrivilegeChanges))
+	for _, kind := range spec.PrivilegeChanges {
+		privileges = append(privileges, string(kind))
+	}
+	return fingerprint.PlanBinding{
+		ContractVersion:          spec.ContractVersion,
+		SchemaUID:                string(schemaUID),
+		PlanContentDigest:        spec.ContentDigest,
+		ArtifactDigest:           spec.ArtifactDigest,
+		CoordinationDigest:       spec.CoordinationDigest,
+		TargetIdentityDigest:     spec.TargetIdentityDigest,
+		ActualStateFingerprint:   spec.ActualStateFingerprint,
+		DesiredStateFingerprint:  spec.DesiredStateFingerprint,
+		PolicyFingerprint:        spec.PolicyFingerprint,
+		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
+		VerificationPolicyDigest: spec.VerificationPolicyDigest,
+		ExecutionBindingID:       spec.ExecutionBindingID,
+		ControllerStateVersion:   spec.ControllerStateVersion,
+		PtahVersion:              spec.PtahVersion,
+		ExecutorImage:            spec.ExecutorImage,
+		RunnerProtocolVersion:    spec.RunnerProtocolVersion,
+		Destructive:              spec.Destructive,
+		PrivilegeChanges:         privileges,
+		StatementCount:           spec.StatementCount,
+	}
+}
+
 // Store uses direct API reads through Reader and mutating calls through Client.
 // The distinction lets controllers bypass a stale cache before apply.
 type Store struct {
@@ -321,11 +353,20 @@ func desiredChunk(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.Pl
 	}
 }
 
+// sameManifest accepts an existing plan as the one being published when
+// everything but the record of its publisher matches. The fingerprint, and
+// with it the name, leaves the manager's image, revision and runner image
+// out, so a later release of the manager computing the same plan finds the
+// one an earlier release published. That plan keeps its original record.
 func sameManifest(desired, actual *operatorv1alpha1.PtahSchemaPlan) error {
 	if actual.DeletionTimestamp != nil {
 		return fmt.Errorf("deterministic plan name is being deleted")
 	}
-	if !reflect.DeepEqual(desired.Spec, actual.Spec) || !reflect.DeepEqual(desired.OwnerReferences, actual.OwnerReferences) {
+	published := actual.Spec.DeepCopy()
+	published.ControllerImage = desired.Spec.ControllerImage
+	published.ControllerRevision = desired.Spec.ControllerRevision
+	published.RunnerImage = desired.Spec.RunnerImage
+	if !reflect.DeepEqual(desired.Spec, *published) || !reflect.DeepEqual(desired.OwnerReferences, actual.OwnerReferences) {
 		return fmt.Errorf("deterministic plan name collides with different immutable content")
 	}
 	return nil

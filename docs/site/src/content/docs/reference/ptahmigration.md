@@ -357,6 +357,7 @@ spec:
 | `status.activeOperation.admissionSnapshot.serviceAccount.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
 | `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. TemplateDigest covers the Pod template the operator asked for, before the cluster's own admission had a chance to change it. |
 | `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` | Version is the snapshot format this record was written in. |
+| `status.activeOperation.admissionSnapshotRefreshed` | `boolean` | AdmissionSnapshotRefreshed records that this claim's admission snapshot was resolved a second time, because the Job template this manager builds differed from the one the snapshot recorded before anything was dispatched. That happens once, when a manager release that shares the execution binding takes over an undispatched claim. It happens at most once per claim: a template that differs again comes from a builder that does not build the same Job twice, and the claim is retired instead. |
 | `status.activeOperation.approvalRef` | `object` | ApprovalRef is the approval that authorized this Apply, recorded before dispatch so the run is attributable to the decision that permitted it. |
 | `status.activeOperation.approvalRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.activeOperation.approvalRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
@@ -364,7 +365,7 @@ spec:
 | `status.activeOperation.coordinationDigest` | `string` | CoordinationDigest is that realm, hashed. |
 | `status.activeOperation.dispatchNotAfter` | `string` | DispatchNotAfter and ExecutionNotAfter bound the claim in time. |
 | `status.activeOperation.dispatchStarted` | `boolean` | DispatchStarted records that the one permitted Job create attempt was made. An Apply that crossed this boundary is never recreated, because whether it ran is a question for the database rather than for a retry. |
-| `status.activeOperation.executionBindingID` | `string`, required | ExecutionBindingID is the epoch this claim was authorized under. A rollout that changes any execution component retires the claim rather than letting its Job finish under new bytes. |
+| `status.activeOperation.executionBindingID` | `string`, required | ExecutionBindingID is the epoch this claim was authorized under. A rollout that changes a bound execution component retires the claim rather than letting its Job finish under new semantics. |
 | `status.activeOperation.executionNotAfter` | `string` | ExecutionNotAfter is when the authorized run itself expires. |
 | `status.activeOperation.id` | `string`, required | ID is this attempt's identity, distinct from every other attempt of the same operation. |
 | `status.activeOperation.inputFingerprint` | `string`, required | InputFingerprint is what the operation was decided from. An input that changed while the Job ran is what makes its result stale rather than wrong. |
@@ -424,15 +425,12 @@ spec:
 | `status.conditions[].reason` | `string`, required | reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of specific condition types may define expected values and meanings for this field, and whether the values are considered a guaranteed API. The value should be a CamelCase string. This field may not be empty. |
 | `status.conditions[].status` | `string`, required, one of `True`, `False`, `Unknown` | status of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | `string`, required | type of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.executionBinding` | `object` | ExecutionBinding is the component identity this resource's work is bound to: the manager that authorized it and the executor and runner that will carry it out. It is the same contract the schema path publishes, because the question it answers is the same one: a rollout that changed any of them has to invalidate a plan rather than execute it under new bytes. |
-| `status.executionBinding.controllerImage` | `string`, required | ControllerImage identifies the exact manager container content that interpreted controller state and authorized this evidence epoch. |
-| `status.executionBinding.controllerRevision` | `string`, required | ControllerRevision identifies the exact manager build that interpreted controller state. It is provenance metadata in addition to ControllerImage, not a substitute for the image content digest. |
+| `status.executionBinding` | `object` | ExecutionBinding is what this resource's plans and approvals are bound to: the components that decide what a run means. It is the same contract the schema path publishes, because the question it answers is the same one: a rollout that changed any of them has to invalidate a plan rather than execute it under new semantics. A manager upgrade that changes none of them leaves it, and every plan and approval, as they were. |
 | `status.executionBinding.controllerStateVersion` | `integer`, required | ControllerStateVersion versions manager-side reconciliation semantics independently of the data-plane runner protocol. |
-| `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes on every component transition, a rollback to identical versions included, so evidence from before a rollout is historical rather than current. |
+| `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes whenever a component below changes, a rollback to identical versions included, so evidence from before such a rollout is historical rather than current. |
 | `status.executionBinding.executorImage` | `string`, required | ExecutorImage is the digest-pinned image carrying that build. |
 | `status.executionBinding.ptahVersion` | `string`, required | PtahVersion is the Ptah build this epoch executes with. |
-| `status.executionBinding.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervises it. |
-| `status.executionBinding.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `status.executionBinding.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol this epoch binds: what the runner enforces inside the Pod and the result frame it returns. |
 | `status.history` | `object` | History is the last reading of the database's own revision table. |
 | `status.history.appliedCount` | `integer`, required | AppliedCount and PendingCount describe the artifact against this history. |
 | `status.history.checkpointVersion` | `integer` | CheckpointVersion is the checkpoint covering the versions below it, and zero where none applies. It stays set after the bootstrap has run: the coverage is what keeps those versions applied rather than pending. |
@@ -447,6 +445,10 @@ spec:
 | `status.history.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the credential-free identity of the database this history was read from, as the executor derived it. A plan that was made against one database is never executed against another. |
 | `status.lastRun` | `object` | LastRun is the evidence of the most recent execution, kept across later reconciliations so an operator can see what happened without the Job. |
 | `status.lastRun.appliedVersions` | `[]integer` | AppliedVersions names the selected migrations the history recorded afterwards, so a migration the history already held is not reported as this run's work. |
+| `status.lastRun.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the run's Job, read from the Job's Pod template when the run was harvested. The plan the run carried out names the manager that published it, which a later release sharing the execution binding need not be. It is absent when the run was settled without its Job. |
+| `status.lastRun.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
+| `status.lastRun.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
+| `status.lastRun.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
 | `status.lastRun.finishedAt` | `string` | FinishedAt is when its result was read. An unfinished run has none. |
 | `status.lastRun.jobName` | `string` | JobName and JobUID identify the execution this evidence came from. The UID is what makes a replacement Job with the same name a different run. |
 | `status.lastRun.jobUID` | `string` | JobUID is that Job's UID. |
@@ -465,6 +467,10 @@ spec:
 | `status.plan.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.plan.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.unresolvedRun` | `object` | UnresolvedRun is the execution nobody could account for, and is absent while there is none. It is written when a run ends Partial or Unknown, and removed only when a read-only reading of the same database finds nothing of this artifact left to apply. While it is here nothing is planned and nothing runs, whatever the conditions happen to say. |
+| `status.unresolvedRun.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the run's Job, as status.lastRun recorded it. It is absent when the run was settled without its Job. |
+| `status.unresolvedRun.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
+| `status.unresolvedRun.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
+| `status.unresolvedRun.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
 | `status.unresolvedRun.jobName` | `string` | JobName and JobUID identify the execution. The UID is what makes a replacement Job with the same name a different run. |
 | `status.unresolvedRun.jobUID` | `string` | JobUID is that Job's UID. |
 | `status.unresolvedRun.operationID` | `string`, required | OperationID is the Apply claim that ran, so this record names one attempt rather than the resource in general. |

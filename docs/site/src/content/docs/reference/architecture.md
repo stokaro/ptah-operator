@@ -58,7 +58,7 @@ answers a different question, and each is invalidated by a different event.
 | Coordination identity | Which realm a resource claims -- derived from `spec.target.engine` and either the namespace with `spec.target.coordinationKey` or the `PtahRealm` in `spec.target.realmRef`, and from nothing a credential carries | Editing any of those fields, which moves the resource to another realm |
 | Target identity | Which database a run actually reached, derived by the Pod from the URL it resolved | The URL resolving somewhere else: another host, port or database |
 | Lease epoch | Which uninterrupted interval of realm ownership a claim holds | The Lease lapsing and being acquired again, which loses continuity and discards any result produced across the change |
-| Execution binding epoch | Which set of execution components a plan was computed under -- manager image and revision, controller-state version, Ptah version, executor and runner images, runner protocol | Any one of those components changing, which retires the plans computed under the old set |
+| Execution binding epoch | Which set of execution components a plan was computed under -- controller-state version, Ptah version, executor image, runner protocol. The manager's image and revision and the runner image are recorded on plans and Jobs and are not in it | Any one of those four changing, which retires the plans computed under the old set. A manager release that changes none of them keeps the epoch |
 
 The first two are about *where*: one is configured, the other is observed, and
 a plan binds both so a redirect between planning and applying is refused. The

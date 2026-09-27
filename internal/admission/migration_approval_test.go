@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -42,11 +44,16 @@ func TestMigrationApprovalCreateStampsIdentityAndHydratesBindings(t *testing.T) 
 	}
 	for _, want := range []string{
 		"operator@example.test", "user-uid", "platform", "mutationRequestUID", "approvedAt",
-		"historyFingerprint", "targetIdentityDigest", "executionBindingID", testControllerImage,
+		"historyFingerprint", "targetIdentityDigest", "executionBindingID", "example.invalid/ptah@sha256:executor",
 	} {
 		if !containsJSON(patchJSON, want) {
 			t.Fatalf("the stamped approval %s does not carry %q", patchJSON, want)
 		}
+	}
+	// The plan records the manager that published it; the approval binds
+	// nothing about that manager, so none of it is copied.
+	if containsJSON(patchJSON, testControllerImage) {
+		t.Fatalf("the stamped approval %s copies the publishing manager's image", patchJSON)
 	}
 	if strings.Count(string(patchJSON), `"platform"`) != 1 {
 		t.Fatalf("duplicate groups were not normalized away: %s", patchJSON)
@@ -83,9 +90,23 @@ func TestMigrationApprovalRefusesWhatTheEvidenceNoLongerSupports(t *testing.T) {
 			message: "resolved artifact changed",
 		},
 		{
-			name: "an execution component rolled out",
+			name: "the executor rolled out",
 			mutate: func(migration *operatorv1alpha1.PtahMigration) {
 				migration.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@sha256:other"
+			},
+			message: "execution component changed",
+		},
+		{
+			name: "the Ptah version rolled out",
+			mutate: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.ExecutionBinding.PtahVersion = "v0.4.0"
+			},
+			message: "execution component changed",
+		},
+		{
+			name: "the runner protocol rolled out",
+			mutate: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.ExecutionBinding.RunnerProtocolVersion++
 			},
 			message: "execution component changed",
 		},
@@ -128,6 +149,72 @@ func TestMigrationApprovalRefusesWhatTheEvidenceNoLongerSupports(t *testing.T) {
 			}
 			if !strings.Contains(response.Result.Message, test.message) {
 				t.Fatalf("denial = %q, want one mentioning %q", response.Result.Message, test.message)
+			}
+		})
+	}
+}
+
+// TestMigrationApprovalAdmitsAPlanAnotherManagerPublished is the admission half
+// of a manager-only upgrade for the migration family: the plan records a
+// manager image, revision and runner image this manager does not have, under
+// the execution binding it runs. Both passes admit the approval.
+func TestMigrationApprovalAdmitsAPlanAnotherManagerPublished(t *testing.T) {
+	t.Parallel()
+
+	for _, mutate := range []bool{true, false} {
+		mutate := mutate
+		t.Run(fmt.Sprintf("mutate=%t", mutate), func(t *testing.T) {
+			t.Parallel()
+			handler, approval := migrationApprovalFixture(t, mutate, nil)
+			api, ok := handler.Reader.(client.Client)
+			if !ok {
+				t.Fatal("migration approval fixture reader is not mutable")
+			}
+			plan := &operatorv1alpha1.PtahMigrationPlan{}
+			key := client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}
+			if err := api.Get(context.Background(), key, plan); err != nil {
+				t.Fatal(err)
+			}
+			plan.Spec.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("d", 64)
+			plan.Spec.ControllerRevision = "an-earlier-release"
+			plan.Spec.RunnerImage = "example.invalid/operator@sha256:" + strings.Repeat("e", 64)
+			if err := api.Update(context.Background(), plan); err != nil {
+				t.Fatal(err)
+			}
+			request := migrationApprovalRequest(t, approval, admissionv1.Create)
+			request.UserInfo = authenticationv1.UserInfo{Username: "operator@example.test", UID: "user-uid"}
+			response := handler.Handle(context.Background(), request)
+			if !response.Allowed {
+				t.Fatalf("an approval for a plan an earlier manager of the same execution published was denied: %#v",
+					response.Result)
+			}
+		})
+	}
+}
+
+// TestMigrationApprovalRefusesAPlanUnderAnotherExecution holds the webhook to
+// the execution it serves: a plan whose bound components differ from it is not
+// approvable here, whatever the migration's status says.
+func TestMigrationApprovalRefusesAPlanUnderAnotherExecution(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(*Execution){
+		"controller state version": func(e *Execution) { e.ControllerStateVersion++ },
+		"Ptah version":             func(e *Execution) { e.PtahVersion = "v0.4.0" },
+		"executor image":           func(e *Execution) { e.ExecutorImage = "example.invalid/ptah@sha256:other" },
+		"runner protocol":          func(e *Execution) { e.RunnerProtocolVersion++ },
+	} {
+		mutate := mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			handler, approval := migrationApprovalFixture(t, true, nil)
+			mutate(&handler.Execution)
+			request := migrationApprovalRequest(t, approval, admissionv1.Create)
+			request.UserInfo = authenticationv1.UserInfo{Username: "operator@example.test", UID: "user-uid"}
+			response := handler.Handle(context.Background(), request)
+			if response.Allowed || response.Result == nil ||
+				!strings.Contains(response.Result.Message, "execution binding this manager does not run") {
+				t.Fatalf("Handle() response = %#v, want an execution-binding denial", response.Result)
 			}
 		})
 	}
@@ -221,11 +308,9 @@ func migrationApprovalFixture(
 		Status: operatorv1alpha1.PtahMigrationStatus{
 			Phase: operatorv1alpha1.MigrationPhaseAwaitingApproval,
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
-				Epoch: "v1-33333333333333333333333333333333", ControllerImage: testControllerImage,
-				ControllerRevision:     "controller-test-revision",
+				Epoch:                  "v1-33333333333333333333333333333333",
 				ControllerStateVersion: 1, PtahVersion: "v0.3.0",
 				ExecutorImage:         "example.invalid/ptah@sha256:executor",
-				RunnerImage:           "example.invalid/operator@sha256:runner",
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
 			},
 			Artifact: &operatorv1alpha1.OCIArtifactAccessBinding{
@@ -246,6 +331,12 @@ func migrationApprovalFixture(
 		},
 	}
 	binding := migration.Status.ExecutionBinding
+	// What this manager executes with, taken before any mutation below moves
+	// the migration's own binding away from it.
+	execution := Execution{
+		ControllerStateVersion: binding.ControllerStateVersion, PtahVersion: binding.PtahVersion,
+		ExecutorImage: binding.ExecutorImage, RunnerProtocolVersion: binding.RunnerProtocolVersion,
+	}
 	planned := []operatorv1alpha1.PlannedMigration{{Version: 3, Checksum: "checksum-3"}}
 	sequenceDigest, err := migrationplan.SequenceDigest(planned)
 	if err != nil {
@@ -262,10 +353,10 @@ func migrationApprovalFixture(
 		ArtifactDigest: artifactDigest, CoordinationDigest: coordinationDigest,
 		TargetIdentityDigest: targetIdentityDigest, PolicyFingerprint: policyFingerprint,
 		VerificationPolicyUID: policyUID, VerificationPolicyDigest: policyDigest,
-		ExecutionBindingID: binding.Epoch, ControllerImage: binding.ControllerImage,
-		ControllerRevision: binding.ControllerRevision, ControllerStateVersion: binding.ControllerStateVersion,
-		PtahVersion: binding.PtahVersion, ExecutorImage: binding.ExecutorImage,
-		RunnerImage: binding.RunnerImage, RunnerProtocolVersion: binding.RunnerProtocolVersion,
+		ExecutionBindingID:     binding.Epoch,
+		ControllerStateVersion: binding.ControllerStateVersion,
+		PtahVersion:            binding.PtahVersion, ExecutorImage: binding.ExecutorImage,
+		RunnerProtocolVersion: binding.RunnerProtocolVersion,
 	}
 	planFingerprint, err := planBinding.Fingerprint()
 	if err != nil {
@@ -279,10 +370,10 @@ func migrationApprovalFixture(
 		ArtifactDigest: artifactDigest, CoordinationDigest: coordinationDigest,
 		TargetIdentityDigest: targetIdentityDigest, PolicyFingerprint: policyFingerprint,
 		VerificationPolicyUID: policyUID, VerificationPolicyDigest: policyDigest,
-		ExecutionBindingID: binding.Epoch, ControllerImage: binding.ControllerImage,
-		ControllerRevision: binding.ControllerRevision, ControllerStateVersion: binding.ControllerStateVersion,
+		ExecutionBindingID: binding.Epoch, ControllerImage: testControllerImage,
+		ControllerRevision: "controller-test-revision", ControllerStateVersion: binding.ControllerStateVersion,
 		PtahVersion: binding.PtahVersion, ExecutorImage: binding.ExecutorImage,
-		RunnerImage: binding.RunnerImage, RunnerProtocolVersion: binding.RunnerProtocolVersion,
+		RunnerImage: "example.invalid/operator@sha256:runner", RunnerProtocolVersion: binding.RunnerProtocolVersion,
 		CreatedAt: metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)),
 	})
 	if err != nil {
@@ -312,12 +403,9 @@ func migrationApprovalFixture(
 		approval.Spec.VerificationPolicyUID = policyUID
 		approval.Spec.VerificationPolicyDigest = policyDigest
 		approval.Spec.ExecutionBindingID = binding.Epoch
-		approval.Spec.ControllerImage = binding.ControllerImage
-		approval.Spec.ControllerRevision = binding.ControllerRevision
 		approval.Spec.ControllerStateVersion = binding.ControllerStateVersion
 		approval.Spec.PtahVersion = binding.PtahVersion
 		approval.Spec.ExecutorImage = binding.ExecutorImage
-		approval.Spec.RunnerImage = binding.RunnerImage
 		approval.Spec.RunnerProtocolVersion = binding.RunnerProtocolVersion
 		approval.Spec.Approver = operatorv1alpha1.ApprovalIdentity{Username: "operator@example.test", UID: "user-uid"}
 		approval.Spec.ApprovedAt = metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
@@ -326,9 +414,8 @@ func migrationApprovalFixture(
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(migration, plan, policyConfigMap).Build()
 	return &MigrationApprovalHandler{
 		Reader: reader, Decoder: cradmission.NewDecoder(scheme), Mutate: mutate,
-		Clock:           fixedApprovalClock{now: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)},
-		ControllerImage: testControllerImage, ControllerRevision: "controller-test-revision",
-		ControllerStateVersion: 1,
+		Clock:     fixedApprovalClock{now: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)},
+		Execution: execution,
 	}, approval
 }
 

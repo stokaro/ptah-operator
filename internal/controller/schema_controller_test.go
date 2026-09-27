@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +42,7 @@ const (
 	testExecutionBindingID           = "v1-33333333333333333333333333333333"
 	testControllerImage              = "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	testControllerRevision           = "controller-test-revision"
+	testRunnerImage                  = "example.invalid/operator@" + testDigest
 	testControllerStateVersion int32 = 1
 	testPolicyUID                    = types.UID("verification-policy-v1-uid")
 )
@@ -78,6 +81,30 @@ func (changedTemplateJobs) Build(
 		job.Spec.Template.Annotations = map[string]string{}
 	}
 	job.Spec.Template.Annotations["operator.ptah.run/rebuilt-template"] = "changed"
+	return job, nil
+}
+
+// unstableTemplateJobs builds a different Pod template every time it is asked,
+// which no real builder may do. It is what a snapshot refresh has to survive
+// without refreshing forever.
+type unstableTemplateJobs struct {
+	fakeJobs
+	builds *atomic.Int64
+}
+
+func (jobs unstableTemplateJobs) Build(
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.PtahSchemaPlan,
+) (*batchv1.Job, error) {
+	job, err := (fakeJobs{}).Build(schema, operation, plan)
+	if err != nil {
+		return nil, err
+	}
+	if job.Spec.Template.Annotations == nil {
+		job.Spec.Template.Annotations = map[string]string{}
+	}
+	job.Spec.Template.Annotations["operator.ptah.run/build"] = strconv.FormatInt(jobs.builds.Add(1), 10)
 	return job, nil
 }
 
@@ -141,24 +168,24 @@ func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1a
 	}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}}}, nil
 }
 
-func (fakeJobs) ExecutionBinding() (string, string, int32, string, string, string, int32) {
-	return testControllerImage, testControllerRevision, testControllerStateVersion, "v0.3.0", "example.invalid/ptah@" + testDigest, "example.invalid/operator@" + testDigest, int32(runner.ProtocolVersion)
+func (fakeJobs) ExecutionBinding() (int32, string, string, int32) {
+	return testControllerStateVersion, "v0.3.0", "example.invalid/ptah@" + testDigest, int32(runner.ProtocolVersion)
 }
 
-func (jobs executionBindingJobs) ExecutionBinding() (string, string, int32, string, string, string, int32) {
-	controllerImage := jobs.controllerImage
-	if controllerImage == "" {
-		controllerImage = testControllerImage
+func (fakeJobs) ManagerIdentity() (string, string, string) {
+	return testControllerImage, testControllerRevision, testRunnerImage
+}
+
+func (jobs executionBindingJobs) ExecutionBinding() (int32, string, string, int32) {
+	return stateVersionOrDefault(jobs.controllerStateVersion), jobs.ptahVersion, jobs.executorImage, jobs.protocol
+}
+
+func (jobs executionBindingJobs) ManagerIdentity() (string, string, string) {
+	runnerImage := jobs.runnerImage
+	if runnerImage == "" {
+		runnerImage = testRunnerImage
 	}
-	revision := jobs.controllerRevision
-	if revision == "" {
-		revision = testControllerRevision
-	}
-	stateVersion := jobs.controllerStateVersion
-	if stateVersion == 0 {
-		stateVersion = testControllerStateVersion
-	}
-	return controllerImage, revision, stateVersion, jobs.ptahVersion, jobs.executorImage, jobs.runnerImage, jobs.protocol
+	return controllerImageOrDefault(jobs.controllerImage), revisionOrDefault(jobs.controllerRevision), runnerImage
 }
 
 func (jobs executionBindingJobs) Build(
@@ -166,12 +193,12 @@ func (jobs executionBindingJobs) Build(
 	operation operatorv1alpha1.ActiveOperationStatus,
 	plan *operatorv1alpha1.PtahSchemaPlan,
 ) (*batchv1.Job, error) {
+	// The real builder refuses a plan under another execution binding and
+	// takes no notice of the manager that published it.
 	if operation.Type == operatorv1alpha1.OperationApply && plan != nil &&
-		(plan.Spec.ControllerImage != controllerImageOrDefault(jobs.controllerImage) ||
-			plan.Spec.ControllerRevision != revisionOrDefault(jobs.controllerRevision) ||
-			plan.Spec.ControllerStateVersion != stateVersionOrDefault(jobs.controllerStateVersion) ||
+		(plan.Spec.ControllerStateVersion != stateVersionOrDefault(jobs.controllerStateVersion) ||
 			plan.Spec.PtahVersion != jobs.ptahVersion || plan.Spec.ExecutorImage != jobs.executorImage ||
-			plan.Spec.RunnerImage != jobs.runnerImage || plan.Spec.RunnerProtocolVersion != jobs.protocol) {
+			plan.Spec.RunnerProtocolVersion != jobs.protocol) {
 		return nil, errors.New("plan execution binding does not match the Job builder")
 	}
 	return (fakeJobs{}).Build(schema, operation, plan)
@@ -321,8 +348,6 @@ func TestInitialExecutionBindingIsDurableBeforeOperationClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bound.Status.ExecutionBinding == nil || !validExecutionBindingID(bound.Status.ExecutionBinding.Epoch) ||
-		bound.Status.ExecutionBinding.ControllerImage != testControllerImage ||
-		bound.Status.ExecutionBinding.ControllerRevision != testControllerRevision ||
 		bound.Status.ExecutionBinding.ControllerStateVersion != testControllerStateVersion ||
 		bound.Status.ActiveOperation != nil || len(bound.Finalizers) != 0 {
 		t.Fatalf("initial execution binding was not isolated from the operation claim: %#v", bound)
@@ -571,13 +596,11 @@ func TestUnsupportedEngineCannotDispatchClaimedApply(t *testing.T) {
 	}
 }
 
-func TestStoredExecutionBindingWithoutManagerIdentityFailsClosed(t *testing.T) {
+func TestStoredExecutionBindingWithoutControllerStateFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	schema := schemaFixture()
 	oldEpoch := schema.Status.ExecutionBinding.Epoch
-	schema.Status.ExecutionBinding.ControllerImage = ""
-	schema.Status.ExecutionBinding.ControllerRevision = ""
 	schema.Status.ExecutionBinding.ControllerStateVersion = 0
 	schema.Status.Phase = operatorv1alpha1.PhaseInSync
 	schema.Status.Source.Verified = true
@@ -585,19 +608,17 @@ func TestStoredExecutionBindingWithoutManagerIdentityFailsClosed(t *testing.T) {
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-		t.Fatalf("fence execution binding without manager identity: %v", err)
+		t.Fatalf("fence execution binding without controller state: %v", err)
 	}
 	fenced := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), request.NamespacedName, fenced); err != nil {
 		t.Fatal(err)
 	}
 	if fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldEpoch ||
-		fenced.Status.ExecutionBinding.ControllerImage != testControllerImage ||
-		fenced.Status.ExecutionBinding.ControllerRevision != testControllerRevision ||
 		fenced.Status.ExecutionBinding.ControllerStateVersion != testControllerStateVersion ||
 		fenced.Status.ActiveOperation != nil || fenced.Status.Phase != operatorv1alpha1.PhasePending ||
 		fenced.Status.Source.Verified {
-		t.Fatalf("execution binding without manager identity was not fenced before work: %#v", fenced.Status)
+		t.Fatalf("execution binding without controller state was not fenced before work: %#v", fenced.Status)
 	}
 
 	restarted := *reconciler
@@ -819,7 +840,10 @@ func TestNegativeStoredControllerStateFailsBeforeAnyReconciliationMutation(t *te
 	}
 }
 
-func TestConfiguredExecutionBindingRejectsControlCharacterControllerRevision(t *testing.T) {
+// TestManagerIdentityRejectsControlCharacterControllerRevision keeps the record
+// a plan carries well formed. The revision binds nothing, so the execution
+// binding is still configured; publishing a plan that records it is refused.
+func TestManagerIdentityRejectsControlCharacterControllerRevision(t *testing.T) {
 	t.Parallel()
 
 	reconciler := &SchemaReconciler{Jobs: executionBindingJobs{
@@ -829,9 +853,12 @@ func TestConfiguredExecutionBindingRejectsControlCharacterControllerRevision(t *
 		runnerImage:        "example.invalid/operator@" + testDigest,
 		protocol:           int32(runner.ProtocolVersion),
 	}}
-	if _, err := reconciler.configuredExecutionBinding(); err == nil ||
-		!strings.Contains(err.Error(), "execution binding is incomplete") {
-		t.Fatalf("configuredExecutionBinding() error = %v, want revision refusal", err)
+	if _, err := reconciler.configuredExecutionBinding(); err != nil {
+		t.Fatalf("configuredExecutionBinding() error = %v, want the binding without the manager's revision", err)
+	}
+	if _, _, _, err := reconciler.managerIdentity(); err == nil ||
+		!strings.Contains(err.Error(), "manager identity is incomplete") {
+		t.Fatalf("managerIdentity() error = %v, want revision refusal", err)
 	}
 }
 
@@ -1520,11 +1547,20 @@ func TestInitialSourceResolutionFailureHasNoRefreshEvidence(t *testing.T) {
 	}
 }
 
-func TestPersistedAdmissionSnapshotRejectsChangedRebuiltTemplateBeforeDispatch(t *testing.T) {
+// TestChangedRebuiltTemplateBeforeDispatchRefreshesTheSnapshot is a manager
+// release arriving between a claim's admission snapshot and its dispatch. The
+// claim's inputs still hold and nothing ran, so what builds a different Pod
+// template is the manager. The claim stands and keeps its identity; only its
+// snapshot is resolved again, from the template this manager builds, and the
+// Job that follows matches that snapshot.
+func TestChangedRebuiltTemplateBeforeDispatchRefreshesTheSnapshot(t *testing.T) {
 	t.Parallel()
 
 	schema := schemaFixture()
 	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	// The fake API server stamps no UID, and the controller refuses a created
+	// Job without one; this test follows the claim as far as its Job.
+	reconciler.Client = assignCreatedJobUIDClient{Client: api, uid: "resolve-job-uid"}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("claim Reconcile() error = %v", err)
@@ -1543,6 +1579,8 @@ func TestPersistedAdmissionSnapshotRejectsChangedRebuiltTemplateBeforeDispatch(t
 		t.Fatal("snapshot reconciliation started dispatch")
 	}
 
+	claimed := persisted.Status.ActiveOperation.DeepCopy()
+
 	reconciler.Jobs = changedTemplateJobs{}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("changed-template Reconcile() error = %v", err)
@@ -1551,16 +1589,85 @@ func TestPersistedAdmissionSnapshotRejectsChangedRebuiltTemplateBeforeDispatch(t
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
 		t.Fatal(err)
 	}
-	if actual.Status.Phase != operatorv1alpha1.PhasePending || actual.Status.ActiveOperation != nil {
-		t.Fatalf("changed rebuilt template was not discarded before dispatch: %#v", actual.Status)
+	operation := actual.Status.ActiveOperation
+	if operation == nil || operation.ID != claimed.ID || operation.JobName != claimed.JobName ||
+		operation.AdmissionSnapshot != nil || !operation.AdmissionSnapshotRefreshed {
+		t.Fatalf("the claim after a template change = %#v, want claim %q with its snapshot dropped and the refresh recorded",
+			operation, claimed.ID)
 	}
 	jobs := &batchv1.JobList{}
 	if err := api.List(context.Background(), jobs); err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs.Items) != 0 {
-		t.Fatalf("changed rebuilt template created %d Jobs", len(jobs.Items))
+		t.Fatalf("changed rebuilt template created %d Jobs before its snapshot was resolved again", len(jobs.Items))
 	}
+
+	job := reconcileUntilASchemaJobExists(t, reconciler, api, schema)
+	dispatched := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), dispatched); err != nil {
+		t.Fatal(err)
+	}
+	operation = dispatched.Status.ActiveOperation
+	if operation == nil || operation.ID != claimed.ID || job.Name != claimed.JobName || operation.AdmissionSnapshot == nil {
+		t.Fatalf("dispatched claim %#v and Job %q, want claim %q", operation, job.Name, claimed.ID)
+	}
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if templateDigest != operation.AdmissionSnapshot.TemplateDigest ||
+		job.Spec.Template.Annotations["operator.ptah.run/rebuilt-template"] != "changed" {
+		t.Fatal("the dispatched Job is not the template the refreshed snapshot recorded")
+	}
+}
+
+// TestASnapshotIsRefreshedOnceForAClaim hands a snapshotted claim to a builder
+// that never builds the same template twice. The first difference is what a
+// manager release looks like, and refreshes the snapshot; the next one cannot
+// be, and retires the claim rather than refreshing it again. Without the
+// bound the claim would alternate between refreshing and resolving for as
+// long as the builder kept moving.
+func TestASnapshotIsRefreshedOnceForAClaim(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	reconciler.Client = assignCreatedJobUIDClient{Client: api, uid: "resolve-job-uid"}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	for pass := range 2 {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("Reconcile() pass %d error = %v", pass, err)
+		}
+	}
+	claimed := safetyGetSchema(t, api, schema).Status.ActiveOperation
+	if claimed == nil || claimed.AdmissionSnapshot == nil {
+		t.Fatalf("no snapshotted claim to start from: %#v", claimed)
+	}
+
+	reconciler.Jobs = unstableTemplateJobs{builds: &atomic.Int64{}}
+	refreshed := false
+	for pass := range 6 {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("Reconcile() pass %d error = %v", pass, err)
+		}
+		operation := safetyGetSchema(t, api, schema).Status.ActiveOperation
+		if operation == nil || operation.ID != claimed.ID {
+			if !refreshed {
+				t.Fatal("the claim was retired before its snapshot was refreshed once")
+			}
+			jobs := &batchv1.JobList{}
+			if err := api.List(context.Background(), jobs); err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs.Items) != 0 {
+				t.Fatalf("a claim with an unstable template dispatched %d Jobs", len(jobs.Items))
+			}
+			return
+		}
+		refreshed = refreshed || operation.AdmissionSnapshotRefreshed
+	}
+	t.Fatalf("the claim was still standing after six passes: %#v", safetyGetSchema(t, api, schema).Status.ActiveOperation)
 }
 
 func TestInvalidExcludeSelectorFailsBeforeCreatingJob(t *testing.T) {
@@ -2439,11 +2546,9 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			ObservedGeneration: 1,
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
-				Epoch: testExecutionBindingID, ControllerImage: testControllerImage,
-				ControllerRevision:     testControllerRevision,
+				Epoch:                  testExecutionBindingID,
 				ControllerStateVersion: testControllerStateVersion, PtahVersion: "v0.3.0",
 				ExecutorImage:         "example.invalid/ptah@" + testDigest,
-				RunnerImage:           "example.invalid/operator@" + testDigest,
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
 			},
 			Conditions: []metav1.Condition{{
@@ -2839,11 +2944,9 @@ func bindActiveInput(t *testing.T, schema *operatorv1alpha1.PtahSchema) {
 	}
 	if schema.Status.ExecutionBinding == nil {
 		schema.Status.ExecutionBinding = &operatorv1alpha1.ExecutionBindingStatus{
-			Epoch: testExecutionBindingID, ControllerImage: testControllerImage,
-			ControllerRevision:     testControllerRevision,
+			Epoch:                  testExecutionBindingID,
 			ControllerStateVersion: testControllerStateVersion, PtahVersion: "v0.3.0",
 			ExecutorImage:         "example.invalid/ptah@" + testDigest,
-			RunnerImage:           "example.invalid/operator@" + testDigest,
 			RunnerProtocolVersion: int32(runner.ProtocolVersion),
 		}
 	}

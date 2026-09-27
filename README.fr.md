@@ -53,9 +53,10 @@ Propriétés de sécurité :
 
 - Les tags OCI sont résolus une fois. Tous les accès suivants utilisent le digest.
 - Les plans lient les octets exacts à l’artefact, à la cible, à l’état observé,
-  à la politique, à l’image du manager fixée par digest, à sa révision et à la
-  sémantique d’état, à la version de Ptah, aux images de l’exécuteur et du runner,
-  ainsi qu’au protocole du runner.
+  à la politique et à ce qui détermine leur exécution : la sémantique d’état du
+  contrôleur, la version de Ptah, l’image de l’exécuteur et le protocole du
+  runner. L’image et la révision du manager sont enregistrées sans être liées :
+  une version corrective de l’opérateur conserve les approbations en attente.
 - Les approbations sont des ressources immuables distinctes, marquées avec
   l’identité authentifiée lors du contrôle d’admission.
 - Les plans destructifs sont désactivés par défaut. Même après activation,

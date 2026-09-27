@@ -968,8 +968,6 @@ assert_awaiting_approval() {
       ($status.history.modifiedVersions // []) == [] and
       ($status.history.fingerprint | test("^sha256:[0-9a-f]{64}$")) and
       ($status.history.targetIdentityDigest | test("^sha256:[0-9a-f]{64}$")) and
-      $status.executionBinding.controllerImage == $controllerImage and
-      $status.executionBinding.controllerRevision == $controllerRevision and
       $status.executionBinding.controllerStateVersion == $controllerStateVersion and
       ($status.plan.name | startswith("ptah-mplan-")) and
       ($status.lastRun // null) == null and
@@ -1068,11 +1066,9 @@ assert_approval_hydrated() {
       $spec.policyFingerprint != "" and $spec.verificationPolicyDigest != "" and
       $spec.ptahVersion != "" and
       ($spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-      $spec.controllerImage == $controllerImage and
-      $spec.controllerRevision == $controllerRevision and
+      ($spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
       $spec.controllerStateVersion == $controllerStateVersion and
       ($spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
-      ($spec.runnerImage | test("@sha256:[0-9a-f]{64}$")) and
       $spec.approver.username != "" and $spec.approvedAt != null and
       $spec.mutationRequestUID != ""
     ' "$WORK_DIR/approval.json" >/dev/null ||

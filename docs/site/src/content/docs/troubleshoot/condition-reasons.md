@@ -31,7 +31,7 @@ decision.
 | `DestructiveChangesDisabled` | A destructive plan is blocked by policy. |
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
-| `ExecutionBindingChanged` | Evidence or approval belongs to a retired runtime identity. |
+| `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
 | `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
 | `HistoryMatched` | The revision table and the migration artifact agree, and nothing is pending. |

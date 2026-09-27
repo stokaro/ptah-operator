@@ -136,8 +136,8 @@ type MigrationOperationStatus struct {
 	Attempt int32 `json:"attempt"`
 
 	// ExecutionBindingID is the epoch this claim was authorized under. A
-	// rollout that changes any execution component retires the claim rather
-	// than letting its Job finish under new bytes.
+	// rollout that changes a bound execution component retires the claim
+	// rather than letting its Job finish under new semantics.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
 
@@ -188,6 +188,14 @@ type MigrationOperationStatus struct {
 	// change to what the Pod executes. A migration Pod is judged by the same
 	// envelope as a schema Pod, because it is the same kind of Pod.
 	AdmissionSnapshot *PodAdmissionSnapshot `json:"admissionSnapshot,omitempty"`
+	// AdmissionSnapshotRefreshed records that this claim's admission snapshot
+	// was resolved a second time, because the Job template this manager
+	// builds differed from the one the snapshot recorded before anything was
+	// dispatched. That happens once, when a manager release that shares the
+	// execution binding takes over an undispatched claim. It happens at most
+	// once per claim: a template that differs again comes from a builder that
+	// does not build the same Job twice, and the claim is retired instead.
+	AdmissionSnapshotRefreshed bool `json:"admissionSnapshotRefreshed,omitempty"`
 }
 
 // MigrationPolicy decides when a planned sequence may execute.
@@ -360,6 +368,14 @@ type MigrationRunStatus struct {
 	// +kubebuilder:validation:MaxItems=256
 	AppliedVersions []int64 `json:"appliedVersions,omitempty"`
 
+	// DispatchedBy is the manager that built and dispatched the run's Job,
+	// read from the Job's Pod template when the run was harvested. The plan
+	// the run carried out names the manager that published it, which a later
+	// release sharing the execution binding need not be. It is absent when
+	// the run was settled without its Job.
+	// +optional
+	DispatchedBy *ManagerRecord `json:"dispatchedBy,omitempty"`
+
 	// Message is a safe explanation. It never carries database rows, and never
 	// carries the SQL a migration ran.
 	// +kubebuilder:validation:MaxLength=1024
@@ -416,6 +432,12 @@ type UnresolvedMigrationRunStatus struct {
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
 
+	// DispatchedBy is the manager that built and dispatched the run's Job, as
+	// status.lastRun recorded it. It is absent when the run was settled
+	// without its Job.
+	// +optional
+	DispatchedBy *ManagerRecord `json:"dispatchedBy,omitempty"`
+
 	// RecordedAt is when the controller wrote this record.
 	RecordedAt metav1.Time `json:"recordedAt"`
 }
@@ -442,11 +464,12 @@ type PtahMigrationStatus struct {
 	// travels.
 	Artifact *OCIArtifactAccessBinding `json:"artifact,omitempty"`
 
-	// ExecutionBinding is the component identity this resource's work is bound
-	// to: the manager that authorized it and the executor and runner that will
-	// carry it out. It is the same contract the schema path publishes, because
-	// the question it answers is the same one: a rollout that changed any of
-	// them has to invalidate a plan rather than execute it under new bytes.
+	// ExecutionBinding is what this resource's plans and approvals are bound
+	// to: the components that decide what a run means. It is the same contract
+	// the schema path publishes, because the question it answers is the same
+	// one: a rollout that changed any of them has to invalidate a plan rather
+	// than execute it under new semantics. A manager upgrade that changes none
+	// of them leaves it, and every plan and approval, as they were.
 	ExecutionBinding *ExecutionBindingStatus `json:"executionBinding,omitempty"`
 
 	// ActiveOperation is the claim the controller is currently carrying out,

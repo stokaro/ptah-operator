@@ -82,10 +82,11 @@ spec:
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
   ptahVersion: v0.9.0-34-gdac0872ac
+  # The execution binding the plan was computed under. A manager release that
+  # changes none of these keeps the approval; one that changes any retires it.
+  executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
-  runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 5
-  controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   controllerStateVersion: 2
 ```
 
@@ -99,11 +100,9 @@ spec:
 | `spec.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
 | `spec.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `spec.artifactDigest` | `string`, required | ArtifactDigest is the OCI migration artifact the sequence comes from. |
-| `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that must dispatch the run. |
-| `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
-| `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it writes. |
+| `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the controller-state semantics the approved run must be dispatched under. |
 | `spec.coordinationDigest` | `string`, required | CoordinationDigest is the database realm the approved run takes its turn in. |
-| `spec.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch the approved plan belongs to, which changes on every operator transition. |
+| `spec.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch the approved plan belongs to, which changes whenever a component that decides what the run means changes. A manager upgrade that changes none of them keeps it. |
 | `spec.executorImage` | `string`, required | ExecutorImage is the digest-pinned image it runs in. |
 | `spec.historyFingerprint` | `string`, required | HistoryFingerprint is the recorded history the plan was computed against. Somebody else's run moves it, and this is what notices. |
 | `spec.migrationRef` | `object`, required | MigrationRef is the resource the approved sequence belongs to. |
@@ -116,8 +115,7 @@ spec:
 | `spec.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `spec.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy it was computed under. |
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build the approved run must use. |
-| `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervises it. |
-| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the protocol the runner that supervises it must speak: what the runner enforces inside the Pod and the result frame it returns. |
 | `spec.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
 | `spec.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
 | `spec.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |

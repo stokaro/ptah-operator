@@ -73,12 +73,15 @@ spec:
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
   ptahVersion: v0.9.0-34-gdac0872ac
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
-  runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 5
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
+  controllerStateVersion: 2
+  # The manager that published the plan. Recorded, not bound: none of the
+  # three is in the fingerprint, and a later release of the manager applies
+  # this plan as it stands.
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   controllerRevision: a7d0119c0bd0d34e0b73f1d9e0e5c6aa0d9ff2b1
-  controllerStateVersion: 2
+  runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
 ```
 
 ### A plan that would destroy something
@@ -198,21 +201,21 @@ spec:
 | `spec.chunks[].size` | `integer`, required | Size of this chunk in bytes, checked with the digest. |
 | `spec.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes the chunks reconstruct. |
 | `spec.contractVersion` | `integer`, required, one of `3` | ContractVersion versions plan publication and reconstruction separately from the Kubernetes API version. Version 3 is the only one. |
-| `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published this plan. |
-| `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision, which distinguishes two deployments of the same image. |
+| `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published this plan. It is a record, not a binding: the fingerprint leaves it out, and a later manager may apply the plan. |
+| `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision, recorded the same way. |
 | `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics that manager writes, so a plan is never applied by a controller that reads status differently. |
 | `spec.coordinationDigest` | `string`, required | CoordinationDigest is the database realm this plan takes its turn in: the engine and the coordination key, hashed. Resources that share it never run against the database at the same time. |
 | `spec.desiredStateFingerprint` | `string`, required | DesiredStateFingerprint is the state the verified artifact declared when the plan was computed. |
 | `spec.destructive` | `boolean`, required | Destructive says the plan drops or rewrites something. Such a plan needs spec.policy.allowDestructive and an approval naming these exact bytes. |
 | `spec.dialect` | `string`, required | Dialect is the SQL dialect the statements are written in. |
-| `spec.executionBindingID` | `string`, required | ExecutionBindingID is a per-transition epoch. It changes even when an operator rollout returns to byte-identical component versions. |
+| `spec.executionBindingID` | `string`, required | ExecutionBindingID is the execution epoch the plan was computed under. It changes whenever a component that decides what the plan means when it runs changes -- the controller-state version, the Ptah version, the executor image or the runner protocol -- even when a rollout returns to byte-identical versions. A manager upgrade that changes none of them keeps it, and the plan stays applicable. |
 | `spec.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran Ptah. |
 | `spec.fingerprint` | `string`, required | Fingerprint is the complete approval identity of this plan: every binding below hashed together. An approval names this value, and an apply runs only while the live bindings still produce it. |
 | `spec.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy the plan was computed under. Editing the policy -- a protected table included -- retires a plan waiting for a person rather than letting it apply under rules nobody approved. |
 | `spec.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan's statements change: privileges granted or revoked, role membership, roles, owners, row-security policies and definer rights. A plan that lists any needs an approval naming these exact bytes whatever spec.policy.apply says, so apply: Always does not grant access on its own. The operator reads the kinds from the SQL itself, independently of the severity Ptah gave each statement, and only ever adds to a plan's class. It names kinds and nothing else: no object, no role and no text. Read the statements with kubectl ptah plan. |
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed this plan, as the executor image reports it. |
-| `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised the executor and returned its result. |
-| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. A runner answering in another version has its result rejected rather than interpreted. |
+| `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image of the manager that published this plan. Like the manager's own identity it is recorded and not bound: the runner is built from the operator's source, and what it enforces is versioned by RunnerProtocolVersion. |
+| `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds: what the runner enforces inside the Pod and the result frame it returns. A runner answering in another version has its result rejected rather than interpreted. |
 | `spec.schemaRef` | `object`, required | SchemaRef is the PtahSchema this plan was computed for. |
 | `spec.schemaRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `spec.schemaRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |

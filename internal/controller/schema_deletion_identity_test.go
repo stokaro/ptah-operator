@@ -91,8 +91,8 @@ func TestDeletingASchemaSettlesAnApplyItCannotAccountFor(t *testing.T) {
 			schema.Status.Plan.UID = "current-plan-uid"
 			schema.Status.Plan.Fingerprint = testDigest
 			schema.Status.Plan.ContentDigest = safetyOtherDigest
-			schema.Status.Plan.ControllerImage = schema.Status.ExecutionBinding.ControllerImage
-			schema.Status.Plan.ControllerRevision = schema.Status.ExecutionBinding.ControllerRevision
+			schema.Status.Plan.ControllerImage = testControllerImage
+			schema.Status.Plan.ControllerRevision = testControllerRevision
 			schema.Status.Plan.ControllerStateVersion = schema.Status.ExecutionBinding.ControllerStateVersion
 			operation := schema.Status.ActiveOperation
 			operation.StartedAt = metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC))

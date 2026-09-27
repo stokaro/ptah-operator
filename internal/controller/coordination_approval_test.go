@@ -139,10 +139,16 @@ func TestAPlanTheControllerPublishedIsApprovableThroughTheWebhook(t *testing.T) 
 			if err := corev1.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}
+			// The webhook runs beside the manager that published the plan,
+			// so it serves the execution the plan was computed under.
 			handler := &approvaladmission.ApprovalHandler{
 				Reader: api, Decoder: cradmission.NewDecoder(scheme), Mutate: true,
-				ControllerImage:    testControllerImage,
-				ControllerRevision: testControllerRevision, ControllerStateVersion: testControllerStateVersion,
+				Execution: approvaladmission.Execution{
+					ControllerStateVersion: plan.Spec.ControllerStateVersion,
+					PtahVersion:            plan.Spec.PtahVersion,
+					ExecutorImage:          plan.Spec.ExecutorImage,
+					RunnerProtocolVersion:  plan.Spec.RunnerProtocolVersion,
+				},
 			}
 			response := handler.Handle(context.Background(), cradmission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
 				UID:       "approve-published-plan",

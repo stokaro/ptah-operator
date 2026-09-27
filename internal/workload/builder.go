@@ -62,10 +62,11 @@ const (
 	// AnnotationExecutionBindingID records the durable evidence epoch.
 	AnnotationExecutionBindingID = "operator.ptah.run/execution-binding-id"
 	// AnnotationControllerImage records the exact manager container content that
-	// authorized the operation.
+	// built and dispatched the Job. It is a record, not a binding: a later
+	// manager that shares the execution binding adopts the Job as it stands.
 	AnnotationControllerImage = "operator.ptah.run/controller-image"
-	// AnnotationControllerRevision records the exact manager build that
-	// authorized the operation.
+	// AnnotationControllerRevision records the exact manager build that built
+	// and dispatched the Job, on the same terms.
 	AnnotationControllerRevision = "operator.ptah.run/controller-revision"
 	// AnnotationControllerStateVersion records the manager-side state contract.
 	AnnotationControllerStateVersion = "operator.ptah.run/controller-state-version"
@@ -126,8 +127,15 @@ var (
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
 )
 
-// Builder contains immutable execution-component bindings. Both images must
-// be content-addressed so a resumed operation cannot silently run new code.
+// Builder contains the manager's immutable execution configuration. Every
+// image must be content-addressed so a resumed operation cannot silently run
+// new code.
+//
+// Two parts of it play different roles. PtahVersion, ExecutorImage,
+// ControllerStateVersion and the runner protocol decide what a plan means
+// when it runs, and a plan and its approval bind them. ControllerImage,
+// ControllerRevision and RunnerImage identify the manager's own release: a Job
+// and a plan record them, and nothing is invalidated when only they change.
 type Builder struct {
 	ExecutorImage          string
 	RunnerImage            string
@@ -171,18 +179,23 @@ func (b Builder) NameForMigration(
 	return NameForMigration(migration, operation)
 }
 
-// ExecutionBinding returns the immutable execution identity recorded in every
-// plan and approval fingerprint.
+// ExecutionBinding returns what this manager executes with: the components a
+// plan fingerprint and an approval bind, and whose change starts a new
+// execution epoch.
 func (b Builder) ExecutionBinding() (
-	controllerImage string,
-	controllerRevision string,
 	controllerStateVersion int32,
 	ptahVersion string,
 	executorImage string,
-	runnerImage string,
 	runnerProtocolVersion int32,
 ) {
-	return b.ControllerImage, b.ControllerRevision, b.ControllerStateVersion, b.PtahVersion, b.ExecutorImage, b.RunnerImage, int32(runner.ProtocolVersion)
+	return b.ControllerStateVersion, b.PtahVersion, b.ExecutorImage, int32(runner.ProtocolVersion)
+}
+
+// ManagerIdentity returns the manager's own release: its image, its revision
+// and the runner image built from the same source. Jobs and plans record it;
+// nothing binds it.
+func (b Builder) ManagerIdentity() (controllerImage, controllerRevision, runnerImage string) {
+	return b.ControllerImage, b.ControllerRevision, b.RunnerImage
 }
 
 // NameFor returns the Job name bound to every field that distinguishes an
@@ -231,12 +244,9 @@ func (b Builder) Build(
 	if err := validateSchema(schema); err != nil {
 		return nil, err
 	}
-	if schema.Status.ExecutionBinding.ControllerImage != b.ControllerImage ||
-		schema.Status.ExecutionBinding.ControllerRevision != b.ControllerRevision ||
-		schema.Status.ExecutionBinding.ControllerStateVersion != b.ControllerStateVersion ||
+	if schema.Status.ExecutionBinding.ControllerStateVersion != b.ControllerStateVersion ||
 		schema.Status.ExecutionBinding.PtahVersion != b.PtahVersion ||
 		schema.Status.ExecutionBinding.ExecutorImage != b.ExecutorImage ||
-		schema.Status.ExecutionBinding.RunnerImage != b.RunnerImage ||
 		schema.Status.ExecutionBinding.RunnerProtocolVersion != int32(runner.ProtocolVersion) ||
 		operation.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch {
 		return nil, errors.New("active operation execution binding is stale")
@@ -255,12 +265,9 @@ func (b Builder) Build(
 	}
 	if operation.Type == operatorv1alpha1.OperationApply &&
 		(plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion ||
-			plan.Spec.ControllerImage != b.ControllerImage ||
-			plan.Spec.ControllerRevision != b.ControllerRevision ||
 			plan.Spec.ControllerStateVersion != b.ControllerStateVersion ||
 			plan.Spec.PtahVersion != b.PtahVersion ||
 			plan.Spec.ExecutorImage != b.ExecutorImage ||
-			plan.Spec.RunnerImage != b.RunnerImage ||
 			plan.Spec.RunnerProtocolVersion != int32(runner.ProtocolVersion)) {
 		return nil, errors.New("apply plan execution-component binding is stale")
 	}
@@ -796,10 +803,8 @@ func validateSchema(schema *operatorv1alpha1.PtahSchema) error {
 		!executionBindingIDPattern.MatchString(schema.Status.ExecutionBinding.Epoch) {
 		return errors.New("schema durable execution binding is required")
 	}
-	if controllerstate.ValidateRevision(schema.Status.ExecutionBinding.ControllerRevision) != nil ||
-		!imageDigestPattern.MatchString(schema.Status.ExecutionBinding.ControllerImage) ||
-		schema.Status.ExecutionBinding.ControllerStateVersion < 1 {
-		return errors.New("schema durable execution binding has no manager identity")
+	if schema.Status.ExecutionBinding.ControllerStateVersion < 1 {
+		return errors.New("schema durable execution binding has no controller state version")
 	}
 	if schema.Spec.Target.URLFrom.Name == "" || schema.Spec.Target.URLFrom.Key == "" {
 		return errors.New("target Secret name and key are required")
@@ -965,12 +970,9 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		plan.Spec.VerificationPolicyDigest != schema.Status.Source.VerificationPolicyDigest ||
 		plan.Spec.CoordinationDigest != schema.Status.Target.CoordinationDigest ||
 		plan.Spec.TargetIdentityDigest != schema.Status.Target.IdentityDigest ||
-		plan.Spec.ControllerImage == "" || plan.Spec.ControllerImage != schema.Status.ExecutionBinding.ControllerImage ||
-		plan.Spec.ControllerRevision == "" || plan.Spec.ControllerRevision != schema.Status.ExecutionBinding.ControllerRevision ||
 		plan.Spec.ControllerStateVersion < 1 || plan.Spec.ControllerStateVersion != schema.Status.ExecutionBinding.ControllerStateVersion ||
 		plan.Spec.PtahVersion != schema.Status.ExecutionBinding.PtahVersion ||
 		plan.Spec.ExecutorImage != schema.Status.ExecutionBinding.ExecutorImage ||
-		plan.Spec.RunnerImage != schema.Status.ExecutionBinding.RunnerImage ||
 		plan.Spec.RunnerProtocolVersion != schema.Status.ExecutionBinding.RunnerProtocolVersion {
 		return errors.New("apply plan source or target binding is stale")
 	}

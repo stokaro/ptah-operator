@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -23,7 +22,6 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/policy"
@@ -31,7 +29,38 @@ import (
 
 const maxRecordedGroups = 64
 
-var imageDigestPattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+// Execution is what the manager serving the webhook executes with: the
+// components a plan binds. A plan computed under anything else is not
+// approvable here.
+//
+// The manager's own image and revision are deliberately not part of it. A
+// plan records the manager that published it, and a later release of the
+// manager that shares this execution may accept an approval for that plan and
+// apply it.
+type Execution struct {
+	ControllerStateVersion int32
+	PtahVersion            string
+	ExecutorImage          string
+	RunnerProtocolVersion  int32
+}
+
+// valid refuses an execution nothing could have been planned under. The
+// manager validated the configured images at startup; this only keeps a
+// zero-valued handler from matching a zero-valued plan.
+func (e Execution) valid() bool {
+	return e.ControllerStateVersion >= 1 && e.RunnerProtocolVersion >= 1 &&
+		strings.TrimSpace(e.PtahVersion) != "" && strings.TrimSpace(e.PtahVersion) == e.PtahVersion &&
+		strings.TrimSpace(e.ExecutorImage) != "" && strings.TrimSpace(e.ExecutorImage) == e.ExecutorImage
+}
+
+// binds refuses a plan computed under another execution than this one.
+func (e Execution) binds(controllerStateVersion int32, ptahVersion, executorImage string, runnerProtocolVersion int32) error {
+	if controllerStateVersion != e.ControllerStateVersion || ptahVersion != e.PtahVersion ||
+		executorImage != e.ExecutorImage || runnerProtocolVersion != e.RunnerProtocolVersion {
+		return fmt.Errorf("referenced plan was computed under an execution binding this manager does not run")
+	}
+	return nil
+}
 
 // Clock makes admission timestamps deterministic in tests.
 type Clock interface {
@@ -45,20 +74,16 @@ func (realClock) Now() time.Time { return time.Now() }
 // ApprovalHandler stamps authenticated identity and rejects stale approval
 // tuples against direct, uncached API reads.
 type ApprovalHandler struct {
-	Reader                 client.Reader
-	Decoder                cradmission.Decoder
-	Clock                  Clock
-	Mutate                 bool
-	ControllerImage        string
-	ControllerRevision     string
-	ControllerStateVersion int32
+	Reader    client.Reader
+	Decoder   cradmission.Decoder
+	Clock     Clock
+	Mutate    bool
+	Execution Execution
 }
 
 // Handle implements controller-runtime admission.Handler.
 func (h *ApprovalHandler) Handle(ctx context.Context, req cradmission.Request) cradmission.Response {
-	if h.Reader == nil || h.Decoder == nil ||
-		!imageDigestPattern.MatchString(h.ControllerImage) ||
-		controllerstate.ValidateRevision(h.ControllerRevision) != nil || h.ControllerStateVersion < 1 {
+	if h.Reader == nil || h.Decoder == nil || !h.Execution.valid() {
 		return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("approval webhook is not initialized"))
 	}
 	if req.Operation != admissionv1.Create && req.Operation != admissionv1.Update {
@@ -137,10 +162,10 @@ func (h *ApprovalHandler) hydrateDerivedBindings(
 	if err := requireCurrentPlanContract(plan.Spec.ContractVersion); err != nil {
 		return err
 	}
-	if plan.Spec.ControllerImage != h.ControllerImage ||
-		plan.Spec.ControllerRevision != h.ControllerRevision ||
-		plan.Spec.ControllerStateVersion != h.ControllerStateVersion {
-		return fmt.Errorf("referenced plan manager identity is not current")
+	if err := h.Execution.binds(
+		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
+	); err != nil {
+		return err
 	}
 	if plan.Spec.SchemaRef != approval.Spec.SchemaRef {
 		return fmt.Errorf("approval schema reference does not match the plan")
@@ -162,11 +187,8 @@ func (h *ApprovalHandler) hydrateDerivedBindings(
 		{"policy fingerprint", &approval.Spec.PolicyFingerprint, plan.Spec.PolicyFingerprint},
 		{"verification policy digest", &approval.Spec.VerificationPolicyDigest, plan.Spec.VerificationPolicyDigest},
 		{"execution binding ID", &approval.Spec.ExecutionBindingID, plan.Spec.ExecutionBindingID},
-		{"controller image", &approval.Spec.ControllerImage, plan.Spec.ControllerImage},
-		{"controller revision", &approval.Spec.ControllerRevision, plan.Spec.ControllerRevision},
 		{"Ptah version", &approval.Spec.PtahVersion, plan.Spec.PtahVersion},
 		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
-		{"runner image", &approval.Spec.RunnerImage, plan.Spec.RunnerImage},
 	}
 	if approval.Spec.VerificationPolicyUID != "" && approval.Spec.VerificationPolicyUID != plan.Spec.VerificationPolicyUID {
 		return fmt.Errorf("approval verification policy UID conflicts with the immutable plan")
@@ -264,10 +286,10 @@ func (h *ApprovalHandler) validateBinding(
 	if err := requireCurrentPlanContract(plan.Spec.ContractVersion); err != nil {
 		return err
 	}
-	if plan.Spec.ControllerImage != h.ControllerImage ||
-		plan.Spec.ControllerRevision != h.ControllerRevision ||
-		plan.Spec.ControllerStateVersion != h.ControllerStateVersion {
-		return fmt.Errorf("referenced plan manager identity is not current")
+	if err := h.Execution.binds(
+		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
+	); err != nil {
+		return err
 	}
 	if plan.UID != approval.Spec.PlanRef.UID {
 		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
@@ -293,10 +315,6 @@ func (h *ApprovalHandler) validateBinding(
 		schema.Status.ExecutionBinding == nil || schema.Status.ExecutionBinding.Epoch == "" ||
 		schema.Status.ExecutionBinding.Epoch != plan.Spec.ExecutionBindingID ||
 		schema.Status.Plan.ExecutionBindingID != plan.Spec.ExecutionBindingID ||
-		schema.Status.Plan.ControllerImage == "" ||
-		schema.Status.Plan.ControllerImage != plan.Spec.ControllerImage ||
-		schema.Status.Plan.ControllerRevision == "" ||
-		schema.Status.Plan.ControllerRevision != plan.Spec.ControllerRevision ||
 		schema.Status.Plan.ControllerStateVersion < 1 ||
 		schema.Status.Plan.ControllerStateVersion != plan.Spec.ControllerStateVersion {
 		return fmt.Errorf("referenced plan is no longer current for the schema")
@@ -325,12 +343,9 @@ func (h *ApprovalHandler) validateBinding(
 		coordinationDigest != plan.Spec.CoordinationDigest ||
 		schema.Status.Target.CoordinationDigest != plan.Spec.CoordinationDigest ||
 		schema.Status.Target.IdentityDigest != plan.Spec.TargetIdentityDigest ||
-		schema.Status.ExecutionBinding.ControllerImage != plan.Spec.ControllerImage ||
-		schema.Status.ExecutionBinding.ControllerRevision != plan.Spec.ControllerRevision ||
 		schema.Status.ExecutionBinding.ControllerStateVersion != plan.Spec.ControllerStateVersion ||
 		schema.Status.ExecutionBinding.PtahVersion != plan.Spec.PtahVersion ||
 		schema.Status.ExecutionBinding.ExecutorImage != plan.Spec.ExecutorImage ||
-		schema.Status.ExecutionBinding.RunnerImage != plan.Spec.RunnerImage ||
 		schema.Status.ExecutionBinding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
 		return fmt.Errorf("schema source or target changed after the plan was generated")
 	}
@@ -362,11 +377,8 @@ func approvalMatchesPlan(
 		{"policy fingerprint", approval.PolicyFingerprint, plan.PolicyFingerprint},
 		{"verification policy digest", approval.VerificationPolicyDigest, plan.VerificationPolicyDigest},
 		{"execution binding ID", approval.ExecutionBindingID, plan.ExecutionBindingID},
-		{"controller image", approval.ControllerImage, plan.ControllerImage},
-		{"controller revision", approval.ControllerRevision, plan.ControllerRevision},
 		{"Ptah version", approval.PtahVersion, plan.PtahVersion},
 		{"executor image", approval.ExecutorImage, plan.ExecutorImage},
-		{"runner image", approval.RunnerImage, plan.RunnerImage},
 	}
 	if approval.VerificationPolicyUID == "" || approval.VerificationPolicyUID != plan.VerificationPolicyUID {
 		return fmt.Errorf("approval verification policy UID does not match the immutable plan")

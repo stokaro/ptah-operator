@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "21"
-    operator.ptah.run/crd-schema-digest: "sha256:f44a37884970e4fbbb374f2f2202b70c7140f095fd9ec2aa34e972b82df70c1c"
+    operator.ptah.run/crd-schema-version: "22"
+    operator.ptah.run/crd-schema-digest: "sha256:a2d192311aac8e21599902da458f8b101a573dc1f7c27bcf4532d1263183410c"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrationapprovals.operator.ptah.run
 spec:
@@ -69,14 +69,6 @@ spec:
                 type: object
               artifactDigest:
                 type: string
-              controllerImage:
-                pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
-                type: string
-              controllerRevision:
-                maxLength: 128
-                minLength: 1
-                pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
-                type: string
               controllerStateVersion:
                 format: int32
                 minimum: 1
@@ -118,8 +110,6 @@ spec:
                 type: string
               ptahVersion:
                 type: string
-              runnerImage:
-                type: string
               runnerProtocolVersion:
                 format: int32
                 minimum: 1
@@ -134,8 +124,6 @@ spec:
             - approvedAt
             - approver
             - artifactDigest
-            - controllerImage
-            - controllerRevision
             - controllerStateVersion
             - coordinationDigest
             - executionBindingID
@@ -147,7 +135,6 @@ spec:
             - planRef
             - policyFingerprint
             - ptahVersion
-            - runnerImage
             - runnerProtocolVersion
             - targetIdentityDigest
             - verificationPolicyDigest

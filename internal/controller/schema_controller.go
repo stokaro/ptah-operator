@@ -89,15 +89,17 @@ type JobBuilder interface {
 		operation operatorv1alpha1.MigrationOperationStatus,
 		plan *operatorv1alpha1.PtahMigrationPlan,
 	) (*batchv1.Job, error)
+	// ExecutionBinding is what this manager executes with: the components a
+	// plan and an approval bind, and whose change starts a new epoch.
 	ExecutionBinding() (
-		controllerImage string,
-		controllerRevision string,
 		controllerStateVersion int32,
 		ptahVersion string,
 		executorImage string,
-		runnerImage string,
 		runnerProtocolVersion int32,
 	)
+	// ManagerIdentity is the manager's own release and the runner image built
+	// beside it. What the manager publishes records it; nothing binds it.
+	ManagerIdentity() (controllerImage, controllerRevision, runnerImage string)
 }
 
 // SchemaReconciler implements the Resolve -> Verify -> Observe -> Plan ->
@@ -504,6 +506,12 @@ func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, sche
 // operation is claimed or any existing read-only result is accepted. The
 // explicit component tuple is audit evidence; the opaque epoch prevents an old
 // approval from becoming current again after a byte-identical rollback.
+//
+// Only the components that decide what a plan means when it runs are
+// compared. A manager release that changes its own image, its revision or the
+// runner image built beside it and nothing else finds the binding equal: the
+// epoch, the current plan and any pending approval carry over, and work the
+// previous manager dispatched is adopted as it stands.
 func (r *SchemaReconciler) reconcileExecutionBinding(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -584,19 +592,31 @@ func (r *SchemaReconciler) configuredExecutionBinding() (*operatorv1alpha1.Execu
 	if r.Jobs == nil {
 		return nil, fmt.Errorf("Job builder is not configured")
 	}
-	controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion := r.Jobs.ExecutionBinding()
-	if !controllerImagePattern.MatchString(controllerImage) ||
-		controllerstate.ValidateRevision(controllerRevision) != nil || controllerStateVersion < 1 ||
+	controllerStateVersion, ptahVersion, executorImage, protocolVersion := r.Jobs.ExecutionBinding()
+	if controllerStateVersion < 1 ||
 		strings.TrimSpace(ptahVersion) == "" || strings.TrimSpace(ptahVersion) != ptahVersion ||
-		strings.TrimSpace(executorImage) == "" || strings.TrimSpace(executorImage) != executorImage ||
-		strings.TrimSpace(runnerImage) == "" || strings.TrimSpace(runnerImage) != runnerImage || protocolVersion < 1 {
+		strings.TrimSpace(executorImage) == "" || strings.TrimSpace(executorImage) != executorImage || protocolVersion < 1 {
 		return nil, fmt.Errorf("Job builder execution binding is incomplete")
 	}
 	return &operatorv1alpha1.ExecutionBindingStatus{
-		ControllerImage: controllerImage, ControllerRevision: controllerRevision, ControllerStateVersion: controllerStateVersion,
-		PtahVersion: ptahVersion, ExecutorImage: executorImage, RunnerImage: runnerImage,
+		ControllerStateVersion: controllerStateVersion,
+		PtahVersion:            ptahVersion, ExecutorImage: executorImage,
 		RunnerProtocolVersion: protocolVersion,
 	}, nil
+}
+
+// managerIdentity is what this manager records on the plans it publishes.
+func (r *SchemaReconciler) managerIdentity() (controllerImage, controllerRevision, runnerImage string, err error) {
+	if r.Jobs == nil {
+		return "", "", "", fmt.Errorf("the Job builder is not configured")
+	}
+	controllerImage, controllerRevision, runnerImage = r.Jobs.ManagerIdentity()
+	if !controllerImagePattern.MatchString(controllerImage) ||
+		controllerstate.ValidateRevision(controllerRevision) != nil ||
+		strings.TrimSpace(runnerImage) == "" || strings.TrimSpace(runnerImage) != runnerImage {
+		return "", "", "", fmt.Errorf("the Job builder's manager identity is incomplete")
+	}
+	return controllerImage, controllerRevision, runnerImage, nil
 }
 
 func newExecutionBinding(configured *operatorv1alpha1.ExecutionBindingStatus) (*operatorv1alpha1.ExecutionBindingStatus, error) {
@@ -624,17 +644,16 @@ func validExecutionBindingID(id string) bool {
 	return err == nil && len(decoded) == 16
 }
 
+// executionBindingComponentsEqual compares what an epoch binds. Nothing in it
+// names the manager's own release, so a manager-only upgrade compares equal.
 func executionBindingComponentsEqual(
 	left *operatorv1alpha1.ExecutionBindingStatus,
 	right *operatorv1alpha1.ExecutionBindingStatus,
 ) bool {
 	return left != nil && right != nil &&
-		left.ControllerImage == right.ControllerImage &&
-		left.ControllerRevision == right.ControllerRevision &&
 		left.ControllerStateVersion == right.ControllerStateVersion &&
 		left.PtahVersion == right.PtahVersion &&
 		left.ExecutorImage == right.ExecutorImage &&
-		left.RunnerImage == right.RunnerImage &&
 		left.RunnerProtocolVersion == right.RunnerProtocolVersion
 }
 
@@ -852,17 +871,24 @@ func retiredPredecessorApplyJobMatches(
 		workload.AnnotationAdmissionSnapshotDigest: snapshotDigest,
 	}
 	workload.MarkMutatingOperation(wantAnnotations)
+	// The manager that dispatched the Job is read from the Job: a plan names
+	// the manager that published it, and a later manager of the same
+	// execution binding may have applied it. What is read is held below to
+	// the exact annotation set on the Job and its Pod template, and pinned by
+	// the Pod template digest the claim persisted before dispatch.
+	controllerImage := job.Annotations[workload.AnnotationControllerImage]
+	controllerRevision := job.Annotations[workload.AnnotationControllerRevision]
 	if pending.Plan.Name == "" || pending.Plan.UID == "" ||
 		pending.AdmissionSnapshot == nil ||
 		podintent.ValidateSnapshot(pending.AdmissionSnapshot) != nil ||
 		pending.AdmissionSnapshot.Digest != snapshotDigest ||
-		!controllerImagePattern.MatchString(pending.Plan.ControllerImage) ||
-		controllerstate.ValidateRevision(pending.Plan.ControllerRevision) != nil ||
+		!controllerImagePattern.MatchString(controllerImage) ||
+		controllerstate.ValidateRevision(controllerRevision) != nil ||
 		pending.Plan.ControllerStateVersion < 1 {
 		return false
 	}
-	wantAnnotations[workload.AnnotationControllerImage] = pending.Plan.ControllerImage
-	wantAnnotations[workload.AnnotationControllerRevision] = pending.Plan.ControllerRevision
+	wantAnnotations[workload.AnnotationControllerImage] = controllerImage
+	wantAnnotations[workload.AnnotationControllerRevision] = controllerRevision
 	wantAnnotations[workload.AnnotationControllerStateVersion] = strconv.FormatInt(
 		int64(pending.Plan.ControllerStateVersion),
 		10,
@@ -1106,8 +1132,18 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 		}
 		if operation.Type == operatorv1alpha1.OperationApply {
-			if _, err := r.Plans.Load(ctx, plan); err != nil {
+			content, err := r.Plans.Load(ctx, plan)
+			if err != nil {
 				return r.applyBecameStale(ctx, schema, fmt.Errorf("verify plan storage: %w", err))
+			}
+			// The plan may have been published by another build of this
+			// manager, and the approval and the apply policy were decided on
+			// that build's reading of the bytes. This build reads them again
+			// before it dispatches; if it reads them differently, the plan is
+			// retired and planned again under this reading, which the plan
+			// fingerprint binds, so it cannot be the same plan.
+			if err := planReadingMatches(schema, plan, content); err != nil {
+				return r.applyBecameStale(ctx, schema, err)
 			}
 			policyBinding, err := policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
 			if err != nil || policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
@@ -1182,11 +1218,14 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.operationFailure(ctx, schema, failure)
 			}
 			if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-				failure := fmt.Errorf("rebuilt Job Pod template differs from the persisted admission snapshot")
-				if operation.Type != operatorv1alpha1.OperationApply {
-					return r.discardStaleOperation(ctx, schema, failure)
+				if operation.AdmissionSnapshotRefreshed {
+					failure := fmt.Errorf("rebuilt Job Pod template differs from the admission snapshot it was already resolved again for")
+					if operation.Type != operatorv1alpha1.OperationApply {
+						return r.discardStaleOperation(ctx, schema, failure)
+					}
+					return r.operationFailure(ctx, schema, failure)
 				}
-				return r.operationFailure(ctx, schema, failure)
+				return r.refreshAdmissionSnapshot(ctx, schema)
 			}
 		}
 		if operation.AdmissionSnapshot == nil {
@@ -1308,7 +1347,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("rebuild immutable Job intent: %w", expectedErr))
 		}
-		if intentErr := validateJobIntent(job, expectedJob, schema); intentErr != nil {
+		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation.AdmissionSnapshot); intentErr != nil {
 			if operation.Type == operatorv1alpha1.OperationApply {
 				return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job intent changed: %w", intentErr))
 			}
@@ -1939,6 +1978,7 @@ func (r *SchemaReconciler) consumeResult(
 			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonNoChanges, "No executable plan is required")
 			if pending != nil && pending.Outcome == operatorv1alpha1.PendingObservationApplySucceeded && pending.Plan.Fingerprint != "" {
 				schema.Status.Applied = appliedStatusFor(pending.Plan, now)
+				schema.Status.Applied.DispatchedBy = pending.DispatchedBy.DeepCopy()
 			}
 			if (pending == nil || pending.ApplyGeneration == schema.Generation) &&
 				completedProofPolicyErr == nil && completedProofExecutionBindingErr == nil {
@@ -2113,6 +2153,81 @@ func (r *SchemaReconciler) expectedJob(
 		}
 	}
 	return r.Jobs.Build(schema, *operation, plan)
+}
+
+// refreshAdmissionSnapshot drops the admission snapshot of a claim whose Job
+// does not exist, so the next pass resolves it again from the Pod template
+// this manager builds. It does so once per claim, and records that it did in
+// the same write: the refresh ends only because the builder builds the same
+// Job for the same claim every time, and a claim whose template moves again
+// is retired by the caller rather than refreshed forever.
+//
+// Its only caller has already established that nothing ran: the claim is
+// read-only with no committed Job UID, or an Apply that never crossed its
+// dispatch boundary, and no Job stands under the claimed name. The claim's
+// inputs are unchanged too, because a changed input retires the claim before
+// the template is rebuilt. What is left to differ is the manager that built
+// the template: its recorded identity -- the manager annotations and the
+// runner image -- and anything else the new release changed in the Job it
+// builds. Neither binds the claim, the plan or the approval, and nothing was
+// dispatched from the old template, so the snapshot is resolved again rather
+// than the claim retired; retiring a read-only claim here would also retire
+// the plan it refreshes.
+func (r *SchemaReconciler) refreshAdmissionSnapshot(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+) (ctrl.Result, error) {
+	before := schema.DeepCopy()
+	schema.Status.ActiveOperation.AdmissionSnapshot = nil
+	schema.Status.ActiveOperation.AdmissionSnapshotRefreshed = true
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.event(schema, corev1.EventTypeNormal, "AdmissionSnapshotRefreshed",
+		"%s Job Pod template changed before dispatch; resolving its admission snapshot again",
+		schema.Status.ActiveOperation.Type)
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// validateAdoptedJobIntent checks a live Job against the Job its claim
+// authorizes, where an earlier manager of the same execution binding may have
+// built it.
+//
+// The manager's recorded identity -- the controller image and revision
+// annotations and the runner image -- binds nothing, so the rebuild takes it
+// from the live Pod template and compares everything else exactly. When it
+// took anything, the live Pod template must still be the one the claim's
+// admission snapshot recorded before dispatch, which pins what was taken to
+// the claim rather than to the object being checked.
+//
+// Adoption holds only when the two releases build the same Job apart from
+// that identity. A release that also changed the Job or its Pod template fails
+// here, and the caller treats the Job as one it cannot confirm: a dispatched
+// Apply is settled as outcome unknown and the database is observed before
+// anything else runs, and a read-only Job is run again under a new attempt.
+func validateAdoptedJobIntent(
+	actual, expected *batchv1.Job,
+	schema *operatorv1alpha1.PtahSchema,
+	snapshot *operatorv1alpha1.PodAdmissionSnapshot,
+) error {
+	carried := workload.CarryManagerIdentity(expected, actual)
+	if err := validateJobIntent(actual, expected, schema); err != nil {
+		return err
+	}
+	if !carried {
+		return nil
+	}
+	if snapshot == nil {
+		return fmt.Errorf("a Job built by another manager has no persisted admission snapshot to hold it to")
+	}
+	digest, err := podintent.DigestTemplate(&actual.Spec.Template)
+	if err != nil {
+		return fmt.Errorf("digest the adopted Job Pod template: %w", err)
+	}
+	if digest != snapshot.TemplateDigest {
+		return fmt.Errorf("the adopted Job Pod template differs from the persisted admission snapshot")
+	}
+	return nil
 }
 
 func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -2670,6 +2785,7 @@ func pendingObservationFor(
 	target := *operation.Target
 	return &operatorv1alpha1.PendingObservationStatus{
 		Outcome: outcome, ApplyOperationID: operation.ID, ApplyJobName: operation.JobName, ApplyJobUID: jobUID,
+		DispatchedBy:      dispatcherRecord(job),
 		AdmissionSnapshot: operation.AdmissionSnapshot.DeepCopy(),
 		ApplyPodUIDs:      append([]types.UID(nil), podUIDs...), ApplyPodCount: podCount,
 		ApplyGeneration: schema.Status.ObservedGeneration, ObserveAfter: observeAfter, Plan: plan, Target: target,
@@ -3371,40 +3487,32 @@ func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1al
 		!executionBindingComponentsEqual(executionBinding, configured) {
 		return nil, fmt.Errorf("durable execution binding is not current")
 	}
-	binding := fingerprint.PlanBinding{
-		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaUID: string(schema.UID), PlanContentDigest: contentDigest,
-		ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: schema.Status.Target.CoordinationDigest,
-		TargetIdentityDigest:   schema.Status.Target.IdentityDigest,
-		ActualStateFingerprint: decoded.FromFingerprint, DesiredStateFingerprint: decoded.ToFingerprint,
-		PolicyFingerprint: policyFingerprint, VerificationPolicyUID: string(schema.Status.Source.VerificationPolicyUID),
-		VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
-		ExecutionBindingID:       executionBinding.Epoch,
-		ControllerImage:          executionBinding.ControllerImage,
-		ControllerRevision:       executionBinding.ControllerRevision,
-		ControllerStateVersion:   executionBinding.ControllerStateVersion,
-		PtahVersion:              executionBinding.PtahVersion, ExecutorImage: executionBinding.ExecutorImage,
-		RunnerImage: executionBinding.RunnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
-	}
-	planFingerprint, err := binding.Fingerprint()
+	controllerImage, controllerRevision, runnerImage, err := r.managerIdentity()
 	if err != nil {
 		return nil, err
 	}
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
 		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaRef: operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
-		Fingerprint: planFingerprint, ContentDigest: contentDigest,
+		ContentDigest:  contentDigest,
 		ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest:   schema.Status.Target.IdentityDigest,
 		ActualStateFingerprint: decoded.FromFingerprint, DesiredStateFingerprint: decoded.ToFingerprint,
 		PolicyFingerprint: policyFingerprint, VerificationPolicyUID: schema.Status.Source.VerificationPolicyUID,
 		VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
 		ExecutionBindingID:       executionBinding.Epoch,
-		ControllerImage:          executionBinding.ControllerImage,
-		ControllerRevision:       executionBinding.ControllerRevision,
+		ControllerImage:          controllerImage,
+		ControllerRevision:       controllerRevision,
 		ControllerStateVersion:   executionBinding.ControllerStateVersion,
 		PtahVersion:              executionBinding.PtahVersion, ExecutorImage: executionBinding.ExecutorImage,
-		RunnerImage: executionBinding.RunnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
+		RunnerImage: runnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
 		Dialect: decoded.Dialect, Destructive: decoded.Destructive, PrivilegeChanges: planPrivilegeChanges(decoded),
 		StatementCount: int32(len(decoded.Statements)),
+	}
+	// The fingerprint is computed from the spec as it will be published, the
+	// way the controller-write webhook recomputes it.
+	spec.Fingerprint, err = planstore.Binding(schema.UID, spec).Fingerprint()
+	if err != nil {
+		return nil, err
 	}
 	desired, chunks, err := planstore.Prepare(schema, spec, content)
 	if err != nil {
@@ -3438,8 +3546,6 @@ func (r *SchemaReconciler) currentPlan(ctx context.Context, schema *operatorv1al
 		plan.Spec.ControllerImage == "" || plan.Spec.ControllerImage != schema.Status.Plan.ControllerImage ||
 		plan.Spec.ControllerRevision == "" || plan.Spec.ControllerRevision != schema.Status.Plan.ControllerRevision ||
 		plan.Spec.ControllerStateVersion < 1 || plan.Spec.ControllerStateVersion != schema.Status.Plan.ControllerStateVersion ||
-		plan.Spec.ControllerImage != schema.Status.ExecutionBinding.ControllerImage ||
-		plan.Spec.ControllerRevision != schema.Status.ExecutionBinding.ControllerRevision ||
 		plan.Spec.ControllerStateVersion != schema.Status.ExecutionBinding.ControllerStateVersion {
 		return nil, fmt.Errorf("current plan binding is stale")
 	}
@@ -3489,11 +3595,9 @@ func (r *SchemaReconciler) ensureCurrentStatusExecutionBinding(
 	status := schema.Status.ExecutionBinding
 	if !validExecutionBindingID(status.Epoch) || !executionBindingComponentsEqual(status, configured) ||
 		plan.ExecutionBindingID == "" || plan.ExecutionBindingID != status.Epoch ||
-		plan.ControllerImage == "" || plan.ControllerImage != status.ControllerImage ||
-		plan.ControllerRevision == "" || plan.ControllerRevision != status.ControllerRevision ||
 		plan.ControllerStateVersion < 1 || plan.ControllerStateVersion != status.ControllerStateVersion ||
 		plan.PtahVersion != status.PtahVersion || plan.ExecutorImage != status.ExecutorImage ||
-		plan.RunnerImage != status.RunnerImage || plan.RunnerProtocolVersion != status.RunnerProtocolVersion {
+		plan.RunnerProtocolVersion != status.RunnerProtocolVersion {
 		return fmt.Errorf("current plan execution binding is stale")
 	}
 	return nil
@@ -4635,6 +4739,54 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.
 // planPrivilegeChanges carries the kinds the plan decoder read into the API
 // type. The decoder's vocabulary and the CRD enum are the same list, which a
 // test of the generated CRD holds them to.
+// dispatcherRecord reads the manager that built and dispatched a harvested
+// Job, from its Pod template. A Job's template cannot change after it is
+// created, and the claim's admission snapshot digested it before dispatch, so
+// what is read is what that manager wrote. A Job that is absent, or whose
+// template records no complete identity, yields no record: the record is
+// audit evidence, and its absence must not stop the harvest it belongs to.
+func dispatcherRecord(job *batchv1.Job) *operatorv1alpha1.ManagerRecord {
+	controllerImage, controllerRevision, runnerImage := workload.ManagerIdentityOf(job)
+	if len(controllerImage) > 512 || !controllerImagePattern.MatchString(controllerImage) ||
+		controllerstate.ValidateRevision(controllerRevision) != nil ||
+		len(runnerImage) > 512 || !controllerImagePattern.MatchString(runnerImage) {
+		return nil
+	}
+	return &operatorv1alpha1.ManagerRecord{
+		ControllerImage:    controllerImage,
+		ControllerRevision: controllerRevision,
+		RunnerImage:        runnerImage,
+	}
+}
+
+// planReadingMatches decodes the stored plan bytes with this manager's
+// classifier and refuses when the result differs from what the plan records:
+// its dialect, whether it is destructive, which privileges it changes and how
+// many statements it holds.
+func planReadingMatches(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan, content []byte) error {
+	decoded, err := dataplane.DecodePlan(content, string(schema.Spec.Target.Engine))
+	if err != nil {
+		return fmt.Errorf("this manager cannot read the stored plan: %w", err)
+	}
+	recorded := make([]string, 0, len(plan.Spec.PrivilegeChanges))
+	for _, kind := range plan.Spec.PrivilegeChanges {
+		recorded = append(recorded, string(kind))
+	}
+	switch {
+	case decoded.Dialect != plan.Spec.Dialect:
+		return fmt.Errorf("this manager reads the plan dialect as %q; the plan records %q", decoded.Dialect, plan.Spec.Dialect)
+	case decoded.Destructive != plan.Spec.Destructive:
+		return fmt.Errorf("this manager reads the plan as destructive=%t; the plan records destructive=%t",
+			decoded.Destructive, plan.Spec.Destructive)
+	case !slices.Equal(fingerprint.NormalizeSet(decoded.PrivilegeChanges), fingerprint.NormalizeSet(recorded)):
+		return fmt.Errorf("this manager reads privilege changes %v; the plan records %v",
+			fingerprint.NormalizeSet(decoded.PrivilegeChanges), fingerprint.NormalizeSet(recorded))
+	case int64(len(decoded.Statements)) != int64(plan.Spec.StatementCount):
+		return fmt.Errorf("this manager reads %d statements; the plan records %d", len(decoded.Statements), plan.Spec.StatementCount)
+	}
+	return nil
+}
+
 func planPrivilegeChanges(plan dataplane.PlanFile) []operatorv1alpha1.PrivilegeChange {
 	if len(plan.PrivilegeChanges) == 0 {
 		return nil
@@ -4727,11 +4879,9 @@ func approvalMatchesPlanStatus(
 		approval.Spec.VerificationPolicyUID == plan.VerificationPolicyUID &&
 		approval.Spec.VerificationPolicyDigest == plan.VerificationPolicyDigest &&
 		approval.Spec.ExecutionBindingID != "" && approval.Spec.ExecutionBindingID == plan.ExecutionBindingID &&
-		approval.Spec.ControllerImage != "" && approval.Spec.ControllerImage == plan.ControllerImage &&
-		approval.Spec.ControllerRevision != "" && approval.Spec.ControllerRevision == plan.ControllerRevision &&
 		approval.Spec.ControllerStateVersion >= 1 && approval.Spec.ControllerStateVersion == plan.ControllerStateVersion &&
 		approval.Spec.PtahVersion == plan.PtahVersion && approval.Spec.ExecutorImage == plan.ExecutorImage &&
-		approval.Spec.RunnerImage == plan.RunnerImage && approval.Spec.RunnerProtocolVersion == plan.RunnerProtocolVersion &&
+		approval.Spec.RunnerProtocolVersion == plan.RunnerProtocolVersion &&
 		!approval.Spec.ApprovedAt.IsZero() && approval.Spec.Approver.Username != "" && approval.Spec.MutationRequestUID != ""
 }
 

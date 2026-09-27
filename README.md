@@ -50,9 +50,10 @@ new read-only observation.
 Key safety properties:
 
 - OCI tags are resolved once and all later artifact access uses the digest.
-- Plans bind exact bytes to artifact, target, observed state, policy, the
-  digest-pinned manager image, manager revision and state semantics, Ptah
-  version, executor image, runner image, and runner protocol.
+- Plans bind exact bytes to artifact, target, observed state, policy, and what
+  decides how they run: controller-state semantics, Ptah version, executor
+  image, and runner protocol. The manager's own image and revision are
+  recorded, not bound, so an operator patch release keeps pending approvals.
 - Approvals are separate immutable resources stamped with authenticated
   admission identity.
 - Destructive plans are disabled by default and still require an exact-plan

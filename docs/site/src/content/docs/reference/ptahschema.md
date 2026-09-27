@@ -353,6 +353,7 @@ spec:
 | `status.activeOperation.admissionSnapshot.serviceAccount.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
 | `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. TemplateDigest covers the Pod template the operator asked for, before the cluster's own admission had a chance to change it. |
 | `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` | Version is the snapshot format this record was written in. |
+| `status.activeOperation.admissionSnapshotRefreshed` | `boolean` | AdmissionSnapshotRefreshed records that this claim's admission snapshot was resolved a second time, because the Job template this manager builds differed from the one the snapshot recorded before anything was dispatched. That happens once, when a manager release that shares the execution binding takes over an undispatched claim. It happens at most once per claim: a template that differs again comes from a builder that does not build the same Job twice, and the claim is retired instead. |
 | `status.activeOperation.attempt` | `integer`, required | Attempt counts this claim among the retries of the same operation. |
 | `status.activeOperation.coordinationDigest` | `string` | Plan and Apply operations persist their credential-free lock binding so later spec changes cannot redirect or shorten protection for a running Job. |
 | `status.activeOperation.dispatchNotAfter` | `string` | DispatchNotAfter is the immutable last instant at which the Apply runner may start its mutating child. Missing or untrusted terminal Pod evidence keeps proof behind the complete execution horizon below. |
@@ -407,10 +408,14 @@ spec:
 | `status.applied` | `object` | Applied is the last apply that was independently observed to have converged, which is a different claim from a Job that exited zero. |
 | `status.applied.artifactDigest` | `string`, required | ArtifactDigest is the artifact that was applied. |
 | `status.applied.completedAt` | `string`, required | CompletedAt is when convergence was independently observed, not when the Job exited. |
-| `status.applied.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that dispatched it. |
+| `status.applied.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published the plan this apply ran. The manager that dispatched the Job is DispatchedBy. |
 | `status.applied.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
 | `status.applied.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it wrote. |
 | `status.applied.coordinationDigest` | `string`, required | CoordinationDigest is the realm the apply held while it ran. |
+| `status.applied.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the Apply Job, read from the Job's Pod template when the Apply was harvested. It can differ from the publisher above: a later release of the manager that shares the execution binding applies the plans an earlier one published. It is absent when the Apply was settled without its Job. |
+| `status.applied.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
+| `status.applied.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
+| `status.applied.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
 | `status.applied.executionBindingID` | `string`, required | ExecutionBindingID is the epoch the apply ran under. |
 | `status.applied.executorImage` | `string`, required | ExecutorImage is the digest-pinned image it ran in. |
 | `status.applied.planFingerprint` | `string`, required | PlanFingerprint says whether the plan object read today is the one this record was written for. |
@@ -418,8 +423,8 @@ spec:
 | `status.applied.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.applied.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.applied.ptahVersion` | `string`, required | PtahVersion is the Ptah build that executed the statements. |
-| `status.applied.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
-| `status.applied.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner spoke. |
+| `status.applied.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published the plan. |
+| `status.applied.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the apply ran under. |
 | `status.applied.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it converged. |
 | `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the engine is supported, the artifact resolved and verified, the database was reachable, drift was found, a plan is ready, an approval is required, the schema is in sync, and whether the last reconciliation failed. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
@@ -428,15 +433,12 @@ spec:
 | `status.conditions[].reason` | `string`, required | reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of specific condition types may define expected values and meanings for this field, and whether the values are considered a guaranteed API. The value should be a CamelCase string. This field may not be empty. |
 | `status.conditions[].status` | `string`, required, one of `True`, `False`, `Unknown` | status of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | `string`, required | type of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.executionBinding` | `object` | ExecutionBinding is the durable identity of the controller/runtime epoch authorized to produce new reconciliation evidence. Retained evidence stays historical until refreshed. Epoch changes on every component transition, including a rollback to identical values. |
-| `status.executionBinding.controllerImage` | `string`, required | ControllerImage identifies the exact manager container content that interpreted controller state and authorized this evidence epoch. |
-| `status.executionBinding.controllerRevision` | `string`, required | ControllerRevision identifies the exact manager build that interpreted controller state. It is provenance metadata in addition to ControllerImage, not a substitute for the image content digest. |
+| `status.executionBinding` | `object` | ExecutionBinding is the durable identity of the execution epoch authorized to produce new reconciliation evidence. Retained evidence stays historical until refreshed. Epoch changes whenever a bound component changes, including a rollback to identical values; a manager upgrade that changes no bound component keeps it. |
 | `status.executionBinding.controllerStateVersion` | `integer`, required | ControllerStateVersion versions manager-side reconciliation semantics independently of the data-plane runner protocol. |
-| `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes on every component transition, a rollback to identical versions included, so evidence from before a rollout is historical rather than current. |
+| `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes whenever a component below changes, a rollback to identical versions included, so evidence from before such a rollout is historical rather than current. |
 | `status.executionBinding.executorImage` | `string`, required | ExecutorImage is the digest-pinned image carrying that build. |
 | `status.executionBinding.ptahVersion` | `string`, required | PtahVersion is the Ptah build this epoch executes with. |
-| `status.executionBinding.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervises it. |
-| `status.executionBinding.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `status.executionBinding.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol this epoch binds: what the runner enforces inside the Pod and the result frame it returns. |
 | `status.lastAttemptTime` | `string` | LastAttemptTime is when the controller last tried to do something. |
 | `status.lastSuccessfulReconciliation` | `string` | LastSuccessfulReconciliation is when it last completed a cycle with nothing left to do. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is the durable earliest time for the next scheduled read-only reconciliation. Event-driven safety work may run sooner. |
@@ -506,6 +508,10 @@ spec:
 | `status.pendingObservation.dev.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.pendingObservation.dev.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.dev.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
+| `status.pendingObservation.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the Apply Job, read from the Job's Pod template when the Apply was harvested, and carried into status.applied when the proof completes. It is absent when the Apply was settled without its Job. |
+| `status.pendingObservation.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
+| `status.pendingObservation.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |
+| `status.pendingObservation.dispatchedBy.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image the manager installed in the task Pod. |
 | `status.pendingObservation.driftSeverity` | `string` | DriftSeverity is the severity the proof reads at. |
 | `status.pendingObservation.exclude` | `[]string` | Exclude is the managed scope the apply was computed under. |
 | `status.pendingObservation.leaseDurationSeconds` | `integer`, required | LeaseDurationSeconds is the immutable duration claimed for the Apply operation. The same holder remains active through convergence proof. |
@@ -513,7 +519,7 @@ spec:
 | `status.pendingObservation.lockTimeout` | `string` | LockTimeout is the database lock timeout it is dispatched with. |
 | `status.pendingObservation.observeAfter` | `string` | ObserveAfter delays proof when the Kubernetes Job identity or create result is uncertain. Until this time, the original mutating Pod could still be within its immutable active deadline. |
 | `status.pendingObservation.outcome` | `string`, required, one of `ApplySucceeded`, `OutcomeUnknown` | Outcome is what is known about the apply this proof is for: that it succeeded, or that nobody can say. |
-| `status.pendingObservation.plan` | `object`, required | Plan is the plan the apply carried out, kept here after the active operation is cleared so the proof knows what it is proving. |
+| `status.pendingObservation.plan` | `object`, required | Plan is the plan the apply carried out, kept here after the active operation is cleared so the proof knows what it is proving. Its manager fields name the manager that published it. |
 | `status.pendingObservation.plan.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed state it was planned from. |
 | `status.pendingObservation.plan.approval` | `object` | Approval is the decision that authorized this plan, where one was made. |
 | `status.pendingObservation.plan.approval.approvedAt` | `string`, required | ApprovedAt is when the decision was stamped. |
@@ -525,7 +531,7 @@ spec:
 | `status.pendingObservation.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
 | `status.pendingObservation.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
 | `status.pendingObservation.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
-| `status.pendingObservation.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it. |
+| `status.pendingObservation.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it, recorded and not bound. |
 | `status.pendingObservation.plan.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
 | `status.pendingObservation.plan.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it writes. |
 | `status.pendingObservation.plan.coordinationDigest` | `string`, required | CoordinationDigest is the database realm it takes its turn in. |
@@ -539,8 +545,8 @@ spec:
 | `status.pendingObservation.plan.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy it was computed under. |
 | `status.pendingObservation.plan.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan changes, as the plan records them. Any entry means an approval is required even when spec.policy.apply is Always. |
 | `status.pendingObservation.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
-| `status.pendingObservation.plan.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
-| `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `status.pendingObservation.plan.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published it, recorded and not bound. |
+| `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
 | `status.pendingObservation.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.pendingObservation.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
 | `status.pendingObservation.plan.uid` | `string`, required | UID it had when this record was written. |
@@ -583,7 +589,7 @@ spec:
 | `status.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
 | `status.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
 | `status.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
-| `status.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it. |
+| `status.plan.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published it, recorded and not bound. |
 | `status.plan.controllerRevision` | `string`, required | ControllerRevision is that manager's revision. |
 | `status.plan.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics it writes. |
 | `status.plan.coordinationDigest` | `string`, required | CoordinationDigest is the database realm it takes its turn in. |
@@ -597,8 +603,8 @@ spec:
 | `status.plan.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy it was computed under. |
 | `status.plan.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan changes, as the plan records them. Any entry means an approval is required even when spec.policy.apply is Always. |
 | `status.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
-| `status.plan.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
-| `status.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `status.plan.runnerImage` | `string`, required | RunnerImage is the runner image of the manager that published it, recorded and not bound. |
+| `status.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
 | `status.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
 | `status.plan.uid` | `string`, required | UID it had when this record was written. |

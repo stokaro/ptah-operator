@@ -543,8 +543,11 @@ func evaluateTransition(baseline, candidate documentSet) (Result, error) {
 		}
 		// Moving the version records that the schema changed. It says nothing
 		// about what changed, and three changes are ones a stored object does
-		// not survive however the version moves.
-		if err := verifyStoredObjectCompatibility(baseline, candidate); err != nil {
+		// not survive however the version moves, unless a break declared for
+		// exactly this version names them.
+		if err := verifyStoredObjectCompatibility(
+			baseline, candidate, candidateIdentity.version, declaredBreaks,
+		); err != nil {
 			return Result{}, err
 		}
 		return result, nil

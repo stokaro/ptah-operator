@@ -24,8 +24,8 @@ flowchart LR
   reconcile["spec.policy"] --> plan
   realm["coordination digest"] --> plan
   route["route identity digest"] --> plan
-  epoch["execution binding epoch<br/>manager image, revision, state version"] --> plan
-  ptah["Ptah version, executor,<br/>runner + protocol"] --> plan
+  epoch["execution binding epoch<br/>controller-state version"] --> plan
+  ptah["Ptah version, executor,<br/>runner protocol"] --> plan
   bytes["plan content digest"] --> plan
   plan --> approval["approval names the fingerprint"]
   approval --> apply["Apply reconstructs and rehashes"]
@@ -35,10 +35,27 @@ A schema plan fingerprint binds the plan contract version, the schema UID, the
 plan content digest, the artifact digest, the coordination digest, the
 credential-free route identity, the observed and desired state fingerprints,
 the reconciliation policy, the verification policy UID and digest, the
-execution binding epoch, the digest-pinned manager image, manager revision and
-controller-state version, the Ptah version and executor image, and the runner
-image and protocol version. The schema *name* is not in it — a name can be
-reused, so the UID is what identifies the resource.
+execution binding epoch, the controller-state version, the Ptah version and
+executor image, and the runner protocol version. It also binds what the
+manager read out of the plan bytes: whether they are destructive, which kinds
+of privilege they change, and how many statements they hold. The bytes alone
+do not fix those -- a manager whose classifier reads a statement differently
+derives different values from the same content -- and the approval and the
+apply policy were decided on them. The schema *name* is not in it — a name can
+be reused, so the UID is what identifies the resource.
+
+The manager that published the plan is not in it either. The plan records the
+manager's image and revision and the runner image beside it, and a later
+release of the manager computing the same plan finds the same fingerprint and
+the same object. An approval names none of the three. So a manager release that
+changes only them -- a patch or a security fix -- keeps every published plan
+and every pending approval, and applies them, as long as it reads the plan bytes
+the same way. Before it dispatches an Apply the manager decodes the stored plan
+again with its own classifier, and a plan it reads differently is retired and
+planned again under the new reading, which is a different fingerprint and
+needs its own approval where the policy asks for one. What the runner enforces
+is bound through the protocol version, which changes whenever that enforcement
+does.
 
 A migration plan fingerprint binds the same execution and target identity, and
 instead of observed and desired state it binds the ordered sequence, each

@@ -815,12 +815,9 @@ func verificationPolicyConfigMap() *corev1.ConfigMap {
 func migrationExecutionBinding() *operatorv1alpha1.ExecutionBindingStatus {
 	return &operatorv1alpha1.ExecutionBindingStatus{
 		Epoch:                  testExecutionBindingID,
-		ControllerImage:        testControllerImage,
-		ControllerRevision:     testControllerRevision,
 		ControllerStateVersion: testControllerStateVersion,
 		PtahVersion:            "v0.3.0",
 		ExecutorImage:          "example.invalid/ptah@" + testDigest,
-		RunnerImage:            "example.invalid/operator@" + testDigest,
 		RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 	}
 }

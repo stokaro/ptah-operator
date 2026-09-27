@@ -100,8 +100,6 @@ func TestTheApplyClaimSchedulesCleanupForTheJobTheBuilderWrote(t *testing.T) {
 			plan := planBindingOf(t, job)
 			binding := schema.Status.ExecutionBinding
 			binding.Epoch = plan.ExecutionBindingID
-			binding.ControllerImage = plan.ControllerImage
-			binding.ControllerRevision = plan.ControllerRevision
 			binding.ControllerStateVersion = plan.ControllerStateVersion
 			binding.PtahVersion = plan.PtahVersion
 			schema.Status.Plan = &plan
@@ -246,4 +244,10 @@ func (refusingJobBuilder) BuildMigration(
 	*operatorv1alpha1.PtahMigrationPlan,
 ) (*batchv1.Job, error) {
 	return nil, errors.New("this cleanup must be decided from the claim, not by rebuilding the Job")
+}
+
+// ManagerIdentity is read only by plan creation, which these rows never
+// reach; the cleanup takes the dispatcher from the Job it is cleaning up.
+func (refusingJobBuilder) ManagerIdentity() (string, string, string) {
+	return testControllerImage, testControllerRevision, testRunnerImage
 }

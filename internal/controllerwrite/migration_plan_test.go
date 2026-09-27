@@ -92,6 +92,15 @@ func TestValidationHandlerRefusesMigrationPlansItCannotReproduce(t *testing.T) {
 			message: "execution binding is not the migration's current one",
 		},
 		{
+			// The plan records the manager that publishes it, and only the
+			// manager serving this webhook is publishing.
+			name: "the plan records another manager",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) {
+				plan.Spec.ControllerImage = "example.test/controller@" + digest('9')
+			},
+			message: "does not record the manager that publishes it",
+		},
+		{
 			name: "status was injected",
 			mutate: func(_ *operatorv1alpha1.PtahMigration, plan *operatorv1alpha1.PtahMigrationPlan) {
 				plan.Status.ObservedGeneration = 1
@@ -174,12 +183,9 @@ func migrationPlanFixture(t *testing.T) (*operatorv1alpha1.PtahMigration, *opera
 		Status: operatorv1alpha1.PtahMigrationStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 				Epoch:                  "v1-11111111111111111111111111111111",
-				ControllerImage:        "example.test/controller@" + digest('1'),
-				ControllerRevision:     "test-revision",
 				ControllerStateVersion: 1,
 				PtahVersion:            "v0.3.0",
 				ExecutorImage:          "example.test/executor@" + digest('2'),
-				RunnerImage:            "example.test/runner@" + digest('3'),
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
 			Artifact: &operatorv1alpha1.OCIArtifactAccessBinding{
@@ -214,12 +220,9 @@ func migrationPlanFixture(t *testing.T) (*operatorv1alpha1.PtahMigration, *opera
 		VerificationPolicyUID:    types.UID("verification-policy-uid"),
 		VerificationPolicyDigest: digest('a'),
 		ExecutionBindingID:       binding.Epoch,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 	}
 	planFingerprint, err := planBinding.Fingerprint()
@@ -240,12 +243,12 @@ func migrationPlanFixture(t *testing.T) (*operatorv1alpha1.PtahMigration, *opera
 		VerificationPolicyUID:    planBinding.VerificationPolicyUID,
 		VerificationPolicyDigest: planBinding.VerificationPolicyDigest,
 		ExecutionBindingID:       binding.Epoch,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
+		ControllerImage:          testControllerImage,
+		ControllerRevision:       testControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
+		RunnerImage:              testRunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 		CreatedAt:                metav1.Now(),
 	})

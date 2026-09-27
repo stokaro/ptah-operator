@@ -53,29 +53,23 @@ type PtahSchemaApprovalSpec struct {
 	// VerificationPolicyDigest is that policy's content at the time.
 	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
 	// ExecutionBindingID is the execution epoch the approved plan belongs to. It
-	// changes on every operator transition, including one that returns to
-	// byte-identical versions, so an approval cannot survive a rollout unseen.
+	// changes whenever a component that decides what the plan means when it
+	// runs changes, including a change back to byte-identical versions, so an
+	// approval cannot survive such a rollout unseen. A manager upgrade that
+	// changes none of them keeps the epoch and this approval.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
-	// ControllerImage is the digest-pinned manager the approved apply must be
-	// dispatched by.
-	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
-	ControllerImage string `json:"controllerImage"`
-	// ControllerRevision is that manager's revision.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
-	ControllerRevision string `json:"controllerRevision"`
-	// ControllerStateVersion is the state semantics it writes.
+	// ControllerStateVersion is the controller-state semantics the approved
+	// apply must be dispatched under.
 	// +kubebuilder:validation:Minimum=1
 	ControllerStateVersion int32 `json:"controllerStateVersion"`
 	// PtahVersion is the Ptah build the approved apply must run.
 	PtahVersion string `json:"ptahVersion"`
 	// ExecutorImage is the digest-pinned image it must run in.
 	ExecutorImage string `json:"executorImage"`
-	// RunnerImage is the digest-pinned image that supervises it.
-	RunnerImage string `json:"runnerImage"`
-	// RunnerProtocolVersion is the result-frame protocol that runner speaks.
+	// RunnerProtocolVersion is the protocol the runner that supervises it must
+	// speak: what the runner enforces inside the Pod and the result frame it
+	// returns.
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 
 	// Approver is stamped by the mutating webhook from the authenticated

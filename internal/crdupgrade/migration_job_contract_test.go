@@ -159,12 +159,9 @@ func contractMigrationFixture(
 		Status: operatorv1alpha1.PtahMigrationStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 				Epoch:                  "v1-11111111111111111111111111111111",
-				ControllerImage:        builder.ControllerImage,
-				ControllerRevision:     builder.ControllerRevision,
 				ControllerStateVersion: builder.ControllerStateVersion,
 				PtahVersion:            builder.PtahVersion,
 				ExecutorImage:          builder.ExecutorImage,
-				RunnerImage:            builder.RunnerImage,
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
 		},
@@ -221,12 +218,9 @@ func contractSchemaFixture(
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
 				Epoch:                  "v1-11111111111111111111111111111111",
-				ControllerImage:        builder.ControllerImage,
-				ControllerRevision:     builder.ControllerRevision,
 				ControllerStateVersion: builder.ControllerStateVersion,
 				PtahVersion:            builder.PtahVersion,
 				ExecutorImage:          builder.ExecutorImage,
-				RunnerImage:            builder.RunnerImage,
 				RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 			},
 		},

@@ -2160,11 +2160,10 @@ for control_plane_binding_marker in \
 	'E2E_CONTROLLER_IMAGE must be pinned by a lowercase SHA-256 digest' \
 	'E2E_CONTROLLER_STATE_VERSION must be a positive integer' \
 	'.status.executionBinding as $binding' \
-	'$binding.controllerImage == $controllerImage' \
-	'$binding.controllerRevision == $controllerRevision' \
+	'($binding | keys) == ["controllerStateVersion", "epoch", "executorImage", "ptahVersion", "runnerProtocolVersion"]' \
 	'$binding.controllerStateVersion == $controllerStateVersion' \
 	'manager must have exactly one --controller-image argument' \
-	'schema execution binding does not match the manager'"'"'s exact controller image argument' \
+	'controller_image=$deployed_controller_image' \
 	'manager controller image argument does not match the externally expected image identity'; do
 	grep -F -- "$control_plane_binding_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 done
@@ -2172,8 +2171,6 @@ done
 for control_plane_plan_marker in \
 	'contract_version: 3' \
 	'execution_binding_id: $executionBindingID' \
-	'controller_image: $controllerImage' \
-	'controller_revision: $controllerRevision' \
 	'controller_state_version: $controllerStateVersion' \
 	'plan_fingerprint="sha256:$(printf' \
 	'contractVersion: 3' \
@@ -2186,16 +2183,24 @@ for control_plane_plan_marker in \
 done
 static_reject_marker "$control_plane_plan_fixture_section" 'contractVersion: 1' \
 	'control-plane approval fixture current contract'
+# The plan fingerprint leaves the publishing manager out; the manifest records it.
+# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
+for control_plane_unbound_marker in \
+	'controller_image: $controllerImage' \
+	'controller_revision: $controllerRevision' \
+	'runner_image: $runnerImage'; do
+	static_reject_marker "$control_plane_plan_fixture_section" "$control_plane_unbound_marker" \
+		'control-plane plan fingerprint'
+done
 # shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
 for control_plane_approval_marker in \
 	'.spec.executionBindingID == $executionBindingID' \
-	'.spec.controllerImage == $controllerImage' \
-	'.spec.controllerRevision == $controllerRevision' \
+	'(.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not)' \
 	'.spec.controllerStateVersion == $controllerStateVersion'; do
 	printf '%s\n' "$control_plane_approval_section" |
 		grep -F -- "$control_plane_approval_marker" >/dev/null
 done
-grep -F 'approval with a conflicting controller image binding' \
+grep -F 'approval with a conflicting executor image binding' \
 	"$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 
 dataplane_approval_identity_section=$(sed -n '/^create_exact_approval()/,/^}/p' \
@@ -2299,9 +2304,21 @@ for controller_revision_crd in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	controller_revision_fields=$(grep -c '^[[:space:]]*controllerRevision:' "$controller_revision_crd" || true)
 	controller_revision_patterns=$(grep -Fc "$controller_revision_pattern" "$controller_revision_crd" || true)
 	controller_revision_minimum=1
-	if [ "${controller_revision_crd##*/}" = operator.ptah.run_ptahrealms.yaml ]; then
+	case "${controller_revision_crd##*/}" in
+	operator.ptah.run_ptahrealms.yaml)
 		controller_revision_minimum=0
-	fi
+		;;
+	*approvals.yaml)
+		# An approval binds nothing about the manager that published the plan
+		# or dispatched the Job, so it carries no revision at all.
+		if [ "$controller_revision_fields" -ne 0 ]; then
+			printf 'e2e static: %s carries a controllerRevision an approval must not bind\n' \
+				"$controller_revision_crd" >&2
+			exit 1
+		fi
+		continue
+		;;
+	esac
 	if [ "$controller_revision_fields" -lt "$controller_revision_minimum" ] ||
 		[ "$controller_revision_patterns" -ne "$controller_revision_fields" ]; then
 		printf 'e2e static: %s lacks exact revision validation on every controllerRevision field\n' \
@@ -6831,9 +6848,9 @@ for crd_live_marker in \
 	'proving an active release survives losing both runtime Deployments' \
 	'the upgrade that restores both deleted runtime Deployments was refused' \
 	'holding one Apply open across the next-release upgrade' \
-	'the successor did not durably fence and adopt the running Apply' \
+	'the successor did not adopt the running Apply under the epoch it was dispatched in' \
 	'the successor replaced, completed, or cleaned the running Apply Job' \
-	'the successor did not adopt and retire the quiesced Apply Job' \
+	'the successor did not account for the adopted Apply Job through its own result' \
 	'coordination namespace mutation' \
 	'leader-election mutation' \
 	'proving the chart refuses a release namespace that runs foreign workloads' \

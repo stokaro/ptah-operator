@@ -57,6 +57,10 @@ func (v *Validator) validateMigrationPlanCreate(ctx context.Context, req admissi
 	if err := validateMigrationPlanShape(plan, migration); err != nil {
 		return denyf("PtahMigrationPlan manifest is invalid: %v", err)
 	}
+	if controllerImage, controllerRevision, runnerImage := v.Jobs.ManagerIdentity(); plan.Spec.ControllerImage != controllerImage ||
+		plan.Spec.ControllerRevision != controllerRevision || plan.Spec.RunnerImage != runnerImage {
+		return denyf("PtahMigrationPlan does not record the manager that publishes it")
+	}
 	return nil
 }
 
@@ -120,12 +124,9 @@ func validateMigrationPlanShape(
 		return errors.New("plan artifact digest does not match the resolved artifact")
 	}
 	if plan.Spec.ExecutionBindingID != binding.Epoch ||
-		plan.Spec.ControllerImage != binding.ControllerImage ||
-		plan.Spec.ControllerRevision != binding.ControllerRevision ||
 		plan.Spec.ControllerStateVersion != binding.ControllerStateVersion ||
 		plan.Spec.PtahVersion != binding.PtahVersion ||
 		plan.Spec.ExecutorImage != binding.ExecutorImage ||
-		plan.Spec.RunnerImage != binding.RunnerImage ||
 		plan.Spec.RunnerProtocolVersion != binding.RunnerProtocolVersion {
 		return errors.New("plan execution binding is not the migration's current one")
 	}
@@ -150,12 +151,9 @@ func validateMigrationPlanShape(
 		VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-		ControllerImage:          plan.Spec.ControllerImage,
-		ControllerRevision:       plan.Spec.ControllerRevision,
 		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 		PtahVersion:              plan.Spec.PtahVersion,
 		ExecutorImage:            plan.Spec.ExecutorImage,
-		RunnerImage:              plan.Spec.RunnerImage,
 		RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
 	}.Fingerprint()
 	if err != nil {
