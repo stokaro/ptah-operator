@@ -83,6 +83,7 @@ would have done. Behavior that depends on Kubernetes doing its part belongs in
 ```bash
 make build          # the four binaries
 make test           # unit contour
+make test-envtest   # CRDs, admission policies and webhooks against a real API server
 make generate       # deepcopy
 make manifests      # CRDs and RBAC from the markers
 make verify         # the checks CI runs, including the CRD schema history

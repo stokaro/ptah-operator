@@ -228,10 +228,15 @@ is the one to change when the contract changes.
 
 ## How this is proven
 
-Unit tests and envtest measure this code and the API contract. They do not
-measure what Kubernetes would do: envtest runs no built-in controllers, so
-nothing there reconciles a Deployment into Pods or garbage-collects by owner
-reference.
+Unit tests measure this code. The envtest suites under `test/envtest` measure
+the API contract against a real kube-apiserver and etcd: the CRDs' schemas and
+CEL rules, every ValidatingAdmissionPolicy the chart installs together with its
+binding and parameter, and the manager's webhooks behind the chart's own webhook
+configurations. Each policy is held to a request it refuses, the write it must
+admit from the identity that makes it, and a mutation of its binding, match or
+parameter reference under which those rows have to fail. They do not measure
+what Kubernetes would do: envtest runs no built-in controllers, so nothing there
+reconciles a Deployment into Pods or garbage-collects by owner reference.
 
 What proves the claims on this page is the acceptance matrix, one job per
 supported Kubernetes minor and suite, against kind with a real registry,
