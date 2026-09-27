@@ -8,9 +8,8 @@ import (
 	"reflect"
 	"strings"
 
+	"gomodules.xyz/jsonpatch/v2"
 	admissionv1 "k8s.io/api/admission/v1"
-	authenticationv1 "k8s.io/api/authentication/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -36,42 +35,95 @@ const (
 	LastSpecWriterUIDAnnotation      = "operator.ptah.run/last-spec-writer-uid"
 )
 
-// stampSpecWriter records user as the identity responsible for object's
-// current spec, replacing whatever the request carried for the two reserved
-// annotations.
-func stampSpecWriter(object metav1.Object, user authenticationv1.UserInfo) {
-	annotations := object.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[LastSpecWriterUsernameAnnotation] = strings.TrimSpace(user.Username)
-	if uid := strings.TrimSpace(user.UID); uid != "" {
-		annotations[LastSpecWriterUIDAnnotation] = uid
-	} else {
-		delete(annotations, LastSpecWriterUIDAnnotation)
-	}
-	object.SetAnnotations(annotations)
-}
-
-// carrySpecWriter copies the two reserved annotations from old onto object
-// unchanged, discarding whatever the request's own payload carried for them.
-// It is what a request that does not change spec goes through instead of
-// stampSpecWriter, so a finalizer patch or a label edit can neither erase the
-// recorded writer nor forge a new one.
-func carrySpecWriter(object, old metav1.Object) {
-	annotations := object.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	previous := old.GetAnnotations()
-	for _, key := range []string{LastSpecWriterUsernameAnnotation, LastSpecWriterUIDAnnotation} {
-		if value, ok := previous[key]; ok {
-			annotations[key] = value
-		} else {
-			delete(annotations, key)
+// specWriterValues says what the two reserved annotations must hold after a
+// request: stamped from the requester when the request creates the resource or
+// changes its spec, and carried unchanged from the stored object otherwise, so
+// a finalizer patch or a label edit can neither erase the recorded writer nor
+// forge a new one. A key absent from the result must be absent from the object.
+func specWriterValues(req cradmission.Request) (map[string]string, error) {
+	values := map[string]string{}
+	if req.Operation == admissionv1.Update {
+		var current, stored specWriterView
+		if err := json.Unmarshal(req.Object.Raw, &current); err != nil {
+			return nil, fmt.Errorf("decode the request object: %w", err)
+		}
+		if err := json.Unmarshal(req.OldObject.Raw, &stored); err != nil {
+			return nil, fmt.Errorf("decode the stored object: %w", err)
+		}
+		if reflect.DeepEqual(current.Spec, stored.Spec) {
+			for _, key := range specWriterAnnotations {
+				if value, ok := stored.Metadata.Annotations[key]; ok {
+					values[key] = value
+				}
+			}
+			return values, nil
 		}
 	}
-	object.SetAnnotations(annotations)
+	values[LastSpecWriterUsernameAnnotation] = strings.TrimSpace(req.UserInfo.Username)
+	if uid := strings.TrimSpace(req.UserInfo.UID); uid != "" {
+		values[LastSpecWriterUIDAnnotation] = uid
+	}
+	return values, nil
+}
+
+// specWriterAnnotations is the order the patch names the reserved keys in.
+var specWriterAnnotations = []string{LastSpecWriterUsernameAnnotation, LastSpecWriterUIDAnnotation}
+
+// specWriterView is the part of a PtahSchema or a PtahMigration the webhook
+// reads. The spec is compared as the JSON the API server sent rather than
+// through the Go types, so a field this binary does not know still counts as a
+// change to it.
+type specWriterView struct {
+	Metadata struct {
+		Annotations map[string]string `json:"annotations"`
+	} `json:"metadata"`
+	Spec any `json:"spec"`
+}
+
+// specWriterResponse admits the request with a patch that touches the two
+// reserved annotations and nothing else.
+//
+// The patch is built from the keys rather than from the difference between
+// the request and a re-encoded typed object. A round trip through the Go types
+// rewrites whatever it does not reproduce byte for byte: an interval of "10m"
+// comes back as "10m0s", and a field this binary does not know is dropped. The
+// author's spec would then be edited by a webhook whose only job is to record
+// who wrote it.
+func specWriterResponse(req cradmission.Request) cradmission.Response {
+	if req.Operation != admissionv1.Create && req.Operation != admissionv1.Update {
+		return cradmission.Denied("only create and update are supported")
+	}
+	want, err := specWriterValues(req)
+	if err != nil {
+		return cradmission.Errored(http.StatusBadRequest, err)
+	}
+	var current specWriterView
+	if err := json.Unmarshal(req.Object.Raw, &current); err != nil {
+		return cradmission.Errored(http.StatusBadRequest, fmt.Errorf("decode the request object: %w", err))
+	}
+	have := current.Metadata.Annotations
+	if have == nil {
+		if len(want) == 0 {
+			return cradmission.Allowed("")
+		}
+		return cradmission.Patched("", jsonpatch.NewOperation("add", "/metadata/annotations", want))
+	}
+	var patches []jsonpatch.JsonPatchOperation
+	for _, key := range specWriterAnnotations {
+		path := "/metadata/annotations/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(key)
+		wanted, keep := want[key]
+		present, found := have[key]
+		switch {
+		case keep && (!found || present != wanted):
+			patches = append(patches, jsonpatch.NewOperation("add", path, wanted))
+		case !keep && found:
+			patches = append(patches, jsonpatch.NewOperation("remove", path, nil))
+		}
+	}
+	if len(patches) == 0 {
+		return cradmission.Allowed("")
+	}
+	return cradmission.Patched("", patches...)
 }
 
 // SchemaSpecWriterHandler stamps the identity that created a PtahSchema, or
@@ -86,31 +138,7 @@ func (h *SchemaSpecWriterHandler) Handle(_ context.Context, req cradmission.Requ
 	if h.Decoder == nil {
 		return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("spec-writer webhook is not initialized"))
 	}
-	if req.Operation != admissionv1.Create && req.Operation != admissionv1.Update {
-		return cradmission.Denied("only create and update are supported")
-	}
-	schema := &operatorv1alpha1.PtahSchema{}
-	if err := h.Decoder.Decode(req, schema); err != nil {
-		return cradmission.Errored(http.StatusBadRequest, fmt.Errorf("decode schema: %w", err))
-	}
-	specChanged := req.Operation == admissionv1.Create
-	if req.Operation == admissionv1.Update {
-		old := &operatorv1alpha1.PtahSchema{}
-		if err := h.Decoder.DecodeRaw(req.OldObject, old); err != nil {
-			return cradmission.Errored(http.StatusBadRequest, fmt.Errorf("decode previous schema: %w", err))
-		}
-		if specChanged = !reflect.DeepEqual(schema.Spec, old.Spec); !specChanged {
-			carrySpecWriter(schema, old)
-		}
-	}
-	if specChanged {
-		stampSpecWriter(schema, req.UserInfo)
-	}
-	mutated, err := json.Marshal(schema)
-	if err != nil {
-		return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("encode stamped schema: %w", err))
-	}
-	return cradmission.PatchResponseFromRaw(req.Object.Raw, mutated)
+	return specWriterResponse(req)
 }
 
 // MigrationSpecWriterHandler is SchemaSpecWriterHandler's counterpart for
@@ -124,31 +152,7 @@ func (h *MigrationSpecWriterHandler) Handle(_ context.Context, req cradmission.R
 	if h.Decoder == nil {
 		return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("spec-writer webhook is not initialized"))
 	}
-	if req.Operation != admissionv1.Create && req.Operation != admissionv1.Update {
-		return cradmission.Denied("only create and update are supported")
-	}
-	migration := &operatorv1alpha1.PtahMigration{}
-	if err := h.Decoder.Decode(req, migration); err != nil {
-		return cradmission.Errored(http.StatusBadRequest, fmt.Errorf("decode migration: %w", err))
-	}
-	specChanged := req.Operation == admissionv1.Create
-	if req.Operation == admissionv1.Update {
-		old := &operatorv1alpha1.PtahMigration{}
-		if err := h.Decoder.DecodeRaw(req.OldObject, old); err != nil {
-			return cradmission.Errored(http.StatusBadRequest, fmt.Errorf("decode previous migration: %w", err))
-		}
-		if specChanged = !reflect.DeepEqual(migration.Spec, old.Spec); !specChanged {
-			carrySpecWriter(migration, old)
-		}
-	}
-	if specChanged {
-		stampSpecWriter(migration, req.UserInfo)
-	}
-	mutated, err := json.Marshal(migration)
-	if err != nil {
-		return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("encode stamped migration: %w", err))
-	}
-	return cradmission.PatchResponseFromRaw(req.Object.Raw, mutated)
+	return specWriterResponse(req)
 }
 
 // refuseSelfApproval enforces the four-eyes control once a resource opts into

@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -355,4 +356,74 @@ func TestMigrationSpecWriterProducesNoPatchForAFinalizerOnlyUpdate(t *testing.T)
 		}
 		t.Fatalf("a finalizer-only update with an already-correct writer produced a patch: %s", patchJSON)
 	}
+}
+
+// The webhook records who wrote the spec; it must not edit the spec. A patch
+// computed from a re-encoded typed object rewrote the author's own values -- an
+// interval of "10m" came back as "10m0s", and a field this binary does not know
+// was dropped -- so every operation has to stay under the two reserved keys.
+func TestSpecWriterPatchesOnlyItsAnnotations(t *testing.T) {
+	t.Parallel()
+
+	user := authenticationv1.UserInfo{Username: "alice@example.com", UID: "idp-123"}
+	for _, test := range []struct {
+		name    string
+		handler cradmission.Handler
+		raw     string
+	}{
+		{
+			name:    "schema",
+			handler: &SchemaSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			raw: `{"apiVersion":"operator.ptah.run/v1alpha1","kind":"PtahSchema",` +
+				`"metadata":{"namespace":"team-a","name":"app","annotations":{"kept":"yes"}},` +
+				`"spec":{"interval":"10m","futureField":{"added":"by a newer API"},` +
+				`"policy":{"allowDestructive":false,"lockTimeout":"30s"}}}`,
+		},
+		{
+			name:    "migration without annotations",
+			handler: &MigrationSpecWriterHandler{Decoder: cradmission.NewDecoder(specWriterScheme(t))},
+			raw: `{"apiVersion":"operator.ptah.run/v1alpha1","kind":"PtahMigration",` +
+				`"metadata":{"namespace":"team-a","name":"app"},` +
+				`"spec":{"interval":"10m","futureField":1}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := cradmission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+				UID: "admission-uid", Namespace: "team-a", Name: "app",
+				Operation: admissionv1.Create, Object: runtime.RawExtension{Raw: []byte(test.raw)}, UserInfo: user,
+			}}
+			response := test.handler.Handle(context.Background(), request)
+			if !response.Allowed {
+				t.Fatalf("Handle() denied a create: %#v", response.Result)
+			}
+			if len(response.Patches) == 0 {
+				t.Fatal("Handle() stamped nothing on a create")
+			}
+			for _, patch := range response.Patches {
+				if !strings.HasPrefix(patch.Path, "/metadata/annotations") {
+					t.Fatalf("patch %s %s reaches outside the reserved annotations", patch.Operation, patch.Path)
+				}
+				if patch.Path == "/metadata/annotations" && patch.Operation != "add" {
+					t.Fatalf("patch %s %s replaces the whole annotation map", patch.Operation, patch.Path)
+				}
+			}
+		})
+	}
+}
+
+// stampSpecWriter records user on object the way the webhook's patch does, for
+// fixtures that need a resource whose spec someone already wrote.
+func stampSpecWriter(object metav1.Object, user authenticationv1.UserInfo) {
+	annotations := object.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[LastSpecWriterUsernameAnnotation] = user.Username
+	if user.UID != "" {
+		annotations[LastSpecWriterUIDAnnotation] = user.UID
+	} else {
+		delete(annotations, LastSpecWriterUIDAnnotation)
+	}
+	object.SetAnnotations(annotations)
 }
