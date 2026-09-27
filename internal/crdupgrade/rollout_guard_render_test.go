@@ -151,24 +151,21 @@ func verifyRenderedRolloutGuardFamily(t *testing.T, path string) {
 			t.Fatalf("%v\n%s", err, renderedSpecDifference(policy, guard.hookIdentityProbePolicy()))
 		}
 	})
-	// The pre-cutover admission convergence sentinel reads each dependency
-	// blueprint back through the typed client and holds it to the blueprint's
-	// ownership and spec; the rendered objects are what it will read.
+	// Predecessor retirement reads each blueprint pair back through the typed
+	// client and seals it into the release inventory; the rendered objects are
+	// what it will read.
 	blueprints, err := predecessorRetirementPairBlueprints(guard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, blueprint := range blueprints {
-		t.Run("sentinel dependency "+blueprint.name, func(t *testing.T) {
+		t.Run("retirement inventory "+blueprint.name, func(t *testing.T) {
 			policy, binding := policies[blueprint.name], bindings[blueprint.name]
 			if policy == nil || binding == nil {
 				t.Fatalf("rendered chart is missing dependency %s", blueprint.name)
 			}
 			if err := blueprint.verifyPolicy(policy); err != nil {
 				t.Fatal(err)
-			}
-			if err := verifyAdmissionConvergenceDependencyMetadata(policy.ObjectMeta, blueprint.policy); err != nil {
-				t.Fatalf("%v\n  rendered annotations %v labels %v\n  blueprint annotations %v labels %v", err, policy.Annotations, policy.Labels, blueprint.policy.GetAnnotations(), blueprint.policy.GetLabels())
 			}
 			if err := blueprint.verifyBinding(binding); err != nil {
 				t.Fatal(err)
@@ -187,9 +184,6 @@ func verifyRenderedRolloutGuardFamily(t *testing.T, path string) {
 			}
 			if err := verifyCurrentRetirementBinding(storedBinding, blueprint); err != nil {
 				t.Fatalf("retirement inventory would refuse the rendered binding: %v", err)
-			}
-			if err := verifyAdmissionConvergenceDependencyMetadata(binding.ObjectMeta, blueprint.binding); err != nil {
-				t.Fatalf("%v\n  rendered annotations %v labels %v\n  blueprint annotations %v labels %v", err, binding.Annotations, binding.Labels, blueprint.binding.GetAnnotations(), blueprint.binding.GetLabels())
 			}
 		})
 	}

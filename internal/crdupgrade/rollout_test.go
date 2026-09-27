@@ -258,7 +258,7 @@ func assertRenderedCertificatePortContract(
 		portExpression,
 	)
 	want := fmt.Sprintf(
-		`variables.isAnyAdmissionConvergenceProbe || (variables.stopTransition || variables.newRelease != 1 || (%s))`,
+		`variables.stopTransition || variables.newRelease != 1 || (%s)`,
 		portExpression,
 	)
 	matches := 0
@@ -335,7 +335,7 @@ func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	reconcileJob := guard.hookJobName("reconcile")
 	quiesceJob := guard.hookJobName("teardown-quiesce")
 	teardownJob := guard.hookJobName("teardown")
-	policy := stripAdmissionConvergenceDependencyProbe(t, guard.hookIdentityPolicy())
+	policy := guard.hookIdentityPolicy()
 	wantMatch := fmt.Sprintf(
 		`request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
 		guard.ReleaseNamespace, guard.HookServiceAccountName, teardownServiceAccount, guard.HookServiceAccountName, teardownServiceAccount,

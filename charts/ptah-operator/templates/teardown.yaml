@@ -34,7 +34,6 @@
 {{- $hookIdentityGuardName := include "ptah-operator.hookIdentityGuardPolicyName" . -}}
 {{- $hookProbeGuardName := include "ptah-operator.hookIdentityProbeGuardPolicyName" . -}}
 {{- $activationGuardName := include "ptah-operator.releaseActivationGuardPolicyName" . -}}
-{{- $admissionConvergenceGuardName := include "ptah-operator.admissionConvergencePolicyName" . -}}
 {{- $admissionConvergenceMarkerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
 {{- $serviceAccountOriginGuardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" . -}}
 {{- $controllerWriteGuardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
@@ -119,7 +118,6 @@ rules:
       - {{ $hookIdentityGuardName }}
       - {{ $hookProbeGuardName }}
       - {{ $activationGuardName }}
-      - {{ $admissionConvergenceGuardName }}
       - {{ $serviceAccountObjectGuardName }}
       - {{ $serviceAccountOriginGuardName }}
       - {{ $controllerWriteGuardName }}
@@ -641,7 +639,6 @@ rules:
       - {{ $hookIdentityGuardName }}
       - {{ $hookProbeGuardName }}
       - {{ $activationGuardName }}
-      - {{ $admissionConvergenceGuardName }}
       - {{ $serviceAccountObjectGuardName }}
       - {{ $serviceAccountOriginGuardName }}
       - {{ $controllerWriteGuardName }}
@@ -665,9 +662,6 @@ rules:
       - {{ $certificateName }}
       {{- end }}
     verbs: ["get"]
-  - apiGroups: ["authorization.k8s.io"]
-    resources: ["subjectaccessreviews", "selfsubjectaccessreviews"]
-    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -686,7 +680,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["list", "watch"]
+    verbs: ["list"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames:
@@ -744,7 +738,7 @@ metadata:
 rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
-    verbs: ["list", "watch"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

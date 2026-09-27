@@ -177,12 +177,11 @@ func admitsMigrationPlan(t *testing.T, object map[string]any, controllerImage st
 			"request":   map[string]any{"operation": "CREATE"},
 			"params":    map[string]any{},
 			"variables": map[string]any{
-				"activeControllerImage":          controllerImage,
-				"activeControllerState":          int64(ourStateVersion),
-				"activeControllerStateString":    ourStateVersionString(),
-				"activeRelease":                  int64(2),
-				"previousRelease":                int64(1),
-				"isAnyAdmissionConvergenceProbe": false,
+				"activeControllerImage":       controllerImage,
+				"activeControllerState":       int64(ourStateVersion),
+				"activeControllerStateString": ourStateVersionString(),
+				"activeRelease":               int64(2),
+				"previousRelease":             int64(1),
 			},
 		})
 		if err != nil {

@@ -202,8 +202,9 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{ if ne .Release.Namespace "default" }}
 ---
-# Direct API-server convergence discovers only the default Kubernetes
-# Service. Keep that discovery authority in the one namespace it reads.
+# Nothing lists these EndpointSlices any more, but the release inventories
+# still pin this grant. Keep it in the one namespace it names until they drop
+# it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -271,7 +272,6 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ include "ptah-operator.admissionConvergencePolicyName" . }}
       - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}

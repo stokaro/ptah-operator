@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -114,7 +113,7 @@ func TestControllerRBACTransitionAcceptsSingleSubjectWithNilFixedSubjects(t *tes
 	}
 }
 
-func TestControllerRBACTransitionCredentialGraceDecision(t *testing.T) {
+func TestControllerRBACTransitionCredentialDrainDecision(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -224,31 +223,31 @@ func TestControllerRBACTransitionCredentialGraceDecision(t *testing.T) {
 				}
 				state.DrainAttempt = attempt
 			}
-			got, err := transition.RequiresCredentialGrace(state, test.pods)
+			got, err := transition.RequiresCredentialDrain(state, test.pods)
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("RequiresCredentialGrace() error = %v, want containing %q", err, test.wantErr)
+					t.Fatalf("RequiresCredentialDrain() error = %v, want containing %q", err, test.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("RequiresCredentialGrace() error = %v", err)
+				t.Fatalf("RequiresCredentialDrain() error = %v", err)
 			}
 			if got != test.want {
-				t.Fatalf("RequiresCredentialGrace() = %t, want %t", got, test.want)
+				t.Fatalf("RequiresCredentialDrain() = %t, want %t", got, test.want)
 			}
 		})
 	}
 }
 
-func TestControllerRBACTransitionCredentialGraceRequiresPreflight(t *testing.T) {
+func TestControllerRBACTransitionCredentialDrainRequiresPreflight(t *testing.T) {
 	t.Parallel()
 	fixture := newControllerRBACTransitionFixture(t, 0)
-	_, err := fixture.transition.RequiresCredentialGrace(ReleaseActivationState{
+	_, err := fixture.transition.RequiresCredentialDrain(ReleaseActivationState{
 		ControllerCredentialPhase: ControllerCredentialsActive,
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "preflight has not completed") {
-		t.Fatalf("RequiresCredentialGrace() error = %v, want preflight refusal", err)
+		t.Fatalf("RequiresCredentialDrain() error = %v, want preflight refusal", err)
 	}
 }
 
@@ -405,46 +404,6 @@ func TestControllerRBACTransitionFrozenRuntimeRoleValidation(t *testing.T) {
 	}
 }
 
-func TestControllerRBACTransitionFrozenRuntimeRoleAuthorizationProbe(t *testing.T) {
-	t.Parallel()
-	fixture := newControllerRBACTransitionFixture(t, 0)
-	probe, err := fixture.transition.PredecessorAuthorizationProbe()
-	if err != nil {
-		t.Fatalf("PredecessorAuthorizationProbe() error = %v", err)
-	}
-	wantSubject := AuthorizationSubject{
-		Name:   "previous-controller",
-		User:   "system:serviceaccount:" + fixture.guard.ReleaseNamespace + ":" + fixture.guard.PreviousControllerServiceAccountName,
-		UID:    string(fixture.guard.PreviousControllerServiceAccountUID),
-		Groups: []string{"system:serviceaccounts", "system:serviceaccounts:" + fixture.guard.ReleaseNamespace, "system:authenticated"},
-	}
-	if !reflect.DeepEqual(probe.Subject, wantSubject) {
-		t.Fatalf("authorization subject = %#v, want %#v", probe.Subject, wantSubject)
-	}
-	want := authorizationv1.ResourceAttributes{
-		Namespace: fixture.guard.ReleaseNamespace,
-		Verb:      "update",
-		Group:     "",
-		Version:   "v1",
-		Resource:  "configmaps",
-		Name:      AdmissionConvergenceMarkerName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 1),
-	}
-	candidateMarker := AdmissionConvergenceMarkerName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 2)
-	matched := 0
-	for _, check := range probe.Checks {
-		if reflect.DeepEqual(check.ResourceAttributes, &want) {
-			matched++
-		}
-		if attributes := check.ResourceAttributes; attributes != nil && attributes.Resource == "configmaps" &&
-			attributes.Verb == "update" && attributes.Name == candidateMarker {
-			t.Error("predecessor authorization probe uses the candidate admission marker")
-		}
-	}
-	if matched != 1 {
-		t.Fatalf("exact sequence-1 admission marker update checks = %d, want 1", matched)
-	}
-}
-
 func TestControllerRBACTransitionFrozenRuntimeRoleCandidateRulesRequireCompleteCutover(t *testing.T) {
 	t.Parallel()
 	for cursor := 0; cursor <= 4; cursor++ {
@@ -497,8 +456,6 @@ func TestFrozenPredecessorRuntimeRoleRules(t *testing.T) {
 			want := []rbacv1.PolicyRule{
 				{APIGroups: []string{""}, Resources: []string{"serviceaccounts"}, ResourceNames: []string{fixture.guard.PreviousControllerServiceAccountName, fixture.runtimeContract.CertificateServiceAccountName}, Verbs: []string{"get"}},
 				{APIGroups: []string{""}, Resources: []string{"limitranges"}, Verbs: []string{"list"}},
-				{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{AdmissionConvergenceMarkerName(namespace, fixture.guard.ReleaseName, 1)}, Verbs: []string{"get", "update"}},
-				{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{ReleaseActivationName}, Verbs: []string{"get"}},
 			}
 			if namespace == corev1.NamespaceDefault {
 				want = append(want, rbacv1.PolicyRule{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"list"}})
@@ -581,7 +538,6 @@ func TestFrozenPredecessorRulesFollowThePredecessorIdentity(t *testing.T) {
 			HookIdentityGuardPolicyName(namespace, release, 1, managerImage),
 			HookIdentityProbeGuardPolicyName(namespace, release, 1, managerImage),
 			ReleaseActivationGuardPolicyName(namespace, release),
-			AdmissionConvergencePolicyName(namespace, release),
 			ServiceAccountObjectGuardPolicyName(namespace, release),
 			ServiceAccountOriginGuardPolicyName(namespace, release, 1, managerImage),
 			ControllerWriteGuardPolicyName(namespace, release, 1, managerImage),
@@ -1073,51 +1029,6 @@ func TestControllerRBACTransitionRechecksPostApplyServiceAccountAndRoleVersions(
 			}
 		})
 	}
-}
-
-func TestControllerRBACPredecessorAuthorizationProbeCoversExactPredecessorUnion(t *testing.T) {
-	t.Parallel()
-	fixture := newControllerRBACTransitionFixture(t, 4)
-	probe, err := fixture.transition.PredecessorAuthorizationProbe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if probe.Subject.Name != "previous-controller" ||
-		probe.Subject.User != "system:serviceaccount:ptah-system:previous-controller" ||
-		probe.Subject.UID != string(fixture.guard.PreviousControllerServiceAccountUID) {
-		t.Fatalf("probe subject = %#v", probe.Subject)
-	}
-	if got, want := len(probe.Checks), 124; got != want {
-		t.Fatalf("predecessor authorization checks = %d, want complete %d-check union", got, want)
-	}
-	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "list", "operator.ptah.run", "ptahschemas", "", "")
-	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "watch", "operator.ptah.run", "ptahrealms", "", "")
-	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "watch", "batch", "jobs", "", "")
-	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "get", "", "pods", "log", "ptah-controller-rbac-revocation-probe")
-	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "update", "", "events", "", "ptah-controller-rbac-revocation-probe")
-	assertControllerRBACCheck(t, probe.Checks, "ptah-coordination", "create", "coordination.k8s.io", "leases", "", "")
-	for _, check := range probe.Checks {
-		if check.ResourceAttributes == nil {
-			t.Fatalf("check %q is not a resource check", check.Name)
-		}
-	}
-}
-
-func assertControllerRBACCheck(
-	t *testing.T,
-	checks []AuthorizationCheck,
-	namespace, verb, group, resource, subresource, name string,
-) {
-	t.Helper()
-	for _, check := range checks {
-		attributes := check.ResourceAttributes
-		if attributes != nil && attributes.Namespace == namespace && attributes.Verb == verb &&
-			attributes.Group == group && attributes.Resource == resource &&
-			attributes.Subresource == subresource && attributes.Name == name {
-			return
-		}
-	}
-	t.Fatalf("missing authorization check namespace=%q verb=%q group=%q resource=%q subresource=%q name=%q", namespace, verb, group, resource, subresource, name)
 }
 
 func assertControllerRBACJSONPatch(

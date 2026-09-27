@@ -68,7 +68,7 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 	assertTransitionRenderNoResourceVerb(t, role, "rbac.authorization.k8s.io", "rolebindings", "patch")
 	assertTransitionRenderNoResourceVerb(t, role, "rbac.authorization.k8s.io", "roles", "get")
 	assertTransitionRenderNoResourceVerb(t, role, "rbac.authorization.k8s.io", "clusterroles", "bind")
-	assertTransitionRenderRule(t, role, "authorization.k8s.io", "subjectaccessreviews", nil, []string{"create"})
+	assertTransitionRenderNoResourceVerb(t, role, "authorization.k8s.io", "subjectaccessreviews", "create")
 	assertTransitionRenderNoResourceVerb(t, role, "discovery.k8s.io", "endpointslices", "list")
 	assertTransitionRenderNoBindingCreate(t, role)
 
@@ -194,7 +194,8 @@ func TestControllerRBACCutoverHookNamespacesMatchRetirementInventory(t *testing.
 					}
 					seenRoles[namespace] = true
 					if namespace == rollout.ReleaseNamespace {
-						assertTransitionRenderRule(t, object, "", "pods", nil, []string{"list", "watch"})
+						assertTransitionRenderRule(t, object, "", "pods", nil, []string{"list"})
+						assertTransitionRenderNoResourceVerb(t, object, "", "pods", "watch")
 					} else {
 						assertTransitionRenderNoResourceVerb(t, object, "", "pods", "list")
 						assertTransitionRenderNoResourceVerb(t, object, "", "pods", "watch")
@@ -235,7 +236,8 @@ func TestControllerRBACCutoverHookNamespacesMatchRetirementInventory(t *testing.
 				t.Fatal(err)
 			}
 			residualRole := findTransitionRenderObjectInNamespace(t, objects, "Role", namespaces[0], residual)
-			assertTransitionRenderRule(t, residualRole, "", "pods", nil, []string{"list", "watch"})
+			assertTransitionRenderRule(t, residualRole, "", "pods", nil, []string{"list"})
+			assertTransitionRenderNoResourceVerb(t, residualRole, "", "pods", "watch")
 			for _, namespace := range []string{namespaces[0], namespaces[1], "default"} {
 				findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hook, namespace, false)
 				found := false

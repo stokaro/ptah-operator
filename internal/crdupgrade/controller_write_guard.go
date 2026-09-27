@@ -178,12 +178,6 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 			},
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy
 }
 
@@ -204,7 +198,6 @@ func (g *ControllerWriteGuard) binding() *admissionregistrationv1.ValidatingAdmi
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding
 }
 

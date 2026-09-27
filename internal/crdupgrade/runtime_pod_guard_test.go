@@ -231,7 +231,7 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Fatal("runtime Pod identity policy is not fail-closed")
 	}
-	native := stripAdmissionConvergenceDependencyProbe(t, policy)
+	native := policy
 	if len(native.Spec.MatchConditions) != 2 || native.Spec.MatchConditions[0].Expression != wantMatch ||
 		native.Spec.MatchConditions[1].Name != "activation-gated-runtime-pod" ||
 		native.Spec.MatchConditions[1].Expression != guard.runtimePodActivationMatchExpression() {

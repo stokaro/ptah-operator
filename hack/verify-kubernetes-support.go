@@ -4185,9 +4185,13 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("late activation exact candidate binding inventory", `fail "late failure did not leave the exact namespace-scoped candidate bindings with the predecessor removed"`),
 				exactSourceLine("late activation predecessor authorization inventory", `for late_probe in schema runtime coordination discovery; do`),
 				exactSourceLineSequence("late activation predecessor authorization denial", []string{
-					`jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \`,
-					`"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null ||`,
-					`fail "late failure retained predecessor $late_probe authorization"`,
+					`if jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \`,
+					`"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null; then`,
+					`break`,
+					`fi`,
+					`if [ "$(date +%s)" -ge "$late_authorization_deadline" ]; then`,
+					`fail "late failure retained predecessor $late_probe authorization for 30s after the cutover; last review status: $(jq -c '.status' "$WORK_DIR/late-activation-${late_probe}-authorization.json")"`,
+					`fi`,
 				}),
 				exactSourceLine("late activation failure implementation", `prove_late_activation_failure_recovery() {`),
 				exactSourceLineSequence("late activation candidate input snapshot", []string{
@@ -4994,10 +4998,10 @@ const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captu
 		--failure-class-file "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
 		--timeout 3m >/dev/null 2>&1 &
 	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!
-	# The reconcile hook waits on the controller credential fence before it
-	# reports, and the blocker holds that fence for as long as the proof needs.
-	# Silence there is the scenario, not an unavailable stream, so this capture
-	# waits for the hook rather than for its first byte.
+	# The reconcile hook stops the runtime and waits for its Pods to go before
+	# it reaches the activation write the blocker refuses, and it may say
+	# nothing until then. Silence there is the scenario, not an unavailable
+	# stream, so this capture waits for the hook rather than for its first byte.
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
 		--kubeconfig "$E2E_KUBECONFIG" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" \

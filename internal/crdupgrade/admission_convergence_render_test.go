@@ -22,7 +22,7 @@ func TestAdmissionConvergenceInventoryRenderRejectsForeignAttemptIdentity(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	end := strings.Index(string(source), `{{- $policyName :=`)
+	end := strings.Index(string(source), `{{- /* The sequence-keyed admission marker.`)
 	if end < 0 {
 		t.Fatal("admission convergence helper boundary is missing")
 	}

@@ -30,12 +30,8 @@ import (
 )
 
 const (
-	defaultTimeout                   = 2 * time.Minute
-	retiredCredentialRevocationDelay = 65 * time.Second
-	// Compensating a drain runs after the failure it compensates, often the
-	// expiry of the deadline that carried the cutover.
-	abandonDrainTimeout = 30 * time.Second
-	supportedModes      = "image-check, identity-probe, preflight, reconcile, teardown-retirement-probe-a, teardown-retirement-gate, teardown-quiesce, teardown, teardown-retirement-final, verify, or runtime-verify"
+	defaultTimeout = 2 * time.Minute
+	supportedModes = "image-check, identity-probe, preflight, reconcile, teardown-quiesce, teardown, teardown-retirement-final, verify, or runtime-verify"
 )
 
 func main() {
@@ -113,7 +109,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	runtimePodConfigExpressionsB64 := flags.String("runtime-pod-config-expressions-b64", "", "base64-encoded exact runtime Pod CEL expression array")
 	runtimeAdmissionContractB64 := flags.String("runtime-admission-contract-b64", "", "base64-encoded runtime Pod admission preflight contract")
 	verifyControllerState := flags.Bool("verify-controller-state", false, "reject controller downgrades incompatible with stored PtahSchema state")
-	verifyCertificateRecovery := flags.Bool("verify-certificate-recovery", false, "directly verify optional certificate Secret recovery admission on every API server")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -123,7 +118,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	if *timeout <= 0 {
 		return fmt.Errorf("timeout must be positive")
 	}
-	if mode != "image-check" && mode != "identity-probe" && mode != "preflight" && mode != "reconcile" && mode != "teardown-retirement-probe-a" && mode != "teardown-retirement-gate" && mode != "teardown-quiesce" && mode != "teardown" && mode != "teardown-retirement-final" && mode != "verify" && mode != "runtime-verify" {
+	if mode != "image-check" && mode != "identity-probe" && mode != "preflight" && mode != "reconcile" && mode != "teardown-quiesce" && mode != "teardown" && mode != "teardown-retirement-final" && mode != "verify" && mode != "runtime-verify" {
 		return fmt.Errorf("unsupported mode %q: use %s", mode, supportedModes)
 	}
 	if err := validateModeFlags(mode, flags); err != nil {
@@ -131,12 +126,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	}
 	if mode != "runtime-verify" && *verifyControllerState {
 		return fmt.Errorf("verify-controller-state is valid only in runtime-verify mode")
-	}
-	if mode != "runtime-verify" && *verifyCertificateRecovery {
-		return fmt.Errorf("verify-certificate-recovery is valid only in runtime-verify mode")
-	}
-	if *verifyControllerState && *verifyCertificateRecovery {
-		return fmt.Errorf("controller-state and certificate-recovery runtime verification are mutually exclusive")
 	}
 	var err error
 	controllerServiceAccountManaged := false
@@ -390,28 +379,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			ctx,
 			stateClients,
 			int64(controllerstate.CurrentVersion),
-			func(prepareCtx context.Context) (prepareErr error) {
-				// A drain fences the active release out of its own runtime. If
-				// this candidate begins one and then fails, it gives the fence
-				// back on the way out; otherwise an upgrade that changed nothing
-				// leaves the release unable to start until a later Helm
-				// operation succeeds. The compensation runs on its own deadline
-				// because the failure being compensated is often the expiry of
-				// this one.
-				drainBegun := false
-				defer func() {
-					if prepareErr == nil || !drainBegun {
-						return
-					}
-					abandonCtx, cancelAbandon := context.WithTimeout(
-						context.WithoutCancel(prepareCtx), abandonDrainTimeout)
-					defer cancelAbandon()
-					if abandonErr := rollout.AbandonControllerCredentialDrain(abandonCtx); abandonErr != nil {
-						prepareErr = fmt.Errorf(
-							"%w (the controller credential drain could not be abandoned: %v)",
-							prepareErr, abandonErr)
-					}
-				}()
+			func(prepareCtx context.Context) error {
 				if readyErr := serviceAccountObjectGuard.WaitReady(prepareCtx); readyErr != nil {
 					return fmt.Errorf("wait for stable ServiceAccount object guard: %w", readyErr)
 				}
@@ -427,13 +395,9 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				if prepareErr := rollout.Prepare(prepareCtx); prepareErr != nil {
 					return prepareErr
 				}
-				if verifyErr := rollout.Verify(prepareCtx); verifyErr != nil {
-					return fmt.Errorf("verify retained rollout guards before admission convergence: %w", verifyErr)
-				}
-				admissionGuard := crdupgrade.NewAdmissionConvergenceGuard(rollout)
-				activationState, verifyErr := admissionGuard.VerifyPreCutover(prepareCtx)
-				if verifyErr != nil {
-					return fmt.Errorf("verify pre-cutover admission convergence sentinel: %w", verifyErr)
+				activationState, stateErr := rollout.ReleaseActivationState(prepareCtx)
+				if stateErr != nil {
+					return fmt.Errorf("read release activation state before cutover: %w", stateErr)
 				}
 				if preflightErr := controllerRBACTransition.Preflight(prepareCtx); preflightErr != nil {
 					return fmt.Errorf("preflight exact controller RBAC transition: %w", preflightErr)
@@ -457,76 +421,20 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				if podInventoryErr != nil {
 					return fmt.Errorf("inventory protected runtime Pods before credential decision: %w", podInventoryErr)
 				}
-				requiresCredentialGrace, graceErr := controllerRBACTransition.RequiresCredentialGrace(activationState, protectedPodsRemain)
-				if graceErr != nil {
-					return fmt.Errorf("decide controller credential grace from durable preflight state: %w", graceErr)
+				requiresCredentialDrain, drainErr := controllerRBACTransition.RequiresCredentialDrain(activationState, protectedPodsRemain)
+				if drainErr != nil {
+					return fmt.Errorf("decide controller credential drain from durable preflight state: %w", drainErr)
 				}
-				if requiresCredentialGrace {
-					activationState, graceErr = rollout.BeginControllerCredentialDrain(prepareCtx)
-					if graceErr != nil {
-						return fmt.Errorf("begin controller credential drain: %w", graceErr)
+				if requiresCredentialDrain {
+					if _, drainErr = rollout.BeginControllerCredentialDrain(prepareCtx); drainErr != nil {
+						return fmt.Errorf("begin controller credential drain: %w", drainErr)
 					}
-					drainBegun = true
-				}
-
-				// The final sentinel is ordered after every retained release guard.
-				// Its tuple-specific denial proves its own controller credential
-				// fence on every directly addressed API server before quiescence or
-				// any RBAC grant moves.
-				admissionBarrier, barrierErr := newExpectedAdmissionConvergenceBarrier(
-					prepareCtx,
-					config,
-					clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-					admissionGuard,
-					serviceAccountObjectGuard,
-					activationState,
-				)
-				if barrierErr != nil {
-					return barrierErr
-				}
-				if barrierErr = admissionBarrier.Wait(prepareCtx); barrierErr != nil {
-					return fmt.Errorf("wait for admission convergence on every API server: %w", barrierErr)
-				}
-				if verifyErr := rollout.Verify(prepareCtx); verifyErr != nil {
-					return fmt.Errorf("re-verify retained rollout guards after admission convergence: %w", verifyErr)
-				}
-				if verifyErr := serviceAccountObjectGuard.Verify(prepareCtx); verifyErr != nil {
-					return fmt.Errorf("re-verify stable ServiceAccount object guard after admission convergence: %w", verifyErr)
-				}
-				if verifyErr := admissionGuard.VerifyState(prepareCtx, activationState); verifyErr != nil {
-					return fmt.Errorf("re-verify admission convergence sentinel: %w", verifyErr)
 				}
 				if sealErr := predecessorRetirement.SealCurrent(prepareCtx); sealErr != nil {
 					return fmt.Errorf("seal current admission inventory: %w", sealErr)
 				}
 				if verifyErr := predecessorRetirement.VerifyCurrentSealed(prepareCtx); verifyErr != nil {
 					return fmt.Errorf("verify sealed current admission inventory: %w", verifyErr)
-				}
-				sealedAdmissionBarrier, barrierErr := newSealedAdmissionConvergenceBarrier(
-					prepareCtx,
-					config,
-					clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-					admissionGuard,
-					serviceAccountObjectGuard,
-					activationState,
-				)
-				if barrierErr != nil {
-					return barrierErr
-				}
-				if barrierErr = sealedAdmissionBarrier.Wait(prepareCtx); barrierErr != nil {
-					return fmt.Errorf("wait for sealed admission convergence on every API server: %w", barrierErr)
-				}
-				if verifyErr := rollout.Verify(prepareCtx); verifyErr != nil {
-					return fmt.Errorf("re-verify retained rollout guards after sealed admission convergence: %w", verifyErr)
-				}
-				if verifyErr := serviceAccountObjectGuard.Verify(prepareCtx); verifyErr != nil {
-					return fmt.Errorf("re-verify stable ServiceAccount object guard after sealed admission convergence: %w", verifyErr)
-				}
-				if verifyErr := predecessorRetirement.VerifyCurrentSealed(prepareCtx); verifyErr != nil {
-					return fmt.Errorf("re-verify sealed current admission inventory after endpoint convergence: %w", verifyErr)
-				}
-				if verifyErr := admissionGuard.VerifySealedState(prepareCtx, activationState); verifyErr != nil {
-					return fmt.Errorf("re-verify sealed admission convergence sentinel: %w", verifyErr)
 				}
 				if preflightErr := predecessorRetirement.Preflight(prepareCtx); preflightErr != nil {
 					return fmt.Errorf("preflight predecessor admission retirement: %w", preflightErr)
@@ -540,31 +448,11 @@ func run(parent context.Context, args []string, output io.Writer) error {
 						return waitForNoProtectedRuntimePods(cutoverCtx, inventory, rollout.PollEvery)
 					},
 					controllerRBACTransition,
-					requiresCredentialGrace,
-					func(cutoverCtx context.Context) error {
-						observer, observeErr := newProtectedRuntimePodStabilityObserver(
-							inventory,
-							clientset.CoreV1().Pods(rollout.ReleaseNamespace),
-							rollout,
-						)
-						if observeErr != nil {
-							return observeErr
-						}
-						return sealedAdmissionBarrier.WaitWithStabilityObserver(
-							cutoverCtx,
-							retiredCredentialRevocationDelay,
-							observer,
-						)
-					},
-					func(cutoverCtx context.Context) (authorizationConvergenceWaiter, error) {
-						return newControllerRBACConvergenceBarrier(cutoverCtx, config, clientset, controllerRBACTransition)
-					},
 				); cutoverErr != nil {
 					return cutoverErr
 				}
 				// Re-read quota and admission inputs after the old runtime is fully
-				// stopped and predecessor authorization is denied on every advertised
-				// API server. Activation remains strictly after the RBAC identity
+				// stopped. Activation remains strictly after the RBAC identity
 				// snapshot has been reverified.
 				if quotaErr := quotaPreflight.WaitForCapacityAfterQuiesce(prepareCtx, rollout.PollEvery); quotaErr != nil {
 					return fmt.Errorf("recheck runtime ResourceQuota capacity before activation: %w", quotaErr)
@@ -578,27 +466,16 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				if verifyErr := predecessorRetirement.VerifyCurrentSealed(prepareCtx); verifyErr != nil {
 					return fmt.Errorf("re-verify sealed current admission inventory before activation: %w", verifyErr)
 				}
-				if verifyErr := admissionGuard.VerifySealedState(prepareCtx, activationState); verifyErr != nil {
-					return fmt.Errorf("re-verify sealed admission convergence state before activation: %w", verifyErr)
-				}
 				if activateErr := rollout.Activate(prepareCtx); activateErr != nil {
 					return activateErr
 				}
-				if retireErr := predecessorRetirement.Retire(
-					prepareCtx,
-					newPredecessorRetirementAdmissionBarrier(
-						config,
-						clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-						admissionGuard,
-						predecessorRetirement,
-					),
-				); retireErr != nil {
+				if retireErr := predecessorRetirement.Retire(prepareCtx); retireErr != nil {
 					return fmt.Errorf("retire predecessor admission inventory: %w", retireErr)
 				}
 				return nil
 			},
 		)
-	case "teardown-retirement-probe-a", "teardown-retirement-gate", "teardown-quiesce", "teardown", "teardown-retirement-final":
+	case "teardown-quiesce", "teardown", "teardown-retirement-final":
 		expected, expectedErr := runtimeInvariants(
 			*releaseName,
 			*releaseNamespace,
@@ -627,7 +504,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
-		err = runTeardownMode(ctx, mode, config, clientset, rollout, runtimeAdmissionContract)
+		err = runTeardownMode(ctx, mode, clientset, rollout, runtimeAdmissionContract)
 	case "verify":
 		err = manager.Verify(ctx)
 	case "runtime-verify":
@@ -665,43 +542,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		serviceAccountObjectGuard := crdupgrade.NewServiceAccountObjectGuard(rollout)
 		if verifyErr := serviceAccountObjectGuard.WaitReady(ctx); verifyErr != nil {
 			return fmt.Errorf("wait for stable ServiceAccount object guard: %w", verifyErr)
-		}
-		admissionGuard := crdupgrade.NewAdmissionConvergenceGuard(rollout)
-		admissionBarrier, barrierErr := newRuntimeAdmissionConvergenceBarrier(
-			ctx,
-			config,
-			clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-			admissionGuard,
-			serviceAccountObjectGuard,
-		)
-		if barrierErr != nil {
-			return barrierErr
-		}
-		if barrierErr = admissionBarrier.Wait(ctx); barrierErr != nil {
-			return fmt.Errorf("wait for runtime admission convergence on every API server: %w", barrierErr)
-		}
-		if verifyErr := rollout.Verify(ctx); verifyErr != nil {
-			return fmt.Errorf("re-verify persistent rollout guards after admission convergence: %w", verifyErr)
-		}
-		if verifyErr := admissionGuard.VerifyRuntime(ctx); verifyErr != nil {
-			return fmt.Errorf("re-verify runtime admission convergence sentinel: %w", verifyErr)
-		}
-		if *verifyCertificateRecovery {
-			recoveryBarrier, recoveryErr := newCertificateRecoveryConvergenceBarrier(
-				ctx,
-				config,
-				clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-				expected.ReleaseNamespace,
-				expected.CertificateDeploymentName,
-				expected.CertificateDeploymentName,
-				*webhookSecretName,
-			)
-			if recoveryErr != nil {
-				return fmt.Errorf("configure optional certificate recovery convergence: %w", recoveryErr)
-			}
-			if recoveryErr = recoveryBarrier.Wait(ctx); recoveryErr != nil {
-				return fmt.Errorf("wait for optional certificate recovery admission on every API server: %w", recoveryErr)
-			}
 		}
 		admissionPreflight, preflightErr := newRuntimeAdmissionPreflight(clientset, expected, runtimeAdmissionContract)
 		if preflightErr != nil {
@@ -743,14 +583,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	}
 	if mode == "identity-probe" {
 		_, err = fmt.Fprintln(output, "privileged hook identity policy is ready and enforcing")
-		return err
-	}
-	if mode == "teardown-retirement-probe-a" {
-		_, err = fmt.Fprintln(output, "first teardown retirement fence is ready and enforcing")
-		return err
-	}
-	if mode == "teardown-retirement-gate" {
-		_, err = fmt.Fprintln(output, "teardown retirement fences and target inventory are ready")
 		return err
 	}
 	if mode == "teardown-quiesce" {
@@ -900,12 +732,11 @@ func newRolloutGuard(
 func runTeardownMode(
 	ctx context.Context,
 	mode string,
-	config *rest.Config,
 	clientset kubernetes.Interface,
 	rollout *crdupgrade.RolloutGuard,
 	contract crdupgrade.RuntimeAdmissionContract,
 ) error {
-	if ctx == nil || config == nil || clientset == nil || rollout == nil {
+	if ctx == nil || clientset == nil || rollout == nil {
 		return errors.New("teardown mode dependencies are required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -926,58 +757,6 @@ func runTeardownMode(
 	}
 
 	switch mode {
-	case "teardown-retirement-probe-a":
-		if err := guard.VerifyOriginalFences(ctx, policies, bindings, crdupgrade.TeardownFenceA); err != nil {
-			return fmt.Errorf("verify first teardown retirement fence: %w", err)
-		}
-		barrier, err := newTeardownRetirementFenceBarrier(
-			ctx,
-			config,
-			clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-			guard,
-			policies,
-			bindings,
-			crdupgrade.TeardownFenceA,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare first teardown retirement fence barrier: %w", err)
-		}
-		if err := bindTeardownRetirementPhase(barrier, guard, configMaps, phase, nil); err != nil {
-			return err
-		}
-		if err := barrier.Wait(ctx); err != nil {
-			return fmt.Errorf("wait for first teardown retirement fence on every API server: %w", err)
-		}
-		return nil
-
-	case "teardown-retirement-gate":
-		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, false); err != nil {
-			return fmt.Errorf("preflight teardown retirement gate: %w", err)
-		}
-		barrier, err := newTeardownRetirementFenceBarrier(
-			ctx,
-			config,
-			clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-			guard,
-			policies,
-			bindings,
-			crdupgrade.TeardownFenceA,
-			crdupgrade.TeardownFenceB,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare teardown retirement gate barrier: %w", err)
-		}
-		if err := bindTeardownRetirementPhase(barrier, guard, configMaps, phase, func(verifyCtx context.Context) error {
-			_, verifyErr := guard.PreflightPairsForPhase(verifyCtx, policies, bindings, phase)
-			return verifyErr
-		}); err != nil {
-			return err
-		}
-		if err := barrier.Wait(ctx); err != nil {
-			return fmt.Errorf("wait for teardown retirement gate on every API server: %w", err)
-		}
-		return nil
-
 	case "teardown-quiesce":
 		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, false); err != nil {
 			return fmt.Errorf("preflight teardown retirement state before quiescence: %w", err)
@@ -998,26 +777,8 @@ func runTeardownMode(
 				return fmt.Errorf("begin teardown controller credential drain: %w", err)
 			}
 		}
-		barrier, err := newTeardownRetirementFenceBarrier(
-			ctx,
-			config,
-			clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-			guard,
-			policies,
-			bindings,
-			crdupgrade.TeardownFenceA,
-			crdupgrade.TeardownFenceB,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare teardown credential admission fence: %w", err)
-		}
-		if err := bindTeardownRetirementPhase(barrier, guard, configMaps, phase, func(verifyCtx context.Context) error {
-			return verifyTeardownRetirementTransitionInventory(verifyCtx, guard, configMaps, policies, bindings, phase, true)
-		}); err != nil {
-			return err
-		}
-		if err := barrier.Wait(ctx); err != nil {
-			return fmt.Errorf("wait for teardown credential admission fence on every API server: %w", err)
+		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, true); err != nil {
+			return fmt.Errorf("verify teardown retirement state after the credential drain: %w", err)
 		}
 		if err := rollout.Quiesce(ctx); err != nil {
 			return fmt.Errorf("quiesce release runtime: %w", err)
@@ -1038,34 +799,6 @@ func runTeardownMode(
 		if err := privilegeTeardown.Preflight(ctx); err != nil {
 			return fmt.Errorf("preflight exact privilege teardown inventory: %w", err)
 		}
-		barrier, err := newTeardownRetirementFenceBarrier(
-			ctx,
-			config,
-			clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-			guard,
-			policies,
-			bindings,
-			crdupgrade.TeardownFenceA,
-			crdupgrade.TeardownFenceB,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare teardown retirement admission barrier: %w", err)
-		}
-		if err := bindTeardownRetirementPhase(barrier, guard, configMaps, phase, func(verifyCtx context.Context) error {
-			return verifyTeardownRetirementTransitionInventory(verifyCtx, guard, configMaps, policies, bindings, phase, true)
-		}); err != nil {
-			return err
-		}
-		convergence, err := newTeardownRBACConvergenceBarrier(ctx, config, clientset, rollout, contract)
-		if err != nil {
-			return fmt.Errorf("prepare API-server authorization convergence barrier: %w", err)
-		}
-		if err := convergence.Validate(); err != nil {
-			return fmt.Errorf("validate API-server authorization convergence barrier: %w", err)
-		}
-		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, true); err != nil {
-			return fmt.Errorf("recheck teardown retirement state before privilege removal: %w", err)
-		}
 		if rollout.CertificateRuntimeEnabled {
 			if err := crdupgrade.NewStagingSecretGuard(rollout).Cleanup(
 				ctx,
@@ -1076,26 +809,6 @@ func runTeardownMode(
 		}
 		if err := privilegeTeardown.Teardown(ctx); err != nil {
 			return fmt.Errorf("remove release privilege: %w", err)
-		}
-		inventory := newWorkloadInventory(clientset, rollout)
-		podObserver, err := newProtectedRuntimePodStabilityObserver(
-			inventory,
-			clientset.CoreV1().Pods(rollout.ReleaseNamespace),
-			rollout,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare protected runtime Pod stability observer: %w", err)
-		}
-		credentialObserver, err := newCredentialRevocationStabilityObserver(
-			convergence,
-			podObserver,
-			privilegeTeardown.Preflight,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare joint teardown credential revocation observer: %w", err)
-		}
-		if err := barrier.WaitWithStabilityObserver(ctx, retiredCredentialRevocationDelay, credentialObserver); err != nil {
-			return fmt.Errorf("wait for uninterrupted teardown admission, authorization, stored-state, and protected-Pod fence: %w", err)
 		}
 		return nil
 
@@ -1109,68 +822,6 @@ func runTeardownMode(
 		}
 		if err := privilegeTeardown.Preflight(ctx); err != nil {
 			return fmt.Errorf("preflight exact privilege teardown inventory: %w", err)
-		}
-		barrier, err := newTeardownRetirementFinalBarrier(
-			ctx,
-			config,
-			clientset.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault),
-			guard,
-			policies,
-			bindings,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare final teardown retirement admission barrier: %w", err)
-		}
-		if err := bindTeardownRetirementPhase(barrier, guard, configMaps, phase, func(verifyCtx context.Context) error {
-			return verifyTeardownRetirementDrainAuthorization(verifyCtx, guard, configMaps, phase)
-		}); err != nil {
-			return err
-		}
-		convergence, err := newTeardownRBACConvergenceBarrier(ctx, config, clientset, rollout, contract)
-		if err != nil {
-			return fmt.Errorf("prepare final API-server authorization convergence barrier: %w", err)
-		}
-		if err := convergence.Validate(); err != nil {
-			return fmt.Errorf("validate final API-server authorization convergence barrier: %w", err)
-		}
-		inventory := newWorkloadInventory(clientset, rollout)
-		podObserver, err := newProtectedRuntimePodStabilityObserver(
-			inventory,
-			clientset.CoreV1().Pods(rollout.ReleaseNamespace),
-			rollout,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare final protected runtime Pod stability observer: %w", err)
-		}
-		credentialObserver, err := newCredentialRevocationStabilityObserver(
-			convergence,
-			podObserver,
-			privilegeTeardown.Preflight,
-		)
-		if err != nil {
-			return fmt.Errorf("prepare final teardown credential revocation observer: %w", err)
-		}
-		if err := barrier.WaitWithStabilityObserver(ctx, retiredCredentialRevocationDelay, credentialObserver); err != nil {
-			return fmt.Errorf("wait for uninterrupted final teardown admission, authorization, stored-state, and protected-Pod fence: %w", err)
-		}
-		if err := verifyTeardownRetirementFinalState(ctx, guard, configMaps, policies, bindings, phase); err != nil {
-			return fmt.Errorf("recheck final teardown retirement state: %w", err)
-		}
-		if err := privilegeTeardown.Preflight(ctx); err != nil {
-			return fmt.Errorf("recheck exact privilege teardown inventory: %w", err)
-		}
-		retirementObserver, err := newTeardownRetirementCredentialObserver(
-			ctx,
-			config,
-			clientset.DiscoveryV1().EndpointSlices(kubernetesServiceNamespace),
-			guard,
-		)
-		if err != nil {
-			return fmt.Errorf("freeze API endpoints for cleanup credential retirement: %w", err)
-		}
-		defer retirementObserver.Close()
-		if err := retirementObserver.verifyTopology(); err != nil {
-			return fmt.Errorf("verify frozen API endpoint topology before finalization: %w", err)
 		}
 		convergenceMarker, err := crdupgrade.NewAdmissionConvergenceGuard(rollout).MarkerTarget()
 		if err != nil {
@@ -1191,51 +842,14 @@ func runTeardownMode(
 		if err := finalizer.Finalize(ctx); err != nil {
 			return fmt.Errorf("finalize teardown retirement: %w", err)
 		}
-		if err := retirementObserver.verifyTopology(); err != nil {
-			return fmt.Errorf("verify frozen API endpoint topology before cleanup credential retirement: %w", err)
-		}
 		if err := privilegeTeardown.RetireCleanupServiceAccount(ctx); err != nil {
 			return fmt.Errorf("retire cleanup ServiceAccount: %w", err)
-		}
-		if err := retirementObserver.Wait(ctx); err != nil {
-			return fmt.Errorf("wait for cleanup credential retirement on every frozen API endpoint: %w", err)
 		}
 		return nil
 
 	default:
 		return fmt.Errorf("unsupported teardown mode %q", mode)
 	}
-}
-
-func bindTeardownRetirementPhase(
-	barrier *admissionConvergenceBarrier,
-	guard *crdupgrade.TeardownRetirementGuard,
-	activation crdupgrade.TeardownRetirementActivationReader,
-	phase crdupgrade.TeardownRetirementPhase,
-	verifyAdditional func(context.Context) error,
-) error {
-	if barrier == nil || guard == nil || activation == nil || barrier.verifyStored == nil {
-		return errors.New("teardown retirement phase barrier dependencies are required")
-	}
-	if phase != crdupgrade.TeardownRetirementActive && phase != crdupgrade.TeardownRetirementTerminal {
-		return fmt.Errorf("unknown teardown retirement phase %q", phase)
-	}
-	verifyStored := barrier.verifyStored
-	barrier.verifyStored = func(ctx context.Context) error {
-		if err := verifyTeardownRetirementPhase(ctx, guard, activation, phase); err != nil {
-			return err
-		}
-		if err := verifyStored(ctx); err != nil {
-			return err
-		}
-		if verifyAdditional != nil {
-			if err := verifyAdditional(ctx); err != nil {
-				return err
-			}
-		}
-		return verifyTeardownRetirementPhase(ctx, guard, activation, phase)
-	}
-	return nil
 }
 
 func verifyTeardownRetirementPhase(
@@ -1359,7 +973,7 @@ func validateModeFlags(mode string, flags *flag.FlagSet) error {
 		allowed["manager-image"] = struct{}{}
 	case "verify":
 		allowed["timeout"] = struct{}{}
-	case "identity-probe", "preflight", "reconcile", "teardown-retirement-probe-a", "teardown-retirement-gate", "teardown-quiesce", "teardown", "teardown-retirement-final", "runtime-verify":
+	case "identity-probe", "preflight", "reconcile", "teardown-quiesce", "teardown", "teardown-retirement-final", "runtime-verify":
 		for _, name := range []string{
 			"timeout",
 			"release-name",
@@ -1395,7 +1009,6 @@ func validateModeFlags(mode string, flags *flag.FlagSet) error {
 		}
 		if mode == "runtime-verify" {
 			allowed["verify-controller-state"] = struct{}{}
-			allowed["verify-certificate-recovery"] = struct{}{}
 		}
 	}
 	var unexpected string
@@ -1468,54 +1081,6 @@ func waitForNoProtectedRuntimePods(ctx context.Context, inventory *crdupgrade.Wo
 		remaining, err := inventory.ProtectedRuntimePodsRemain(pollCtx)
 		return !remaining, err
 	})
-}
-
-func waitForRetiredBoundCredentialRevocation(ctx context.Context, delay time.Duration) error {
-	if ctx == nil {
-		return errors.New("retired credential revocation context is nil")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if delay <= 0 {
-		return errors.New("retired credential revocation delay must be positive")
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func waitForRetiredBoundCredentialRevocationSince(
-	ctx context.Context,
-	convergedAt time.Time,
-	delay time.Duration,
-	now func() time.Time,
-) error {
-	if ctx == nil {
-		return errors.New("retired credential revocation context is nil")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if convergedAt.IsZero() {
-		return errors.New("controller credential drain convergence time is required")
-	}
-	if delay <= 0 {
-		return errors.New("retired credential revocation delay must be positive")
-	}
-	if now == nil {
-		return errors.New("controller credential grace clock is required")
-	}
-	remaining := convergedAt.Add(delay).Sub(now())
-	if remaining <= 0 {
-		return nil
-	}
-	return waitForRetiredBoundCredentialRevocation(ctx, remaining)
 }
 
 func parseExactBooleanFlag(value, name string) (bool, error) {

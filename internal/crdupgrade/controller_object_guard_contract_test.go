@@ -158,7 +158,7 @@ func evaluateChunkContract(t *testing.T, expression string, object map[string]an
 		"oldObject": nil,
 		"request":   map[string]any{"operation": "CREATE"},
 		"params":    map[string]any{},
-		"variables": map[string]any{"isAnyAdmissionConvergenceProbe": false},
+		"variables": map[string]any{},
 	})
 	if err != nil {
 		// The API server applies its failure policy to an expression that

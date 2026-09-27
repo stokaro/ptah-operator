@@ -82,13 +82,8 @@ func TestCertificateWriteGuardsAreTypedExactAndFailClosed(t *testing.T) {
 		entry := entry
 		t.Run(entry.resource, func(t *testing.T) {
 			t.Parallel()
-			policy := stripStableAdmissionConvergenceDependencyProbeForTest(
-				t,
-				guard.policy(entry),
-				guard.ReleaseNamespace,
-				guard.ReleaseName,
-			)
-			binding := stripAdmissionConvergenceProbeBindingForTest(t, guard.binding(entry))
+			policy := guard.policy(entry)
+			binding := guard.binding(entry)
 			if policy.Spec.ParamKind != nil || binding.Spec.ParamRef != nil {
 				t.Fatal("certificate write guard must not depend on admission parameters")
 			}
@@ -119,12 +114,7 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 		entry := entry
 		t.Run(entry.resource, func(t *testing.T) {
 			t.Parallel()
-			policy := stripStableAdmissionConvergenceDependencyProbeForTest(
-				t,
-				guard.policy(entry),
-				guard.ReleaseNamespace,
-				guard.ReleaseName,
-			)
+			policy := guard.policy(entry)
 			validations := policy.Spec.Validations
 			if len(validations) != 3 {
 				t.Fatalf("%s validations = %d, want 3", entry.resource, len(validations))
@@ -202,77 +192,6 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 		validatingCertificateCanaryWebhookName,
 	}) {
 		t.Fatalf("validating webhook order is not the exact release inventory: %#v", certificateValidatingWebhookNames())
-	}
-}
-
-func TestCertificateWriteGuardConvergenceProbesHaveOnePolicyCause(t *testing.T) {
-	t.Parallel()
-
-	guard := testCertificateWriteGuard()
-	entries := guard.entries()
-	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy, len(entries))
-	for _, entry := range entries {
-		policies[entry.name] = guard.policy(entry)
-	}
-	markerName := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, 1)
-	object := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "ConfigMap",
-		"metadata": map[string]any{
-			"name": markerName, "namespace": guard.ReleaseNamespace,
-		},
-	}
-	for _, entry := range entries {
-		probe := newStableAdmissionConvergenceDependencyProbe(entry.name, strings.Repeat("a", 64))
-		request := map[string]any{
-			"operation": "UPDATE",
-			"namespace": guard.ReleaseNamespace,
-			"name":      markerName,
-			"dryRun":    true,
-			"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
-			"options":   map[string]any{"fieldManager": probe.FieldManager},
-			"userInfo":  map[string]any{"username": "system:serviceaccount:ptah-system:probe"},
-		}
-		matched := 0
-		for name, policy := range policies {
-			if !evaluatePolicyMatchConditions(t, policy, object, object, request, nil) {
-				continue
-			}
-			results := evaluatePolicyValidations(t, policy, object, object, request, nil)
-			if name != entry.name {
-				// The union selector lets every stable guard see the probe; a
-				// foreign guard escapes its native validations and must not
-				// answer in place of the target.
-				for index, allowed := range results {
-					if !allowed {
-						t.Fatalf("probe for %s was denied by certificate policy %s validation %d", entry.name, name, index)
-					}
-				}
-				continue
-			}
-			matched++
-			denied := 0
-			for index, allowed := range results {
-				if allowed {
-					continue
-				}
-				denied++
-				validation := policy.Spec.Validations[index]
-				if validation.MessageExpression == "" {
-					t.Fatalf("probe for %s was denied by a native validation %d", entry.name, index)
-				}
-				message := evaluateRolloutCEL(t, validation.MessageExpression, map[string]any{"request": request}, map[string]any{})
-				if message != probe.Message {
-					t.Fatalf("probe for %s denial = %v, want %q", entry.name, message, probe.Message)
-				}
-			}
-			if denied != 1 {
-				t.Fatalf("probe for %s denial count = %d, want one", entry.name, denied)
-			}
-		}
-		if matched != 1 {
-			t.Fatalf("probe for %s matched %d certificate policies, want one", entry.name, matched)
-		}
 	}
 }
 
@@ -806,85 +725,6 @@ func assertExactCertificateWriteMatch(t *testing.T, match *admissionregistration
 	}
 }
 
-func stripStableAdmissionConvergenceDependencyProbeForTest(
-	t *testing.T,
-	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
-	releaseNamespace,
-	releaseName string,
-) *admissionregistrationv1.ValidatingAdmissionPolicy {
-	t.Helper()
-	if policy == nil || policy.Spec.MatchConstraints == nil {
-		t.Fatal("stable dependency policy or match constraints are nil")
-	}
-	wantExpression := stableAdmissionConvergenceProbeRequestExpression(
-		policy.Name,
-		releaseNamespace,
-		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
-	)
-	wantAnyExpression := stableAdmissionConvergenceAnyProbeRequestExpression(
-		releaseNamespace,
-		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
-	)
-	if len(policy.Spec.Variables) < 2 ||
-		policy.Spec.Variables[0] != (admissionregistrationv1.Variable{Name: "isAnyAdmissionConvergenceProbe", Expression: wantAnyExpression}) ||
-		policy.Spec.Variables[1] != (admissionregistrationv1.Variable{Name: "isAdmissionConvergenceProbe", Expression: wantExpression}) {
-		t.Fatalf("stable dependency variables differ from the policy-specific selector: %#v", policy.Spec.Variables)
-	}
-	resourceRules := policy.Spec.MatchConstraints.ResourceRules
-	if len(resourceRules) < 2 || !reflect.DeepEqual(resourceRules[len(resourceRules)-1], admissionConvergenceProbeResourceRule("")) {
-		t.Fatalf("stable dependency marker rule differs from the exact wrapper: %#v", resourceRules)
-	}
-	if len(policy.Spec.Validations) < 2 {
-		t.Fatal("stable dependency policy lacks proof validations")
-	}
-	proof := policy.Spec.Validations[len(policy.Spec.Validations)-2:]
-	if proof[0].Expression != `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true` ||
-		proof[0].Message != admissionConvergenceProbePersistenceMessage ||
-		proof[1].Expression != `!variables.isAdmissionConvergenceProbe` ||
-		proof[1].MessageExpression != `"Ptah admission convergence confirmed exact workload guard " + request.options.fieldManager` {
-		t.Fatalf("stable dependency proof validations differ from the exact wrapper: %#v", proof)
-	}
-
-	native := policy.DeepCopy()
-	native.Spec.MatchConstraints.ResourceRules = native.Spec.MatchConstraints.ResourceRules[:len(native.Spec.MatchConstraints.ResourceRules)-1]
-	native.Spec.Variables = native.Spec.Variables[2:]
-	native.Spec.Validations = native.Spec.Validations[:len(native.Spec.Validations)-2]
-	matchPrefix := "(" + wantAnyExpression + ") || ("
-	for index := range native.Spec.MatchConditions {
-		expression := native.Spec.MatchConditions[index].Expression
-		if !strings.HasPrefix(expression, matchPrefix) || !strings.HasSuffix(expression, ")") {
-			t.Fatalf("stable dependency match condition %d differs from the exact wrapper", index)
-		}
-		native.Spec.MatchConditions[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, matchPrefix), ")")
-	}
-	validationPrefix := "variables.isAnyAdmissionConvergenceProbe || ("
-	for index := range native.Spec.Validations {
-		expression := native.Spec.Validations[index].Expression
-		if !strings.HasPrefix(expression, validationPrefix) || !strings.HasSuffix(expression, ")") {
-			t.Fatalf("stable dependency validation %d differs from the exact wrapper", index)
-		}
-		native.Spec.Validations[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, validationPrefix), ")")
-	}
-	return native
-}
-
-func stripAdmissionConvergenceProbeBindingForTest(
-	t *testing.T,
-	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
-) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
-	t.Helper()
-	if binding == nil || binding.Spec.MatchResources == nil {
-		t.Fatal("dependency binding or match resources are nil")
-	}
-	rules := binding.Spec.MatchResources.ResourceRules
-	if len(rules) < 2 || !reflect.DeepEqual(rules[len(rules)-1], admissionConvergenceProbeResourceRule("")) {
-		t.Fatalf("dependency binding marker rule differs from the exact wrapper: %#v", rules)
-	}
-	native := binding.DeepCopy()
-	native.Spec.MatchResources.ResourceRules = native.Spec.MatchResources.ResourceRules[:len(native.Spec.MatchResources.ResourceRules)-1]
-	return native
-}
-
 func testCertificateWriteGuard() *CertificateWriteGuard {
 	return &CertificateWriteGuard{
 		Policies:                      &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}},
@@ -915,61 +755,6 @@ func jsonFieldNames(typeOf reflect.Type) []string {
 		}
 	}
 	return fields
-}
-
-// The runtime verifier in the certificate rotator probes every dependency
-// policy under the certificate principal, which these guards match by name.
-// A probe of a foreign family must pass through each of them untouched: the
-// target policy alone answers it.
-func TestCertificateWriteGuardsAdmitForeignConvergenceProbesUnderTheCertificatePrincipal(t *testing.T) {
-	t.Parallel()
-
-	guard := testCertificateWriteGuard()
-	markerName := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, 1)
-	marker := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "ConfigMap",
-		"metadata": map[string]any{
-			"name": markerName, "namespace": guard.ReleaseNamespace,
-			"managedFields": []any{map[string]any{"manager": "helm"}},
-		},
-	}
-	probed := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "ConfigMap",
-		"metadata": map[string]any{
-			"name": markerName, "namespace": guard.ReleaseNamespace,
-			"managedFields": []any{map[string]any{"manager": "helm"}, map[string]any{"manager": "probe"}},
-		},
-	}
-	username := "system:serviceaccount:" + guard.ReleaseNamespace + ":" + guard.CertificateServiceAccountName
-	fieldManagers := map[string]string{
-		"dependency probe":              admissionConvergenceProbeFieldManagerPrefix + strings.Repeat("b", 64),
-		"stable probe of another guard": stableAdmissionConvergenceProbeFieldManagerPrefix("another-policy") + strings.Repeat("c", 64),
-		"service account object probe":  serviceAccountObjectProbeFieldManagerPrefix + strings.Repeat("d", 64),
-	}
-	for _, entry := range guard.entries() {
-		policy := guard.policy(entry)
-		for family, fieldManager := range fieldManagers {
-			request := map[string]any{
-				"operation": "UPDATE",
-				"namespace": guard.ReleaseNamespace,
-				"name":      markerName,
-				"dryRun":    true,
-				"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
-				"options":   map[string]any{"fieldManager": fieldManager},
-				"userInfo":  map[string]any{"username": username},
-			}
-			if !evaluatePolicyMatchConditions(t, policy, probed, marker, request, nil) {
-				t.Fatalf("%s under the certificate principal escaped %s entirely", family, entry.name)
-			}
-			for index, allowed := range evaluatePolicyValidations(t, policy, probed, marker, request, nil) {
-				if !allowed {
-					t.Fatalf("%s under the certificate principal was denied by %s validation %d", family, entry.name, index)
-				}
-			}
-		}
-	}
 }
 
 // The admission canary proves convergence with dry-run updates of its own

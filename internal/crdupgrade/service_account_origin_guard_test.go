@@ -126,7 +126,7 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 		*policy.Spec.MatchConstraints.MatchPolicy != admissionregistrationv1.Exact {
 		t.Fatal("service account origin policy is not explicitly fail-closed with exact matching")
 	}
-	native := stripAdmissionConvergenceDependencyProbe(t, policy)
+	native := policy
 	rules := native.Spec.MatchConstraints.ResourceRules
 	if len(rules) != 1 {
 		t.Fatalf("resource rules = %d, want one all-resource rule", len(rules))
@@ -384,11 +384,6 @@ func TestServiceAccountOriginBindingCutoverRejectsPrivilegeChanges(t *testing.T)
 		}},
 		{"wrong attempt", func(f *originBindingCELFixture) {
 			f.params["data"].(map[string]any)[controllerCredentialsAttemptDataKey] = strings.Repeat("a", 64)
-		}},
-		{"convergence field manager decoy", func(f *originBindingCELFixture) {
-			f.object["subjects"].([]any)[0].(map[string]any)["name"] = "foreign"
-			f.request["dryRun"] = true
-			f.request["options"] = map[string]any{"fieldManager": newAdmissionConvergenceDependencyProbe(policy.Name, hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)).FieldManager}
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

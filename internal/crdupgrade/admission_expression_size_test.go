@@ -66,7 +66,7 @@ func TestHookExecutableArgumentsUseBoundedCELExpressions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			assertAdmissionPolicyCELHeadroom(t, test.name, test.policy)
-			policy := stripAdmissionConvergenceDependencyProbe(t, test.policy)
+			policy := test.policy
 
 			var got []string
 			for _, validation := range policy.Spec.Validations {

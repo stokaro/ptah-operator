@@ -85,7 +85,7 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				t.Fatalf("%s guard matches %#v/%#v, want exact %q/%q", entry.resource, entry.apiGroups, entry.apiVersions, want.apiGroup, want.apiVersion)
 			}
 			policy := guard.policy(entry)
-			native := stripAdmissionConvergenceDependencyProbe(t, policy)
+			native := policy
 			binding := guard.binding(entry)
 			if policy.Spec.ParamKind == nil || policy.Spec.ParamKind.APIVersion != "v1" || policy.Spec.ParamKind.Kind != "ConfigMap" {
 				t.Fatalf("controller object guard does not use the release activation ConfigMap: %#v", policy.Spec.ParamKind)
@@ -94,7 +94,7 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				t.Fatal("controller object guard is not fail-closed")
 			}
 			assertExactControllerObjectMatch(t, native.Spec.MatchConstraints, entry)
-			assertControllerObjectMatchWithConvergenceProbe(t, binding.Spec.MatchResources, entry)
+			assertExactControllerObjectMatch(t, binding.Spec.MatchResources, entry)
 			wantUsername := `request.userInfo.username in ["system:serviceaccount:ptah-system:ptah-controller"]`
 			if !reflect.DeepEqual(native.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
 				Name: "candidate-or-predecessor-controller-service-account", Expression: wantUsername,
@@ -373,7 +373,7 @@ func TestControllerJobPodTemplateContractRefusesAMissingServiceAccount(t *testin
 		result, _, evalErr := program.Eval(map[string]any{
 			"object":    object,
 			"request":   map[string]any{"operation": "CREATE"},
-			"variables": map[string]any{"isAnyAdmissionConvergenceProbe": false},
+			"variables": map[string]any{},
 		})
 		if evalErr != nil {
 			t.Fatalf("evaluate Pod template contract: %v", evalErr)
@@ -954,23 +954,6 @@ func assertExactControllerObjectMatch(
 		len(rule.ResourceNames) != 0 || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
 		t.Fatalf("controller object rule is not exact: %#v", rule)
 	}
-}
-
-func assertControllerObjectMatchWithConvergenceProbe(
-	t *testing.T,
-	match *admissionregistrationv1.MatchResources,
-	entry controllerObjectGuardEntry,
-) {
-	t.Helper()
-	if match == nil || len(match.ResourceRules) != 2 {
-		t.Fatalf("controller object binding rules = %#v, want native rule plus convergence marker rule", match)
-	}
-	if !reflect.DeepEqual(match.ResourceRules[1], admissionConvergenceProbeResourceRule("")) {
-		t.Fatalf("controller object binding convergence rule = %#v, want %#v", match.ResourceRules[1], admissionConvergenceProbeResourceRule(""))
-	}
-	native := match.DeepCopy()
-	native.ResourceRules = native.ResourceRules[:1]
-	assertExactControllerObjectMatch(t, native, entry)
 }
 
 func testControllerObjectGuard() *ControllerObjectGuard {

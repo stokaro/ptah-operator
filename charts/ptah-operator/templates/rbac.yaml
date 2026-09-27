@@ -33,7 +33,6 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ include "ptah-operator.admissionConvergencePolicyName" . }}
       - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
@@ -154,20 +153,9 @@ rules:
   - apiGroups: [""]
     resources: ["limitranges"]
     verbs: ["list"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" . | quote }}]
-    verbs: ["get", "update"]
-  # The runtime verifier in both Deployments proves the stored admission
-  # contract against the release activation parameter before its Pod serves.
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: ["ptah-operator-release-activation"]
-    verbs: ["get"]
 {{- if eq .Release.Namespace "default" }}
-  # The runtime verifier discovers every API server through the default
-  # Kubernetes Service's EndpointSlices; a release in that namespace reads
-  # them through this Role, any other through the discovery Role below.
+  # A release in the default namespace carries the EndpointSlice grant in this
+  # Role, any other in the discovery Role below.
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["list"]
@@ -193,10 +181,10 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{ if ne .Release.Namespace "default" }}
 ---
-# The runtime verifier in both Deployments discovers every API server
-# through the default Kubernetes Service's EndpointSlices. Keep that
-# authority in the one namespace it reads; the controller RBAC transition
-# moves this binding with the controller ServiceAccount.
+# EndpointSlice read authority, kept in the one namespace that holds the
+# default Kubernetes Service. Nothing lists them any more, but the release
+# inventories still pin this grant. The controller RBAC transition moves this
+# binding with the controller ServiceAccount.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

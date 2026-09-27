@@ -791,42 +791,12 @@ dyn(null).spec, the validation errors, and the policy denies.
 {{- printf "ptah-operator-release-activation-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
-{{- define "ptah-operator.admissionConvergencePolicyName" -}}
-{{- printf "ptah-operator-admission-convergence-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
 {{- define "ptah-operator.stagingSecretGuardPolicyName" -}}
 {{- printf "ptah-operator-cert-stage-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.admissionConvergenceMarkerName" -}}
 {{- printf "ptah-admission-convergence-v1-%s-%s" (include "ptah-operator.releaseSequence" .) (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.admissionConvergenceProbeFieldManager" -}}
-{{- printf "ptah-admission-convergence-v1-%s" (printf "1\n%s\n%s" .policyName (include "ptah-operator.hookIdentityDigest" .root) | sha256sum) -}}
-{{- end -}}
-
-{{- define "ptah-operator.admissionConvergenceProbeRequest" -}}
-{{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q` .root.Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .root) .fieldManager -}}
-{{- end -}}
-
-{{/*
-Every probe that writes the convergence marker: the dependency probes, the
-stable guards' probes, and the service account object guard's probe. A guard
-that matches the marker meets every family; recognizing only its own lets it
-refuse another in place of the target's answer, and a match condition that
-dereferences a workload field errors on the ConfigMap instead of declining.
-crdupgrade compiles the same pattern.
-*/}}
-{{- define "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" -}}^(ptah-admission-convergence-v1-[0-9a-f]{64}|ptah-admission-stable-v1-[0-9a-f]{32}-[0-9a-f]{64}|ptah-service-account-object-probe-v1-[0-9a-f]{64})${{- end -}}
-
-{{- define "ptah-operator.admissionConvergenceAnyProbeRequest" -}}
-{{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .) (include "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" .) -}}
-{{- end -}}
-
-{{- define "ptah-operator.admissionConvergenceProbeMessage" -}}
-{{- printf "Ptah admission convergence confirmed exact workload guard %s" .fieldManager -}}
 {{- end -}}
 
 {{- define "ptah-operator.namespaceDeletionGuardPolicyName" -}}
@@ -1277,13 +1247,8 @@ ptah-operator-parameter-informer-anchor
       (printf "--runtime-pod-config-expressions-b64=%s" (include "ptah-operator.runtimePodConfigExpressionsJSON" $root | b64enc))
       (printf "--runtime-admission-contract-b64=%s" (include "ptah-operator.runtimeAdmissionContractJSON" $root | b64enc))
       (printf "--previous-controller-manager-image=%s" (include "ptah-operator.previousControllerManagerImage" $root)) -}}
-{{- /* ptah-crd-manager refuses --verify-controller-state together with
-      --verify-certificate-recovery, and RolloutGuard compiles the runtime-verify
-      contract with the same exclusion. */ -}}
 {{- if .verifyControllerState -}}
 {{- $args = append $args "--verify-controller-state=true" -}}
-{{- else if and (eq .mode "runtime-verify") $root.Values.certificateRotation.recreateMissingSecret -}}
-{{- $args = append $args "--verify-certificate-recovery=true" -}}
 {{- end -}}
 {{- $args | toJson -}}
 {{- end -}}

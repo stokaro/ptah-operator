@@ -67,69 +67,6 @@ type PredecessorRetirementConfigMapClient interface {
 	Delete(context.Context, string, metav1.DeleteOptions) error
 }
 
-// PredecessorRetirementProbe identifies one content-versioned dry-run denial
-// that a direct API-server barrier must prove absent after deleting every
-// predecessor binding.
-type PredecessorRetirementProbe struct {
-	PolicyName   string
-	BindingName  string
-	FieldManager string
-	Message      string
-}
-
-// HasExactDenial reports whether err is the exact attributed denial for this
-// predecessor policy and binding. A caller must not treat a generic Forbidden
-// response as convergence evidence.
-func (p PredecessorRetirementProbe) HasExactDenial(err error) bool {
-	return hasExactValidatingAdmissionPolicyDenial(err, p.PolicyName, p.BindingName, p.Message)
-}
-
-// PredecessorRetirementBarrierTarget is the immutable input to an
-// all-API-server binding-retirement proof. The barrier must re-read and verify
-// the marker through each direct endpoint, issue every listed dry-run probe,
-// and prove that none returns its exact predecessor denial.
-type PredecessorRetirementBarrierTarget struct {
-	marker *corev1.ConfigMap
-	probes []PredecessorRetirementProbe
-}
-
-// MarkerName returns the exact sealed predecessor marker name.
-func (t PredecessorRetirementBarrierTarget) MarkerName() string {
-	if t.marker == nil {
-		return ""
-	}
-	return t.marker.Name
-}
-
-// Marker returns a defensive copy of the exact sealed predecessor marker.
-func (t PredecessorRetirementBarrierTarget) Marker() *corev1.ConfigMap {
-	if t.marker == nil {
-		return nil
-	}
-	return t.marker.DeepCopy()
-}
-
-// Probes returns the fixed candidate-pair probe inventory in canonical order.
-func (t PredecessorRetirementBarrierTarget) Probes() []PredecessorRetirementProbe {
-	return slices.Clone(t.probes)
-}
-
-// VerifyMarker rejects endpoint-local drift from the sealed shared-storage
-// snapshot used to derive this barrier.
-func (t PredecessorRetirementBarrierTarget) VerifyMarker(actual *corev1.ConfigMap) error {
-	if t.marker == nil || actual == nil {
-		return errors.New("predecessor retirement barrier marker is missing")
-	}
-	if !reflect.DeepEqual(actual, t.marker) {
-		return fmt.Errorf("predecessor retirement barrier ConfigMap/%s changed", t.marker.Name)
-	}
-	return nil
-}
-
-// PredecessorRetirementBarrier proves binding deletion through every directly
-// addressed API server before any predecessor policy can be deleted.
-type PredecessorRetirementBarrier func(context.Context, PredecessorRetirementBarrierTarget) error
-
 type predecessorRetirementInventory struct {
 	Version string                                `json:"version"`
 	Entries []predecessorRetirementInventoryEntry `json:"entries"`
@@ -314,8 +251,8 @@ func validatePredecessorRetirementInventory(inventory predecessorRetirementInven
 }
 
 // unsealedMarker returns the only marker shape Helm may create. The pinned
-// hook seals this object after the complete stored-object and direct-endpoint
-// proofs and before candidate activation.
+// hook seals this object after verifying the complete stored inventory and
+// before candidate activation.
 func (g *AdmissionConvergenceGuard) unsealedMarker() *corev1.ConfigMap {
 	name := AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence)
 	metadata := g.markerMetadata(name)
@@ -656,11 +593,10 @@ func NewPredecessorRetirement(
 	}
 }
 
-// SealCurrent verifies all twelve candidate-scoped policy/binding pairs and
-// the hook denial-probe ConfigMap against their constructors, records the live
-// UID and semantic digest of each object, and makes the marker immutable. The
-// caller must complete the pre-seal direct-endpoint proof first and repeat it
-// against the sealed marker before activation.
+// SealCurrent verifies every candidate-scoped policy/binding pair and the hook
+// denial-probe ConfigMap against their constructors, records the live UID and
+// semantic digest of each object, and makes the marker immutable, so the next
+// release retires exactly the objects this one installed.
 func (r *PredecessorRetirement) SealCurrent(ctx context.Context) error {
 	rollout, err := r.validatedRollout()
 	if err != nil {
@@ -728,8 +664,7 @@ func (r *PredecessorRetirement) SealCurrent(ctx context.Context) error {
 }
 
 // VerifyCurrentSealed re-reads the exact sealed marker and all attested live
-// objects. Runtime and post-seal endpoint proofs use this check to ensure no
-// object changed after the inventory was captured.
+// objects, so no object changed after the inventory was captured.
 func (r *PredecessorRetirement) VerifyCurrentSealed(ctx context.Context) error {
 	rollout, err := r.validatedRollout()
 	if err != nil {
@@ -763,14 +698,10 @@ func (r *PredecessorRetirement) Preflight(ctx context.Context) error {
 	return err
 }
 
-// Retire deletes every predecessor binding, invokes the mandatory direct
-// all-API-server convergence barrier, then deletes policies, the hook probe,
+// Retire deletes every predecessor binding, then the policies, the hook probe,
 // and finally the sealed inventory marker. Every delete uses the UID and
 // resourceVersion from an immediate exact re-read.
-func (r *PredecessorRetirement) Retire(ctx context.Context, barrier PredecessorRetirementBarrier) error {
-	if barrier == nil {
-		return errors.New("predecessor retirement admission convergence barrier is required")
-	}
+func (r *PredecessorRetirement) Retire(ctx context.Context) error {
 	snapshot, err := r.preflightPredecessor(ctx)
 	if err != nil {
 		return err
@@ -786,24 +717,17 @@ func (r *PredecessorRetirement) Retire(ctx context.Context, barrier PredecessorR
 	}
 
 	if snapshot.hasPolicy() {
-		target := PredecessorRetirementBarrierTarget{
-			marker: snapshot.marker.DeepCopy(),
-			probes: predecessorRetirementProbes(snapshot.guard, snapshot.pairs),
-		}
-		if err := barrier(ctx, target); err != nil {
-			return fmt.Errorf("prove predecessor admission binding retirement: %w", err)
-		}
 		refreshed, err := r.preflightPredecessor(ctx)
 		if err != nil {
-			return fmt.Errorf("verify predecessor inventory after binding convergence: %w", err)
+			return fmt.Errorf("verify predecessor inventory after binding deletion: %w", err)
 		}
 		if refreshed == nil || refreshed.marker.UID != snapshot.marker.UID ||
 			refreshed.marker.Data[PredecessorRetirementInventoryDataKey] != snapshot.marker.Data[PredecessorRetirementInventoryDataKey] {
-			return errors.New("sealed predecessor inventory changed during binding convergence")
+			return errors.New("sealed predecessor inventory changed during binding deletion")
 		}
 		for _, pair := range refreshed.pairs {
 			if pair.binding.present {
-				return fmt.Errorf("predecessor binding %s reappeared after convergence", pair.binding.entry.Name)
+				return fmt.Errorf("predecessor binding %s reappeared after deletion", pair.binding.entry.Name)
 			}
 		}
 		snapshot = refreshed
@@ -1108,22 +1032,6 @@ func validatePredecessorRetirementState(snapshot *predecessorRetirementSnapshot)
 		return errors.New("predecessor hook probe is absent before all policies")
 	}
 	return nil
-}
-
-func predecessorRetirementProbes(
-	guard *AdmissionConvergenceGuard,
-	pairs []predecessorRetirementLivePair,
-) []PredecessorRetirementProbe {
-	attempt := hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	probes := make([]PredecessorRetirementProbe, 0, len(pairs))
-	for _, pair := range pairs {
-		probe := newAdmissionConvergenceDependencyProbe(pair.policy.entry.Name, attempt)
-		probes = append(probes, PredecessorRetirementProbe{
-			PolicyName: probe.PolicyName, BindingName: probe.PolicyName,
-			FieldManager: probe.FieldManager, Message: probe.Message,
-		})
-	}
-	return probes
 }
 
 func (r *PredecessorRetirement) inspectPolicy(

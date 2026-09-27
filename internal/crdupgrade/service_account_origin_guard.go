@@ -123,9 +123,7 @@ func (g *ServiceAccountOriginGuard) Verify(ctx context.Context) error {
 
 // Prepare verifies the retained contract and waits for CEL type checking.
 // It deliberately never submits a TokenRequest: that API can generate a real
-// bearer credential even when a client supplies dry-run options. The final
-// inert admission sentinel independently carries and directly proves the
-// controller TokenRequest phase fence on every API server.
+// bearer credential even when a client supplies dry-run options.
 func (g *ServiceAccountOriginGuard) Prepare(ctx context.Context) error {
 	if err := g.validate(); err != nil {
 		return err
@@ -278,12 +276,6 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 			},
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy, nil
 }
 

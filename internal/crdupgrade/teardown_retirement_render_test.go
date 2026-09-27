@@ -88,7 +88,7 @@ func TestRenderedTeardownRetirementMatchesCompiledContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantCount := 22
+			wantCount := 21
 			if test.certificateRecovery {
 				wantCount++
 			}
@@ -129,55 +129,6 @@ func TestRenderedTeardownRetirementStableAnchorsDoNotDriftAcrossImages(t *testin
 				t.Fatalf("stable fence %s does not have exactly one ordinary anchor and one pre-delete replacement", fence)
 			}
 		}
-	}
-}
-
-func TestRenderedTeardownRetirementBootstrapEndpointSliceDiscoveryIsDefaultScoped(t *testing.T) {
-	for _, namespace := range []string{"ptah-e2e", corev1.NamespaceDefault} {
-		t.Run(namespace, func(t *testing.T) {
-			objects := renderTeardownRetirementChartInNamespaceWithDigest(t, namespace, false, strings.Repeat("2", 64))
-			guard := teardownRetirementGuardFromRender(t, objects)
-			name := guard.bootstrapServiceAccountName()
-
-			clusterRoleObject := findTeardownRetirementNamespacedObject(t, objects, "ClusterRole", "", name)
-			var clusterRole rbacv1.ClusterRole
-			decodeTeardownRetirementObject(t, clusterRoleObject, &clusterRole)
-			for _, rule := range clusterRole.Rules {
-				if slices.Contains(rule.APIGroups, "discovery.k8s.io") && slices.Contains(rule.Resources, "endpointslices") {
-					t.Fatalf("retirement bootstrap ClusterRole/%s retains EndpointSlice authority", name)
-				}
-			}
-
-			endpointRoles := 0
-			for _, object := range objects {
-				if object.GetKind() != "Role" || object.GetName() != name {
-					continue
-				}
-				var role rbacv1.Role
-				decodeTeardownRetirementObject(t, object, &role)
-				for _, rule := range role.Rules {
-					if slices.Contains(rule.APIGroups, "discovery.k8s.io") &&
-						slices.Contains(rule.Resources, "endpointslices") && slices.Contains(rule.Verbs, "list") {
-						endpointRoles++
-						if object.GetNamespace() != corev1.NamespaceDefault {
-							t.Fatalf("retirement bootstrap EndpointSlice Role rendered in namespace %q", object.GetNamespace())
-						}
-					}
-				}
-			}
-			if endpointRoles != 1 {
-				t.Fatalf("retirement bootstrap EndpointSlice Role count = %d, want 1", endpointRoles)
-			}
-
-			bindingObject := findTeardownRetirementNamespacedObject(t, objects, "RoleBinding", corev1.NamespaceDefault, name)
-			var binding rbacv1.RoleBinding
-			decodeTeardownRetirementObject(t, bindingObject, &binding)
-			wantSubject := rbacv1.Subject{Kind: rbacv1.ServiceAccountKind, Name: name, Namespace: namespace}
-			if binding.RoleRef != (rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}) ||
-				!reflect.DeepEqual(binding.Subjects, []rbacv1.Subject{wantSubject}) {
-				t.Fatalf("retirement bootstrap default RoleBinding differs from exact subject/ref contract: %#v", binding)
-			}
-		})
 	}
 }
 

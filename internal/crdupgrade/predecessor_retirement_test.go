@@ -120,49 +120,17 @@ func TestPredecessorRetirementDeletesBindingsThenPoliciesThenMarkers(t *testing.
 	t.Parallel()
 
 	fixture := newSealedPredecessorRetirementFixture(t)
-	barrierCalls := 0
-	err := fixture.retirement.Retire(context.Background(), func(_ context.Context, target PredecessorRetirementBarrierTarget) error {
-		barrierCalls++
-		fixture.recorder.events = append(fixture.recorder.events, "Barrier")
-		if err := target.VerifyMarker(fixture.configMaps.objects[target.MarkerName()]); err != nil {
-			return err
-		}
-		probes := target.Probes()
-		if len(probes) != predecessorRetirementPairCount {
-			return fmt.Errorf("probe count = %d, want %d", len(probes), predecessorRetirementPairCount)
-		}
-		for index, name := range fixture.pairNames {
-			if probes[index].PolicyName != name || probes[index].BindingName != name ||
-				probes[index].FieldManager == "" || probes[index].Message == "" {
-				return fmt.Errorf("probe %d = %#v, want %s", index, probes[index], name)
-			}
-			if fixture.bindings.objects[name] != nil {
-				return fmt.Errorf("binding %s remained before barrier", name)
-			}
-			if fixture.policies.objects[name] == nil {
-				return fmt.Errorf("policy %s was deleted before barrier", name)
-			}
-		}
-		if fixture.configMaps.objects[fixture.probeName] == nil {
-			return errors.New("hook probe was deleted before barrier")
-		}
-		return nil
-	})
-	if err != nil {
+	if err := fixture.retirement.Retire(context.Background()); err != nil {
 		t.Fatalf("Retire() error = %v", err)
-	}
-	if barrierCalls != 1 {
-		t.Fatalf("barrier calls = %d, want 1", barrierCalls)
 	}
 	if len(fixture.policies.objects) != 0 || len(fixture.bindings.objects) != 0 || len(fixture.configMaps.objects) != 0 {
 		t.Fatalf("retirement left residue: policies=%d bindings=%d ConfigMaps=%d", len(fixture.policies.objects), len(fixture.bindings.objects), len(fixture.configMaps.objects))
 	}
-	// Every binding, then the barrier, then every policy, then the two markers.
-	wantOrder := make([]string, 0, 2*predecessorRetirementPairCount+3)
+	// Every binding, then every policy, then the two markers.
+	wantOrder := make([]string, 0, 2*predecessorRetirementPairCount+2)
 	for range predecessorRetirementPairCount {
 		wantOrder = append(wantOrder, "ValidatingAdmissionPolicyBinding")
 	}
-	wantOrder = append(wantOrder, "Barrier")
 	for range predecessorRetirementPairCount {
 		wantOrder = append(wantOrder, "ValidatingAdmissionPolicy")
 	}
@@ -171,9 +139,6 @@ func TestPredecessorRetirementDeletesBindingsThenPoliciesThenMarkers(t *testing.
 		t.Fatalf("retirement order = %v, want %v", got, wantOrder)
 	}
 	for _, event := range fixture.recorder.events {
-		if event == "Barrier" {
-			continue
-		}
 		if !strings.Contains(event, "uid=") || !strings.Contains(event, "rv=") {
 			t.Fatalf("delete omitted preconditions: %s", event)
 		}
@@ -184,16 +149,15 @@ func TestPredecessorRetirementResumesOnlyContiguousPhases(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name             string
-		deletedBindings  int
-		deletedPolicies  int
-		deleteProbe      bool
-		wantBarrierCalls int
+		name            string
+		deletedBindings int
+		deletedPolicies int
+		deleteProbe     bool
 	}{
-		{name: "fresh", wantBarrierCalls: 1},
-		{name: "partial bindings", deletedBindings: 5, wantBarrierCalls: 1},
-		{name: "all bindings", deletedBindings: predecessorRetirementPairCount, wantBarrierCalls: 1},
-		{name: "partial policies", deletedBindings: predecessorRetirementPairCount, deletedPolicies: 7, wantBarrierCalls: 1},
+		{name: "fresh"},
+		{name: "partial bindings", deletedBindings: 5},
+		{name: "all bindings", deletedBindings: predecessorRetirementPairCount},
+		{name: "partial policies", deletedBindings: predecessorRetirementPairCount, deletedPolicies: 7},
 		{name: "all pairs", deletedBindings: predecessorRetirementPairCount, deletedPolicies: predecessorRetirementPairCount},
 		{
 			name:            "marker only",
@@ -216,16 +180,8 @@ func TestPredecessorRetirementResumesOnlyContiguousPhases(t *testing.T) {
 			if test.deleteProbe {
 				delete(fixture.configMaps.objects, fixture.probeName)
 			}
-			calls := 0
-			err := fixture.retirement.Retire(context.Background(), func(context.Context, PredecessorRetirementBarrierTarget) error {
-				calls++
-				return nil
-			})
-			if err != nil {
+			if err := fixture.retirement.Retire(context.Background()); err != nil {
 				t.Fatalf("Retire() error = %v", err)
-			}
-			if calls != test.wantBarrierCalls {
-				t.Fatalf("barrier calls = %d, want %d", calls, test.wantBarrierCalls)
 			}
 			if len(fixture.policies.objects) != 0 || len(fixture.bindings.objects) != 0 || len(fixture.configMaps.objects) != 0 {
 				t.Fatal("resumed retirement left residue")
@@ -320,40 +276,17 @@ func TestPredecessorRetirementRejectsUnsealedActiveMarker(t *testing.T) {
 	}
 }
 
-func TestPredecessorRetirementBarrierFailurePreservesPoliciesAndMarkers(t *testing.T) {
-	t.Parallel()
-
-	fixture := newSealedPredecessorRetirementFixture(t)
-	want := errors.New("endpoint not converged")
-	err := fixture.retirement.Retire(context.Background(), func(context.Context, PredecessorRetirementBarrierTarget) error {
-		return want
-	})
-	if !errors.Is(err, want) {
-		t.Fatalf("Retire() error = %v, want %v", err, want)
-	}
-	if len(fixture.bindings.objects) != 0 {
-		t.Fatalf("bindings remaining after barrier boundary = %d", len(fixture.bindings.objects))
-	}
-	if len(fixture.policies.objects) != predecessorRetirementPairCount || fixture.configMaps.objects[fixture.probeName] == nil ||
-		fixture.configMaps.objects[fixture.previousMarkerName] == nil {
-		t.Fatal("barrier failure removed a policy or marker")
-	}
-}
-
 func TestPredecessorRetirementAbsentMarkerIsCompletedState(t *testing.T) {
 	t.Parallel()
 
 	fixture := newSealedPredecessorRetirementFixture(t)
 	delete(fixture.configMaps.objects, fixture.previousMarkerName)
-	calls := 0
-	if err := fixture.retirement.Retire(context.Background(), func(context.Context, PredecessorRetirementBarrierTarget) error {
-		calls++
-		return nil
-	}); err != nil {
+	before := len(fixture.recorder.events)
+	if err := fixture.retirement.Retire(context.Background()); err != nil {
 		t.Fatalf("Retire() error = %v", err)
 	}
-	if calls != 0 {
-		t.Fatalf("barrier calls = %d, want 0", calls)
+	if len(fixture.recorder.events) != before {
+		t.Fatalf("retirement with an absent marker deleted %v", fixture.recorder.events[before:])
 	}
 }
 

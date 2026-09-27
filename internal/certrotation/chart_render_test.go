@@ -122,8 +122,12 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	defaultDiscoveryRole := mustNamespacedObject(t, objects, "Role", "default", discoveryRoleName)
 	assertExactRule(t, defaultDiscoveryRole, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
 	assertExactCertificateRoleBinding(t, objects, "default", discoveryRoleName, rotatorName, releaseNamespace)
+	// The runtime verifier no longer proves the admission marker or reads the
+	// activation parameter, so its Role reaches no ConfigMap.
 	runtimeAdmissionRole := mustObject(t, objects, "Role", managerName+"-runtime-admission")
-	assertExactRule(t, runtimeAdmissionRole, "", "configmaps", []string{"ptah-admission-convergence-v1-1-f1e165dcd72a"}, []string{"get", "update"})
+	for _, verb := range []string{"get", "update"} {
+		assertNoResourceVerb(t, runtimeAdmissionRole, "", "configmaps", verb)
+	}
 
 	clusterRole := mustObject(t, objects, "ClusterRole", rotatorName)
 	assertNoResourceVerb(t, clusterRole, "discovery.k8s.io", "endpointslices", "list")
@@ -136,7 +140,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"ptah-operator-hook-identity-v1-90a0385b562b",
 		"ptah-operator-hook-probe-guard-v1-90a0385b562b",
 		"ptah-operator-release-activation-guard-v1-f1e165dcd72a",
-		"ptah-operator-admission-convergence-v1-f1e165dcd72a",
 		"ptah-operator-service-account-object-guard-v1-f1e165dcd72a",
 		"ptah-operator-service-account-origin-guard-v2-90a0385b562b",
 		"ptah-operator-controller-write-guard-v2-90a0385b562b",

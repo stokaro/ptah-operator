@@ -13,14 +13,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/stokaro/ptah-operator/internal/crdupgrade"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 )
 
 func TestStoredControllerStateClientsUseEveryDurableResource(t *testing.T) {
@@ -133,21 +132,6 @@ func TestImageCheckProvesCompiledSequenceWithoutClusterAccess(t *testing.T) {
 	}
 }
 
-func TestWaitForRetiredBoundCredentialRevocation(t *testing.T) {
-	if err := waitForRetiredBoundCredentialRevocation(context.Background(), time.Nanosecond); err != nil {
-		t.Fatalf("waitForRetiredBoundCredentialRevocation() error = %v", err)
-	}
-	if err := waitForRetiredBoundCredentialRevocation(context.Background(), 0); err == nil ||
-		!strings.Contains(err.Error(), "delay must be positive") {
-		t.Fatalf("zero delay error = %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := waitForRetiredBoundCredentialRevocation(ctx, time.Hour); !errors.Is(err, context.Canceled) {
-		t.Fatalf("pre-canceled wait error = %v, want context.Canceled", err)
-	}
-}
-
 func TestImageCheckRejectsMismatchedSequenceAndAPIFlags(t *testing.T) {
 	tests := [][]string{
 		{"image-check", "--release-sequence=" + strconv.FormatInt(int64(crdupgrade.CurrentReleaseSequence+1), 10), "--manager-image=image"},
@@ -218,8 +202,6 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 		{mode: "preflight", flag: "--verify-controller-state=true"},
 		{mode: "identity-probe", flag: "--verify-controller-state=true"},
 		{mode: "reconcile", flag: "--verify-controller-state=true"},
-		{mode: "teardown-retirement-probe-a", flag: "--verify-controller-state=true"},
-		{mode: "teardown-retirement-gate", flag: "--verify-controller-state=true"},
 		{mode: "teardown-quiesce", flag: "--verify-controller-state=true"},
 		{mode: "teardown", flag: "--verify-controller-state=true"},
 		{mode: "teardown-retirement-final", flag: "--verify-controller-state=true"},
@@ -235,67 +217,19 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 	}
 }
 
-func TestTeardownRetirementBarrierRechecksInitialPhaseBeforeEveryStoredSweep(t *testing.T) {
-	guard := teardownRetirementManagerTestGuard()
-	activation := teardownRetirementManagerTestActivation(t, guard)
-	clientset := fake.NewSimpleClientset(activation)
-	configMaps := clientset.CoreV1().ConfigMaps(activation.Namespace)
-	baseCalls := 0
-	additionalCalls := 0
-	barrier := &admissionConvergenceBarrier{
-		verifyStored: func(context.Context) error {
-			baseCalls++
-			return nil
-		},
+// The two teardown proof modes and the certificate recovery proof are gone
+// with the per-API-server barriers they ran; a hook left over from an older
+// chart must be refused rather than run as something else.
+func TestRemovedProofModesAndFlagsAreRefused(t *testing.T) {
+	for _, mode := range []string{"teardown-retirement-probe-a", "teardown-retirement-gate"} {
+		err := run(context.Background(), []string{mode}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "unsupported mode") {
+			t.Fatalf("run(%s) error = %v, want unsupported mode", mode, err)
+		}
 	}
-	if err := bindTeardownRetirementPhase(
-		barrier,
-		guard,
-		configMaps,
-		crdupgrade.TeardownRetirementActive,
-		func(context.Context) error {
-			additionalCalls++
-			return nil
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := barrier.verifyStored(context.Background()); err != nil {
-		t.Fatalf("active stored sweep failed: %v", err)
-	}
-	if baseCalls != 1 || additionalCalls != 1 {
-		t.Fatalf("active stored sweep calls = base %d, additional %d, want 1/1", baseCalls, additionalCalls)
-	}
-	if err := configMaps.Delete(context.Background(), crdupgrade.ReleaseActivationName, metav1.DeleteOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := barrier.verifyStored(context.Background()); err == nil || !strings.Contains(err.Error(), "phase changed") {
-		t.Fatalf("terminal stored sweep error = %v, want phase-change refusal", err)
-	}
-	if baseCalls != 1 || additionalCalls != 1 {
-		t.Fatalf("phase-changing sweep called wrapped verifiers: base %d, additional %d", baseCalls, additionalCalls)
-	}
-}
-
-func TestTeardownRetirementBarrierClosesPhaseAroundStoredSweep(t *testing.T) {
-	guard := teardownRetirementManagerTestGuard()
-	activation := teardownRetirementManagerTestActivation(t, guard)
-	clientset := fake.NewSimpleClientset(activation)
-	configMaps := clientset.CoreV1().ConfigMaps(activation.Namespace)
-	barrier := &admissionConvergenceBarrier{verifyStored: func(context.Context) error { return nil }}
-	if err := bindTeardownRetirementPhase(
-		barrier,
-		guard,
-		configMaps,
-		crdupgrade.TeardownRetirementActive,
-		func(ctx context.Context) error {
-			return configMaps.Delete(ctx, crdupgrade.ReleaseActivationName, metav1.DeleteOptions{})
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := barrier.verifyStored(context.Background()); err == nil || !strings.Contains(err.Error(), "phase changed") {
-		t.Fatalf("phase-changing stored sweep error = %v, want closing phase refusal", err)
+	err := run(context.Background(), []string{"runtime-verify", "--verify-certificate-recovery=true"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "verify-certificate-recovery") {
+		t.Fatalf("runtime-verify with --verify-certificate-recovery error = %v, want refusal", err)
 	}
 }
 

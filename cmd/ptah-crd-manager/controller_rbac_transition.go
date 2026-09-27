@@ -80,55 +80,26 @@ func (c *controllerRBACClient) PatchClusterRoleBinding(
 }
 
 type controllerRBACTransitionPhase interface {
-	Preflight(context.Context) error
 	Transition(context.Context) error
 	VerifyComplete(context.Context) error
-	HasPredecessor() bool
-	RequiresCredentialGrace(crdupgrade.ReleaseActivationState, bool) (bool, error)
 }
 
-type authorizationConvergenceWaiter interface {
-	Validate() error
-	Wait(context.Context) error
-}
-
+// completeControllerRBACCutover moves the controller bindings to the candidate
+// identity once no runtime Pod that could still use the predecessor identity
+// remains, then re-reads the complete binding inventory before activation.
 func completeControllerRBACCutover(
 	ctx context.Context,
 	waitForNoPods func(context.Context) error,
 	transition controllerRBACTransitionPhase,
-	requiresCredentialGrace bool,
-	waitForContinuousCredentialFence func(context.Context) error,
-	newConvergenceBarrier func(context.Context) (authorizationConvergenceWaiter, error),
 ) error {
-	if waitForNoPods == nil || transition == nil || waitForContinuousCredentialFence == nil || newConvergenceBarrier == nil {
+	if waitForNoPods == nil || transition == nil {
 		return fmt.Errorf("controller RBAC cutover dependencies are required")
 	}
-	if requiresCredentialGrace {
-		if err := waitForContinuousCredentialFence(ctx); err != nil {
-			return fmt.Errorf("wait for continuous controller credential fence before RBAC transition: %w", err)
-		}
-	} else {
-		if err := waitForNoPods(ctx); err != nil {
-			return fmt.Errorf("wait for namespace-wide runtime Pod quiescence: %w", err)
-		}
+	if err := waitForNoPods(ctx); err != nil {
+		return fmt.Errorf("wait for namespace-wide runtime Pod quiescence: %w", err)
 	}
 	if err := transition.Transition(ctx); err != nil {
 		return fmt.Errorf("move exact controller RBAC bindings to candidate identity: %w", err)
-	}
-	if transition.HasPredecessor() {
-		barrier, err := newConvergenceBarrier(ctx)
-		if err != nil {
-			return fmt.Errorf("prepare predecessor authorization convergence barrier: %w", err)
-		}
-		if barrier == nil {
-			return fmt.Errorf("predecessor authorization convergence barrier is nil")
-		}
-		if err := barrier.Validate(); err != nil {
-			return fmt.Errorf("validate predecessor authorization convergence barrier: %w", err)
-		}
-		if err := barrier.Wait(ctx); err != nil {
-			return fmt.Errorf("wait for predecessor authorization revocation on every API server: %w", err)
-		}
 	}
 	if err := transition.VerifyComplete(ctx); err != nil {
 		return fmt.Errorf("reverify controller RBAC identities before activation: %w", err)

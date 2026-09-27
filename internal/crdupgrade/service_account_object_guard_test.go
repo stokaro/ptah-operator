@@ -646,102 +646,6 @@ func TestServiceAccountObjectGuardVerifyRejectsTamperingAndWaitsReady(t *testing
 	}
 }
 
-func TestServiceAccountObjectGuardProbeRequiresExactCurrentMarkerAndDenial(t *testing.T) {
-	tests := []struct {
-		name      string
-		mutate    func(*testing.T, *admissionConvergenceFixture, *ServiceAccountObjectGuard)
-		updateErr error
-		want      bool
-		wantErr   string
-		wantCalls int
-	}{
-		{
-			name:      "exact unsealed marker denial",
-			updateErr: exactServiceAccountObjectProbeDenial(testServiceAccountObjectGuard()),
-			want:      true,
-			wantCalls: 1,
-		},
-		{
-			name: "exact sealed marker denial",
-			mutate: func(t *testing.T, fixture *admissionConvergenceFixture, _ *ServiceAccountObjectGuard) {
-				sealAdmissionConvergenceMarkerForTest(t, fixture.guard, fixture.configMaps.objects[fixture.markerName])
-			},
-			updateErr: exactServiceAccountObjectProbeDenial(testServiceAccountObjectGuard()),
-			want:      true,
-			wantCalls: 1,
-		},
-		{
-			name:      "admitted update is inconclusive",
-			wantCalls: 1,
-		},
-		{
-			name: "malformed current marker fails closed",
-			mutate: func(_ *testing.T, fixture *admissionConvergenceFixture, _ *ServiceAccountObjectGuard) {
-				fixture.configMaps.objects[fixture.markerName].Data[admissionConvergenceAttemptDataKey] = "foreign"
-			},
-			wantErr: "neither exact unsealed nor sealed state",
-		},
-		{
-			name: "wrong release sequence cannot select another marker",
-			mutate: func(_ *testing.T, _ *admissionConvergenceFixture, guard *ServiceAccountObjectGuard) {
-				rollout := *guard.rollout
-				rollout.ReleaseSequence++
-				rollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)[:12]
-				rollout.ControllerServiceAccountName = "ptah-controller-v2"
-				rollout.PreviousControllerServiceAccountName = guard.rollout.ControllerServiceAccountName
-				rollout.PreviousControllerServiceAccountManaged = false
-				rollout.PreviousControllerReleaseSequence = guard.rollout.ReleaseSequence
-				guard.rollout = &rollout
-			},
-			wantErr: "not found",
-		},
-		{
-			name:      "foreign denial fails closed",
-			updateErr: exactPolicyDenialError("foreign-policy", "foreign-binding", "foreign denial"),
-			wantErr:   "unexpected response",
-			wantCalls: 1,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newAdmissionConvergenceFixture(t)
-			guard := NewServiceAccountObjectGuard(fixture.guard.dependencyRollout)
-			if test.mutate != nil {
-				test.mutate(t, fixture, guard)
-			}
-			if test.updateErr != nil {
-				fixture.configMaps.updateErrors = []error{test.updateErr}
-			}
-			got, err := guard.Probe(context.Background(), fixture.configMaps)
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("Probe() error = %v, want containing %q", err, test.wantErr)
-				}
-			} else if err != nil {
-				t.Fatal(err)
-			}
-			if got != test.want {
-				t.Fatalf("Probe() = %t, want %t", got, test.want)
-			}
-			if len(fixture.configMaps.updates) != test.wantCalls {
-				t.Fatalf("dry-run updates = %d, want %d", len(fixture.configMaps.updates), test.wantCalls)
-			}
-			for index, options := range fixture.configMaps.updateOptions {
-				probe := serviceAccountObjectGuardProbe(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName)
-				if !reflect.DeepEqual(options.DryRun, []string{metav1.DryRunAll}) || options.FieldManager != probe.FieldManager {
-					t.Fatalf("update %d options = %#v, want exact service account object probe", index, options)
-				}
-			}
-		})
-	}
-}
-
-func exactServiceAccountObjectProbeDenial(guard *ServiceAccountObjectGuard) error {
-	probe := serviceAccountObjectGuardProbe(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName)
-	return exactPolicyDenialError(probe.PolicyName, probe.PolicyName, probe.Message)
-}
-
 func TestRenderedServiceAccountObjectGuardMatchesCompiledContract(t *testing.T) {
 	path := os.Getenv("PTAH_ROLLOUT_GUARD_RENDER")
 	if path == "" {
@@ -828,7 +732,7 @@ func testServiceAccountObjectGuard() *ServiceAccountObjectGuard {
 
 func assertServiceAccountObjectMatchResources(t *testing.T, match *admissionregistrationv1.MatchResources) {
 	t.Helper()
-	if match == nil || match.MatchPolicy == nil || *match.MatchPolicy != admissionregistrationv1.Exact || match.NamespaceSelector == nil || match.ObjectSelector == nil || len(match.ExcludeResourceRules) != 0 || len(match.ResourceRules) != 2 {
+	if match == nil || match.MatchPolicy == nil || *match.MatchPolicy != admissionregistrationv1.Exact || match.NamespaceSelector == nil || match.ObjectSelector == nil || len(match.ExcludeResourceRules) != 0 || len(match.ResourceRules) != 1 {
 		t.Fatalf("service account object match resources are not explicit and exact: %#v", match)
 	}
 	rule := match.ResourceRules[0]
@@ -836,9 +740,6 @@ func assertServiceAccountObjectMatchResources(t *testing.T, match *admissionregi
 		!reflect.DeepEqual(rule.APIGroups, []string{""}) || !reflect.DeepEqual(rule.APIVersions, []string{"v1"}) ||
 		!reflect.DeepEqual(rule.Resources, []string{"serviceaccounts"}) || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
 		t.Fatalf("service account object resource rule is not exact: %#v", rule)
-	}
-	if got, want := match.ResourceRules[1], admissionConvergenceProbeResourceRule(""); !reflect.DeepEqual(got, want) {
-		t.Fatalf("service account object convergence resource rule = %#v, want %#v", got, want)
 	}
 }
 

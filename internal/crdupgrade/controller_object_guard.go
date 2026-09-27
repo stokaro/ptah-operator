@@ -248,12 +248,6 @@ func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admiss
 			Validations: validations,
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy
 }
 
@@ -273,7 +267,6 @@ func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admis
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding
 }
 

@@ -516,16 +516,9 @@ func (g *RolloutGuard) ReleaseActivationState(ctx context.Context) (ReleaseActiv
 }
 
 // BeginControllerCredentialDrain persists the candidate-specific drain tuple
-// before any credential grace period begins.
+// before the runtime is stopped.
 func (g *RolloutGuard) BeginControllerCredentialDrain(ctx context.Context) (ReleaseActivationState, error) {
 	return g.releaseActivationGuard().BeginDraining(ctx)
-}
-
-// AbandonControllerCredentialDrain gives back a drain this candidate began and
-// did not complete, so a failed upgrade does not fence the active release out
-// of its own runtime.
-func (g *RolloutGuard) AbandonControllerCredentialDrain(ctx context.Context) error {
-	return g.releaseActivationGuard().AbandonDraining(ctx)
 }
 
 // CandidateRuntimeConverged reports whether the candidate release is already
@@ -1190,7 +1183,7 @@ func (g *RolloutGuard) activeIdentityProbeDeployment(ctx context.Context) (*apps
 // the active predecessor's template. The normal stop transition permits no
 // extra annotation, so adding the probe token would trigger unrelated denials.
 // Restore the active identity and desired replicas in a private dry-run copy;
-// the full retained policies must accept it before the sentinel is attempted.
+// the full retained policies must accept it before the probe is attempted.
 func (g *RolloutGuard) drainingEnforcementProbeBaseline(ctx context.Context, deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
 	if !g.isCandidateStampedStoppedDeployment(deployment) {
 		return deployment, nil
@@ -1415,14 +1408,8 @@ func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
 	}
 	if verifyControllerState {
 		args = append(args, "--verify-controller-state=true")
-	} else if g.certificateRecoveryEnabled() {
-		args = append(args, "--verify-certificate-recovery=true")
 	}
 	return args
-}
-
-func (g *RolloutGuard) certificateRecoveryEnabled() bool {
-	return slices.Contains(g.CertificateArgs, "--recreate-missing-secret=true")
 }
 
 func (g *RolloutGuard) verifyDeployment(target deploymentTarget, deployment *appsv1.Deployment) error {
@@ -1646,12 +1633,6 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 			},
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy
 }
 
@@ -1715,12 +1696,6 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			Validations: validations,
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy
 }
 
@@ -1765,12 +1740,6 @@ func (g *RolloutGuard) hookIdentityProbePolicy() *admissionregistrationv1.Valida
 			}},
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy
 }
 
@@ -2125,12 +2094,6 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 			Validations: validations,
 		},
 	}
-	addAdmissionConvergenceDependencyProbe(
-		policy,
-		g.ReleaseNamespace,
-		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
-		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
-	)
 	return policy
 }
 
@@ -2151,7 +2114,6 @@ func (g *RolloutGuard) binding(name string) *admissionregistrationv1.ValidatingA
 			Namespace:               g.ReleaseNamespace,
 			ParameterNotFoundAction: &action,
 		}
-		addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	}
 	return binding
 }
