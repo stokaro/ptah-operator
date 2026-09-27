@@ -16,9 +16,9 @@ certificate rotator, the CRD manager, the runner and the `kubectl ptah` plugin.
 [The architecture page](docs/site/src/content/docs/reference/architecture.md)
 says how those pieces fit together and which invariant each one holds.
 
-Read the versions out of `go.mod` rather than out of prose here. At the time of
-writing they are `sigs.k8s.io/controller-runtime v0.25.1`, `k8s.io/api v0.37.1`,
-Go `1.26` with toolchain `1.27`.
+Read the versions out of `go.mod` rather than out of prose here: a number
+written down here goes stale the next time a dependency moves, and nothing
+would catch it.
 
 ## Skills
 
