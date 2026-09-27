@@ -2848,7 +2848,7 @@ assert_privileged_gate_source_contract() {
 		'checkpoint_schema_jobs "$privileged_schema" "$privileged_before"' \
 		'.spec.policy.apply == "Always" and .spec.policy.allowDestructive == false and' \
 		'"$privileged_gate_file" "the privileged plan held for a person"' \
-		'.spec.privilegeChanges == ["SecurityDefiner", "FunctionReplacement"] and' \
+		'.spec.privilegeChanges == ["SecurityDefiner"] and' \
 		'[ "$(external_privileged_function_count)" = 0 ]' \
 		'(.status.nextReconciliationTime | fromdateiso8601) > ($after | fromdateiso8601)' \
 		'all($refreshes[]; (.created | fromdateiso8601) >= ($deadline | fromdateiso8601)) and' \

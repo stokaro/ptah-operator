@@ -81,7 +81,7 @@ spec:
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
-  ptahVersion: v0.9.0-34-gdac0872ac
+  ptahVersion: v0.9.0-73-gf6e562c5b
   # The execution binding the plan was computed under. A manager release that
   # changes none of these keeps the approval; one that changes any retires it.
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0

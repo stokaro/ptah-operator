@@ -153,12 +153,13 @@ Kubernetes workload hosts that database, then, under `apply: Always`, performs
 a focused Plan, a single Apply with no approval, a post-Apply `NoChanges`
 proof, and an independent Docker-side catalog check.
 
-It then publishes a second artifact that adds one `SECURITY DEFINER` function,
-which Ptah rates safe and not destructive, so only the privilege class stands
-between that plan and an unattended Apply. The plan must record
-`SecurityDefiner` and `FunctionReplacement`, and the resource must wait with
+It then publishes a second artifact that adds one new `SECURITY DEFINER`
+function, which Ptah rates safe and not destructive and writes as a plain
+`CREATE FUNCTION` -- the routine did not exist, so nothing is replaced -- so
+only the privilege class stands between that plan and an unattended Apply.
+The plan must record `SecurityDefiner`, and the resource must wait with
 `ApprovalRequired` reason `PrivilegeChanges` and a condition message that names
-the kinds and nothing the statement says. It has to hold through its persisted
+the kind and nothing the statement says. It has to hold through its persisted
 refresh deadline and the refresh after it: every Apply read on every poll finds
 none, the refresh Resolve is dated at or after the deadline, the deadline sits
 a full interval after the Plan Job completed, and the database has no such
