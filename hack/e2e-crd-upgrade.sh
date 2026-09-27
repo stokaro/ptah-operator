@@ -1149,12 +1149,11 @@ capture_controller_service_account_identity() {
 		--arg image "$expected_manager_image" '
       [.items[] | select(
         .metadata.labels["app.kubernetes.io/instance"] == $release and
-        .metadata.labels["app.kubernetes.io/component"] == "controller" and
-        # The chart carries the release sequence as an annotation on the
-        # Deployment and on its Pod template. It is not a label, so selecting
-        # on one matched nothing.
-        .metadata.annotations["operator.ptah.run/release-sequence"] == $sequence
+        .metadata.labels["app.kubernetes.io/component"] == "controller"
       )] |
+      # A release runs one controller Deployment under a stable name, so the
+      # labels find exactly one. Which release it belongs to is the manager
+      # image below: the Deployment carries no release sequence.
       if length != 1 then error("controller Deployment cardinality differs") else .[0] end |
       select(
         (.metadata.uid | type == "string" and length > 0) and
