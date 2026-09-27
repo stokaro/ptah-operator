@@ -17,48 +17,37 @@ import (
 )
 
 const (
-	AdmissionConfigurationName               = "ptah-operator-admission"
-	ReleaseNameAnnotation                    = "operator.ptah.run/release-name"
-	ReleaseNamespaceAnnotation               = "operator.ptah.run/release-namespace"
-	CoordinationAnnotation                   = "operator.ptah.run/coordination-namespace"
-	LeaderElectionAnnotation                 = "operator.ptah.run/leader-election"
-	LeaderElectionIDAnnotation               = "operator.ptah.run/leader-election-id"
-	WebhookServiceAnnotation                 = "operator.ptah.run/webhook-service-name"
-	HookServiceAccountAnnotation             = "operator.ptah.run/hook-service-account-name"
-	ControllerServiceAccountAnnotation       = "operator.ptah.run/controller-service-account-name"
-	ControllerDeploymentAnnotation           = "operator.ptah.run/controller-deployment-name"
-	CertificateDeploymentAnnotation          = "operator.ptah.run/certificate-deployment-name"
-	AdmissionContractVersionAnnotation       = "operator.ptah.run/admission-contract-version"
-	CurrentAdmissionContractVersion    int32 = 2
+	AdmissionConfigurationName         = "ptah-operator-admission"
+	ReleaseNameAnnotation              = "operator.ptah.run/release-name"
+	ReleaseNamespaceAnnotation         = "operator.ptah.run/release-namespace"
+	CoordinationAnnotation             = "operator.ptah.run/coordination-namespace"
+	LeaderElectionAnnotation           = "operator.ptah.run/leader-election"
+	LeaderElectionIDAnnotation         = "operator.ptah.run/leader-election-id"
+	WebhookServiceAnnotation           = "operator.ptah.run/webhook-service-name"
+	HookServiceAccountAnnotation       = "operator.ptah.run/hook-service-account-name"
+	ControllerServiceAccountAnnotation = "operator.ptah.run/controller-service-account-name"
+	ControllerDeploymentAnnotation     = "operator.ptah.run/controller-deployment-name"
+	CertificateDeploymentAnnotation    = "operator.ptah.run/certificate-deployment-name"
+	AdmissionContractVersionAnnotation = "operator.ptah.run/admission-contract-version"
+	// CurrentAdmissionContractVersion is the one admission contract every
+	// release serves, whoever issues its certificate. The chart renders the
+	// same number in ptah-operator.admissionContractVersion.
+	CurrentAdmissionContractVersion int32 = 2
 
-	mutatingApprovalWebhookName                    = "mapproval.operator.ptah.run"
-	validatingApprovalWebhookName                  = "vapproval.operator.ptah.run"
-	mutatingMigrationApprovalWebhookName           = "mmigrationapproval.operator.ptah.run"
-	validatingMigrationApprovalWebhookName         = "vmigrationapproval.operator.ptah.run"
-	podIntentWebhookName                           = "vpodintent.operator.ptah.run"
-	controllerWriteWebhookName                     = "vcontrollerwrite.operator.ptah.run"
-	mutatingCertificateCanaryWebhookName           = "certificate-rotation-canary-mutate.operator.ptah.run"
-	validatingCertificateCanaryWebhookName         = "certificate-rotation-canary-validate.operator.ptah.run"
-	mutatingApprovalPath                           = "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"
-	validatingApprovalPath                         = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
-	mutatingMigrationApprovalPath                  = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
-	validatingMigrationApprovalPath                = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
-	podIntentPath                                  = "/validate-v1-pod-ptah-operation-intent"
-	controllerWritePath                            = "/validate-operator-controller-write"
-	mutatingCertificateCanaryPath                  = "/candidate/mutate"
-	validatingCertificateCanaryPath                = "/candidate/validate"
-	mutatingCertificateCanaryConditionName         = "exact-certificate-rotation-mutating-canary"
-	validatingCertificateCanaryConditionName       = "exact-certificate-rotation-validating-canary"
-	certificateCanaryLabel                         = "operator.ptah.run/certificate-rotation-canary"
-	certificateCanaryLabelValue                    = "v1"
-	mutatingCertificateCanaryFieldManager          = "ptah-certificate-rotation-canary-mutate-v1"
-	validatingCertificateCanaryFieldManager        = "ptah-certificate-rotation-canary-validate-v1"
-	certificateCanaryTimeoutSeconds          int32 = 5
-	certificateRotatorNameSuffix                   = "-cert-rotator"
-	certificateTransitionServiceSuffix             = "-cert-transition"
-	certificateCanaryConfigMapSuffix               = "-cert-canary"
-	podIntentMatchConditionName                    = "managed-or-operation-job-pod"
-	podIntentMatchExpression                       = `(has(object.metadata.labels) &&
+	mutatingApprovalWebhookName            = "mapproval.operator.ptah.run"
+	validatingApprovalWebhookName          = "vapproval.operator.ptah.run"
+	mutatingMigrationApprovalWebhookName   = "mmigrationapproval.operator.ptah.run"
+	validatingMigrationApprovalWebhookName = "vmigrationapproval.operator.ptah.run"
+	podIntentWebhookName                   = "vpodintent.operator.ptah.run"
+	controllerWriteWebhookName             = "vcontrollerwrite.operator.ptah.run"
+	mutatingApprovalPath                   = "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"
+	validatingApprovalPath                 = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
+	mutatingMigrationApprovalPath          = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	validatingMigrationApprovalPath        = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	podIntentPath                          = "/validate-v1-pod-ptah-operation-intent"
+	controllerWritePath                    = "/validate-operator-controller-write"
+	podIntentMatchConditionName            = "managed-or-operation-job-pod"
+	podIntentMatchExpression               = `(has(object.metadata.labels) &&
   'app.kubernetes.io/managed-by' in object.metadata.labels &&
   object.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
   'app.kubernetes.io/component' in object.metadata.labels &&
@@ -238,11 +227,6 @@ func (i RuntimeInvariants) validate() error {
 	if i.AdmissionContractVersion > CurrentAdmissionContractVersion {
 		return fmt.Errorf("admission-contract version %d is newer than supported version %d", i.AdmissionContractVersion, CurrentAdmissionContractVersion)
 	}
-	if i.AdmissionContractVersion >= 2 {
-		if _, _, err := certificateCanaryRuntimeNames(i); err != nil {
-			return err
-		}
-	}
 	if i.ReleaseSequence < 1 {
 		return fmt.Errorf("release sequence must be positive")
 	}
@@ -264,19 +248,6 @@ func (i RuntimeInvariants) annotations() map[string]string {
 		ControllerStateVersionAnnotation:   strconv.FormatInt(int64(i.ControllerStateVersion), 10),
 		AdmissionContractVersionAnnotation: strconv.FormatInt(int64(i.AdmissionContractVersion), 10),
 		ReleaseSequenceAnnotation:          strconv.FormatInt(int64(i.ReleaseSequence), 10),
-	}
-}
-
-func (i RuntimeInvariants) immutableAnnotations() map[string]string {
-	return map[string]string{
-		ReleaseNameAnnotation:           i.ReleaseName,
-		ReleaseNamespaceAnnotation:      i.ReleaseNamespace,
-		CoordinationAnnotation:          i.CoordinationNamespace,
-		LeaderElectionAnnotation:        strconv.FormatBool(i.LeaderElection),
-		LeaderElectionIDAnnotation:      i.LeaderElectionID,
-		WebhookServiceAnnotation:        i.WebhookServiceName,
-		ControllerDeploymentAnnotation:  i.ControllerDeploymentName,
-		CertificateDeploymentAnnotation: i.CertificateDeploymentName,
 	}
 }
 
@@ -402,14 +373,10 @@ type webhookView struct {
 }
 
 func verifyMutatingWebhookContract(configuration *admissionregistrationv1.MutatingWebhookConfiguration, expected RuntimeInvariants) error {
-	contracts := []webhookContract{
+	return verifyMutatingWebhookContracts(configuration, []webhookContract{
 		currentMutatingApprovalWebhookContract(expected),
 		currentMutatingMigrationApprovalWebhookContract(expected),
-	}
-	if expected.AdmissionContractVersion >= 2 {
-		contracts = append(contracts, currentMutatingCertificateCanaryWebhookContract(expected))
-	}
-	return verifyMutatingWebhookContracts(configuration, contracts)
+	})
 }
 
 func verifyMutatingWebhookContracts(
@@ -454,16 +421,12 @@ func verifyMutatingWebhookContracts(
 }
 
 func verifyValidatingWebhookContract(configuration *admissionregistrationv1.ValidatingWebhookConfiguration, expected RuntimeInvariants) error {
-	contracts := []webhookContract{
+	return verifyValidatingWebhookContracts(configuration, []webhookContract{
 		currentValidatingApprovalWebhookContract(expected),
 		currentValidatingMigrationApprovalWebhookContract(expected),
 		currentPodIntentWebhookContract(expected),
 		currentControllerWriteWebhookContract(expected),
-	}
-	if expected.AdmissionContractVersion >= 2 {
-		contracts = append(contracts, currentValidatingCertificateCanaryWebhookContract(expected))
-	}
-	return verifyValidatingWebhookContracts(configuration, contracts)
+	})
 }
 
 func verifyValidatingWebhookContracts(
@@ -642,115 +605,6 @@ func currentControllerWriteWebhookContract(expected RuntimeInvariants) webhookCo
 			),
 		}},
 	}
-}
-
-func currentMutatingCertificateCanaryWebhookContract(expected RuntimeInvariants) webhookContract {
-	candidateServiceName, markerName, err := certificateCanaryRuntimeNames(expected)
-	if err != nil {
-		return webhookContract{}
-	}
-	never := admissionregistrationv1.NeverReinvocationPolicy
-	return currentCertificateCanaryWebhookContract(
-		expected,
-		mutatingCertificateCanaryWebhookName,
-		mutatingCertificateCanaryPath,
-		mutatingCertificateCanaryConditionName,
-		mutatingCertificateCanaryFieldManager,
-		candidateServiceName,
-		markerName,
-		&never,
-	)
-}
-
-func currentValidatingCertificateCanaryWebhookContract(expected RuntimeInvariants) webhookContract {
-	candidateServiceName, markerName, err := certificateCanaryRuntimeNames(expected)
-	if err != nil {
-		return webhookContract{}
-	}
-	return currentCertificateCanaryWebhookContract(
-		expected,
-		validatingCertificateCanaryWebhookName,
-		validatingCertificateCanaryPath,
-		validatingCertificateCanaryConditionName,
-		validatingCertificateCanaryFieldManager,
-		candidateServiceName,
-		markerName,
-		nil,
-	)
-}
-
-func currentCertificateCanaryWebhookContract(
-	expected RuntimeInvariants,
-	name string,
-	path string,
-	conditionName string,
-	fieldManager string,
-	candidateServiceName string,
-	markerName string,
-	reinvocationPolicy *admissionregistrationv1.ReinvocationPolicyType,
-) webhookContract {
-	scope := admissionregistrationv1.NamespacedScope
-	return webhookContract{
-		name:                    name,
-		path:                    path,
-		serviceNamespace:        expected.ReleaseNamespace,
-		serviceName:             candidateServiceName,
-		servicePort:             443,
-		requireNonemptyCABundle: true,
-		admissionReviewVersions: []string{"v1"},
-		rules: []admissionregistrationv1.RuleWithOperations{{
-			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
-			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{""}, APIVersions: []string{"v1"}, Resources: []string{"configmaps"}, Scope: &scope,
-			},
-		}},
-		failurePolicy: admissionregistrationv1.Fail,
-		matchPolicy:   admissionregistrationv1.Exact,
-		namespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-			"kubernetes.io/metadata.name": expected.ReleaseNamespace,
-		}},
-		objectSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-			certificateCanaryLabel: certificateCanaryLabelValue,
-		}},
-		sideEffects:    admissionregistrationv1.SideEffectClassNone,
-		timeoutSeconds: certificateCanaryTimeoutSeconds,
-		matchConditions: []admissionregistrationv1.MatchCondition{{
-			Name: conditionName,
-			Expression: fmt.Sprintf(
-				`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && request.userInfo.username == %q && request.dryRun == true && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q && has(request.options.fieldValidation) && request.options.fieldValidation == "Strict"`,
-				expected.ReleaseNamespace,
-				markerName,
-				"system:serviceaccount:"+expected.ReleaseNamespace+":"+expected.CertificateDeploymentName,
-				fieldManager,
-			),
-		}},
-		reinvocationPolicy: reinvocationPolicy,
-	}
-}
-
-func certificateCanaryRuntimeNames(expected RuntimeInvariants) (candidateServiceName string, markerName string, err error) {
-	return deriveCertificateCanaryNames(expected.CertificateDeploymentName, expected.WebhookServiceName)
-}
-
-func deriveCertificateCanaryNames(certificateRuntimeName, webhookServiceName string) (candidateServiceName string, markerName string, err error) {
-	if !strings.HasSuffix(certificateRuntimeName, certificateRotatorNameSuffix) {
-		return "", "", fmt.Errorf(
-			"certificate Deployment name %q must end with %q for admission contract v2",
-			certificateRuntimeName,
-			certificateRotatorNameSuffix,
-		)
-	}
-	base := strings.TrimSuffix(certificateRuntimeName, certificateRotatorNameSuffix)
-	if base == "" {
-		return "", "", fmt.Errorf("certificate Deployment name has no bounded release prefix")
-	}
-	candidateServiceName = base + certificateTransitionServiceSuffix
-	markerName = base + certificateCanaryConfigMapSuffix
-	if len(candidateServiceName) > 63 || len(markerName) > 63 ||
-		candidateServiceName == webhookServiceName || markerName == webhookServiceName {
-		return "", "", fmt.Errorf("derived certificate canary identities are invalid or collide with the primary webhook Service")
-	}
-	return candidateServiceName, markerName, nil
 }
 
 func verifyWebhookContract(kind, configurationName string, actual webhookView, want webhookContract) error {

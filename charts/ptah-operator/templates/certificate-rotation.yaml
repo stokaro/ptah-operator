@@ -1,12 +1,8 @@
 {{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) }}
-{{- include "ptah-operator.validateCertificatePorts" . -}}
 {{- include "ptah-operator.validateCertificateRenewalThreshold" . -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
-{{- $discoveryRoleName := include "ptah-operator.certificateDiscoveryRoleName" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
 {{- $stagingSecretName := include "ptah-operator.certRotationStagingSecretName" . -}}
-{{- $candidateServiceName := include "ptah-operator.certificateTransitionServiceName" . -}}
-{{- $canaryConfigMapName := include "ptah-operator.certificateCanaryConfigMapName" . -}}
 {{- $leaseName := include "ptah-operator.certRotationLeaseName" . -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
@@ -106,39 +102,6 @@ metadata:
     operator.ptah.run/certificate-rotation-staging: "true"
 type: Opaque
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ $canaryConfigMapName }}
-  namespace: {{ .Release.Namespace }}
-  annotations:
-    meta.helm.sh/release-name: {{ .Release.Name | quote }}
-    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    app.kubernetes.io/managed-by: Helm
-    operator.ptah.run/certificate-rotation-canary: "v1"
-immutable: true
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ $candidateServiceName }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: certificate-rotation
-spec:
-  publishNotReadyAddresses: true
-  selector:
-    app.kubernetes.io/name: {{ include "ptah-operator.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: certificate-rotation
-  ports:
-    - name: https
-      port: 443
-      protocol: TCP
-      targetPort: candidate
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -166,19 +129,6 @@ rules:
     resources: ["leases"]
     resourceNames: [{{ $leaseName | quote }}]
     verbs: ["get", "update"]
-  - apiGroups: [""]
-    resources: ["serviceaccounts"]
-    resourceNames:
-      - {{ include "ptah-operator.serviceAccountName" . }}
-      - {{ $rotatorName }}
-    verbs: ["get"]
-  - apiGroups: [""]
-    resources: ["limitranges"]
-    verbs: ["list"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: [{{ $canaryConfigMapName | quote }}]
-    verbs: ["get", "update"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["list"]
@@ -199,41 +149,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ $rotatorName }}
     namespace: {{ .Release.Namespace }}
-{{ if ne .Release.Namespace "default" }}
----
-# Nothing lists these EndpointSlices any more, but the release inventories
-# still pin this grant. Keep it in the one namespace it names until they drop
-# it.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ $discoveryRoleName }}
-  namespace: default
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: certificate-rotation
-rules:
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ $discoveryRoleName }}
-  namespace: default
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: certificate-rotation
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ $discoveryRoleName }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ $rotatorName }}
-    namespace: {{ .Release.Namespace }}
-{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -262,32 +177,6 @@ rules:
     resources: ["validatingwebhookconfigurations"]
     resourceNames: [{{ $configurationName | quote }}]
     verbs: ["get", "update"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
-    resourceNames:
-      - {{ include "ptah-operator.rolloutGuardPolicyName" . }}
-      - {{ include "ptah-operator.runtimeGuardPolicyName" . }}
-      - {{ include "ptah-operator.runtimePodGuardPolicyName" . }}
-      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
-      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
-      - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
-      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
-    verbs: ["get"]
-  - apiGroups: ["scheduling.k8s.io"]
-    resources: ["priorityclasses"]
-    verbs: ["get", "list"]
   {{- if .Values.certificateRotation.recreateMissingSecret }}
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
@@ -360,7 +249,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
           args:
-            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" false) | fromJsonArray) }}
+            {{- range (include "ptah-operator.runtimeVerifyArgsJSON" (dict "root" . "verifyControllerState" false) | fromJsonArray) }}
             - {{ . | quote }}
             {{- end }}
           securityContext:
@@ -399,9 +288,6 @@ spec:
           ports:
             - name: health
               containerPort: {{ .Values.certificateRotation.healthPort }}
-              protocol: TCP
-            - name: candidate
-              containerPort: {{ .Values.certificateRotation.candidatePort }}
               protocol: TCP
           livenessProbe:
             httpGet:

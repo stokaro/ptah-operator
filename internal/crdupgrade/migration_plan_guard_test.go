@@ -175,13 +175,10 @@ func admitsMigrationPlan(t *testing.T, object map[string]any, controllerImage st
 			"object":    decoded,
 			"oldObject": nil,
 			"request":   map[string]any{"operation": "CREATE"},
-			"params":    map[string]any{},
 			"variables": map[string]any{
-				"activeControllerImage":       controllerImage,
-				"activeControllerState":       int64(ourStateVersion),
-				"activeControllerStateString": ourStateVersionString(),
-				"activeRelease":               int64(2),
-				"previousRelease":             int64(1),
+				"releaseControllerImage":       controllerImage,
+				"releaseControllerState":       int64(ourStateVersion),
+				"releaseControllerStateString": ourStateVersionString(),
 			},
 		})
 		if err != nil {

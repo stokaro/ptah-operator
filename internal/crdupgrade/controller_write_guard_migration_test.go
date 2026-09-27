@@ -21,7 +21,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -180,11 +179,10 @@ func TestRenderedControllerWriteGuardConfinesMigrationPatches(t *testing.T) {
 				test.mutate(object)
 			}
 			request := controllerWriteRequest(test.resource, serviceAccount)
-			params := controllerWriteActivationParams()
-			if !evaluatePolicyMatchConditions(t, policy, object, oldObject, request, params) {
+			if !evaluatePolicyMatchConditions(t, policy, object, oldObject, request) {
 				t.Fatalf("the rendered guard does not decide a controller %s patch at all", test.resource)
 			}
-			results := evaluatePolicyValidations(t, policy, object, oldObject, request, params)
+			results := evaluatePolicyValidations(t, policy, object, oldObject, request)
 			admitted := true
 			refused := -1
 			for index, allowed := range results {
@@ -383,38 +381,6 @@ func controllerWriteRequest(resource, serviceAccount string) map[string]any {
 		},
 		"userInfo": map[string]any{
 			"username": "system:serviceaccount:" + controllerWriteProofRelease + ":" + serviceAccount,
-		},
-	}
-}
-
-func controllerWriteActivationParams() map[string]any {
-	sequence := strconv.Itoa(1)
-	return map[string]any{
-		"metadata": map[string]any{
-			"name":            ReleaseActivationName,
-			"namespace":       controllerWriteProofRelease,
-			"uid":             "release-activation-uid",
-			"resourceVersion": "101",
-			"annotations": map[string]any{
-				"helm.sh/hook":                     "pre-install,pre-upgrade",
-				"helm.sh/hook-weight":              releaseActivationHookWeight,
-				"helm.sh/resource-policy":          "keep",
-				rolloutGuardVersionAnnotation:      rolloutGuardVersion,
-				ReleaseNameAnnotation:              controllerWriteProofRelease,
-				ReleaseNamespaceAnnotation:         controllerWriteProofRelease,
-				ControllerStateVersionAnnotation:   ourStateVersionString(),
-				AdmissionContractVersionAnnotation: "1",
-				ReleaseSequenceAnnotation:          sequence,
-				ManagerImageAnnotation:             renderedGuardManagerImage,
-			},
-			"labels": map[string]any{
-				managedByLabel:                rolloutGuardManagedBy,
-				instanceLabel:                 controllerWriteProofRelease,
-				"app.kubernetes.io/component": rolloutGuardComponent,
-			},
-		},
-		"data": map[string]any{
-			activeReleaseDataKey: sequence,
 		},
 	}
 }

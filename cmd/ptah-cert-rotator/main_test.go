@@ -95,10 +95,13 @@ func TestParseFlagsTiesTheCASwitchDelayToTheRunInterval(t *testing.T) {
 	}
 }
 
-func TestParseFlagsAcceptsTheDormantCanaryArgumentsTheChartPasses(t *testing.T) {
+// The rotator stopped proving a CA transition through an admission canary, and
+// the chart stopped passing the canary's arguments with it. A manifest that
+// still passes one is refused rather than silently ignored.
+func TestParseFlagsRefusesTheRetiredCanaryArguments(t *testing.T) {
 	t.Parallel()
 
-	args := append(testRotatorArgs(),
+	for _, argument := range []string{
 		"--candidate-service-name=ptah-cert-transition",
 		"--candidate-bind-address=:9444",
 		"--candidate-probe-config-map-name=ptah-cert-canary",
@@ -108,15 +111,13 @@ func TestParseFlagsAcceptsTheDormantCanaryArgumentsTheChartPasses(t *testing.T) 
 		"--candidate-stability-duration=10s",
 		"--candidate-poll-interval=1s",
 		"--candidate-request-timeout=5s",
-	)
-	if len(args)-len(testRotatorArgs()) != len(dormantCanaryFlags) {
-		t.Fatalf("test passes %d dormant arguments, want all %d", len(args)-len(testRotatorArgs()), len(dormantCanaryFlags))
+	} {
+		if _, _, _, err := parseFlags(append(testRotatorArgs(), argument)); err == nil {
+			t.Errorf("parseFlags() accepted the retired argument %s", argument)
+		}
 	}
-	if _, _, _, err := parseFlags(args); err != nil {
-		t.Fatalf("parseFlags() rejected the chart's dormant canary arguments: %v", err)
-	}
-	if _, _, _, err := parseFlags(append(testRotatorArgs(), "--candidate-unknown=1")); err == nil {
-		t.Fatal("parseFlags() accepted a flag outside the dormant set")
+	if _, _, _, err := parseFlags(testRotatorArgs()); err != nil {
+		t.Fatalf("parseFlags() rejected the chart's arguments: %v", err)
 	}
 }
 

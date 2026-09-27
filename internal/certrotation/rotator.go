@@ -1114,8 +1114,8 @@ func helmOwnershipAnnotations(config Config) map[string]string {
 // anchors, then includes every entry targeting the exact release Service and
 // its supported port. This lets an already-running predecessor carry a
 // same-Service entry observed in a narrow partial-apply race. It does not make a
-// quiesced predecessor restartable after candidate activation; recovery then
-// retries the same candidate. URL, foreign-Service, and other-port entries
+// predecessor the upgrade hook stopped restartable; recovery then retries the
+// same candidate. URL, foreign-Service, and other-port entries
 // remain outside this rotator's authority.
 func managedMutatingWebhooks(webhooks []admissionregistrationv1.MutatingWebhook, config Config) ([]*admissionregistrationv1.MutatingWebhook, error) {
 	expected := make(map[string]struct{}, len(config.MutatingWebhookNames))
@@ -1153,8 +1153,8 @@ func managedMutatingWebhooks(webhooks []admissionregistrationv1.MutatingWebhook,
 // anchors, then includes every entry targeting the exact release Service and
 // its supported port. This lets an already-running predecessor carry a
 // same-Service entry observed in a narrow partial-apply race. It does not make a
-// quiesced predecessor restartable after candidate activation; recovery then
-// retries the same candidate. URL, foreign-Service, and other-port entries
+// predecessor the upgrade hook stopped restartable; recovery then retries the
+// same candidate. URL, foreign-Service, and other-port entries
 // remain outside this rotator's authority.
 func managedValidatingWebhooks(webhooks []admissionregistrationv1.ValidatingWebhook, config Config) ([]*admissionregistrationv1.ValidatingWebhook, error) {
 	expected := make(map[string]struct{}, len(config.ValidatingWebhookNames))

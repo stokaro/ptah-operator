@@ -248,7 +248,7 @@ func TestReconcileRepeatsStatePreflightAfterReleaseCutover(t *testing.T) {
 			return nil
 		},
 	)
-	if err == nil || !contains(err.Error(), "final stored controller-state preflight after release cutover") ||
+	if err == nil || !contains(err.Error(), "final stored controller-state preflight after stopping the running release") ||
 		!contains(err.Error(), "controller downgrade refused") || !contains(err.Error(), "PtahSchemaApproval tenant-a/approval-a") {
 		t.Fatalf("ReconcileWithStatePreflightAndPrepare error = %v, want post-cutover downgrade refusal", err)
 	}
@@ -739,9 +739,9 @@ func TestReconcileRefusesCRDsWithoutIdentityBeforeAnyUpdate(t *testing.T) {
 	}
 	client := &memoryClient{objects: objects}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	err := manager.PreflightWithState(context.Background(), emptyStoredStateClients(), int64(ourStateVersion))
+	err := manager.ReconcileWithStatePreflight(context.Background(), emptyStoredStateClients(), int64(ourStateVersion))
 	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
-		t.Fatalf("PreflightWithState() = %v, want a refusal for the missing identity tuple", err)
+		t.Fatalf("ReconcileWithStatePreflight() = %v, want a refusal for the missing identity tuple", err)
 	}
 	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
 		t.Fatalf("updates dry-run=%d real=%d before refusing the identity-less set", client.dryRunUpdates, client.realUpdates)

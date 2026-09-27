@@ -1,22 +1,16 @@
 package crdupgrade
 
 import (
-	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"reflect"
-	"strings"
-	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
 	controllerWriteGuardNamePrefix = "ptah-operator-controller-write-guard-v2-"
-	controllerWriteGuardComponent  = "controller-write-guard"
-	controllerWritePolicyWeight    = "-158"
-	controllerWriteBindingWeight   = "-157"
 
 	activeOperationFinalizer    = "operator.ptah.run/active-operation"
 	migrationOperationFinalizer = "operator.ptah.run/migration-operation"
@@ -25,109 +19,55 @@ const (
 	migrationResource = "ptahmigrations"
 )
 
-// ControllerWriteGuardPolicyName returns the stable, versioned name of the
-// release-owned desired-state boundary for the controller ServiceAccount.
-// The release sequence is intentionally excluded: a compatible controller
-// update must continue to satisfy the same fail-closed contract.
-func ControllerWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
-	return controllerWriteGuardNamePrefix + controllerPrincipalGuardDigest(releaseNamespace, releaseName, releaseSequence, managerImage)
+// releaseDigest names a release's cluster-scoped objects apart from another
+// release's. It depends on nothing a release changes from one version to the
+// next, so an upgrade updates those objects in place. The chart computes the
+// same value in ptah-operator.releaseDigest.
+func releaseDigest(releaseNamespace, releaseName string) string {
+	sum := sha256.Sum256([]byte(releaseNamespace + "\n" + releaseName))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// ControllerWriteGuardPolicyName returns the name of the release's
+// desired-state boundary for the controller ServiceAccount.
+func ControllerWriteGuardPolicyName(releaseNamespace, releaseName string) string {
+	return controllerWriteGuardNamePrefix + releaseDigest(releaseNamespace, releaseName)
 }
 
 func controllerWriteGuardDenialMessage() string {
 	return "Ptah controller write guard rejected a desired-state mutation"
 }
 
-// ControllerWriteGuard confines main-resource PtahSchema and PtahMigration
-// patches made by the controller identity to the one finalizer that identity
-// owns on the kind being written. Status writes use the status subresource and
-// therefore do not match this policy.
+// controllerPrincipalMatchExpression selects the requests the controller's
+// ServiceAccount makes.
+func controllerPrincipalMatchExpression(releaseNamespace, serviceAccount string) string {
+	return fmt.Sprintf(`request.userInfo.username == %q`, "system:serviceaccount:"+releaseNamespace+":"+serviceAccount)
+}
+
+// ControllerWriteGuard builds the policy that confines the main-resource
+// PtahSchema and PtahMigration patches the controller's ServiceAccount makes
+// to the one finalizer it owns on the kind being written. Status writes use
+// the status subresource and therefore do not match it.
+//
+// The chart renders the policy in templates/controller-write-guard.yaml, and a
+// render test holds the two to the same spec.
 type ControllerWriteGuard struct {
-	Policies                     ValidatingAdmissionPolicyReader
-	Bindings                     ValidatingAdmissionPolicyBindingReader
 	ReleaseName                  string
 	ReleaseNamespace             string
 	ControllerServiceAccountName string
-	ReleaseSequence              int32
-	ManagerImage                 string
-	PollEvery                    time.Duration
 }
 
-// NewControllerWriteGuard copies the stable release and controller identity
-// from the rollout contract.
-func NewControllerWriteGuard(rollout *RolloutGuard) *ControllerWriteGuard {
-	if rollout == nil {
-		return nil
-	}
-	return &ControllerWriteGuard{
-		Policies:                     rollout.Policies,
-		Bindings:                     rollout.Bindings,
-		ReleaseName:                  rollout.ReleaseName,
-		ReleaseNamespace:             rollout.ReleaseNamespace,
-		ControllerServiceAccountName: rollout.ControllerServiceAccountName,
-		ReleaseSequence:              rollout.ReleaseSequence,
-		ManagerImage:                 rollout.ManagerImage,
-		PollEvery:                    rollout.PollEvery,
-	}
-}
-
-// Verify requires the retained policy and binding to match the compiled
-// contract exactly.
-func (g *ControllerWriteGuard) Verify(ctx context.Context) error {
-	if err := g.validate(false); err != nil {
-		return err
-	}
-	name := ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
-	policy, err := g.Policies.Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("get controller write guard policy: %w", err)
-	}
-	if err := g.verifyPolicy(policy); err != nil {
-		return err
-	}
-	binding, err := g.Bindings.Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("get controller write guard binding: %w", err)
-	}
-	return g.verifyBinding(binding)
-}
-
-// WaitReady verifies the immutable contract and waits for successful API
-// server CEL type checking before any controller workload can roll out.
-func (g *ControllerWriteGuard) WaitReady(ctx context.Context) error {
-	if err := g.validate(true); err != nil {
-		return err
-	}
-	if err := g.Verify(ctx); err != nil {
-		return err
-	}
-	name := ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
-	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
-		policy, err := g.Policies.Get(pollCtx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, fmt.Errorf("read controller write guard policy status: %w", err)
-		}
-		if err := g.verifyPolicy(policy); err != nil {
-			return false, err
-		}
-		if policy.Status.ObservedGeneration != policy.Generation || policy.Status.TypeChecking == nil {
-			return false, nil
-		}
-		if warnings := policy.Status.TypeChecking.ExpressionWarnings; len(warnings) != 0 {
-			return false, fmt.Errorf("controller write guard policy has CEL type-check warnings: %s", warnings[0].Warning)
-		}
-		return true, nil
-	})
+func (g *ControllerWriteGuard) name() string {
+	return ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
 }
 
 func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
-	name := ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	message := controllerWriteGuardDenialMessage()
-	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
+	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
-		ObjectMeta: g.metadata(name),
+		ObjectMeta: metav1.ObjectMeta{Name: g.name()},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-			ParamKind:        &admissionregistrationv1.ParamKind{APIVersion: "v1", Kind: "ConfigMap"},
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(),
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
@@ -135,7 +75,6 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 				Expression: controllerPrincipalMatchExpression(g.ReleaseNamespace, g.ControllerServiceAccountName),
 			}},
 			Variables: []admissionregistrationv1.Variable{
-				{Name: "activeRelease", Expression: decimalCEL("params", activeReleaseDataKey, true)},
 				{Name: "oldFinalizers", Expression: `has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []`},
 				{Name: "newFinalizers", Expression: `has(object.metadata.finalizers) ? object.metadata.finalizers : []`},
 				// Each family has its own finalizer, so the one the
@@ -146,11 +85,6 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 				{Name: "newActiveCount", Expression: `variables.newFinalizers.filter(value, value == variables.activeFinalizer).size()`},
 			},
 			Validations: []admissionregistrationv1.Validation{
-				{Expression: g.activationParameterExpression(), Message: message},
-				{
-					Expression: controllerPrincipalAuthorityExpression(g.ReleaseNamespace, g.ControllerServiceAccountName, g.ReleaseSequence),
-					Message:    controllerPrincipalGuardDenialMessage(),
-				},
 				{Expression: `dyn(object).spec == dyn(oldObject).spec`, Message: message},
 				{Expression: `has(dyn(object).status) == has(dyn(oldObject).status) && (!has(dyn(object).status) || dyn(object).status == dyn(oldObject).status)`, Message: message},
 				{
@@ -164,27 +98,18 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 			},
 		},
 	}
-	return policy
 }
 
 func (g *ControllerWriteGuard) binding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
-	name := ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
-	deny := admissionregistrationv1.DenyAction
-	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
-		ObjectMeta: g.metadata(name),
+		ObjectMeta: metav1.ObjectMeta{Name: g.name()},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
-			PolicyName:     name,
-			MatchResources: g.matchResources(),
-			ParamRef: &admissionregistrationv1.ParamRef{
-				Name:                    ReleaseActivationName,
-				Namespace:               g.ReleaseNamespace,
-				ParameterNotFoundAction: &deny,
-			},
+			PolicyName:        g.name(),
+			MatchResources:    g.matchResources(),
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	return binding
 }
 
 // controllerWriteFinalizerExpression names the finalizer the controller owns
@@ -196,11 +121,6 @@ func controllerWriteFinalizerExpression() string {
 		migrationOperationFinalizer,
 		activeOperationFinalizer,
 	)
-}
-
-func (g *ControllerWriteGuard) activationParameterExpression() string {
-	activation := &ReleaseActivationGuard{ReleaseName: g.ReleaseName, ReleaseNamespace: g.ReleaseNamespace}
-	return activation.activationObjectShapeExpression("params")
 }
 
 func (g *ControllerWriteGuard) matchResources() *admissionregistrationv1.MatchResources {
@@ -223,83 +143,6 @@ func (g *ControllerWriteGuard) matchResources() *admissionregistrationv1.MatchRe
 	}
 }
 
-func (g *ControllerWriteGuard) metadata(name string) metav1.ObjectMeta {
-	return metav1.ObjectMeta{
-		Name: name,
-		Annotations: map[string]string{
-			rolloutGuardVersionAnnotation: rolloutGuardVersion,
-			ReleaseNameAnnotation:         g.ReleaseName,
-			ReleaseNamespaceAnnotation:    g.ReleaseNamespace,
-		},
-		Labels: map[string]string{
-			managedByLabel:                rolloutGuardManagedBy,
-			instanceLabel:                 g.ReleaseName,
-			"app.kubernetes.io/component": controllerWriteGuardComponent,
-		},
-	}
-}
-
-func (g *ControllerWriteGuard) verifyPolicy(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
-	name := ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
-	if policy == nil || policy.Name != name {
-		return fmt.Errorf("fixed controller write guard policy %s is missing", name)
-	}
-	if err := g.verifyMetadata("ValidatingAdmissionPolicy", policy.ObjectMeta); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(policy.Spec, g.policy().Spec) {
-		return fmt.Errorf("controller write guard policy spec differs from the immutable contract")
-	}
-	return nil
-}
-
-func (g *ControllerWriteGuard) verifyBinding(binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
-	name := ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
-	if binding == nil || binding.Name != name {
-		return fmt.Errorf("fixed controller write guard binding %s is missing", name)
-	}
-	if err := g.verifyMetadata("ValidatingAdmissionPolicyBinding", binding.ObjectMeta); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(binding.Spec, g.binding().Spec) {
-		return fmt.Errorf("controller write guard binding spec differs from the immutable contract")
-	}
-	return nil
-}
-
-func (g *ControllerWriteGuard) verifyMetadata(kind string, metadata metav1.ObjectMeta) error {
-	expected := g.metadata(ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage))
-	if metadata.Name != expected.Name {
-		return fmt.Errorf("fixed controller write guard %s has an unexpected name", kind)
-	}
-	for key, value := range expected.Annotations {
-		if metadata.Annotations[key] != value {
-			return fmt.Errorf("fixed controller write guard %s has foreign or incomplete ownership", kind)
-		}
-	}
-	for key, value := range expected.Labels {
-		if metadata.Labels[key] != value {
-			return fmt.Errorf("fixed controller write guard %s has foreign or incomplete ownership", kind)
-		}
-	}
-	return nil
-}
-
-func (g *ControllerWriteGuard) validate(requirePoll bool) error {
-	if g == nil || g.Policies == nil || g.Bindings == nil {
-		return fmt.Errorf("controller write guard policy clients are required")
-	}
-	if g.ReleaseName == "" || g.ReleaseNamespace == "" || g.ControllerServiceAccountName == "" ||
-		g.ReleaseName != strings.TrimSpace(g.ReleaseName) ||
-		g.ReleaseNamespace != strings.TrimSpace(g.ReleaseNamespace) ||
-		g.ControllerServiceAccountName != strings.TrimSpace(g.ControllerServiceAccountName) {
-		return fmt.Errorf("controller write guard release and ServiceAccount identity is required")
-	}
-	if g.ReleaseSequence < 1 || g.ManagerImage == "" || g.ManagerImage != strings.TrimSpace(g.ManagerImage) {
-		return fmt.Errorf("controller write guard release identity is required")
-	}
-	if requirePoll && g.PollEvery <= 0 {
-		return fmt.Errorf("controller write guard poll interval must be positive")
-	}
-	return nil
+func scopePtr(scope admissionregistrationv1.ScopeType) *admissionregistrationv1.ScopeType {
+	return &scope
 }

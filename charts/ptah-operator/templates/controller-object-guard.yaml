@@ -1,23 +1,21 @@
 {{- $controllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.serviceAccountName" .) -}}
 {{- $controllerUsernameMatch := printf `request.userInfo.username == %q` $controllerUsername -}}
-{{- $candidateSequence := include "ptah-operator.releaseSequence" . -}}
-{{- /* Every release runs the controller as the same ServiceAccount, so the
-      predecessor's runtime writes under this name until the cutover stops it,
-      and this release's once the cutover activates it. */ -}}
-{{- $controllerAuthority := printf `request.userInfo.username == %q && variables.activeRelease == %s` $controllerUsername $candidateSequence -}}
-{{- if gt (atoi $candidateSequence) 1 -}}
-{{- $controllerAuthority = printf `request.userInfo.username == %q && (variables.activeRelease == %s || variables.activeRelease == %s)` $controllerUsername $candidateSequence (include "ptah-operator.predecessorReleaseSequence" .) -}}
-{{- end -}}
+{{- /* A Job or a plan the controller creates names the manager image and the
+      controller-state version that built it. This release's are written into
+      the policies, so a manager left over from another release cannot create
+      either. internal/crdupgrade/controller_object_guard.go builds the same
+      policies, and a render test compares the two. */ -}}
+{{- $releaseControllerState := include "ptah-operator.controllerStateVersion" . -}}
+{{- $releaseControllerImage := include "ptah-operator.controllerImage" . -}}
 {{- $jobMessage := "Ptah controller Job write guard rejected an unsafe workload shape" -}}
 {{- $chunkMessage := "Ptah controller chunk write guard rejected an unsafe ConfigMap shape" -}}
 {{- $planMessage := "Ptah controller plan write guard rejected an unsafe manifest shape" -}}
 {{- $migrationPlanMessage := "Ptah controller migration plan write guard rejected an unsafe manifest shape" -}}
-{{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
-{{- $jobCurrent := `has(object.metadata.annotations) && ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest", "operator.ptah.run/plan-fingerprint", "operator.ptah.run/plan-content-digest", "cluster-autoscaler.kubernetes.io/safe-to-evict"]) && object.metadata.annotations["operator.ptah.run/operation-id"] != "" && object.metadata.annotations["operator.ptah.run/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/ptah-version"] != "" && object.metadata.annotations["operator.ptah.run/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.run/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.run/controller-revision"] != "" && object.metadata.annotations["operator.ptah.run/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString && object.metadata.annotations["operator.ptah.run/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && object.metadata.labels["app.kubernetes.io/component"] == "schema-operation" && "operator.ptah.run/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.run/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || ((object.metadata.labels["operator.ptah.run/operation"] != "apply" || object.metadata.labels["app.kubernetes.io/component"] == "migration-operation") && !("operator.ptah.run/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.run/plan-content-digest" in object.metadata.annotations))) && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && "cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations && object.metadata.annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] == "false") || (object.metadata.labels["operator.ptah.run/operation"] != "apply" && !("cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations)))` -}}
-{{- $jobActiveImageClause := ` && object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage` -}}
-{{- $jobActiveStateClause := ` && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString` -}}
+{{- $jobCurrent := `has(object.metadata.annotations) && ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest", "operator.ptah.run/plan-fingerprint", "operator.ptah.run/plan-content-digest", "cluster-autoscaler.kubernetes.io/safe-to-evict"]) && object.metadata.annotations["operator.ptah.run/operation-id"] != "" && object.metadata.annotations["operator.ptah.run/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/ptah-version"] != "" && object.metadata.annotations["operator.ptah.run/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.run/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/controller-image"] == variables.releaseControllerImage && object.metadata.annotations["operator.ptah.run/controller-revision"] != "" && object.metadata.annotations["operator.ptah.run/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.releaseControllerStateString && object.metadata.annotations["operator.ptah.run/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && object.metadata.labels["app.kubernetes.io/component"] == "schema-operation" && "operator.ptah.run/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.run/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || ((object.metadata.labels["operator.ptah.run/operation"] != "apply" || object.metadata.labels["app.kubernetes.io/component"] == "migration-operation") && !("operator.ptah.run/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.run/plan-content-digest" in object.metadata.annotations))) && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && "cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations && object.metadata.annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] == "false") || (object.metadata.labels["operator.ptah.run/operation"] != "apply" && !("cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations)))` -}}
+{{- $jobActiveImageClause := ` && object.metadata.annotations["operator.ptah.run/controller-image"] == variables.releaseControllerImage` -}}
+{{- $jobActiveStateClause := ` && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.releaseControllerStateString` -}}
 {{- $jobCurrentAnyIdentity := $jobCurrent | replace $jobActiveImageClause "" | replace $jobActiveStateClause "" -}}
-{{- $jobActiveIdentity := `object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString` -}}
+{{- $jobActiveIdentity := `object.metadata.annotations["operator.ptah.run/controller-image"] == variables.releaseControllerImage && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.releaseControllerStateString` -}}
 {{- $jobAnnotationContract := printf `(%s) && (request.operation == "UPDATE" || (request.operation == "CREATE" && (%s)))` $jobCurrentAnyIdentity $jobActiveIdentity -}}
 {{- $jobValidations := list
       (dict "expression" (include "ptah-operator.eitherSubject" `has(object.metadata.labels) && object.metadata.labels.size() == 5 && ["app.kubernetes.io/managed-by", "app.kubernetes.io/component", "operator.ptah.run/schema", "operator.ptah.run/operation", "operator.ptah.run/operation-id"].all(key, key in object.metadata.labels) && object.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" && object.metadata.labels["app.kubernetes.io/component"] == "schema-operation" && object.metadata.labels["operator.ptah.run/schema"] != "" && object.metadata.labels["operator.ptah.run/operation"] in ["resolve", "verify", "observe", "plan", "apply"] && object.metadata.labels["operator.ptah.run/operation-id"].matches("^[0-9a-f]{16}$") && object.metadata.name.startsWith("ptah-" + object.metadata.labels["operator.ptah.run/operation"] + "-") && object.metadata.name.matches("^ptah-(resolve|verify|observe|plan|apply)-[a-z0-9]([-a-z0-9.]*[a-z0-9])?-[0-9a-f]{16}$") && (!has(object.metadata.generateName) || object.metadata.generateName == "") && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion`) "message" $jobMessage)
@@ -41,9 +39,9 @@
 {{- $chunkValidations := list
       (dict "expression" `has(object.metadata.labels) && object.metadata.labels.size() == 2 && ["operator.ptah.run/plan", "operator.ptah.run/schema"].all(key, key in object.metadata.labels && object.metadata.labels[key] != "") && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && object.metadata.name.startsWith(object.metadata.labels["operator.ptah.run/plan"] + "-") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchemaPlan" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/plan"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion` "message" $chunkMessage)
       (dict "expression" `has(dyn(object).immutable) && dyn(object).immutable && (!has(dyn(object).data) || dyn(object).data.size() == 0) && has(dyn(object).binaryData) && dyn(object).binaryData.size() == 1 && "chunk" in dyn(object).binaryData && dyn(object).binaryData["chunk"].size() >= 1 && dyn(object).binaryData["chunk"].size() <= 699052` "message" $chunkMessage) -}}
-{{- /* Candidate fields stay dynamic until the predecessor CRD has been upgraded. */ -}}
+{{- /* Fields are read through dyn, so the policy does not depend on the CRD revision the API server type-checks it against. */ -}}
 {{- $planCommon := `dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1 && dyn(object).spec.dialect != "" && dyn(object).spec.statementCount >= 1 && dyn(object).spec.size >= 1 && dyn(object).spec.size <= 8388608` -}}
-{{- $planCurrent := `dyn(object).spec.contractVersion == 3 && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.activeControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.activeControllerState` -}}
+{{- $planCurrent := `dyn(object).spec.contractVersion == 3 && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.releaseControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.releaseControllerState` -}}
 {{- $planContract := printf `(%s) && (%s)` $planCommon $planCurrent -}}
 {{- $planValidations := list
       (dict "expression" `has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.run/schema" in object.metadata.labels && object.metadata.labels["operator.ptah.run/schema"] != "" && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && dyn(object).spec.schemaRef.name == object.metadata.labels["operator.ptah.run/schema"] && dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid` "message" $planMessage)
@@ -52,57 +50,24 @@
       (dict "expression" `!has(dyn(object).status)` "message" $planMessage) -}}
 {{- $migrationPlanValidations := list
       (dict "expression" `has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.run/migration" in object.metadata.labels && object.metadata.labels["operator.ptah.run/migration"] != "" && object.metadata.name.matches("^ptah-mplan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahMigration" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/migration"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && dyn(object).spec.migrationRef.name == object.metadata.labels["operator.ptah.run/migration"] && dyn(object).spec.migrationRef.uid == object.metadata.ownerReferences[0].uid` "message" $migrationPlanMessage)
-      (dict "expression" `dyn(object).spec.contractVersion == 1 && dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.historyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.currentVersion >= 0 && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.controllerImage == variables.activeControllerImage && dyn(object).spec.controllerRevision != "" && dyn(object).spec.controllerStateVersion >= 1 && dyn(object).spec.controllerStateVersion == variables.activeControllerState && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1` "message" $migrationPlanMessage)
+      (dict "expression" `dyn(object).spec.contractVersion == 1 && dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.historyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.currentVersion >= 0 && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.controllerImage == variables.releaseControllerImage && dyn(object).spec.controllerRevision != "" && dyn(object).spec.controllerStateVersion >= 1 && dyn(object).spec.controllerStateVersion == variables.releaseControllerState && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1` "message" $migrationPlanMessage)
       (dict "expression" `dyn(object).spec.migrations.size() >= 1 && dyn(object).spec.migrations.size() <= 256 && dyn(object).spec.migrations.all(migration, migration.version >= 1 && migration.checksum != "" && migration.checksum.size() <= 128 && (!has(migration.transactionMode) || migration.transactionMode in ["file", "none"]))` "message" $migrationPlanMessage)
       (dict "expression" `!has(dyn(object).status)` "message" $migrationPlanMessage) -}}
 {{- $entries := list
-      (dict "name" (include "ptah-operator.controllerJobWriteGuardPolicyName" .) "component" "controller-job-write-guard" "apiGroups" (list "batch") "apiVersions" (list "v1") "resource" "jobs" "operations" (list "CREATE" "UPDATE") "denialMessage" $jobMessage "validations" $jobValidations "parameterized" true)
-      (dict "name" (include "ptah-operator.controllerChunkWriteGuardPolicyName" .) "component" "controller-chunk-write-guard" "apiGroups" (list "") "apiVersions" (list "v1") "resource" "configmaps" "operations" (list "CREATE") "denialMessage" $chunkMessage "validations" $chunkValidations "parameterized" true)
-      (dict "name" (include "ptah-operator.controllerPlanWriteGuardPolicyName" .) "component" "controller-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahschemaplans" "operations" (list "CREATE") "denialMessage" $planMessage "validations" $planValidations "parameterized" true)
-      (dict "name" (include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" .) "component" "controller-migration-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahmigrationplans" "operations" (list "CREATE") "denialMessage" $migrationPlanMessage "validations" $migrationPlanValidations "parameterized" true) -}}
-{{- range $entry := $entries -}}
-{{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $entry.name -}}
-{{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $entry.name -}}
-{{- range $object := list
-      (dict "kind" "ValidatingAdmissionPolicy" "value" $policy)
-      (dict "kind" "ValidatingAdmissionPolicyBinding" "value" $binding) -}}
-{{- with $object.value -}}
-{{- $annotations := default (dict) .metadata.annotations -}}
-{{- $labels := default (dict) .metadata.labels -}}
-{{- if or
-      (ne (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.run/release-name")) $.Release.Name)
-      (ne (default "" (index $annotations "operator.ptah.run/release-namespace")) $.Release.Namespace)
-      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
-      (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
-      (ne (default "" (index $labels "app.kubernetes.io/component")) $entry.component) -}}
-{{- fail (printf "retained %s %s has foreign or incomplete controller-object ownership" $object.kind $entry.name) -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- if not $policy }}
+      (dict "name" (include "ptah-operator.controllerJobWriteGuardPolicyName" .) "component" "controller-job-write-guard" "apiGroups" (list "batch") "apiVersions" (list "v1") "resource" "jobs" "operations" (list "CREATE" "UPDATE") "denialMessage" $jobMessage "validations" $jobValidations)
+      (dict "name" (include "ptah-operator.controllerChunkWriteGuardPolicyName" .) "component" "controller-chunk-write-guard" "apiGroups" (list "") "apiVersions" (list "v1") "resource" "configmaps" "operations" (list "CREATE") "denialMessage" $chunkMessage "validations" $chunkValidations)
+      (dict "name" (include "ptah-operator.controllerPlanWriteGuardPolicyName" .) "component" "controller-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahschemaplans" "operations" (list "CREATE") "denialMessage" $planMessage "validations" $planValidations)
+      (dict "name" (include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" .) "component" "controller-migration-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahmigrationplans" "operations" (list "CREATE") "denialMessage" $migrationPlanMessage "validations" $migrationPlanValidations) -}}
+{{- range $entry := $entries }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: {{ $entry.name }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-152"
-    helm.sh/resource-policy: keep
-    operator.ptah.run/rollout-guard-version: "1"
-    operator.ptah.run/release-name: {{ $.Release.Name | quote }}
-    operator.ptah.run/release-namespace: {{ $.Release.Namespace | quote }}
   labels:
-    app.kubernetes.io/managed-by: ptah-operator
-    app.kubernetes.io/instance: {{ $.Release.Name }}
+    {{- include "ptah-operator.labels" $ | nindent 4 }}
     app.kubernetes.io/component: {{ $entry.component }}
 spec:
   failurePolicy: Fail
-{{- if $entry.parameterized }}
-  paramKind:
-    apiVersion: v1
-    kind: ConfigMap
-{{- end }}
   matchConstraints:
     matchPolicy: Exact
     namespaceSelector: {}
@@ -117,42 +82,24 @@ spec:
     - name: controller-service-account
       expression: {{ $controllerUsernameMatch | quote }}
   variables:
-    - name: activeRelease
-      expression: 'params != null && has(params.data) && "active-release-sequence" in params.data && params.data["active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(params.data["active-release-sequence"]) : -1'
-    - name: activeControllerStateString
-      expression: 'params != null && has(params.metadata.annotations) && "operator.ptah.run/controller-state-version" in params.metadata.annotations ? params.metadata.annotations["operator.ptah.run/controller-state-version"] : ""'
-    - name: activeControllerState
-      expression: 'params != null && has(params.metadata.annotations) && "operator.ptah.run/controller-state-version" in params.metadata.annotations && params.metadata.annotations["operator.ptah.run/controller-state-version"].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations["operator.ptah.run/controller-state-version"]) : 0'
-    - name: activeControllerImage
-      expression: 'params != null && has(params.metadata.annotations) && "operator.ptah.run/manager-image" in params.metadata.annotations ? params.metadata.annotations["operator.ptah.run/manager-image"] : ""'
-    - name: candidateRelease
-      expression: {{ $candidateSequence | quote }}
+    - name: releaseControllerStateString
+      expression: {{ printf "%q" $releaseControllerState | quote }}
+    - name: releaseControllerState
+      expression: {{ $releaseControllerState | quote }}
+    - name: releaseControllerImage
+      expression: {{ printf "%q" $releaseControllerImage | quote }}
   validations:
-    - expression: {{ $activationShape | quote }}
-      message: {{ $entry.denialMessage | quote }}
-    - expression: {{ $controllerAuthority | quote }}
-      message: "Ptah controller principal guard rejected an inactive release identity"
 {{- range $validation := $entry.validations }}
     - expression: {{ $validation.expression | quote }}
       message: {{ $validation.message | quote }}
 {{- end }}
 ---
-{{- end }}
-{{- if not $binding }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
   name: {{ $entry.name }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: {{ ternary "-147" "-151" $entry.parameterized | quote }}
-    helm.sh/resource-policy: keep
-    operator.ptah.run/rollout-guard-version: "1"
-    operator.ptah.run/release-name: {{ $.Release.Name | quote }}
-    operator.ptah.run/release-namespace: {{ $.Release.Namespace | quote }}
   labels:
-    app.kubernetes.io/managed-by: ptah-operator
-    app.kubernetes.io/instance: {{ $.Release.Name }}
+    {{- include "ptah-operator.labels" $ | nindent 4 }}
     app.kubernetes.io/component: {{ $entry.component }}
 spec:
   policyName: {{ $entry.name }}
@@ -166,13 +113,6 @@ spec:
         operations: {{ $entry.operations | toJson }}
         resources: [{{ $entry.resource | quote }}]
         scope: Namespaced
-{{- if $entry.parameterized }}
-  paramRef:
-    name: ptah-operator-release-activation
-    namespace: {{ $.Release.Namespace }}
-    parameterNotFoundAction: Deny
-{{- end }}
   validationActions: [Deny]
 ---
-{{- end }}
 {{- end }}

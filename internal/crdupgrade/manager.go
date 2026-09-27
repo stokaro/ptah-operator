@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -20,8 +19,6 @@ import (
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
-
-var errPreflightComplete = errors.New("CRD preflight complete")
 
 // Client is the exact cluster-scoped API surface needed to manage the fixed
 // Ptah CRD set.
@@ -48,24 +45,11 @@ func (m *Manager) ReconcileWithStatePreflight(ctx context.Context, state StoredC
 	return m.ReconcileWithStatePreflightAndPrepare(ctx, state, supported, nil)
 }
 
-// PreflightWithState performs the complete stored-state, compatibility,
-// re-read, and server-side dry-run sequence without any persistent mutation.
-// Helm runs it before creating the append-only rollout guards.
-func (m *Manager) PreflightWithState(ctx context.Context, state StoredControllerStateClients, supported int64) error {
-	err := m.ReconcileWithStatePreflightAndPrepare(ctx, state, supported, func(context.Context) error {
-		return errPreflightComplete
-	})
-	if errors.Is(err, errPreflightComplete) {
-		return nil
-	}
-	return err
-}
-
 // ReconcileWithStatePreflightAndPrepare performs every CRD and stored-state
 // check, including server-side dry runs, before invoking prepare immediately
-// ahead of the first real CRD update. The Helm hook uses prepare to establish
-// the persistent rollout ratchet and stop old runtime Pods without weakening
-// the mandatory state preflight.
+// ahead of the first real CRD update. The Helm hook uses prepare to stop the
+// running release when the manager image changes, so a refusal leaves that
+// release running.
 func (m *Manager) ReconcileWithStatePreflightAndPrepare(
 	ctx context.Context,
 	state StoredControllerStateClients,
@@ -90,19 +74,19 @@ func (m *Manager) ReconcileWithStatePreflightAndPrepare(
 	}
 	return m.reconcile(ctx, func() error {
 		if err := VerifyStoredControllerState(ctx, state, supported); err != nil {
-			return fmt.Errorf("repeat stored controller-state preflight before release cutover: %w", err)
+			return fmt.Errorf("repeat stored controller-state preflight before stopping the running release: %w", err)
 		}
 		if prepare != nil {
 			if err := prepare(ctx); err != nil {
-				return fmt.Errorf("prepare release cutover: %w", err)
+				return fmt.Errorf("stop the running release: %w", err)
 			}
 		}
-		// The Helm cutover stops every old runtime Pod in prepare. Re-read
+		// The Helm hook stops every old runtime Pod in prepare. Re-read
 		// durable state only after that writer is gone so a last successful old
 		// reconciliation cannot hide a controller downgrade between the
 		// preflight snapshot and the first CRD update.
 		if err := VerifyStoredControllerState(ctx, state, supported); err != nil {
-			return fmt.Errorf("final stored controller-state preflight after release cutover: %w", err)
+			return fmt.Errorf("final stored controller-state preflight after stopping the running release: %w", err)
 		}
 		return nil
 	})

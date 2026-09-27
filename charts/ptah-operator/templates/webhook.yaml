@@ -12,13 +12,9 @@
 {{- $tlsKey := $material.tlsKey -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
-{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
-{{- $candidateServiceName := include "ptah-operator.certificateTransitionServiceName" . -}}
-{{- $canaryConfigMapName := include "ptah-operator.certificateCanaryConfigMapName" . -}}
-{{- $certificateUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.certRotatorServiceAccountName" .) -}}
 {{- $existingMutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $configurationName -}}
 {{- $existingValidating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $configurationName -}}
-{{- $entryBundles := dict "mutating" $caBundle "migrationMutating" $caBundle "mutatingCanary" $caBundle "approvalValidating" $caBundle "migrationApprovalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle "validatingCanary" $caBundle -}}
+{{- $entryBundles := dict "mutating" $caBundle "migrationMutating" $caBundle "approvalValidating" $caBundle "migrationApprovalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle -}}
 {{- if not .Values.webhook.existingSecret -}}
 {{- if $existingMutating -}}
 {{- range $existingMutating.webhooks -}}
@@ -26,8 +22,6 @@
 {{- $_ := set $entryBundles "mutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- else if and (eq .name "mmigrationapproval.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
 {{- $_ := set $entryBundles "migrationMutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
-{{- else if and $certificateRuntimeEnabled (eq .name "certificate-rotation-canary-mutate.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $candidateServiceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
-{{- $_ := set $entryBundles "mutatingCanary" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -42,8 +36,6 @@
 {{- $_ := set $entryBundles "podValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vcontrollerwrite.operator.ptah.run") -}}
 {{- $_ := set $entryBundles "controllerWriteValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
-{{- else if and $certificateRuntimeEnabled (eq .name "certificate-rotation-canary-validate.operator.ptah.run") (eq .clientConfig.service.name $candidateServiceName) -}}
-{{- $_ := set $entryBundles "validatingCanary" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -130,51 +122,6 @@ webhooks:
         operations: ["CREATE"]
         resources: ["ptahmigrationapprovals"]
         scope: Namespaced
-  {{- if $certificateRuntimeEnabled }}
-  - name: certificate-rotation-canary-mutate.operator.ptah.run
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: Fail
-    matchPolicy: Exact
-    reinvocationPolicy: Never
-    timeoutSeconds: 5
-    namespaceSelector:
-      matchLabels:
-        kubernetes.io/metadata.name: {{ .Release.Namespace }}
-    objectSelector:
-      matchLabels:
-        operator.ptah.run/certificate-rotation-canary: "v1"
-    matchConditions:
-      - name: exact-certificate-rotation-mutating-canary
-        expression: >-
-          request.operation == "UPDATE" &&
-          request.resource.group == "" &&
-          request.resource.version == "v1" &&
-          request.resource.resource == "configmaps" &&
-          (!has(request.subResource) || request.subResource == "") &&
-          request.namespace == {{ .Release.Namespace | quote }} &&
-          request.name == {{ $canaryConfigMapName | quote }} &&
-          request.userInfo.username == {{ $certificateUsername | quote }} &&
-          request.dryRun == true &&
-          has(request.options) &&
-          has(request.options.fieldManager) &&
-          request.options.fieldManager == "ptah-certificate-rotation-canary-mutate-v1" &&
-          has(request.options.fieldValidation) &&
-          request.options.fieldValidation == "Strict"
-    clientConfig:
-      caBundle: {{ index $entryBundles "mutatingCanary" }}
-      service:
-        namespace: {{ .Release.Namespace }}
-        name: {{ $candidateServiceName }}
-        path: /candidate/mutate
-        port: 443
-    rules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
-        scope: Namespaced
-  {{- end }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
@@ -308,47 +255,3 @@ webhooks:
         operations: ["CREATE"]
         resources: ["ptahschemaplans", "ptahmigrationplans"]
         scope: Namespaced
-  {{- if $certificateRuntimeEnabled }}
-  - name: certificate-rotation-canary-validate.operator.ptah.run
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: Fail
-    matchPolicy: Exact
-    timeoutSeconds: 5
-    namespaceSelector:
-      matchLabels:
-        kubernetes.io/metadata.name: {{ .Release.Namespace }}
-    objectSelector:
-      matchLabels:
-        operator.ptah.run/certificate-rotation-canary: "v1"
-    matchConditions:
-      - name: exact-certificate-rotation-validating-canary
-        expression: >-
-          request.operation == "UPDATE" &&
-          request.resource.group == "" &&
-          request.resource.version == "v1" &&
-          request.resource.resource == "configmaps" &&
-          (!has(request.subResource) || request.subResource == "") &&
-          request.namespace == {{ .Release.Namespace | quote }} &&
-          request.name == {{ $canaryConfigMapName | quote }} &&
-          request.userInfo.username == {{ $certificateUsername | quote }} &&
-          request.dryRun == true &&
-          has(request.options) &&
-          has(request.options.fieldManager) &&
-          request.options.fieldManager == "ptah-certificate-rotation-canary-validate-v1" &&
-          has(request.options.fieldValidation) &&
-          request.options.fieldValidation == "Strict"
-    clientConfig:
-      caBundle: {{ index $entryBundles "validatingCanary" }}
-      service:
-        namespace: {{ .Release.Namespace }}
-        name: {{ $candidateServiceName }}
-        path: /candidate/validate
-        port: 443
-    rules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["UPDATE"]
-        resources: ["configmaps"]
-        scope: Namespaced
-  {{- end }}

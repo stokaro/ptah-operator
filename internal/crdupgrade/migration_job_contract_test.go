@@ -281,13 +281,10 @@ func evaluateJobContract(t *testing.T, expression string, object map[string]any,
 		"object":    object,
 		"oldObject": nil,
 		"request":   map[string]any{"operation": "CREATE"},
-		"params":    map[string]any{},
 		"variables": map[string]any{
-			"activeRelease":               int64(2),
-			"previousRelease":             int64(1),
-			"activeControllerImage":       controllerImage,
-			"activeControllerState":       int64(ourStateVersion),
-			"activeControllerStateString": ourStateVersionString(),
+			"releaseControllerImage":       controllerImage,
+			"releaseControllerState":       int64(ourStateVersion),
+			"releaseControllerStateString": ourStateVersionString(),
 		},
 	})
 	if err != nil {

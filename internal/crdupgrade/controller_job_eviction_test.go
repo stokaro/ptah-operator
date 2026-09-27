@@ -33,8 +33,7 @@ func TestControllerJobAnnotationContractRequiresEveryApplyToRefuseEviction(t *te
 	}
 	const image = "registry.example/ptah@sha256:" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	variables := map[string]any{
-		"activeRelease": int64(1), "candidateRelease": int64(1), "previousRelease": int64(0),
-		"activeControllerImage": image, "activeControllerStateString": "1", "activeControllerState": int64(1),
+		"releaseControllerImage": image, "releaseControllerStateString": "1", "releaseControllerState": int64(1),
 	}
 	job := func(component, operation string, extra map[string]any) map[string]any {
 		annotations := map[string]any{

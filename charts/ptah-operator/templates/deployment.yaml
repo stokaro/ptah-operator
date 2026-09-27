@@ -67,7 +67,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
           args:
-            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" true) | fromJsonArray) }}
+            {{- range (include "ptah-operator.runtimeVerifyArgsJSON" (dict "root" . "verifyControllerState" true) | fromJsonArray) }}
             - {{ . | quote }}
             {{- end }}
           securityContext:

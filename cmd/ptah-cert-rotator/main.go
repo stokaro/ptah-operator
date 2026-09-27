@@ -18,23 +18,6 @@ import (
 	"github.com/stokaro/ptah-operator/internal/certrotation"
 )
 
-// dormantCanaryFlags are the admission-canary arguments the chart still
-// passes. The rotator no longer proves a transition through a canary, but the
-// release guards in internal/crdupgrade pin the rotator's exact arguments and
-// the chart objects the canary used, so the flags stay accepted and unread
-// until the chart and those guards drop them together.
-var dormantCanaryFlags = []string{
-	"candidate-service-name",
-	"candidate-bind-address",
-	"candidate-probe-config-map-name",
-	"candidate-probe-username",
-	"candidate-mutating-field-manager",
-	"candidate-validating-field-manager",
-	"candidate-stability-duration",
-	"candidate-poll-interval",
-	"candidate-request-timeout",
-}
-
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -123,9 +106,6 @@ func parseFlags(args []string) (certrotation.Config, supervisorConfig, string, e
 	flags.DurationVar(&config.ProbeInterval, "probe-interval", 2*time.Second, "interval between serving-certificate probes")
 	flags.DurationVar(&config.LeaseDuration, "lease-duration", 10*time.Minute, "certificate rotation Lease duration")
 	flags.DurationVar(&config.AcquireTimeout, "lease-acquire-timeout", 30*time.Second, "maximum time to acquire the certificate rotation Lease")
-	for _, name := range dormantCanaryFlags {
-		flags.String(name, "", "unused; accepted while the release guards still pin it")
-	}
 	if err := flags.Parse(args); err != nil {
 		return certrotation.Config{}, supervisorConfig{}, "", err
 	}

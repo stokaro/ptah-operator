@@ -85,7 +85,7 @@ const (
 	ptahCatalogPath            = "support/ptah.json"
 	releaseSequenceHistoryPath = "hack/releaseverify/release-sequence-history.json"
 	releaseSequenceHelperPath  = "charts/ptah-operator/templates/_helpers.tpl"
-	releaseSequenceGoPath      = "internal/crdupgrade/rollout.go"
+	releaseSequenceGoPath      = "internal/crdupgrade/release_sequence.go"
 	kubernetesSupportPath      = "support/kubernetes.json"
 	buildxVersion              = "v0.37.1"
 	buildkitImage              = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"

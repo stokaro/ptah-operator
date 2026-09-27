@@ -1,5 +1,4 @@
 {{- $coordinationNamespace := default .Release.Namespace .Values.coordination.namespace -}}
-{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -21,31 +20,6 @@ rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     resourceNames: ["ptah-operator-admission"]
-    verbs: ["get"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
-    resourceNames:
-      - {{ include "ptah-operator.rolloutGuardPolicyName" . }}
-      - {{ include "ptah-operator.runtimeGuardPolicyName" . }}
-      - {{ include "ptah-operator.runtimePodGuardPolicyName" . }}
-      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
-      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
-      - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
-      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
-      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
-      {{- if $certificateRuntimeEnabled }}
-      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
-      {{- end }}
     verbs: ["get"]
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas"]
@@ -130,43 +104,6 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ include "ptah-operator.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "ptah-operator.fullname" . }}-runtime-admission
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-rules:
-  - apiGroups: [""]
-    resources: ["serviceaccounts"]
-    resourceNames:
-      - {{ include "ptah-operator.serviceAccountName" . }}
-      - {{ include "ptah-operator.certRotatorServiceAccountName" . }}
-    verbs: ["get"]
-  - apiGroups: [""]
-    resources: ["limitranges"]
-    verbs: ["list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "ptah-operator.fullname" . }}-runtime-admission
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "ptah-operator.fullname" . }}-runtime-admission
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "ptah-operator.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
-  - kind: ServiceAccount
-    name: {{ include "ptah-operator.certRotatorServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
