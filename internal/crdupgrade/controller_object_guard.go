@@ -10,13 +10,13 @@ import (
 )
 
 const (
-	controllerJobWriteGuardNamePrefix  = "ptah-operator-job-write-guard-v2-"
-	controllerChunkWriteGuardPrefix    = "ptah-operator-chunk-write-guard-v2-"
-	controllerPlanWriteGuardNamePrefix = "ptah-operator-plan-write-guard-v2-"
+	controllerJobWriteGuardNamePrefix  = "ptah-operator-job-write-guard-"
+	controllerChunkWriteGuardPrefix    = "ptah-operator-chunk-write-guard-"
+	controllerPlanWriteGuardNamePrefix = "ptah-operator-plan-write-guard-"
 	// The migration plan is a separate kind with a separate shape, so it gets
 	// its own boundary rather than a widened one: the schema plan contract
 	// stays exactly as strict as it was.
-	controllerMigrationPlanWriteGuardNamePrefix = "ptah-operator-migration-plan-write-guard-v1-"
+	controllerMigrationPlanWriteGuardNamePrefix = "ptah-operator-migration-plan-write-guard-"
 
 	controllerJobWriteGuardComponent   = "controller-job-write-guard"
 	controllerChunkWriteGuardComponent = "controller-chunk-write-guard"

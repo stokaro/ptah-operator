@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	controllerWriteGuardNamePrefix = "ptah-operator-controller-write-guard-v2-"
+	controllerWriteGuardNamePrefix = "ptah-operator-controller-write-guard-"
 
 	activeOperationFinalizer    = "operator.ptah.run/active-operation"
 	migrationOperationFinalizer = "operator.ptah.run/migration-operation"

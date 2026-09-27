@@ -20,11 +20,11 @@ import (
 //  3. Retire: once every webhook endpoint serves that certificate, every
 //     managed entry trusts the new CA alone, and the record is cleared.
 //
-// The delay is what the removed admission canary used to prove directly: that
-// every API server has picked up the expanded bundle before any webhook
-// presents a certificate only the new CA verifies. Nothing proves it now; the
-// delay makes it true with a wide margin, since an API server sees a webhook
-// configuration change within seconds and the default delay is hours.
+// The delay is the only thing that makes it true that every API server has
+// picked up the expanded bundle before any webhook presents a certificate
+// only the new CA verifies: nothing proves that directly. The delay carries a
+// wide margin, since an API server sees a webhook configuration change within
+// seconds and the default delay is hours.
 //
 // The delay protects a serving certificate that still works, and never runs
 // past the moment it stops working: the switch comes no later than one probe
@@ -51,14 +51,6 @@ func (r *Rotator) runPendingCATransition(
 	default:
 		return Result{}, errors.New("durable CA transition has no known relationship to the generated TLS Secret")
 	}
-	if pending.sourceState == stagingSourceMissing {
-		// Prove the broad-CREATE guard on every pass, before trust changes, so
-		// a guard that stopped holding blocks the transition where it stands.
-		if err := r.ensureSecretCreateGuard(ctx, generatedSecret(r.config, pending.material)); err != nil {
-			return Result{}, err
-		}
-	}
-
 	current, err := r.currentServingTrust(ctx, primary)
 	if err != nil {
 		return Result{}, err

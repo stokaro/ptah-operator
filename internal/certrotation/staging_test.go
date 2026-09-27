@@ -1277,13 +1277,7 @@ func TestPrimarySecretCreateAcceptsOnlyExactLiveObject(t *testing.T) {
 			now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 			old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
 			client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-			installEstablishedSecretCreateGuard(t, client, config)
-			installSecretCreateAdmission(t, client, config)
 			client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
-				if len(options.DryRun) != 0 {
-					return false, nil, nil
-				}
 				observed := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret).DeepCopy()
 				observed.UID = "created-primary-secret-uid"
 				observed.ResourceVersion = "1"
