@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -113,11 +112,6 @@ var managerArgumentPrefixes = []string{
 	"--certificate-health-port=",
 	"--hook-service-account-name=",
 	"--controller-service-account-name=",
-	"--controller-service-account-managed=",
-	"--previous-controller-service-account-name=",
-	"--previous-controller-service-account-uid=",
-	"--previous-controller-service-account-managed=",
-	"--previous-controller-release-sequence=",
 	"--controller-deployment-name=",
 	"--controller-replicas=",
 	"--certificate-deployment-name=",
@@ -128,35 +122,6 @@ var managerArgumentPrefixes = []string{
 	"--runtime-deployment-config-expressions-b64=",
 	"--runtime-pod-config-expressions-b64=",
 	"--runtime-admission-contract-b64=",
-	"--previous-controller-manager-image=",
-}
-
-// previousControllerArguments are the manager arguments the chart fills from
-// its lookup of the previous controller principal. A client-side helm
-// template has no lookup, so a candidate render leaves the name, uid and
-// release sequence empty and says managed=false, while the live Job carries
-// what the cluster established. The render fixes their position and shape,
-// never their value, and comparisons mask them to their prefixes.
-var previousControllerArguments = map[int]*regexp.Regexp{
-	15: regexp.MustCompile(`^(|[a-z0-9]([-a-z0-9.]*[a-z0-9])?)$`),
-	16: regexp.MustCompile(`^[A-Za-z0-9-]*$`),
-	17: regexp.MustCompile(`^(true|false)$`),
-	18: regexp.MustCompile(`^[0-9]*$`),
-	29: regexp.MustCompile(`^(|[^\s@]+@sha256:[0-9a-f]{64})$`),
-}
-
-// maskPreviousControllerArguments reduces the previous-controller arguments
-// of a manager container to their prefixes so a live Job compares equal to
-// the candidate render that could not know their values.
-func maskPreviousControllerArguments(spec *corev1.PodSpec) {
-	if len(spec.Containers) != 1 || len(spec.Containers[0].Args) != len(managerArgumentPrefixes) {
-		return
-	}
-	for index := range previousControllerArguments {
-		if strings.HasPrefix(spec.Containers[0].Args[index], managerArgumentPrefixes[index]) {
-			spec.Containers[0].Args[index] = managerArgumentPrefixes[index]
-		}
-	}
 }
 
 var (
@@ -1074,12 +1039,6 @@ func validateManagerArguments(arguments []string, config captureConfig, image st
 		if !strings.HasPrefix(arguments[index], prefix) {
 			return fmt.Errorf("container manager argument %d does not match %s", index, prefix)
 		}
-		if shape, lookupDerived := previousControllerArguments[index]; lookupDerived {
-			if !shape.MatchString(arguments[index][len(prefix):]) {
-				return fmt.Errorf("container manager argument %d has a malformed %s value", index, prefix)
-			}
-			continue
-		}
 		if len(arguments[index]) == len(prefix) {
 			return fmt.Errorf("container manager argument %d does not match %s", index, prefix)
 		}
@@ -1097,7 +1056,7 @@ func validateManagerArguments(arguments []string, config captureConfig, image st
 	if arguments[12] != "--hook-service-account-name="+expectedServiceAccount {
 		return errors.New("container hook service account argument is invalid")
 	}
-	if arguments[23] != "--manager-image="+image {
+	if arguments[18] != "--manager-image="+image {
 		return errors.New("container manager image argument does not match its image")
 	}
 	return nil
@@ -1308,7 +1267,6 @@ func podSpecMatchesTemplate(observed, template corev1.PodSpec, config captureCon
 
 func normalizePodSpecDefaults(spec corev1.PodSpec) corev1.PodSpec {
 	normalized := spec.DeepCopy()
-	maskPreviousControllerArguments(normalized)
 	if normalized.DNSPolicy == "" {
 		normalized.DNSPolicy = corev1.DNSClusterFirst
 	}
@@ -1373,7 +1331,7 @@ func runtimePodDefaultsFromTemplate(template corev1.PodSpec, mode hookMode) (run
 		return runtimePodDefaults{}, errors.New("manager mode does not match the exact hook mode")
 	}
 	var controllerArguments []string
-	if err := decodeArgumentJSON(arguments[24], managerArgumentPrefixes[24], &controllerArguments); err != nil {
+	if err := decodeArgumentJSON(arguments[19], managerArgumentPrefixes[19], &controllerArguments); err != nil {
 		return runtimePodDefaults{}, fmt.Errorf("decode controller runtime arguments: %w", err)
 	}
 	enabledValue, err := exactArgumentValue(controllerArguments, "--default-tolerations-enabled=")
@@ -1415,7 +1373,7 @@ func runtimePodDefaultsFromTemplate(template corev1.PodSpec, mode hookMode) (run
 	}
 
 	var contract renderedRuntimeAdmissionContract
-	if err := decodeArgumentJSON(arguments[28], managerArgumentPrefixes[28], &contract); err != nil {
+	if err := decodeArgumentJSON(arguments[23], managerArgumentPrefixes[23], &contract); err != nil {
 		return runtimePodDefaults{}, fmt.Errorf("decode runtime admission contract: %w", err)
 	}
 	if contract.Version != 1 {

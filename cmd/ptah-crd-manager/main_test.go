@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -144,55 +143,6 @@ func TestImageCheckRejectsMismatchedSequenceAndAPIFlags(t *testing.T) {
 	}
 }
 
-func TestRuntimeInvariantsRejectSameCandidateAndPredecessorServiceAccount(t *testing.T) {
-	t.Parallel()
-
-	_, err := runtimeInvariants(
-		"release", "ptah-system", "ptah-system", "true",
-		"leader", "webhook", 10,
-		"hook", "controller", true, "controller", "previous-uid", false, "controller",
-		"certificate", crdupgrade.CurrentReleaseSequence, 0, "",
-	)
-	if err == nil || !strings.Contains(err.Error(), "must differ") {
-		t.Fatalf("runtimeInvariants error = %v, want distinct-principal refusal", err)
-	}
-}
-
-// A predecessor is a release, and every release runs at a sequence: the chart
-// passes the predecessor's ServiceAccount, sequence and manager image together
-// or none of them.
-func TestRuntimeInvariantsRequireAPredecessorToCarryItsReleaseSequence(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name     string
-		previous string
-		sequence int32
-		image    string
-		want     string
-	}{
-		{name: "named predecessor without a sequence", previous: "previous-controller", want: "requires a previous release sequence"},
-		{name: "sequence without a named predecessor", sequence: 1, image: "registry.example/ptah@sha256:" + strings.Repeat("b", 64), want: "is required with a previous release sequence"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			uid := types.UID("")
-			if test.previous != "" {
-				uid = "previous-uid"
-			}
-			_, err := runtimeInvariants(
-				"release", "ptah-system", "ptah-system", "true",
-				"leader", "webhook", 10,
-				"hook", "controller", true, test.previous, uid, false, "controller",
-				"certificate", crdupgrade.CurrentReleaseSequence+1, test.sequence, test.image,
-			)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("runtimeInvariants error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
 func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 	tests := []struct {
 		mode string
@@ -215,9 +165,10 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 	}
 }
 
-// The uninstall proof and cleanup modes and the certificate recovery proof are
-// gone with the protocol that ran them; a hook left over from an older chart
-// must be refused rather than run as something else.
+// The uninstall proof and cleanup modes, the certificate recovery proof and the
+// predecessor controller identity are gone with the protocols that used them;
+// a hook left over from an older chart must be refused rather than run as
+// something else.
 func TestRemovedProofModesAndFlagsAreRefused(t *testing.T) {
 	for _, mode := range []string{
 		"teardown-retirement-probe-a",
@@ -230,9 +181,17 @@ func TestRemovedProofModesAndFlagsAreRefused(t *testing.T) {
 			t.Fatalf("run(%s) error = %v, want unsupported mode", mode, err)
 		}
 	}
-	err := run(context.Background(), []string{"runtime-verify", "--verify-certificate-recovery=true"}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "verify-certificate-recovery") {
-		t.Fatalf("runtime-verify with --verify-certificate-recovery error = %v, want refusal", err)
+	for _, flag := range []string{
+		"--verify-certificate-recovery=true",
+		"--controller-service-account-managed=true",
+		"--previous-controller-service-account-name=ptah-operator-v1",
+		"--previous-controller-release-sequence=1",
+	} {
+		name := strings.TrimPrefix(strings.SplitN(flag, "=", 2)[0], "--")
+		err := run(context.Background(), []string{"runtime-verify", flag}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Fatalf("runtime-verify with %s error = %v, want refusal", flag, err)
+		}
 	}
 }
 
@@ -331,9 +290,8 @@ func TestNewRolloutGuardUsesDecodedPriorityClassContract(t *testing.T) {
 	guard := newRolloutGuard(
 		fake.NewSimpleClientset(),
 		crdupgrade.RuntimeInvariants{
-			ReleaseNamespace:                     "ptah-system",
-			PreviousControllerServiceAccountName: "previous-controller",
-			PreviousControllerReleaseSequence:    4,
+			ReleaseNamespace:             "ptah-system",
+			ControllerServiceAccountName: "ptah-controller",
 		},
 		"manager-image", "webhook-secret",
 		9443, 8081, 1,
@@ -347,8 +305,8 @@ func TestNewRolloutGuardUsesDecodedPriorityClassContract(t *testing.T) {
 	if guard.RuntimeAdmissionContractB64 != encoded {
 		t.Fatal("rollout lost the encoded runtime admission contract")
 	}
-	if guard.PreviousControllerServiceAccountName != "previous-controller" || guard.PreviousControllerReleaseSequence != 4 {
-		t.Fatalf("rollout predecessor identity = %q/%d, want expected invariant", guard.PreviousControllerServiceAccountName, guard.PreviousControllerReleaseSequence)
+	if guard.ControllerServiceAccountName != "ptah-controller" {
+		t.Fatalf("rollout controller ServiceAccount = %q, want the expected invariant", guard.ControllerServiceAccountName)
 	}
 }
 

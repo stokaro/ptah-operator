@@ -3,7 +3,6 @@ package crdupgrade
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -23,34 +22,17 @@ const (
 	releaseActivationPolicyWeight    = "-168"
 	releaseActivationBindingWeight   = "-167"
 	releaseActivationHookWeight      = "-166"
-
-	controllerCredentialsDataKey        = "controller-credentials"
-	controllerCredentialsTargetDataKey  = "controller-credentials-target-release-sequence"
-	controllerCredentialsAttemptDataKey = "controller-credentials-attempt"
 )
 
-// ControllerCredentialPhase is the persisted issuance state for controller
-// identities protected by the service-account-origin policy.
-type ControllerCredentialPhase string
-
-const (
-	ControllerCredentialsActive   ControllerCredentialPhase = "active"
-	ControllerCredentialsDraining ControllerCredentialPhase = "draining"
-)
-
-// ReleaseActivationState is the exact durable activation and controller
-// credential state observed from the retained release parameter.
+// ReleaseActivationState is the exact durable activation state observed from
+// the retained release parameter.
 type ReleaseActivationState struct {
-	ActiveReleaseSequence      int32
-	ControllerCredentialPhase  ControllerCredentialPhase
-	DrainTargetReleaseSequence int32
-	DrainAttempt               string
+	ActiveReleaseSequence int32
 }
 
 var (
 	nonNegativeExactDecimalPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 	positiveExactDecimalPattern    = regexp.MustCompile(`^[1-9][0-9]*$`)
-	candidateAttemptPattern        = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // ReleaseActivationGuardPolicyName returns the versioned, release-owned name
@@ -153,7 +135,7 @@ func (g *ReleaseActivationGuard) Prepare(ctx context.Context) error {
 }
 
 // CurrentState verifies the retained parameter and returns its exact durable
-// activation and credential-drain state.
+// activation state.
 func (g *ReleaseActivationGuard) CurrentState(ctx context.Context) (ReleaseActivationState, error) {
 	if err := g.validate(); err != nil {
 		return ReleaseActivationState{}, err
@@ -170,79 +152,6 @@ func (g *ReleaseActivationGuard) CurrentState(ctx context.Context) (ReleaseActiv
 		return ReleaseActivationState{}, err
 	}
 	return releaseActivationState(identity)
-}
-
-// BeginDraining durably closes controller request and TokenRequest authority
-// before the runtime is stopped. Repeating the exact draining tuple is a no-op,
-// including after a successful update response was lost.
-func (g *ReleaseActivationGuard) BeginDraining(ctx context.Context) (ReleaseActivationState, error) {
-	if err := g.validate(); err != nil {
-		return ReleaseActivationState{}, err
-	}
-	current, err := g.ConfigMaps.Get(ctx, ReleaseActivationName, metav1.GetOptions{})
-	if err != nil {
-		return ReleaseActivationState{}, fmt.Errorf("get release activation parameter before controller credential drain: %w", err)
-	}
-	identity, err := g.verifyActivationObject(current)
-	if err != nil {
-		return ReleaseActivationState{}, err
-	}
-	if err := g.verifyCandidateCompatibility(identity); err != nil {
-		return ReleaseActivationState{}, err
-	}
-	if identity.phase == ControllerCredentialsDraining {
-		if err := g.waitUpdateAllowed(ctx, current.DeepCopy(), "wait for release activation drain admission-cache propagation"); err != nil {
-			return ReleaseActivationState{}, err
-		}
-		return releaseActivationState(identity)
-	}
-
-	candidate := current.DeepCopy()
-	candidate.Data = map[string]string{
-		activeReleaseDataKey:                strconv.FormatUint(identity.active, 10),
-		controllerCredentialsDataKey:        string(ControllerCredentialsDraining),
-		controllerCredentialsTargetDataKey:  strconv.FormatInt(int64(g.ReleaseSequence), 10),
-		controllerCredentialsAttemptDataKey: g.candidateAttempt(),
-	}
-	candidateIdentity, err := g.verifyActivationObject(candidate)
-	if err != nil {
-		return ReleaseActivationState{}, fmt.Errorf("build controller credential drain state: %w", err)
-	}
-	if err := g.verifyCandidateCompatibility(candidateIdentity); err != nil {
-		return ReleaseActivationState{}, err
-	}
-	if err := g.waitUpdateAllowed(ctx, candidate, "wait for release activation guard before controller credential drain"); err != nil {
-		return ReleaseActivationState{}, err
-	}
-	_, updateErr := g.ConfigMaps.Update(ctx, candidate, metav1.UpdateOptions{})
-
-	observed, getErr := g.ConfigMaps.Get(ctx, ReleaseActivationName, metav1.GetOptions{})
-	if getErr != nil {
-		if updateErr != nil {
-			return ReleaseActivationState{}, errors.Join(
-				fmt.Errorf("persist controller credential drain: %w", updateErr),
-				fmt.Errorf("verify controller credential drain: %w", getErr),
-			)
-		}
-		return ReleaseActivationState{}, fmt.Errorf("verify controller credential drain: %w", getErr)
-	}
-	observedIdentity, verifyErr := g.verifyActivationObject(observed)
-	if verifyErr != nil {
-		return ReleaseActivationState{}, verifyErr
-	}
-	if observed.UID != current.UID || !activationIdentityEqual(observed, candidate) {
-		if updateErr != nil {
-			return ReleaseActivationState{}, fmt.Errorf("persist controller credential drain: %w", updateErr)
-		}
-		return ReleaseActivationState{}, fmt.Errorf("controller credential drain state did not persist exactly")
-	}
-	if err := g.verifyCandidateCompatibility(observedIdentity); err != nil {
-		return ReleaseActivationState{}, err
-	}
-	if err := g.waitUpdateAllowed(ctx, observed.DeepCopy(), "wait for release activation drain admission-cache propagation"); err != nil {
-		return ReleaseActivationState{}, err
-	}
-	return releaseActivationState(observedIdentity)
 }
 
 // Activate advances the release parameter after quiescence. It first waits
@@ -265,9 +174,6 @@ func (g *ReleaseActivationGuard) Activate(ctx context.Context) error {
 		return err
 	}
 	candidateSequence := uint64(g.ReleaseSequence)
-	if identity.phase == ControllerCredentialsActive && identity.active != 0 && identity.active != candidateSequence {
-		return fmt.Errorf("release activation must drain controller credentials before advancing sequence %d to %d", identity.active, candidateSequence)
-	}
 
 	candidate := current.DeepCopy()
 	candidate.Annotations[ControllerStateVersionAnnotation] = strconv.FormatInt(int64(g.ControllerStateVersion), 10)
@@ -275,8 +181,7 @@ func (g *ReleaseActivationGuard) Activate(ctx context.Context) error {
 	candidate.Annotations[ReleaseSequenceAnnotation] = strconv.FormatInt(int64(g.ReleaseSequence), 10)
 	candidate.Annotations[ManagerImageAnnotation] = g.ManagerImage
 	candidate.Data = map[string]string{
-		activeReleaseDataKey:         strconv.FormatInt(int64(g.ReleaseSequence), 10),
-		controllerCredentialsDataKey: string(ControllerCredentialsActive),
+		activeReleaseDataKey: strconv.FormatInt(int64(g.ReleaseSequence), 10),
 	}
 	if _, err := g.verifyActivationObject(candidate); err != nil {
 		return fmt.Errorf("build candidate release activation parameter: %w", err)
@@ -329,18 +234,6 @@ func (g *ReleaseActivationGuard) verifyCandidateCompatibility(identity releaseAc
 	if identity.admission > uint64(g.AdmissionContractVersion) {
 		return fmt.Errorf("release activation admission-contract rollback refused: active version %d is newer than candidate %d", identity.admission, g.AdmissionContractVersion)
 	}
-	if identity.phase == ControllerCredentialsDraining {
-		wantAttempt := g.candidateAttempt()
-		if identity.target != candidateSequence || identity.attempt != wantAttempt {
-			return fmt.Errorf(
-				"release activation is draining for target %d attempt %q, want candidate %d attempt %q",
-				identity.target,
-				identity.attempt,
-				candidateSequence,
-				wantAttempt,
-			)
-		}
-	}
 	if identity.release == candidateSequence &&
 		(identity.state != uint64(g.ControllerStateVersion) ||
 			identity.admission != uint64(g.AdmissionContractVersion) ||
@@ -350,20 +243,11 @@ func (g *ReleaseActivationGuard) verifyCandidateCompatibility(identity releaseAc
 	return nil
 }
 
-func (g *ReleaseActivationGuard) candidateAttempt() string {
-	return hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
-}
-
 func releaseActivationState(identity releaseActivationIdentity) (ReleaseActivationState, error) {
-	if identity.active > uint64(^uint32(0)>>1) || identity.target > uint64(^uint32(0)>>1) {
+	if identity.active > uint64(^uint32(0)>>1) {
 		return ReleaseActivationState{}, fmt.Errorf("release activation sequence exceeds the supported range")
 	}
-	return ReleaseActivationState{
-		ActiveReleaseSequence:      int32(identity.active),
-		ControllerCredentialPhase:  identity.phase,
-		DrainTargetReleaseSequence: int32(identity.target),
-		DrainAttempt:               identity.attempt,
-	}, nil
+	return ReleaseActivationState{ActiveReleaseSequence: int32(identity.active)}, nil
 }
 
 type releaseActivationIdentity struct {
@@ -372,9 +256,6 @@ type releaseActivationIdentity struct {
 	admission uint64
 	release   uint64
 	image     string
-	phase     ControllerCredentialPhase
-	target    uint64
-	attempt   string
 }
 
 func (g *ReleaseActivationGuard) verifyActivationObject(object *corev1.ConfigMap) (releaseActivationIdentity, error) {
@@ -409,6 +290,9 @@ func (g *ReleaseActivationGuard) verifyActivationObject(object *corev1.ConfigMap
 		return identity, fmt.Errorf("release activation parameter data and metadata shape is not exact")
 	}
 	activeValue, found := object.Data[activeReleaseDataKey]
+	if len(object.Data) != 1 {
+		return identity, fmt.Errorf("release activation parameter data is not exactly the active release sequence")
+	}
 	if !found || !nonNegativeExactDecimalPattern.MatchString(activeValue) {
 		return identity, fmt.Errorf("release activation sequence is not an exact non-negative decimal")
 	}
@@ -435,36 +319,8 @@ func (g *ReleaseActivationGuard) verifyActivationObject(object *corev1.ConfigMap
 	if image == "" || strings.IndexFunc(image, func(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '\n' }) >= 0 {
 		return identity, fmt.Errorf("release activation manager image is empty or contains whitespace")
 	}
-	phase := ControllerCredentialPhase(object.Data[controllerCredentialsDataKey])
-	var target uint64
-	var attempt string
-	switch phase {
-	case ControllerCredentialsActive:
-		if len(object.Data) != 2 {
-			return identity, fmt.Errorf("active release activation parameter has unexpected drain state")
-		}
-	case ControllerCredentialsDraining:
-		if len(object.Data) != 4 {
-			return identity, fmt.Errorf("draining release activation parameter has incomplete drain state")
-		}
-		targetValue := object.Data[controllerCredentialsTargetDataKey]
-		if !positiveExactDecimalPattern.MatchString(targetValue) {
-			return identity, fmt.Errorf("release activation drain target is not an exact positive decimal")
-		}
-		target, err = strconv.ParseUint(targetValue, 10, 63)
-		if err != nil {
-			return identity, fmt.Errorf("release activation drain target: %w", err)
-		}
-		attempt = object.Data[controllerCredentialsAttemptDataKey]
-		if !candidateAttemptPattern.MatchString(attempt) {
-			return identity, fmt.Errorf("release activation drain attempt is not an exact candidate digest")
-		}
-	default:
-		return identity, fmt.Errorf("release activation controller credential phase %q is invalid", phase)
-	}
 	return releaseActivationIdentity{
 		active: active, state: state, admission: admission, release: release, image: image,
-		phase: phase, target: target, attempt: attempt,
 	}, nil
 }
 
@@ -514,31 +370,11 @@ func (g *ReleaseActivationGuard) hookUsernamePattern() (string, error) {
 	return "^" + regexp.QuoteMeta(prefix), nil
 }
 
-// teardownUsernamePattern matches the identity an uninstall runs its last hooks
-// under. It exists only while the release is being removed, which is what
-// bounds the reset transition below.
 // ReleaseActivationBootstrapData returns the parameter contents a release that
 // has never activated carries, which is also what an uninstall leaves behind
 // for the moment before it deletes the object.
 func ReleaseActivationBootstrapData() map[string]string {
-	return map[string]string{
-		activeReleaseDataKey:         "0",
-		controllerCredentialsDataKey: string(ControllerCredentialsActive),
-	}
-}
-
-func (g *ReleaseActivationGuard) teardownUsernamePattern() (string, error) {
-	suffix := fmt.Sprintf("-crd-v%d-", g.ReleaseSequence)
-	identitySuffix := suffix + hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)[:12]
-	if !strings.HasSuffix(g.HookServiceAccountName, identitySuffix) {
-		return "", fmt.Errorf("hook service account does not match the candidate release identity")
-	}
-	base := strings.TrimSuffix(g.HookServiceAccountName, identitySuffix)
-	if base == "" {
-		return "", fmt.Errorf("hook service account has no stable name prefix")
-	}
-	prefix := "system:serviceaccount:" + g.ReleaseNamespace + ":" + base + "-cleanup-v"
-	return "^" + regexp.QuoteMeta(prefix), nil
+	return map[string]string{activeReleaseDataKey: "0"}
 }
 
 func activationServiceAccountGroupsExpression(namespace string) string {
@@ -555,7 +391,6 @@ func (g *ReleaseActivationGuard) policy() *admissionregistrationv1.ValidatingAdm
 	name := ReleaseActivationGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
 	denial := releaseActivationGuardDenialMessage()
 	hookPattern, _ := g.hookUsernamePattern()
-	teardownPattern, _ := g.teardownUsernamePattern()
 	metadata := g.metadata(name, releaseActivationPolicyWeight)
 	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
@@ -585,15 +420,8 @@ func (g *ReleaseActivationGuard) policy() *admissionregistrationv1.ValidatingAdm
 			}},
 			Variables: []admissionregistrationv1.Variable{
 				{Name: "paramsActive", Expression: decimalCEL("params", activeReleaseDataKey, true)},
-				{Name: "paramsCredentialPhase", Expression: stringDataCEL("params", controllerCredentialsDataKey)},
 				{Name: "newActive", Expression: guardedDecimalCEL("object", activeReleaseDataKey, true)},
 				{Name: "oldActive", Expression: guardedDecimalCEL("oldObject", activeReleaseDataKey, true)},
-				{Name: "newCredentialPhase", Expression: guardedStringDataCEL("object", controllerCredentialsDataKey)},
-				{Name: "oldCredentialPhase", Expression: guardedStringDataCEL("oldObject", controllerCredentialsDataKey)},
-				{Name: "newDrainTarget", Expression: guardedDecimalCEL("object", controllerCredentialsTargetDataKey, false)},
-				{Name: "oldDrainTarget", Expression: guardedDecimalCEL("oldObject", controllerCredentialsTargetDataKey, false)},
-				{Name: "newDrainAttempt", Expression: guardedStringDataCEL("object", controllerCredentialsAttemptDataKey)},
-				{Name: "oldDrainAttempt", Expression: guardedStringDataCEL("oldObject", controllerCredentialsAttemptDataKey)},
 				{Name: "newState", Expression: guardedAnnotationDecimalCEL("object", ControllerStateVersionAnnotation)},
 				{Name: "oldState", Expression: guardedAnnotationDecimalCEL("oldObject", ControllerStateVersionAnnotation)},
 				{Name: "newAdmission", Expression: guardedAnnotationDecimalCEL("object", AdmissionContractVersionAnnotation)},
@@ -601,30 +429,20 @@ func (g *ReleaseActivationGuard) policy() *admissionregistrationv1.ValidatingAdm
 				{Name: "newRelease", Expression: guardedAnnotationDecimalCEL("object", ReleaseSequenceAnnotation)},
 				{Name: "oldRelease", Expression: guardedAnnotationDecimalCEL("oldObject", ReleaseSequenceAnnotation)},
 				{Name: "isReleaseHook", Expression: fmt.Sprintf(`request.operation == "UPDATE" && variables.newActive > 0 && request.userInfo.username.matches(%q + string(variables.newActive) + "-[0-9a-f]{12}$") && (%s)`, hookPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
-				{Name: "isDrainHook", Expression: fmt.Sprintf(`request.operation == "UPDATE" && variables.newDrainTarget > 0 && variables.newDrainAttempt.matches("^[0-9a-f]{64}$") && request.userInfo.username.matches(%q + string(variables.newDrainTarget) + "-" + variables.newDrainAttempt.substring(0, 12) + "$") && (%s)`, hookPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
-				{Name: "isDrainedActivationHook", Expression: fmt.Sprintf(`request.operation == "UPDATE" && variables.oldDrainTarget > 0 && variables.oldDrainAttempt.matches("^[0-9a-f]{64}$") && request.userInfo.username.matches(%q + string(variables.oldDrainTarget) + "-" + variables.oldDrainAttempt.substring(0, 12) + "$") && (%s)`, hookPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
 				{Name: "isReleaseHookCaller", Expression: fmt.Sprintf(`request.userInfo.username.matches(%q + "[1-9][0-9]*-[0-9a-f]{12}$") && (%s)`, hookPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
-				{Name: "isTeardownCaller", Expression: fmt.Sprintf(`request.userInfo.username.matches(%q + "[1-9][0-9]*-[0-9a-f]{12}$") && (%s)`, teardownPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
 				{Name: "isNamespaceController", Expression: activationNamespaceControllerExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `request.operation != "DELETE" || variables.isNamespaceController || variables.isReleaseHookCaller`, Message: denial},
 				{Expression: fmt.Sprintf(`request.operation == "DELETE" || (%s)`, g.activationObjectShapeExpression("object")), Message: denial},
 				{Expression: fmt.Sprintf(`request.operation == "CREATE" || (%s)`, g.activationObjectShapeExpression("oldObject")), Message: denial},
-				{Expression: fmt.Sprintf(`request.operation == "DELETE" || (params != null && (%s) && params.data == oldObject.data && params.metadata.annotations == oldObject.metadata.annotations && params.metadata.labels == oldObject.metadata.labels && variables.paramsActive == variables.oldActive && variables.paramsCredentialPhase == variables.oldCredentialPhase)`, g.activationObjectShapeExpression("params")), Message: denial},
+				{Expression: fmt.Sprintf(`request.operation == "DELETE" || (params != null && (%s) && params.data == oldObject.data && params.metadata.annotations == oldObject.metadata.annotations && params.metadata.labels == oldObject.metadata.labels && variables.paramsActive == variables.oldActive)`, g.activationObjectShapeExpression("params")), Message: denial},
 				{
 					Expression: `request.operation != "UPDATE" || ` +
 						`(object.data == oldObject.data && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.isReleaseHookCaller) || ` +
-						`(variables.oldCredentialPhase == "active" && variables.newCredentialPhase == "draining" && variables.newActive == variables.oldActive && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.newDrainTarget >= variables.oldRelease && variables.newDrainTarget <= variables.oldRelease + 1 && ((variables.oldActive == 0 && variables.newDrainTarget == variables.oldRelease) || (variables.oldActive > 0 && variables.newDrainTarget <= variables.oldActive + 1)) && variables.isDrainHook) || ` +
-						`(variables.oldCredentialPhase == "draining" && variables.newCredentialPhase == "active" && variables.newActive == variables.oldDrainTarget && variables.newRelease == variables.newActive && variables.newRelease >= variables.oldRelease && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isDrainedActivationHook) || ` +
-						`(variables.oldCredentialPhase == "active" && variables.oldActive == 0 && variables.newCredentialPhase == "active" && variables.newActive == variables.oldRelease && variables.newRelease == variables.newActive && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isReleaseHook) || ` +
-						// An uninstall returns this parameter to the value a fresh
-						// install starts from, and only then deletes it. Kubernetes
-						// keeps serving a deleted parameter to policy bindings, so
-						// what it keeps serving has to be the bootstrap state; a
-						// reinstall otherwise meets guards reading the sequence the
-						// removed release last activated.
-						`(variables.newActive == 0 && variables.newCredentialPhase == "active" && object.data.size() == 2 && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.isTeardownCaller)`,
+						// A release hook activates its own sequence: the one a fresh
+						// install recorded, or the one after the active sequence.
+						`(((variables.oldActive == 0 && variables.newActive == variables.oldRelease) || (variables.oldActive > 0 && variables.newActive == variables.oldActive + 1)) && variables.newRelease == variables.newActive && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isReleaseHook)`,
 					Message: denial,
 				},
 			},
@@ -713,14 +531,7 @@ func (g *ReleaseActivationGuard) activationObjectShapeExpression(object string) 
 		fmt.Sprintf(`has(%s.data)`, object),
 		fmt.Sprintf(`%q in %s.data`, activeReleaseDataKey, object),
 		fmt.Sprintf(`%s.data[%q].matches("^(0|[1-9][0-9]*)$")`, object, activeReleaseDataKey),
-		fmt.Sprintf(`%q in %s.data`, controllerCredentialsDataKey, object),
-		fmt.Sprintf(
-			`((%s.data[%q] == %q && %s.data.size() == 2) || (%s.data[%q] == %q && %s.data.size() == 4 && %q in %s.data && %s.data[%q].matches("^[1-9][0-9]*$") && %q in %s.data && %s.data[%q].matches("^[0-9a-f]{64}$")))`,
-			object, controllerCredentialsDataKey, ControllerCredentialsActive, object,
-			object, controllerCredentialsDataKey, ControllerCredentialsDraining, object,
-			controllerCredentialsTargetDataKey, object, object, controllerCredentialsTargetDataKey,
-			controllerCredentialsAttemptDataKey, object, object, controllerCredentialsAttemptDataKey,
-		),
+		fmt.Sprintf(`%s.data.size() == 1`, object),
 		fmt.Sprintf(`(!has(%s.binaryData) || %s.binaryData.size() == 0)`, object, object),
 		fmt.Sprintf(`(!has(%s.immutable) || !%s.immutable)`, object, object),
 		fmt.Sprintf(`(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)`, object, object),
@@ -742,14 +553,6 @@ func decimalCEL(object, key string, allowZero bool) string {
 
 func guardedDecimalCEL(object, key string, allowZero bool) string {
 	return fmt.Sprintf(`request.operation == "UPDATE" ? (%s) : -1`, decimalCEL(object, key, allowZero))
-}
-
-func stringDataCEL(object, key string) string {
-	return fmt.Sprintf(`%s != null && has(%s.data) && %q in %s.data ? %s.data[%q] : ""`, object, object, key, object, object, key)
-}
-
-func guardedStringDataCEL(object, key string) string {
-	return fmt.Sprintf(`request.operation == "UPDATE" ? (%s) : ""`, stringDataCEL(object, key))
 }
 
 func guardedAnnotationDecimalCEL(object, key string) string {

@@ -141,8 +141,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"ptah-operator-hook-identity-v1-90a0385b562b",
 		"ptah-operator-hook-probe-guard-v1-90a0385b562b",
 		"ptah-operator-release-activation-guard-v1-f1e165dcd72a",
-		"ptah-operator-service-account-object-guard-v1-f1e165dcd72a",
-		"ptah-operator-service-account-origin-guard-v2-90a0385b562b",
 		"ptah-operator-controller-write-guard-v2-90a0385b562b",
 		"ptah-operator-job-write-guard-v2-90a0385b562b",
 		"ptah-operator-chunk-write-guard-v2-90a0385b562b",
@@ -771,47 +769,69 @@ func TestChartPreservesExplicitPtahVersionAsOneExactArgument(t *testing.T) {
 	}
 }
 
-func TestExternalControllerServiceAccountUsesReleaseEpochName(t *testing.T) {
+// The controller runs as one ServiceAccount in every release: the configured
+// name, or the release's full name when none is configured. An external one is
+// used as named and never rendered.
+func TestControllerServiceAccountIsTheSameNameInEveryRelease(t *testing.T) {
 	t.Parallel()
 
-	const base = "platform-controller"
-	objects := renderChart(t,
-		"--set", "serviceAccount.create=false",
-		"--set-string", "serviceAccount.name="+base,
-	)
-	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
-	name, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "serviceAccountName")
-	if err != nil || !found {
-		t.Fatalf("external controller Deployment serviceAccountName: found=%t err=%v", found, err)
+	for _, test := range []struct {
+		name     string
+		args     []string
+		want     string
+		external bool
+	}{
+		{name: "generated", want: releaseName + "-ptah-operator"},
+		{name: "configured", args: []string{"--set-string", "serviceAccount.name=platform-controller"}, want: "platform-controller"},
+		{
+			name:     "external",
+			args:     []string{"--set", "serviceAccount.create=false", "--set-string", "serviceAccount.name=platform-controller"},
+			want:     "platform-controller",
+			external: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			objects := renderChart(t, test.args...)
+			deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
+			name, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "serviceAccountName")
+			if err != nil || !found {
+				t.Fatalf("controller Deployment serviceAccountName: found=%t err=%v", found, err)
+			}
+			if name != test.want {
+				t.Fatalf("controller ServiceAccount name = %q, want %q", name, test.want)
+			}
+			rendered := false
+			for _, object := range objects {
+				if object.GetKind() == "ServiceAccount" && object.GetName() == name {
+					rendered = true
+				}
+			}
+			if rendered == test.external {
+				t.Fatalf("controller ServiceAccount %s/%s rendered = %t, want %t", releaseNamespace, name, rendered, !test.external)
+			}
+		})
 	}
-	if want := base + "-v1"; name != want {
-		t.Fatalf("external controller ServiceAccount name = %q, want %q", name, want)
-	}
-	for _, object := range objects {
-		if object.GetKind() == "ServiceAccount" && object.GetName() == name {
-			t.Fatalf("chart rendered user-owned external ServiceAccount %s/%s", releaseNamespace, name)
+}
+
+// A ServiceAccount name is a DNS subdomain, so the whole Kubernetes range is
+// available and nothing past it is.
+func TestControllerServiceAccountNameKeepsTheKubernetesRange(t *testing.T) {
+	t.Parallel()
+
+	for _, create := range []string{"true", "false"} {
+		if _, err := renderChartCommand(t,
+			"--set", "serviceAccount.create="+create,
+			"--set-string", "serviceAccount.name="+strings.Repeat("a", 253),
+		); err != nil {
+			t.Fatalf("serviceAccount.create=%s rejected a 253-character controller ServiceAccount: %v", create, err)
 		}
-	}
-}
-
-func TestExternalControllerServiceAccountBaseReservesEpochSuffix(t *testing.T) {
-	t.Parallel()
-
-	if _, err := renderChartCommand(t,
-		"--set", "serviceAccount.create=false",
-		"--set-string", "serviceAccount.name="+strings.Repeat("a", 242),
-	); err == nil {
-		t.Fatal("chart accepted an external controller ServiceAccount base that cannot fit every release epoch")
-	}
-}
-
-func TestManagedControllerServiceAccountBaseKeepsFullConfigurationRange(t *testing.T) {
-	t.Parallel()
-
-	if _, err := renderChartCommand(t,
-		"--set-string", "serviceAccount.name="+strings.Repeat("a", 242),
-	); err != nil {
-		t.Fatalf("chart rejected a valid managed controller ServiceAccount base: %v", err)
+		if _, err := renderChartCommand(t,
+			"--set", "serviceAccount.create="+create,
+			"--set-string", "serviceAccount.name="+strings.Repeat("a", 254),
+		); err == nil {
+			t.Fatalf("serviceAccount.create=%s accepted a 254-character controller ServiceAccount", create)
+		}
 	}
 }
 

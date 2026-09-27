@@ -126,8 +126,7 @@ func TestReleaseActivationGuardPolicyIsStableAndExact(t *testing.T) {
 	}
 	for _, required := range []string{
 		`[0-9a-f]{12}$`,
-		`[0-9a-f]{64}$`,
-		`substring(0, 12)`,
+		`variables.newActive == variables.oldActive + 1`,
 		`system:kube-controller-manager`,
 		`request.userInfo.groups.size() == 3`,
 		`variables.paramsActive == variables.oldActive`,
@@ -330,55 +329,109 @@ func TestReleaseActivationPrepareProvesLiveDenial(t *testing.T) {
 	}
 }
 
-func TestReleaseActivationBeginDrainingPersistsFullAttemptAndResumesLostResponse(t *testing.T) {
+// A release advances the active sequence directly: there is no intermediate
+// state between the predecessor and the candidate, so a lost response on the
+// one update is resumed by reading back the candidate state.
+func TestReleaseActivationAdvancesTheActiveSequenceInOneUpdate(t *testing.T) {
 	t.Parallel()
-	guard := testReleaseActivationGuard()
+	guard := testSequenceTwoActivationGuard()
 	client := &activationConfigMapClient{
-		object:             activationObject(guard, 0),
+		object:             activationObject(guard, 1),
 		persistError:       errors.New("response stream reset"),
 		persistBeforeError: true,
 	}
+	client.object.Annotations[ManagerImageAnnotation] = "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	guard.ConfigMaps = client
-	state, err := guard.BeginDraining(context.Background())
-	if err != nil {
-		t.Fatalf("BeginDraining() after lost response error = %v", err)
+	if err := guard.Activate(context.Background()); err == nil {
+		t.Fatal("Activate() reported success although the update response was lost")
 	}
-	wantAttempt := hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	if state != (ReleaseActivationState{
-		ActiveReleaseSequence: 0, ControllerCredentialPhase: ControllerCredentialsDraining,
-		DrainTargetReleaseSequence: guard.ReleaseSequence,
-		DrainAttempt:               wantAttempt,
-	}) {
-		t.Fatalf("BeginDraining() state = %#v", state)
-	}
-	if len(wantAttempt) != 64 || client.object.Data[controllerCredentialsAttemptDataKey] != wantAttempt {
-		t.Fatalf("persisted attempt = %q, want full digest %q", client.object.Data[controllerCredentialsAttemptDataKey], wantAttempt)
+	if !reflect.DeepEqual(client.object.Data, map[string]string{activeReleaseDataKey: "2"}) {
+		t.Fatalf("persisted activation data = %v, want the candidate sequence alone", client.object.Data)
 	}
 	client.persistError = nil
-	if _, err := guard.BeginDraining(context.Background()); err != nil {
-		t.Fatalf("same-tuple BeginDraining() retry error = %v", err)
+	if err := guard.Activate(context.Background()); err != nil {
+		t.Fatalf("Activate() retry error = %v", err)
 	}
 	if client.realUpdates != 1 {
-		t.Fatalf("persistent drain updates = %d, want one", client.realUpdates)
+		t.Fatalf("persistent activation updates = %d, want one", client.realUpdates)
+	}
+	state, err := guard.CurrentState(context.Background())
+	if err != nil || state != (ReleaseActivationState{ActiveReleaseSequence: 2}) {
+		t.Fatalf("CurrentState() = %#v, %v, want sequence 2", state, err)
 	}
 }
 
-func TestReleaseActivationRejectsSamePrefixDifferentFullDrainAttempt(t *testing.T) {
+// The activation guard admits a release hook moving the parameter to the
+// sequence after the active one, or to the sequence a fresh install recorded,
+// and nothing else. Each refused row is a transition the retired drain phase
+// used to stand between.
+func TestReleaseActivationGuardAdmitsOnlyTheNextSequence(t *testing.T) {
 	t.Parallel()
+	guard := testSequenceTwoActivationGuard()
+	policy := guard.policy()
+	hookGroups := []any{"system:serviceaccounts", "system:serviceaccounts:" + guard.ReleaseNamespace, "system:authenticated"}
+	hookFor := func(sequence int32, image string) string {
+		return "system:serviceaccount:" + guard.ReleaseNamespace + ":ptah-crd-v" + activationDecimal(sequence) + "-" +
+			hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, sequence, image)[:12]
+	}
+	predecessorImage := "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	active := activationObject(guard, 1)
+	active.Annotations[ManagerImageAnnotation] = predecessorImage
+	next := active.DeepCopy()
+	next.Annotations[ReleaseSequenceAnnotation] = "2"
+	next.Annotations[ManagerImageAnnotation] = guard.ManagerImage
+	next.Data = map[string]string{activeReleaseDataKey: "2"}
+	bootstrap := activationObject(guard, 0)
+	activatedBootstrap := bootstrap.DeepCopy()
+	activatedBootstrap.Data = map[string]string{activeReleaseDataKey: "2"}
+	skipped := next.DeepCopy()
+	skipped.Annotations[ReleaseSequenceAnnotation] = "3"
+	skipped.Data = map[string]string{activeReleaseDataKey: "3"}
+	extraKey := next.DeepCopy()
+	extraKey.Data["controller-credentials"] = "active"
+	reset := active.DeepCopy()
+	reset.Data = map[string]string{activeReleaseDataKey: "0"}
+
+	for _, test := range []struct {
+		name     string
+		old, new *corev1.ConfigMap
+		username string
+		want     bool
+	}{
+		{name: "candidate hook activates the next sequence", old: active, new: next, username: hookFor(2, guard.ManagerImage), want: true},
+		{name: "candidate hook activates a fresh install", old: bootstrap, new: activatedBootstrap, username: hookFor(2, guard.ManagerImage), want: true},
+		{name: "predecessor hook cannot activate the candidate", old: active, new: next, username: hookFor(1, predecessorImage)},
+		{name: "a sequence cannot be skipped", old: active, new: skipped, username: hookFor(3, guard.ManagerImage)},
+		{name: "the parameter holds the sequence and nothing else", old: active, new: extraKey, username: hookFor(2, guard.ManagerImage)},
+		{name: "a hook cannot reset an active release", old: active, new: reset, username: hookFor(1, predecessorImage)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := map[string]any{
+				"operation": "UPDATE",
+				"namespace": guard.ReleaseNamespace,
+				"name":      ReleaseActivationName,
+				"userInfo":  map[string]any{"username": test.username, "groups": hookGroups},
+			}
+			oldObject := rolloutCELClone(t, test.old).(map[string]any)
+			results := evaluatePolicyValidations(t, policy, rolloutCELClone(t, test.new).(map[string]any), oldObject, request, oldObject)
+			admitted := true
+			for _, result := range results {
+				admitted = admitted && result
+			}
+			if admitted != test.want {
+				t.Fatalf("activation update admitted = %t, want %t (validations %v)", admitted, test.want, results)
+			}
+		})
+	}
+}
+
+func testSequenceTwoActivationGuard() *ReleaseActivationGuard {
 	guard := testReleaseActivationGuard()
-	object := activationObject(guard, 0)
-	attempt := guard.candidateAttempt()
-	object.Data = map[string]string{
-		activeReleaseDataKey:                "0",
-		controllerCredentialsDataKey:        string(ControllerCredentialsDraining),
-		controllerCredentialsTargetDataKey:  "1",
-		controllerCredentialsAttemptDataKey: attempt[:len(attempt)-1] + differentHexDigit(attempt[len(attempt)-1]),
-	}
-	guard.ConfigMaps = &activationConfigMapClient{object: object}
-	_, err := guard.CurrentState(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "want candidate") {
-		t.Fatalf("CurrentState() error = %v, want full-attempt collision refusal", err)
-	}
+	guard.ReleaseSequence = 2
+	guard.ManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	guard.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
+	return guard
 }
 
 func TestReleaseActivationRejectsFailedBootstrapSequenceGap(t *testing.T) {
@@ -395,13 +448,6 @@ func TestReleaseActivationRejectsFailedBootstrapSequenceGap(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "bootstrap attempt 1 cannot be superseded by candidate 2") {
 		t.Fatalf("CurrentState() error = %v, want failed-bootstrap gap refusal", err)
 	}
-}
-
-func differentHexDigit(value byte) string {
-	if value == '0' {
-		return "1"
-	}
-	return "0"
 }
 
 func testReleaseActivationGuard() *ReleaseActivationGuard {
@@ -452,8 +498,7 @@ func activationObject(guard *ReleaseActivationGuard, active int) *corev1.ConfigM
 			},
 		},
 		Data: map[string]string{
-			activeReleaseDataKey:         activationDecimal(int32(active)),
-			controllerCredentialsDataKey: string(ControllerCredentialsActive),
+			activeReleaseDataKey: activationDecimal(int32(active)),
 		},
 	}
 }

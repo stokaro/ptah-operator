@@ -107,7 +107,6 @@ func TestRenderedRolloutGuardMatchesCompiledContract(t *testing.T) {
 		CertificateHealthPort:              8081,
 		HookServiceAccountName:             hookServiceAccount,
 		ControllerServiceAccountName:       controllerDeployment.Spec.Template.Spec.ServiceAccountName,
-		ControllerServiceAccountManaged:    true,
 		ControllerDeploymentName:           "ptah-e2e-ptah-operator",
 		ControllerReplicas:                 *controllerDeployment.Spec.Replicas,
 		CertificateDeploymentName:          "ptah-e2e-ptah-operator-cert-rotator",
@@ -756,45 +755,40 @@ func TestRolloutGuardCandidateRuntimeConverged(t *testing.T) {
 	tests := []struct {
 		name   string
 		active int
-		phase  ControllerCredentialPhase
 		mutate func(guard *RolloutGuard, deployments *rolloutDeploymentClient)
 		want   bool
 	}{
 		{
-			name: "active candidate with both Deployments running it", active: 1, phase: ControllerCredentialsActive,
+			name: "active candidate with both Deployments running it", active: 1,
 			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: true,
 		},
 		{
-			name: "active candidate without a certificate Deployment", active: 1, phase: ControllerCredentialsActive,
+			name: "active candidate without a certificate Deployment", active: 1,
 			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
 				delete(deployments.objects, guard.CertificateDeploymentName)
 			},
 			want: true,
 		},
 		{
-			name: "fresh bootstrap", active: 0, phase: ControllerCredentialsActive,
+			name: "fresh bootstrap", active: 0,
 			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: false,
 		},
 		{
-			name: "candidate activated but credentials draining", active: 1, phase: ControllerCredentialsDraining,
-			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: false,
-		},
-		{
-			name: "candidate activated with a stopped controller", active: 1, phase: ControllerCredentialsActive,
+			name: "candidate activated with a stopped controller", active: 1,
 			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
 				deployments.objects[guard.ControllerDeploymentName].Spec.Replicas = int32Ptr(0)
 			},
 			want: false,
 		},
 		{
-			name: "candidate activated with an older certificate identity", active: 1, phase: ControllerCredentialsActive,
+			name: "candidate activated with an older certificate identity", active: 1,
 			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
 				delete(deployments.objects[guard.CertificateDeploymentName].Annotations, ReleaseSequenceAnnotation)
 			},
 			want: false,
 		},
 		{
-			name: "candidate activated with a foreign controller image", active: 1, phase: ControllerCredentialsActive,
+			name: "candidate activated with a foreign controller image", active: 1,
 			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
 				deployments.objects[guard.ControllerDeploymentName].Spec.Template.Spec.Containers[0].Image = "registry.example/other@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 			},
@@ -807,11 +801,6 @@ func TestRolloutGuardCandidateRuntimeConverged(t *testing.T) {
 			deployments.objects[guard.CertificateDeploymentName] = candidateDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
 			deployments.objects[guard.ControllerDeploymentName] = candidateDeployment(guard, guard.ControllerDeploymentName, "controller")
 			activation := activationObject(guard.releaseActivationGuard(), test.active)
-			activation.Data[controllerCredentialsDataKey] = string(test.phase)
-			if test.phase == ControllerCredentialsDraining {
-				activation.Data[controllerCredentialsTargetDataKey] = "1"
-				activation.Data[controllerCredentialsAttemptDataKey] = hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-			}
 			guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activation
 			test.mutate(guard, deployments)
 
@@ -1467,8 +1456,7 @@ func rolloutActivationCELObject(g *RolloutGuard, active, state, admission, relea
 			},
 		},
 		"data": map[string]any{
-			activeReleaseDataKey:         strconv.FormatInt(active, 10),
-			controllerCredentialsDataKey: string(ControllerCredentialsActive),
+			activeReleaseDataKey: strconv.FormatInt(active, 10),
 		},
 	}
 }
@@ -1680,37 +1668,18 @@ func rolloutCELClone(t *testing.T, source any) any {
 	return clone
 }
 
-func TestRolloutGuardRejectsPreviousControllerIdentityCollisions(t *testing.T) {
+// The controller keeps one ServiceAccount in every release, and it has to be
+// its own: a hook or the certificate rotator sharing it would share its grants.
+func TestRolloutGuardRejectsControllerServiceAccountCollisions(t *testing.T) {
 	t.Parallel()
 	guard, _, _, _ := readyRolloutGuard()
-	cleanup, err := TeardownServiceAccountName(guard.HookServiceAccountName, guard.ReleaseSequence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	quiesce, err := TeardownQuiesceJobName(guard.HookServiceAccountName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name     string
-		previous string
-		want     string
-	}{
-		{name: "candidate", previous: guard.ControllerServiceAccountName, want: "candidate controller"},
-		{name: "hook", previous: guard.HookServiceAccountName, want: "CRD manager hook"},
-		{name: "cleanup", previous: cleanup, want: "teardown ServiceAccount"},
-		{name: "quiesce", previous: quiesce, want: "teardown quiesce identity"},
-		{name: "certificate", previous: guard.CertificateDeploymentName, want: "certificate ServiceAccount"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			candidate := *guard
-			candidate.PreviousControllerServiceAccountName = test.previous
-			err := candidate.validateIdentity()
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("validateIdentity() error = %v, want collision with %q", err, test.want)
-			}
-		})
+	for _, name := range []string{guard.HookServiceAccountName, guard.CertificateDeploymentName} {
+		candidate := *guard
+		candidate.ControllerServiceAccountName = name
+		err := candidate.validateIdentity()
+		if err == nil || !strings.Contains(err.Error(), "controller ServiceAccount must differ") {
+			t.Fatalf("validateIdentity() with controller ServiceAccount %q error = %v, want a collision refusal", name, err)
+		}
 	}
 }
 
@@ -1776,14 +1745,6 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 	activationName := ReleaseActivationGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	policies.objects[activationName] = readyPolicy(activation.policy())
 	bindings.objects[activationName] = activation.binding()
-	origin := NewServiceAccountOriginGuard(guard)
-	originName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	originPolicy, err := origin.policy()
-	if err != nil {
-		panic(err)
-	}
-	policies.objects[originName] = readyPolicy(originPolicy)
-	bindings.objects[originName] = origin.binding()
 	namespaceGuard := NewNamespaceDeletionGuard(guard)
 	namespaceGuardName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	policies.objects[namespaceGuardName] = readyPolicy(namespaceGuard.policy())

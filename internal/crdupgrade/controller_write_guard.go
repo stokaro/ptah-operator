@@ -42,16 +42,14 @@ func controllerWriteGuardDenialMessage() string {
 // owns on the kind being written. Status writes use the status subresource and
 // therefore do not match this policy.
 type ControllerWriteGuard struct {
-	Policies                             ValidatingAdmissionPolicyReader
-	Bindings                             ValidatingAdmissionPolicyBindingReader
-	ReleaseName                          string
-	ReleaseNamespace                     string
-	ControllerServiceAccountName         string
-	PreviousControllerServiceAccountName string
-	PreviousControllerReleaseSequence    int32
-	ReleaseSequence                      int32
-	ManagerImage                         string
-	PollEvery                            time.Duration
+	Policies                     ValidatingAdmissionPolicyReader
+	Bindings                     ValidatingAdmissionPolicyBindingReader
+	ReleaseName                  string
+	ReleaseNamespace             string
+	ControllerServiceAccountName string
+	ReleaseSequence              int32
+	ManagerImage                 string
+	PollEvery                    time.Duration
 }
 
 // NewControllerWriteGuard copies the stable release and controller identity
@@ -61,16 +59,14 @@ func NewControllerWriteGuard(rollout *RolloutGuard) *ControllerWriteGuard {
 		return nil
 	}
 	return &ControllerWriteGuard{
-		Policies:                             rollout.Policies,
-		Bindings:                             rollout.Bindings,
-		ReleaseName:                          rollout.ReleaseName,
-		ReleaseNamespace:                     rollout.ReleaseNamespace,
-		ControllerServiceAccountName:         rollout.ControllerServiceAccountName,
-		PreviousControllerServiceAccountName: rollout.PreviousControllerServiceAccountName,
-		PreviousControllerReleaseSequence:    rollout.PreviousControllerReleaseSequence,
-		ReleaseSequence:                      rollout.ReleaseSequence,
-		ManagerImage:                         rollout.ManagerImage,
-		PollEvery:                            rollout.PollEvery,
+		Policies:                     rollout.Policies,
+		Bindings:                     rollout.Bindings,
+		ReleaseName:                  rollout.ReleaseName,
+		ReleaseNamespace:             rollout.ReleaseNamespace,
+		ControllerServiceAccountName: rollout.ControllerServiceAccountName,
+		ReleaseSequence:              rollout.ReleaseSequence,
+		ManagerImage:                 rollout.ManagerImage,
+		PollEvery:                    rollout.PollEvery,
 	}
 }
 
@@ -135,12 +131,8 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(),
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name: "candidate-or-predecessor-controller-service-account",
-				Expression: controllerPrincipalMatchExpression(
-					g.ReleaseNamespace,
-					g.ControllerServiceAccountName,
-					g.PreviousControllerServiceAccountName,
-				),
+				Name:       "controller-service-account",
+				Expression: controllerPrincipalMatchExpression(g.ReleaseNamespace, g.ControllerServiceAccountName),
 			}},
 			Variables: []admissionregistrationv1.Variable{
 				{Name: "activeRelease", Expression: decimalCEL("params", activeReleaseDataKey, true)},
@@ -156,14 +148,8 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: g.activationParameterExpression(), Message: message},
 				{
-					Expression: controllerPrincipalAuthorityExpression(
-						g.ReleaseNamespace,
-						g.ControllerServiceAccountName,
-						g.PreviousControllerServiceAccountName,
-						g.ReleaseSequence,
-						g.PreviousControllerReleaseSequence,
-					),
-					Message: controllerPrincipalGuardDenialMessage(),
+					Expression: controllerPrincipalAuthorityExpression(g.ReleaseNamespace, g.ControllerServiceAccountName, g.ReleaseSequence),
+					Message:    controllerPrincipalGuardDenialMessage(),
 				},
 				{Expression: `dyn(object).spec == dyn(oldObject).spec`, Message: message},
 				{Expression: `has(dyn(object).status) == has(dyn(oldObject).status) && (!has(dyn(object).status) || dyn(object).status == dyn(oldObject).status)`, Message: message},
@@ -308,10 +294,6 @@ func (g *ControllerWriteGuard) validate(requirePoll bool) error {
 		g.ReleaseNamespace != strings.TrimSpace(g.ReleaseNamespace) ||
 		g.ControllerServiceAccountName != strings.TrimSpace(g.ControllerServiceAccountName) {
 		return fmt.Errorf("controller write guard release and ServiceAccount identity is required")
-	}
-	if g.PreviousControllerServiceAccountName != "" &&
-		g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
-		return fmt.Errorf("controller write guard predecessor ServiceAccount identity must not contain surrounding whitespace")
 	}
 	if g.ReleaseSequence < 1 || g.ManagerImage == "" || g.ManagerImage != strings.TrimSpace(g.ManagerImage) {
 		return fmt.Errorf("controller write guard release identity is required")

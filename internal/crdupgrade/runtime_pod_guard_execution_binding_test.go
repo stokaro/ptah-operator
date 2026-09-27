@@ -61,7 +61,7 @@ func TestRuntimePodGuardContractDigestCoversTheExecutionBinding(t *testing.T) {
 func renderedRuntimePodGuardContractDigest(t *testing.T, extraArgs ...string) string {
 	t.Helper()
 	digests := map[string]string{}
-	for _, object := range renderControllerRBACCutoverChart(t, extraArgs...) {
+	for _, object := range renderReleaseChart(t, extraArgs...) {
 		digest, found := object.GetAnnotations()[runtimePodContractDigestAnnotation]
 		if !found {
 			continue

@@ -56,12 +56,6 @@ type RuntimeResourceQuotaPreflight struct {
 	ReleaseNamespace          string
 	ControllerDeploymentName  string
 	CertificateDeploymentName string
-	// PreviousControllerServiceAccountName is the ServiceAccount the previous
-	// release's controller runs under. That controller keeps running until the
-	// reconcile hook quiesces it, and this read-only preflight runs before that,
-	// so its Pods are old protected runtime Pods rather than strangers. Empty
-	// when there is no previous controller.
-	PreviousControllerServiceAccountName string
 }
 
 // NewRuntimeResourceQuotaPreflight constructs a read-only post-Recreate
@@ -611,28 +605,21 @@ type runtimeQuotaProtectedIdentity struct {
 	deploymentName string
 	serviceAccount string
 	component      string
-	// previousServiceAccount is accepted beside serviceAccount for the
-	// controller identity while the previous release's controller still runs.
-	previousServiceAccount string
 }
 
 func (i runtimeQuotaProtectedIdentity) acceptsServiceAccount(name string) bool {
-	return name == i.serviceAccount || (i.previousServiceAccount != "" && name == i.previousServiceAccount)
+	return name == i.serviceAccount
 }
 
 func (i runtimeQuotaProtectedIdentity) acceptedServiceAccounts() string {
-	if i.previousServiceAccount == "" {
-		return fmt.Sprintf("%q", i.serviceAccount)
-	}
-	return fmt.Sprintf("%q or %q", i.serviceAccount, i.previousServiceAccount)
+	return fmt.Sprintf("%q", i.serviceAccount)
 }
 
 func (p *RuntimeResourceQuotaPreflight) protectedPodIdentity(pod *corev1.Pod) (runtimeQuotaProtectedIdentity, bool, error) {
 	controller := runtimeQuotaProtectedIdentity{
-		deploymentName:         p.ControllerDeploymentName,
-		serviceAccount:         p.Contract.ControllerServiceAccountName,
-		previousServiceAccount: p.PreviousControllerServiceAccountName,
-		component:              "controller",
+		deploymentName: p.ControllerDeploymentName,
+		serviceAccount: p.Contract.ControllerServiceAccountName,
+		component:      "controller",
 	}
 	certificate := runtimeQuotaProtectedIdentity{
 		deploymentName: p.CertificateDeploymentName,

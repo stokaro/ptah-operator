@@ -1108,7 +1108,7 @@ func TestCaptureDoesNotPublishQuarantinedLogForCandidateRenderMismatch(t *testin
 			t.Fatal("capture did not start the quarantined Pod log stream promptly")
 		}
 		waitForFileContents(t, output.quarantinePath, "untrusted hook output\n")
-		job.Spec.Template.Spec.Containers[0].Args[20] = "--controller-replicas=3"
+		job.Spec.Template.Spec.Containers[0].Args[15] = "--controller-replicas=3"
 		jobWatcher.Add(job)
 
 		select {
@@ -1132,10 +1132,10 @@ func TestValidateJobAgainstRenderRejectsExecutionAndMetadataDrift(t *testing.T) 
 		"image": func(job *batchv1.Job) {
 			image := "ghcr.io/stokaro/other@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 			job.Spec.Template.Spec.Containers[0].Image = image
-			job.Spec.Template.Spec.Containers[0].Args[23] = "--manager-image=" + image
+			job.Spec.Template.Spec.Containers[0].Args[18] = "--manager-image=" + image
 		},
 		"trailing argument": func(job *batchv1.Job) {
-			job.Spec.Template.Spec.Containers[0].Args[20] = "--controller-replicas=3"
+			job.Spec.Template.Spec.Containers[0].Args[15] = "--controller-replicas=3"
 		},
 		"delete policy": func(job *batchv1.Job) {
 			job.Annotations[hookDeleteAnnotation] = "hook-succeeded"
@@ -1431,10 +1431,10 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 
 	t.Run("toleration seconds", func(t *testing.T) {
 		rendered := validRenderedJob()
-		rendered.Spec.Template.Spec.Containers[0].Args[24] = managerArgumentPrefixes[24] +
+		rendered.Spec.Template.Spec.Containers[0].Args[19] = managerArgumentPrefixes[19] +
 			encodedTestControllerRuntimeArguments(true, 17, 23, false)
 		pod := validPod(types.UID("job-uid"))
-		pod.Spec.Containers[0].Args[24] = rendered.Spec.Template.Spec.Containers[0].Args[24]
+		pod.Spec.Containers[0].Args[19] = rendered.Spec.Template.Spec.Containers[0].Args[19]
 		notReady := int64(17)
 		unreachable := int64(23)
 		pod.Spec.Tolerations[0].TolerationSeconds = &notReady
@@ -1447,10 +1447,10 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 	t.Run("priority class", func(t *testing.T) {
 		rendered := validRenderedJob()
 		rendered.Spec.Template.Spec.PriorityClassName = "hook-critical"
-		rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
+		rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
 			encodedTestRuntimeAdmissionContract("hook-critical", 1000, corev1.PreemptNever, nil)
 		pod := validPod(types.UID("job-uid"))
-		pod.Spec.Containers[0].Args[28] = rendered.Spec.Template.Spec.Containers[0].Args[28]
+		pod.Spec.Containers[0].Args[23] = rendered.Spec.Template.Spec.Containers[0].Args[23]
 		pod.Spec.PriorityClassName = "hook-critical"
 		priority := int32(1000)
 		pod.Spec.Priority = &priority
@@ -1463,10 +1463,10 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 
 	t.Run("always pull images", func(t *testing.T) {
 		rendered := validRenderedJob()
-		rendered.Spec.Template.Spec.Containers[0].Args[24] = managerArgumentPrefixes[24] +
+		rendered.Spec.Template.Spec.Containers[0].Args[19] = managerArgumentPrefixes[19] +
 			encodedTestControllerRuntimeArguments(true, 300, 300, true)
 		pod := validPod(types.UID("job-uid"))
-		pod.Spec.Containers[0].Args[24] = rendered.Spec.Template.Spec.Containers[0].Args[24]
+		pod.Spec.Containers[0].Args[19] = rendered.Spec.Template.Spec.Containers[0].Args[19]
 		if err := validatePodAgainstRender(pod, rendered, testCaptureConfig()); err == nil {
 			t.Fatal("validatePodAgainstRender accepted an unmodified pull policy with AlwaysPullImages enabled")
 		}
@@ -1483,7 +1483,7 @@ func TestValidateRenderedJobRejectsMismatchedAdmissionContract(t *testing.T) {
 	t.Run("different named class", func(t *testing.T) {
 		rendered := validRenderedJob()
 		rendered.Spec.Template.Spec.PriorityClassName = "hook-critical"
-		rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
+		rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
 			encodedTestRuntimeAdmissionContract("different-class", 1000, corev1.PreemptNever, nil)
 		if err := validateRenderedJob(rendered, testCaptureConfig()); err == nil {
 			t.Fatal("validateRenderedJob accepted a mismatched priority admission contract")
@@ -1492,7 +1492,7 @@ func TestValidateRenderedJobRejectsMismatchedAdmissionContract(t *testing.T) {
 
 	t.Run("named contract for unclassified hook", func(t *testing.T) {
 		rendered := validRenderedJob()
-		rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
+		rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
 			encodedTestRuntimeAdmissionContract("runtime-only", 1000, corev1.PreemptNever, nil)
 		if err := validateRenderedJob(rendered, testCaptureConfig()); err == nil {
 			t.Fatal("validateRenderedJob accepted a named contract for an unclassified hook template")
@@ -1652,11 +1652,6 @@ func TestManagerArgumentPrefixesMatchRenderedHookContract(t *testing.T) {
 		"--certificate-health-port=",
 		"--hook-service-account-name=",
 		"--controller-service-account-name=",
-		"--controller-service-account-managed=",
-		"--previous-controller-service-account-name=",
-		"--previous-controller-service-account-uid=",
-		"--previous-controller-service-account-managed=",
-		"--previous-controller-release-sequence=",
 		"--controller-deployment-name=",
 		"--controller-replicas=",
 		"--certificate-deployment-name=",
@@ -1667,7 +1662,6 @@ func TestManagerArgumentPrefixesMatchRenderedHookContract(t *testing.T) {
 		"--runtime-deployment-config-expressions-b64=",
 		"--runtime-pod-config-expressions-b64=",
 		"--runtime-admission-contract-b64=",
-		"--previous-controller-manager-image=",
 	}
 	if len(managerArgumentPrefixes) != len(expected) {
 		t.Fatalf("manager argument prefix count = %d, want %d", len(managerArgumentPrefixes), len(expected))
@@ -1697,11 +1691,11 @@ func TestPreflightModeUsesClasslessPodAdmissionDefaults(t *testing.T) {
 
 	config := testCaptureConfigForMode(hookModePreflight)
 	rendered := validRenderedJobForMode(hookModePreflight)
-	rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
+	rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
 		encodedTestRuntimeAdmissionContract("runtime-only", 1000, corev1.PreemptNever, nil)
 	config.expectedJob = rendered
 	pod := validPodForMode(hookModePreflight, types.UID("job-uid"))
-	pod.Spec.Containers[0].Args[28] = rendered.Spec.Template.Spec.Containers[0].Args[28]
+	pod.Spec.Containers[0].Args[23] = rendered.Spec.Template.Spec.Containers[0].Args[23]
 	if err := validateRenderedJob(rendered, config); err != nil {
 		t.Fatalf("validateRenderedJob rejected a classless preflight for a named runtime contract: %v", err)
 	}
@@ -1828,10 +1822,10 @@ func TestValidatePodOwnerRequiresObservedTemplateExecutionContract(t *testing.T)
 	job := validJob()
 	pod := validPod(job.UID)
 	pod.Spec.Containers[0].Image = "ghcr.io/stokaro/other@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	pod.Spec.Containers[0].Args[23] = "--manager-image=" + pod.Spec.Containers[0].Image
+	pod.Spec.Containers[0].Args[18] = "--manager-image=" + pod.Spec.Containers[0].Image
 	config := testCaptureConfig()
 	config.expectedJob.Spec.Template.Spec.Containers[0].Image = pod.Spec.Containers[0].Image
-	config.expectedJob.Spec.Template.Spec.Containers[0].Args[23] = pod.Spec.Containers[0].Args[23]
+	config.expectedJob.Spec.Template.Spec.Containers[0].Args[18] = pod.Spec.Containers[0].Args[18]
 	if err := validatePod(pod, config); err != nil {
 		t.Fatalf("validatePod rejected the independently self-consistent Pod: %v", err)
 	}
@@ -2500,22 +2494,16 @@ func validManagerArgumentsForMode(mode hookMode) []string {
 		"--certificate-health-port=8081",
 		"--hook-service-account-name=" + contract.serviceAccountName,
 		"--controller-service-account-name=ptah",
-		"--controller-service-account-managed=true",
-		"--previous-controller-service-account-name=ptah-previous",
-		"--previous-controller-service-account-uid=previous-controller-uid",
-		"--previous-controller-service-account-managed=true",
-		"--previous-controller-release-sequence=1",
 		"--controller-deployment-name=ptah",
 		"--controller-replicas=2",
 		"--certificate-deployment-name=ptah-cert-rotator",
 		"--release-sequence=2",
 		"--manager-image=" + testImage,
-		managerArgumentPrefixes[24] + encodedTestControllerRuntimeArguments(true, 300, 300, false),
+		managerArgumentPrefixes[19] + encodedTestControllerRuntimeArguments(true, 300, 300, false),
 		"--certificate-runtime-args-b64=W10=",
 		"--runtime-deployment-config-expressions-b64=W10=",
 		"--runtime-pod-config-expressions-b64=W10=",
-		managerArgumentPrefixes[28] + encodedTestRuntimeAdmissionContract("", 0, corev1.PreemptLowerPriority, nil),
-		"--previous-controller-manager-image=" + testImage,
+		managerArgumentPrefixes[23] + encodedTestRuntimeAdmissionContract("", 0, corev1.PreemptLowerPriority, nil),
 	}
 }
 

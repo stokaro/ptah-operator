@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/stokaro/ptah-operator/internal/certrotation"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -75,7 +74,6 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 	// not the client's doing either way.
 	createShape := contract.secretShape("object", false)
 	rotator := exactServiceAccountPrincipalExpression(g.rollout.ReleaseNamespace, contract.rotatorServiceAccount)
-	cleanup := contract.cleanupPrincipalExpression()
 	dataPreserved := `has(dyn(object).data) == has(dyn(oldObject).data) && (!has(dyn(object).data) || dyn(object).data == dyn(oldObject).data)`
 	updateIdentity := `object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && has(object.metadata.creationTimestamp) == has(oldObject.metadata.creationTimestamp) && (!has(object.metadata.creationTimestamp) || object.metadata.creationTimestamp == oldObject.metadata.creationTimestamp)`
 
@@ -83,11 +81,7 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: g.metadata(name, stagingSecretGuardPolicyWeight),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-			FailurePolicy: &fail,
-			ParamKind: &admissionregistrationv1.ParamKind{
-				APIVersion: "v1",
-				Kind:       "ConfigMap",
-			},
+			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(contract.stagingSecretName),
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "exact-certificate-staging-secret",
@@ -102,7 +96,6 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 				{Name: "isUpdate", Expression: `request.operation == "UPDATE"`},
 				{Name: "isDelete", Expression: `request.operation == "DELETE"`},
 				{Name: "isRotator", Expression: rotator},
-				{Name: "isCleanup", Expression: cleanup},
 			},
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `variables.isCreate || variables.isUpdate || variables.isDelete`, Message: message},
@@ -110,8 +103,10 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 				{Expression: `variables.isDelete || (variables.isCreate && (` + createShape + `)) || (variables.isUpdate && (` + newShape + `))`, Message: message},
 				{Expression: `!variables.isCreate || (!has(dyn(object).data) || dyn(object).data.size() == 0)`, Message: message},
 				{Expression: `!variables.isUpdate || (` + updateIdentity + `)`, Message: message},
-				{Expression: fmt.Sprintf(`!variables.isUpdate || (variables.isRotator || (variables.isCleanup && (!has(dyn(object).data) || dyn(object).data.size() == 0)) || ((!variables.isRotator && !variables.isCleanup) && (%s)))`, dataPreserved), Message: message},
-				{Expression: `!variables.isDelete || (variables.isCleanup && (!has(dyn(oldObject).data) || dyn(oldObject).data.size() == 0))`, Message: message},
+				{Expression: fmt.Sprintf(`!variables.isUpdate || variables.isRotator || (%s)`, dataPreserved), Message: message},
+				// The uninstall deletes this Secret only after it has deleted
+				// this guard, so nothing the guard sees may delete it.
+				{Expression: `!variables.isDelete`, Message: message},
 			},
 		},
 	}
@@ -124,19 +119,13 @@ func (g *StagingSecretGuard) ExpectedBinding() (*admissionregistrationv1.Validat
 	if err != nil {
 		return nil, err
 	}
-	action := admissionregistrationv1.DenyAction
 	name := StagingSecretGuardBindingName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
 	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
 		ObjectMeta: g.metadata(name, stagingSecretGuardBindingWeight),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
-			PolicyName:     StagingSecretGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName),
-			MatchResources: g.matchResources(contract.stagingSecretName),
-			ParamRef: &admissionregistrationv1.ParamRef{
-				Name:                    ReleaseActivationName,
-				Namespace:               g.rollout.ReleaseNamespace,
-				ParameterNotFoundAction: &action,
-			},
+			PolicyName:        StagingSecretGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName),
+			MatchResources:    g.matchResources(contract.stagingSecretName),
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
@@ -210,11 +199,10 @@ func (g *StagingSecretGuard) WaitReady(ctx context.Context) error {
 }
 
 type stagingSecretContract struct {
-	namespace              string
-	releaseName            string
-	stagingSecretName      string
-	rotatorServiceAccount  string
-	hookServiceAccountBase string
+	namespace             string
+	releaseName           string
+	stagingSecretName     string
+	rotatorServiceAccount string
 }
 
 func (g *StagingSecretGuard) contract() (stagingSecretContract, error) {
@@ -231,40 +219,12 @@ func (g *StagingSecretGuard) contract() (stagingSecretContract, error) {
 	if problems := utilvalidation.IsDNS1123Subdomain(stagingSecretName); len(problems) != 0 {
 		return stagingSecretContract{}, fmt.Errorf("staging Secret guard target %q is invalid: %v", stagingSecretName, problems)
 	}
-	identity, err := ServiceAccountObjectIdentityContractForRollout(g.rollout)
-	if err != nil {
-		return stagingSecretContract{}, fmt.Errorf("derive staging Secret cleanup identity: %w", err)
-	}
 	return stagingSecretContract{
-		namespace:              g.rollout.ReleaseNamespace,
-		releaseName:            g.rollout.ReleaseName,
-		stagingSecretName:      stagingSecretName,
-		rotatorServiceAccount:  g.rollout.CertificateDeploymentName,
-		hookServiceAccountBase: identity.HookServiceAccountBase,
+		namespace:             g.rollout.ReleaseNamespace,
+		releaseName:           g.rollout.ReleaseName,
+		stagingSecretName:     stagingSecretName,
+		rotatorServiceAccount: g.rollout.CertificateDeploymentName,
 	}, nil
-}
-
-func (c stagingSecretContract) cleanupPrincipalExpression() string {
-	parameterShape := strings.Join([]string{
-		`params != null`,
-		`has(params.metadata)`,
-		fmt.Sprintf(`has(params.metadata.name) && params.metadata.name == %q`, ReleaseActivationName),
-		fmt.Sprintf(`has(params.metadata.namespace) && params.metadata.namespace == %q`, c.namespace),
-		`has(params.metadata.uid) && params.metadata.uid != ""`,
-		`has(params.metadata.resourceVersion) && params.metadata.resourceVersion != ""`,
-		`has(params.data) && params.data.size() == 4`,
-		fmt.Sprintf(`%q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$")`, activeReleaseDataKey, activeReleaseDataKey),
-		fmt.Sprintf(`%q in params.data && params.data[%q] == %q`, controllerCredentialsDataKey, controllerCredentialsDataKey, ControllerCredentialsDraining),
-		fmt.Sprintf(`%q in params.data && params.data[%q].matches("^[1-9][0-9]*$")`, controllerCredentialsTargetDataKey, controllerCredentialsTargetDataKey),
-		fmt.Sprintf(`%q in params.data && params.data[%q].matches("^[0-9a-f]{64}$")`, controllerCredentialsAttemptDataKey, controllerCredentialsAttemptDataKey),
-	}, " && ")
-	username := fmt.Sprintf(
-		`request.userInfo.username == %q + params.data[%q] + "-" + params.data[%q].substring(0, 12)`,
-		"system:serviceaccount:"+c.namespace+":"+c.hookServiceAccountBase+"-cleanup-v",
-		controllerCredentialsTargetDataKey,
-		controllerCredentialsAttemptDataKey,
-	)
-	return fmt.Sprintf(`(%s) && (%s)`, parameterShape, exactServiceAccountUsernamePrincipalExpression(c.namespace, username))
 }
 
 func (c stagingSecretContract) secretShape(path string, requireLiveIdentity bool) string {
@@ -351,7 +311,7 @@ func (g *StagingSecretGuard) verifyPolicy(actual, expected *admissionregistratio
 	if err := verifyStagingSecretGuardMetadata("policy", actual.ObjectMeta, expected.ObjectMeta); err != nil {
 		return err
 	}
-	if mismatch := serviceAccountObjectPolicySpecMismatch(actual.Spec, expected.Spec); mismatch != "" {
+	if mismatch := policySpecMismatch(actual.Spec, expected.Spec); mismatch != "" {
 		return fmt.Errorf("staging Secret guard policy %s does not match its immutable contract: %s", expected.Name, mismatch)
 	}
 	return nil
@@ -373,6 +333,46 @@ func (g *StagingSecretGuard) verifyBinding(actual, expected *admissionregistrati
 		return fmt.Errorf("staging Secret guard binding %s does not match its immutable contract", expected.Name)
 	}
 	return nil
+}
+
+// policySpecMismatch names the first part of a policy spec that differs from
+// its compiled contract, so a refusal says what drifted.
+func policySpecMismatch(actual, expected admissionregistrationv1.ValidatingAdmissionPolicySpec) string {
+	if reflect.DeepEqual(actual, expected) {
+		return ""
+	}
+	if !reflect.DeepEqual(actual.ParamKind, expected.ParamKind) {
+		return "parameter kind differs"
+	}
+	if !reflect.DeepEqual(actual.FailurePolicy, expected.FailurePolicy) {
+		return "failure policy differs"
+	}
+	if !reflect.DeepEqual(actual.MatchConstraints, expected.MatchConstraints) {
+		return "match constraints differ"
+	}
+	if !reflect.DeepEqual(actual.MatchConditions, expected.MatchConditions) {
+		return "match conditions differ"
+	}
+	if !reflect.DeepEqual(actual.Variables, expected.Variables) {
+		for index := 0; index < len(actual.Variables) && index < len(expected.Variables); index++ {
+			if !reflect.DeepEqual(actual.Variables[index], expected.Variables[index]) {
+				return fmt.Sprintf("variable %d (%s) differs: got %q, want %q", index, expected.Variables[index].Name, actual.Variables[index].Expression, expected.Variables[index].Expression)
+			}
+		}
+		return fmt.Sprintf("variable count differs: got %d, want %d", len(actual.Variables), len(expected.Variables))
+	}
+	if !reflect.DeepEqual(actual.Validations, expected.Validations) {
+		for index := 0; index < len(actual.Validations) && index < len(expected.Validations); index++ {
+			if !reflect.DeepEqual(actual.Validations[index], expected.Validations[index]) {
+				return fmt.Sprintf("validation %d differs: got %q, want %q", index, actual.Validations[index].Expression, expected.Validations[index].Expression)
+			}
+		}
+		return fmt.Sprintf("validation count differs: got %d, want %d", len(actual.Validations), len(expected.Validations))
+	}
+	if !reflect.DeepEqual(actual.AuditAnnotations, expected.AuditAnnotations) {
+		return "audit annotations differ"
+	}
+	return "unknown field differs"
 }
 
 func verifyStagingSecretGuardMetadata(kind string, actual, expected metav1.ObjectMeta) error {

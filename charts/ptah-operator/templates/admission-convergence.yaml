@@ -73,7 +73,7 @@
       hook reads that inventory back to retire it. */ -}}
 {{- $markerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
 {{- $sequence := include "ptah-operator.releaseSequence" . -}}
-{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- $previousSequence := include "ptah-operator.predecessorReleaseSequence" . -}}
 {{- $managerImage := include "ptah-operator.managerImage" . -}}
 {{- $attempt := include "ptah-operator.hookIdentityDigest" . -}}
 {{- $cleanupServiceAccount := include "ptah-operator.teardownServiceAccountName" . -}}

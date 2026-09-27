@@ -5169,10 +5169,9 @@ find_release_fault_lease() {
 		"$WORK_DIR/release-fault-managers.json") ||
 		fail "the manager Pods do not share one service account"
 	RELEASE_FAULT_MANAGER="system:serviceaccount:${RELEASE_FAULT_LEASE_NAMESPACE}:${release_manager_account}"
-	# The chart's origin guard admits the manager's identity only with the
-	# token-bound Pod it came from, so the dry run below carries a running
-	# manager Pod's name and UID and the ServiceAccount's own UID, the way the
-	# lifecycle suite's controller impersonation does.
+	# The dry run below asks with the identity a running manager has: its
+	# ServiceAccount's UID and the name and UID of the Pod its token is bound
+	# to, the way the lifecycle suite's controller impersonation does.
 	RELEASE_FAULT_MANAGER_UID=$(k -n "$RELEASE_FAULT_LEASE_NAMESPACE" get serviceaccount \
 		"$release_manager_account" -o jsonpath='{.metadata.uid}')
 	jq -r '[.items[] | select(.status.phase == "Running" and .metadata.deletionTimestamp == null)][0] |

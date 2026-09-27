@@ -24,9 +24,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestRolloutGuardDrainingEnforcementProbe(t *testing.T) {
+func TestRolloutGuardStoppedCandidateEnforcementProbe(t *testing.T) {
 	t.Parallel()
-	objects := renderControllerRBACCutoverChart(t, "--set", "replicaCount=3")
+	objects := renderReleaseChart(t, "--set", "replicaCount=3")
 	for _, test := range []struct {
 		name              string
 		state             int32
@@ -42,7 +42,7 @@ func TestRolloutGuardDrainingEnforcementProbe(t *testing.T) {
 		{name: "stopped certificate fallback", state: ourStateVersion, certificate: true, controllerMissing: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, test.state, test.certificate, test.bootstrap)
+			fixture := newStoppedCandidateProbeFixture(t, objects, test.state, test.certificate, test.bootstrap)
 			if test.controllerMissing {
 				delete(fixture.client.objects, fixture.guard.ControllerDeploymentName)
 			}
@@ -100,24 +100,13 @@ func TestRolloutGuardDrainingEnforcementProbe(t *testing.T) {
 	}
 }
 
-func TestRolloutGuardDrainingProbeRejectsUnprovenIdentity(t *testing.T) {
+func TestRolloutGuardStoppedCandidateProbeRejectsUnprovenIdentity(t *testing.T) {
 	t.Parallel()
-	objects := renderControllerRBACCutoverChart(t)
+	objects := renderReleaseChart(t)
 	for _, test := range []struct {
 		name   string
 		mutate func(*RolloutGuard, *appsv1.Deployment, *corev1.ConfigMap)
 	}{
-		{name: "wrong attempt", mutate: func(_ *RolloutGuard, _ *appsv1.Deployment, p *corev1.ConfigMap) {
-			p.Data[controllerCredentialsAttemptDataKey] = strings.Repeat("0", 64)
-		}},
-		{name: "wrong target", mutate: func(_ *RolloutGuard, _ *appsv1.Deployment, p *corev1.ConfigMap) {
-			p.Data[controllerCredentialsTargetDataKey] = "3"
-		}},
-		{name: "missing drain", mutate: func(_ *RolloutGuard, _ *appsv1.Deployment, p *corev1.ConfigMap) {
-			p.Data[controllerCredentialsDataKey] = string(ControllerCredentialsActive)
-			delete(p.Data, controllerCredentialsTargetDataKey)
-			delete(p.Data, controllerCredentialsAttemptDataKey)
-		}},
 		{name: "foreign parameter", mutate: func(_ *RolloutGuard, _ *appsv1.Deployment, p *corev1.ConfigMap) { p.Labels[instanceLabel] = "foreign" }},
 		{name: "missing UID", mutate: func(_ *RolloutGuard, d *appsv1.Deployment, _ *corev1.ConfigMap) { d.UID = "" }},
 		{name: "missing RV", mutate: func(_ *RolloutGuard, d *appsv1.Deployment, _ *corev1.ConfigMap) { d.ResourceVersion = "" }},
@@ -170,7 +159,7 @@ func TestRolloutGuardDrainingProbeRejectsUnprovenIdentity(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
+			fixture := newStoppedCandidateProbeFixture(t, objects, ourStateVersion, false, false)
 			deployment := fixture.client.objects[fixture.guard.ControllerDeploymentName]
 			parameter := fixture.guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName]
 			test.mutate(fixture.guard, deployment, parameter)
@@ -216,9 +205,9 @@ func TestPredecessorProbeControllerReplicas(t *testing.T) {
 	}
 }
 
-func TestRolloutGuardDrainingProbeFullCELControls(t *testing.T) {
+func TestRolloutGuardStoppedCandidateProbeFullCELControls(t *testing.T) {
 	t.Parallel()
-	objects := renderControllerRBACCutoverChart(t)
+	objects := renderReleaseChart(t)
 	for _, test := range []struct {
 		name   string
 		mutate func(*appsv1.Deployment)
@@ -229,7 +218,7 @@ func TestRolloutGuardDrainingProbeFullCELControls(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
+			fixture := newStoppedCandidateProbeFixture(t, objects, ourStateVersion, false, false)
 			test.mutate(fixture.client.objects[fixture.guard.ControllerDeploymentName])
 			err := fixture.guard.waitEnforced(context.Background(), RolloutGuardPolicyName(2), rolloutGuardProbeDenialMessage(2))
 			if err == nil || !strings.Contains(err.Error(), "prove baseline Deployment is accepted") {
@@ -241,7 +230,7 @@ func TestRolloutGuardDrainingProbeFullCELControls(t *testing.T) {
 		})
 	}
 
-	fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
+	fixture := newStoppedCandidateProbeFixture(t, objects, ourStateVersion, false, false)
 	baseline, _, err := fixture.guard.enforcementProbeDeployment(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -309,12 +298,12 @@ func TestRolloutGuardDrainingProbeFullCELControls(t *testing.T) {
 	}
 }
 
-func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
+func TestRolloutGuardStoppedCandidateProbePreservesOtherStates(t *testing.T) {
 	t.Parallel()
-	objects := renderControllerRBACCutoverChart(t)
-	for _, variant := range []string{"running", "unstamped", "different state", "active candidate", "draining active candidate"} {
+	objects := renderReleaseChart(t)
+	for _, variant := range []string{"running", "unstamped", "different state", "active candidate"} {
 		t.Run(variant, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, false)
+			fixture := newStoppedCandidateProbeFixture(t, objects, ourStateVersion, false, false)
 			deployment := fixture.client.objects[fixture.guard.ControllerDeploymentName]
 			switch variant {
 			case "running":
@@ -328,11 +317,6 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 				parameter.Data[activeReleaseDataKey] = "2"
 				parameter.Annotations[ReleaseSequenceAnnotation] = "2"
 				parameter.Annotations[ManagerImageAnnotation] = fixture.guard.ManagerImage
-				if variant == "active candidate" {
-					parameter.Data[controllerCredentialsDataKey] = string(ControllerCredentialsActive)
-					delete(parameter.Data, controllerCredentialsTargetDataKey)
-					delete(parameter.Data, controllerCredentialsAttemptDataKey)
-				}
 			}
 			before := deployment.DeepCopy()
 			baseline, create, err := fixture.guard.enforcementProbeDeployment(context.Background())
@@ -343,7 +327,7 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 	}
 	for _, variant := range []string{"unstopped", "wrong stamp", "foreign owner", "template identity", "live replicas"} {
 		t.Run("refuse certificate "+variant, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, true, false)
+			fixture := newStoppedCandidateProbeFixture(t, objects, ourStateVersion, true, false)
 			certificate := fixture.client.objects[fixture.guard.CertificateDeploymentName]
 			switch variant {
 			case "unstopped":
@@ -364,7 +348,7 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 	}
 	for _, annotation := range []string{ControllerStateVersionAnnotation, ReleaseSequenceAnnotation} {
 		t.Run("bootstrap refuses template "+annotation, func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, false, true)
+			fixture := newStoppedCandidateProbeFixture(t, objects, ourStateVersion, false, true)
 			fixture.client.objects[fixture.guard.ControllerDeploymentName].Spec.Template.Annotations[annotation] = "1"
 			if _, _, err := fixture.guard.enforcementProbeDeployment(context.Background()); err == nil {
 				t.Fatal("bootstrap normalization accepted an already versioned template")
@@ -373,9 +357,9 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 	}
 }
 
-func TestRolloutGuardDrainingProbeRereadsAfterConflict(t *testing.T) {
+func TestRolloutGuardStoppedCandidateProbeRereadsAfterConflict(t *testing.T) {
 	t.Parallel()
-	fixture := newDrainingProbeFixture(t, renderControllerRBACCutoverChart(t), ourStateVersion, true, false)
+	fixture := newStoppedCandidateProbeFixture(t, renderReleaseChart(t), ourStateVersion, true, false)
 	fixture.client.maxUpdateRequests = 4
 	fixture.client.beforeUpdate = func(call int) {
 		if call == 2 {
@@ -399,12 +383,12 @@ func TestRolloutGuardDrainingProbeRereadsAfterConflict(t *testing.T) {
 	}
 }
 
-func TestRolloutGuardDrainingProbeRequestBudget(t *testing.T) {
+func TestRolloutGuardStoppedCandidateProbeRequestBudget(t *testing.T) {
 	t.Parallel()
-	objects := renderControllerRBACCutoverChart(t)
+	objects := renderReleaseChart(t)
 	for _, maximum := range []int{2, 4} {
 		t.Run(strconv.Itoa(maximum), func(t *testing.T) {
-			fixture := newDrainingProbeFixture(t, objects, ourStateVersion, true, false)
+			fixture := newStoppedCandidateProbeFixture(t, objects, ourStateVersion, true, false)
 			fixture.client.maxUpdateRequests = maximum
 			// An unenforced sentinel must not leave a t.Context()-bound test
 			// polling indefinitely. This negative never claims enforcement.
@@ -422,16 +406,16 @@ func TestRolloutGuardDrainingProbeRequestBudget(t *testing.T) {
 	}
 }
 
-type drainingProbeFixture struct {
+type stoppedCandidateProbeFixture struct {
 	guard  *RolloutGuard
-	client *drainingProbeDeploymentClient
+	client *stoppedCandidateProbeDeploymentClient
 }
 
-func newDrainingProbeFixture(t *testing.T, objects []*unstructured.Unstructured, state int32, certificate, bootstrap bool) drainingProbeFixture {
+func newStoppedCandidateProbeFixture(t *testing.T, objects []*unstructured.Unstructured, state int32, certificate, bootstrap bool) stoppedCandidateProbeFixture {
 	t.Helper()
-	job := findControllerRBACCutoverJob(t, objects)
+	job := findReconcileJob(t, objects)
 	containers, _, _ := unstructured.NestedSlice(job.Object, "spec", "template", "spec", "containers")
-	predecessor := renderedRolloutGuard(t, transitionRenderStringSlice(containers[0].(map[string]any)["args"]), "")
+	predecessor := renderedRolloutGuard(t, renderStringSlice(containers[0].(map[string]any)["args"]), "")
 	value := *predecessor
 	guard := &value
 	guard.ControllerStateVersion = state
@@ -450,16 +434,12 @@ func newDrainingProbeFixture(t *testing.T, objects []*unstructured.Unstructured,
 	}
 	guard.HookServiceAccountName = fmt.Sprintf("%s-crd-v%d-%s", prefix, guard.ReleaseSequence, hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12])
 	params := rolloutActivationCELObject(predecessor, active, int64(predecessor.ControllerStateVersion), int64(predecessor.AdmissionContractVersion), 1, predecessor.ManagerImage)
-	data := params["data"].(map[string]any)
-	data[controllerCredentialsDataKey] = string(ControllerCredentialsDraining)
-	data[controllerCredentialsTargetDataKey] = strconv.Itoa(int(guard.ReleaseSequence))
-	data[controllerCredentialsAttemptDataKey] = guard.releaseActivationGuard().candidateAttempt()
 	var parameter corev1.ConfigMap
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(params, &parameter); err != nil {
 		t.Fatal(err)
 	}
 	guard.ConfigMaps = &rolloutConfigMapClient{objects: map[string]*corev1.ConfigMap{ReleaseActivationName: &parameter}}
-	client := &drainingProbeDeploymentClient{
+	client := &stoppedCandidateProbeDeploymentClient{
 		rolloutDeploymentClient: &rolloutDeploymentClient{objects: map[string]*appsv1.Deployment{}},
 		t:                       t, guard: guard, params: params,
 		maxUpdateRequests: 2,
@@ -471,7 +451,7 @@ func newDrainingProbeFixture(t *testing.T, objects []*unstructured.Unstructured,
 	if !bootstrap {
 		for _, name := range []string{RolloutGuardPolicyName(1), RuntimeGuardPolicyName(1)} {
 			var policy admissionregistrationv1.ValidatingAdmissionPolicy
-			if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(findTransitionRenderObject(t, objects, "ValidatingAdmissionPolicy", name).Object, &policy); err != nil {
+			if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(findRenderObject(t, objects, "ValidatingAdmissionPolicy", name).Object, &policy); err != nil {
 				t.Fatal(err)
 			}
 			client.policies = append(client.policies, &policy)
@@ -481,8 +461,8 @@ func newDrainingProbeFixture(t *testing.T, objects []*unstructured.Unstructured,
 		if !certificate && name == guard.CertificateDeploymentName {
 			continue
 		}
-		live := findTransitionRenderObject(t, objects, "Deployment", name).DeepCopy()
-		defaultDrainingProbeDeployment(live.Object)
+		live := findRenderObject(t, objects, "Deployment", name).DeepCopy()
+		defaultStoppedCandidateProbeDeployment(live.Object)
 		live.SetUID(types.UID("live-" + name))
 		live.SetResourceVersion("101")
 		annotations := live.GetAnnotations()
@@ -505,12 +485,12 @@ func newDrainingProbeFixture(t *testing.T, objects []*unstructured.Unstructured,
 		client.objects[name] = &deployment
 	}
 	guard.Deployments = client
-	return drainingProbeFixture{guard: guard, client: client}
+	return stoppedCandidateProbeFixture{guard: guard, client: client}
 }
 
 // This client evaluates every policy validation against the unchanged stored
 // object. It is a native-CEL unit test, not an API-server simulator.
-type drainingProbeDeploymentClient struct {
+type stoppedCandidateProbeDeploymentClient struct {
 	*rolloutDeploymentClient
 	t                 *testing.T
 	guard             *RolloutGuard
@@ -521,7 +501,7 @@ type drainingProbeDeploymentClient struct {
 	maxUpdateRequests int
 }
 
-func (c *drainingProbeDeploymentClient) Update(_ context.Context, deployment *appsv1.Deployment, options metav1.UpdateOptions) (*appsv1.Deployment, error) {
+func (c *stoppedCandidateProbeDeploymentClient) Update(_ context.Context, deployment *appsv1.Deployment, options metav1.UpdateOptions) (*appsv1.Deployment, error) {
 	if !reflect.DeepEqual(options.DryRun, []string{metav1.DryRunAll}) {
 		c.t.Fatal("enforcement probe attempted a persistent Deployment update")
 	}
@@ -566,15 +546,15 @@ func (c *drainingProbeDeploymentClient) Update(_ context.Context, deployment *ap
 	return deployment.DeepCopy(), nil
 }
 
-func TestRolloutDrainingProbeMetadataNormalizationHitsRetainedReplicaContract(t *testing.T) {
+func TestRolloutStoppedCandidateProbeMetadataNormalizationHitsRetainedReplicaContract(t *testing.T) {
 	t.Parallel()
-	objects := renderControllerRBACCutoverChart(t)
-	job := findControllerRBACCutoverJob(t, objects)
+	objects := renderReleaseChart(t)
+	job := findReconcileJob(t, objects)
 	containers, found, err := unstructured.NestedSlice(job.Object, "spec", "template", "spec", "containers")
 	if err != nil || !found || len(containers) != 1 {
 		t.Fatal("rendered reconcile Job must have one container")
 	}
-	predecessor := renderedRolloutGuard(t, transitionRenderStringSlice(containers[0].(map[string]any)["args"]), "")
+	predecessor := renderedRolloutGuard(t, renderStringSlice(containers[0].(map[string]any)["args"]), "")
 	currentValue := *predecessor
 	current := &currentValue
 	current.ReleaseSequence++
@@ -586,13 +566,9 @@ func TestRolloutDrainingProbeMetadataNormalizationHitsRetainedReplicaContract(t 
 	}
 	current.HookServiceAccountName = hookPrefix + "-crd-v2-" + hookIdentityDigest(current.ReleaseNamespace, current.ReleaseName, current.ReleaseSequence, current.ManagerImage)[:12]
 	params := rolloutActivationCELObject(predecessor, 1, int64(predecessor.ControllerStateVersion), int64(predecessor.AdmissionContractVersion), 1, predecessor.ManagerImage)
-	data := params["data"].(map[string]any)
-	data[controllerCredentialsDataKey] = string(ControllerCredentialsDraining)
-	data[controllerCredentialsTargetDataKey] = "2"
-	data[controllerCredentialsAttemptDataKey] = current.releaseActivationGuard().candidateAttempt()
 
 	var retainedRuntime admissionregistrationv1.ValidatingAdmissionPolicy
-	rendered := findTransitionRenderObject(t, objects, "ValidatingAdmissionPolicy", RuntimeGuardPolicyName(predecessor.ReleaseSequence))
+	rendered := findRenderObject(t, objects, "ValidatingAdmissionPolicy", RuntimeGuardPolicyName(predecessor.ReleaseSequence))
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(rendered.Object, &retainedRuntime); err != nil {
 		t.Fatal(err)
 	}
@@ -616,8 +592,8 @@ func TestRolloutDrainingProbeMetadataNormalizationHitsRetainedReplicaContract(t 
 
 	for _, name := range []string{current.ControllerDeploymentName, current.CertificateDeploymentName} {
 		t.Run(name, func(t *testing.T) {
-			live := findTransitionRenderObject(t, objects, "Deployment", name).DeepCopy()
-			defaultDrainingProbeDeployment(live.Object)
+			live := findRenderObject(t, objects, "Deployment", name).DeepCopy()
+			defaultStoppedCandidateProbeDeployment(live.Object)
 			live.SetUID("live-deployment-uid")
 			live.SetResourceVersion("101")
 			annotations := live.GetAnnotations()
@@ -693,7 +669,7 @@ func TestRolloutDrainingProbeMetadataNormalizationHitsRetainedReplicaContract(t 
 
 // Helm omits these API defaults. Apply them before taking the simulated live
 // snapshot, never as a mutation made by the enforcement probe itself.
-func defaultDrainingProbeDeployment(object map[string]any) {
+func defaultStoppedCandidateProbeDeployment(object map[string]any) {
 	spec := object["spec"].(map[string]any)
 	setDefault := func(object map[string]any, key string, value any) {
 		if _, found := object[key]; !found {

@@ -7,15 +7,12 @@
 {{- $identityProbeJobName := include "ptah-operator.hookIdentityProbeJobName" . -}}
 {{- $identityBootstrapRoleName := printf "%s-bootstrap" ($clusterRoleName | trunc 53 | trimSuffix "-") -}}
 {{- $admissionConvergenceMarkerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
-{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
-{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
-{{- $controllerName := include "ptah-operator.fullname" . -}}
-{{- $coordinationNamespace := include "ptah-operator.coordinationNamespace" . -}}
+{{- $previousSequence := include "ptah-operator.predecessorReleaseSequence" . -}}
+{{- $previousManagerImage := include "ptah-operator.predecessorManagerImage" . -}}
 {{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
-{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 {{- $previousAdmissionConvergenceMarkerName := printf "ptah-admission-convergence-v1-%s-%s" $previousSequence $releaseDigest -}}
-{{- $previousHookIdentityDigest := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $previousSequence (include "ptah-operator.previousControllerManagerImage" .) | sha256sum | trunc 12 -}}
+{{- $previousHookIdentityDigest := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $previousSequence $previousManagerImage | sha256sum | trunc 12 -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -107,8 +104,6 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
-      - {{ $serviceAccountObjectGuardName }}
-      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
@@ -130,8 +125,6 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
-      - {{ $serviceAccountObjectGuardName }}
-      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
@@ -349,8 +342,6 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ $serviceAccountObjectGuardName }}
-      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
@@ -376,8 +367,6 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
-      - {{ $serviceAccountObjectGuardName }}
-      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
@@ -408,27 +397,6 @@ rules:
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list"]
-  # Binding LIST is cluster-wide so the manager can reject every foreign grant
-  # to either protected controller principal. Namespaced GET/PATCH is granted
-  # below only in the binding's namespace; the hook cannot create bindings.
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterrolebindings"]
-    verbs: ["list"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterrolebindings"]
-    resourceNames: [{{ include "ptah-operator.fullname" . | quote }}]
-    verbs: ["get", "patch"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings"]
-    verbs: ["list"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterroles"]
-    resourceNames: [{{ include "ptah-operator.fullname" . | quote }}]
-    {{- if $previousControllerServiceAccount }}
-    verbs: ["get", "bind"]
-    {{- else }}
-    verbs: ["get"]
-    {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -467,32 +435,6 @@ metadata:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: crd-manager
 rules:
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles"]
-    resourceNames: [{{ printf "%s-runtime-admission" $controllerName | quote }}]
-    {{- if ne $previousSequence "0" }}
-    verbs: ["get", "bind"]
-    {{- else }}
-    verbs: ["get"]
-    {{- end }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings"]
-    resourceNames: [{{ printf "%s-runtime-admission" $controllerName | quote }}]
-    verbs: ["get", "patch"]
-  {{- if eq $coordinationNamespace .Release.Namespace }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles"]
-    resourceNames: [{{ $controllerName | quote }}]
-    {{- if $previousControllerServiceAccount }}
-    verbs: ["get", "bind"]
-    {{- else }}
-    verbs: ["get"]
-    {{- end }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings"]
-    resourceNames: [{{ $controllerName | quote }}]
-    verbs: ["get", "patch"]
-  {{- end }}
   - apiGroups: ["apps"]
     resources: ["deployments"]
     resourceNames:
@@ -510,9 +452,6 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.serviceAccountName" . }}
       - {{ include "ptah-operator.certRotatorServiceAccountName" . }}
-      {{- with (include "ptah-operator.previousControllerServiceAccountName" .) }}
-      - {{ . }}
-      {{- end }}
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["limitranges"]
@@ -533,16 +472,13 @@ rules:
     resourceNames:
       - {{ $previousAdmissionConvergenceMarkerName }}
     verbs: ["get", "delete"]
+  {{- if $previousManagerImage }}
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames:
       - {{ printf "ptah-hook-probe-v%s-%s" $previousSequence $previousHookIdentityDigest }}
     verbs: ["get", "delete"]
   {{- end }}
-  {{- if eq .Release.Namespace "default" }}
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -567,130 +503,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ $serviceAccountName }}
     namespace: {{ .Release.Namespace }}
-{{ if ne .Release.Namespace "default" }}
----
-# Exact controller binding transition in the default namespace.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ $clusterRoleName }}
-  namespace: default
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-80"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    meta.helm.sh/release-name: {{ .Release.Name | quote }}
-    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: crd-manager
-rules:
-  {{- if eq $coordinationNamespace "default" }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles"]
-    resourceNames: [{{ $controllerName | quote }}]
-    {{- if $previousControllerServiceAccount }}
-    verbs: ["get", "bind"]
-    {{- else }}
-    verbs: ["get"]
-    {{- end }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings"]
-    resourceNames: [{{ $controllerName | quote }}]
-    verbs: ["get", "patch"]
-  {{- end }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles"]
-    resourceNames: [{{ printf "%s-runtime-discovery" $controllerName | quote }}]
-    {{- if $previousControllerServiceAccount }}
-    verbs: ["get", "bind"]
-    {{- else }}
-    verbs: ["get"]
-    {{- end }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings"]
-    resourceNames: [{{ printf "%s-runtime-discovery" $controllerName | quote }}]
-    verbs: ["get", "patch"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ $clusterRoleName }}
-  namespace: default
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-70"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    meta.helm.sh/release-name: {{ .Release.Name | quote }}
-    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: crd-manager
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ $clusterRoleName }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ $serviceAccountName }}
-    namespace: {{ .Release.Namespace }}
-{{ end }}
-{{ if and (ne $coordinationNamespace .Release.Namespace) (ne $coordinationNamespace "default") }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ $clusterRoleName }}
-  namespace: {{ $coordinationNamespace }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-80"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    meta.helm.sh/release-name: {{ .Release.Name | quote }}
-    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: crd-manager
-rules:
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles"]
-    resourceNames: [{{ $controllerName | quote }}]
-    {{- if $previousControllerServiceAccount }}
-    verbs: ["get", "bind"]
-    {{- else }}
-    verbs: ["get"]
-    {{- end }}
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["rolebindings"]
-    resourceNames: [{{ $controllerName | quote }}]
-    verbs: ["get", "patch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ $clusterRoleName }}
-  namespace: {{ $coordinationNamespace }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-70"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    meta.helm.sh/release-name: {{ .Release.Name | quote }}
-    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: crd-manager
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ $clusterRoleName }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ $serviceAccountName }}
-    namespace: {{ .Release.Namespace }}
-{{ end }}
 ---
 apiVersion: batch/v1
 kind: Job

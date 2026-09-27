@@ -26,8 +26,8 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 
 	fixture := newReleaseTeardownFixture(t, false)
 	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
-	if len(wantOrder) != 44 {
-		t.Fatalf("known teardown inventory has %d objects, want 44", len(wantOrder))
+	if len(wantOrder) != 40 {
+		t.Fatalf("known teardown inventory has %d objects, want 40", len(wantOrder))
 	}
 	if err := fixture.teardown.Preflight(context.Background()); err != nil {
 		t.Fatalf("read-only preflight: %v", err)
@@ -82,8 +82,8 @@ func TestReleaseTeardownDeletesTheStagingSecretAfterItsGuardWithoutReadingIt(t *
 
 	fixture := newReleaseTeardownFixture(t, true)
 	order := expectedReleaseTeardownOrder(fixture.guard)
-	if len(order) != 47 {
-		t.Fatalf("certificate runtime teardown inventory has %d objects, want 47", len(order))
+	if len(order) != 43 {
+		t.Fatalf("certificate runtime teardown inventory has %d objects, want 43", len(order))
 	}
 	if err := fixture.teardown.Teardown(context.Background()); err != nil {
 		t.Fatal(err)
@@ -273,12 +273,7 @@ func TestReleaseTeardownReturnsTheActivationToBootstrapBeforeDeletingIt(t *testi
 
 	fixture := newReleaseTeardownFixture(t, false)
 	activation := fixture.configMaps.objects[ReleaseActivationName]
-	activation.Data = map[string]string{
-		activeReleaseDataKey:                "1",
-		controllerCredentialsDataKey:        string(ControllerCredentialsDraining),
-		controllerCredentialsTargetDataKey:  "1",
-		controllerCredentialsAttemptDataKey: fixture.guard.releaseActivationGuard().candidateAttempt(),
-	}
+	activation.Data = map[string]string{activeReleaseDataKey: "1"}
 	if reflect.DeepEqual(activation.Data, ReleaseActivationBootstrapData()) {
 		t.Fatal("the fixture activation already holds the bootstrap state, so the reset would not be exercised")
 	}
@@ -769,13 +764,6 @@ func installReleaseTeardownGuards(
 	install(guard.hookIdentityProbePolicy(), guard.binding(hookProbeName))
 	activation := guard.releaseActivationGuard()
 	install(activation.policy(), activation.binding())
-	origin := NewServiceAccountOriginGuard(guard)
-	originPolicy, err := origin.policy()
-	must(err)
-	install(originPolicy, origin.binding())
-	serviceAccountObjectPolicy, serviceAccountObjectBinding, err := NewServiceAccountObjectGuard(guard).ExpectedObjects()
-	must(err)
-	install(serviceAccountObjectPolicy, serviceAccountObjectBinding)
 	namespaceGuard := NewNamespaceDeletionGuard(guard)
 	install(namespaceGuard.policy(), namespaceGuard.binding())
 	controllerWrite := NewControllerWriteGuard(guard)
@@ -809,8 +797,6 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	parentHookOriginName := ParentHookJobOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	parentHookPodOriginName := ParentHookPodOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	parentHookContractName := ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	serviceAccountName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	serviceAccountObjectName := ServiceAccountObjectGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	controllerWriteName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	controllerJobWriteName := ControllerJobWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	controllerChunkWriteName := ControllerChunkWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
@@ -823,26 +809,24 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 
 	parameterized := []string{
 		rolloutName, runtimeName, runtimePodName,
-		serviceAccountName, controllerWriteName,
+		controllerWriteName,
 		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
 		controllerMigrationPlanWriteName,
-	}
-	if guard.CertificateRuntimeEnabled {
-		parameterized = append(parameterized, stagingName)
 	}
 	remaining := []string{
 		hookName, hookProbeName,
 		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
-		serviceAccountObjectName,
 		certificateMutatingWriteName, certificateValidatingWriteName,
 		namespaceName,
+	}
+	if guard.CertificateRuntimeEnabled {
+		remaining = append(remaining, stagingName)
 	}
 	policies := []string{
 		rolloutName, runtimeName, runtimePodName,
 		hookName, hookProbeName,
 		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
-		serviceAccountObjectName,
-		serviceAccountName, controllerWriteName,
+		controllerWriteName,
 		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
 		controllerMigrationPlanWriteName,
 		certificateMutatingWriteName, certificateValidatingWriteName,

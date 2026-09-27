@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
@@ -49,21 +47,9 @@ func runTeardownMode(ctx context.Context, clientset kubernetes.Interface, rollou
 
 // stopReleaseRuntime scales both runtime Deployments to zero and waits until no
 // Pod in the namespace runs as a runtime identity. The retained rollout guards
-// admit that stop only while the release activation records a drain toward
-// the active sequence, so the drain is recorded first. An activation that is
-// already gone means an earlier attempt deleted it after the guards that read
-// it, and the stop needs no record.
+// admit a release's own hook stopping the sequence that is active, which is
+// what an uninstall stops.
 func stopReleaseRuntime(ctx context.Context, clientset kubernetes.Interface, rollout *crdupgrade.RolloutGuard) error {
-	_, err := clientset.CoreV1().ConfigMaps(rollout.ReleaseNamespace).Get(ctx, crdupgrade.ReleaseActivationName, metav1.GetOptions{})
-	switch {
-	case err == nil:
-		if _, drainErr := rollout.BeginControllerCredentialDrain(ctx); drainErr != nil {
-			return fmt.Errorf("record the runtime stop in the release activation: %w", drainErr)
-		}
-	case apierrors.IsNotFound(err):
-	default:
-		return fmt.Errorf("read the release activation before stopping the runtime: %w", err)
-	}
 	if err := rollout.Quiesce(ctx); err != nil {
 		return fmt.Errorf("quiesce release runtime: %w", err)
 	}
