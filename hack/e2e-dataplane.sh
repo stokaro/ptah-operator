@@ -5528,93 +5528,6 @@ assert_registry_outage_and_recovery() {
 	printf '%s\n' 'e2e data plane: PASS registry outage freshness and exact recovery'
 }
 
-refuse_execution_binding_change_in_sequence() {
-	upgrade_schema=$1
-	upgrade_old_plan=$CURRENT_PLAN
-	upgrade_old_plan_uid=$CURRENT_PLAN_UID
-	upgrade_old_fingerprint=$CURRENT_PLAN_FINGERPRINT
-	upgrade_original_ptah_version=$PTAH_VERSION
-	upgrade_before="$WORK_DIR/${upgrade_schema}-binding-change-before.json"
-	checkpoint_schema_jobs "$upgrade_schema" "$upgrade_before"
-	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
-		jq -e --arg planUID "$upgrade_old_plan_uid" --arg version "$PTAH_VERSION" '
-          .status.phase == "AwaitingApproval" and
-          .status.plan.uid == $planUID and .status.plan.approval == null and
-          .status.plan.ptahVersion == $version and
-          .status.nextReconciliationTime != null and
-          ((.status.nextReconciliationTime | fromdateiso8601) - now) >= 180
-        ' >/dev/null || fail "$upgrade_schema lacks a quiescent approval window"
-
-	pause_controller_status_writes
-	# The retained rollout guards pin this release's executable contract for the
-	# life of its release sequence: the runtime Pod guard carries the digest of
-	# the manager's own arguments, and the hook parent contract pins the Job that
-	# carries them. A values-only change to the execution binding is therefore
-	# refused before anything is applied. stokaro/ptah-operator#14 records that
-	# the release documentation reads as if the same change were an upgrade.
-	upgrade_new_version="e2e-binding-$(printf '%s' "$PTAH_VERSION" | sha256 | cut -c1-16)"
-	[ "$upgrade_new_version" != "$PTAH_VERSION" ] ||
-		fail "execution-binding proof did not select a distinct Ptah version"
-	upgrade_manager_before=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json)
-	upgrade_revision_before=$(helm --kubeconfig "$KUBECONFIG_FILE" list \
-		--namespace "$OPERATOR_NAMESPACE" --filter "^${HELM_RELEASE}$" -o json |
-		jq -er '.[0].revision')
-	upgrade_refusal="$WORK_DIR/${upgrade_schema}-binding-change.err"
-	printf 'e2e data plane: refusing an execution-binding change inside the release sequence\n'
-	if helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
-		--namespace "$OPERATOR_NAMESPACE" --reuse-values --wait --timeout 5m \
-		--set-string execution.ptahVersion="$upgrade_new_version" \
-		>"$upgrade_refusal.stdout" 2>"$upgrade_refusal"; then
-		fail "$HELM_RELEASE accepted an execution-binding change inside its release sequence"
-	fi
-	grep -Fq 'pins the executable contract of release sequence' "$upgrade_refusal" ||
-		fail "the execution-binding change was refused for an unexpected reason"
-
-	upgrade_revision_after=$(helm --kubeconfig "$KUBECONFIG_FILE" list \
-		--namespace "$OPERATOR_NAMESPACE" --filter "^${HELM_RELEASE}$" -o json |
-		jq -er '.[0].revision')
-	[ "$upgrade_revision_after" = "$upgrade_revision_before" ] ||
-		fail "the refused execution-binding change still wrote release revision $upgrade_revision_after"
-	k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
-		jq -e \
-			--argjson before "$upgrade_manager_before" \
-			--arg version "--ptah-version=${PTAH_VERSION}" \
-			--arg refusedVersion "--ptah-version=${upgrade_new_version}" '
-          [.spec.template.spec.containers[] | select(.name == "manager")] as $manager |
-          ($manager | length) == 1 and
-          ($manager[0].args | index($version)) != null and
-          ($manager[0].args | index($refusedVersion)) == null and
-          .metadata.uid == $before.metadata.uid and
-          .metadata.generation == $before.metadata.generation and
-          .spec.template == $before.spec.template
-        ' >/dev/null ||
-		fail "the refused execution-binding change disturbed the running manager"
-	upgrade_after="$WORK_DIR/${upgrade_schema}-binding-change-after.json"
-	checkpoint_schema_jobs "$upgrade_schema" "$upgrade_after"
-	for upgrade_operation in resolve verify observe plan apply; do
-		assert_no_job_between_checkpoints "$upgrade_schema" "$upgrade_operation" \
-			"$upgrade_before" "$upgrade_after"
-	done
-	capture_current_plan "$upgrade_schema"
-	[ "$CURRENT_PLAN" = "$upgrade_old_plan" ] ||
-		fail "$upgrade_schema replaced its plan after a refused execution-binding change"
-	[ "$CURRENT_PLAN_UID" = "$upgrade_old_plan_uid" ] ||
-		fail "$upgrade_schema replaced its plan UID after a refused execution-binding change"
-	[ "$CURRENT_PLAN_FINGERPRINT" = "$upgrade_old_fingerprint" ] ||
-		fail "$upgrade_schema changed its plan fingerprint after a refused execution-binding change"
-	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
-		jq -e --arg planUID "$upgrade_old_plan_uid" --arg version "$upgrade_original_ptah_version" '
-          .status.phase == "AwaitingApproval" and
-          .status.plan.uid == $planUID and .status.plan.approval == null and
-          .status.plan.ptahVersion == $version and
-          .status.activeOperation == null
-        ' >/dev/null ||
-		fail "$upgrade_schema lost its pending approval window across the refused change"
-	[ "$RBAC_PAUSED" -eq 1 ] ||
-		fail "the refused execution-binding change released the status barrier"
-	printf '%s\n' 'e2e data plane: PASS refused execution-binding change inside a release sequence'
-}
-
 assert_external_postgresql_catalog() {
 	assert_external_pg_not_hosted_in_kubernetes
 	assert_external_pg_container_contract
@@ -6577,19 +6490,12 @@ run_engine_lifecycle() {
 	plan_v1_fingerprint=$CURRENT_PLAN_FINGERPRINT
 	assert_job_isolation "$lifecycle_schema" "$lifecycle_secret" false
 	assert_no_new_jobs "$lifecycle_schema" apply "$v1_apply_checkpoint"
-	if [ "$lifecycle_slug" = postgresql ]; then
-		refuse_execution_binding_change_in_sequence "$lifecycle_schema"
-		plan_v1=$CURRENT_PLAN
-		plan_v1_uid=$CURRENT_PLAN_UID
-		plan_v1_fingerprint=$CURRENT_PLAN_FINGERPRINT
-	fi
 	v1_post_observe_checkpoint="$WORK_DIR/${lifecycle_schema}-v1-post-observe.json"
 	v1_post_plan_checkpoint="$WORK_DIR/${lifecycle_schema}-v1-post-plan.json"
 	checkpoint_jobs "$lifecycle_schema" observe "$v1_post_observe_checkpoint"
 	checkpoint_jobs "$lifecycle_schema" plan "$v1_post_plan_checkpoint"
 	create_exact_approval "$lifecycle_schema" "$plan_v1" "${lifecycle_schema}-v1" \
 		"$lifecycle_coordination_key" "$lifecycle_coordination_digest"
-	resume_controller_status_writes || fail "could not release the v1 approval barrier"
 	wait_for_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"
 	wait_for_in_sync "$lifecycle_schema" "$digest_v1" \
 		"$v1_post_observe_checkpoint" "$v1_post_plan_checkpoint"

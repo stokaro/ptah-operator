@@ -31,16 +31,10 @@ SHARED_RBAC_RENDER=$WORK_DIR/shared-rbac.yaml
 CRD_INSTALL_RENDER=$WORK_DIR/crd-install.yaml
 CRD_UPGRADE_RENDER=$WORK_DIR/crd-upgrade.yaml
 CRD_FULL_RENDER=$WORK_DIR/crd-full.yaml
-CRD_FULL_RECOVERY_RENDER=$WORK_DIR/crd-full-recovery.yaml
-ROLLOUT_GUARD_RENDER=$WORK_DIR/rollout-guard.yaml
-ROLLOUT_GUARD_V1_RENDER=$WORK_DIR/rollout-guard-v1.yaml
-RUNTIME_POD_GUARD_LONG_RENDER=$WORK_DIR/runtime-pod-guard-long.yaml
-TEARDOWN_RENDER=$WORK_DIR/teardown.yaml
-TEARDOWN_EXTERNAL_CERT_RENDER=$WORK_DIR/teardown-external-cert.yaml
-TEARDOWN_EXTERNAL_SA_RENDER=$WORK_DIR/teardown-external-sa.yaml
-TEARDOWN_COORDINATION_RENDER=$WORK_DIR/teardown-coordination.yaml
-TEARDOWN_DEFAULT_NAMESPACE_RENDER=$WORK_DIR/teardown-default-namespace.yaml
-TEARDOWN_FULLNAME_COLLISION_ERROR=$WORK_DIR/teardown-fullname-collision.err
+EXTERNAL_CERTIFICATE_RENDER=$WORK_DIR/external-certificate.yaml
+CONTROLLER_WRITE_GUARD_RENDER=$WORK_DIR/controller-write-guard.yaml
+CONTROLLER_OBJECT_GUARD_RENDER=$WORK_DIR/controller-object-guard.yaml
+HOOK_FULLNAME_COLLISION_ERROR=$WORK_DIR/hook-fullname-collision.err
 INVALID_SERVICE_ACCOUNT_ERROR=$WORK_DIR/invalid-service-account.err
 CRD_GUARD_PENDING_FIXTURE=$WORK_DIR/crd-guard-pending.json
 CRD_GUARD_FAILED_FIXTURE=$WORK_DIR/crd-guard-failed.json
@@ -191,11 +185,7 @@ assert_webhook_runtime_argument_owners() {
     BEGIN {
       expected["Deployment/ptah-e2e-ptah-operator"] = 1
       expected["Deployment/ptah-e2e-ptah-operator-cert-rotator"] = 1
-      expected["Job/ptah-hook-identity-v1-a4221dfdc0df"] = 1
-      expected["Job/ptah-e2e-ptah-operator-crd-v1-a4221dfdc0df-preflight"] = 1
-      expected["Job/ptah-e2e-ptah-operator-crd-v1-a4221dfdc0df"] = 1
-      expected["Job/ptah-e2e-ptah-operator-quiesce-v1-a4221dfdc0df"] = 1
-      expected_count = 6
+      expected_count = 2
       reset_document()
     }
     /^---$/ {
@@ -321,7 +311,6 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 "$ROOT_DIR/hack/e2e-suites-selftest.sh"
 "$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"
 "$ROOT_DIR/hack/e2e-sql-selftest.sh"
-"$ROOT_DIR/hack/e2e-hook-log-capture-selftest.sh"
 "$ROOT_DIR/hack/e2e-ha-metrics-selftest.sh"
 
 # Every phase the driver runs is measured, and it is measured in the one place
@@ -2048,56 +2037,33 @@ for next_release_crd_marker in \
 	'.repository + "@" + .digest' \
 	'validate_release_sequence_transition() {' \
 	'[ "$E2E_NEXT_RELEASE_SEQUENCE" -eq $((E2E_CURRENT_RELEASE_SEQUENCE + 1)) ]' \
-	'assert_sealed_release_inventory() {' \
-	'assert_inventory_resources_absent() {' \
-	'assert_release_sequence_candidate_residue_absent() {' \
+	'create_late_failure_blocker() {' \
+	'prove_late_failure_recovery() {' \
+	'retry_same_candidate() {' \
+	'prove_rollback_refused_over_future_state() {' \
+	'prove_rollback() {' \
 	'run_next_release_upgrade_proof() {' \
-	'assert_release_sequence_candidate_residue_absent "$current_release_sequence"' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE"' \
 	'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall'; do
 	static_require_count "$next_release_crd_source" "$next_release_crd_marker" 1 \
 		'synthetic next-release CRD lifecycle'
 done
-
-# The sealed inventory is one policy/binding pair per retired guard plus the
-# hook probe, and the uninstall proof pins its exact length. Pinning it twice
-# is how the two parted company: adding a guard moved the Go count and left the
-# shell literal behind, and only a two-hour lifecycle said so. So the literal is
-# derived from the Go constant here, where a `make verify` finds it.
-retirement_pair_count=$(sed -n 's/^const predecessorRetirementPairCount = \([0-9][0-9]*\)$/\1/p' \
-	"$ROOT_DIR/internal/crdupgrade/predecessor_retirement.go")
-printf '%s\n' "$retirement_pair_count" | grep -Eq '^[1-9][0-9]*$' || {
-	printf '%s\n' 'e2e static: predecessorRetirementPairCount could not be read' >&2
-	exit 1
-}
-sealed_inventory_length=$((retirement_pair_count * 2 + 1))
-sealed_inventory_last=$((sealed_inventory_length - 1))
-for sealed_inventory_marker in \
-	"(.entries | type == \"array\" and length == ${sealed_inventory_length})" \
-	"([range(0; ${sealed_inventory_last}; 2) as \$index |" \
-	".entries[${sealed_inventory_last}].kind == \"ConfigMap\"" \
-	"| unique | length) == ${sealed_inventory_length}" \
-	"sealed inventory is not ${retirement_pair_count} exact policy/binding pairs plus one hook probe"; do
-	static_require_count "$next_release_crd_source" "$sealed_inventory_marker" 1 \
-		'sealed release inventory'
-done
-# The synthetic next release is applied twice: once behind the late-activation
-# blocker, where it must fail at the reconcile hook, and once for real.
+# The synthetic next release is applied twice: once behind the late-failure
+# blocker, which refuses Helm's apply of the candidate Deployments after the
+# hook stopped the runtime, and once for real.
 # shellcheck disable=SC2016 # Exact upgrade marker retains runtime variables literally.
 static_require_count "$next_release_crd_source" \
 	'helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' 2 \
-	'late-activation failure attempt and real next-release upgrade'
-# One retirement transition and all three successful uninstalls must consume
-# the exact sealed kind/name/UID inventories they captured.
-# shellcheck disable=SC2016 # Exact helper call retains runtime variables literally.
+	'late-failure attempt and real next-release upgrade'
+# The definition, and one check after each of the three uninstalls.
 static_require_count "$next_release_crd_source" \
-	'assert_inventory_resources_absent' 5 \
-	'exact predecessor retirement and uninstall inventory checks'
+	'assert_release_runtime_removed' 4 \
+	'uninstall residue checks'
 # shellcheck disable=SC2016 # Count the variable-driven next-sequence image handoff.
 static_require_count "$next_release_crd_source" \
-	'"$E2E_NEXT_RELEASE_SEQUENCE" "$E2E_NEXT_CONTROLLER_IMAGE"' 2 \
-	'next-sequence activation before both uninstalls'
+	'"$E2E_NEXT_RELEASE_SEQUENCE" "$E2E_NEXT_CONTROLLER_IMAGE"' 1 \
+	'next-sequence identity after the reinstall'
 static_reject_marker "$next_release_crd_source" \
 	'.repository + "@" + .testIdentityDigest' \
 	'production controller image identity extraction'
@@ -2106,32 +2072,40 @@ static_reject_marker "$next_release_crd_source" \
 	'variable-driven successor release assertions'
 # shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
 static_require_order "$next_release_crd_source" \
-	'current to next release activation and predecessor retirement' \
+	'current to next release upgrade, late failure, retry and rollback' \
 	'run_next_release_upgrade_proof() {' \
 	'validate_release_sequence_transition' \
 	'current_release_sequence=$E2E_CURRENT_RELEASE_SEQUENCE' \
 	'next_release_sequence=$E2E_NEXT_RELEASE_SEQUENCE' \
 	'capture_controller_service_account_identity' \
 	'"$current_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
-	'"$current_sequence_marker" "$current_sequence_inventory"' \
-	'retry_same_candidate_with_diagnostics' \
+	'prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"' \
+	'start_running_apply_fixture' \
+	'stage_predecessor_apply_job_uid_gap_while_running' \
+	'prove_late_failure_recovery "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
+	'stage_read_only_job_completion' \
+	'stage_read_only_job_uid_gap' \
+	'assert_late_failure_candidate_unchanged' \
+	'delete_late_failure_blocker' \
+	'retry_same_candidate' \
+	'wait_for_read_only_job_cleanup' \
+	'assert_predecessor_apply_remains_exclusive_while_running' \
+	'release_running_apply_barrier' \
 	'"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE"' \
-	'"$next_sequence_marker" "$next_sequence_inventory"' \
-	'assert_inventory_resources_absent' \
-	'"$current_sequence_inventory" "$current_sequence_marker_name"' \
-	'assert_release_sequence_candidate_residue_absent "$current_release_sequence"' \
-	'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission inventory and kept the controller identity'
-# shellcheck disable=SC2016 # Exact helper ordering retains runtime variables literally.
+	'prove_rollback_refused_over_future_state "$current_release_revision"' \
+	'prove_rollback "$current_release_revision" "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
+	'e2e crd: synthetic sequence-%s upgrade kept the controller identity, and the rollback to sequence %s went through its hook'
+# The blocker has to be in place before the candidate is applied, and the
+# evidence read is the revision the blocker failed.
+# shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
 static_require_order "$next_release_crd_source" \
-	'same-candidate retry capture and authoritative Helm failure' \
-	'retry_same_candidate_with_diagnostics() {' \
-	'LATE_ACTIVATION_PREFLIGHT_LOG_FILE=$WORK_DIR/retry-preflight.log' \
-	'LATE_ACTIVATION_RECONCILE_LOG_FILE=$WORK_DIR/retry-reconcile.log' \
-	'arm_late_activation_hook_log_captures' \
+	'late failure after the runtime stop' \
+	'prove_late_failure_recovery() {' \
+	'create_late_failure_blocker' \
 	'if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
-	'finish_late_activation_hook_log_captures || retry_capture_status=$?' \
-	'return "$retry_helm_status"' \
-	'verify_late_activation_preflight_capture'
+	'late-failure-blocker.operator.ptah.run' \
+	'--revision "$late_revision" -o json' \
+	'.spec.replicas == 0 and'
 # shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
 static_require_order "$next_release_crd_source" \
 	'next chart reinstall and final zero-residue proof' \
@@ -2139,20 +2113,15 @@ static_require_order "$next_release_crd_source" \
 	'run_next_release_upgrade_proof' \
 	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
 	'assert_release_runtime_removed' \
-	'"$next_sequence_inventory" "$next_sequence_marker_name"' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
-	'assert_release_activation_sequence' \
 	'"$E2E_NEXT_RELEASE_SEQUENCE" "$E2E_NEXT_CONTROLLER_IMAGE"' \
-	'reinstalled_next_inventory=$WORK_DIR/reinstalled-sequence-${E2E_NEXT_RELEASE_SEQUENCE}-admission-inventory.json' \
 	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
 	'assert_release_runtime_removed' \
-	'"$reinstalled_next_inventory" "$reinstalled_next_marker_name"' \
 	'e2e crd: fresh-installing the exact exported current-release chart bytes' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE"' \
 	'"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE"' \
-	'fresh_current_inventory=$WORK_DIR/fresh-current-sequence-${E2E_CURRENT_RELEASE_SEQUENCE}-admission-inventory.json' \
-	'assert_release_sequence_candidate_residue_absent "$E2E_CURRENT_RELEASE_SEQUENCE"' \
-	'"$fresh_current_inventory" "$fresh_current_marker_name"' \
+	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
+	'assert_release_runtime_removed' \
 	'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall' \
 	'e2e crd: uninstall retained CRDs and live objects'
 
@@ -2414,8 +2383,6 @@ registry_outage_snapshot_section=$(sed -n '/^snapshot_registry_outage_evidence()
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 registry_ready_section=$(sed -n '/^wait_for_registry_http_ready() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
-binding_refusal_section=$(sed -n '/^refuse_execution_binding_change_in_sequence() {$/,/^}$/p' \
-	"$ROOT_DIR/hack/e2e-dataplane.sh")
 digest_pin_section=$(sed -n '/^assert_requested_digest_pin_refusal() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 source_isolation_section=$(sed -n '/^assert_source_job_isolation() {$/,/^}$/p' \
@@ -2438,7 +2405,7 @@ for required_static_section in \
 	"$automatic_external_pg_lifecycle_section" \
 	"$external_pg_lifecycle_section" "$external_pg_main_section" \
 	"$registry_outage_section" "$registry_outage_snapshot_section" \
-	"$registry_ready_section" "$binding_refusal_section" \
+	"$registry_ready_section" \
 	"$digest_pin_section" "$source_isolation_section" \
 	"$source_isolation_filter"; do
 	[ -n "$required_static_section" ] || {
@@ -2693,25 +2660,9 @@ static_require_count "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 1 'registry readiness port handoff'
 
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
-static_require_order "$binding_refusal_section" 'in-sequence execution-binding refusal proof' \
-	'upgrade_original_ptah_version=$PTAH_VERSION' \
-	'pause_controller_status_writes' \
-	'helm --kubeconfig "$KUBECONFIG_FILE" upgrade' \
-	'--set-string execution.ptahVersion="$upgrade_new_version"' \
-	'accepted an execution-binding change inside its release sequence' \
-	'pins the executable contract of release sequence' \
-	'still wrote release revision $upgrade_revision_after' \
-	'.spec.template == $before.spec.template' \
-	'assert_no_job_between_checkpoints "$upgrade_schema" "$upgrade_operation"' \
-	'capture_current_plan "$upgrade_schema"' \
-	'.status.plan.uid == $planUID and .status.plan.approval == null' \
-	'[ "$RBAC_PAUSED" -eq 1 ]'
-
-# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
-static_require_order "$engine_lifecycle_section" 'binding upgrade and registry outage placement' \
+static_require_order "$engine_lifecycle_section" 'registry outage placement' \
 	'create_schema_resource "$lifecycle_schema"' \
 	'assert_plan "$lifecycle_schema"' \
-	'refuse_execution_binding_change_in_sequence "$lifecycle_schema"' \
 	'create_exact_approval "$lifecycle_schema" "$plan_v1"' \
 	'wait_for_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"' \
 	'assert_periodic_noop "$lifecycle_schema" "$PERIODIC_NOOP_CHECKPOINT"' \
@@ -5765,12 +5716,12 @@ helm template ptah-e2e-ha "$ROOT_DIR/charts/ptah-operator" \
 	--set-string webhook.caBundle=e2e-ca >"$SHARED_RBAC_RENDER"
 
 for rbac_render in "$DEFAULT_RBAC_RENDER" "$SHARED_RBAC_RENDER"; do
-	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 2 ] || {
-		printf 'e2e static: %s does not render exactly two scoped manager Roles\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 1 ] || {
+		printf 'e2e static: %s does not render exactly one scoped manager Role\n' "$rbac_render" >&2
 		exit 1
 	}
-	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 2 ] || {
-		printf 'e2e static: %s does not render exactly two scoped manager RoleBindings\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 1 ] || {
+		printf 'e2e static: %s does not render exactly one scoped manager RoleBinding\n' "$rbac_render" >&2
 		exit 1
 	}
 	if awk '
@@ -5843,20 +5794,6 @@ for controller_write_live_marker in \
 	'operator.ptah.run/active-operation' \
 	'controller desired-state and direct-write boundaries passed'; do
 	grep -F -- "$controller_write_live_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
-done
-
-# shellcheck disable=SC2016 # Match literal impersonation variables in the live proof.
-for certificate_write_live_marker in \
-	'prove_certificate_write_guards' \
-	'--as-user-extra="authentication.kubernetes.io/pod-name=${ROTATOR_POD}"' \
-	'--as-user-extra="authentication.kubernetes.io/pod-uid=${ROTATOR_POD_UID}"' \
-	'certificate write guard rejected a bounded CA-only' \
-	'a mutating reinvocationPolicy change' \
-	'a validating failurePolicy change' \
-	'an empty validating caBundle' \
-	'a validating webhook reorder' \
-	'typed certificate write boundary proof passed'; do
-	grep -F -- "$certificate_write_live_marker" "$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
 done
 
 default_role_namespace=$(awk '
@@ -6076,20 +6013,16 @@ rotator_crd_verbs=$(awk '
 	printf '%s\n' 'e2e static: certificate rotator CRD verifier has mutation or list access' >&2
 	exit 1
 }
-rotator_guard_verbs=$(awk '
-  index($0, "resources: [\"validatingadmissionpolicies\", \"validatingadmissionpolicybindings\"]") {
-    while (getline > 0) {
-      if (index($0, "verbs:")) {print; exit}
-    }
-  }
-' "$ROTATOR_RENDER" | tr -d '[:space:]')
-[ "$rotator_guard_verbs" = 'verbs:["get"]' ] || {
-	printf '%s\n' 'e2e static: certificate rotator rollout-guard verifier exceeds read-only access' >&2
-	exit 1
-}
+# The rotator reads no admission policy and no scheduling or quota object: the
+# verifier that needed them is gone.
 for default_forbidden_marker in \
 		'kind: ValidatingAdmissionPolicy' \
 		'kind: ValidatingAdmissionPolicyBinding' \
+		'validatingadmissionpolicies' \
+		'priorityclasses' \
+		'limitranges' \
+		'resources: ["serviceaccounts"]' \
+		'resources: ["configmaps"]' \
 		'verbs: ["create"]' \
 		'--recreate-missing-secret' \
 		'--secret-create-policy-name=' \
@@ -6314,93 +6247,50 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e --i
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	$crd_render_args >"$CRD_FULL_RENDER"
-# The e2e values enable certificate recovery, which changes the runtime-verify
-# arguments the rollout guard family compiles; the gate has to render that too.
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--set certificateRotation.recreateMissingSecret=true \
-	$crd_render_args >"$CRD_FULL_RECOVERY_RENDER"
+	--set-string webhook.existingSecret=external-tls \
+	--set-string webhook.caBundle=Y2E= \
+	$crd_render_args >"$EXTERNAL_CERTIFICATE_RENDER"
+# Each guard family is compared with the contract compiled in Go in a render of
+# its own, so a test holds the render to exactly its own policies. The
+# Deployment comes along because the guards name the ServiceAccount it runs as.
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/hook-identity-guard.yaml \
-	--show-only templates/namespace-guard.yaml \
-	--show-only templates/release-activation-guard.yaml \
-	--show-only templates/release-activation.yaml \
 	--show-only templates/controller-write-guard.yaml \
+	--show-only templates/deployment.yaml \
+	$crd_render_args >"$CONTROLLER_WRITE_GUARD_RENDER"
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/controller-object-guard.yaml \
-	--show-only templates/certificate-write-guard.yaml \
-	--show-only templates/parent-workload-guard.yaml \
-	--show-only templates/admission-convergence.yaml \
-	--show-only templates/rollout-guard.yaml \
-	--show-only templates/runtime-pod-guard.yaml \
 	--show-only templates/deployment.yaml \
-	--show-only templates/certificate-rotation.yaml \
-	--set-string 'tolerations[0].key=dedicated' \
-	$crd_render_args >"$ROLLOUT_GUARD_RENDER"
-# Keep the retained admission-contract v1 policy compatible with its historical
-# single health-port certificate runtime shape.
-# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/rollout-guard.yaml \
-	--set-string webhook.existingSecret=external-tls \
-	--set-string webhook.caBundle=Y2E= \
-	$crd_render_args >"$ROLLOUT_GUARD_V1_RENDER"
-# Exercise API-server generated-name truncation with a maximal runtime name.
-# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/runtime-pod-guard.yaml \
-	--show-only templates/deployment.yaml \
-	--show-only templates/certificate-rotation.yaml \
-	--set-string fullnameOverride=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr \
-	$crd_render_args >"$RUNTIME_POD_GUARD_LONG_RENDER"
-# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/teardown.yaml \
-	$crd_render_args >"$TEARDOWN_RENDER"
-# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/teardown.yaml \
-	--set-string webhook.existingSecret=external-tls \
-	--set-string webhook.caBundle=Y2E= \
-	$crd_render_args >"$TEARDOWN_EXTERNAL_CERT_RENDER"
-# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/teardown.yaml \
-	--set serviceAccount.create=false \
-	--set-string serviceAccount.name=external-controller \
-	$crd_render_args >"$TEARDOWN_EXTERNAL_SA_RENDER"
-# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/teardown.yaml \
-	--set-string coordination.namespace=ptah-coordination \
-	$crd_render_args >"$TEARDOWN_COORDINATION_RENDER"
-# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace default \
-	--show-only templates/teardown.yaml \
-	$crd_render_args >"$TEARDOWN_DEFAULT_NAMESPACE_RENDER"
+	$crd_render_args >"$CONTROLLER_OBJECT_GUARD_RENDER"
 
-uninstall_role_name=$(awk '
+# The hook's objects are named after the first 24 characters of the release
+# fullname, so a fullname chosen to be the hook's own name makes the controller
+# and the hook one ServiceAccount. The chart refuses it rather than render it.
+crd_hook_name=$(awk '
   /^kind:/ {kind = $2}
-  kind == "ClusterRole" && /^  name:/ {
+  kind == "ServiceAccount" && /^  name:/ {
     print $2
     exit
   }
-' "$TEARDOWN_RENDER")
-printf '%s\n' "$uninstall_role_name" | grep -Eq -- '-quiesce-v1-[0-9a-f]{12}$' || {
-	printf 'e2e static: the uninstall ClusterRole is named %s, not after the quiesce Job\n' "$uninstall_role_name" >&2
+' "$CRD_UPGRADE_RENDER")
+printf '%s\n' "$crd_hook_name" | grep -Eq -- '^ptah-e2e-ptah-operator-crd-v1-[0-9a-f]{12}$' || {
+	printf 'e2e static: the CRD hook ServiceAccount is named %s, not after the release sequence and image\n' \
+		"$crd_hook_name" >&2
 	exit 1
 }
-uninstall_identity_digest=${uninstall_role_name##*-}
-fixed_point_fullname="abcdefghijklmnopqrstuvwx-quiesce-v1-$uninstall_identity_digest"
+fixed_point_fullname="abcdefghijklmnopqrstuvwx-crd-v1-${crd_hook_name##*-}"
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
-	--show-only templates/teardown.yaml \
+	--show-only templates/crd-upgrade.yaml \
 	--set-string "fullnameOverride=$fixed_point_fullname" \
-	$crd_render_args >/dev/null 2>"$TEARDOWN_FULLNAME_COLLISION_ERROR"; then
-	printf '%s\n' 'e2e static: teardown accepted a fixed-point fullname collision with its own RBAC' >&2
+	$crd_render_args >/dev/null 2>"$HOOK_FULLNAME_COLLISION_ERROR"; then
+	printf '%s\n' 'e2e static: the chart accepted a fullname that makes the controller and the CRD hook one ServiceAccount' >&2
 	exit 1
 fi
-grep -F 'lifecycle resource identity collision:' "$TEARDOWN_FULLNAME_COLLISION_ERROR" >/dev/null
+grep -F 'lifecycle resource identity collision:' "$HOOK_FULLNAME_COLLISION_ERROR" >/dev/null
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--set serviceAccount.create=false \
@@ -6411,45 +6301,39 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e 
 fi
 grep -F '/serviceAccount/name' "$INVALID_SERVICE_ACCOUNT_ERROR" >/dev/null
 
-for crd_reconcile_marker in \
-	'- image-check' \
-	'- "identity-probe"' \
-	'- "preflight"' \
-	'- "reconcile"'; do
-	grep -F -- "$crd_reconcile_marker" "$CRD_INSTALL_RENDER" >/dev/null
-	grep -F -- "$crd_reconcile_marker" "$CRD_UPGRADE_RENDER" >/dev/null
-done
-[ "$(grep -Fc -- '- image-check' "$CRD_UPGRADE_RENDER")" -eq 1 ]
-[ "$(grep -Fc -- '- "identity-probe"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
-[ "$(grep -Fc -- '- "preflight"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
+# The upgrade runs one hook Job. It reads the stored state, stops the runtime
+# when the manager image changes and updates the CRDs, and it runs on install,
+# upgrade and rollback alike.
+grep -F -- '- "reconcile"' "$CRD_INSTALL_RENDER" >/dev/null
 [ "$(grep -Fc -- '- "reconcile"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
-[ "$(grep -Fc -- '- "--timeout=180s"' "$CRD_UPGRADE_RENDER")" -eq 2 ]
+[ "$(grep -Fxc 'kind: Job' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- '- "--timeout=360s"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- 'activeDeadlineSeconds: 390' "$CRD_UPGRADE_RENDER")" -eq 1 ]
-assert_crd_manager_job_container_contract "$CRD_UPGRADE_RENDER" 4 || {
+for crd_reconcile_argument in \
+	'- "--release-name=ptah-e2e"' \
+	'- "--release-namespace=ptah-e2e"' \
+	'- "--controller-deployment-name=ptah-e2e-ptah-operator"' \
+	'- "--certificate-deployment-name=ptah-e2e-ptah-operator-cert-rotator"' \
+	'- "--manager-image=ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"'; do
+	[ "$(grep -Fc -- "$crd_reconcile_argument" "$CRD_UPGRADE_RENDER")" -eq 1 ] || {
+		printf 'e2e static: the CRD reconcile hook lacks %s\n' "$crd_reconcile_argument" >&2
+		exit 1
+	}
+done
+assert_crd_manager_job_container_contract "$CRD_UPGRADE_RENDER" 1 || {
 	printf '%s\n' 'e2e static: CRD hook containers expose an unsafe termination or restart contract' >&2
 	exit 1
 }
 crd_hook_resource_count=$(grep -Ec '^apiVersion:' "$CRD_UPGRADE_RENDER")
-[ "$crd_hook_resource_count" -gt 0 ]
-[ "$(grep -Fc 'helm.sh/hook: pre-install,pre-upgrade' "$CRD_UPGRADE_RENDER")" -eq "$crd_hook_resource_count" ]
+[ "$crd_hook_resource_count" -eq 6 ]
+[ "$(grep -Fxc '    helm.sh/hook: pre-install,pre-upgrade,pre-rollback' "$CRD_UPGRADE_RENDER")" -eq "$crd_hook_resource_count" ]
 [ "$(grep -Fc 'helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed' "$CRD_UPGRADE_RENDER")" -eq "$crd_hook_resource_count" ]
-[ "$(grep -Fc 'helm.sh/hook-weight: "-130"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
-[ "$(grep -Fc 'app.kubernetes.io/component: crd-manager-image-check' "$CRD_UPGRADE_RENDER")" -eq 2 ]
-image_check_template_section=$(awk '
-  /^apiVersion: batch\/v1$/ {emit = 1}
-  emit {print}
-  emit && /^---$/ {exit}
-' "$ROOT_DIR/charts/ptah-operator/templates/crd-upgrade.yaml")
-printf '%s\n' "$image_check_template_section" |
-	grep -F 'app.kubernetes.io/component: crd-manager-image-check' >/dev/null
-printf '%s\n' "$image_check_template_section" |
-	grep -F 'automountServiceAccountToken: false' >/dev/null
-if printf '%s\n' "$image_check_template_section" |
-	grep -Eq 'serviceAccountName:|name: api-access'; then
-	printf '%s\n' 'e2e static: image preflight receives Kubernetes credentials' >&2
+# Helm deletes the failed Job, so its log is the only place its refusal reaches
+# the person who ran the command.
+[ "$(grep -Fxc '    helm.sh/hook-output-log-policy: hook-failed' "$CRD_UPGRADE_RENDER")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: the CRD reconcile hook does not print its log when it fails' >&2
 	exit 1
-fi
+}
 [ "$(grep -Fc 'image: ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222' "$CRD_FULL_RENDER")" -ge 3 ]
 crd_role_section=$(awk '
   function emit() {
@@ -6513,30 +6397,19 @@ assert_webhook_runtime_argument_owners "$CRD_FULL_RENDER" || {
 grep -F -- '--controller-image=ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
 	"$CRD_FULL_RENDER" >/dev/null
 [ "$(grep -Fc 'resources: ["customresourcedefinitions"]' "$CRD_FULL_RENDER")" -eq 3 ]
-[ "$(grep -Fc 'resourceNames: ["ptah-operator-admission"]' "$CRD_FULL_RENDER")" -eq 9 ]
-# The uninstall is one pre-delete Job and the identity it runs as: a
-# ServiceAccount, a ClusterRole and a Role, and their two bindings.
-teardown_resource_count=$(grep -Ec '^apiVersion:' "$TEARDOWN_RENDER")
-[ "$teardown_resource_count" -eq 6 ]
-[ "$(grep -Fc 'helm.sh/hook: pre-delete' "$TEARDOWN_RENDER")" -eq "$teardown_resource_count" ]
-[ "$(grep -Fc 'helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded' "$TEARDOWN_RENDER")" -eq "$teardown_resource_count" ]
-[ "$(grep -Fc 'kind: Job' "$TEARDOWN_RENDER")" -eq 1 ]
-[ "$(grep -Fc -- '- "teardown-quiesce"' "$TEARDOWN_RENDER")" -eq 1 ]
-assert_crd_manager_job_container_contract "$TEARDOWN_RENDER" 1 || {
-	printf '%s\n' 'e2e static: teardown hook containers expose an unsafe termination or restart contract' >&2
+[ "$(grep -Fc 'resourceNames: ["ptah-operator-admission"]' "$CRD_FULL_RENDER")" -eq 3 ]
+# Every hook the chart renders is the CRD reconcile hook and its identity, or
+# a CRD the release adds. The uninstall runs none: Helm deletes the release's
+# objects, and the CRDs stay.
+crd_bootstrap_count=$(find "$ROOT_DIR/charts/ptah-operator/crds" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')
+[ "$(grep -Fc 'helm.sh/hook:' "$CRD_FULL_RENDER")" -eq $((crd_hook_resource_count + crd_bootstrap_count)) ] || {
+	printf '%s\n' 'e2e static: the chart renders a hook other than the CRD reconcile hook, its identity and the CRD bootstrap' >&2
 	exit 1
 }
-[ "$(grep -Fc 'helm.sh/hook-weight: "-10"' "$TEARDOWN_RENDER")" -eq 1 ]
-# Nothing the uninstall renders outside teardown.yaml runs as a pre-delete
-# hook: the fences and the retirement pairs are gone.
-[ "$(grep -Fc 'helm.sh/hook: pre-delete' "$CRD_FULL_RENDER")" -eq "$teardown_resource_count" ] || {
-	printf '%s\n' 'e2e static: the chart renders a pre-delete hook outside the uninstall Job and its identity' >&2
+[ "$(grep -Fc 'helm.sh/hook: pre-delete' "$CRD_FULL_RENDER")" -eq 0 ] || {
+	printf '%s\n' 'e2e static: the chart renders a pre-delete hook' >&2
 	exit 1
 }
-if grep -F 'hook-failed' "$TEARDOWN_RENDER" >/dev/null || grep -F '["*"]' "$TEARDOWN_RENDER" >/dev/null; then
-	printf '%s\n' 'e2e static: teardown hooks delete failed diagnostics or contain wildcard RBAC' >&2
-	exit 1
-fi
 for singleton_annotation in \
 	'operator.ptah.run/release-name: "ptah-e2e"' \
 	'operator.ptah.run/release-namespace: "ptah-e2e"' \
@@ -6547,7 +6420,7 @@ for singleton_annotation in \
 	'operator.ptah.run/controller-deployment-name: "ptah-e2e-ptah-operator"' \
 	'operator.ptah.run/certificate-deployment-name: "ptah-e2e-ptah-operator-cert-rotator"' \
 	"operator.ptah.run/controller-state-version: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" \
-	'operator.ptah.run/admission-contract-version: "1"' \
+	'operator.ptah.run/admission-contract-version: "2"' \
 	'operator.ptah.run/release-sequence: "1"'; do
 	[ "$(grep -Fc -- "$singleton_annotation" "$ADMISSION_RENDER")" -eq 2 ]
 done
@@ -6563,158 +6436,97 @@ printf '%s\n' "$hook_service_account_name" |
 [ "$(grep -Fc -- \
 	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
-for hook_identity_marker in \
-	'helm.sh/hook-weight: "-120"' \
-	'helm.sh/hook-weight: "-115"' \
-	'helm.sh/resource-policy: keep' \
-	'Ptah hook identity guard v1 rejected an unsafe privileged hook Pod' \
-	'resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]'; do
-	grep -F -- "$hook_identity_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+# The release keeps five admission policies, and each is an ordinary release
+# object: no hook annotation, no keep policy and no parameter. Their names
+# carry the release's own digest and nothing that changes between its
+# upgrades, so an upgrade updates each in place and the uninstall deletes it.
+controller_guard_policy_names() {
+	awk '
+      /^kind: ValidatingAdmissionPolicy$/ {policy = 1; next}
+      /^kind:/ {policy = 0}
+      policy && /^  name: / {print $2; policy = 0}
+    ' "$1" | sort
+}
+controller_guard_names=$(controller_guard_policy_names "$CRD_FULL_RENDER")
+[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 5 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly five admission policies' >&2
+	exit 1
+}
+[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 5 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly five admission policy bindings' >&2
+	exit 1
+}
+for controller_guard_family in \
+	controller-write-guard-v2 \
+	job-write-guard-v2 \
+	chunk-write-guard-v2 \
+	plan-write-guard-v2 \
+	migration-plan-write-guard-v1; do
+	[ "$(printf '%s\n' "$controller_guard_names" |
+		grep -Ec "^ptah-operator-${controller_guard_family}-[0-9a-f]{12}\$")" -eq 1 ] || {
+		printf 'e2e static: the release does not render one %s policy\n' "$controller_guard_family" >&2
+		exit 1
+	}
 done
-for runtime_pod_guard_marker in \
-	'ptah-operator-runtime-pod-identity-v1' \
-	'operator.ptah.run/runtime-pod-contract-digest: "sha256:' \
-	'resources: ["pods/ephemeralcontainers", "pods/resize"]' \
-	'resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]' \
-	'system:serviceaccount:kube-system:replicaset-controller' \
-	'parameterNotFoundAction: Deny'; do
-	grep -F -- "$runtime_pod_guard_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+[ "$(printf '%s\n' "$controller_guard_names" | sed 's/.*-//' | sort -u | grep -c .)" -eq 1 ] || {
+	printf '%s\n' 'e2e static: the controller guards do not share the release digest' >&2
+	exit 1
+}
+for controller_guard_name in $controller_guard_names; do
+	[ "$(grep -Fxc -- "  name: $controller_guard_name" "$CRD_FULL_RENDER")" -eq 2 ] || {
+		printf 'e2e static: controller guard %s does not have one policy and one binding\n' \
+			"$controller_guard_name" >&2
+		exit 1
+	}
+	[ "$(grep -Fxc -- "  policyName: $controller_guard_name" "$CRD_FULL_RENDER")" -eq 1 ] || {
+		printf 'e2e static: no single binding targets controller guard %s\n' "$controller_guard_name" >&2
+		exit 1
+	}
 done
-controller_write_guard_name=$(awk '
-  $1 == "name:" && $2 ~ /^ptah-operator-controller-write-guard-v2-/ {print $2}
-' "$ROLLOUT_GUARD_RENDER" | sort -u)
-[ "$(printf '%s\n' "$controller_write_guard_name" | grep -c .)" -eq 1 ] || {
-	printf '%s\n' 'e2e static: rendered controller write boundary lacks one stable guard identity' >&2
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+controller_guard_successor_names=$(helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--show-only templates/controller-write-guard.yaml \
+	--show-only templates/controller-object-guard.yaml \
+	$crd_render_args \
+	--set-string image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333 |
+	controller_guard_policy_names /dev/stdin)
+[ "$controller_guard_successor_names" = "$controller_guard_names" ] || {
+	printf '%s\n' 'e2e static: another manager image renames the controller guards, so an upgrade would replace them' >&2
 	exit 1
 }
-[ "$(grep -Fxc -- "  name: $controller_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 2 ] || {
-	printf '%s\n' 'e2e static: controller write guard does not have one policy and binding' >&2
+if grep -Eq '^  (paramKind|paramRef):' "$CRD_FULL_RENDER"; then
+	printf '%s\n' 'e2e static: an admission policy still reads a parameter' >&2
 	exit 1
-}
-[ "$(grep -Fxc -- "  policyName: $controller_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 1 ] || {
-	printf '%s\n' 'e2e static: controller write binding does not target its exact policy' >&2
+fi
+if grep -F 'ptah-operator-release-activation' "$CRD_FULL_RENDER" >/dev/null; then
+	printf '%s\n' 'e2e static: the chart still renders the release activation' >&2
 	exit 1
-}
-[ "$(grep -Fxc -- "      - $controller_write_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
-	printf '%s\n' 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share the exact controller write guard' >&2
-	exit 1
-}
+fi
 for controller_write_marker in \
-	'helm.sh/hook-weight: "-158"' \
-	'helm.sh/hook-weight: "-157"' \
 	'dyn(object).spec == dyn(oldObject).spec' \
 	'dyn(object).status == dyn(oldObject).status' \
 	'resources: ["ptahschemas", "ptahmigrations"]' \
 	'request.resource.resource == "ptahmigrations" ? "operator.ptah.run/migration-operation" : "operator.ptah.run/active-operation"' \
 	'Ptah controller write guard rejected a desired-state mutation'; do
-	grep -F -- "$controller_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+	grep -F -- "$controller_write_marker" "$CONTROLLER_WRITE_GUARD_RENDER" >/dev/null
 done
 grep -F -- \
 	"request.userInfo.username == \\\"system:serviceaccount:ptah-e2e:$controller_service_account_name\\\"" \
-	"$ROLLOUT_GUARD_RENDER" >/dev/null
-controller_object_guard_names=$(awk '
-  $1 == "name:" &&
-    ($2 ~ /^ptah-operator-job-write-guard-v2-/ ||
-     $2 ~ /^ptah-operator-chunk-write-guard-v2-/ ||
-     $2 ~ /^ptah-operator-plan-write-guard-v2-/ ||
-     $2 ~ /^ptah-operator-migration-plan-write-guard-v1-/) {
-    print $2
-  }
-' "$ROLLOUT_GUARD_RENDER" | sort -u)
-[ "$(printf '%s\n' "$controller_object_guard_names" | grep -c .)" -eq 4 ] || {
-	printf '%s\n' 'e2e static: rendered controller object boundary lacks four typed guard identities' >&2
-	exit 1
-}
-for controller_object_guard_name in $controller_object_guard_names; do
-	[ "$(grep -Fxc -- "  name: $controller_object_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 2 ] || {
-		printf 'e2e static: controller object guard %s does not have one policy and binding\n' \
-			"$controller_object_guard_name" >&2
-		exit 1
-	}
-	[ "$(grep -Fxc -- "  policyName: $controller_object_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 1 ] || {
-		printf 'e2e static: controller object binding does not target %s exactly once\n' \
-			"$controller_object_guard_name" >&2
-		exit 1
-	}
-	[ "$(grep -Fxc -- "      - $controller_object_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
-		printf 'e2e static: lifecycle RBAC does not share controller object guard %s\n' \
-			"$controller_object_guard_name" >&2
-		exit 1
-	}
-done
-controller_job_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
-	grep -E '^ptah-operator-job-write-guard-v2-')
-controller_chunk_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
-	grep -E '^ptah-operator-chunk-write-guard-v2-')
-controller_plan_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
-	grep -E '^ptah-operator-plan-write-guard-v2-')
-controller_migration_plan_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
-	grep -E '^ptah-operator-migration-plan-write-guard-v1-')
-controller_object_guard_contracts=$(awk '
-  function reset() {
-    kind = ""
-    name = ""
-    weight = ""
-    metadata = 0
-    section = ""
-    param_kind = ""
-    param_name = ""
-    param_namespace = ""
-    parameter_not_found = ""
-  }
-  function emit() {
-    if (name ~ /^ptah-operator-(job|chunk|plan)-write-guard-v2-/ ||
-        name ~ /^ptah-operator-migration-plan-write-guard-v1-/) {
-      print kind ":" name ":" weight ":" param_kind ":" param_name ":" param_namespace ":" parameter_not_found
-    }
-    reset()
-  }
-  BEGIN {reset()}
-  /^---$/ {emit(); next}
-  /^kind:/ {kind = $2; next}
-  /^metadata:/ {metadata = 1; next}
-  /^spec:/ {metadata = 0; section = ""; next}
-  metadata && /^  name:/ {name = $2; next}
-  /helm[.]sh\/hook-weight:/ {
-    weight = $2
-    gsub(/"/, "", weight)
-    next
-  }
-  /^  paramKind:/ {section = "kind"; next}
-  /^  paramRef:/ {section = "reference"; next}
-  section == "kind" && /^    kind:/ {param_kind = $2; next}
-  section == "reference" && /^    name:/ {param_name = $2; next}
-  section == "reference" && /^    namespace:/ {param_namespace = $2; next}
-  section == "reference" && /^    parameterNotFoundAction:/ {parameter_not_found = $2; next}
-  /^  [[:alnum:]]/ {section = ""}
-  END {emit()}
-' "$ROLLOUT_GUARD_RENDER")
-for controller_object_guard_contract in \
-	"ValidatingAdmissionPolicy:$controller_job_guard_name:-152:ConfigMap:::" \
-	"ValidatingAdmissionPolicyBinding:$controller_job_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny" \
-	"ValidatingAdmissionPolicy:$controller_chunk_guard_name:-152:ConfigMap:::" \
-	"ValidatingAdmissionPolicyBinding:$controller_chunk_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny" \
-	"ValidatingAdmissionPolicy:$controller_plan_guard_name:-152:ConfigMap:::" \
-	"ValidatingAdmissionPolicyBinding:$controller_plan_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny" \
-	"ValidatingAdmissionPolicy:$controller_migration_plan_guard_name:-152:ConfigMap:::" \
-	"ValidatingAdmissionPolicyBinding:$controller_migration_plan_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny"; do
-	[ "$(printf '%s\n' "$controller_object_guard_contracts" |
-		grep -Fxc -- "$controller_object_guard_contract")" -eq 1 ] || {
-		printf 'e2e static: controller object guard lacks exact activation contract %s\n' \
-			"$controller_object_guard_contract" >&2
-		exit 1
-	}
-done
+	"$CONTROLLER_WRITE_GUARD_RENDER" >/dev/null
+# The object guards admit what this release's manager writes: its image and
+# its controller-state version are literals in the policy, where a parameter
+# used to carry them.
 for controller_object_marker in \
-	'helm.sh/hook-weight: "-152"' \
-	'helm.sh/hook-weight: "-147"' \
-	'parameterNotFoundAction: Deny' \
-	'params.metadata.name == \"ptah-operator-release-activation\"' \
-	'name: candidateRelease' \
-	'request.operation == \"UPDATE\" || (request.operation == \"CREATE\" && (object.metadata.annotations[\"operator.ptah.run/controller-image\"] == variables.activeControllerImage && object.metadata.annotations[\"operator.ptah.run/controller-state-version\"] == variables.activeControllerStateString))' \
-	'== variables.activeControllerImage' \
-	'== variables.activeControllerStateString' \
-	'== variables.activeControllerState' \
+	'- name: releaseControllerImage' \
+	'expression: "\"ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222\""' \
+	'- name: releaseControllerStateString' \
+	"expression: \"\\\"$EXPECTED_CONTROLLER_STATE_VERSION\\\"\"" \
+	'- name: releaseControllerState' \
+	"expression: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" \
+	'== variables.releaseControllerImage' \
+	'== variables.releaseControllerStateString' \
+	'== variables.releaseControllerState' \
 	'resources: ["jobs"]' \
 	'resources: ["configmaps"]' \
 	'resources: ["ptahschemaplans"]' \
@@ -6726,201 +6538,56 @@ for controller_object_marker in \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
 	'Ptah controller chunk write guard rejected an unsafe ConfigMap shape' \
 	'Ptah controller plan write guard rejected an unsafe manifest shape'; do
-	grep -F -- "$controller_object_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+	grep -F -- "$controller_object_marker" "$CONTROLLER_OBJECT_GUARD_RENDER" >/dev/null || {
+		printf 'e2e static: the controller object guards lack %s\n' "$controller_object_marker" >&2
+		exit 1
+	}
 done
 # Only the current Job envelope and plan contract are admitted: a Job without
 # controller provenance and a plan older than contract 3 are refused.
 for retired_controller_object_marker in \
 	'variables.previousRelease' \
+	'variables.activeRelease' \
+	'params.' \
 	'dyn(object).spec.contractVersion == 2'; do
-	if grep -F -- "$retired_controller_object_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null; then
-		printf 'e2e static: controller object guard still admits %s\n' "$retired_controller_object_marker" >&2
+	if grep -F -- "$retired_controller_object_marker" "$CONTROLLER_OBJECT_GUARD_RENDER" >/dev/null; then
+		printf 'e2e static: controller object guard still reads %s\n' "$retired_controller_object_marker" >&2
 		exit 1
 	fi
 done
-grep -F -- \
-	"request.userInfo.username == \\\"system:serviceaccount:ptah-e2e:$controller_service_account_name\\\" && variables.activeRelease == 1" \
-	"$ROLLOUT_GUARD_RENDER" >/dev/null
-certificate_write_guard_names=$(awk '
-  $1 == "name:" &&
-    ($2 ~ /^ptah-operator-certificate-mutate-guard-v1-/ ||
-     $2 ~ /^ptah-operator-certificate-validate-guard-v1-/) {
-    print $2
-  }
-' "$ROLLOUT_GUARD_RENDER" | sort -u)
-[ "$(printf '%s\n' "$certificate_write_guard_names" | grep -c .)" -eq 2 ] || {
-	printf '%s\n' 'e2e static: rendered certificate write boundary lacks two typed guard identities' >&2
-	exit 1
-}
-for certificate_write_guard_name in $certificate_write_guard_names; do
-	[ "$(grep -Fxc -- "  name: $certificate_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 2 ] || {
-		printf 'e2e static: certificate write guard %s does not have one policy and binding\n' \
-			"$certificate_write_guard_name" >&2
-		exit 1
-	}
-	[ "$(grep -Fxc -- "  policyName: $certificate_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 1 ] || {
-		printf 'e2e static: certificate write binding does not target %s exactly once\n' \
-			"$certificate_write_guard_name" >&2
-		exit 1
-	}
-	[ "$(grep -Fxc -- "      - $certificate_write_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
-		printf 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share certificate guard %s\n' \
-			"$certificate_write_guard_name" >&2
-		exit 1
-	}
-done
-for certificate_write_marker in \
-	'helm.sh/hook-weight: "-156"' \
-	'helm.sh/hook-weight: "-155"' \
-	'helm.sh/hook-weight: "-154"' \
-	'helm.sh/hook-weight: "-153"' \
-	'resources: ["mutatingwebhookconfigurations"]' \
-	'resources: ["validatingwebhookconfigurations"]' \
-	'request.userInfo.username == \"system:serviceaccount:ptah-e2e:ptah-e2e-ptah-operator-cert-rotator\"' \
-	'object.metadata.selfLink' \
-	'dyn(object).webhooks != dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation + 1' \
-	'dyn(object).webhooks.map(webhook, webhook.name) == dyn(oldObject).webhooks.map(webhook, webhook.name)' \
-	'dyn(object).webhooks.all(webhook, dyn(oldObject).webhooks.exists(previous' \
-	'clientConfig.caBundle.size() > 0' \
-	'clientConfig.caBundle.size() <= 262144' \
-	'Ptah certificate mutating write guard rejected an unsafe mutation' \
-	'Ptah certificate validating write guard rejected an unsafe mutation'; do
-	grep -F -- "$certificate_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
-done
-parent_guard_names=$(awk '
-  $1 == "name:" &&
-    ($2 ~ /^ptah-operator-runtime-parent-guard-/ ||
-     $2 ~ /^ptah-operator-hook-parent-origin-guard-/ ||
-     $2 ~ /^ptah-operator-hook-pod-origin-guard-/ ||
-     $2 ~ /^ptah-operator-hook-parent-contract-v[1-9][0-9]*-/) {
-    print $2
-  }
-' "$ROLLOUT_GUARD_RENDER" | sort -u)
-[ "$(printf '%s\n' "$parent_guard_names" | grep -c .)" -eq 4 ] || {
-	printf '%s\n' 'e2e static: rendered parent workload boundary lacks its four distinct guards' >&2
-	exit 1
-}
-for parent_guard_name in $parent_guard_names; do
-	[ "$(grep -Fxc -- "  name: $parent_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 2 ] || {
-		printf 'e2e static: parent workload guard %s does not have one policy and binding\n' \
-			"$parent_guard_name" >&2
-		exit 1
-	}
-	[ "$(grep -Fxc -- "  policyName: $parent_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 1 ] || {
-		printf 'e2e static: parent workload guard binding does not target %s exactly once\n' \
-			"$parent_guard_name" >&2
-		exit 1
-	}
-	[ "$(grep -Fxc -- "      - $parent_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
-		printf 'e2e static: manager, rotator, and hook RBAC do not reference parent guard %s exactly\n' \
-			"$parent_guard_name" >&2
-		exit 1
-	}
-done
-for parent_guard_marker in \
-	'Ptah runtime parent guard rejected an unsafe ReplicaSet' \
-	'Ptah hook parent origin guard rejected an unauthorized Job' \
-	'Ptah hook Pod origin guard rejected an unauthorized Pod' \
-	'Ptah hook parent contract v1 rejected an unsafe Job'; do
-	grep -F -- "$parent_guard_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
-done
-activation_hook_order=$(awk '
-  function emit() {
-    if (component == "release-activation-guard" ||
-        component == "admission-convergence" ||
-        (kind == "ConfigMap" && name == "ptah-operator-release-activation") ||
-        (kind == "ValidatingAdmissionPolicyBinding" &&
-         component ~ /^controller-(job|chunk|plan)-write-guard$/ ||
-         component == "controller-migration-plan-write-guard")) {
-      print kind ":" weight
-    }
-    kind = ""
-    name = ""
-    weight = ""
-    component = ""
-  }
-  /^---$/ {emit(); next}
-  /^kind:/ {kind = $2}
-  /^  name:/ && name == "" {name = $2}
-  /helm[.]sh\/hook-weight:/ {
-    weight = $2
-    gsub(/"/, "", weight)
-  }
-  /app[.]kubernetes[.]io\/component:/ {component = $2}
-  END {emit()}
-' "$CRD_FULL_RENDER")
-for activation_hook in \
-	'ValidatingAdmissionPolicy:-168' \
-	'ValidatingAdmissionPolicyBinding:-167' \
-	'ConfigMap:-166' \
-	'ConfigMap:-165'; do
-	[ "$(printf '%s\n' "$activation_hook_order" | grep -Fxc -- "$activation_hook")" -eq 1 ] || {
-		printf 'e2e static: release activation hook order is missing exact entry %s\n' \
-			"$activation_hook" >&2
-		exit 1
-	}
-done
-[ "$(printf '%s\n' "$activation_hook_order" |
-	grep -Fxc -- 'ValidatingAdmissionPolicyBinding:-147')" -eq 4 ] || {
-	printf '%s\n' 'e2e static: controller object bindings do not render after the activation self-guard' >&2
-	exit 1
-}
 (cd "$ROOT_DIR" && \
-	PTAH_ROLLOUT_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
-	PTAH_ROLLOUT_GUARD_V1_RENDER="$ROLLOUT_GUARD_V1_RENDER" \
-	PTAH_RUNTIME_POD_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
-	PTAH_RUNTIME_POD_GUARD_LONG_RENDER="$RUNTIME_POD_GUARD_LONG_RENDER" \
 	PTAH_ADMISSION_RENDER="$ADMISSION_RENDER" \
-	PTAH_TEARDOWN_RENDER="$TEARDOWN_RENDER" \
+	PTAH_CONTROLLER_GUARD_RENDER="$CONTROLLER_WRITE_GUARD_RENDER" \
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
-	PTAH_PRIVILEGE_RECOVERY_RENDER="$CRD_FULL_RECOVERY_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceMarkerMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedTeardownRBACMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
-	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
+	PTAH_CONTROLLER_GUARD_RENDER="$CONTROLLER_OBJECT_GUARD_RENDER" \
+	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
+	go test ./internal/crdupgrade -run '^TestRenderedControllerObjectGuardsMatchCompiledContracts$' -count=1)
+(cd "$ROOT_DIR" && \
+	PTAH_PRIVILEGE_RENDER="$EXTERNAL_CERTIFICATE_RENDER" \
 	PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED=false \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
-(cd "$ROOT_DIR" && \
-	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_SA_RENDER" \
-	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
-(cd "$ROOT_DIR" && \
-	PTAH_TEARDOWN_RENDER="$TEARDOWN_COORDINATION_RENDER" \
-	PTAH_RBAC_COORDINATION_NAMESPACE=ptah-coordination \
-	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
-(cd "$ROOT_DIR" && \
-	PTAH_TEARDOWN_RENDER="$TEARDOWN_DEFAULT_NAMESPACE_RENDER" \
-	PTAH_RBAC_RELEASE_NAMESPACE=default \
-	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
-# Exercise each namespace merge branch in both the uninstall and release grants.
+	go test ./internal/crdupgrade -run '^TestRenderedReleaseRBACMatchesCompiledContract$' -count=1)
+# Exercise each namespace merge branch in the release grants.
 for namespace_pair in default:ptah-coordination ptah-e2e:default; do
 	release_namespace=${namespace_pair%:*}
 	coordination_namespace=${namespace_pair#*:}
 	merged_privilege_render=$WORK_DIR/privilege-${release_namespace}-${coordination_namespace}.yaml
-	merged_teardown_render=$WORK_DIR/teardown-${release_namespace}-${coordination_namespace}.yaml
 	# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 	helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--namespace "$release_namespace" \
 		--set-string "coordination.namespace=$coordination_namespace" \
 		$crd_render_args >"$merged_privilege_render"
-	# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
-	helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
-		--namespace "$release_namespace" \
-		--set-string "coordination.namespace=$coordination_namespace" \
-		--show-only templates/teardown.yaml \
-		$crd_render_args >"$merged_teardown_render"
 	(cd "$ROOT_DIR" && \
-		PTAH_TEARDOWN_RENDER="$merged_teardown_render" \
 		PTAH_PRIVILEGE_RENDER="$merged_privilege_render" \
 		PTAH_RBAC_RELEASE_NAMESPACE="$release_namespace" \
 		PTAH_RBAC_COORDINATION_NAMESPACE="$coordination_namespace" \
 		GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 		go test ./internal/crdupgrade \
-			-run '^(TestRenderedTeardownRBACMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
+			-run '^TestRenderedReleaseRBACMatchesCompiledContract$' -count=1)
 done
 for singleton_guard_marker in \
 	'lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration"' \
@@ -6963,12 +6630,10 @@ for crd_live_marker in \
 	'shared release namespace upgrade' \
 	'failed without the shared-namespace refusal naming it' \
 	'releaseNamespace.allowSharedNamespace=true did not admit the upgrade over a foreign CronJob' \
-	'execution binding mutation' \
-	'pins the executable contract of release sequence' \
 	'runtime rejection of an incomplete singleton' \
 	'incomplete admission singleton' \
-	'proving the admission singleton refuses a foreign owner' \
-	'rejected an unsafe release transition' \
+	'proving the runtime refuses an admission singleton another release owns' \
+	'foreign admission singleton owner' \
 	'runtime rejection of drifted admission behavior' \
 	'drifted admission behavior' \
 	'failurePolicy","value":"Ignore' \
@@ -6981,148 +6646,20 @@ for crd_live_marker in \
 	'fresh-installing the exact exported current-release chart bytes' \
 	'the exact released-chart install did not reconcile a retained CRD another manager drifted' \
 	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
-	'uninstall retained CRDs and live objects'; do
+	'uninstall retained CRDs and live objects' \
+	'the late failure left the runtime stopped on the predecessor template' \
+	'the late failure did not come after a reconcile hook that succeeded' \
+	'the same-candidate retry did not complete the upgrade' \
+	'the refused rollback did not reach its pre-rollback hook' \
+	'the refused rollback changed a runtime Deployment' \
+	'the rollback was refused before any Pod changed' \
+	'did not end deployed'; do
 	grep -F -- "$crd_live_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
 		"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
 		printf 'e2e static: live CRD proof marker is missing: %s\n' "$crd_live_marker" >&2
 		exit 1
 	}
 done
-
-hook_progress_source=$ROOT_DIR/hack/e2e-crd-upgrade.sh
-hook_progress_attack_section=$(sed -n '/^exercise_hook_progress_attacks() {$/,/^}$/p' \
-	"$hook_progress_source")
-hook_progress_proof_section=$(sed -n '/^prove_upgrade_hook_progress_guards() {$/,/^}$/p' \
-	"$hook_progress_source")
-hook_progress_upgrade_section=$(sed -n '/^run_upgrade_proof() {$/,/^}$/p' \
-	"$hook_progress_source")
-# shellcheck disable=SC2016 # These are literal source-contract markers.
-for hook_progress_marker in \
-	'HOOK_PROGRESS_ADVERSARY_UID=' \
-	'HOOK_PROGRESS_BLOCKED_STABILITY_SECONDS=3' \
-	'HOOK_PROGRESS_HOLD_STABILITY_ATTEMPTS=5' \
-	'HOOK_PROGRESS_WAIT_SECONDS=90' \
-	'image_check_matches=$(rendered_hook_job_name crd-manager-image-check -130)' \
-	'expected_name=$(expected_hook_progress_name "$component")' \
-	'.metadata.name == $expected_name and' \
-	'--as-uid "$HOOK_PROGRESS_ADVERSARY_UID"' \
-	'HOOK_PROGRESS_AUTHORIZATION_SECONDS=90' \
-	'wait_for_hook_progress_authorization' \
-	'--server "https://${HOOK_PROGRESS_AUTHORIZATION_ENDPOINT}:6443"' \
-	'create --raw /apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f -' \
-	"'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status'" \
-	"'get pods' 'patch pods' 'get pods/status' 'patch pods/status'" \
-	"'create validatingadmissionpolicies.admissionregistration.k8s.io'" \
-	"'create validatingadmissionpolicybindings.admissionregistration.k8s.io'" \
-	"'create jobs' 'update jobs' 'update pods'" \
-	'expect_hook_progress_authorization yes "${hook_auth_capability%% *}" "${hook_auth_capability#* }"' \
-	'expect_hook_progress_authorization no "${hook_auth_capability%% *}" "${hook_auth_capability#* }"' \
-	'[ "$hook_auth_endpoint_count" -eq 3 ]' \
-	'Ptah E2E hook progress hold rejected controller status advancement' \
-	'Ptah hook parent origin guard rejected an unauthorized Job' \
-	'Ptah hook Pod origin guard rejected an unauthorized Pod' \
-	'wait_for_hook_progress_hold_ready' \
-	'verify_hook_progress_hold_transition' \
-	'--request-timeout=15s' \
-	'--wait --timeout 5m' \
-	'wait "$HOOK_PROGRESS_HELM_PID"' \
-	'delete_hook_progress_adversary_and_hold' \
-	'e2e crd: retained v2 hook progress proof passed'; do
-	grep -F -- "$hook_progress_marker" "$hook_progress_source" >/dev/null || {
-		printf 'e2e static: hook progress proof lacks %s\n' "$hook_progress_marker" >&2
-		exit 1
-	}
-done
-[ "$(grep -Fc 'prove_upgrade_hook_progress_guards' "$hook_progress_source")" -eq 2 ] || {
-	printf '%s\n' 'e2e static: hook progress proof must have one implementation and one lifecycle call' >&2
-	exit 1
-}
-printf '%s\n' "$hook_progress_upgrade_section" | awk '
-  /proving read-only Job cleanup within the current release/ { fixture = NR }
-  /prove_upgrade_hook_progress_guards/ { progress = NR }
-  /proving a missing CRD aborts Helm upgrade without recreation/ { missing = NR }
-  END { exit !(fixture > 0 && fixture < progress && progress < missing) }
-' || {
-	printf '%s\n' 'e2e static: hook progress proof is not ordered after candidate convergence and before later upgrades' >&2
-	exit 1
-}
-[ "$(printf '%s\n' "$hook_progress_proof_section" |
-	grep -Fc 'exercise_hook_progress_attacks ')" -eq 4 ] || {
-	printf '%s\n' 'e2e static: hook progress proof does not attack exactly four upgrade hooks' >&2
-	exit 1
-}
-# shellcheck disable=SC2016 # These are literal source-contract markers.
-for hook_progress_attack_marker in \
-	'delete job "$HOOK_PROGRESS_JOB_NAME" --wait=false --request-timeout=15s' \
-	'"type":"Complete","status":"True"' \
-	'"type":"Failed","status":"True"' \
-	'/metadata/labels/app.kubernetes.io~1component' \
-	'"phase":"Succeeded"' \
-	'assert_hook_progress_target_intact "$component"'; do
-	printf '%s\n' "$hook_progress_attack_section" |
-		grep -F -- "$hook_progress_attack_marker" >/dev/null || {
-		printf 'e2e static: hook progress attack set lacks %s\n' \
-			"$hook_progress_attack_marker" >&2
-		exit 1
-	}
-done
-if printf '%s\n' "$hook_progress_attack_section" | grep -F -- '--dry-run' >/dev/null; then
-	printf '%s\n' 'e2e static: hook progress adversary attacks must be actual API requests' >&2
-	exit 1
-fi
-# shellcheck disable=SC2016 # These are literal ordered source-contract markers.
-static_require_order "$hook_progress_proof_section" 'hook progress monotonic lifecycle' \
-	'create_hook_progress_adversary_and_hold' \
-	'helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE"' \
-	'HOOK_PROGRESS_HELM_PID=$!' \
-	'wait_for_hook_progress_target crd-manager-image-check -130' \
-	'exercise_hook_progress_attacks crd-manager-image-check' \
-	'assert_helm_stalled_on_hook_progress crd-manager-image-check hook-identity-probe -105' \
-	"set_hook_progress_hold_components '[\"hook-identity-probe\",\"crd-manager-preflight\",\"crd-manager\"]'" \
-	'verify_hook_progress_hold_transition crd-manager-image-check hook-identity-probe' \
-	'wait_for_hook_progress_target hook-identity-probe -105' \
-	'exercise_hook_progress_attacks hook-identity-probe' \
-	'assert_helm_stalled_on_hook_progress hook-identity-probe crd-manager-preflight -60' \
-	"set_hook_progress_hold_components '[\"crd-manager-preflight\",\"crd-manager\"]'" \
-	'verify_hook_progress_hold_transition hook-identity-probe crd-manager-preflight' \
-	'wait_for_hook_progress_target crd-manager-preflight -60' \
-	'exercise_hook_progress_attacks crd-manager-preflight' \
-	'assert_helm_stalled_on_hook_progress crd-manager-preflight crd-manager 0' \
-	"set_hook_progress_hold_components '[\"crd-manager\"]'" \
-	'verify_hook_progress_hold_transition crd-manager-preflight crd-manager' \
-	'wait_for_hook_progress_target crd-manager 0' \
-	'exercise_hook_progress_attacks crd-manager' \
-	"assert_helm_stalled_on_hook_progress crd-manager '' ''" \
-	"set_hook_progress_hold_components '[]'" \
-	"verify_hook_progress_hold_transition crd-manager ''" \
-	'wait "$HOOK_PROGRESS_HELM_PID"' \
-	'delete_hook_progress_adversary_and_hold' \
-	'e2e crd: retained v2 hook progress proof passed'
-for hook_progress_release_marker in \
-	'assert_helm_stalled_on_hook_progress crd-manager-image-check hook-identity-probe -105' \
-	"set_hook_progress_hold_components '[\"hook-identity-probe\",\"crd-manager-preflight\",\"crd-manager\"]'" \
-	'verify_hook_progress_hold_transition crd-manager-image-check hook-identity-probe' \
-	'assert_helm_stalled_on_hook_progress hook-identity-probe crd-manager-preflight -60' \
-	"set_hook_progress_hold_components '[\"crd-manager-preflight\",\"crd-manager\"]'" \
-	'verify_hook_progress_hold_transition hook-identity-probe crd-manager-preflight' \
-	'assert_helm_stalled_on_hook_progress crd-manager-preflight crd-manager 0' \
-	"set_hook_progress_hold_components '[\"crd-manager\"]'" \
-	'verify_hook_progress_hold_transition crd-manager-preflight crd-manager' \
-	"assert_helm_stalled_on_hook_progress crd-manager '' ''" \
-	"set_hook_progress_hold_components '[]'" \
-	"verify_hook_progress_hold_transition crd-manager ''"; do
-	printf '%s\n' "$hook_progress_proof_section" |
-		grep -F -- "$hook_progress_release_marker" >/dev/null || {
-		printf 'e2e static: hook progress monotonic release lacks %s\n' \
-			"$hook_progress_release_marker" >&2
-		exit 1
-	}
-done
-if grep -E 'cat[[:space:]].*hook-progress-(upgrade|denial|hold)' \
-	"$hook_progress_source" >/dev/null; then
-	printf '%s\n' 'e2e static: hook progress proof emits private API or Helm captures' >&2
-	exit 1
-fi
 
 if grep -F 'expected one controller Deployment' \
 	"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null; then

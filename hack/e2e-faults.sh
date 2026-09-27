@@ -4722,12 +4722,11 @@ load_ready_manager_leader
 OLD_MANAGER_POD_NAME=$MANAGER_POD_NAME
 OLD_MANAGER_POD_UID=$MANAGER_POD_UID
 start_follow_logs "$OPERATOR_NAMESPACE" "$OLD_MANAGER_POD_NAME" manager-restart "$OLD_MANAGER_POD_UID"
-# The retained runtime guard pins the release's Deployments, so a rollout
-# restart, which writes a Pod-template annotation, is refused. Replacing the
-# Pods is what this proof needs and what the guard leaves to the ReplicaSet.
-# Replace them one at a time: the manager serves the admission webhooks, and
-# deleting every replica at once leaves the API server with no backend, which
-# fails any request the webhooks gate until a replacement is ready.
+# Replacing the Pods is what this proof needs, rather than a rollout restart
+# that would change the Pod template. Replace them one at a time: the manager
+# serves the admission webhooks, and deleting every replica at once leaves the
+# API server with no backend, which fails any request the webhooks gate until a
+# replacement is ready.
 manager_restart_pods=$(k -n "$OPERATOR_NAMESPACE" get pods \
 	-l "app.kubernetes.io/name=ptah-operator,app.kubernetes.io/instance=${HELM_RELEASE},app.kubernetes.io/component=controller" \
 	-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')

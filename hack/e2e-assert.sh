@@ -171,8 +171,7 @@ CONTROLLER_NAME=$(k -n "$OPERATOR_NAMESPACE" get deployment \
 # The chart truncates each suffixed name to what Kubernetes accepts, so a name
 # is not the controller's name plus a suffix. The admission singleton names the
 # webhook Service it calls, and the certificate rotator's own arguments name
-# the Secret, the transition Service, the canary marker and the identity that
-# writes them; both are what the release actually installed.
+# the Secret; both are what the release actually installed.
 WEBHOOK_SERVICE=$(k get validatingwebhookconfiguration ptah-operator-admission \
 	-o jsonpath='{.webhooks[0].clientConfig.service.name}')
 [ -n "$WEBHOOK_SERVICE" ] || fail "admission singleton names no webhook Service"
@@ -185,9 +184,6 @@ rotator_argument() {
 	printf '%s\n' "$rotator_value"
 }
 WEBHOOK_CERT_SECRET=$(rotator_argument secret-name)
-CERT_TRANSITION_SERVICE=$(rotator_argument candidate-service-name)
-CERT_CANARY_MARKER=$(rotator_argument candidate-probe-config-map-name)
-CERT_ROTATOR_USERNAME=$(rotator_argument candidate-probe-username)
 
 printf '%s\n' 'e2e assertions: checking manager readiness and chart state'
 h -n "$OPERATOR_NAMESPACE" status "$HELM_RELEASE" >/dev/null
@@ -249,7 +245,6 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" '
       .webhooks |
       (map(.name) | sort) == [
-        "certificate-rotation-canary-mutate.operator.ptah.run",
         "mapproval.operator.ptah.run",
         "mmigrationapproval.operator.ptah.run"
       ] and
@@ -292,7 +287,6 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
         operation_labels("oldObject") + " || " + operation_owner("oldObject") + "))";
       .webhooks |
       (map(.name) | sort) == [
-        "certificate-rotation-canary-validate.operator.ptah.run",
         "vapproval.operator.ptah.run",
         "vcontrollerwrite.operator.ptah.run",
         "vmigrationapproval.operator.ptah.run",
@@ -346,52 +340,6 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
             resources: ["ptahschemaplans", "ptahmigrationplans"], scope: "Namespaced"}
         ]))
     ' >/dev/null || fail "validating webhooks are not exact and fail-closed"
-
-assert_certificate_canary() {
-	canary_resource=$1
-	canary_suffix=$2
-	canary_condition=$3
-	k get "$canary_resource/ptah-operator-admission" -o json |
-		jq -e --arg namespace "$OPERATOR_NAMESPACE" \
-			--arg service "$CERT_TRANSITION_SERVICE" \
-			--arg marker "$CERT_CANARY_MARKER" \
-			--arg username "$CERT_ROTATOR_USERNAME" \
-			--arg suffix "$canary_suffix" --arg condition "$canary_condition" '
-          [.webhooks[] | select(.name == ("certificate-rotation-canary-" + $suffix + ".operator.ptah.run"))] |
-          length == 1 and all(.[];
-            .admissionReviewVersions == ["v1"] and
-            .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Exact" and
-            .timeoutSeconds == 5 and
-            (if $suffix == "mutate" then .reinvocationPolicy == "Never"
-             else (has("reinvocationPolicy") | not) end) and
-            .namespaceSelector == {matchLabels: {"kubernetes.io/metadata.name": $namespace}} and
-            .objectSelector == {matchLabels: {"operator.ptah.run/certificate-rotation-canary": "v1"}} and
-            .matchConditions == [{
-              name: $condition,
-              expression: (
-                "request.operation == \"UPDATE\" && request.resource.group == \"\" && " +
-                "request.resource.version == \"v1\" && request.resource.resource == \"configmaps\" && " +
-                "(!has(request.subResource) || request.subResource == \"\") && " +
-                "request.namespace == " + ($namespace | tojson) + " && " +
-                "request.name == " + ($marker | tojson) + " && " +
-                "request.userInfo.username == " + ($username | tojson) + " && " +
-                "request.dryRun == true && has(request.options) && has(request.options.fieldManager) && " +
-                "request.options.fieldManager == \"ptah-certificate-rotation-canary-" + $suffix + "-v1\" && " +
-                "has(request.options.fieldValidation) && request.options.fieldValidation == \"Strict\""
-              )
-            }] and
-            (.clientConfig.caBundle | type == "string" and length > 0) and
-            (.clientConfig | has("url") | not) and
-            .clientConfig.service == {
-              namespace: $namespace, name: $service, path: ("/candidate/" + $suffix), port: 443
-            } and
-            .rules == [{apiGroups: [""], apiVersions: ["v1"], operations: ["UPDATE"],
-              resources: ["configmaps"], scope: "Namespaced"}])
-        ' >/dev/null || fail "$canary_resource certificate canary does not match its exact admission contract"
-}
-
-assert_certificate_canary mutatingwebhookconfiguration mutate exact-certificate-rotation-mutating-canary
-assert_certificate_canary validatingwebhookconfiguration validate exact-certificate-rotation-validating-canary
 
 printf '%s\n' 'e2e assertions: checking controller Secret isolation'
 # The bootstrap creates these, because every suite needs them and creating a

@@ -1628,17 +1628,9 @@ collect_diagnostics() {
 			printf '=== policy %s ===\n' "$debug_policy" >&2
 			kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 				get validatingadmissionpolicy "$debug_policy" -o jsonpath='resources={range .spec.matchConstraints.resourceRules[*]}{.resources}{end} conditions={range .spec.matchConditions[*]}{.name}{","}{end}{"\n"}' >&2 || true
-			# A parent-origin guard the chart refuses as "differs from the exact
-			# contract" can only be diffed against the render from its whole spec.
-			case $debug_policy in
-			*origin-guard-v2-*|*hook-parent-contract-*|*-runtime-guard-*|*-rollout-guard-*|*-hook-identity-*|*-hook-probe-guard-*)
-				kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
-					get validatingadmissionpolicy "$debug_policy" -o json 2>/dev/null | jq -c .spec >&2 || true
-				;;
-			esac
 		done
-		# A hook Job Helm could not replace is refused by a retained contract on
-		# DELETE; the object it judged is the one still in the cluster.
+		# A Job a policy or a webhook refused on admission is judged against the
+		# object still in the cluster.
 		# shellcheck disable=SC2046 # One namespace/name per word is the intent.
 		for debug_job in $(kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get jobs -A \
 			-o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null); do
@@ -2064,7 +2056,7 @@ mkdir -p "$NEXT_BUILD_CONTEXT"
 git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
 	--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"
 tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"
-NEXT_GO_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/internal/crdupgrade/rollout.go
+NEXT_GO_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/internal/crdupgrade/release_sequence.go
 NEXT_HELM_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/charts/ptah-operator/templates/_helpers.tpl
 for next_sequence_source in "$NEXT_GO_SEQUENCE_FILE" "$NEXT_HELM_SEQUENCE_FILE"; do
 	if [ ! -f "$next_sequence_source" ] || [ -L "$next_sequence_source" ]; then
@@ -2867,9 +2859,6 @@ E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
 E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
-E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
-E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \
-E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
 E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
 E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
@@ -3035,9 +3024,6 @@ E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
 E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
 E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
-E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
-E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \
-E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \
 E2E_PHASE=uninstall \
 	run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 

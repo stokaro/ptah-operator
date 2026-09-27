@@ -4065,24 +4065,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("required live Kubernetes version", `E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION:?E2E_KUBERNETES_VERSION is required}`),
 				exactSourceLine("private work directory mode", `chmod 700 "$WORK_DIR"`),
 				exactSourceLine("private work file creation mask", `umask 077`),
-				exactSourceLine("late activation helper destination", `LATE_ACTIVATION_HOOK_CAPTURE_BINARY=$WORK_DIR/hooklogcapture`),
 				exactSourceLine("cleanup implementation", `cleanup() {`),
 				exactSourceLine("cleanup status capture", `status=$?`),
-				exactSourceLineSequence("late activation preflight capture cleanup", []string{
-					`if [ -n "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" ]; then`,
-					`kill "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" >/dev/null 2>&1 || true`,
-					`wait "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" >/dev/null 2>&1 || true`,
-					`LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=`,
-					`fi`,
-				}),
-				exactSourceLineSequence("late activation reconcile capture cleanup", []string{
-					`if [ -n "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" ]; then`,
-					`kill "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true`,
-					`wait "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true`,
-					`LATE_ACTIVATION_RECONCILE_CAPTURE_PID=`,
-					`fi`,
-				}),
-				exactSourceLine("late activation blocker cleanup", `if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then`),
+				exactSourceLine("late failure blocker cleanup", `if [ -n "$LATE_FAILURE_BLOCKER_WEBHOOK" ]; then`),
 				exactSourceLine("cleanup status preservation", `exit "$status"`),
 				exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
 					`"$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
@@ -4096,179 +4081,81 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "candidate render does not contain exactly one weight-0 reconcile hook Job"`,
 				}),
 				exactSourceLine("rendered reconcile hook identity assignment", `EXPECTED_RECONCILE_HOOK_NAME=$reconcile_matches`),
-				exactSourceLineSequence("late activation exact update blocker", []string{
-					`- name: exact-release-activation-update`,
-					`expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && request.name == "ptah-operator-release-activation"'`,
-					`- name: active-release-sequence-change`,
-					`expression: 'oldObject != null && has(oldObject.data) && has(object.data) && "active-release-sequence" in oldObject.data && "active-release-sequence" in object.data && object.data["active-release-sequence"] != oldObject.data["active-release-sequence"]'`,
+				// The blocker refuses Helm's write of the candidate Deployments and
+				// nothing else, so the hook's scale-down passes it and the failure
+				// lands after the hook stopped the runtime.
+				exactSourceLineSequence("late failure blocker refuses only the candidate Deployments", []string{
+					`- name: exact-runtime-deployment`,
+					`expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && (request.name == "$CONTROLLER_DEPLOYMENT" || request.name == "$ROTATOR_DEPLOYMENT")'`,
+					`- name: candidate-image`,
+					`expression: 'object != null && object.spec.template.spec.containers.exists(container, container.image == "$E2E_NEXT_CONTROLLER_IMAGE")'`,
 				}),
-				exactSourceLine("late activation readiness implementation", `wait_for_late_activation_hook_log_capture_ready() {`),
-				exactSourceLine("late activation readiness requires watching state", `[ "$(sed -n '1p' "$capture_status_file" 2>/dev/null)" != watching ] ||`),
-				exactSourceLine("late activation dual capture arming implementation", `arm_late_activation_hook_log_captures() {`),
-				exactSourceLine("late activation single capture completion implementation", `finish_late_activation_hook_log_capture() {`),
-				exactSourceLine("late activation dual capture completion implementation", `finish_late_activation_hook_log_captures() {`),
-				exactSourceLine("late activation failure class summary implementation", `late_activation_failure_class_summary() {`),
-				exactSourceLine("late activation failure class size bound", `if [ "$failure_class_size" -gt 32 ]; then`),
-				exactSourceLine("late activation diagnostic scanner implementation", `hook_diagnostic_is_safe() {`),
-				exactSourceLineSequence("late activation hook diagnostic credential scan", []string{
-					`if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then`,
-					`return 1`,
-					`else`,
-					`diagnostic_scan_status=$?`,
-					`[ "$diagnostic_scan_status" -eq 1 ] || return 1`,
-					`fi`,
-				}),
-				exactSourceLine("late activation hook diagnostic bounded format", `[ "$diagnostic_size" -gt 0 ] && [ "$diagnostic_size" -le 8192 ] &&`),
-				exactSourceLine("late activation preflight diagnostic implementation", `emit_late_activation_preflight_diagnostic_if_available() {`),
-				exactSourceLine("late activation preflight success contract", `grep -Fx 'candidate release preflight verified without persistent mutation' \`),
-				exactSourceLine("late activation reconcile diagnostic implementation", `emit_late_activation_reconcile_diagnostic() {`),
-				exactSourceLineSequence("late activation reconcile safe diagnostic emission", []string{
-					`cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2`,
-					`missing_blocker_evidence=`,
-				}),
-				exactSourceLineSequence("late activation reconcile exact blocker evidence", []string{
-					`grep -F 'wait for release activation guard before persistence' \`,
-					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
-					`missing_blocker_evidence="$missing_blocker_evidence activation-phase"`,
-					`grep -F 'late-activation-blocker.operator.ptah.run' \`,
-					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
-					`missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"`,
-					`grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \`,
-					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
-					`missing_blocker_evidence="$missing_blocker_evidence missing-service"`,
-					`[ -z "$missing_blocker_evidence" ] ||`,
-					`fail "late activation reconcile log lacks exact blocker evidence:$missing_blocker_evidence"`,
-				}),
-				exactSourceLine("late activation bounded summary implementation", `emit_late_activation_failure_summary() {`),
-				exactSourceLineSequence("late activation failure class synthesis", []string{
-					`preflight_failure_class=$(late_activation_failure_class_summary "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE")`,
-					`reconcile_failure_class=$(late_activation_failure_class_summary "$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE")`,
-				}),
-				exactSourceLineSequence("canceled reconcile is diagnostic-only target-not-reached evidence", []string{
-					`expectedReconcileFailed: any($reconcile[]; (.weight == null or ((.weight | type) == "number" and .weight == 0)) and .last_run.phase == "Failed"),`,
-					`preflightCapture: $preflight_capture,`,
-					`preflightCaptureExit: $preflight_exit,`,
-					`preflightCapturePhase: $preflight_phase,`,
-					`preflightFailureClass: $preflight_failure_class,`,
-					`reconcileCapture: $reconcile_capture,`,
-					`reconcileCaptureExit: $reconcile_exit,`,
-					`reconcileCapturePhase: $reconcile_phase,`,
-					`reconcileFailureClass: $reconcile_failure_class,`,
-					`reconcileTarget: (`,
-					`if any($reconcile[]; ((.last_run.started_at // "") | type) == "string" and ((.last_run.started_at // "") | length > 0)) then "reached"`,
-					`elif $reconcile_capture == "canceled" then "not-reached"`,
-					`else "indeterminate"`,
-					`end`,
-					`)`,
-				}),
-				exactSourceLine("late activation preserved activation implementation", `assert_late_activation_preserved() {`),
-				exactSourceLineSequence("late activation exact predecessor activation", []string{
-					`.metadata.annotations["operator.ptah.run/release-sequence"] == $current and`,
-					`.metadata.annotations["operator.ptah.run/manager-image"] == $image and`,
-					`.data == {"active-release-sequence": $current}`,
-					`' >/dev/null ||`,
-					`fail "late failure did not preserve the exact predecessor activation"`,
-				}),
-				exactSourceLineSequence("late activation immutable candidate retry inputs", []string{
+				exactSourceLineSequence("late failure immutable candidate retry inputs", []string{
 					`late_retry_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE") ||`,
-					`fail "could not checksum the late activation candidate chart"`,
+					`fail "could not checksum the late-failure candidate chart"`,
 					`late_retry_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE") ||`,
-					`fail "could not checksum the late activation candidate values"`,
+					`fail "could not checksum the late-failure candidate values"`,
 					`if [ "$late_retry_chart_sha256" != "$late_candidate_chart_sha256" ] ||`,
 					`[ "$late_retry_values_sha256" != "$late_candidate_values_sha256" ] ||`,
-					`[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ] ||`,
-					`[ "$E2E_NEXT_RELEASE_SEQUENCE" != "$late_next_sequence" ]; then`,
-					`fail "late activation recovery changed the candidate chart, values, image, or sequence"`,
+					`[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ]; then`,
+					`fail "late-failure recovery changed the candidate chart, values, or image"`,
 					`fi`,
 				}),
-				exactSourceLine("late activation failure implementation", `prove_late_activation_failure_recovery() {`),
-				exactSourceLineSequence("late activation candidate input snapshot", []string{
+				exactSourceLine("late failure implementation", `prove_late_failure_recovery() {`),
+				exactSourceLineSequence("late failure candidate input snapshot", []string{
 					`late_candidate_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")`,
 					`late_candidate_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE")`,
 					`late_candidate_image=$E2E_NEXT_CONTROLLER_IMAGE`,
 				}),
-				exactSourceLineSequence("late activation dual capture arming", []string{
-					`create_late_activation_blocker`,
-					`arm_late_activation_hook_log_captures`,
-					`late_upgrade_succeeded=false`,
-				}),
-				exactSourceLineSequence("late activation Helm failure execution", []string{
+				exactSourceLine("late failure blocker before the candidate", `create_late_failure_blocker`),
+				exactSourceLineSequence("late failure Helm execution", []string{
 					`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
 					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
 					`--force-conflicts \`,
-					`--wait --timeout 7m >"$WORK_DIR/late-activation-failure.out" \`,
-					`2>"$WORK_DIR/late-activation-failure.err"; then`,
-				}),
-				exactSourceLineSequence("late activation dual capture completion", []string{
-					`fi`,
-					`late_activation_captures_succeeded=false`,
-					`if finish_late_activation_hook_log_captures; then`,
-					`late_activation_captures_succeeded=true`,
+					`--wait --timeout 7m >"$WORK_DIR/late-failure.out" \`,
+					`2>"$WORK_DIR/late-failure.err"; then`,
+					`fail "upgrade with a late-failure blocker unexpectedly succeeded"`,
 					`fi`,
 				}),
-				exactSourceLineSequence("late activation structured revision retrieval before capture evidence", []string{
-					`if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
-					`--revision "$late_revision" -o json >"$late_status_file" 2>/dev/null; then`,
+				exactSourceLineSequence("late failure structured revision retrieval", []string{
+					`helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
+					`--revision "$late_revision" -o json >"$late_status_file" 2>/dev/null ||`,
+					`fail "the late failure did not retain structured Helm evidence for revision $late_revision"`,
 				}),
-				exactSourceLineSequence("late activation failed status fail-closed exact hook identity jq", []string{
-					`if jq -e --argjson expected_revision "$late_revision" \`,
-					`--arg expected_preflight_name "$EXPECTED_PREFLIGHT_HOOK_NAME" \`,
-					`--arg expected_reconcile_name "$EXPECTED_RECONCILE_HOOK_NAME" '`,
-				}),
-				exactSourceLineSequence("late activation failed revision evidence", []string{
-					`((.hooks // []) | if type == "array" then . else [] end) as $hooks |`,
-					`[$hooks[] | select(.last_run.phase == "Failed")] as $failed |`,
-					`[$hooks[] | select(`,
-					`.name == $expected_preflight_name and`,
-					`.kind == "Job"`,
-					`)] as $preflight |`,
-				}),
-				exactSourceLineSequence("late activation reconcile identity evidence", []string{
-					`[$hooks[] | select(`,
-					`.name == $expected_reconcile_name and`,
-					`.kind == "Job"`,
-					`)] as $reconcile |`,
-				}),
-				exactSourceLineSequence("late activation exact preflight success evidence", []string{
+				exactSourceLineSequence("late failure after a reconcile hook that succeeded", []string{
 					`.version == $expected_revision and`,
 					`.info.status == "failed" and`,
-					`($preflight | length == 1) and`,
-					`($preflight[0] |`,
-					`((.weight | type) == "number" and .weight == -60) and`,
-					`((.events // []) | type) == "array" and`,
-					`((.events // []) | index("pre-upgrade") != null) and`,
-					`.last_run.phase == "Succeeded" and`,
-					`((.last_run.started_at // "") | type) == "string" and`,
-					`((.last_run.started_at // "") | length > 0) and`,
-					`((.last_run.completed_at // "") | type) == "string" and`,
-					`((.last_run.completed_at // "") | length > 0)) and`,
-				}),
-				exactSourceLineSequence("late activation exact failed reconcile evidence", []string{
+					`([$hooks[] | select(.last_run.phase == "Failed")] | length == 0) and`,
 					`($reconcile | length == 1) and`,
-					`($failed | length == 1) and`,
-					`($failed[0].name == $expected_reconcile_name) and`,
 					`($reconcile[0] |`,
-					`(.weight == null or ((.weight | type) == "number" and .weight == 0)) and`,
-					`((.events // []) | type) == "array" and`,
-					`((.events // []) | index("pre-upgrade") != null) and`,
-					`.last_run.phase == "Failed" and`,
-					`((.last_run.started_at // "") | type) == "string" and`,
-					`((.last_run.started_at // "") | length > 0) and`,
-					`((.last_run.completed_at // "") | type) == "string" and`,
-					`((.last_run.completed_at // "") | length > 0))`,
+					`.last_run.phase == "Succeeded" and`,
+					`((.events // []) | index("pre-upgrade") != null))`,
 				}),
-				exactSourceLineSequence("late activation capture evidence only after revision classification", []string{
-					`if [ "$late_activation_captures_succeeded" != true ]; then`,
-					`emit_late_activation_preflight_diagnostic_if_available`,
-					`emit_late_activation_failure_summary "$late_status_file"`,
-					`fail "late activation hook log captures did not both complete successfully"`,
+				exactSourceLine("late failure stopped runtime", `.spec.replicas == 0 and`),
+				exactSourceLine("late failure runtime Pod absence", `' >/dev/null || fail "the late failure left a runtime Pod after the runtime stop"`),
+				exactSourceLine("late failure boundary completion", `printf '%s\n' 'e2e crd: the late failure left the runtime stopped on the predecessor template'`),
+				exactSourceLineSequence("same-candidate retry", []string{
+					`retry_same_candidate() {`,
+					`if ! helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
+					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
+					`--force-conflicts \`,
+				}),
+				// A rollback runs the pre-rollback hook of the release it rolls back
+				// to. Over state that release cannot read, the hook refuses before
+				// Helm touches a Deployment.
+				exactSourceLine("refused rollback implementation", `prove_rollback_refused_over_future_state() {`),
+				exactSourceLineSequence("refused rollback execution", []string{
+					`if helm_e2e rollback "$E2E_HELM_RELEASE" "$rollback_revision" \`,
+					`--namespace "$E2E_OPERATOR_NAMESPACE" --force-conflicts \`,
+					`--wait --timeout 3m >"$WORK_DIR/refused-rollback.out" 2>"$WORK_DIR/refused-rollback.err"; then`,
+					`fail "a rollback over stored state newer than the release it rolls back to was admitted"`,
 					`fi`,
-					`verify_late_activation_preflight_capture`,
-					`emit_late_activation_reconcile_diagnostic`,
-					`assert_late_activation_preserved`,
 				}),
-				exactSourceLine("late activation protected Pod absence", `' >/dev/null || fail "late failure left a protected runtime Pod after the runtime stop"`),
-				exactSourceLine("late activation failed boundary completion", `printf '%s\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'`),
+				exactSourceLine("refused rollback reached its hook", `fail "the refused rollback did not reach its pre-rollback hook"`),
+				exactSourceLine("refused rollback left the runtime alone", `cmp "$before" "$after" || fail "the refused rollback changed a runtime Deployment"`),
+				exactSourceLine("refused rollback completion", `printf '%s\n' 'e2e crd: the rollback was refused before any Pod changed'`),
+				exactSourceLine("rollback implementation", `prove_rollback() {`),
+				exactSourceLine("rollback ends deployed", `fail "the rollback to revision $rollback_revision did not end deployed"`),
 				exactSourceLineSequence("read-only Job controller-owned failure staging", []string{
 					`failure_target_patch=$(jq -nc \`,
 					`--arg failure_target_at "$failure_target_at" \`,
@@ -4351,32 +4238,30 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
 				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
 				exactSourceLine("next-release upgrade proof implementation", `run_next_release_upgrade_proof() {`),
-				exactSourceLineSequence("successor read-only Job dispatch before the late activation failure", []string{
+				exactSourceLineSequence("successor read-only Job dispatch before the late failure", []string{
 					`dispatch_read_only_job_fixture`,
 					`start_running_apply_barrier`,
 					`prepare_running_apply_fixture`,
 					`start_running_apply_fixture`,
 					`stage_predecessor_apply_job_uid_gap_while_running`,
-					`prove_late_activation_failure_recovery \`,
-					`"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"`,
+					`prove_late_failure_recovery "$CURRENT_RELEASE_CONTROLLER_IMAGE"`,
 					`set_pod_webhook_failure_policy Fail Ignore`,
 					`stage_read_only_job_completion`,
 					`set_pod_webhook_failure_policy Ignore Fail`,
 					`stage_read_only_job_uid_gap`,
-					`assert_late_activation_preserved`,
-					`assert_late_activation_candidate_unchanged`,
-					`delete_late_activation_blocker`,
+					`assert_late_failure_candidate_unchanged`,
+					`delete_late_failure_blocker`,
 				}),
 				exactSourceLineSequence("same-candidate recovery resumes failed revision", []string{
 					`[ "$before_retry_revision" -eq "$late_revision" ] ||`,
-					`fail "late activation recovery did not resume the exact failed Helm revision"`,
+					`fail "late-failure recovery did not resume the exact failed Helm revision"`,
 				}),
-				exactSourceLine("same-candidate recovery exact Helm retry", `retry_same_candidate_with_diagnostics`),
 				// The running Apply is read after the upgrade completed, and the
 				// barrier is released only once exclusivity has been proven: an
 				// Apply released earlier would have finished on its own, and the
 				// proof would be about an Apply that was never interrupted.
-				exactSourceLineSequence("successor read-only Job cleanup and running Apply adoption after activation", []string{
+				exactSourceLineSequence("same-candidate retry, read-only Job cleanup and running Apply adoption", []string{
+					`retry_same_candidate`,
 					`wait_runtime_ready`,
 					`wait_for_read_only_job_cleanup`,
 					`quiesce_read_only_job_schema`,
@@ -4396,16 +4281,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "synthetic sequence-$next_release_sequence upgrade moved the controller from ServiceAccount $current_sequence_service_account to $next_sequence_service_account"`,
 					`[ "$next_sequence_service_account_uid" = "$current_sequence_service_account_uid" ] ||`,
 				}),
-				exactSourceLineSequence("same-candidate recovery final activation and retirement", []string{
-					`assert_release_activation_sequence \`,
-					`"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE"`,
-					`assert_sealed_release_inventory \`,
-					`"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE" \`,
-					`"$next_sequence_marker" "$next_sequence_inventory"`,
-					`assert_inventory_resources_absent \`,
-					`"$current_sequence_inventory" "$current_sequence_marker_name"`,
-					`assert_release_sequence_candidate_residue_absent "$current_release_sequence"`,
-				}),
 				// The synthetic next release changes the manager image and nothing
 				// the execution binding holds, so the schema keeps its epoch and
 				// its plan and approval carry over: the whole object is unchanged.
@@ -4414,6 +4289,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`assert_object_unchanged "$resource" "$PROOF_SCHEMA" \`,
 					`"$WORK_DIR/${resource}-before.json"`,
 					`done`,
+					`printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'`,
+				}),
+				exactSourceLineSequence("refused rollback, then the rollback it leaves pending", []string{
+					`prove_rollback_refused_over_future_state "$current_release_revision"`,
+					`prove_rollback "$current_release_revision" "$CURRENT_RELEASE_CONTROLLER_IMAGE"`,
 				}),
 				exactSourceLine("uninstall proof implementation", `run_uninstall_proof() {`),
 				exactSourceLineSequence("released chart fresh-install inputs", []string{
@@ -4424,18 +4304,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "E2E_CANDIDATE_VALUES_FILE must name the regular non-symlink current-release values file"`,
 					`fi`,
 				}),
-				exactSourceLineSequence("upgraded release exact uninstall absence", []string{
-					`assert_inventory_resources_absent \`,
-					`"$next_sequence_inventory" "$next_sequence_marker_name"`,
-				}),
-				exactSourceLineSequence("reinstalled successor inventory capture", []string{
-					`reinstalled_next_marker=$WORK_DIR/reinstalled-sequence-${E2E_NEXT_RELEASE_SEQUENCE}-admission-convergence.json`,
-					`reinstalled_next_inventory=$WORK_DIR/reinstalled-sequence-${E2E_NEXT_RELEASE_SEQUENCE}-admission-inventory.json`,
-				}),
-				exactSourceLineSequence("reinstalled successor exact uninstall absence", []string{
-					`assert_inventory_resources_absent \`,
-					`"$reinstalled_next_inventory" "$reinstalled_next_marker_name"`,
-				}),
+				exactSourceLine("rolled-back release uninstall", `fail "the uninstall of the rolled-back release failed; Helm's own error is above"`),
+				exactSourceLine("reinstalled release uninstall", `fail "the uninstall of the release reinstalled over retained CRDs failed; Helm's own error is above"`),
 				exactSourceLineSequence("exact released chart fresh install", []string{
 					`helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
 					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \`,
@@ -4447,20 +4317,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \`,
 					`"$WORK_DIR/fresh-current-sequence-${E2E_CURRENT_RELEASE_SEQUENCE}-controller-identity.json"`,
 				}),
-				exactSourceLineSequence("exact released chart activation", []string{
-					`assert_release_activation_sequence \`,
-					`"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE"`,
-				}),
-				exactSourceLineSequence("exact released chart sealed inventory", []string{
-					`assert_sealed_release_inventory \`,
-					`"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \`,
-					`"$fresh_current_marker" "$fresh_current_inventory"`,
-				}),
-				exactSourceLine("exact released chart zero-residue assertion", `assert_release_sequence_candidate_residue_absent "$E2E_CURRENT_RELEASE_SEQUENCE"`),
-				exactSourceLineSequence("exact released chart inventory absence", []string{
-					`assert_inventory_resources_absent \`,
-					`"$fresh_current_inventory" "$fresh_current_marker_name"`,
-				}),
+				exactSourceLine("exported release uninstall", `fail "the uninstall of the exported current-release chart failed; Helm's own error is above"`),
 				exactSourceLine("exact released chart installability evidence", `printf '%s\n' 'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall'`),
 				exactSourceLineSequence("phase dispatch", []string{
 					`case "$E2E_PHASE" in`,
@@ -4570,112 +4427,30 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", files.crdUpgrade, err)
 	}
-	if err := verifyHookProgressAuthorizationSource(files.crdUpgrade, crdUpgradeContents); err != nil {
-		return err
-	}
 	for _, functionName := range []string{
-		"wait_for_late_activation_hook_log_capture_ready",
-		"arm_late_activation_hook_log_captures",
-		"finish_late_activation_hook_log_capture",
-		"finish_late_activation_hook_log_captures",
-		"late_activation_capture_status_summary",
-		"late_activation_capture_exit_summary",
-		"late_activation_failure_class_summary",
-		"hook_diagnostic_is_safe",
-		"emit_late_activation_preflight_diagnostic_if_available",
-		"verify_late_activation_preflight_capture",
-		"emit_late_activation_reconcile_diagnostic",
-		"emit_late_activation_failure_summary",
-		"assert_late_activation_preserved",
-		"assert_late_activation_candidate_unchanged",
-		"prove_late_activation_failure_recovery",
+		"create_late_failure_blocker",
+		"assert_late_failure_candidate_unchanged",
+		"prove_late_failure_recovery",
+		"retry_same_candidate",
+		"prove_rollback_refused_over_future_state",
+		"prove_rollback",
 		"run_next_release_upgrade_proof",
 	} {
 		if err := verifySingleShellFunctionDefinition(files.crdUpgrade, crdUpgradeContents, functionName); err != nil {
 			return err
 		}
 	}
-	for _, assertion := range []string{"assert_late_activation_preserved", "assert_late_activation_candidate_unchanged"} {
-		body := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(assertion) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`).Find(crdUpgradeContents)
-		if err := rejectEarlySuccessfulReturn(files.crdUpgrade+" "+assertion, body,
-			sourceLinePattern(assertion+"() {"), regexp.MustCompile(`(?m)^\}[ \t]*\r?$`)); err != nil {
-			return err
-		}
-	}
-	if err := verifyExactShellFunctionContract(
-		files.crdUpgrade,
-		crdUpgradeContents,
-		"arm_late_activation_hook_log_captures",
-		lateActivationHookCaptureArmContract,
-		"exact dual resourceVersion-bound late activation hook capture arm contract",
-	); err != nil {
+	candidateCheck := regexp.MustCompile(`(?ms)^assert_late_failure_candidate_unchanged\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`).Find(crdUpgradeContents)
+	if err := rejectEarlySuccessfulReturn(files.crdUpgrade+" assert_late_failure_candidate_unchanged", candidateCheck,
+		sourceLinePattern("assert_late_failure_candidate_unchanged() {"), regexp.MustCompile(`(?m)^\}[ \t]*\r?$`)); err != nil {
 		return err
 	}
-	if err := verifyExactShellFunctionContract(
-		files.crdUpgrade,
-		crdUpgradeContents,
-		"finish_late_activation_hook_log_capture",
-		lateActivationHookCaptureFinishContract,
-		"exact bounded late activation hook capture completion contract",
-	); err != nil {
-		return err
-	}
-	if err := verifyExactShellFunctionContract(
-		files.crdUpgrade,
-		crdUpgradeContents,
-		"finish_late_activation_hook_log_captures",
-		lateActivationHookCapturesFinishContract,
-		"exact bounded dual late activation hook capture completion contract",
-	); err != nil {
-		return err
-	}
-	if err := verifyExactShellFunctionContract(
-		files.crdUpgrade,
-		crdUpgradeContents,
-		"late_activation_failure_class_summary",
-		lateActivationFailureClassSummaryContract,
-		"exact bounded allowlisted late activation failure class summary contract",
-	); err != nil {
-		return err
-	}
-	if err := verifyExactShellFunctionContract(
-		files.crdUpgrade,
-		crdUpgradeContents,
-		"hook_diagnostic_is_safe",
-		lateActivationHookDiagnosticContract,
-		"exact credential-safe bounded hook diagnostic scanner contract",
-	); err != nil {
-		return err
-	}
-	if err := verifyExactShellFunctionContract(
-		files.crdUpgrade,
-		crdUpgradeContents,
-		"emit_late_activation_preflight_diagnostic_if_available",
-		lateActivationPreflightDiagnosticContract,
-		"exact optional preflight diagnostic emission contract",
-	); err != nil {
-		return err
-	}
-	if err := verifyExactShellFunctionContract(
-		files.crdUpgrade,
-		crdUpgradeContents,
-		"emit_late_activation_reconcile_diagnostic",
-		lateActivationReconcileDiagnosticContract,
-		"exact reconcile blocker diagnostic emission contract",
-	); err != nil {
-		return err
-	}
-	if err := verifySameCandidateRetryDiagnostics(files.crdUpgrade, crdUpgradeContents); err != nil {
-		return err
-	}
-	lateActivationFailurePattern := regexp.MustCompile(`(?ms)^prove_late_activation_failure_recovery\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`)
-	lateActivationFailureMatches := lateActivationFailurePattern.FindAll(crdUpgradeContents, -1)
-	if len(lateActivationFailureMatches) != 1 {
-		return fmt.Errorf("%s: late activation failure proof must have exactly one auditable function body", files.crdUpgrade)
-	}
-	lateActivationFailureBody := lateActivationFailureMatches[0]
+	// Between the late failure and the retry, only the hook may move the
+	// runtime: a proof that stopped or restarted it by hand would measure its
+	// own hand rather than the boundary the failure left.
 	for _, recovery := range []struct{ function, completion string }{
-		{"prove_late_activation_failure_recovery", `printf '%s\n' 'e2e crd: exact late-failure activation and quiescence boundary proved'`},
+		{"prove_late_failure_recovery", `printf '%s\n' 'e2e crd: the late failure left the runtime stopped on the predecessor template'`},
+		{"prove_rollback_refused_over_future_state", `printf '%s\n' 'e2e crd: the rollback was refused before any Pod changed'`},
 		{"run_next_release_upgrade_proof", `printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'`},
 	} {
 		if err := rejectEarlySuccessfulReturn(files.crdUpgrade, crdUpgradeContents,
@@ -4685,59 +4460,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		body := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(recovery.function) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`).Find(crdUpgradeContents)
 		for _, backward := range []string{"restore_runtime_deployment", "restore_runtime_deployment_snapshot", "stop_runtime_deployments", "start_runtime_deployments"} {
 			if regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(backward) + `(?:[ \t\r\n]|$)`).Match(body) {
-				return fmt.Errorf("%s: same-candidate recovery must preserve the genuine hook boundary, not invoke %s", files.crdUpgrade, backward)
+				return fmt.Errorf("%s: %s must leave the runtime to the hook, not invoke %s", files.crdUpgrade, recovery.function, backward)
 			}
-		}
-	}
-	orderedEvidenceMarkers := []struct {
-		description string
-		marker      string
-	}{
-		{"structured revision query", `if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`},
-		{"exact revision classification", `if jq -e --argjson expected_revision "$late_revision" \`},
-		{"capture-success enforcement", `if [ "$late_activation_captures_succeeded" != true ]; then`},
-	}
-	previousEvidenceOffset := -1
-	for _, evidenceMarker := range orderedEvidenceMarkers {
-		offset := bytes.Index(lateActivationFailureBody, []byte(evidenceMarker.marker))
-		if offset < 0 || offset <= previousEvidenceOffset {
-			return fmt.Errorf(
-				"%s: revision classification must precede capture-success enforcement at %s",
-				files.crdUpgrade,
-				evidenceMarker.description,
-			)
-		}
-		previousEvidenceOffset = offset
-	}
-	for _, privateEvidence := range []string{
-		"late-activation-failure.out",
-		"late-activation-failure.err",
-		"same-candidate-retry.out",
-		"same-candidate-retry.err",
-	} {
-		if bytes.Count(crdUpgradeContents, []byte(privateEvidence)) != 1 {
-			return fmt.Errorf("%s: late activation raw Helm evidence must remain write-only", files.crdUpgrade)
-		}
-	}
-	for _, helperErrorFile := range []string{
-		"LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE",
-		"LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE",
-	} {
-		if bytes.Contains(lateActivationFailureBody, []byte(helperErrorFile)) {
-			return fmt.Errorf("%s: late activation helper errors must not be emitted as evidence", files.crdUpgrade)
-		}
-		// Initial and retry-only assignments, helper argument, and mode check.
-		// The retry assignment itself is pinned by its complete function digest.
-		if bytes.Count(crdUpgradeContents, []byte(helperErrorFile)) != 4 {
-			return fmt.Errorf("%s: late activation helper error files must remain private non-emitted capture outputs", files.crdUpgrade)
-		}
-	}
-	for _, failureClassFile := range []string{
-		"LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE",
-		"LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE",
-	} {
-		if bytes.Count(crdUpgradeContents, []byte(failureClassFile)) != 5 {
-			return fmt.Errorf("%s: late activation failure classes must flow only through private helper output and bounded synthesis", files.crdUpgrade)
 		}
 	}
 	// Last, so that a phase hidden behind an always-false branch or dropped
@@ -4896,25 +4620,20 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 	contract := []sourceContractStep{
 		exactSourceLine("failed-upgrade evidence implementation", `expect_upgrade_failure_without_deployment_change() {`),
 		exactSourceLine("failed-upgrade structured status destination", `status_file=$WORK_DIR/failed-upgrade-status.json`),
-		exactSourceLineSequence("current and next failed revision binding", []string{
+		exactSourceLineSequence("rendered reconcile hook and failed revision binding", []string{
+			`[ -n "$UPGRADE_VALUES_FILE" ] || fail "upgrade values file is not configured"`,
+			`[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"`,
 			`before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \`,
 			`--namespace "$E2E_OPERATOR_NAMESPACE" -o json | jq -er '.version | select(type == "number" and . >= 1)')`,
 			`failed_revision=$((before_revision + 1))`,
-		}),
-		exactSourceLineSequence("rendered hook identity binding", []string{
-			`[ -n "$EXPECTED_IDENTITY_HOOK_NAME" ] || fail "rendered identity hook name is unavailable"`,
-			`[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"`,
 			`deployment_evidence >"$before"`,
-			`arm_identity_hook_log_capture`,
 		}),
 		exactSourceLineSequence("failed upgrade execution and explicit revision retrieval", []string{
 			`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
 			`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \`,
 			`--wait --timeout 2m "$@" >"$WORK_DIR/failed-upgrade.out" 2>"$WORK_DIR/failed-upgrade.err"; then`,
-			`finish_identity_hook_log_capture`,
 			`fail "$description unexpectedly succeeded"`,
 			`fi`,
-			`finish_identity_hook_log_capture`,
 			`if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
 			`--revision "$failed_revision" -o json >"$status_file"; then`,
 			`if [ "${E2E_DEBUG_LOGS:-0}" -eq 1 ]; then`,
@@ -4924,18 +4643,13 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 			`fail "$description did not retain structured Helm evidence for failed revision $failed_revision"`,
 			`fi`,
 		}),
-		exactSourceLineSequence("exact failed preflight evidence evaluation", []string{
+		exactSourceLineSequence("exact failed reconcile evidence evaluation", []string{
 			`if ! jq -e \`,
 			`--argjson expected_revision "$failed_revision" \`,
-			`--arg expected_name "$EXPECTED_PREFLIGHT_HOOK_NAME" \`,
-			`--argjson expected_weight -60 \`,
-			`--arg expected_identity_name "$EXPECTED_IDENTITY_HOOK_NAME" \`,
-			`--argjson expected_identity_weight -105 \`,
+			`--arg expected_name "$EXPECTED_RECONCILE_HOOK_NAME" \`,
 			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null; then`,
-			`emit_identity_hook_diagnostic >&2 ||`,
-			`fail "$description identity-hook diagnostic failed closed"`,
 		}),
-		exactSourceLine("failed preflight evidence refusal", `fail "$description lacks exact revision-bound failed preflight evidence"`),
+		exactSourceLine("failed reconcile evidence refusal", `fail "$description lacks exact revision-bound failed reconcile evidence"`),
 	}
 	if err := verifyOrderedSourceContract(path, contents, contract); err != nil {
 		return err
@@ -4962,245 +4676,6 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 	return nil
 }
 
-const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captures() {
-	[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"
-	[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"
-	[ -z "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" ] || fail "late activation preflight capture is already armed"
-	[ -z "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" ] || fail "late activation reconcile capture is already armed"
-	require_mode_0600_regular_file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" expected-crd-upgrade-render
-	mkdir -p "$WORK_DIR/go-cache"
-	env GOCACHE="$WORK_DIR/go-cache" go -C "$ROOT_DIR" build -trimpath \
-		-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack/hooklogcapture
-	if [ ! -f "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
-		[ -L "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
-		[ ! -x "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ]; then
-		fail "late activation hook log capture helper is not a regular executable"
-	fi
-	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
-		--kubeconfig "$E2E_KUBECONFIG" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" \
-		--job-name "$EXPECTED_PREFLIGHT_HOOK_NAME" \
-		--hook-mode preflight \
-		--render-file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" \
-		--log-file "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" \
-		--status-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
-		--ready-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
-		--error-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE" \
-		--failure-class-file "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
-		--timeout 3m >/dev/null 2>&1 &
-	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!
-	# The reconcile hook stops the runtime and waits for its Pods to go before
-	# it reaches the activation write the blocker refuses, and it may say
-	# nothing until then. Silence there is the scenario, not an unavailable
-	# stream, so this capture waits for the hook rather than for its first byte.
-	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
-		--kubeconfig "$E2E_KUBECONFIG" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" \
-		--job-name "$EXPECTED_RECONCILE_HOOK_NAME" \
-		--hook-mode reconcile \
-		--render-file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" \
-		--log-file "$LATE_ACTIVATION_RECONCILE_LOG_FILE" \
-		--status-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
-		--ready-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
-		--error-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
-		--failure-class-file "$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE" \
-		--log-start-timeout 8m \
-		--timeout 9m >/dev/null 2>&1 &
-	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=$!
-	wait_for_late_activation_hook_log_capture_ready \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
-		"late activation preflight capture"
-	wait_for_late_activation_hook_log_capture_ready \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
-		"late activation reconcile capture"
-	for activation_capture_file in \
-		"$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE" \
-		"$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
-		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
-		"$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE" \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE"; do
-		require_mode_0600_regular_file "$activation_capture_file" late-activation-hook-capture-file
-	done
-}`
-
-const lateActivationHookCaptureFinishContract = `finish_late_activation_hook_log_capture() {
-	capture_pid=$1
-	capture_status_file=$2
-	capture_grace=0
-	while kill -0 "$capture_pid" >/dev/null 2>&1 && [ "$capture_grace" -lt 15 ]; do
-		case "$(sed -n '1p' "$capture_status_file" 2>/dev/null)" in
-		captured | failed | canceled) break ;;
-		esac
-		sleep 1
-		capture_grace=$((capture_grace + 1))
-	done
-	case "$(sed -n '1p' "$capture_status_file" 2>/dev/null)" in
-	captured | failed | canceled) ;;
-	*) kill "$capture_pid" >/dev/null 2>&1 || true ;;
-	esac
-	capture_exit_status=0
-	wait "$capture_pid" >/dev/null 2>&1 || capture_exit_status=$?
-	return "$capture_exit_status"
-}`
-
-const lateActivationHookCapturesFinishContract = `finish_late_activation_hook_log_captures() {
-	[ -n "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" ] || fail "late activation preflight capture is not armed"
-	[ -n "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" ] || fail "late activation reconcile capture is not armed"
-	LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS=0
-	finish_late_activation_hook_log_capture \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" \
-		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" ||
-		LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS=$?
-	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=
-	LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS=0
-	finish_late_activation_hook_log_capture \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" \
-		"$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" ||
-		LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS=$?
-	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=
-	[ "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS" -eq 0 ] &&
-		[ "$LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS" -eq 0 ]
-}`
-
-const lateActivationFailureClassSummaryContract = `late_activation_failure_class_summary() {
-	failure_class_file=$1
-	if [ -L "$failure_class_file" ]; then
-		printf '%s\n' invalid
-		return
-	fi
-	if [ ! -e "$failure_class_file" ]; then
-		printf '%s\n' unavailable
-		return
-	fi
-	if [ ! -f "$failure_class_file" ]; then
-		printf '%s\n' invalid
-		return
-	fi
-	if failure_class_mode=$(stat -c '%a' "$failure_class_file" 2>/dev/null); then
-		:
-	else
-		failure_class_mode=$(stat -f '%Lp' "$failure_class_file" 2>/dev/null) || {
-			printf '%s\n' invalid
-			return
-		}
-	fi
-	if [ "$failure_class_mode" != 600 ]; then
-		printf '%s\n' invalid
-		return
-	fi
-	failure_class_size=$(wc -c <"$failure_class_file" 2>/dev/null | tr -d '[:space:]') || {
-		printf '%s\n' invalid
-		return
-	}
-	case "$failure_class_size" in
-	'' | *[!0-9]*)
-		printf '%s\n' invalid
-		return
-		;;
-	0)
-		printf '%s\n' unavailable
-		return
-		;;
-	esac
-	if [ "$failure_class_size" -gt 32 ]; then
-		printf '%s\n' invalid
-		return
-	fi
-	failure_class_lines=$(awk 'END { print NR + 0 }' "$failure_class_file" 2>/dev/null) || {
-		printf '%s\n' invalid
-		return
-	}
-	if [ "$failure_class_lines" -ne 1 ]; then
-		printf '%s\n' invalid
-		return
-	fi
-	failure_class=$(sed -n '1p' "$failure_class_file" 2>/dev/null) || {
-		printf '%s\n' invalid
-		return
-	}
-	case "$failure_class" in
-	configuration | output | render | kubernetes-client | priority-inventory | priority-watch | job-inventory | job-watch | job-contract | pod-inventory | pod-watch | pod-contract | pod-owner | log-start | log-start-timeout | log-read | log-empty | log-too-large | deadline | canceled | internal)
-		printf '%s\n' "$failure_class"
-		;;
-	*) printf '%s\n' invalid ;;
-	esac
-}`
-
-const lateActivationHookDiagnosticContract = `hook_diagnostic_is_safe() {
-	diagnostic_file=$1
-	[ -f "$diagnostic_file" ] && [ ! -L "$diagnostic_file" ] || return 1
-	if diagnostic_mode=$(stat -c '%a' "$diagnostic_file" 2>/dev/null); then
-		:
-	else
-		diagnostic_mode=$(stat -f '%Lp' "$diagnostic_file" 2>/dev/null) || return 1
-	fi
-	[ "$diagnostic_mode" = 600 ] || return 1
-	require_mode_0600_regular_file "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" identity-hook-credential-patterns
-	[ -s "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ] || return 1
-	if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then
-		return 1
-	else
-		diagnostic_scan_status=$?
-		[ "$diagnostic_scan_status" -eq 1 ] || return 1
-	fi
-	if LC_ALL=C grep -Eq '(^|[^[:alnum:]_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+($|[^[:alnum:]_-])|[Aa]uthorization:[[:space:]]*|[Bb]earer[[:space:]]+|://[^[:space:]@/:]+:[^[:space:]@/]+@' \
-		"$diagnostic_file"; then
-		return 1
-	else
-		diagnostic_scan_status=$?
-		[ "$diagnostic_scan_status" -eq 1 ] || return 1
-	fi
-	diagnostic_size=$(wc -c <"$diagnostic_file" | tr -d '[:space:]')
-	diagnostic_lines=$(awk 'END { print NR + 0 }' "$diagnostic_file")
-	case "$diagnostic_size:$diagnostic_lines" in
-	*[!0-9:]* | :* | *:) return 1 ;;
-	esac
-	[ "$diagnostic_size" -gt 0 ] && [ "$diagnostic_size" -le 8192 ] &&
-		[ "$diagnostic_lines" -eq 1 ] &&
-		LC_ALL=C grep -Eq '^ptah-crd-manager: [[:print:]]+$|^candidate release preflight verified without persistent mutation$' \
-			"$diagnostic_file"
-}`
-
-const lateActivationPreflightDiagnosticContract = `emit_late_activation_preflight_diagnostic_if_available() {
-	[ "$(late_activation_capture_status_summary "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE")" = captured ] || return 0
-	[ -s "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" ] || return 0
-	if hook_diagnostic_is_safe "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE"; then
-		cat "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" >&2
-	else
-		printf '%s\n' 'e2e crd: preflight diagnostic withheld by credential and format scanner' >&2
-	fi
-}`
-
-const lateActivationReconcileDiagnosticContract = `emit_late_activation_reconcile_diagnostic() {
-	require_mode_0600_regular_file "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" late-activation-reconcile-capture-status
-	[ "$(sed -n '1p' "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")" = captured ] ||
-		fail "late activation reconcile log was not captured"
-	hook_diagnostic_is_safe "$LATE_ACTIVATION_RECONCILE_LOG_FILE" ||
-		fail "late activation reconcile log failed credential and format validation"
-	cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2
-	missing_blocker_evidence=
-	grep -F 'wait for release activation guard before persistence' \
-		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
-		missing_blocker_evidence="$missing_blocker_evidence activation-phase"
-	grep -F 'late-activation-blocker.operator.ptah.run' \
-		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
-		missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"
-	grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \
-		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
-		missing_blocker_evidence="$missing_blocker_evidence missing-service"
-	[ -z "$missing_blocker_evidence" ] ||
-		fail "late activation reconcile log lacks exact blocker evidence:$missing_blocker_evidence"
-}`
-
 const failedHookEvidenceContract = `def hook_phase:
   .last_run.phase // "";
 
@@ -5209,30 +4684,20 @@ def hook_weight:
 
 (.hooks // []) as $hooks |
 ($hooks | map(select(hook_phase == "Failed"))) as $failed |
-($hooks | map(select(
-  .name == $expected_identity_name and
-  .kind == "Job" and
-  hook_weight == $expected_identity_weight and
-  ((.events // []) | index("pre-upgrade") != null)))) as $identity |
 (.version == $expected_revision) and
 (.info.status == "failed") and
-($identity | length == 1) and
-($identity[0] |
-  hook_phase == "Succeeded" and
-  ((.last_run.started_at // "") | length > 0) and
-  ((.last_run.completed_at // "") | length > 0)) and
 ($failed | length == 1) and
 ($failed[0] |
   .name == $expected_name and
   .kind == "Job" and
-  hook_weight == $expected_weight and
+  hook_weight == 0 and
   ((.events // []) | index("pre-upgrade") != null) and
   ((.last_run.started_at // "") | length > 0) and
   ((.last_run.completed_at // "") | length > 0)) and
 ($hooks | all(.[];
   if
     (((.events // []) | index("pre-upgrade")) != null) and
-    (hook_weight > $expected_weight)
+    (hook_weight > 0)
   then
     hook_phase == ""
   else
@@ -5264,10 +4729,7 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		exactSourceLineSequence("revision-bound failed-hook evaluator", []string{
 			`jq -e \`,
 			`--argjson expected_revision 7 \`,
-			`--arg expected_name ptah-crd-preflight \`,
-			`--argjson expected_weight -60 \`,
-			`--arg expected_identity_name ptah-hook-identity \`,
-			`--argjson expected_identity_weight -105 \`,
+			`--arg expected_name ptah-crd-reconcile \`,
 			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$1" >/dev/null`,
 		}),
 		exactSourceLine("negative-fixture implementation", `expect_rejected() {`),
@@ -5280,13 +4742,14 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		}),
 		exactSourceLine("valid fixture evaluation", `evaluate "$WORK_DIR/valid.json"`),
 		exactSourceLine("wrong revision refusal", `expect_rejected wrong-revision '.version = 8'`),
-		exactSourceLine("wrong hook name refusal", `expect_rejected wrong-name '.hooks[1].name = "other-preflight"'`),
-		exactSourceLine("wrong hook weight refusal", `expect_rejected wrong-weight '.hooks[1].weight = -59'`),
+		exactSourceLine("successful release refusal", `expect_rejected not-failed '.info.status = "deployed"'`),
+		exactSourceLine("wrong hook name refusal", `expect_rejected wrong-name '.hooks[1].name = "other-reconcile"'`),
+		exactSourceLine("wrong hook kind refusal", `expect_rejected wrong-kind '.hooks[1].kind = "Pod"'`),
+		exactSourceLine("wrong hook weight refusal", `expect_rejected wrong-weight '.hooks[1].weight = -60'`),
 		exactSourceLine("wrong hook event refusal", `expect_rejected wrong-event '.hooks[1].events = ["post-upgrade"]'`),
-		exactSourceLine("missing identity hook refusal", `expect_rejected missing-identity '.hooks[0].name = "other-identity"'`),
-		exactSourceLine("failed identity hook refusal", `expect_rejected failed-identity '.hooks[0].last_run.phase = "Failed"'`),
-		exactSourceLine("wrong identity hook weight refusal", `expect_rejected wrong-identity-weight '.hooks[0].weight = -104'`),
-		exactSourceLine("multiple failed hooks refusal", `expect_rejected two-failures '.hooks[2].last_run = .hooks[1].last_run'`),
+		exactSourceLine("unstarted hook refusal", `expect_rejected never-started '.hooks[1].last_run.started_at = ""'`),
+		exactSourceLine("multiple failed hooks refusal", `expect_rejected two-failures '.hooks[0].last_run.phase = "Failed"'`),
+		exactSourceLine("missing failure refusal", `expect_rejected no-failure '.hooks[1].last_run.phase = "Succeeded"'`),
 		exactSourceLine("later hook execution refusal", `expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'`),
 		exactSourceLine("malformed later hook weight refusal", `expect_rejected malformed-later-weight '.hooks[2].weight = "not-a-weight"'`),
 		exactSourceLine("terminal failed-hook self-test evidence", `printf '%s\n' 'failed hook evidence self-test: PASS'`),
@@ -5341,11 +4804,6 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		// trim is shell, and a guard that stopped reporting a failed statement
 		// leaves the phase blaming the operator for setup it never received.
 		exactSourceLine("SQL statement self-test wiring", `"$ROOT_DIR/hack/e2e-sql-selftest.sh"`),
-		// The hook log is the only thing that says why a refused upgrade was
-		// refused, and the shell that captures it races the cluster from both
-		// ends. A capture that lost that race reported nothing and read as a
-		// hook that printed nothing, so its self-test is wired here too.
-		exactSourceLine("hook-log capture self-test wiring", `"$ROOT_DIR/hack/e2e-hook-log-capture-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -5368,12 +4826,9 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-sql-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the SQL statement self-test must be wired exactly once", files.staticChecks)
 	}
-	if bytes.Count(staticContents, []byte("e2e-hook-log-capture-selftest.sh")) != 1 {
-		return fmt.Errorf("%s: the hook-log capture self-test must be wired exactly once", files.staticChecks)
-	}
 	for _, step := range []sourceContractStep{
 		staticContract[1], staticContract[3], staticContract[4], staticContract[5],
-		staticContract[6], staticContract[7], staticContract[8],
+		staticContract[6], staticContract[7],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
@@ -6136,18 +5591,6 @@ func verifyExactShellFunctionContract(path string, contents []byte, name, expect
 	return nil
 }
 
-func verifySameCandidateRetryDiagnostics(path string, contents []byte) error {
-	for _, contract := range []struct{ name, digest, description string }{
-		{"retry_same_candidate_with_diagnostics", "c3ef6b8ef3b0baca8e1668ba2089396a8d8dbef2459425fa8731fbde62880764", "same-candidate recovery exact Helm retry"},
-		{"emit_same_candidate_retry_reconcile_diagnostic_if_available", "b1a26e153aa1119e51065f8d26490ee8e0c8afe4e0f4278b7e037117885b071f", "same-candidate recovery credential-safe diagnostic"},
-	} {
-		if err := verifyAuditedShellFunctionDigest(path, contents, contract.name, contract.digest, contract.description); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func verifyAuditedShellFunctionDigest(path string, contents []byte, name, expected, description string) error {
 	functionPattern := regexp.MustCompile(
 		`(?ms)^` + regexp.QuoteMeta(name) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`,
@@ -6249,9 +5692,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_KUBERNETES_VERSION", value: `$K8S_VERSION`},
 				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
 				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
-				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
-				{name: "E2E_API_SERVER_NODE_INVENTORY_FILE", value: `$NODE_READINESS_FILE`},
-				{name: "E2E_API_SERVER_ENDPOINT_INVENTORY_FILE", value: `$API_SERVER_ENDPOINT_INVENTORY_FILE`},
 				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
 				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
 				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
@@ -6451,9 +5891,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
 				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
 				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
-				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
-				{name: "E2E_API_SERVER_NODE_INVENTORY_FILE", value: `$NODE_READINESS_FILE`},
-				{name: "E2E_API_SERVER_ENDPOINT_INVENTORY_FILE", value: `$API_SERVER_ENDPOINT_INVENTORY_FILE`},
 				{name: "E2E_PHASE", value: `uninstall`},
 			},
 		},
@@ -6736,136 +6173,6 @@ func exactSourceLineSequence(name string, lines []string) sourceContractStep {
 	}
 	pattern.WriteString(`\r?$`)
 	return sourceContractStep{name: name, pattern: regexp.MustCompile(pattern.String())}
-}
-
-func verifyHookProgressAuthorizationSource(path string, contents []byte) error {
-	if !sourceLinePattern(`HOOK_PROGRESS_AUTHORIZATION_SECONDS=90`).Match(contents) {
-		return fmt.Errorf("%s: hook progress authorization aggregate deadline must remain 90 seconds", path)
-	}
-	contracts := []struct {
-		function, completion string
-		lines                []string
-	}{
-		{
-			function:   "prepare_hook_progress_authorization_endpoints",
-			completion: `}`,
-			lines: []string{
-				`[ -n "$E2E_DOCKER_CONTEXT" ] || fail "hook progress authorization requires an explicit Docker context"`,
-				`printf '%s\n' "$E2E_KIND_CLUSTER_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||`,
-				`[ "${#E2E_KIND_CLUSTER_NAME}" -le 63 ] || fail "hook progress kind cluster name exceeds 63 bytes"`,
-				`require_mode_0600_regular_file "$E2E_API_SERVER_NODE_INVENTORY_FILE" hook-progress-node-inventory`,
-				`require_mode_0600_regular_file "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" hook-progress-endpoint-inventory`,
-				`cp "$E2E_API_SERVER_NODE_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-nodes.json"`,
-				`cp "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-slices.json"`,
-				`jq -e --arg cluster "$E2E_KIND_CLUSTER_NAME" \`,
-				`--slurpfile nodes "$WORK_DIR/hook-progress-authorization-nodes.json" \`,
-				`-f "$ROOT_DIR/hack/api-server-endpoint-inventory.jq" \`,
-				`"$WORK_DIR/hook-progress-authorization-slices.json" >/dev/null ||`,
-				`fail "hook progress authorization inventory is not the exact three control-plane endpoints"`,
-				`.endpoints[].addresses[]] | sort[]' "$WORK_DIR/hook-progress-authorization-slices.json" \`,
-				`>"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS" || fail "could not materialize hook progress endpoints"`,
-				`hook_auth_primary_address=$(jq -er --arg name "${E2E_KIND_CLUSTER_NAME}-control-plane" '`,
-				`select(.type == "InternalIP") | .address`,
-				`hook_auth_container=$(docker --context "$E2E_DOCKER_CONTEXT" container inspect \`,
-				`--format '{"id":{{json .Id}},"name":{{json .Name}},"address":{{json .NetworkSettings.Networks.kind.IPAddress}}}' \`,
-				`"${E2E_KIND_CLUSTER_NAME}-control-plane") || fail "could not inspect the hook progress control-plane container"`,
-				`HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID=$(printf '%s\n' "$hook_auth_container" |`,
-				`jq -er --arg name "/${E2E_KIND_CLUSTER_NAME}-control-plane" --arg address "$hook_auth_primary_address" '`,
-				`select(.name == $name and .address == $address and (.id | test("^[a-f0-9]{64}$"))) | .id`,
-			},
-		},
-		{
-			function: "expect_hook_progress_authorization", completion: `case "$hook_auth_expected:$hook_auth_allowed" in`,
-			lines: []string{
-				`hook_auth_expected=$1`, `hook_auth_verb=$2`, `hook_auth_resource=${3%%/*}`,
-				`hook_auth_namespace=$E2E_OPERATOR_NAMESPACE`,
-				`*/*) hook_auth_subresource=${3#*/} ;;`,
-				`jobs) hook_auth_group='batch' ;;`, `pods) hook_auth_group= ;;`,
-				`hook_auth_group=admissionregistration.k8s.io`, `hook_auth_resource=${hook_auth_resource%%.*}`,
-				`hook_auth_namespace=`,
-				`[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary UID is missing"`,
-				`hook_auth_remaining=$((HOOK_PROGRESS_AUTHORIZATION_DEADLINE - $(date +%s)))`,
-				`[ "$hook_auth_remaining" -gt 0 ] ||`,
-				`[ "$hook_auth_remaining" -le 15 ] || hook_auth_remaining=15`,
-				`jq -n --arg namespace "$hook_auth_namespace" --arg verb "$hook_auth_verb" \`,
-				`--arg group "$hook_auth_group" --arg resource "$hook_auth_resource" --arg subresource "$hook_auth_subresource" '`,
-				`spec:{resourceAttributes:{namespace:$namespace,verb:$verb,group:$group,resource:$resource,subresource:$subresource}}}`,
-				`if docker --context "$E2E_DOCKER_CONTEXT" exec -i "$HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID" \`,
-				`kubectl --kubeconfig /etc/kubernetes/admin.conf \`,
-				`--server "https://${HOOK_PROGRESS_AUTHORIZATION_ENDPOINT}:6443" --tls-server-name kubernetes \`,
-				`--as "system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY" \`,
-				`--as-uid "$HOOK_PROGRESS_ADVERSARY_UID" \`,
-				`--as-group system:serviceaccounts \`,
-				`--as-group "system:serviceaccounts:$E2E_OPERATOR_NAMESPACE" \`,
-				`--as-group system:authenticated --request-timeout="${hook_auth_remaining}s" \`,
-				`create --raw /apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f - \`,
-				`hook_auth_status=$?`,
-				`fail "hook progress authorization query failed at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3 (exit $hook_auth_status)"`,
-				`hook_auth_allowed=$(jq -ser '`,
-				`select(length == 1) | .[0] |`,
-				`select(.apiVersion == "authorization.k8s.io/v1" and .kind == "SelfSubjectAccessReview") |`,
-				`.status | select((.allowed | type) == "boolean" and`,
-				`((has("denied") | not) or (.denied | type) == "boolean") and`,
-				`((has("evaluationError") | not) or .evaluationError == "") and`,
-				`(.allowed != true or .denied != true)) | .allowed | tostring`,
-				`[ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ] ||`,
-				`case "$hook_auth_expected:$hook_auth_allowed" in`,
-				`yes:true | no:false) return 0 ;;`, `yes:false) return 1 ;;`,
-				`*) fail "hook progress adversary has an unexpected $hook_auth_verb $3 grant at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT" ;;`,
-			},
-		},
-		{
-			function: "wait_for_hook_progress_authorization", completion: `if [ "$hook_auth_ready" -eq 1 ]; then`,
-			lines: []string{
-				`prepare_hook_progress_authorization_endpoints`,
-				`HOOK_PROGRESS_AUTHORIZATION_DEADLINE=$(($(date +%s) + HOOK_PROGRESS_AUTHORIZATION_SECONDS))`,
-				`while [ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ]; do`,
-				`hook_auth_ready=1`, `hook_auth_endpoint_count=0`,
-				`while IFS= read -r HOOK_PROGRESS_AUTHORIZATION_ENDPOINT; do`,
-				`hook_auth_endpoint_count=$((hook_auth_endpoint_count + 1))`,
-				`for hook_auth_capability in 'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status' \`,
-				`'get pods' 'patch pods' 'get pods/status' 'patch pods/status'; do`,
-				`if expect_hook_progress_authorization yes "${hook_auth_capability%% *}" "${hook_auth_capability#* }"; then`,
-				`hook_auth_ready=0`,
-				`'create validatingadmissionpolicies.admissionregistration.k8s.io' \`,
-				`'create validatingadmissionpolicybindings.admissionregistration.k8s.io' \`,
-				`'create jobs' 'update jobs' 'update pods'; do`,
-				`expect_hook_progress_authorization no "${hook_auth_capability%% *}" "${hook_auth_capability#* }"`,
-				`done <"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS"`,
-				`[ "$hook_auth_endpoint_count" -eq 3 ] || fail "hook progress authorization did not query all three API servers"`,
-				`if [ "$hook_auth_ready" -eq 1 ]; then`, `return 0`, `sleep 1`,
-				`fail "hook progress adversary authorization did not converge on all three API servers"`,
-			},
-		},
-		{
-			function: "create_hook_progress_adversary_and_hold", completion: `wait_for_hook_progress_authorization`,
-			lines: []string{
-				`HOOK_PROGRESS_ADVERSARY_UID=$(kube -n "$E2E_OPERATOR_NAMESPACE" \`,
-				`get serviceaccount "$HOOK_PROGRESS_ADVERSARY" -o jsonpath='{.metadata.uid}' \`,
-				`[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary has no UID"`,
-				`wait_for_hook_progress_authorization`,
-				`held_components='["crd-manager-image-check","hook-identity-probe","crd-manager-preflight","crd-manager"]'`,
-			},
-		},
-	}
-	for _, contract := range contracts {
-		pattern := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(contract.function) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`)
-		matches := pattern.FindAll(contents, -1)
-		if len(matches) != 1 {
-			return fmt.Errorf("%s: hook progress authorization must have one auditable %s body", path, contract.function)
-		}
-		steps := make([]sourceContractStep, 0, len(contract.lines))
-		for _, line := range contract.lines {
-			steps = append(steps, exactSourceLine("hook progress authorization "+contract.function, line))
-		}
-		if err := verifyOrderedSourceContract(path, matches[0], steps); err != nil {
-			return err
-		}
-		if err := rejectEarlySuccessfulReturn(path, matches[0], sourceLinePattern(contract.function+"() {"), sourceLinePattern(contract.completion)); err != nil {
-			return fmt.Errorf("hook progress authorization %s: %w", contract.function, err)
-		}
-	}
-	return nil
 }
 
 func verifyOrderedSourceContract(path string, contents []byte, steps []sourceContractStep) error {

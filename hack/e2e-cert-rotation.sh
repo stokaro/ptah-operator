@@ -104,9 +104,7 @@ webhook_bundle() {
 
 # uniform_service_bundle prints the one caBundle every entry targeting the
 # webhook Service carries, and nothing unless those entries are exactly the
-# rotator's managed inventory. The two dormant certificate-rotation canary
-# entries target another Service; the rotator no longer maintains them, so
-# they are outside this check.
+# rotator's managed inventory.
 uniform_service_bundle() {
 	kind=$1
 	configuration=$2
@@ -541,63 +539,6 @@ rotator_kube() {
 		"$@"
 }
 
-CERTIFICATE_WRITE_PROBE_INDEX=0
-expect_certificate_write_denial() {
-	resource=$1
-	description=$2
-	filter=$3
-	denial=$4
-	CERTIFICATE_WRITE_PROBE_INDEX=$((CERTIFICATE_WRITE_PROBE_INDEX + 1))
-	source=$UPGRADE_WORK_DIR/certificate-write-${CERTIFICATE_WRITE_PROBE_INDEX}-source.json
-	candidate=$UPGRADE_WORK_DIR/certificate-write-${CERTIFICATE_WRITE_PROBE_INDEX}-candidate.json
-	error_file=$UPGRADE_WORK_DIR/certificate-write-${CERTIFICATE_WRITE_PROBE_INDEX}.err
-	kubectl --kubeconfig "$KUBECONFIG_FILE" get "$resource" ptah-operator-admission -o json >"$source"
-	jq "$filter" "$source" >"$candidate"
-	if rotator_kube replace --field-manager='' --dry-run=server -f "$candidate" \
-		>/dev/null 2>"$error_file"; then
-		fail "certificate write guard accepted ${description}"
-	fi
-	grep -F "$denial" "$error_file" >/dev/null ||
-		fail "${description} was not rejected by the typed certificate write guard"
-}
-
-prove_certificate_write_guards() {
-	proof_bundle=$(printf '%s' 'certificate-write-boundary-proof' | base64 | tr -d '\n')
-	for resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
-		source=$UPGRADE_WORK_DIR/${resource}-ca-source.json
-		candidate=$UPGRADE_WORK_DIR/${resource}-ca-candidate.json
-		kubectl --kubeconfig "$KUBECONFIG_FILE" get "$resource" ptah-operator-admission -o json >"$source"
-		jq --arg bundle "$proof_bundle" '(.webhooks[].clientConfig.caBundle) = $bundle' \
-			"$source" >"$candidate"
-		rotator_kube replace --field-manager='' --dry-run=server -f "$candidate" >/dev/null ||
-			fail "certificate write guard rejected a bounded CA-only ${resource} update"
-	done
-	expect_certificate_write_denial mutatingwebhookconfiguration \
-		'a mutating reinvocationPolicy change' \
-		'.webhooks[0].reinvocationPolicy = "IfNeeded"' \
-		'Ptah certificate mutating write guard rejected an unsafe mutation'
-	expect_certificate_write_denial validatingwebhookconfiguration \
-		'a validating failurePolicy change' \
-		'.webhooks[0].failurePolicy = "Ignore"' \
-		'Ptah certificate validating write guard rejected an unsafe mutation'
-	expect_certificate_write_denial validatingwebhookconfiguration \
-		'a validating metadata annotation change' \
-		'.metadata.annotations["operator.ptah.run/certificate-write-e2e"] = "changed"' \
-		'Ptah certificate validating write guard rejected an unsafe mutation'
-	expect_certificate_write_denial validatingwebhookconfiguration \
-		'an empty validating caBundle' \
-		'.webhooks[0].clientConfig.caBundle = ""' \
-		'Ptah certificate validating write guard rejected an unsafe mutation'
-	# shellcheck disable=SC2016 # jq binds $first; the shell must not expand it.
-	expect_certificate_write_denial validatingwebhookconfiguration \
-		'a validating webhook reorder' \
-		'.webhooks[0] as $first | .webhooks[0] = .webhooks[1] | .webhooks[1] = $first' \
-		'Ptah certificate validating write guard rejected an unsafe mutation'
-	printf '%s\n' 'e2e certificate rotation: typed certificate write boundary proof passed'
-}
-
-prove_certificate_write_guards
-
 GUARD_ERROR=$UPGRADE_WORK_DIR/secret-guard.err
 # This proof is about the recovery contract, so it asks with the identity the
 # rotator actually has: its ServiceAccount, bound to its running Pod.
@@ -724,9 +665,8 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" get validatingwebhookconfiguration "$VAL
 OLD_ROTATOR_POD=$(live_pod_name certificate-rotation)
 OLD_ROTATOR_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$OLD_ROTATOR_POD" -o jsonpath='{.metadata.uid}')
-# The retained runtime guard pins the release's Deployments, so a rollout
-# restart, which writes a Pod-template annotation, is refused. Replacing the
-# Pod is what this proof needs and what the guard leaves to the ReplicaSet.
+# Replacing the rotator's Pod is what this proof needs: a new process that
+# reads the corrupted CA state from nothing but the cluster.
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	delete pod "$OLD_ROTATOR_POD" --wait=false >/dev/null
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
