@@ -120,7 +120,10 @@ func TestAManagerReadsARefusalFromARunnerOfAnotherProtocol(t *testing.T) {
 		document := map[string]any{
 			"protocolVersion": foreign, "operation": "apply", "operationId": "apply-1",
 			"childExitCode": -1, "stdout": "",
-			"error": map[string]any{"code": CodeRunnerProtocolMismatch, "message": "the Job expects runner protocol 5"},
+			"error": map[string]any{
+				"code":    CodeRunnerProtocolMismatch,
+				"message": "the Job expects runner protocol " + strconv.Itoa(ProtocolVersion),
+			},
 		}
 		if mutate != nil {
 			mutate(document)

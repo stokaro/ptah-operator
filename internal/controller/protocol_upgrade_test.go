@@ -13,13 +13,15 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-func TestProtocolFiveFencesDispatchedProtocolFourOperationBeforeLogHarvest(t *testing.T) {
+// TestTheProtocolFencesAnOperationThePreviousOneDispatched upgrades a
+// manager across one runner protocol version, with a read-only operation the
+// previous protocol dispatched still standing. The binding rotates and the
+// operation is fenced before its log is read, because its frame is written in
+// a protocol this manager does not read.
+func TestTheProtocolFencesAnOperationThePreviousOneDispatched(t *testing.T) {
 	t.Parallel()
 
-	const priorProtocolVersion int32 = 4
-	if runner.ProtocolVersion != 5 {
-		t.Fatalf("runner.ProtocolVersion = %d, want 5 for this upgrade regression", runner.ProtocolVersion)
-	}
+	priorProtocolVersion := int32(runner.ProtocolVersion) - 1
 
 	schema := schemaFixture()
 	schema.Finalizers = []string{activeOperationFinalizer}
@@ -27,8 +29,8 @@ func TestProtocolFiveFencesDispatchedProtocolFourOperationBeforeLogHarvest(t *te
 	schema.Status.ExecutionBinding.RunnerProtocolVersion = priorProtocolVersion
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 		Type:      operatorv1alpha1.OperationResolve,
-		ID:        "protocol-four-resolve",
-		JobName:   "protocol-four-resolve-job",
+		ID:        "previous-protocol-resolve",
+		JobName:   "previous-protocol-resolve-job",
 		JobUID:    "job-uid",
 		StartedAt: metav1.Now(),
 		Attempt:   1,
@@ -39,7 +41,7 @@ func TestProtocolFiveFencesDispatchedProtocolFourOperationBeforeLogHarvest(t *te
 	oldEpoch := schema.Status.ExecutionBinding.Epoch
 	oldOperation := schema.Status.ActiveOperation.DeepCopy()
 
-	logs := &safetyCountingLogs{content: []byte("protocol-four result must not be read")}
+	logs := &safetyCountingLogs{content: []byte("a previous-protocol result must not be read")}
 	reconciler, api := fakeReconciler(t, logs, schema, job, pod)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {

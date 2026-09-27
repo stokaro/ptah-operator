@@ -19,7 +19,7 @@
           "ptahRelease": null,
           "ptahCommit": "dac0872ac5952dd9a9df38479834853701f4b586",
           "ptahDescribe": "v0.9.0-34-gdac0872ac",
-          "runnerProtocolVersion": 5,
+          "runnerProtocolVersion": 6,
           "evidence": "kubernetes-e2e",
           "scope": "The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL."
         }

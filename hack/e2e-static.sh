@@ -690,10 +690,25 @@ if manager_pods_replaced '["old-a","old-b"]' '["new-a"]' >/dev/null 2>&1; then
 	exit 1
 fi
 
-grep -Eq '^[[:space:]]*ProtocolVersion = 5$' "$ROOT_DIR/internal/runner/protocol.go" || {
-	printf '%s\n' 'e2e static: runner protocol constant is not version 5' >&2
+# The acceptance scripts read the runner protocol from support/ptah.json, so
+# the constant, the catalog and the protocol record have to name one version:
+# a bump that moved only the constant would leave every lifecycle asserting
+# the old one.
+runner_protocol_constant=$(sed -n 's/^[[:space:]]*ProtocolVersion = \([1-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/runner/protocol.go")
+runner_protocol_catalog=$(jq -er '
+  [.releases[] | select(.operator == "edge") | .verified[].runnerProtocolVersion] | unique |
+  if length == 1 and (.[0] | type) == "number" then .[0]
+  else error("support/ptah.json must record exactly one runner protocol version for edge") end
+' "$ROOT_DIR/support/ptah.json")
+runner_protocol_record=$(jq -er '.protocolVersion' "$ROOT_DIR/support/runner-protocol.json")
+if [ -z "$runner_protocol_constant" ] ||
+	[ "$runner_protocol_constant" != "$runner_protocol_catalog" ] ||
+	[ "$runner_protocol_constant" != "$runner_protocol_record" ]; then
+	printf 'e2e static: runner protocol constant %s, support/ptah.json %s and support/runner-protocol.json %s disagree\n' \
+		"$runner_protocol_constant" "$runner_protocol_catalog" "$runner_protocol_record" >&2
 	exit 1
-}
+fi
 grep -F 'TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol' \
 	"$ROOT_DIR/internal/runner/protocol_test.go" >/dev/null || {
 	printf '%s\n' 'e2e static: previous runner protocol rejection regression is missing' >&2
@@ -1748,6 +1763,7 @@ for engine in postgresql mysql; do
 		exit 1
 	}
 done
+# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
 for lifecycle_marker in \
 	'wait_for_in_sync' \
 	'assert_periodic_noop' \
@@ -1789,7 +1805,7 @@ for lifecycle_marker in \
 	'registryAuthFrom' \
 		'coordinationKey' \
 		'.status.target.driftReportDigest != ""' \
-		'.spec.runnerProtocolVersion == 5' \
+		'.spec.runnerProtocolVersion == $runnerProtocolVersion' \
 		'e2e-faults.sh' \
 	'run_mysql_dsn_refusal' \
 	'audit_started_containers' \

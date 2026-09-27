@@ -36,7 +36,7 @@ const (
 	// keeps the number, unless support/runner-protocol.json declares why the
 	// contract stayed the same. Every Job names this number in
 	// EnvRunnerProtocolVersion, and a runner of another protocol refuses it.
-	ProtocolVersion = 5
+	ProtocolVersion = 6
 
 	// JSON escaping can expand a bounded plan payload. This shared cap includes
 	// the worst-case expansion plus fixed result-envelope headroom.

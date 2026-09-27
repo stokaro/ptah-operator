@@ -170,7 +170,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "5"
+                "value": "6"
               }
             ],
             "resources": {},
@@ -331,7 +331,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "5"
+                "value": "6"
               },
               {
                 "name": "PTAH_SCHEMA_FILE",

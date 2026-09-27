@@ -119,7 +119,7 @@
       "executorImage": "registry.example:5000/ptah-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "ptahVersion": "939c2fb",
       "runnerImage": "registry.example:5000/ptah-runner@sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      "runnerProtocolVersion": 5
+      "runnerProtocolVersion": 6
     },
     "history": {
       "appliedCount": 3,

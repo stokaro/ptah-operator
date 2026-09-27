@@ -248,7 +248,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "5"
+                "value": "6"
               },
               {
                 "name": "PTAH_VERIFICATION_POLICY",

@@ -60,7 +60,7 @@ spec:
   ptahVersion: v0.9.0-34-gdac0872ac
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
-  runnerProtocolVersion: 5
+  runnerProtocolVersion: 6
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   controllerStateVersion: 2
 ```
@@ -131,7 +131,7 @@ spec:
   ptahVersion: v0.9.0-34-gdac0872ac
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
-  runnerProtocolVersion: 5
+  runnerProtocolVersion: 6
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   controllerStateVersion: 2
 ```
@@ -172,7 +172,7 @@ spec:
   ptahVersion: v0.9.0-34-gdac0872ac
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
-  runnerProtocolVersion: 5
+  runnerProtocolVersion: 6
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   controllerStateVersion: 2
 ```

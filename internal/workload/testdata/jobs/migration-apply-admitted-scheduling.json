@@ -222,7 +222,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "5"
+                "value": "6"
               }
             ],
             "resources": {
@@ -444,7 +444,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "5"
+                "value": "6"
               },
               {
                 "name": "PTAH_TERMINATION_GRACE_PERIOD_SECONDS",

@@ -715,7 +715,7 @@ func TestObserveFramesTheForcedRowSecurityCategories(t *testing.T) {
 			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":%q,"dialect":"postgres","findings":[{"category":%q,"count":1,"severity":%q}],"diff":{"changed":true}}`,
 				test.severity, test.category, test.severity)
 			result := Run(context.Background(), Config{
-				Operation: OperationObserve, Environment: databaseEnvironment(operationID),
+				Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment(operationID)),
 				Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
 			})
 			want := []DriftFindingSummary{{Category: test.category, Count: 1, Severity: test.severity}}
@@ -754,7 +754,7 @@ func TestObserveFramesEveryCategoryThePinnedPtahEmits(t *testing.T) {
 			report := fmt.Sprintf(`{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":%q,"count":3,"severity":"warning"}],"diff":{"changed":true}}`,
 				category)
 			result := Run(context.Background(), Config{
-				Operation: OperationObserve, Environment: databaseEnvironment(operationID),
+				Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment(operationID)),
 				Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
 			})
 			if result.Error != nil || len(result.DriftFindings) != 1 || result.DriftFindings[0].Category != category {
@@ -883,7 +883,7 @@ func TestObserveFramesDriftTheReportHasNoCategoryFor(t *testing.T) {
 			operationID := "observe-grant-only-" + strings.ReplaceAll(test.name, " ", "-")
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: test.report, exitCode: 1}}}
 			result := Run(context.Background(), Config{
-				Operation: OperationObserve, Environment: databaseEnvironment(operationID), Executor: executor,
+				Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment(operationID)), Executor: executor,
 			})
 			if result.Error != nil || result.ChildExitCode != 0 || result.DriftReportDigest == "" || result.Stdout != "" {
 				t.Fatalf("Run() = %#v, want a framed observation of drift", result)
@@ -923,7 +923,7 @@ func TestObserveRefusesAnUncategorizedDriftAboveSafe(t *testing.T) {
 
 	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","diff":{"grants_added":[]}}`
 	result := Run(context.Background(), Config{
-		Operation: OperationObserve, Environment: databaseEnvironment("observe-uncategorized-warning"),
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-uncategorized-warning")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
 	})
 	if result.Error == nil || result.Error.Code != "invalid_observed_state" || result.ObservedDrift ||

@@ -3641,7 +3641,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
 		}),
 		exactSourceLineSequence("durable Job archive normalized result binding", []string{
-			`.protocolVersion == 5 and .operation == $operation and`,
+			`.protocolVersion == $runnerProtocolVersion and .operation == $operation and`,
 			`.operationId == $operationID and .truncation == null`,
 			`' "$validated_result_file" >/dev/null ||`,
 		}),

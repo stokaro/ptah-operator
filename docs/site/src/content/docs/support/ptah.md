@@ -35,7 +35,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- `v0.9.0-34-gdac0872ac`, which is not a Ptah release. Commit [`dac0872ac5952dd9a9df38479834853701f4b586`](https://github.com/stokaro/ptah/commit/dac0872ac5952dd9a9df38479834853701f4b586), runner protocol version 5, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- `v0.9.0-34-gdac0872ac`, which is not a Ptah release. Commit [`dac0872ac5952dd9a9df38479834853701f4b586`](https://github.com/stokaro/ptah/commit/dac0872ac5952dd9a9df38479834853701f4b586), runner protocol version 6, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 

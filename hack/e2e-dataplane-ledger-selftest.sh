@@ -5,6 +5,16 @@ set -eu
 
 unset CDPATH
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
+
+# The runner protocol this tree speaks. support/ptah.json records it for the
+# release under test, and hack/verifyptahsupport holds that record to
+# runner.ProtocolVersion, so an assertion reads it here rather than writing
+# the number down a second time.
+RUNNER_PROTOCOL_VERSION=$(jq -er '
+  [.releases[] | select(.operator == "edge") | .verified[].runnerProtocolVersion] | unique |
+  if length == 1 and (.[0] | type) == "number" then .[0]
+  else error("support/ptah.json must record exactly one runner protocol version for edge") end
+' "$ROOT_DIR/support/ptah.json")
 SOURCE_FILE=$ROOT_DIR/hack/e2e-dataplane.sh
 FAULT_SOURCE_FILE=$ROOT_DIR/hack/e2e-faults.sh
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-ledger-selftest.XXXXXX")
@@ -256,10 +266,11 @@ write_valid_job_evidence() {
     ' >"$fixture_archive/pod.json"
 	printf '%s\n' 'fixture raw transport' >"$fixture_archive/ptah.log"
 	jq -n \
+		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 		--arg operation "$fixture_operation" \
 		--arg operationID "$TEST_OPERATION_ID" '
       {
-        protocolVersion: 5,
+        protocolVersion: $runnerProtocolVersion,
         operation: $operation,
         operationId: $operationID,
         truncation: null,
@@ -392,9 +403,10 @@ emit_empty_job_list() {
 # a sentence the re-read does not wait for.
 write_result_transport_frames() {
 	transport_payload=$(jq -cn \
+		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 		--arg operationID "$TEST_OPERATION_ID" \
 		--arg coordinationDigest "$TEST_COORDINATION_DIGEST" '
-      {protocolVersion: 5, operation: "plan", operationId: $operationID,
+      {protocolVersion: $runnerProtocolVersion, operation: "plan", operationId: $operationID,
        childExitCode: 0, stdout: "", coordinationDigest: $coordinationDigest,
        planOutcome: "NoChanges"}') ||
 		test_fail "could not build the transport result payload"
@@ -403,9 +415,10 @@ write_result_transport_frames() {
 	# else and be refused as a frame still arriving, which is the opposite of
 	# what the wrong transport is here to measure.
 	transport_divergent_payload=$(jq -cn \
+		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 		--arg operationID "$TEST_OPERATION_ID" \
 		--arg coordinationDigest "$TEST_DIVERGENT_COORDINATION_DIGEST" '
-      {protocolVersion: 5, operation: "plan", operationId: $operationID,
+      {protocolVersion: $runnerProtocolVersion, operation: "plan", operationId: $operationID,
        childExitCode: 0, stdout: "", coordinationDigest: $coordinationDigest,
        planOutcome: "NoChanges"}') ||
 		test_fail "could not build the divergent transport result payload"
@@ -515,7 +528,8 @@ transport_settles_after_an_incomplete_read() (
 		test_fail "settled transport read the container log $(transport_read_count) times, want $TRANSPORT_ARRIVAL_READS"
 	grep -Fx PTAH_RUNNER_RESULT_END_V1 "$TRANSPORT_LOG_FILE" >/dev/null ||
 		test_fail "settled transport retained a log whose frame never closed"
-	jq -e '.protocolVersion == 5' "$TRANSPORT_RESULT_FILE" >/dev/null ||
+	jq -e --argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
+		'.protocolVersion == $runnerProtocolVersion' "$TRANSPORT_RESULT_FILE" >/dev/null ||
 		test_fail "settled transport did not retain its validated result"
 )
 
@@ -1175,8 +1189,9 @@ selected_job_gc_fallback_successful_path() (
 	[ "$CAPTURED_JOB_EVIDENCE_DIR" = "$fixture_archive" ] ||
 		test_fail "GC fallback did not expose the validated archive"
 	jq -e \
+		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 		--arg operationID "$TEST_OPERATION_ID" '
-      .protocolVersion == 5 and .operation == "plan" and
+      .protocolVersion == $runnerProtocolVersion and .operation == "plan" and
       .operationId == $operationID
     ' "$OUTPUT_FILE" >/dev/null ||
 		test_fail "GC fallback did not consume the normalized archived result"
