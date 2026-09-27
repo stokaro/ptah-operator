@@ -77,7 +77,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "12b83650fc22aa09bd85735b398cdd7e5bc3ec86192789227a278109eb927410"
+	ciWorkflowSHA256                = "da82b84af66147bafb2cc4a0c45bce6d9387488f9088b0c7c8c827820ffc9c4e"
 	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -801,19 +801,23 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		return err
 	}
 	// The three values the image build is handed are read out of the matrix
-	// this step just validated, with jq -e so a missing field fails the step
-	// rather than exporting an empty pin.
+	// this step just validated, with jq -e, and assigned before anything is
+	// printed: set -e acts on a failed substitution in an assignment and
+	// ignores one in printf's arguments, which exported "null" for a missing
+	// field.
 	const wantMatrixRun = `set -euo pipefail
 matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
-echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 acceptance="$(go run ./hack/verify-kubernetes-support.go -output=acceptance)"
-echo "acceptance=$acceptance" >> "$GITHUB_OUTPUT"
-printf 'prepare_kubernetes_version=%s\n' \
-  "$(jq -er '.[-1].kubernetes_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
-printf 'prepare_node_image=%s\n' \
-  "$(jq -er '.[-1].node_image' <<<"$matrix")" >> "$GITHUB_OUTPUT"
-printf 'prepare_kind_version=%s\n' \
-  "$(jq -er '.[-1].kind_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+kubernetes_version="$(jq -er '.[-1].kubernetes_version' <<<"$matrix")"
+node_image="$(jq -er '.[-1].node_image' <<<"$matrix")"
+kind_version="$(jq -er '.[-1].kind_version' <<<"$matrix")"
+{
+  echo "matrix=$matrix"
+  echo "acceptance=$acceptance"
+  printf 'prepare_kubernetes_version=%s\n' "$kubernetes_version"
+  printf 'prepare_node_image=%s\n' "$node_image"
+  printf 'prepare_kind_version=%s\n' "$kind_version"
+} >> "$GITHUB_OUTPUT"
 `
 	if matrixStep.If != "" || matrixStep.Shell != "bash" || matrixStep.Run != wantMatrixRun {
 		return fmt.Errorf("%s: support-matrix step must unconditionally export the verified dynamic matrix", path)

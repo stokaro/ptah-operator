@@ -1,0 +1,4 @@
+# The workflows and the gates under hack/ decide what CI and a release accept,
+# so a change to either needs a review from their owner.
+/.github/ @denisvmedia
+/hack/ @denisvmedia

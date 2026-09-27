@@ -63,21 +63,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      # Each value is assigned before it is printed. A command substitution
+      # that fails inside printf's arguments leaves printf's own status, so
+      # jq -e there exported "null" for a missing field instead of failing.
       - name: Validate support metadata and export matrix
         id: matrix
         shell: bash
         run: |
           set -euo pipefail
           matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           acceptance="$(go run ./hack/verify-kubernetes-support.go -output=acceptance)"
-          echo "acceptance=$acceptance" >> "$GITHUB_OUTPUT"
-          printf 'prepare_kubernetes_version=%s\n' \
-            "$(jq -er '.[-1].kubernetes_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
-          printf 'prepare_node_image=%s\n' \
-            "$(jq -er '.[-1].node_image' <<<"$matrix")" >> "$GITHUB_OUTPUT"
-          printf 'prepare_kind_version=%s\n' \
-            "$(jq -er '.[-1].kind_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+          kubernetes_version="$(jq -er '.[-1].kubernetes_version' <<<"$matrix")"
+          node_image="$(jq -er '.[-1].node_image' <<<"$matrix")"
+          kind_version="$(jq -er '.[-1].kind_version' <<<"$matrix")"
+          {
+            echo "matrix=$matrix"
+            echo "acceptance=$acceptance"
+            printf 'prepare_kubernetes_version=%s\n' "$kubernetes_version"
+            printf 'prepare_node_image=%s\n' "$node_image"
+            printf 'prepare_kind_version=%s\n' "$kind_version"
+          } >> "$GITHUB_OUTPUT"
       # The lifecycle job needs the tested Ptah commit twice -- to check the
       # source out and to build the executor from it -- and the catalog is
       # where that commit is declared. Exporting it here is what keeps the
