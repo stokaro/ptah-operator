@@ -401,10 +401,14 @@ func TestGeneratedPtahSchemaCRDBindsRegistryAccessPolicy(t *testing.T) {
 	}
 
 	transport := desired.Properties["transport"]
+	// The executor loads a client pair into one process-wide TLS configuration
+	// and cannot keep it from a registry a redirect lands on, so the API offers
+	// no way to name one.
+	if _, selectable := transport.Properties["clientCertificateFrom"]; selectable {
+		t.Error("spec.desired.transport exposes a client certificate the executor cannot scope across redirects")
+	}
 	wantRules := map[string]bool{
-		"!self.plainHTTP || !has(self.caFrom)":                false,
-		"!self.plainHTTP || !has(self.clientCertificateFrom)": false,
-		"!has(self.clientCertificateFrom)":                    false,
+		"!self.plainHTTP || !has(self.caFrom)": false,
 	}
 	for _, validation := range transport.XValidations {
 		if _, ok := wantRules[validation.Rule]; ok {
@@ -490,8 +494,14 @@ func TestGeneratedPtahSchemaAdmissionSnapshotBounds(t *testing.T) {
 	if !reflect.DeepEqual(pendingSnapshot, snapshot) {
 		t.Fatal("status.pendingObservation.admissionSnapshot does not preserve the bounded active-operation snapshot schema")
 	}
+	// An Apply claim persists its snapshot one pass before it dispatches. A Job
+	// standing under the name it reserved before then finishes the claim as
+	// outcome-unknown, and the pending observation that records it has no
+	// snapshot to copy. TestAnUndispatchedApplyWhoseJobNameIsTakenOwesProofWithoutASnapshot
+	// in internal/controller drives that path.
 	if slices.Contains(pendingObservation.Required, "admissionSnapshot") {
-		t.Fatal("status.pendingObservation.admissionSnapshot must remain optional")
+		t.Fatal("status.pendingObservation.admissionSnapshot is required, but an undispatched Apply " +
+			"whose reserved Job name was taken writes a pending observation without one")
 	}
 
 	limitRanges := snapshot.Properties["limitRanges"]

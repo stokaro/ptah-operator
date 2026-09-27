@@ -28,6 +28,8 @@ func TestAnUnresolvedRunRefusesTheNextApply(t *testing.T) {
 	approval := migrationApprovalFor(migration, plan)
 	migration.Status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
 		Outcome:              operatorv1alpha1.MigrationRunOutcomePartial,
+		OperationID:          safetyOtherDigest,
+		PlanRef:              operatorv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-earlier", UID: "earlier-plan-uid"},
 		RecordedAt:           metav1.Now(),
 		TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
 	}

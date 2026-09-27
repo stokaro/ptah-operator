@@ -139,7 +139,7 @@ type MigrationOperationStatus struct {
 	// rollout that changes any execution component retires the claim rather
 	// than letting its Job finish under new bytes.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	ExecutionBindingID string `json:"executionBindingID"`
 
 	// Source is the credential-free artifact binding this operation uses:
 	// the resolved digest and the selectors needed to fetch it. Every operation
@@ -392,7 +392,7 @@ type UnresolvedMigrationRunStatus struct {
 	// OperationID is the Apply claim that ran, so this record names one attempt
 	// rather than the resource in general.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
-	OperationID string `json:"operationID,omitempty"`
+	OperationID string `json:"operationID"`
 
 	// JobName and JobUID identify the execution. The UID is what makes a
 	// replacement Job with the same name a different run.
@@ -403,7 +403,7 @@ type UnresolvedMigrationRunStatus struct {
 
 	// PlanRef names the plan the run was carrying out, which is the work that
 	// may have reached the database.
-	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
+	PlanRef ImmutableObjectReference `json:"planRef"`
 
 	// TargetIdentityDigest is the credential-free identity of the database this
 	// run reached, as the run itself reported it. Where no result frame was

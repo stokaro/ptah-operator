@@ -636,6 +636,9 @@ func (r *MigrationReconciler) observeMigrationRun(
 // later refusal rewrites the reason this run left, and a refusal that was
 // rewritten says nothing about whether the mutation was ever accounted for.
 // Only a reading of that same database with nothing pending removes it.
+//
+// Both callers retire an Apply claim, and the one place that writes an Apply
+// claim names its plan, so the attempt and the plan are always known here.
 func recordUnresolvedMigrationRun(
 	migration *operatorv1alpha1.PtahMigration,
 	operation *operatorv1alpha1.MigrationOperationStatus,
@@ -647,14 +650,12 @@ func recordUnresolvedMigrationRun(
 		return
 	}
 	unresolved := &operatorv1alpha1.UnresolvedMigrationRunStatus{
-		Outcome:    run.Outcome,
-		JobName:    run.JobName,
-		JobUID:     run.JobUID,
-		RecordedAt: metav1.NewTime(now),
-	}
-	if operation != nil {
-		unresolved.OperationID = operation.ID
-		unresolved.PlanRef = operation.PlanRef.DeepCopy()
+		Outcome:     run.Outcome,
+		OperationID: operation.ID,
+		JobName:     run.JobName,
+		JobUID:      run.JobUID,
+		PlanRef:     *operation.PlanRef,
+		RecordedAt:  metav1.NewTime(now),
 	}
 	// Which database to name is the whole point of the record, so the run's own
 	// account of it wins. A result frame reports the target the executor opened,

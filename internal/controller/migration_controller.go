@@ -323,10 +323,13 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 // reportDiscardedUnresolvedRun says what a deletion is about to destroy.
 //
 // status.unresolvedRun is the record that an Apply may have changed the
-// database and nobody established what it did. Only a person clears it, and
-// deleting the resource is one of the ways a person can: the operator does not
-// refuse a deletion, because a refusal it can never lift is a resource nobody
-// can remove.
+// database and nobody established what it did. A History reading of the
+// database the run addressed, with nothing left to apply, settles it: that is
+// the proof the record was waiting for. A person can also clear it, and
+// deleting the resource is one of the ways a person can. The operator does not
+// refuse a deletion: a deleting resource reads no more history, so the refusal
+// would be one the operator could never lift, and a resource nobody can
+// remove.
 //
 // What it does refuse to do is lose the record quietly. The object is going
 // away and the record with it, so the last place the run can be named is an
@@ -340,17 +343,13 @@ func (r *MigrationReconciler) reportDiscardedUnresolvedRun(
 	if unresolved == nil {
 		return
 	}
-	plan := "no plan"
-	if unresolved.PlanRef != nil {
-		plan = "plan " + unresolved.PlanRef.Name
-	}
 	job := unresolved.JobName
 	if job == "" {
 		job = "no Job this claim recorded"
 	}
 	r.event(migration, corev1.EventTypeWarning, "UnresolvedRunDiscarded",
-		"Deleting this resource discards the record of a %s run nobody accounted for: %s, %s, database %s",
-		unresolved.Outcome, job, plan, bounded(unresolved.TargetIdentityDigest, 80))
+		"Deleting this resource discards the record of a %s run nobody accounted for: %s, plan %s, database %s",
+		unresolved.Outcome, job, unresolved.PlanRef.Name, bounded(unresolved.TargetIdentityDigest, 80))
 	ctrl.LoggerFrom(ctx).Info(
 		"deleting a migration discards an unresolved run",
 		"outcome", unresolved.Outcome,
@@ -434,7 +433,9 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, true, err
 	}
-	return ctrl.Result{Requeue: true}, true, nil
+	// The next pass works under the binding this write installed, so it has
+	// to start from a fresh read of it.
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, true, nil
 }
 
 // applyUncertainUnderBindingChange records that a dispatched Apply outlived the

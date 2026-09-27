@@ -46,8 +46,6 @@ for an `oci://docker.io/...` source). A Docker config Secret keeps its standard
 `.dockerconfigjson` data in addition to that owner-controlled grant. If authenticated
 `plainHTTP` is unavoidable, the authentication Secret must also contain
 `allowPlainHTTP: "true"`; anonymous plain HTTP needs no Secret grant.
-`clientCertificateFrom` is currently rejected because the pinned executor
-cannot constrain a client certificate across cross-host redirects.
 Verification-policy
 ConfigMaps must be immutable. To change a policy, create a new ConfigMap name
 and update the schema reference; delete-and-recreate is intentionally not

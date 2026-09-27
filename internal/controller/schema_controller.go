@@ -61,7 +61,12 @@ const (
 	terminalPodGrace         = 10 * time.Second
 	jobCleanupTTLSeconds     = int32(300)
 	maxLockContentionPoll    = 5 * time.Second
-	statusPatchRequeue       = time.Millisecond
+	// statusPatchRequeue ends a pass whose last act was a status write the
+	// next pass has to start from, and asks for that pass at once. Neither
+	// primary watch passes a status-only update, so the write wakes nothing by
+	// itself, and the next pass reads the object through the API reader rather
+	// than a cache that may not have seen the write yet.
+	statusPatchRequeue = time.Millisecond
 	// applyTerminationGrace is recorded on every Apply claim. The builder
 	// gives the Apply Pod this grace and tells the runner the same number, and
 	// the controller dates the end of the Apply's execution horizon by it.
@@ -1198,8 +1203,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			// The snapshot is a separate durable boundary. In particular, an
 			// Apply reconciliation must persist it before DispatchStarted and
-			// before the one permitted Job create attempt.
-			return ctrl.Result{Requeue: true}, nil
+			// before the one permitted Job create attempt. The Job built above
+			// carries no snapshot digest, so the next pass rebuilds it from the
+			// claim this write recorded.
+			return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 		}
 		expectedJob := job.DeepCopy()
 		if operationNeedsTargetLock(schema) && !operation.DispatchStarted {

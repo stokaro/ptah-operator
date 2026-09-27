@@ -226,8 +226,7 @@ type OCIArtifactSourceSpec struct {
 	// the previous version rather than letting them apply.
 	VerificationPolicyFrom corev1.ConfigMapKeySelector `json:"verificationPolicyFrom"`
 
-	// Transport is how the registry is reached: plain HTTP, a custom CA, a
-	// client certificate.
+	// Transport is how the registry is reached: plain HTTP, a custom CA.
 	Transport OCITransportSpec `json:"transport,omitempty"`
 }
 
@@ -285,8 +284,6 @@ type RegistryAuthSource struct {
 // OCITransportSpec configures private and air-gapped registries without
 // allowing arbitrary files or commands into the execution Pod.
 // +kubebuilder:validation:XValidation:rule="!self.plainHTTP || !has(self.caFrom)",message="caFrom cannot be used with plainHTTP"
-// +kubebuilder:validation:XValidation:rule="!self.plainHTTP || !has(self.clientCertificateFrom)",message="clientCertificateFrom cannot be used with plainHTTP"
-// +kubebuilder:validation:XValidation:rule="!has(self.clientCertificateFrom)",message="clientCertificateFrom is not supported until the executor can scope client certificates across redirects"
 type OCITransportSpec struct {
 	// PlainHTTP is intended only for explicitly trusted test or air-gapped
 	// networks. HTTPS remains the default. When registryAuthFrom is present, its
@@ -298,24 +295,6 @@ type OCITransportSpec struct {
 	// same Secret must contain caSHA256 with the exact lowercase SHA-256 digest
 	// of the selected bytes.
 	CAFrom *corev1.ConfigMapKeySelector `json:"caFrom,omitempty"`
-
-	// ClientCertificateFrom is reserved for a future executor contract that can
-	// select a client certificate by the effective TLS authority on every
-	// request, including redirects. The current API rejects this field.
-	ClientCertificateFrom *TLSSecretReference `json:"clientCertificateFrom,omitempty"`
-}
-
-// TLSSecretReference retains the client-certificate selector shape for source
-// compatibility. OCITransportSpec currently rejects its use.
-type TLSSecretReference struct {
-	// Name of the Secret holding the client certificate.
-	Name string `json:"name"`
-	// +kubebuilder:default=tls.crt
-	// CertificateKey is the Secret key holding the certificate.
-	CertificateKey string `json:"certificateKey,omitempty"`
-	// +kubebuilder:default=tls.key
-	// PrivateKeyKey is the Secret key holding its private key.
-	PrivateKeyKey string `json:"privateKeyKey,omitempty"`
 }
 
 // ReconciliationPolicy defines safety decisions. Destructive plans always
@@ -1010,7 +989,7 @@ type ActiveOperationStatus struct {
 	// ExecutionBindingID binds every Job and result to the durable evidence
 	// epoch that authorized its claim.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	ExecutionBindingID string `json:"executionBindingID"`
 
 	// AdmissionSnapshot is persisted before dispatch and is bound into the Job
 	// and Pod template annotations. It permits only modeled, safe built-in

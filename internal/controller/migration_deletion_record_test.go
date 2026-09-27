@@ -18,11 +18,13 @@ import (
 // the record is the only thing that says a database may hold a change nobody
 // accounted for.
 //
-// The operator does not refuse the deletion. Only a person clears that record,
-// so a refusal would be one the operator can never lift, and a resource nobody
-// can remove is worse than a record that ends in the event stream. What it
-// must not do is lose it quietly: whoever later finds an unaccounted-for change
-// in that database has the Events and the log and nothing else.
+// The operator does not refuse the deletion. A History reading with nothing
+// left to apply would settle that record, but a deleting resource reads no more
+// history, so a refusal would be one the operator can never lift, and a
+// resource nobody can remove is worse than a record that ends in the event
+// stream. What it must not do is lose it quietly: whoever later finds an
+// unaccounted-for change in that database has the Events and the log and
+// nothing else.
 func TestDeletingAMigrationNamesTheUnresolvedRunItDiscards(t *testing.T) {
 	t.Parallel()
 

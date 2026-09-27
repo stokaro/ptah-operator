@@ -1303,8 +1303,8 @@ jq --arg name e2e-conflicting-controller-image \
 expect_denied "approval with a conflicting controller image binding" \
 	'controller image conflicts with the immutable plan' \
 	"$invalid_approval_file" "$error_file"
-# Version 4 is the immediately previous runner contract and must not be
-# accepted against a version-5 immutable plan.
+# Any runner protocol other than the plan's own version 5 conflicts with it;
+# 4 is just a value that differs.
 jq --arg name e2e-conflicting-protocol '
     .metadata.name = $name | .spec.runnerProtocolVersion = 4
   ' "$approval_file" >"$invalid_approval_file"

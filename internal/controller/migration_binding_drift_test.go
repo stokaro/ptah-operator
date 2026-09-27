@@ -121,3 +121,39 @@ func TestAPlanIsNotAppliedUnderComponentsItWasNotDecidedUnder(t *testing.T) {
 		})
 	}
 }
+
+// A rollout that changes an execution component retires a read-only claim and
+// installs the new binding in one status write. Neither primary watch passes a
+// status-only update, so that write wakes nothing: the pass has to ask for the
+// next one itself, or the resource waits out an interval before it works under
+// the binding it just installed.
+func TestABindingRotationAsksForTheNextPass(t *testing.T) {
+	t.Parallel()
+
+	migration, _ := awaitingApprovalFixture(t)
+	migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	oldEpoch := migration.Status.ExecutionBinding.Epoch
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, verificationPolicyConfigMap())
+	rolledOut := "example.invalid/operator@" + safetyOtherDigest
+	reconciler.Jobs = executionBindingJobs{
+		ptahVersion:   migration.Status.ExecutionBinding.PtahVersion,
+		executorImage: migration.Status.ExecutionBinding.ExecutorImage,
+		runnerImage:   rolledOut,
+		protocol:      migration.Status.ExecutionBinding.RunnerProtocolVersion,
+	}
+
+	result, err := reconciler.Reconcile(context.Background(), migrationRequest(migration))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	binding := actual.Status.ExecutionBinding
+	if binding == nil || binding.Epoch == oldEpoch || binding.RunnerImage != rolledOut ||
+		actual.Status.ActiveOperation != nil {
+		t.Fatalf("the rollout did not retire the claim under a new binding, so the result below "+
+			"is about some other pass: binding %#v, claim %#v", binding, actual.Status.ActiveOperation)
+	}
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("binding rotation result = %#v, want the next pass after %s", result, statusPatchRequeue)
+	}
+}

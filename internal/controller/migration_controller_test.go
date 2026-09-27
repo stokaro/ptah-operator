@@ -1050,7 +1050,11 @@ func TestAPendingMigrationIsNotReplayedAfterAnUnreadableRun(t *testing.T) {
 				// ends. A run that failed and committed nothing leaves none.
 				if test.outcome != operatorv1alpha1.MigrationRunOutcomeFailed {
 					migration.Status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
-						Outcome: test.outcome, TargetIdentityDigest: testDigest, RecordedAt: finished,
+						Outcome:              test.outcome,
+						OperationID:          safetyOtherDigest,
+						PlanRef:              operatorv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-earlier", UID: "earlier-plan-uid"},
+						TargetIdentityDigest: testDigest,
+						RecordedAt:           finished,
 					}
 				}
 			}
@@ -1264,7 +1268,7 @@ func TestAnUnresolvedMigrationRunRecordsWhatMayHaveRun(t *testing.T) {
 				t.Fatalf("recorded Job = %q/%q, want %q/%q",
 					unresolved.JobName, unresolved.JobUID, run.JobName, run.JobUID)
 			}
-			if unresolved.PlanRef == nil || unresolved.PlanRef.UID != types.UID("migration-plan-uid") {
+			if unresolved.PlanRef.UID != types.UID("migration-plan-uid") {
 				t.Fatalf("recorded plan = %#v, want the plan the run was carrying out", unresolved.PlanRef)
 			}
 			if unresolved.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
@@ -1920,7 +1924,7 @@ func TestAnUnconfirmedApplyCreateRecordsNoJob(t *testing.T) {
 	if record.JobName != "" || record.JobUID != "" {
 		t.Fatalf("the record names a Job nothing established existed: %q %q", record.JobName, record.JobUID)
 	}
-	if record.OperationID != operation.ID || record.PlanRef == nil || record.PlanRef.Name != plan.Name {
+	if record.OperationID != operation.ID || record.PlanRef.Name != plan.Name {
 		t.Fatalf("the record lost the attempt or the plan it was carrying out: %#v", record)
 	}
 }

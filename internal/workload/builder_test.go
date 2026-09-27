@@ -929,26 +929,8 @@ func TestBuildRejectsCredentialScopeAndTransportDowngrades(t *testing.T) {
 	t.Parallel()
 
 	for name, mutate := range map[string]func(*operatorv1alpha1.PtahSchema){
-		"client certificate transport": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Spec.Desired.Transport.ClientCertificateFrom = &operatorv1alpha1.TLSSecretReference{
-				Name: "registry-client",
-			}
-		},
-		"client certificate custom selectors": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Spec.Desired.Transport.ClientCertificateFrom = &operatorv1alpha1.TLSSecretReference{
-				Name: "registry-client", CertificateKey: "custom.crt", PrivateKeyKey: "custom.key",
-			}
-		},
-		"client certificate over plain HTTP": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Spec.Desired.Transport.PlainHTTP = true
-			schema.Spec.Desired.Transport.CAFrom = nil
-			schema.Spec.Desired.Transport.ClientCertificateFrom = &operatorv1alpha1.TLSSecretReference{
-				Name: "registry-client",
-			}
-		},
 		"custom CA over plain HTTP": func(schema *operatorv1alpha1.PtahSchema) {
 			schema.Spec.Desired.Transport.PlainHTTP = true
-			schema.Spec.Desired.Transport.ClientCertificateFrom = nil
 		},
 	} {
 		mutate := mutate
