@@ -87,6 +87,18 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 			t.Fatalf("the API server refused a well-formed drift summary on PtahSchema %s: %v", schema.GetName(), err)
 		}
 	})
+
+	// A grant is drift the report has no category for. The controller
+	// records it as a safe highest severity with no summaries and no count,
+	// and the schema has to take that shape as it takes any other.
+	t.Run("drift in no category is published", func(t *testing.T) {
+		t.Parallel()
+		observed := reread(t, schema)
+		set(t, observed, map[string]any{"highestDriftSeverity": "safe"}, "status", "target")
+		if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
+			t.Fatalf("the API server refused drift in no category on PtahSchema %s: %v", schema.GetName(), err)
+		}
+	})
 }
 
 // The truncation rule demands exactly 64 summaries, and summaries are keyed by
