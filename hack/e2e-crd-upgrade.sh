@@ -2896,6 +2896,33 @@ run_next_release_upgrade_proof() {
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er 'select(.info.status == "deployed") | .version | select(type == "number" and . >= 1)')
 
+	# A chart runs the image its values name, and values carried from one
+	# release to the next keep the image they named. The hook refuses a chart of
+	# another release than its image before it reads or changes anything. The
+	# pairing here is the current chart with the next release's image, whose
+	# hook would otherwise stop the runtime and update the CRDs first.
+	printf '%s\n' 'e2e crd: proving the hook refuses the current chart with the next release manager image'
+	mismatched_values_file=$WORK_DIR/current-chart-next-image-values.json
+	jq --arg repository "${E2E_NEXT_CONTROLLER_IMAGE%@*}" --arg digest "${E2E_NEXT_CONTROLLER_IMAGE#*@}" \
+		'.image.repository = $repository | .image.digest = $digest' \
+		"$WORK_DIR/current-release-values.json" >"$mismatched_values_file"
+	prepare_expected_hook_names "$E2E_CHART_PACKAGE" "$mismatched_values_file"
+	for crd_name in \
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
+		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-mismatched-image.json"
+	done
+	UPGRADE_VALUES_FILE=$mismatched_values_file
+	expect_upgrade_failure_without_deployment_change "current chart with the next release manager image"
+	for crd_name in \
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
+		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-mismatched-image.json"
+	done
+	UPGRADE_VALUES_FILE=
+
 	prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"
 	# The late failure leaves the runtime stopped; stage the handoff while no
 	# runtime can consume or clean up the Job. Do not delete or resurrect

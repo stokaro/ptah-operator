@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 )
 
@@ -118,10 +119,11 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 		flag string
 	}{
 		{mode: "verify", flag: "--release-name=ignored"},
+		{mode: "verify", flag: "--controller-state-version=2"},
 		{mode: "reconcile", flag: "--verify-controller-state=true"},
-		{mode: "reconcile", flag: "--release-sequence=1"},
 		{mode: "reconcile", flag: "--hook-service-account-name=ignored"},
 		{mode: "runtime-verify", flag: "--manager-image=ignored"},
+		{mode: "runtime-verify", flag: "--controller-state-version=2"},
 	}
 	for _, test := range tests {
 		t.Run(test.mode+test.flag, func(t *testing.T) {
@@ -187,6 +189,52 @@ func TestRuntimeVerifyRefusesAnotherReleaseSequence(t *testing.T) {
 	}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "release-sequence must equal the binary contract") {
 		t.Fatalf("runtime-verify error = %v, want the release-sequence refusal", err)
+	}
+}
+
+// The reconcile hook runs the image the values name with the arguments the
+// chart renders, and a --reuse-values upgrade keeps the old image under a new
+// chart. The hook refuses a chart of another release before it reads the
+// cluster, whichever of its two identities differs. A pair that matches reaches
+// the cluster, which a test process has none of, so the in-cluster error is
+// what shows the check let it through.
+func TestReconcileRefusesAChartFromAnotherRelease(t *testing.T) {
+	sequence := int64(crdupgrade.CurrentReleaseSequence)
+	state := int64(controllerstate.CurrentVersion)
+	for _, test := range []struct {
+		name     string
+		sequence string
+		state    string
+		refusal  string
+	}{
+		{name: "the chart published with the image", sequence: strconv.FormatInt(sequence, 10), state: strconv.FormatInt(state, 10)},
+		{name: "a later chart", sequence: strconv.FormatInt(sequence+1, 10), state: strconv.FormatInt(state, 10), refusal: "release sequence"},
+		{name: "an earlier chart", sequence: strconv.FormatInt(sequence-1, 10), state: strconv.FormatInt(state, 10), refusal: "release sequence"},
+		{name: "a chart that names no release sequence", state: strconv.FormatInt(state, 10), refusal: "release sequence"},
+		{name: "a chart of a later state contract", sequence: strconv.FormatInt(sequence, 10), state: strconv.FormatInt(state+1, 10), refusal: "controller-state version"},
+		{name: "a chart of an earlier state contract", sequence: strconv.FormatInt(sequence, 10), state: strconv.FormatInt(state-1, 10), refusal: "controller-state version"},
+		{name: "a chart that names no state contract", sequence: strconv.FormatInt(sequence, 10), refusal: "controller-state version"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := []string{"reconcile"}
+			if test.sequence != "" {
+				args = append(args, "--release-sequence="+test.sequence)
+			}
+			if test.state != "" {
+				args = append(args, "--controller-state-version="+test.state)
+			}
+			err := run(context.Background(), args, &bytes.Buffer{})
+			if test.refusal == "" {
+				if err == nil || !strings.Contains(err.Error(), "load in-cluster configuration") {
+					t.Fatalf("run error = %v, want the matching pair to reach the cluster", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.refusal) ||
+				!strings.Contains(err.Error(), "published with the image") || strings.Contains(err.Error(), "in-cluster") {
+				t.Fatalf("run error = %v, want the %s refusal before the cluster is read", err, test.refusal)
+			}
+		})
 	}
 }
 

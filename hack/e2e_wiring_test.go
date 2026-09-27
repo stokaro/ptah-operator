@@ -4779,6 +4779,13 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "current-release read-only Job cleanup staging",
 		},
 		{
+			name:        "CRD mismatched chart and image upgrade removed",
+			child:       "crd-upgrade",
+			old:         "\texpect_upgrade_failure_without_deployment_change \"current chart with the next release manager image\"\n",
+			replacement: "\t: # mismatched pairing accepted\n",
+			wantError:   "chart and image of different releases refused before any change",
+		},
+		{
 			name:        "CRD next-release upgrade skips late-failure recovery",
 			child:       "crd-upgrade",
 			old:         "\tprove_late_failure_recovery \"$CURRENT_RELEASE_CONTROLLER_IMAGE\"\n",

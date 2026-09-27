@@ -75,6 +75,8 @@ var modeFlags = map[string][]string{
 		"controller-deployment-name",
 		"certificate-deployment-name",
 		"manager-image",
+		"release-sequence",
+		"controller-state-version",
 	},
 	"verify": {"timeout"},
 	"runtime-verify": {
@@ -119,6 +121,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	certificateDeploymentName := flags.String("certificate-deployment-name", "", "exact certificate-rotator Deployment name")
 	releaseSequence := flags.Int64("release-sequence", 0, "monotonic published operator release sequence")
 	managerImage := flags.String("manager-image", "", "exact manager image this release runs")
+	controllerStateVersion := flags.Int64("controller-state-version", 0, "controller-state version the chart was published with")
 	verifyControllerState := flags.Bool("verify-controller-state", false, "reject controller downgrades incompatible with stored PtahSchema state")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -131,6 +134,11 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	}
 	if err := validateModeFlags(mode, flags); err != nil {
 		return err
+	}
+	if mode == "reconcile" {
+		if err := verifyChartPairing(*releaseSequence, *controllerStateVersion); err != nil {
+			return err
+		}
 	}
 	var expected crdupgrade.RuntimeInvariants
 	if mode == "runtime-verify" {
@@ -194,7 +202,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		err = manager.ReconcileWithStatePreflightAndPrepare(
 			ctx,
 			stateClients,
-			int64(controllerstate.CurrentVersion),
+			*controllerStateVersion,
 			func(prepareCtx context.Context) error {
 				if stopErr := stop.Run(prepareCtx); stopErr != nil {
 					return fmt.Errorf("stop the running release: %w", stopErr)
@@ -238,6 +246,29 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	}
 	_, err = fmt.Fprintln(output, success)
 	return err
+}
+
+// verifyChartPairing refuses a chart and a manager image from different
+// releases before the hook reads or changes anything. The chart names the image
+// in image.digest, and a --reuse-values upgrade keeps the old one: the new
+// chart's hook would run the old binary, which stops nothing and updates no
+// CRD, and Helm would then replace the running Pods with ones whose verifier
+// refuses to start. The other pairing is worse, an old chart with a new image,
+// whose hook would stop the runtime and update the CRDs first. The chart says
+// which release it is by its release sequence and its controller-state
+// version, and the binary compiles both.
+func verifyChartPairing(releaseSequence, controllerStateVersion int64) error {
+	if releaseSequence != int64(crdupgrade.CurrentReleaseSequence) {
+		return fmt.Errorf(
+			"the chart is release sequence %d and this manager image is %d: install the chart published with the image, or the image published with the chart",
+			releaseSequence, crdupgrade.CurrentReleaseSequence)
+	}
+	if controllerStateVersion != int64(controllerstate.CurrentVersion) {
+		return fmt.Errorf(
+			"the chart carries controller-state version %d and this manager image compiles %d: install the chart published with the image, or the image published with the chart",
+			controllerStateVersion, controllerstate.CurrentVersion)
+	}
+	return nil
 }
 
 func runtimeInvariants(

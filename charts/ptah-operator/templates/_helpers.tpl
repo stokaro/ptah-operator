@@ -263,6 +263,12 @@ The CRD reconcile hook's arguments. It stops the release's runtime when the
 manager image changes and then brings the CRDs to this release's schemas, so
 it needs the two Deployments it may stop and the image that tells whether it
 has to.
+
+The release sequence and the controller-state version are the chart's, and the
+hook refuses them unless its image compiles the same ones. That is what
+refuses a chart paired with another release's image, as a --reuse-values
+upgrade that keeps the old image.digest makes, before the hook changes
+anything.
 */}}
 {{- define "ptah-operator.crdReconcileArgsJSON" -}}
 {{- list
@@ -273,6 +279,8 @@ has to.
       (printf "--controller-deployment-name=%s" (include "ptah-operator.fullname" .))
       (printf "--certificate-deployment-name=%s" (include "ptah-operator.certRotatorServiceAccountName" .))
       (printf "--manager-image=%s" (include "ptah-operator.managerImage" .))
+      (printf "--release-sequence=%s" (include "ptah-operator.releaseSequence" .))
+      (printf "--controller-state-version=%s" (include "ptah-operator.controllerStateVersion" .))
     | toJson -}}
 {{- end -}}
 
