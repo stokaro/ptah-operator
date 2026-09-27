@@ -431,6 +431,43 @@ deployment_evidence() {
 # hook is this revision's reconcile Job, and every runtime Deployment
 # unchanged. The wording of the refusal is measured where it is observable, in
 # the Manager unit tests: Helm reports only that the Job failed.
+# A chart and an image of different releases must be refused before anything
+# changes. Two layers refuse it: the chart's render-time singleton check, while
+# the hook ServiceAccount name still derives from the manager image, and the
+# reconcile hook's pairing check, which does not depend on that name. Either
+# one is the invariant; the row requires one of the two exact refusals, no
+# deployed revision, and no Deployment change.
+expect_mismatched_pairing_refused() {
+	description=$1
+	before=$WORK_DIR/deployment-before-mismatch.json
+	after=$WORK_DIR/deployment-after-mismatch.json
+	[ -n "$UPGRADE_VALUES_FILE" ] || fail "upgrade values file is not configured"
+	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" -o json | jq -er '.version | select(type == "number" and . >= 1)')
+	deployment_evidence >"$before"
+	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \
+		--wait --timeout 2m >"$WORK_DIR/mismatch-upgrade.out" 2>"$WORK_DIR/mismatch-upgrade.err"; then
+		fail "$description unexpectedly succeeded"
+	fi
+	after_status=$(helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" -o json)
+	after_revision=$(printf '%s\n' "$after_status" | jq -er '.version')
+	if [ "$after_revision" -eq "$before_revision" ]; then
+		grep -Fq 'annotation operator.ptah.run/hook-service-account-name is' "$WORK_DIR/mismatch-upgrade.err" ||
+			fail "$description was refused before a revision, but not by the singleton's hook identity check"
+	else
+		[ "$after_revision" -eq $((before_revision + 1)) ] ||
+			fail "$description left revision $after_revision after $before_revision"
+		printf '%s\n' "$after_status" | jq -e '.info.status == "failed"' >/dev/null ||
+			fail "$description left revision $after_revision in a state other than failed"
+		grep -Eq 'the chart (is release sequence|carries controller-state version) [0-9]+ and this manager image' \
+			"$WORK_DIR/mismatch-upgrade.err" ||
+			fail "$description failed revision $after_revision without the hook's pairing refusal"
+	fi
+	deployment_evidence >"$after"
+	cmp "$before" "$after" || fail "$description mutated runtime Deployments"
+}
+
 expect_upgrade_failure_without_deployment_change() {
 	description=$1
 	shift
@@ -1163,6 +1200,20 @@ assert_release_runtime_removed() {
 		fail "generated certificate Secret identity was not captured before uninstall"
 	[ -n "$CERTIFICATE_STAGING_SECRET_NAME" ] ||
 		fail "certificate staging Secret identity was not captured before uninstall"
+	# helm uninstall --wait waits for the objects Helm deletes. The ReplicaSets
+	# and Pods behind the Deployments go through garbage collection and the
+	# Pods' termination grace afterwards, so give them that time before the
+	# inventory below asserts that nothing labeled is left.
+	runtime_removal_deadline=$(($(date +%s) + 180))
+	while :; do
+		remaining_runtime=$(kube -n "$E2E_OPERATOR_NAMESPACE" get replicaset,pod \
+			-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json |
+			jq -r '.items | length')
+		[ "$remaining_runtime" -eq 0 ] && break
+		[ "$(date +%s)" -lt "$runtime_removal_deadline" ] ||
+			fail "$remaining_runtime labeled ReplicaSet or Pod objects outlived uninstall by 180s"
+		sleep 2
+	done
 	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
 		remaining=$(kube get "$singleton_resource" ptah-operator-admission \
 			--ignore-not-found=true -o name)
@@ -2895,6 +2946,33 @@ run_next_release_upgrade_proof() {
 	current_release_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er 'select(.info.status == "deployed") | .version | select(type == "number" and . >= 1)')
+
+	# A chart runs the image its values name, and values carried from one
+	# release to the next keep the image they named. The hook refuses a chart of
+	# another release than its image before it reads or changes anything. The
+	# pairing here is the current chart with the next release's image, whose
+	# hook would otherwise stop the runtime and update the CRDs first.
+	printf '%s\n' 'e2e crd: proving the hook refuses the current chart with the next release manager image'
+	mismatched_values_file=$WORK_DIR/current-chart-next-image-values.json
+	jq --arg repository "${E2E_NEXT_CONTROLLER_IMAGE%@*}" --arg digest "${E2E_NEXT_CONTROLLER_IMAGE#*@}" \
+		'.image.repository = $repository | .image.digest = $digest' \
+		"$WORK_DIR/current-release-values.json" >"$mismatched_values_file"
+	prepare_expected_hook_names "$E2E_CHART_PACKAGE" "$mismatched_values_file"
+	for crd_name in \
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
+		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-mismatched-image.json"
+	done
+	UPGRADE_VALUES_FILE=$mismatched_values_file
+	expect_mismatched_pairing_refused "current chart with the next release manager image"
+	for crd_name in \
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
+		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-mismatched-image.json"
+	done
+	UPGRADE_VALUES_FILE=
 
 	prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"
 	# The late failure leaves the runtime stopped; stage the handoff while no

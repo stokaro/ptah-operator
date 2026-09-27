@@ -6309,12 +6309,23 @@ grep -F -- '- "reconcile"' "$CRD_INSTALL_RENDER" >/dev/null
 [ "$(grep -Fxc 'kind: Job' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- '- "--timeout=360s"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- 'activeDeadlineSeconds: 390' "$CRD_UPGRADE_RENDER")" -eq 1 ]
+# The hook refuses a chart whose release sequence or controller-state version
+# its image does not compile, so the chart has to hand it the ones the binary
+# is built with, read from where the binary reads them.
+compiled_release_sequence=$(sed -n 's/^[[:space:]]*CurrentReleaseSequence int32 = \([1-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/crdupgrade/release_sequence.go")
+[ -n "$compiled_release_sequence" ] || {
+	printf '%s\n' 'e2e static: CurrentReleaseSequence could not be read' >&2
+	exit 1
+}
 for crd_reconcile_argument in \
 	'- "--release-name=ptah-e2e"' \
 	'- "--release-namespace=ptah-e2e"' \
 	'- "--controller-deployment-name=ptah-e2e-ptah-operator"' \
 	'- "--certificate-deployment-name=ptah-e2e-ptah-operator-cert-rotator"' \
-	'- "--manager-image=ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"'; do
+	'- "--manager-image=ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"' \
+	"- \"--release-sequence=$compiled_release_sequence\"" \
+	"- \"--controller-state-version=$EXPECTED_CONTROLLER_STATE_VERSION\""; do
 	[ "$(grep -Fc -- "$crd_reconcile_argument" "$CRD_UPGRADE_RENDER")" -eq 1 ] || {
 		printf 'e2e static: the CRD reconcile hook lacks %s\n' "$crd_reconcile_argument" >&2
 		exit 1
@@ -6648,6 +6659,8 @@ for crd_live_marker in \
 	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
 	'uninstall retained CRDs and live objects' \
 	'the late failure left the runtime stopped on the predecessor template' \
+	'proving the hook refuses the current chart with the next release manager image' \
+	'current chart with the next release manager image' \
 	'the late failure did not come after a reconcile hook that succeeded' \
 	'the same-candidate retry did not complete the upgrade' \
 	'the refused rollback did not reach its pre-rollback hook' \

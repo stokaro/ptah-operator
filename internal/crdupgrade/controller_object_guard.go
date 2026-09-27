@@ -62,6 +62,10 @@ type controllerObjectGuardEntry struct {
 	operations    []admissionregistrationv1.OperationType
 	denialMessage string
 	validations   []admissionregistrationv1.Validation
+	// releaseValues is whether the kind names the manager that built it. A Job
+	// and both plans do; a chunk does not, because it is bound to its plan by
+	// name and owner, and the plan carries the manager's identity.
+	releaseValues bool
 }
 
 // ControllerObjectGuard builds the typed structural boundaries around every
@@ -91,6 +95,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			resource:      "jobs",
 			operations:    []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			denialMessage: "Ptah controller Job write guard rejected an unsafe workload shape",
+			releaseValues: true,
 		},
 		{
 			name:          ControllerChunkWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
@@ -109,6 +114,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			resource:      "ptahschemaplans",
 			operations:    []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
 			denialMessage: "Ptah controller plan write guard rejected an unsafe manifest shape",
+			releaseValues: true,
 		},
 		{
 			name:          ControllerMigrationPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
@@ -118,6 +124,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			resource:      "ptahmigrationplans",
 			operations:    []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
 			denialMessage: "Ptah controller migration plan write guard rejected an unsafe manifest shape",
+			releaseValues: true,
 		},
 	}
 	entries[0].validations = controllerJobWriteValidations(entries[0].denialMessage)
@@ -129,6 +136,10 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 
 func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
+	var variables []admissionregistrationv1.Variable
+	if entry.releaseValues {
+		variables = controllerObjectReleaseVariables(g.ManagerImage, g.ControllerStateVersion)
+	}
 	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metav1.ObjectMeta{Name: entry.name},
@@ -139,7 +150,7 @@ func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admiss
 				Name:       "controller-service-account",
 				Expression: controllerPrincipalMatchExpression(g.ReleaseNamespace, g.ControllerServiceAccountName),
 			}},
-			Variables:   controllerObjectReleaseVariables(g.ManagerImage, g.ControllerStateVersion),
+			Variables:   variables,
 			Validations: entry.validations,
 		},
 	}

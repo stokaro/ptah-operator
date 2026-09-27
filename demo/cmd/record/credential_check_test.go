@@ -124,21 +124,16 @@ func statusDocument(t *testing.T, credential string, padding int) string {
 }
 
 // runCredentialCheck runs the step against a kubectl that answers with the
-// document, and nothing else.
+// document, and nothing else. The stub is a shell function rather than an
+// executable file: a file written and executed while parallel tests fork can
+// fail with "text file busy", and a kubectl that fails that way would measure
+// the wrong thing.
 func runCredentialCheck(t *testing.T, script, status string) (stdout, stderr string, err error) {
 	t.Helper()
 
-	stubs := t.TempDir()
-	stub := "#!/bin/sh\nprintf '%s' " + shellQuote(status) + "\n"
-	if writeErr := os.WriteFile(filepath.Join(stubs, "kubectl"), []byte(stub), 0o700); writeErr != nil {
-		t.Fatal(writeErr)
-	}
-
-	command := exec.Command("/bin/sh", "-c", script)
-	command.Env = append(os.Environ(),
-		"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"NAMESPACE=demo",
-	)
+	stub := "kubectl() { printf '%s' " + shellQuote(status) + "; }\n"
+	command := exec.Command("/bin/sh", "-c", stub+script)
+	command.Env = append(os.Environ(), "NAMESPACE=demo")
 	var out, errs strings.Builder
 	command.Stdout = &out
 	command.Stderr = &errs

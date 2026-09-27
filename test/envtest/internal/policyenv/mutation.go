@@ -24,6 +24,12 @@ type Mutation struct {
 	Apply func(ctx context.Context, env *Env) (restore func(context.Context) error, err error)
 	// Breaks names the rows that must fail while the mutation holds.
 	Breaks []string
+	// Admits makes the rows it breaks owe more than a failure: each one must be
+	// admitted while the mutation holds. A mutation that writes the value a
+	// refused request carries into the policy has to reverse that verdict. A
+	// policy the mutation left malformed refuses everything instead, and that
+	// failure proves nothing about the value.
+	Admits bool
 }
 
 // The API server rebuilds its policy set from informers once a second, so a
@@ -61,18 +67,28 @@ func (env *Env) Prove(ctx context.Context, mutation Mutation, rows map[string]Ro
 		return err
 	}
 	var proved error
-	var last []string
 	deadline := time.Now().Add(settle)
 	for {
-		failures := env.failing(ctx, breaks)
-		if len(failures) == len(breaks) {
-			break
-		}
-		last = passing(breaks, failures)
-		if time.Now().After(deadline) {
-			proved = fmt.Errorf("mutation %q held for %s and these rows still passed, so they do not depend on it: %s",
-				mutation.Name, settle, strings.Join(last, ", "))
-			break
+		if mutation.Admits {
+			refused := env.refused(ctx, breaks)
+			if len(refused) == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				proved = fmt.Errorf("mutation %q held for %s and these rows were not admitted, so it did not reverse their verdict: %s",
+					mutation.Name, settle, strings.Join(refused, "; "))
+				break
+			}
+		} else {
+			failures := env.failing(ctx, breaks)
+			if len(failures) == len(breaks) {
+				break
+			}
+			if time.Now().After(deadline) {
+				proved = fmt.Errorf("mutation %q held for %s and these rows still passed, so they do not depend on it: %s",
+					mutation.Name, settle, strings.Join(passing(breaks, failures), ", "))
+				break
+			}
 		}
 		time.Sleep(pollInterval)
 	}
@@ -103,6 +119,18 @@ func (env *Env) failing(ctx context.Context, rows []Row) []string {
 		}
 	}
 	return failures
+}
+
+// refused sends every row's request and returns each one the API server did not
+// admit, with its verdict.
+func (env *Env) refused(ctx context.Context, rows []Row) []string {
+	var refused []string
+	for _, row := range rows {
+		if verdict := Decide(row.Do(ctx, env)); !verdict.Admitted {
+			refused = append(refused, fmt.Sprintf("%s: %s", row.Name, verdict))
+		}
+	}
+	return refused
 }
 
 func passing(rows []Row, failures []string) []string {

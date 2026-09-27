@@ -240,6 +240,11 @@ A refusal in the CRD hook before it stops the runtime leaves the runtime
 unchanged. Correct the reported conflict or API reachability problem and rerun
 the identical candidate chart, image and values.
 
+A hook that reports the chart and the manager image come from different
+releases refused before it read the cluster. `--reuse-values` keeps the
+previous `image.digest` under a new chart; set `image.digest` to the one
+published with the chart and rerun.
+
 A CRD that lacks the schema version or the schema digest is refused before any
 CRD mutation, even when its live normalized `spec` matches the candidate
 exactly. A malformed annotation, an incomplete identity plus any schema
@@ -311,7 +316,9 @@ nothing and changes nothing on its own.
 `helm rollback` restores an earlier revision's manifests and runs that
 revision's CRD hook first, with that revision's image. The hook holds the
 rollback to the checks an upgrade passes: it refuses stored state and CRD
-schemas newer than the restored release reads, before it stops anything.
+schemas newer than the restored release reads. Every check but one runs
+before it stops anything; the last state scan runs after the stop, to find
+state the running manager wrote in the moment before it stopped.
 
 #### Before you start {#rollback-before}
 
@@ -346,8 +353,18 @@ read, and the way forward is a release that reads it.
 
 Helm records the rollback revision before it runs the hook, so a refused
 rollback leaves that revision `pending-rollback`, and a later `helm upgrade`
-refuses to start while it is. The running release is untouched. Another
-`helm rollback`, to a revision the stored state allows, clears it.
+refuses to start while it is. A refusal before the stop leaves the running
+release as it was; one from the scan after the stop leaves the runtime stopped
+until the next rollback or upgrade brings a release up. Another `helm
+rollback`, to a revision the stored state allows, clears the pending revision.
+
+`helm upgrade --rollback-on-failure` rolls back to the last deployed revision
+when the upgrade fails. After an upgrade that failed once its hook had updated
+the CRDs, that rollback runs the previous release's hook, which refuses the
+newer schemas, and the release is left `pending-rollback`. `helm rollback
+<release>` with no revision rolls back to the revision before the pending one,
+which is the upgrade that failed: its hook reads the schemas it wrote, and Helm
+brings that release up.
 
 ### Repair a release that lost its runtime {#repair-runtime}
 

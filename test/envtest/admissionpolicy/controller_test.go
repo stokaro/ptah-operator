@@ -173,17 +173,27 @@ func controllerRows(t *testing.T, c *catalog) {
 	// Plans: the plan store's own publication, a plan stamped by another
 	// manager image, and a ConfigMap that is not a plan chunk.
 	const (
-		publishRow          = "manager publishes a two-chunk plan through the plan store"
-		foreignPlanRow      = "manager creates a plan stamped with another manager's image"
-		notChunkRow         = "manager creates a ConfigMap that is not a plan chunk"
-		migrationPlanRow    = "manager publishes a migration plan"
-		foreignMigrationRow = "manager creates a migration plan stamped with another manager's image"
+		publishRow               = "manager publishes a two-chunk plan through the plan store"
+		foreignPlanRow           = "manager creates a plan stamped with another manager's image"
+		foreignStatePlanRow      = "manager creates a plan stamped with another controller-state version"
+		notChunkRow              = "manager creates a ConfigMap that is not a plan chunk"
+		migrationPlanRow         = "manager publishes a migration plan"
+		foreignMigrationRow      = "manager creates a migration plan stamped with another manager's image"
+		foreignStateMigrationRow = "manager creates a migration plan stamped with another controller-state version"
 	)
+	releaseState := managerBuilder().ControllerStateVersion
 	c.row(policyenv.Row{Name: publishRow, Do: as(manager, publishPlan)})
 	c.row(policyenv.Row{
 		Name: foreignPlanRow, Deny: []string{planGuard}, Message: "rejected an unsafe manifest shape",
 		Do: as(manager, dryRunCreate(func() (client.Object, error) {
-			plan, _, err := schemaPlan(foreignImage)
+			plan, _, err := schemaPlan(foreignImage, releaseState)
+			return plan, err
+		})),
+	})
+	c.row(policyenv.Row{
+		Name: foreignStatePlanRow, Deny: []string{planGuard}, Message: "rejected an unsafe manifest shape",
+		Do: as(manager, dryRunCreate(func() (client.Object, error) {
+			plan, _, err := schemaPlan(harness.ManagerImage, foreignState)
 			return plan, err
 		})),
 	})
@@ -197,14 +207,42 @@ func controllerRows(t *testing.T, c *catalog) {
 		})),
 	})
 	c.row(policyenv.Row{Name: migrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
-		return migrationPlan(harness.ManagerImage)
+		return migrationPlan(harness.ManagerImage, releaseState)
 	}))})
 	c.row(policyenv.Row{
 		Name: foreignMigrationRow, Deny: []string{migrationPlanGuard}, Message: "rejected an unsafe manifest shape",
 		Do: as(manager, dryRunCreate(func() (client.Object, error) {
-			return migrationPlan(foreignImage)
+			return migrationPlan(foreignImage, releaseState)
 		})),
 	})
+	c.row(policyenv.Row{
+		Name: foreignStateMigrationRow, Deny: []string{migrationPlanGuard}, Message: "rejected an unsafe manifest shape",
+		Do: as(manager, dryRunCreate(func() (client.Object, error) {
+			return migrationPlan(harness.ManagerImage, foreignState)
+		})),
+	})
+
+	// A mutation that writes another release's value into a policy has to turn
+	// the row that carries that value from refused to admitted. Admits holds it
+	// to that: a policy the rewrite left malformed would refuse the row too,
+	// and that would prove nothing about the value.
+	carriesImage := func(name, policy, row string) policyenv.Mutation {
+		return policyenv.Mutation{
+			Name: name, Policies: []string{policy},
+			Apply:  policyenv.SetVariables(policy, map[string]string{"releaseControllerImage": strconv.Quote(foreignImage)}),
+			Breaks: []string{row}, Admits: true,
+		}
+	}
+	carriesState := func(name, policy, row string) policyenv.Mutation {
+		return policyenv.Mutation{
+			Name: name, Policies: []string{policy},
+			Apply: policyenv.SetVariables(policy, map[string]string{
+				"releaseControllerStateString": strconv.Quote(strconv.Itoa(int(foreignState))),
+				"releaseControllerState":       strconv.Itoa(int(foreignState)),
+			}),
+			Breaks: []string{row}, Admits: true,
+		}
+	}
 
 	c.mutation(policyenv.Mutation{
 		Name: "controller write guard binding dropped", Policies: []string{writeGuard},
@@ -224,21 +262,8 @@ func controllerRows(t *testing.T, c *catalog) {
 		Apply:  policyenv.DropBinding(jobGuard),
 		Breaks: []string{privilegedJobRow, foreignImageJobRow, foreignStateJobRow},
 	})
-	c.mutation(policyenv.Mutation{
-		Name: "Job write guard carries another manager's image", Policies: []string{jobGuard},
-		Apply: policyenv.SetVariables(jobGuard, map[string]string{
-			"releaseControllerImage": strconv.Quote(foreignImage),
-		}),
-		Breaks: []string{foreignImageJobRow},
-	})
-	c.mutation(policyenv.Mutation{
-		Name: "Job write guard carries another controller-state version", Policies: []string{jobGuard},
-		Apply: policyenv.SetVariables(jobGuard, map[string]string{
-			"releaseControllerStateString": strconv.Quote(strconv.Itoa(int(foreignState))),
-			"releaseControllerState":       strconv.Itoa(int(foreignState)),
-		}),
-		Breaks: []string{foreignStateJobRow},
-	})
+	c.mutation(carriesImage("Job write guard carries another manager's image", jobGuard, foreignImageJobRow))
+	c.mutation(carriesState("Job write guard carries another controller-state version", jobGuard, foreignStateJobRow))
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard matches every identity", Policies: []string{jobGuard},
 		Apply: policyenv.WidenMatch(jobGuard), Breaks: []string{userJobRow},
@@ -257,30 +282,21 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard binding dropped", Policies: []string{planGuard},
-		Apply: policyenv.DropBinding(planGuard), Breaks: []string{foreignPlanRow},
+		Apply: policyenv.DropBinding(planGuard), Breaks: []string{foreignPlanRow, foreignStatePlanRow},
 	})
-	c.mutation(policyenv.Mutation{
-		Name: "plan write guard carries another manager's image", Policies: []string{planGuard},
-		Apply: policyenv.SetVariables(planGuard, map[string]string{
-			"releaseControllerImage": strconv.Quote(foreignImage),
-		}),
-		Breaks: []string{foreignPlanRow},
-	})
+	c.mutation(carriesImage("plan write guard carries another manager's image", planGuard, foreignPlanRow))
+	c.mutation(carriesState("plan write guard carries another controller-state version", planGuard, foreignStatePlanRow))
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard refuses what it matches", Policies: []string{planGuard},
 		Apply: policyenv.RefuseEverything(planGuard), Breaks: []string{publishRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard binding dropped", Policies: []string{migrationPlanGuard},
-		Apply: policyenv.DropBinding(migrationPlanGuard), Breaks: []string{foreignMigrationRow},
+		Apply:  policyenv.DropBinding(migrationPlanGuard),
+		Breaks: []string{foreignMigrationRow, foreignStateMigrationRow},
 	})
-	c.mutation(policyenv.Mutation{
-		Name: "migration plan write guard carries another manager's image", Policies: []string{migrationPlanGuard},
-		Apply: policyenv.SetVariables(migrationPlanGuard, map[string]string{
-			"releaseControllerImage": strconv.Quote(foreignImage),
-		}),
-		Breaks: []string{foreignMigrationRow},
-	})
+	c.mutation(carriesImage("migration plan write guard carries another manager's image", migrationPlanGuard, foreignMigrationRow))
+	c.mutation(carriesState("migration plan write guard carries another controller-state version", migrationPlanGuard, foreignStateMigrationRow))
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard refuses what it matches", Policies: []string{migrationPlanGuard},
 		Apply: policyenv.RefuseEverything(migrationPlanGuard), Breaks: []string{migrationPlanRow},
@@ -289,8 +305,9 @@ func controllerRows(t *testing.T, c *catalog) {
 
 // schemaPlan is the plan the controller prepares for the tenant schema, with
 // a fingerprint of its own each time: a publication is not repeatable under
-// one name, and a mutation sends its rows many times.
-func schemaPlan(controllerImage string) (*operatorv1alpha1.PtahSchemaPlan, [][]byte, error) {
+// one name, and a mutation sends its rows many times. controllerImage and
+// controllerStateVersion stamp it as a manager release's.
+func schemaPlan(controllerImage string, controllerStateVersion int32) (*operatorv1alpha1.PtahSchemaPlan, [][]byte, error) {
 	identity := make([]byte, 32)
 	if _, err := rand.Read(identity); err != nil {
 		return nil, nil, err
@@ -311,7 +328,7 @@ func schemaPlan(controllerImage string) (*operatorv1alpha1.PtahSchemaPlan, [][]b
 		ExecutionBindingID:       executionBindingID,
 		ControllerImage:          controllerImage,
 		ControllerRevision:       builder.ControllerRevision,
-		ControllerStateVersion:   builder.ControllerStateVersion,
+		ControllerStateVersion:   controllerStateVersion,
 		PtahVersion:              builder.PtahVersion,
 		ExecutorImage:            builder.ExecutorImage,
 		RunnerImage:              builder.RunnerImage,
@@ -330,7 +347,7 @@ func schemaPlan(controllerImage string) (*operatorv1alpha1.PtahSchemaPlan, [][]b
 // plan store, whose writes -- the plan, each chunk, the plan's status -- are the
 // manager's.
 func publishPlan(ctx context.Context, api client.Client) error {
-	plan, chunks, err := schemaPlan(harness.ManagerImage)
+	plan, chunks, err := schemaPlan(harness.ManagerImage, managerBuilder().ControllerStateVersion)
 	if err != nil {
 		return err
 	}
@@ -344,7 +361,7 @@ func publishPlan(ctx context.Context, api client.Client) error {
 // migrationPlan is the plan the migration controller publishes, built by the
 // same function. The manager's image, revision and runner image are recorded
 // on the plan and bind nothing, so the fingerprint leaves them out.
-func migrationPlan(controllerImage string) (*operatorv1alpha1.PtahMigrationPlan, error) {
+func migrationPlan(controllerImage string, controllerStateVersion int32) (*operatorv1alpha1.PtahMigrationPlan, error) {
 	builder := managerBuilder()
 	planned := []operatorv1alpha1.PlannedMigration{{Version: 1, Checksum: digest("1")}}
 	sequence, err := migrationplan.SequenceDigest(planned)
@@ -362,7 +379,7 @@ func migrationPlan(controllerImage string) (*operatorv1alpha1.PtahMigrationPlan,
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: digest("c"),
 		ExecutionBindingID:       executionBindingID,
-		ControllerStateVersion:   builder.ControllerStateVersion,
+		ControllerStateVersion:   controllerStateVersion,
 		PtahVersion:              builder.PtahVersion,
 		ExecutorImage:            builder.ExecutorImage,
 		RunnerProtocolVersion:    int32(runner.ProtocolVersion),

@@ -76,8 +76,10 @@ controller runs there, so what they prove is the API server's own verdict:
   a Pod-bound token, or an ordinary user. Then it weakens each policy the way a
   regression would, dropping its binding, widening its match, replacing its
   validations or rewriting the release values it carries as literals, and
-  requires the rows that name the policy to fail and recover. A policy the chart
-  installs without a refusal row and a mutation fails the suite.
+  requires the rows that name the policy to fail and recover. A rewritten
+  literal has to do more than fail its row: the row has to be admitted, since a
+  policy the rewrite broke would refuse it too. A policy the chart installs
+  without a refusal row and a mutation fails the suite.
 - `webhook` serves the manager's admission handlers in-process behind the
   chart's own webhook configurations, which envtest points at this process.
 

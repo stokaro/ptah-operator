@@ -94,6 +94,12 @@ func TestMigrationPlanWriteGuardBoundsWhatTheControllerMayPublish(t *testing.T) 
 			},
 		},
 		{
+			name: "another release's controller-state version",
+			mutate: func(object map[string]any) {
+				object["spec"].(map[string]any)["controllerStateVersion"] = int64(ourStateVersion + 1)
+			},
+		},
+		{
 			name: "a migration with no checksum",
 			mutate: func(object map[string]any) {
 				migrations := object["spec"].(map[string]any)["migrations"].([]any)

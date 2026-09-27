@@ -4238,6 +4238,14 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
 				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
 				exactSourceLine("next-release upgrade proof implementation", `run_next_release_upgrade_proof() {`),
+				// The hook runs the image the values name with the chart's arguments,
+				// so a chart and an image of different releases have to be refused by
+				// the hook itself, before anything changes.
+				exactSourceLineSequence("chart and image of different releases refused before any change", []string{
+					`UPGRADE_VALUES_FILE=$mismatched_values_file`,
+					`expect_mismatched_pairing_refused "current chart with the next release manager image"`,
+					`for crd_name in \`,
+				}),
 				exactSourceLineSequence("successor read-only Job dispatch before the late failure", []string{
 					`dispatch_read_only_job_fixture`,
 					`start_running_apply_barrier`,
