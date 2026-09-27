@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -13,6 +14,10 @@ import (
 
 // The executor recipe is the file the harness builds and the release ships, so
 // the rows start from the file itself rather than a fixture that resembles it.
+
+// runtimeDigestPin matches the digest on the runtime stage's FROM line.
+var runtimeDigestPin = regexp.MustCompile(`@sha256:[0-9a-f]{64}`)
+
 func TestExecutorDockerfileRefusesWhatTheReleaseCannotVerify(t *testing.T) {
 	t.Parallel()
 
@@ -37,8 +42,13 @@ func TestExecutorDockerfileRefusesWhatTheReleaseCannotVerify(t *testing.T) {
 		problem string
 	}{
 		{
-			name:    "a runtime image named by a tag",
-			mutate:  replace("FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b", "FROM alpine:3.24"),
+			// The digest is read from the recipe, so a base-image update
+			// does not turn this row into one that changes nothing.
+			name: "a runtime image named by a tag",
+			mutate: func(recipe string) string {
+				runtime := strings.LastIndex(recipe, "\nFROM ")
+				return recipe[:runtime] + runtimeDigestPin.ReplaceAllString(recipe[runtime:], "")
+			},
 			problem: "is not digest-pinned",
 		},
 		{
