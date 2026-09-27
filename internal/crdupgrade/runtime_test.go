@@ -162,7 +162,7 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 		mutate func(*RuntimeVerifier)
 	}{
 		{
-			name: "cardinality", want: "expected exactly 2",
+			name: "cardinality", want: "expected exactly 4",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Mutating.(*mutatingAdmissionClient)
 				client.object.Webhooks = append(client.object.Webhooks, client.object.Webhooks[0])
@@ -974,6 +974,8 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		Webhooks: []admissionregistrationv1.MutatingWebhook{
 			readyMutatingApprovalWebhook(expected),
 			readyMutatingMigrationApprovalWebhook(expected),
+			readySchemaWriterWebhook(expected),
+			readyMigrationWriterWebhook(expected),
 		},
 	}}
 	validatingClient := &validatingAdmissionClient{object: &admissionregistrationv1.ValidatingWebhookConfiguration{
@@ -1096,6 +1098,37 @@ func readyMutatingMigrationApprovalWebhook(expected RuntimeInvariants) admission
 	webhook.ClientConfig = readyWebhookClientConfig(expected, mutatingMigrationApprovalPath)
 	webhook.Rules = migrationApprovalRules([]admissionregistrationv1.OperationType{admissionregistrationv1.Create})
 	return webhook
+}
+
+func readySchemaWriterWebhook(expected RuntimeInvariants) admissionregistrationv1.MutatingWebhook {
+	webhook := readyMutatingApprovalWebhook(expected)
+	webhook.Name = mutatingSchemaWriterWebhookName
+	webhook.ClientConfig = readyWebhookClientConfig(expected, mutatingSchemaWriterPath)
+	webhook.Rules = specWriterRules([]admissionregistrationv1.OperationType{
+		admissionregistrationv1.Create, admissionregistrationv1.Update,
+	}, "ptahschemas")
+	return webhook
+}
+
+func readyMigrationWriterWebhook(expected RuntimeInvariants) admissionregistrationv1.MutatingWebhook {
+	webhook := readyMutatingApprovalWebhook(expected)
+	webhook.Name = mutatingMigrationWriterWebhookName
+	webhook.ClientConfig = readyWebhookClientConfig(expected, mutatingMigrationWriterPath)
+	webhook.Rules = specWriterRules([]admissionregistrationv1.OperationType{
+		admissionregistrationv1.Create, admissionregistrationv1.Update,
+	}, "ptahmigrations")
+	return webhook
+}
+
+func specWriterRules(operations []admissionregistrationv1.OperationType, resource string) []admissionregistrationv1.RuleWithOperations {
+	scope := admissionregistrationv1.NamespacedScope
+	return []admissionregistrationv1.RuleWithOperations{{
+		Operations: operations,
+		Rule: admissionregistrationv1.Rule{
+			APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
+			Resources: []string{resource}, Scope: &scope,
+		},
+	}}
 }
 
 func readyValidatingMigrationApprovalWebhook(expected RuntimeInvariants) admissionregistrationv1.ValidatingWebhook {

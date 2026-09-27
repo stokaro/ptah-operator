@@ -112,7 +112,9 @@ uniform_service_bundle() {
 		jq -r --arg kind "$kind" --arg service "$SERVICE" --arg namespace "$OPERATOR_NAMESPACE" '
           (if $kind == "mutatingwebhookconfiguration" then {
             "mapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
-            "mmigrationapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"]
+            "mmigrationapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
+            "mschemawriter.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschema"],
+            "mmigrationwriter.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigration"]
           } else {
             "vapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
             "vmigrationapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
@@ -324,6 +326,8 @@ observe_expanded_trust() {
 	done <<EOF
 mutatingwebhookconfiguration $MUTATING_CONFIGURATION mapproval.operator.ptah.run
 mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationapproval.operator.ptah.run
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mschemawriter.operator.ptah.run
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationwriter.operator.ptah.run
 validatingwebhookconfiguration $VALIDATING_CONFIGURATION vapproval.operator.ptah.run
 validatingwebhookconfiguration $VALIDATING_CONFIGURATION vmigrationapproval.operator.ptah.run
 validatingwebhookconfiguration $VALIDATING_CONFIGURATION vpodintent.operator.ptah.run
@@ -777,6 +781,8 @@ while read -r entry_kind entry_configuration entry_name; do
 done <<EOF
 mutatingwebhookconfiguration $MUTATING_CONFIGURATION mapproval.operator.ptah.run
 mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationapproval.operator.ptah.run
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mschemawriter.operator.ptah.run
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationwriter.operator.ptah.run
 validatingwebhookconfiguration $VALIDATING_CONFIGURATION vapproval.operator.ptah.run
 validatingwebhookconfiguration $VALIDATING_CONFIGURATION vmigrationapproval.operator.ptah.run
 validatingwebhookconfiguration $VALIDATING_CONFIGURATION vpodintent.operator.ptah.run

@@ -76,6 +76,8 @@ func TestCertificateE2EManagedWebhookInventory(t *testing.T) {
 				entries := [][3]string{
 					{"mapproval.operator.ptah.run", "webhook", "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"},
 					{"mmigrationapproval.operator.ptah.run", "webhook", "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"},
+					{"mschemawriter.operator.ptah.run", "webhook", "/mutate-operator-ptah-run-v1alpha1-ptahschema"},
+					{"mmigrationwriter.operator.ptah.run", "webhook", "/mutate-operator-ptah-run-v1alpha1-ptahmigration"},
 				}
 				canaryName := "certificate-rotation-canary-mutate.operator.ptah.run"
 				if kind == "validatingwebhookconfiguration" {

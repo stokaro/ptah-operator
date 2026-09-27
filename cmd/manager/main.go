@@ -44,6 +44,8 @@ const (
 	mutateMigrationApprovalPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
 
 	validateMigrationApprovalPath = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	mutateSchemaSpecWriterPath    = "/mutate-operator-ptah-run-v1alpha1-ptahschema"
+	mutateMigrationSpecWriterPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigration"
 	validatePodIntentPath         = "/validate-v1-pod-ptah-operation-intent"
 	validateControllerWritePath   = "/validate-operator-controller-write"
 	leaderElectionID              = "ptah-operator.operator.ptah.run"
@@ -242,6 +244,12 @@ func main() {
 	}})
 	manager.GetWebhookServer().Register(validateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false, Execution: execution,
+	}})
+	manager.GetWebhookServer().Register(mutateSchemaSpecWriterPath, &cradmission.Webhook{Handler: &approvaladmission.SchemaSpecWriterHandler{
+		Decoder: decoder,
+	}})
+	manager.GetWebhookServer().Register(mutateMigrationSpecWriterPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationSpecWriterHandler{
+		Decoder: decoder,
 	}})
 	manager.GetWebhookServer().Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder,
