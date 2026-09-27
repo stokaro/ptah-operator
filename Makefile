@@ -3,6 +3,7 @@ SHELL := /bin/sh
 GO ?= go
 CONTROLLER_GEN_VERSION ?= v0.22.0
 SETUP_ENVTEST_VERSION ?= v0.25.1
+ACTIONLINT_VERSION ?= v1.7.12
 ENVTEST_KUBERNETES_VERSION ?= 1.37.0
 ENVTEST_INDEX ?= https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/1031496fc98a4f51010c3bdfdeb57b5d67bea7bd/envtest-releases.yaml
 ENVTEST_BIN_DIR ?=
@@ -110,9 +111,18 @@ docs-reference-check:
 		-out docs/site/src/content/docs/reference -require-descriptions; \
 	status=$$?; rm -rf $$tmp; exit $$status
 
+.PHONY: lint-workflows
+
+# actionlint reads every workflow's expressions, job graph and action inputs,
+# and runs shellcheck over each run block when shellcheck is on PATH, which it
+# is on GitHub's runners. CODEOWNERS is what makes a workflow change reviewed;
+# this catches what a reviewer reads past.
+lint-workflows:
+	$(GO) run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+
 verify: verify-source test-race
 
-verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release e2e-static vet build test test-envtest
+verify-source: fmt-check lint-workflows generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release e2e-static vet build test test-envtest
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets
 
 verify-crd-schema-history: manifests
