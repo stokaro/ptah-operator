@@ -223,6 +223,10 @@
                 "value": "oci://registry.example/acme/orders:stable"
               },
               {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "6"
+              },
+              {
                 "name": "TMPDIR",
                 "value": "/work"
               }

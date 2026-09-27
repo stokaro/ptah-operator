@@ -220,7 +220,7 @@ func TestMigrationApplyStoppedBetweenFilesReportsWhatItApplied(t *testing.T) {
 		done <- Run(ctx, Config{
 			Operation:   OperationMigrationApply,
 			PtahBinary:  child.spec.Path,
-			Environment: append(migrationApplyEnvironment(t, "migration-apply-stopped-cleanly"), child.spec.Env...),
+			Environment: withRunnerProtocol(append(migrationApplyEnvironment(t, "migration-apply-stopped-cleanly"), child.spec.Env...)),
 			TempDir:     t.TempDir(),
 		})
 	}()

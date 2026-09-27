@@ -729,6 +729,18 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
+	if refusal := runnerProtocolRefusal(result, parseErr); refusal != nil {
+		r.event(migration, corev1.EventTypeWarning, "RunnerProtocolMismatch",
+			"the %s runner refused the Job before starting the executor: %s", operation.Type, bounded(refusal.Error(), 512))
+		if !applying {
+			return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonRunnerProtocolMismatch, refusal)
+		}
+		// An Apply is settled from its own evidence as every Apply is. A
+		// refusal from a runner of another protocol is not a frame of this
+		// protocol, so it reaches the unread path and is recorded as a run
+		// nobody accounted for; one from a runner of this protocol is its
+		// frame, and says the child never started.
+	}
 	if applying {
 		// The run's own evidence settles an Apply, whatever the Job's exit
 		// status said: a run that stopped is exactly the run whose controller
@@ -1518,6 +1530,18 @@ func (r *MigrationReconciler) retryMigrationOperation(
 	job *batchv1.Job,
 	failure error,
 ) (ctrl.Result, error) {
+	return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonOperationFailed, failure)
+}
+
+// retryMigrationOperationAs is retryMigrationOperation with the failure named
+// on the condition a reader looks at.
+func (r *MigrationReconciler) retryMigrationOperationAs(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	reason operatorv1alpha1.ConditionReason,
+	failure error,
+) (ctrl.Result, error) {
 	if job != nil {
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
@@ -1544,7 +1568,7 @@ func (r *MigrationReconciler) retryMigrationOperation(
 	next.JobName = name
 	migration.Status.ActiveOperation = next
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		operatorv1alpha1.ReasonOperationFailed, bounded(failure.Error(), 512))
+		reason, bounded(failure.Error(), 512))
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}

@@ -82,6 +82,12 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: OCI source validation mode accepts only --validate-oci-source")
 			return 2
 		}
+		// The guard authorizes the fetch that runs next with the registry
+		// credentials, so it is held to the protocol as the main run is.
+		if err := runner.CheckProtocolBinding(environment); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
+			return 2
+		}
 		var err error
 		if *snapshotOCICATo == "" {
 			err = runner.ValidateOCISourceAccess(*validateOCISource, environment)

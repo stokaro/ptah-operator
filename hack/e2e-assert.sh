@@ -24,6 +24,16 @@ fi
 unset CDPATH
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 
+# The runner protocol this tree speaks. support/ptah.json records it for the
+# release under test, and hack/verifyptahsupport holds that record to
+# runner.ProtocolVersion, so an assertion reads it here rather than writing
+# the number down a second time.
+RUNNER_PROTOCOL_VERSION=$(jq -er '
+  [.releases[] | select(.operator == "edge") | .verified[].runnerProtocolVersion] | unique |
+  if length == 1 and (.[0] | type) == "number" then .[0]
+  else error("support/ptah.json must record exactly one runner protocol version for edge") end
+' "$ROOT_DIR/support/ptah.json")
+
 KUBECONFIG_FILE=${E2E_KUBECONFIG:-}
 OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:-}
 TEST_NAMESPACE=${E2E_TEST_NAMESPACE:-}
@@ -899,6 +909,7 @@ schema_generation=$(printf '%s\n' "$schema_object" | jq -er '.metadata.generatio
 # that names the manager's own release: a manager that changes only its image,
 # its revision or the runner image built beside it keeps the epoch.
 if ! execution_binding=$(printf '%s\n' "$schema_object" | jq -ce \
+	--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 	--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 	--arg ptahVersion "$PTAH_VERSION" \
 	--arg executorImage "$EXECUTOR_IMAGE" '
@@ -909,7 +920,7 @@ if ! execution_binding=$(printf '%s\n' "$schema_object" | jq -ce \
       $binding.controllerStateVersion == $controllerStateVersion and
       $binding.ptahVersion == $ptahVersion and
       $binding.executorImage == $executorImage and
-      ($binding.runnerProtocolVersion | type == "number" and . == 5)
+      ($binding.runnerProtocolVersion | type == "number" and . == $runnerProtocolVersion)
     ) | $binding
   '); then
 	fail "suspended schema lacks the exact four-component execution binding"
@@ -943,6 +954,7 @@ policy_fingerprint=sha256:777777777777777777777777777777777777777777777777777777
 created_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
 plan_binding_json=$(jq -cn \
+	--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 	--arg schemaUID "$schema_uid" \
 	--arg contentDigest "$content_digest" \
 	--arg artifactDigest "$artifact_digest" \
@@ -973,7 +985,7 @@ plan_binding_json=$(jq -cn \
     controller_state_version: $controllerStateVersion,
     ptah_version: $ptahVersion,
     executor_image: $executorImage,
-    runner_protocol_version: 5,
+    runner_protocol_version: $runnerProtocolVersion,
     destructive: false,
     privilege_changes: [],
     statement_count: 1
@@ -982,6 +994,7 @@ plan_binding_json=$(jq -cn \
 plan_fingerprint="sha256:$(printf '%s' "$plan_binding_json" | sha256_stdin)"
 
 jq -n \
+	--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 	--arg namespace "$TEST_NAMESPACE" \
 	--arg name "$PLAN_NAME" \
 	--arg chunkName "$PLAN_CHUNK_NAME" \
@@ -1041,7 +1054,7 @@ jq -n \
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
-      runnerProtocolVersion: 5,
+      runnerProtocolVersion: $runnerProtocolVersion,
       dialect: "postgres",
       destructive: false,
       statementCount: 1,
@@ -1109,6 +1122,7 @@ k -n "$TEST_NAMESPACE" patch ptahschemaplan "$PLAN_NAME" \
 	--subresource=status --type=merge -p "$plan_status" >/dev/null
 
 schema_status=$(jq -n \
+	--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 	--argjson observedGeneration "$schema_generation" \
 	--arg planName "$PLAN_NAME" \
 	--arg planUID "$plan_uid" \
@@ -1181,7 +1195,7 @@ schema_status=$(jq -n \
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
-      runnerProtocolVersion: 5,
+      runnerProtocolVersion: $runnerProtocolVersion,
       destructive: false,
       statementCount: 1,
       createdAt: $now
@@ -1218,6 +1232,7 @@ approval_json "$APPROVAL_NAME" "$plan_fingerprint" >"$approval_file"
 k create -f "$approval_file" >/dev/null
 k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
 	jq -e \
+		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 		--arg artifactDigest "$artifact_digest" \
 		--arg coordinationDigest "$coordination_digest" \
 		--arg targetDigest "$target_digest" \
@@ -1245,7 +1260,7 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
       .spec.controllerStateVersion == $controllerStateVersion and
       .spec.ptahVersion == $ptahVersion and
       .spec.executorImage == $executorImage and
-      .spec.runnerProtocolVersion == 5 and
+      .spec.runnerProtocolVersion == $runnerProtocolVersion and
       (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not)
     ' >/dev/null || fail "mutating webhook did not stamp identity and hydrate the plan binding"
 

@@ -56,6 +56,7 @@ func TestConditionReasonWireContract(t *testing.T) {
 		{"refresh suspended", operatorv1alpha1.ReasonRefreshSuspended, "RefreshSuspended"},
 		{"requested", operatorv1alpha1.ReasonRequested, "Requested"},
 		{"resolve failed", operatorv1alpha1.ReasonResolveFailed, "ResolveFailed"},
+		{"runner protocol mismatch", operatorv1alpha1.ReasonRunnerProtocolMismatch, "RunnerProtocolMismatch"},
 		{"satisfied", operatorv1alpha1.ReasonSatisfied, "Satisfied"},
 		{"scoped changes", operatorv1alpha1.ReasonScopedChanges, "ScopedChanges"},
 		{"scoped converged", operatorv1alpha1.ReasonScopedConverged, "ScopedConverged"},

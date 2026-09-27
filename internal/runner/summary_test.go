@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -152,7 +153,7 @@ func TestTheSummaryCarriesNoCredentialAndNoChildText(t *testing.T) {
 		exitCode: 1,
 	}}}
 	result := Run(context.Background(), Config{
-		Operation: OperationMigrationApply, Environment: environment, Executor: executor, TempDir: t.TempDir(),
+		Operation: OperationMigrationApply, Environment: withRunnerProtocol(environment), Executor: executor, TempDir: t.TempDir(),
 	})
 	if len(executor.calls) != 1 || result.MigrationRun == nil {
 		t.Fatalf("Run() = %#v after %d calls, want a run that reached the child and kept its report",
@@ -202,7 +203,9 @@ func TestParseSummaryRefusesWhatItCannotAccountFor(t *testing.T) {
 		{name: "without its trailing newline", message: strings.TrimSuffix(valid, "\n")},
 		{name: "another operation", message: valid, operation: OperationMigrationHistory, wantErr: true},
 		{name: "another attempt", message: valid, id: "sha256:" + strings.Repeat("f", 64), wantErr: true},
-		{name: "another protocol", message: edit(`"protocolVersion":5`, `"protocolVersion":4`), wantErr: true},
+		{name: "another protocol", message: edit(
+			`"protocolVersion":`+strconv.Itoa(ProtocolVersion), `"protocolVersion":`+strconv.Itoa(ProtocolVersion-1),
+		), wantErr: true},
 		{name: "a field this build does not know", message: edit(`{"protocolVersion"`, `{"extra":1,"protocolVersion"`), wantErr: true},
 		{name: "data after the document", message: strings.TrimSuffix(valid, "\n") + " {}", wantErr: true},
 		{name: "two summaries", message: valid + valid, wantErr: true},

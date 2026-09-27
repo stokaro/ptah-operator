@@ -149,6 +149,19 @@ deadline with nothing left to schedule its collection. The timing changes
 nothing -- Kubernetes starts that timer when a Job finishes either way -- so
 the exception is written for a schema Apply and for no other shape.
 
+## Which runner a Job accepts
+
+The runner is installed from `execution.runnerImage`, and nothing but the
+installation ties that image to the manager. Every runner container of a Job --
+the one that starts the executor and the guard that authorizes OCI access --
+is told the protocol its manager speaks in `PTAH_RUNNER_PROTOCOL_VERSION`. A
+runner of another protocol refuses the Job before it reads anything else: the
+executor never starts, and the result frame carries only the operation, the
+error code `runner_protocol_mismatch` and the runner's own protocol version, a
+document every protocol writes and reads the same way. The manager reports the
+refusal as `RunnerProtocolMismatch` rather than as a failed operation. A guard
+that refuses stops the Pod before the fetch that uses the registry credentials.
+
 ## When a Pod is stopped
 
 A node drain, a preemption, an eviction or a Pod deadline stops an operation

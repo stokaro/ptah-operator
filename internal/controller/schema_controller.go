@@ -1435,6 +1435,20 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
+	if refusal := runnerProtocolRefusal(result, parseErr); refusal != nil {
+		r.event(schema, corev1.EventTypeWarning, "RunnerProtocolMismatch",
+			"the %s runner refused the Job before starting the executor: %s", operation.Type, bounded(refusal.Error(), 512))
+		if operation.Type == operatorv1alpha1.OperationApply {
+			// The refusal says this Pod started nothing, and it is the Pod's
+			// own account. A Job may run its Pod more than once, so an Apply
+			// still owes the read-only proof every Apply error owes; that
+			// proof meets the same runner and is refused the same way, which
+			// names the cause where a reader looks.
+			return r.finishUncertainApplyWithEvidence(ctx, schema, job,
+				fmt.Errorf("apply result is uncertain: %w", refusal), evidence.PodUIDs, evidence.PodCount, !evidence.Trusted)
+		}
+		return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonRunnerProtocolMismatch, refusal, nil)
+	}
 	if parseErr != nil || !jobSucceeded(job) {
 		if mutationlifecycle.HarvestFailure(
 			mutationlifecycle.FaultUnreadableResult, operation.Type == operatorv1alpha1.OperationApply,
@@ -4757,6 +4771,23 @@ func dispatcherRecord(job *batchv1.Job) *operatorv1alpha1.ManagerRecord {
 		ControllerRevision: controllerRevision,
 		RunnerImage:        runnerImage,
 	}
+}
+
+// runnerProtocolRefusal reports a runner that refused its Job because the Job
+// was built for another runner protocol: a runner of this protocol that
+// answered in its own frame, or a runner of another protocol that answered in
+// the one document every protocol writes and reads the same way. Either way
+// the runner started no executor, and the cause is the runner image the
+// installation names rather than anything the resource asked for, so it is
+// reported as that rather than as a failed operation.
+func runnerProtocolRefusal(result runner.Result, parseErr error) error {
+	if mismatch := (*runner.ProtocolMismatchError)(nil); errors.As(parseErr, &mismatch) {
+		return mismatch
+	}
+	if parseErr == nil && result.Error != nil && result.Error.Code == runner.CodeRunnerProtocolMismatch {
+		return fmt.Errorf("%w: %s", runner.ErrRunnerProtocolMismatch, bounded(result.Error.Message, 512))
+	}
+	return nil
 }
 
 // planReadingMatches decodes the stored plan bytes with this manager's

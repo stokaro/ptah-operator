@@ -66,6 +66,7 @@ decision.
 | `RefreshSuspended` | Source refresh stopped before dispatch because reconciliation was suspended. |
 | `Requested` | The spec requests suspension. |
 | `ResolveFailed` | No immutable source resolution is available. |
+| `RunnerProtocolMismatch` | The runner refused the Job before starting the executor, because `execution.runnerImage` is a runner that speaks another protocol than this manager. The operation is tried again after the failure interval; set `execution.runnerImage` to the runner of the manager's own release. |
 | `Satisfied` | Current plan approval requirements passed final validation. |
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |

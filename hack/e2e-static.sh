@@ -690,10 +690,25 @@ if manager_pods_replaced '["old-a","old-b"]' '["new-a"]' >/dev/null 2>&1; then
 	exit 1
 fi
 
-grep -Eq '^[[:space:]]*ProtocolVersion = 5$' "$ROOT_DIR/internal/runner/protocol.go" || {
-	printf '%s\n' 'e2e static: runner protocol constant is not version 5' >&2
+# The acceptance scripts read the runner protocol from support/ptah.json, so
+# the constant, the catalog and the protocol record have to name one version:
+# a bump that moved only the constant would leave every lifecycle asserting
+# the old one.
+runner_protocol_constant=$(sed -n 's/^[[:space:]]*ProtocolVersion = \([1-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/runner/protocol.go")
+runner_protocol_catalog=$(jq -er '
+  [.releases[] | select(.operator == "edge") | .verified[].runnerProtocolVersion] | unique |
+  if length == 1 and (.[0] | type) == "number" then .[0]
+  else error("support/ptah.json must record exactly one runner protocol version for edge") end
+' "$ROOT_DIR/support/ptah.json")
+runner_protocol_record=$(jq -er '.protocolVersion' "$ROOT_DIR/support/runner-protocol.json")
+if [ -z "$runner_protocol_constant" ] ||
+	[ "$runner_protocol_constant" != "$runner_protocol_catalog" ] ||
+	[ "$runner_protocol_constant" != "$runner_protocol_record" ]; then
+	printf 'e2e static: runner protocol constant %s, support/ptah.json %s and support/runner-protocol.json %s disagree\n' \
+		"$runner_protocol_constant" "$runner_protocol_catalog" "$runner_protocol_record" >&2
 	exit 1
-}
+fi
 grep -F 'TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol' \
 	"$ROOT_DIR/internal/runner/protocol_test.go" >/dev/null || {
 	printf '%s\n' 'e2e static: previous runner protocol rejection regression is missing' >&2
@@ -1748,6 +1763,7 @@ for engine in postgresql mysql; do
 		exit 1
 	}
 done
+# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
 for lifecycle_marker in \
 	'wait_for_in_sync' \
 	'assert_periodic_noop' \
@@ -1789,7 +1805,7 @@ for lifecycle_marker in \
 	'registryAuthFrom' \
 		'coordinationKey' \
 		'.status.target.driftReportDigest != ""' \
-		'.spec.runnerProtocolVersion == 5' \
+		'.spec.runnerProtocolVersion == $runnerProtocolVersion' \
 		'e2e-faults.sh' \
 	'run_mysql_dsn_refusal' \
 	'audit_started_containers' \
@@ -3513,7 +3529,8 @@ source_job_fixture() {
         literalEnv("TMPDIR"; "/work"),
         literalEnv("PTAH_OPERATION_ID"; operationID($operation)),
         literalEnv("PTAH_REQUESTED_REFERENCE";
-          "oci://registry.example:5000/acme/schema:latest")
+          "oci://registry.example:5000/acme/schema:latest"),
+        literalEnv("PTAH_RUNNER_PROTOCOL_VERSION"; "5")
       ] +
       (if $operation == "verify" then [
         literalEnv("PTAH_RESOLVED_REFERENCE";
@@ -3674,6 +3691,15 @@ assert_source_isolation_mutation_rejected() {
 
 assert_source_isolation_mutation_rejected 'missing Verify Job' \
 	"$source_environment_fixture" Environment 'del(.items[1])'
+assert_source_isolation_mutation_rejected 'source Job that names no runner protocol' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.containers[0].env |= map(select(.name != "PTAH_RUNNER_PROTOCOL_VERSION"))'
+assert_source_isolation_mutation_rejected 'runner protocol read from a Secret' \
+	"$source_environment_fixture" Environment \
+	'(.items[0].spec.template.spec.containers[0].env[] | select(.name == "PTAH_RUNNER_PROTOCOL_VERSION")) |= {name, valueFrom: {secretKeyRef: {name: "registry-auth", key: "protocol"}}}'
+assert_source_isolation_mutation_rejected 'runner protocol that is not a version' \
+	"$source_environment_fixture" Environment \
+	'(.items[0].spec.template.spec.containers[0].env[] | select(.name == "PTAH_RUNNER_PROTOCOL_VERSION")).value = "05"'
 assert_source_isolation_mutation_rejected 'extra source Job' \
 	"$source_environment_fixture" Environment '.items += [.items[1]]'
 assert_source_isolation_mutation_rejected 'duplicate Resolve operation' \

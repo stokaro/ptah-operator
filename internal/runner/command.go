@@ -219,6 +219,7 @@ func childEnvironment(environment []string) []string {
 		EnvDispatchNotAfter,
 		EnvExecutionNotAfter,
 		EnvTerminationGracePeriod,
+		EnvRunnerProtocolVersion,
 		EnvExpectedDatabaseEngine,
 		EnvOCIAuthMode,
 		EnvOCIAuthRegistryGrant,

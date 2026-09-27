@@ -247,6 +247,10 @@
                 "value": "oci://registry.example/acme/orders@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
               },
               {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "6"
+              },
+              {
                 "name": "PTAH_VERIFICATION_POLICY",
                 "value": "/verification/policy.yaml"
               },

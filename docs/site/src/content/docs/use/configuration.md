@@ -16,7 +16,9 @@ accepted, and a Docker image ID is not a registry manifest digest.
 `execution.runnerImage` is the runner beside it, also by digest. The executor
 is bound into every plan and approval; the runner is built from the operator's
 own source, so its digest is recorded and its enforcement is bound through the
-runner protocol version instead. Each release
+runner protocol version instead. A runner image from a release that speaks
+another protocol refuses every Job before the executor starts, and the resource
+reports `RunnerProtocolMismatch`. Each release
 builds an executor from the Ptah commit it was tested with and names its digest
 in the release manifest, as [the executor](../../support/releases/#the-executor)
 describes; the chart still takes it only as an explicit value.

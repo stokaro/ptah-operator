@@ -12,6 +12,14 @@ def exact_literal_env($container; $name; $value):
   [$container.env[]? | select(.name == $name)] as $matches |
   ($matches | length) == 1 and
   $matches[0].value == $value and $matches[0].valueFrom == null;
+# The runner protocol the manager speaks: a literal protocol version, which
+# the runner compares with its own before it reads anything else.
+def runner_protocol_env($container):
+  [$container.env[]? | select(.name == "PTAH_RUNNER_PROTOCOL_VERSION")] as $matches |
+  ($matches | length) == 1 and
+  ($matches[0].value | type) == "string" and
+  ($matches[0].value | test("^[1-9][0-9]*$")) and
+  $matches[0].valueFrom == null;
 def exact_secret_env($container; $name; $key; $optional):
   [$container.env[]? | select(.name == $name)] as $matches |
   ($matches | length) == 1 and
@@ -38,6 +46,7 @@ def exact_source_env_names($operation):
     "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
     "PTAH_PLAIN_HTTP",
     "PTAH_REQUESTED_REFERENCE",
+    "PTAH_RUNNER_PROTOCOL_VERSION",
     "TMPDIR"
   ] +
   (if $authMode == "Environment" then
@@ -220,6 +229,7 @@ def exact_source_literals($job; $container; $operation):
     $job.metadata.annotations["operator.ptah.run/operation-id"]) and
   exact_literal_env($container; "PTAH_REQUESTED_REFERENCE";
     $requestedReference) and
+  runner_protocol_env($container) and
   (if $operation == "verify" then
     exact_literal_env($container; "PTAH_RESOLVED_REFERENCE";
       $resolvedReference) and

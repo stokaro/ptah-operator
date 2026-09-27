@@ -77,6 +77,6 @@ spec:
   # changes none of these keeps the approval; one that changes any retires it.
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
-  runnerProtocolVersion: 5
+  runnerProtocolVersion: 6
   controllerStateVersion: 2
 ```

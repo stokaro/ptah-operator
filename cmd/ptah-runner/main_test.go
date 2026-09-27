@@ -8,11 +8,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
+
+// runnerProtocol names this runner's protocol, as the builder does in every
+// runner container it writes.
+var runnerProtocol = runner.EnvRunnerProtocolVersion + "=" + strconv.Itoa(runner.ProtocolVersion)
 
 func TestRunUsesConfiguredBinaryAndResultLimit(t *testing.T) {
 	t.Parallel()
@@ -31,6 +36,7 @@ func TestRunUsesConfiguredBinaryAndResultLimit(t *testing.T) {
 		[]string{
 			"PTAH_OPERATION_ID=resolve-flags",
 			"PTAH_REQUESTED_REFERENCE=oci://registry.example/schema:main",
+			runnerProtocol,
 		},
 		"",
 	)
@@ -46,6 +52,43 @@ func TestRunUsesConfiguredBinaryAndResultLimit(t *testing.T) {
 	}
 	if result.Error == nil || result.Error.Code != "output_truncated" || result.Truncation == nil || !result.Truncation.Stdout {
 		t.Fatalf("result = %#v, want output truncation metadata", result)
+	}
+}
+
+// TestRunRefusesAJobBuiltForAnotherProtocol drives the entrypoint the Pod runs
+// with a Job built for the next protocol. The executor is a program that
+// would leave a mark if it ran; the runner frames its refusal, and the mark
+// is never made.
+func TestRunRefusesAJobBuiltForAnotherProtocol(t *testing.T) {
+	t.Parallel()
+
+	marker := filepath.Join(t.TempDir(), "executor-ran")
+	executor := filepath.Join(t.TempDir(), "ptah")
+	if err := os.WriteFile(executor, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	run(
+		context.Background(),
+		[]string{"--ptah-binary", executor, "--operation", "resolve"},
+		&stdout,
+		&stderr,
+		[]string{
+			"PTAH_OPERATION_ID=resolve-next-protocol",
+			"PTAH_REQUESTED_REFERENCE=oci://registry.example/schema:main",
+			runner.EnvRunnerProtocolVersion + "=" + strconv.Itoa(runner.ProtocolVersion+1),
+		},
+		"",
+	)
+	result, err := runner.ParseResultFor(stdout.Bytes(), runner.OperationResolve, "resolve-next-protocol")
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v, stdout = %q, stderr = %q", err, stdout.String(), stderr.String())
+	}
+	if result.Error == nil || result.Error.Code != runner.CodeRunnerProtocolMismatch || result.ChildExitCode != -1 {
+		t.Fatalf("result = %#v, want the protocol refusal", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the executor ran under a Job built for another protocol (stat error %v)", err)
 	}
 }
 
@@ -74,6 +117,7 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 		reference   string
 		environment []string
 		wantExit    int
+		wantStderr  string
 	}{
 		"matching grant": {
 			reference: "oci://registry.example/team/schema@sha256:" + strings.Repeat("a", 64),
@@ -81,7 +125,31 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 				runner.EnvOCIAuthMode + "=Environment",
 				"PTAH_OCI_REGISTRY=registry.example",
 				runner.EnvOCIAuthRegistryGrant + "=registry.example",
+				runnerProtocol,
 			},
+		},
+		// The grant matches; the Job was built for another runner protocol,
+		// and the guard authorizes nothing for it.
+		"matching grant under another protocol": {
+			reference: "oci://registry.example/team/schema@sha256:" + strings.Repeat("a", 64),
+			environment: []string{
+				runner.EnvOCIAuthMode + "=Environment",
+				"PTAH_OCI_REGISTRY=registry.example",
+				runner.EnvOCIAuthRegistryGrant + "=registry.example",
+				runner.EnvRunnerProtocolVersion + "=" + strconv.Itoa(runner.ProtocolVersion+1),
+			},
+			wantExit:   2,
+			wantStderr: runner.CodeRunnerProtocolMismatch,
+		},
+		"matching grant without a protocol": {
+			reference: "oci://registry.example/team/schema@sha256:" + strings.Repeat("a", 64),
+			environment: []string{
+				runner.EnvOCIAuthMode + "=Environment",
+				"PTAH_OCI_REGISTRY=registry.example",
+				runner.EnvOCIAuthRegistryGrant + "=registry.example",
+			},
+			wantExit:   2,
+			wantStderr: runner.CodeRunnerProtocolMismatch,
 		},
 		"mismatched grant": {
 			reference: "oci://registry.example/team/schema@sha256:" + strings.Repeat("a", 64),
@@ -89,6 +157,7 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 				runner.EnvOCIAuthMode + "=Environment",
 				"PTAH_OCI_REGISTRY=registry.example",
 				runner.EnvOCIAuthRegistryGrant + "=attacker.example",
+				runnerProtocol,
 			},
 			wantExit: 2,
 		},
@@ -106,7 +175,7 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 				test.environment,
 				"",
 			)
-			if exitCode != test.wantExit || stdout.Len() != 0 {
+			if exitCode != test.wantExit || stdout.Len() != 0 || !strings.Contains(stderr.String(), test.wantStderr) {
 				t.Fatalf("run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 			}
 		})
@@ -129,6 +198,7 @@ func TestRunSnapshotsValidatedOCICA(t *testing.T) {
 		runner.EnvOCIAuthRegistryGrant + "=registry.example",
 		runner.EnvOCIHasCA + "=true",
 		runner.EnvOCICASourceFile + "=" + source,
+		runnerProtocol,
 	}
 	for name, grant := range map[string]string{
 		"matching":   fmt.Sprintf("sha256:%x", digest),
