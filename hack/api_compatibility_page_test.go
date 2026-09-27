@@ -52,9 +52,14 @@ func TestTheCompatibilityPagePromisesOnlyWhatIsEnforced(t *testing.T) {
 			refusal: "must equal baseline version",
 		},
 		{
-			stated:  "append-only rollout",
-			source:  filepath.Join("internal", "crdupgrade", "activation_guard.go"),
-			refusal: "release activation rollback refused",
+			stated:  "release sequence one above",
+			source:  filepath.Join("charts", "ptah-operator", "templates", "_helpers.tpl"),
+			refusal: "is newer than candidate",
+		},
+		{
+			stated:  "refuses stored state newer than that release reads",
+			source:  filepath.Join("internal", "crdupgrade", "runtime.go"),
+			refusal: "controller downgrade refused: ",
 		},
 		{
 			stated:  "refuses a set that added or removed a kind",

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/workload"
 	"github.com/stokaro/ptah-operator/test/envtest/internal/harness"
 	"github.com/stokaro/ptah-operator/test/envtest/internal/policyenv"
 )
@@ -70,6 +72,11 @@ func dryRunCreate(build func() (client.Object, error)) func(context.Context, cli
 // manager's code writes, and refuses the same write with one field changed.
 // An ordinary user's writes are outside them, which the widened-match
 // mutations prove matters.
+//
+// The object guards carry this release's manager image and controller-state
+// version as literals. A write stamped by another release is refused, and the
+// mutations that put the other release's value into the policy show that the
+// literal is what refuses it.
 func controllerRows(t *testing.T, c *catalog) {
 	writeGuard := policy(t, "ptah-operator-controller-write-guard-")
 	jobGuard := policy(t, "ptah-operator-job-write-guard-")
@@ -118,13 +125,25 @@ func controllerRows(t *testing.T, c *catalog) {
 		return api.Status().Update(ctx, current, client.DryRunAll)
 	})})
 
-	// Jobs: the builder's own Jobs, and one of them made privileged.
+	// Jobs: the builder's own Jobs, one of them made privileged, and the same
+	// Job built by another manager release.
 	const (
-		schemaJobRow     = "manager dispatches the Job the builder builds for a PtahSchema"
-		migrationJobRow  = "manager dispatches the Job the builder builds for a PtahMigration"
-		privilegedJobRow = "manager dispatches a builder Job made privileged"
-		userJobRow       = "ordinary user creates a privileged Job"
+		schemaJobRow       = "manager dispatches the Job the builder builds for a PtahSchema"
+		migrationJobRow    = "manager dispatches the Job the builder builds for a PtahMigration"
+		privilegedJobRow   = "manager dispatches a builder Job made privileged"
+		foreignImageJobRow = "manager dispatches a Job stamped with another manager's image"
+		foreignStateJobRow = "manager dispatches a Job stamped with another controller-state version"
+		userJobRow         = "ordinary user creates a privileged Job"
 	)
+	foreignImage := "ghcr.io/stokaro/ptah-operator@" + digest("9")
+	foreignState := managerBuilder().ControllerStateVersion + 1
+	builtBy := func(edit func(*workload.Builder)) func() (client.Object, error) {
+		return func() (client.Object, error) {
+			builder := managerBuilder()
+			edit(&builder)
+			return resolveJobBuiltBy(builder)
+		}
+	}
 	privileged := func() (client.Object, error) {
 		job, err := resolveJob()
 		if err != nil {
@@ -141,6 +160,14 @@ func controllerRows(t *testing.T, c *catalog) {
 		Name: privilegedJobRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
 		Do: as(manager, dryRunCreate(privileged)),
 	})
+	c.row(policyenv.Row{
+		Name: foreignImageJobRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(builtBy(func(builder *workload.Builder) { builder.ControllerImage = foreignImage }))),
+	})
+	c.row(policyenv.Row{
+		Name: foreignStateJobRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(builtBy(func(builder *workload.Builder) { builder.ControllerStateVersion = foreignState }))),
+	})
 	c.row(policyenv.Row{Name: userJobRow, Do: as(policyenv.User(), dryRunCreate(privileged))})
 
 	// Plans: the plan store's own publication, a plan stamped by another
@@ -156,7 +183,7 @@ func controllerRows(t *testing.T, c *catalog) {
 	c.row(policyenv.Row{
 		Name: foreignPlanRow, Deny: []string{planGuard}, Message: "rejected an unsafe manifest shape",
 		Do: as(manager, dryRunCreate(func() (client.Object, error) {
-			plan, _, err := schemaPlan("ghcr.io/stokaro/ptah-operator@" + digest("9"))
+			plan, _, err := schemaPlan(foreignImage)
 			return plan, err
 		})),
 	})
@@ -175,18 +202,13 @@ func controllerRows(t *testing.T, c *catalog) {
 	c.row(policyenv.Row{
 		Name: foreignMigrationRow, Deny: []string{migrationPlanGuard}, Message: "rejected an unsafe manifest shape",
 		Do: as(manager, dryRunCreate(func() (client.Object, error) {
-			return migrationPlan("ghcr.io/stokaro/ptah-operator@" + digest("9"))
+			return migrationPlan(foreignImage)
 		})),
 	})
 
 	c.mutation(policyenv.Mutation{
 		Name: "controller write guard binding dropped", Policies: []string{writeGuard},
 		Apply:  policyenv.DropBinding(writeGuard),
-		Breaks: []string{schemaSpecRow, crossFinalizerRow},
-	})
-	c.mutation(policyenv.Mutation{
-		Name: "controller write guard parameter reference fails open", Policies: []string{writeGuard},
-		Apply:  policyenv.RedirectParameters(writeGuard),
 		Breaks: []string{schemaSpecRow, crossFinalizerRow},
 	})
 	c.mutation(policyenv.Mutation{
@@ -199,7 +221,23 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard binding dropped", Policies: []string{jobGuard},
-		Apply: policyenv.DropBinding(jobGuard), Breaks: []string{privilegedJobRow},
+		Apply:  policyenv.DropBinding(jobGuard),
+		Breaks: []string{privilegedJobRow, foreignImageJobRow, foreignStateJobRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard carries another manager's image", Policies: []string{jobGuard},
+		Apply: policyenv.SetVariables(jobGuard, map[string]string{
+			"releaseControllerImage": strconv.Quote(foreignImage),
+		}),
+		Breaks: []string{foreignImageJobRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard carries another controller-state version", Policies: []string{jobGuard},
+		Apply: policyenv.SetVariables(jobGuard, map[string]string{
+			"releaseControllerStateString": strconv.Quote(strconv.Itoa(int(foreignState))),
+			"releaseControllerState":       strconv.Itoa(int(foreignState)),
+		}),
+		Breaks: []string{foreignStateJobRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard matches every identity", Policies: []string{jobGuard},
@@ -222,12 +260,26 @@ func controllerRows(t *testing.T, c *catalog) {
 		Apply: policyenv.DropBinding(planGuard), Breaks: []string{foreignPlanRow},
 	})
 	c.mutation(policyenv.Mutation{
+		Name: "plan write guard carries another manager's image", Policies: []string{planGuard},
+		Apply: policyenv.SetVariables(planGuard, map[string]string{
+			"releaseControllerImage": strconv.Quote(foreignImage),
+		}),
+		Breaks: []string{foreignPlanRow},
+	})
+	c.mutation(policyenv.Mutation{
 		Name: "plan write guard refuses what it matches", Policies: []string{planGuard},
 		Apply: policyenv.RefuseEverything(planGuard), Breaks: []string{publishRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard binding dropped", Policies: []string{migrationPlanGuard},
 		Apply: policyenv.DropBinding(migrationPlanGuard), Breaks: []string{foreignMigrationRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "migration plan write guard carries another manager's image", Policies: []string{migrationPlanGuard},
+		Apply: policyenv.SetVariables(migrationPlanGuard, map[string]string{
+			"releaseControllerImage": strconv.Quote(foreignImage),
+		}),
+		Breaks: []string{foreignMigrationRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard refuses what it matches", Policies: []string{migrationPlanGuard},

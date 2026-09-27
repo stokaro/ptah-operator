@@ -187,7 +187,7 @@ func TestTheDocumentedRefusalsAreTheOnesTheFenceEmits(t *testing.T) {
 	for _, refusal := range []string{
 		"controller downgrade refused: ",
 		"does not match compiled controller-state version ",
-		"release activation controller-state rollback refused:",
+		"controller-state rollback refused: existing ",
 	} {
 		if !strings.Contains(page, refusal) {
 			t.Fatalf("%s no longer quotes the refusal %q", controllerStateDocumentation, refusal)

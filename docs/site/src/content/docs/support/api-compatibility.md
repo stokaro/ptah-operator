@@ -59,10 +59,14 @@ version or below and refuses anything above, at startup and before every CRD
 update. Which version carries which state, and what each refusal looks like,
 is [the controller-state contract](../releases/#controller-state-contract).
 
-**Release order.** Each published chart advances an append-only rollout
-sequence, and a candidate below the recorded active sequence is refused before
-any CRD is touched. Upgrading is allowed to move forward and rolling back
-below state that has already been written is not.
+**Release order.** Each published chart carries a release sequence one above
+the chart before it, and the admission configurations record the sequence of
+the release that wrote them. An upgrade to a chart whose sequence is below the
+recorded one is refused when Helm renders it, before any hook runs. `helm
+rollback` renders nothing: it runs the CRD hook of the release it returns to,
+and that hook refuses stored state newer than that release reads. Upgrading is
+allowed to move forward and rolling back below state that has already been
+written is not.
 
 ## The set of kinds cannot change quietly
 

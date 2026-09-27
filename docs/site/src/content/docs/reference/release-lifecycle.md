@@ -1,11 +1,12 @@
 ---
 title: Release lifecycle
-description: What install, upgrade, retirement and uninstall do, and what each refuses.
+description: What install, upgrade, rollback and uninstall do, and what each refuses.
 ---
 
-A release is installed, upgraded and removed by Helm hooks that refuse more
-than they do. This page is what those hooks check and why a refusal reads the
-way it does. Performing any of it is
+A release is installed, upgraded, rolled back and removed by Helm, with one
+hook of its own: the CRD manager's reconcile Job. This page is what that hook
+and the runtime verifier check, and why a refusal reads the way it does.
+Performing any of it is
 [Operations](../../use/operations/#installation-and-upgrades), and nothing
 here has to be read to follow a runbook there. What a release promises about
 objects you have stored is
@@ -14,28 +15,25 @@ objects you have stored is
 The release namespace is trusted infrastructure: whoever can create workloads
 there is a Ptah administrator, as
 [the release namespace contract](../../use/security/#release-namespace) says.
-Several mechanisms below go further and defend the hooks against a hostile
-writer inside that namespace. They sit outside the contract, and
-[#443](https://github.com/stokaro/ptah-operator/issues/443) removes them. The
-checks against a stale or buggy previous release stay: schema identity, the
-downgrade preflight and the runtime verifier.
+Nothing below defends the release against a writer inside that namespace. What
+it checks is a stale or buggy previous release: schema identity, the downgrade
+preflight and the runtime verifier.
 
-## The hooks and what each decides
+## The hook and the verifier
 
-`ptah-crd-manager` runs as Helm hooks. Each mode validates its preconditions
-before proceeding:
+`ptah-crd-manager` runs in three modes:
 
-| Mode | What it decides |
-| --- | --- |
-| `identity-probe` | Whether the live release identity matches the one being installed |
-| `preflight` | Whether the install or upgrade may start at all: ownership, RBAC, namespaces, PriorityClass, resource quota |
-| `reconcile` | The CRDs themselves, against the stored schema history |
-| `verify`, `runtime-verify` | That what was applied is what runs |
-| `teardown-quiesce` | Uninstall: stop the runtime, then delete what the release keeps outside Helm's own deletion |
+| Mode | Where it runs | What it decides |
+| --- | --- | --- |
+| `reconcile` | The Helm hook, on install, upgrade and rollback | The stored state, the CRDs, and whether the running release has to stop first |
+| `runtime-verify` | The init container of the manager and the certificate rotator | That the CRDs and the admission singleton are the ones this release installs, and for the manager, that the stored state is one it reads |
+| `verify` | By hand | That the live CRDs match the ones this binary embeds and are established |
 
-A refusal is written to the container's termination message as well as to
-stderr, because Helm reports only that a hook Job failed: without that, an
-operator is told an uninstall was refused and never why.
+A refusal is written to stderr and to the container's termination message.
+Helm deletes a failed hook Job, but it prints the Job's log first, because the
+Job carries `helm.sh/hook-output-log-policy: hook-failed`: the refusal is in
+the output of the command that failed, rather than only the fact that a hook
+Job did.
 
 `ptah-cert-rotator` owns the webhook serving certificates. One reconciliation
 at a time, serialized by a Lease of its own: it issues or renews the CA
@@ -52,36 +50,61 @@ The manager never receives permission to read the Secret this writes.
 
 CRDs are stored under the chart's `crds/` directory and are installed before
 templated resources. The candidate operator image embeds the exact same
-generated CRDs. The same reconciliation hook runs for `pre-install` and
-`pre-upgrade`, which makes a fresh installation over CRDs retained by an
-earlier uninstall safe and usable. It first scans every durable
-controller-state version described below. Only after that downgrade preflight
-succeeds does it dry-run every required schema change, update only the `spec`
-and the two owned schema-identity annotations of each existing CRD, and wait
-for both `Established=True` and `NamesAccepted=True`. Helm does not roll the
-manager Deployment until that hook succeeds.
+generated CRDs. One reconcile hook runs for `pre-install`, `pre-upgrade` and
+`pre-rollback`, which makes a fresh installation over CRDs retained by an
+earlier uninstall safe and usable, and holds a rollback to the checks an
+upgrade passes. The hook runs the image of the release Helm is moving to: on a
+rollback, the image of the revision being restored.
+
+In order, it:
+
+1. scans every durable controller-state version, as described below;
+2. checks the schema identity of every CRD against the one it embeds, and
+   dry-runs every required schema change;
+3. scans the stored state again, and stops the running release when its
+   manager image differs from the hook's;
+4. scans the stored state a third time, now that no old manager can write it;
+5. updates only the `spec` and the two owned schema-identity annotations of
+   each existing CRD, and waits for both `Established=True` and
+   `NamesAccepted=True`.
+
+A refusal before the stop leaves the running release exactly as it was,
+because nothing before it changes anything. A refusal after it leaves the
+runtime stopped until an upgrade or a rollback to a release that passes these
+checks brings it back. Helm does not apply the new Deployments until the hook
+succeeds.
 
 The hook never creates, deletes, or force-applies a CRD. A missing CRD, an API
 identity conflict, a stored version absent from the candidate, a rejected
 dry-run, or an incompatible schema identity introduced concurrently makes the
-Helm operation fail. The
-dedicated hook ServiceAccount can `get` and `update` only the seven exact Ptah
-CRD names. Separate read-only `list` grants for every kind that stores a
-controller-state version exist solely for the downgrade preflight. Kubernetes
-RBAC cannot restrict `create` by `resourceNames`, so the hook also receives a
-temporary namespace-wide `create` grant for Deployments after the rollout
-guard is installed. The guard admits that identity only for server-side
-dry-run probes of the two fixed runtime Deployment names, rejects every
-arbitrary name with a dedicated policy denial, and forbids its reserved probe
-annotation from persistence. The hook proves both the exact-name and
-arbitrary-name boundaries before using any broader rollout permission.
-Hook RBAC is removed after either success or failure. Replacing only `spec` and
-those two owned annotations preserves CRD UIDs, all other metadata, status,
-and all custom resources. The manager and certificate-rotation Pods also run
-the embedded verifier as an init container
-with read-only, exact-name CRD and admission-configuration access. A partial
-update, later schema drift, or admission singleton owned by another release
-therefore cannot start either mutating process.
+Helm operation fail. The hook's own ServiceAccount can `get` and `update` only
+the seven exact Ptah CRD names. Separate read-only `list` grants for every kind
+that stores a controller-state version exist solely for the downgrade
+preflight. In the release namespace it can `get` and `update` the two runtime
+Deployments by name and `list` Pods, which is what stopping the runtime takes.
+Helm deletes the hook's RBAC after either success or failure. Replacing only
+`spec` and those two owned annotations preserves CRD UIDs, all other metadata,
+status, and all custom resources.
+
+### Stopping the running release
+
+The approval webhooks answer with a patch computed from the object the manager
+decoded, so a manager older than the schema would drop every field it does not
+know from the objects it mutates. The hook therefore stops the running release
+before the first CRD update whenever its manager image differs from the
+running one: it scales the certificate rotator and then the manager to zero and
+waits until neither Deployment selects a Pod. A release already running the
+hook's image is left alone, because the image fixes the CRDs it serves.
+
+A Deployment that does not exist has nothing to stop, and one that Helm did not
+install for this release is refused rather than scaled. Stopping twice changes
+nothing: a stopped Deployment stays at zero, and the wait finds no Pod. That is
+what makes rerunning the same upgrade the recovery for one that failed after
+the hook.
+
+The scale-down leaves `.spec.replicas` owned by the hook's field manager, and
+Helm 4 applies the release server-side, so the apply that raises it again is a
+conflict unless it carries `--force-conflicts`. The hook writes no other field.
 
 ## Schema identity on a CRD
 
@@ -94,7 +117,9 @@ embedded copies together; the generator derives the digest. Before any dry-run
 or real update, the hook checks all three live versions and refuses an existing
 version newer than the candidate. It also refuses two different digests bound
 to the same version. This machine-enforced binding prevents an older image from
-narrowing a newer schema even if a developer forgot to bump the version.
+narrowing a newer schema even if a developer forgot to bump the version, and it
+is what refuses a rollback to a release whose schemas are older than the ones
+installed.
 
 Repository verification independently recomputes every annotated digest and
 compares the complete generated CRD set with an exact Git baseline. A changed
@@ -113,85 +138,27 @@ partial baseline remains a set-integrity failure rather than a bootstrap.
 
 ## The downgrade preflight
 
-Before starting a manager, the init verifier scans every kind that stores a
-controller-state version across the cluster: `PtahSchema`, `PtahSchemaPlan`,
-`PtahSchemaApproval`, `PtahMigration`, `PtahMigrationPlan`, and
-`PtahMigrationApproval`. It checks controller-state versions in
+The hook, and the manager's init verifier before a manager starts, scan every
+kind that stores a controller-state version across the cluster: `PtahSchema`,
+`PtahSchemaPlan`, `PtahSchemaApproval`, `PtahMigration`, `PtahMigrationPlan`,
+and `PtahMigrationApproval`. They check controller-state versions in
 `PtahSchema.status.executionBinding`, `status.plan`, `status.applied`, and
 `status.pendingObservation.plan`, in `PtahMigration.status.executionBinding`,
 and in the immutable `spec.controllerStateVersion` carried by every plan and
 approval.
 Every kind is read through exhaustive pagination anchored to its own single
 collection `resourceVersion`. A nonzero version newer than the binary's
-supported controller-state version blocks the rollout, even if another stored
-location records none yet. During a Helm downgrade, the pre-upgrade
-hook fails before Helm changes the Deployment, so the newer ready manager Pods
-remain in place and the older candidate never gets an opportunity to
-reinterpret or rewrite future state.
+supported controller-state version blocks the release, even if another stored
+location records none yet. During a Helm downgrade or rollback, the hook fails
+before it stops anything, so the newer manager keeps running and the older
+candidate never gets an opportunity to reinterpret or rewrite future state.
 A location that records no version, such as a resource the manager has not
-reconciled yet, blocks nothing. A malformed or negative
-stored version also blocks startup. The upgrade hook repeats this state scan
-after all server-side dry-runs, immediately before release cutover. After the
-old runtime Pods have stopped, it performs a third scan immediately before the
-first real CRD update. The controller init verifier repeats both CRD and state
-checks after the admission singleton becomes ready. A missing client for any
-of the three durable resource collections fails closed.
-
-## The cutover
-
-The controller runs as one ServiceAccount in every release:
-`serviceAccount.name`, or the release's full name when that is empty. An
-upgrade moves no binding, because every release renders the same subjects, and
-the CRD hook holds no RBAC authority at all. The predecessor's runtime writes
-under that ServiceAccount until the cutover stops it, and the candidate's once
-the cutover activates it, so the controller-write guards admit it while the
-active release is the candidate or the one before it.
-
-The retained activation ConfigMap records the active release sequence and
-nothing else. The reconcile hook seals its admission inventory, stops the
-runtime and waits until no Pod runs as a runtime identity, then moves the
-activation from the predecessor's sequence straight to its own and retires the
-predecessor's inventory. The activation guard admits only that step, by that
-release's own hook: to the sequence after the active one, or to the sequence a
-fresh install recorded. A candidate that fails after the stop leaves the runtime
-stopped and the activation naming the predecessor, and rerunning the same
-candidate finishes the cutover.
-
-## The admission inventory marker
-
-Each release attempt owns an immutable, sequence-keyed admission marker. The
-chart inventories at most the active predecessor marker and current candidate
-marker, rejects gaps, future or malformed markers, and refuses a same-sequence
-marker bound to another full manager-image attempt. Before activation, the
-reconcile hook reads every release-scoped admission policy and binding this
-release installed, and the hook identity probe ConfigMap, checks each against
-the contract it compiles, and seals the marker immutable with the live UID and
-a semantic digest of each object. The next release's hook reads that inventory
-back after it activates and retires exactly those objects: every binding first,
-then every policy, the probe ConfigMap and finally the marker, each deleted with
-the UID and resourceVersion of an immediate re-read. It never discovers what to
-delete from a label or a name prefix.
-
-The hooks and the runtime init verifier compare the stored contract of every
-retained guard exactly and wait for its CEL type checking; they do not probe
-whether each API server has loaded it. The optional missing-Secret recovery
-policy is installed later, and the rotator verifies the pair's complete stored
-structure before using its Secret `create` permission.
-
-## A retry before activation
-
-An interrupted upgrade is resumed by rerunning the identical candidate, and the
-probe that resumption needs is not a restart.
-
-During a retry before candidate activation, an enforcement probe may need a
-dry-run copy of a stopped, candidate-stamped Deployment with the predecessor's
-top-level identity and desired replica count. The original Pod template, UID,
-and resource version remain unchanged. The replica count comes from the
-preserved predecessor verifier arguments, or the certificate contract's fixed
-single replica, never from the new candidate's controller settings. The full
-retained admission rules must accept that baseline before the probe adds its
-reserved annotation and requires an isolated denial. These requests are all
-dry-run: they do not restart the predecessor or change its persisted identity.
+reconciled yet, blocks nothing. A malformed or negative stored version also
+blocks. The hook repeats the scan after all server-side dry-runs, and again
+after the old runtime Pods have stopped, immediately before the first real CRD
+update. The controller init verifier repeats both CRD and state checks after
+the admission singleton becomes ready. A missing client for any of the durable
+resource collections fails closed.
 
 ## What the runtime verifier requires
 
@@ -202,7 +169,9 @@ Helm rendering uses `lookup` and fails when either singleton is missing its
 peer, lacks an annotation, or disagrees with the requested values. This blocks
 a second release and blocks changes to `coordination.namespace` or
 `leaderElection` before either the CRD hook or manager Deployment can mutate
-cluster state. There is no value that bypasses this check.
+cluster state. There is no value that bypasses this check. The same annotations
+record the release sequence, and a chart whose sequence is below the recorded
+one is refused when Helm renders it.
 
 The runtime verifier closes the remaining concurrent-install race in which two
 clients could both render while the singleton was absent. New manager and
@@ -210,81 +179,33 @@ certificate-rotation Pods wait for both fixed admission configurations and
 require their complete annotation tuple to match the Pod's release. They also
 require exactly two mutating approval webhooks and four validating webhooks --
 one approval pair for each resource family, plus operation-Pod intent and
-controller writes -- with fail-closed policies, nonempty CA bundles, the exact Service, paths, port, rules, selectors,
-match conditions, review version, side-effect and match policies, reinvocation
-policy, and their bounded timeouts. Where certificate rotation is enabled, the
-two candidate canary webhooks are required beside them; where it is not, they
-must be absent. The rotator no longer calls or updates the canary webhooks;
-they remain because this verifier still requires them. Nothing else in either configuration is accepted.
+controller writes -- with fail-closed policies, nonempty CA bundles, the exact
+Service, paths, port, rules, selectors, match conditions, review version,
+side-effect and match policies, reinvocation policy, and their bounded
+timeouts. Nothing else in either configuration is accepted.
 The verifier reads this complete contract again after its wait and rechecks the
 CRDs immediately before allowing the process to start. A losing release or a
 Pod launched while Helm is repairing a drifted singleton can neither reconcile
 schemas nor patch the winning release's CA bundle.
 
+## Rollback
+
+`helm rollback` runs the reconcile hook of the revision it restores, with that
+revision's image. The hook refuses stored state or CRD schemas newer than that
+release reads, before it stops anything, so a rollback the cluster has outgrown
+leaves the running release in place. A rollback it allows stops the running
+release, because the images differ, and Helm brings the restored revision up.
+
+Helm records the rollback revision before it runs the hook. A refused rollback
+therefore leaves that revision `pending-rollback`, and a later `helm upgrade`
+refuses to start while it is. Another `helm rollback`, to a revision the
+stored state allows, clears it.
+
 ## Uninstall
 
-An uninstall is one pre-delete hook Job, `teardown-quiesce`, running as the
-release's CRD manager ServiceAccount. It keeps the name and arguments of the
-quiesce step it grew out of, because the admission guards that are still in
-place while it runs admit exactly that Job.
-
-The Job first reads every object it is about to delete and checks each one
-against the contract this release compiles, without changing anything, so an
-inventory it would refuse to delete fails before the runtime stops. It then
-stops the runtime: the retained rollout guards admit a release's own hook
-stopping the sequence that is active, so it scales both runtime Deployments to
-zero and waits until no Pod in the namespace runs as a runtime identity. Only
-then does it delete the admission guards that fence the controller's writes, so
-no controller runs once they are gone.
-
-It deletes, by exact name, what the release keeps outside Helm's own deletion:
-every admission guard binding, then every guard policy, the certificate
-staging Secret when the chart generates certificates, the hook identity probe
-and parent-origin readiness ConfigMaps, the release activation guard, the
-admission inventory marker, and the release activation parameter last. Each
-object is read, checked and deleted with the UID and resourceVersion of that
-read; the staging Secret is deleted by name without being read, because it
-holds a pending CA private key. An object already gone is skipped, so rerunning
-the uninstall after a failure deletes what is left.
-
-A guard the Job has just deleted can still be cached by an API server for a
-moment, so a refusal that names a ValidatingAdmissionPolicy, a conflict, and an
-API server that does not answer are retried until the Job's own deadline. Any
-other refusal, and an object that differs from its contract, stops the Job with
-that reason in its termination message.
-
-The release activation goes back to the state a fresh install starts from
-before it is deleted. An API server can go on serving a deleted policy
-parameter, and a reinstall in the same namespace needs what it serves to be the
-bootstrap state rather than the sequence the removed release last activated.
-
-Helm then deletes everything else in the release. The CRDs and their objects
-stay, and so does the parameter informer anchor below. A webhook entry an API server still
-caches after the uninstall is an availability residue, not authority a
+An uninstall runs no hook. Helm deletes every object the release installed,
+the admission policies and their bindings among them. The CRDs and their
+objects stay: Helm deletes neither what it installed from `crds/` nor a CRD a
+later release added through its bootstrap hook. A webhook entry an API server
+still caches after the uninstall is an availability residue, not authority a
 removed release keeps.
-
-### The parameter informer anchor
-
-An uninstall also leaves behind one cluster-scoped pair named
-`ptah-operator-parameter-informer-anchor`: a ValidatingAdmissionPolicy and its
-binding. They admit everything they match, name a ConfigMap nothing creates,
-and exist for one reason. The API server keeps a single informer per admission
-parameter kind, and when the last bound policy naming a built-in kind goes away
-it cancels that informer and cannot start it again: the replacement comes from
-the typed shared informer factory, which refuses to restart an informer it has
-already started. The canceled informer still reports itself as synced, so
-every later policy that reads a ConfigMap parameter resolves against a cache
-frozen at the moment it stopped. Parameters written afterwards are invisible,
-and a binding that denies on a missing parameter refuses every request it
-matches. Without the anchor, uninstalling the operator would leave the next
-install unable to run its own hooks until the API servers restarted.
-
-The defect is upstream and open:
-[kubernetes/kubernetes#133827](https://github.com/kubernetes/kubernetes/issues/133827)
-reports it, and
-[kubernetes/kubernetes#141015](https://github.com/kubernetes/kubernetes/pull/141015)
-is the fix for this exact case. That fix reached master during the 1.37 code
-freeze and is still unmerged, so no release in the supported window carries it.
-A CRD parameter kind resolves through a different informer path and is not
-affected.
-

@@ -76,11 +76,9 @@ reader of a converged schema can see exactly what produced it.
 | `nodeSelector` | `{}` | Node labels the manager and rotator Pods are scheduled onto. |
 | `tolerations` | `[]` | Taints the manager and rotator Pods tolerate, beside the ones admission.defaultTolerations describes. |
 | `affinity` | `{}` | Affinity for the manager and rotator Pods. Replicas already spread across nodes by default; this is for anything narrower. |
-| `priorityClassName` | `""` | Assign this class to the runtime Deployments and to the weight-zero CRD reconcile hook after preflight verifies the live class. Earlier bootstrap, preflight, and uninstall hooks remain classless; Pod admission may apply the cluster's global default class to those hooks. |
-| `priorityClassValue` | `0` | Pin the scheduling semantics of priorityClassName. Use 0 and PreemptLowerPriority when no class is configured. The preflight refuses a named class whose live value or effective preemption policy differs, so a PriorityClass change cannot silently alter an approved runtime contract. |
-| `priorityClassPreemptionPolicy` | `PreemptLowerPriority` | The preemption policy the live PriorityClass must declare, checked the same way as priorityClassValue. |
+| `priorityClassName` | `""` | Assign this class to the runtime Deployments and to the CRD reconcile hook. |
 | `metrics` |  | The manager's metrics endpoint. |
-| `metrics.bindAddress` | `":8080"` | Address the manager serves metrics on. The guards expect port 8080 on the Pod, so change the Service below rather than this. |
+| `metrics.bindAddress` | `":8080"` | Address the manager serves metrics on. The manager Pod declares port 8080, so change the Service below rather than this. |
 | `metrics.service` |  | A Service in front of the metrics port, for a scraper that needs one. |
 | `metrics.service.enabled` | `true` | Whether to create the metrics Service. |
 | `metrics.service.port` | `8080` | Port the metrics Service listens on. |
@@ -119,11 +117,6 @@ reader of a converged schema can see exactly what produced it.
 | `certificateRotation.retryInitial` | `"5s"` | First backoff delay after a failed reconciliation. |
 | `certificateRotation.retryMax` | `"5m"` | Ceiling on the backoff after repeated failures. |
 | `certificateRotation.healthPort` | `8081` | Port the rotator serves its own health and readiness probes on. |
-| `certificateRotation.candidatePort` | `9444` | Unused. The rotator no longer runs the candidate listener; the release guards still require the port until they drop the admission canary. |
-| `certificateRotation.admissionConvergence` |  | Unused, and kept for the same reason as candidatePort. |
-| `certificateRotation.admissionConvergence.stabilityDuration` | `"10s"` | Unused. |
-| `certificateRotation.admissionConvergence.pollInterval` | `"1s"` | Unused. |
-| `certificateRotation.admissionConvergence.requestTimeout` | `"5s"` | Unused. |
 | `certificateRotation.renewalThreshold` | `"720h"` | Rotate a certificate once no more than this much validity remains. At least 48h, the life of the bootstrap CA the chart renders. |
 | `certificateRotation.servingCertificateValidity` | `"2160h"` | Validity of a newly issued serving certificate. |
 | `certificateRotation.caCertificateValidity` | `"26280h"` | Validity of a newly issued CA certificate. |

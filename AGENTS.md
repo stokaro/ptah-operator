@@ -70,15 +70,14 @@ controller runs there, so what they prove is the API server's own verdict:
   CEL rules must refuse. A refusal counts only if it names the field and the
   rule's message.
 - `admissionpolicy` renders the chart and installs what a completed install
-  leaves bound: the release activated, and every ValidatingAdmissionPolicy with
-  its binding and parameter. It sends each policy the request it exists to
-  refuse and the write it must admit, as the identity that makes it -- the
-  manager's ServiceAccount with a Pod-bound token, an ordinary user, the Job
-  controller, the release hook. Then it weakens each policy the way a regression
-  would, dropping its binding, widening its match, pointing its parameter at
-  nothing or replacing its validations, and requires the rows that name the
-  policy to fail and recover. A policy the chart installs without a refusal row
-  and a mutation fails the suite.
+  leaves bound: every ValidatingAdmissionPolicy with its binding, none of them
+  a hook. It sends each policy the request it exists to refuse and the write it
+  must admit, as the identity that makes it -- the manager's ServiceAccount with
+  a Pod-bound token, or an ordinary user. Then it weakens each policy the way a
+  regression would, dropping its binding, widening its match, replacing its
+  validations or rewriting the release values it carries as literals, and
+  requires the rows that name the policy to fail and recover. A policy the chart
+  installs without a refusal row and a mutation fails the suite.
 - `webhook` serves the manager's admission handlers in-process behind the
   chart's own webhook configurations, which envtest points at this process.
 

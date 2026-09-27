@@ -82,7 +82,7 @@ var requirements = []requirement{
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
 		"the CRD schema history gates, the admission rows in `hack/e2e-assert.sh`, " +
-			"`prove_controller_write_guard`, `prove_controller_downgrade_guard`, `prove_certificate_write_guards`, " +
+			"`prove_controller_write_guard`, `prove_controller_object_supported_window_guard`, `prove_controller_downgrade_guard`, " +
 			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans `audit_runtime_credentials`, " +
 			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`, " +
 			"author, approver and administrator identities against RBAC and the example guard in `run_apply_policy_guard_proof`, " +

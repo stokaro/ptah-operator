@@ -13,9 +13,9 @@ import (
 )
 
 // Mutation weakens installed policies the way a regression in the chart would:
-// a binding left out, a match widened, a parameter reference pointed at
-// nothing. A row that still passes while a mutation holds does not depend on
-// what the mutation changed, and so does not prove what it is named for.
+// a binding left out, a match widened, validations that refuse everything. A
+// row that still passes while a mutation holds does not depend on what the
+// mutation changed, and so does not prove what it is named for.
 type Mutation struct {
 	Name string
 	// Policies are the policies the mutation weakens.
@@ -123,8 +123,7 @@ func passing(rows []Row, failures []string) []string {
 }
 
 // WaitFor polls until every row passes, which is how the suite knows the API
-// server has compiled the policies it just installed and synced the
-// parameters they read.
+// server has compiled the policies it just installed.
 func (env *Env) WaitFor(ctx context.Context, rows []Row, within time.Duration) error {
 	deadline := time.Now().Add(within)
 	for {
@@ -189,24 +188,31 @@ func RefuseEverything(policy string) func(context.Context, *Env) (func(context.C
 	})
 }
 
-// RedirectParameters points the policy's binding at a parameter that does
-// not exist and tells the API server to admit when it is missing: a paramRef
-// that fails open.
-func RedirectParameters(policy string) func(context.Context, *Env) (func(context.Context) error, error) {
+// SetVariables rewrites the named variables of the policy, which is how a
+// chart that inlined another release's values would render it. A row refused
+// for carrying another release's value is admitted once the policy carries
+// that value itself, and that is what shows the variable is what refused it.
+func SetVariables(policy string, expressions map[string]string) func(context.Context, *Env) (func(context.Context) error, error) {
 	return func(ctx context.Context, env *Env) (func(context.Context) error, error) {
-		rendered, err := env.Chart.Binding(policy)
+		rendered, err := env.renderedPolicy(policy)
 		if err != nil {
 			return nil, err
 		}
-		allow := admissionregistrationv1.AllowAction
-		restore := func(ctx context.Context) error { return env.putBinding(ctx, rendered.Name, rendered.Spec) }
+		restore := func(ctx context.Context) error { return env.putPolicy(ctx, policy, rendered.Spec) }
 		spec := *rendered.Spec.DeepCopy()
-		if spec.ParamRef == nil {
-			return restore, fmt.Errorf("binding %s has no paramRef to redirect", rendered.Name)
+		set := map[string]bool{}
+		for index := range spec.Variables {
+			if expression, ok := expressions[spec.Variables[index].Name]; ok {
+				spec.Variables[index].Expression = expression
+				set[spec.Variables[index].Name] = true
+			}
 		}
-		spec.ParamRef.Name = "policyenv-missing-parameter"
-		spec.ParamRef.ParameterNotFoundAction = &allow
-		return restore, env.putBinding(ctx, rendered.Name, spec)
+		for name := range expressions {
+			if !set[name] {
+				return restore, fmt.Errorf("policy %s has no variable %s", policy, name)
+			}
+		}
+		return restore, env.putPolicy(ctx, policy, spec)
 	}
 }
 
@@ -229,17 +235,6 @@ func editPolicy(
 func (env *Env) putPolicy(ctx context.Context, name string, spec admissionregistrationv1.ValidatingAdmissionPolicySpec) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		live := &admissionregistrationv1.ValidatingAdmissionPolicy{}
-		if err := env.Admin.Get(ctx, types.NamespacedName{Name: name}, live); err != nil {
-			return err
-		}
-		live.Spec = *spec.DeepCopy()
-		return env.Admin.Update(ctx, live)
-	})
-}
-
-func (env *Env) putBinding(ctx context.Context, name string, spec admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		live := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
 		if err := env.Admin.Get(ctx, types.NamespacedName{Name: name}, live); err != nil {
 			return err
 		}

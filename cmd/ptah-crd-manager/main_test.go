@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -16,7 +14,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 )
@@ -115,45 +112,16 @@ type recordedDynamicResource struct {
 	gvr schema.GroupVersionResource
 }
 
-func TestImageCheckProvesCompiledSequenceWithoutClusterAccess(t *testing.T) {
-	var output bytes.Buffer
-	image := "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	err := run(context.Background(), []string{
-		"image-check",
-		"--release-sequence=" + strconv.FormatInt(int64(crdupgrade.CurrentReleaseSequence), 10),
-		"--manager-image=" + image,
-	}, &output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), image) {
-		t.Fatalf("image-check output = %q, want exact image identity", output.String())
-	}
-}
-
-func TestImageCheckRejectsMismatchedSequenceAndAPIFlags(t *testing.T) {
-	tests := [][]string{
-		{"image-check", "--release-sequence=" + strconv.FormatInt(int64(crdupgrade.CurrentReleaseSequence+1), 10), "--manager-image=image"},
-		{"image-check", "--release-sequence=" + strconv.FormatInt(int64(crdupgrade.CurrentReleaseSequence), 10), "--manager-image=image", "--release-name=unexpected"},
-	}
-	for _, args := range tests {
-		if err := run(context.Background(), args, &bytes.Buffer{}); err == nil {
-			t.Fatalf("run(%v) succeeded, want refusal", args)
-		}
-	}
-}
-
 func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 	tests := []struct {
 		mode string
 		flag string
 	}{
 		{mode: "verify", flag: "--release-name=ignored"},
-		{mode: "preflight", flag: "--verify-controller-state=true"},
-		{mode: "identity-probe", flag: "--verify-controller-state=true"},
 		{mode: "reconcile", flag: "--verify-controller-state=true"},
-		{mode: "teardown-quiesce", flag: "--verify-controller-state=true"},
-		{mode: "image-check", flag: "--timeout=1s"},
+		{mode: "reconcile", flag: "--release-sequence=1"},
+		{mode: "reconcile", flag: "--hook-service-account-name=ignored"},
+		{mode: "runtime-verify", flag: "--manager-image=ignored"},
 	}
 	for _, test := range tests {
 		t.Run(test.mode+test.flag, func(t *testing.T) {
@@ -165,12 +133,15 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 	}
 }
 
-// The uninstall proof and cleanup modes, the certificate recovery proof and the
-// predecessor controller identity are gone with the protocols that used them;
-// a hook left over from an older chart must be refused rather than run as
-// something else.
-func TestRemovedProofModesAndFlagsAreRefused(t *testing.T) {
+// The release guards, the preflights that dry-ran them, the uninstall hook and
+// the runtime contract the guards pinned are gone. A hook or an init container
+// left over from an older chart is refused rather than run as something else.
+func TestRemovedModesAndFlagsAreRefused(t *testing.T) {
 	for _, mode := range []string{
+		"image-check",
+		"identity-probe",
+		"preflight",
+		"teardown-quiesce",
 		"teardown-retirement-probe-a",
 		"teardown-retirement-gate",
 		"teardown",
@@ -182,139 +153,46 @@ func TestRemovedProofModesAndFlagsAreRefused(t *testing.T) {
 		}
 	}
 	for _, flag := range []string{
+		"--webhook-secret-name=ptah-webhook-cert",
+		"--webhook-port=9443",
+		"--certificate-health-port=8081",
+		"--controller-replicas=1",
+		"--controller-runtime-args-b64=W10=",
+		"--certificate-runtime-args-b64=W10=",
+		"--runtime-deployment-config-expressions-b64=W10=",
+		"--runtime-pod-config-expressions-b64=W10=",
+		"--runtime-admission-contract-b64=e30=",
 		"--verify-certificate-recovery=true",
 		"--controller-service-account-managed=true",
 		"--previous-controller-service-account-name=ptah-operator-v1",
 		"--previous-controller-release-sequence=1",
 	} {
 		name := strings.TrimPrefix(strings.SplitN(flag, "=", 2)[0], "--")
-		err := run(context.Background(), []string{"runtime-verify", flag}, &bytes.Buffer{})
-		if err == nil || !strings.Contains(err.Error(), name) {
-			t.Fatalf("runtime-verify with %s error = %v, want refusal", flag, err)
+		for _, mode := range []string{"reconcile", "runtime-verify"} {
+			err := run(context.Background(), []string{mode, flag}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("%s with %s error = %v, want refusal", mode, flag, err)
+			}
 		}
 	}
 }
 
-func TestDecodeRuntimeAdmissionContractRequiresEveryWireField(t *testing.T) {
-	var fields map[string]any
-	if err := json.Unmarshal([]byte(validRuntimeAdmissionContractJSON), &fields); err != nil {
-		t.Fatal(err)
-	}
-	for field := range fields {
-		t.Run(field, func(t *testing.T) {
-			candidate := make(map[string]any, len(fields)-1)
-			for key, value := range fields {
-				if key != field {
-					candidate[key] = value
-				}
-			}
-			raw, err := json.Marshal(candidate)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = decodeRuntimeAdmissionContract(base64.StdEncoding.EncodeToString(raw))
-			if err == nil || !strings.Contains(err.Error(), "required field \""+field+"\" is missing") {
-				t.Fatalf("decode error = %v, want missing field %q", err, field)
-			}
-		})
+// The runtime verifier compares the admission singleton's annotations with the
+// release sequence it was built for, so an init container handed another one
+// is refused before it reads the cluster.
+func TestRuntimeVerifyRefusesAnotherReleaseSequence(t *testing.T) {
+	err := run(context.Background(), []string{
+		"runtime-verify",
+		"--release-sequence=" + strconv.FormatInt(int64(crdupgrade.CurrentReleaseSequence+1), 10),
+	}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "release-sequence must equal the binary contract") {
+		t.Fatalf("runtime-verify error = %v, want the release-sequence refusal", err)
 	}
 }
-
-func TestDecodeRuntimeAdmissionContractRejectsAmbiguousJSON(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string
-		want string
-	}{
-		{
-			name: "duplicate top-level key",
-			raw:  strings.Replace(validRuntimeAdmissionContractJSON, `"version":1`, `"version":1,"version":1`, 1),
-			want: `duplicate JSON key "version" at $`,
-		},
-		{
-			name: "duplicate nested key",
-			raw:  strings.Replace(validRuntimeAdmissionContractJSON, `"commonInitContainerResources":{}`, `"commonInitContainerResources":{"requests":{"cpu":"1m","cpu":"2m"}}`, 1),
-			want: `duplicate JSON key "cpu" at $.commonInitContainerResources.requests`,
-		},
-		{
-			name: "unknown key",
-			raw:  strings.Replace(validRuntimeAdmissionContractJSON, `"version":1`, `"version":1,"unexpected":true`, 1),
-			want: `unknown field "unexpected"`,
-		},
-		{
-			name: "unsupported version",
-			raw:  strings.Replace(validRuntimeAdmissionContractJSON, `"version":1`, `"version":2`, 1),
-			want: "unsupported version 2",
-		},
-		{
-			name: "trailing value",
-			raw:  validRuntimeAdmissionContractJSON + ` {}`,
-			want: "trailing JSON value",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := decodeRuntimeAdmissionContract(base64.StdEncoding.EncodeToString([]byte(test.raw)))
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("decode error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestDecodeRuntimeAdmissionContractPreservesFalseValues(t *testing.T) {
-	contract, err := decodeRuntimeAdmissionContract(base64.StdEncoding.EncodeToString([]byte(validRuntimeAdmissionContractJSON)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if contract.ControllerServiceAccountCreate || contract.CertificateRuntimeEnabled {
-		t.Fatalf("decoded false values changed: %#v", contract)
-	}
-	if contract.Namespace != "ptah-system" || contract.ControllerServiceAccountName != "ptah-controller" || contract.CertificateServiceAccountName != "ptah-certificate" {
-		t.Fatalf("decoded identity = %#v", contract)
-	}
-}
-
-func TestNewRolloutGuardUsesDecodedPriorityClassContract(t *testing.T) {
-	encoded := base64.StdEncoding.EncodeToString([]byte(strings.Replace(
-		validRuntimeAdmissionContractJSON,
-		`"priorityClassName":""`,
-		`"priorityClassName":"runtime-critical"`,
-		1,
-	)))
-	contract, err := decodeRuntimeAdmissionContract(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	guard := newRolloutGuard(
-		fake.NewSimpleClientset(),
-		crdupgrade.RuntimeInvariants{
-			ReleaseNamespace:             "ptah-system",
-			ControllerServiceAccountName: "ptah-controller",
-		},
-		"manager-image", "webhook-secret",
-		9443, 8081, 1,
-		nil, nil, nil, nil,
-		contract,
-		encoded,
-	)
-	if guard.PriorityClassName != "runtime-critical" {
-		t.Fatalf("rollout priority class = %q, want decoded runtime-critical class", guard.PriorityClassName)
-	}
-	if guard.RuntimeAdmissionContractB64 != encoded {
-		t.Fatal("rollout lost the encoded runtime admission contract")
-	}
-	if guard.ControllerServiceAccountName != "ptah-controller" {
-		t.Fatalf("rollout controller ServiceAccount = %q, want the expected invariant", guard.ControllerServiceAccountName)
-	}
-}
-
-const validRuntimeAdmissionContractJSON = `{"version":1,"namespace":"ptah-system","commonInitContainerResources":{},"controllerContainerResources":{},"certificateContainerResources":{},"imagePullSecrets":[],"priorityClassName":"","priorityClassValue":0,"priorityClassPreemptionPolicy":"PreemptLowerPriority","controllerServiceAccountName":"ptah-controller","certificateServiceAccountName":"ptah-certificate","controllerServiceAccountCreate":false,"controllerServiceAccountEnforceMountableSecrets":false,"controllerSecretNames":["ptah-webhook"],"certificateSecretNames":[],"certificateRuntimeEnabled":false}`
 
 // A hook that refuses prints its reason to stderr, which stays inside the Pod.
 // Helm reports only that the Job failed, so the reason reaches the person who
-// ran the uninstall through the termination message or not at all.
+// ran the upgrade through the termination message or not at all.
 func TestReportTerminationMessageWritesTheRefusal(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "termination-log")
@@ -325,13 +203,13 @@ func TestReportTerminationMessageWritesTheRefusal(t *testing.T) {
 	terminationMessageFile = path
 	t.Cleanup(func() { terminationMessageFile = original })
 
-	reportTerminationMessage(errors.New("foreign ClusterRoleBinding/example names a protected ServiceAccount"))
+	reportTerminationMessage(errors.New("controller downgrade refused: PtahSchema team-a/orders stores controller state version 3"))
 
 	written, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "ptah-crd-manager: foreign ClusterRoleBinding/example names a protected ServiceAccount\n"
+	want := "ptah-crd-manager: controller downgrade refused: PtahSchema team-a/orders stores controller state version 3\n"
 	if string(written) != want {
 		t.Fatalf("termination message = %q, want %q", written, want)
 	}

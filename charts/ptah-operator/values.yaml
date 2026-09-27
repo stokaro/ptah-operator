@@ -123,24 +123,13 @@ tolerations: []
 # Affinity for the manager and rotator Pods. Replicas already spread across
 # nodes by default; this is for anything narrower.
 affinity: {}
-# Assign this class to the runtime Deployments and to the weight-zero CRD
-# reconcile hook after preflight verifies the live class. Earlier bootstrap,
-# preflight, and uninstall hooks remain classless; Pod admission may apply the
-# cluster's global default class to those hooks.
+# Assign this class to the runtime Deployments and to the CRD reconcile hook.
 priorityClassName: ""
-# Pin the scheduling semantics of priorityClassName. Use 0 and
-# PreemptLowerPriority when no class is configured. The preflight refuses a
-# named class whose live value or effective preemption policy differs, so a
-# PriorityClass change cannot silently alter an approved runtime contract.
-priorityClassValue: 0
-# The preemption policy the live PriorityClass must declare, checked the same
-# way as priorityClassValue.
-priorityClassPreemptionPolicy: PreemptLowerPriority
 
 # The manager's metrics endpoint.
 metrics:
-  # Address the manager serves metrics on. The guards expect port 8080 on the
-  # Pod, so change the Service below rather than this.
+  # Address the manager serves metrics on. The manager Pod declares port 8080,
+  # so change the Service below rather than this.
   bindAddress: ":8080"
   # A Service in front of the metrics port, for a scraper that needs one.
   service:
@@ -255,17 +244,6 @@ certificateRotation:
   retryMax: "5m"
   # Port the rotator serves its own health and readiness probes on.
   healthPort: 8081
-  # Unused. The rotator no longer runs the candidate listener; the release
-  # guards still require the port until they drop the admission canary.
-  candidatePort: 9444
-  # Unused, and kept for the same reason as candidatePort.
-  admissionConvergence:
-    # Unused.
-    stabilityDuration: "10s"
-    # Unused.
-    pollInterval: "1s"
-    # Unused.
-    requestTimeout: "5s"
   # Rotate a certificate once no more than this much validity remains. At
   # least 48h, the life of the bootstrap CA the chart renders.
   renewalThreshold: "720h"

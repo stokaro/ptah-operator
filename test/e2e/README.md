@@ -114,11 +114,13 @@ Two things are worth knowing before reaching for a container snapshot instead.
 A rendering refusal reproduces in seconds with `helm upgrade --dry-run=server`
 against the retained cluster; a plain `--dry-run` does not, because it disables
 `lookup` and the chart then sees none of the live objects its refusals are
-about. And a failed hook Job is gone before its log can be read, because the
-hook carries `hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed`;
-stripping `hook-failed` to keep it does not work either, since the parent
-contract policy pins the hook's exact annotations and denies the Job. Capture
-the Pod logs while the Job runs, which is what `hack/hooklogcapture` is for.
+about. And a failed hook Job is gone once Helm returns, because the hook
+carries `hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed`.
+Helm prints its log to stderr first, because it also carries
+`hook-output-log-policy: hook-failed`, so the refusal is in the failed
+command's stderr, which a phase shows under `E2E_DEBUG_LOGS=1`. To keep the Job
+itself, remove `hook-failed` from the delete policy in a local copy of the
+chart and upgrade with it.
 
 Set `E2E_RUN_ID` to a CI run identifier for deterministic, collision-resistant
 resource names. Local runs include the Git revision and process ID by default.

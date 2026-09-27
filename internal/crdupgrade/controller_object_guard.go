@@ -1,15 +1,12 @@
 package crdupgrade
 
 import (
-	"context"
 	"fmt"
-	"reflect"
+	"strconv"
 	"strings"
-	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
@@ -26,37 +23,34 @@ const (
 	controllerPlanWriteGuardComponent  = "controller-plan-write-guard"
 
 	controllerMigrationPlanWriteGuardComponent = "controller-migration-plan-write-guard"
-
-	controllerObjectPolicyWeight  = "-152"
-	controllerObjectBindingWeight = "-147"
 )
 
 // ControllerJobWriteGuardPolicyName returns the stable release-owned name of
 // the manager's structural Job write boundary.
-func ControllerJobWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
-	return controllerObjectGuardPolicyName(controllerJobWriteGuardNamePrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
+func ControllerJobWriteGuardPolicyName(releaseNamespace, releaseName string) string {
+	return controllerObjectGuardPolicyName(controllerJobWriteGuardNamePrefix, releaseNamespace, releaseName)
 }
 
 // ControllerChunkWriteGuardPolicyName returns the stable release-owned name
 // of the manager's structural plan-chunk ConfigMap write boundary.
-func ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
-	return controllerObjectGuardPolicyName(controllerChunkWriteGuardPrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
+func ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName string) string {
+	return controllerObjectGuardPolicyName(controllerChunkWriteGuardPrefix, releaseNamespace, releaseName)
 }
 
 // ControllerPlanWriteGuardPolicyName returns the stable release-owned name of
 // the manager's structural PtahSchemaPlan write boundary.
-func ControllerPlanWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
-	return controllerObjectGuardPolicyName(controllerPlanWriteGuardNamePrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
+func ControllerPlanWriteGuardPolicyName(releaseNamespace, releaseName string) string {
+	return controllerObjectGuardPolicyName(controllerPlanWriteGuardNamePrefix, releaseNamespace, releaseName)
 }
 
 // ControllerMigrationPlanWriteGuardPolicyName returns the stable release-owned
 // name of the manager's structural migration plan write boundary.
-func ControllerMigrationPlanWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
-	return controllerObjectGuardPolicyName(controllerMigrationPlanWriteGuardNamePrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
+func ControllerMigrationPlanWriteGuardPolicyName(releaseNamespace, releaseName string) string {
+	return controllerObjectGuardPolicyName(controllerMigrationPlanWriteGuardNamePrefix, releaseNamespace, releaseName)
 }
 
-func controllerObjectGuardPolicyName(prefix, releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
-	return prefix + controllerPrincipalGuardDigest(releaseNamespace, releaseName, releaseSequence, managerImage)
+func controllerObjectGuardPolicyName(prefix, releaseNamespace, releaseName string) string {
+	return prefix + releaseDigest(releaseNamespace, releaseName)
 }
 
 type controllerObjectGuardEntry struct {
@@ -70,102 +64,27 @@ type controllerObjectGuardEntry struct {
 	validations   []admissionregistrationv1.Validation
 }
 
-// ControllerObjectGuard verifies the typed, activation-parameterized
-// structural boundaries around every main-resource object the manager may
-// create or update. The validating webhook remains the authoritative
-// reconstruction boundary; these policies independently reject broad or
-// privileged shapes.
+// ControllerObjectGuard builds the typed structural boundaries around every
+// main-resource object the manager may create or update. The validating
+// webhook remains the authoritative reconstruction boundary; these policies
+// independently reject broad or privileged shapes, and refuse a Job or a plan
+// that names a manager other than this release's.
+//
+// The chart renders the policies in templates/controller-object-guard.yaml,
+// with this release's manager image and controller-state version written
+// into them, and a render test holds the two to the same specs.
 type ControllerObjectGuard struct {
-	Policies                     ValidatingAdmissionPolicyReader
-	Bindings                     ValidatingAdmissionPolicyBindingReader
 	ReleaseName                  string
 	ReleaseNamespace             string
 	ControllerServiceAccountName string
-	ReleaseSequence              int32
 	ManagerImage                 string
-	PollEvery                    time.Duration
-}
-
-// NewControllerObjectGuard copies the stable release and manager identity
-// from the rollout contract.
-func NewControllerObjectGuard(rollout *RolloutGuard) *ControllerObjectGuard {
-	if rollout == nil {
-		return nil
-	}
-	return &ControllerObjectGuard{
-		Policies:                     rollout.Policies,
-		Bindings:                     rollout.Bindings,
-		ReleaseName:                  rollout.ReleaseName,
-		ReleaseNamespace:             rollout.ReleaseNamespace,
-		ControllerServiceAccountName: rollout.ControllerServiceAccountName,
-		ReleaseSequence:              rollout.ReleaseSequence,
-		ManagerImage:                 rollout.ManagerImage,
-		PollEvery:                    rollout.PollEvery,
-	}
-}
-
-// Verify requires all three retained policy/binding pairs to match the
-// compiled typed contracts exactly.
-func (g *ControllerObjectGuard) Verify(ctx context.Context) error {
-	if err := g.validate(false); err != nil {
-		return err
-	}
-	for _, entry := range g.entries() {
-		policy, err := g.Policies.Get(ctx, entry.name, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("get %s policy: %w", entry.component, err)
-		}
-		if err := g.verifyPolicy(entry, policy); err != nil {
-			return err
-		}
-		binding, err := g.Bindings.Get(ctx, entry.name, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("get %s binding: %w", entry.component, err)
-		}
-		if err := g.verifyBinding(entry, binding); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// WaitReady verifies the immutable contracts and waits for warning-free CEL
-// type checking before the manager receives runtime privileges.
-func (g *ControllerObjectGuard) WaitReady(ctx context.Context) error {
-	if err := g.validate(true); err != nil {
-		return err
-	}
-	if err := g.Verify(ctx); err != nil {
-		return err
-	}
-	for _, entry := range g.entries() {
-		entry := entry
-		if err := wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
-			policy, err := g.Policies.Get(pollCtx, entry.name, metav1.GetOptions{})
-			if err != nil {
-				return false, fmt.Errorf("read %s policy status: %w", entry.component, err)
-			}
-			if err := g.verifyPolicy(entry, policy); err != nil {
-				return false, err
-			}
-			if policy.Status.ObservedGeneration != policy.Generation || policy.Status.TypeChecking == nil {
-				return false, nil
-			}
-			if warnings := policy.Status.TypeChecking.ExpressionWarnings; len(warnings) != 0 {
-				return false, fmt.Errorf("%s policy has CEL type-check warnings: %s", entry.component, warnings[0].Warning)
-			}
-			return true, nil
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
+	ControllerStateVersion       int32
 }
 
 func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 	entries := []controllerObjectGuardEntry{
 		{
-			name:          ControllerJobWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+			name:          ControllerJobWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
 			component:     controllerJobWriteGuardComponent,
 			apiGroups:     []string{"batch"},
 			apiVersions:   []string{"v1"},
@@ -174,7 +93,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			denialMessage: "Ptah controller Job write guard rejected an unsafe workload shape",
 		},
 		{
-			name:          ControllerChunkWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+			name:          ControllerChunkWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
 			component:     controllerChunkWriteGuardComponent,
 			apiGroups:     []string{""},
 			apiVersions:   []string{"v1"},
@@ -183,7 +102,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			denialMessage: "Ptah controller chunk write guard rejected an unsafe ConfigMap shape",
 		},
 		{
-			name:          ControllerPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+			name:          ControllerPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
 			component:     controllerPlanWriteGuardComponent,
 			apiGroups:     []string{"operator.ptah.run"},
 			apiVersions:   []string{"v1alpha1"},
@@ -192,7 +111,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			denialMessage: "Ptah controller plan write guard rejected an unsafe manifest shape",
 		},
 		{
-			name:          ControllerMigrationPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+			name:          ControllerMigrationPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
 			component:     controllerMigrationPlanWriteGuardComponent,
 			apiGroups:     []string{"operator.ptah.run"},
 			apiVersions:   []string{"v1alpha1"},
@@ -210,86 +129,45 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 
 func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
-	validations := make([]admissionregistrationv1.Validation, 0, len(entry.validations)+2)
-	validations = append(validations, admissionregistrationv1.Validation{
-		Expression: g.activationParameterExpression(),
-		Message:    entry.denialMessage,
-	}, admissionregistrationv1.Validation{
-		Expression: controllerPrincipalAuthorityExpression(g.ReleaseNamespace, g.ControllerServiceAccountName, g.ReleaseSequence),
-		Message:    controllerPrincipalGuardDenialMessage(),
-	})
-	validations = append(validations, entry.validations...)
-	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
+	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
-		ObjectMeta: g.metadata(entry),
+		ObjectMeta: metav1.ObjectMeta{Name: entry.name},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-			ParamKind:        &admissionregistrationv1.ParamKind{APIVersion: "v1", Kind: "ConfigMap"},
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(entry),
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "controller-service-account",
 				Expression: controllerPrincipalMatchExpression(g.ReleaseNamespace, g.ControllerServiceAccountName),
 			}},
-			Variables:   controllerObjectActivationVariables(g.ReleaseSequence),
-			Validations: validations,
+			Variables:   controllerObjectReleaseVariables(g.ManagerImage, g.ControllerStateVersion),
+			Validations: entry.validations,
 		},
 	}
-	return policy
 }
 
 func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
-	deny := admissionregistrationv1.DenyAction
-	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
-		ObjectMeta: g.metadata(entry),
+		ObjectMeta: metav1.ObjectMeta{Name: entry.name},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
-			PolicyName:     entry.name,
-			MatchResources: g.matchResources(entry),
-			ParamRef: &admissionregistrationv1.ParamRef{
-				Name:                    ReleaseActivationName,
-				Namespace:               g.ReleaseNamespace,
-				ParameterNotFoundAction: &deny,
-			},
+			PolicyName:        entry.name,
+			MatchResources:    g.matchResources(entry),
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	return binding
 }
 
-func (g *ControllerObjectGuard) activationParameterExpression() string {
-	activation := &ReleaseActivationGuard{ReleaseName: g.ReleaseName, ReleaseNamespace: g.ReleaseNamespace}
-	return activation.activationObjectShapeExpression("params")
-}
-
-func controllerObjectActivationVariables(releaseSequence int32) []admissionregistrationv1.Variable {
+// controllerObjectReleaseVariables carry the manager image and the
+// controller-state version this release runs. A Job or a plan the controller
+// creates names both, and one that names another manager is refused, so a
+// manager left over from another release cannot create either. The values are
+// CEL literals, written into the policy when the chart renders it.
+func controllerObjectReleaseVariables(managerImage string, controllerStateVersion int32) []admissionregistrationv1.Variable {
+	state := strconv.FormatInt(int64(controllerStateVersion), 10)
 	return []admissionregistrationv1.Variable{
-		{Name: "activeRelease", Expression: decimalCEL("params", activeReleaseDataKey, true)},
-		{
-			Name: "activeControllerStateString",
-			Expression: fmt.Sprintf(
-				`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""`,
-				ControllerStateVersionAnnotation,
-				ControllerStateVersionAnnotation,
-			),
-		},
-		{
-			Name: "activeControllerState",
-			Expression: fmt.Sprintf(
-				`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : 0`,
-				ControllerStateVersionAnnotation,
-				ControllerStateVersionAnnotation,
-				ControllerStateVersionAnnotation,
-			),
-		},
-		{
-			Name: "activeControllerImage",
-			Expression: fmt.Sprintf(
-				`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""`,
-				ManagerImageAnnotation,
-				ManagerImageAnnotation,
-			),
-		},
-		{Name: "candidateRelease", Expression: fmt.Sprintf(`%d`, releaseSequence)},
+		{Name: "releaseControllerStateString", Expression: strconv.Quote(state)},
+		{Name: "releaseControllerState", Expression: state},
+		{Name: "releaseControllerImage", Expression: strconv.Quote(managerImage)},
 	}
 }
 
@@ -311,88 +189,6 @@ func (g *ControllerObjectGuard) matchResources(entry controllerObjectGuardEntry)
 			},
 		}},
 	}
-}
-
-func (g *ControllerObjectGuard) metadata(entry controllerObjectGuardEntry) metav1.ObjectMeta {
-	return metav1.ObjectMeta{
-		Name: entry.name,
-		Annotations: map[string]string{
-			rolloutGuardVersionAnnotation: rolloutGuardVersion,
-			ReleaseNameAnnotation:         g.ReleaseName,
-			ReleaseNamespaceAnnotation:    g.ReleaseNamespace,
-		},
-		Labels: map[string]string{
-			managedByLabel:                rolloutGuardManagedBy,
-			instanceLabel:                 g.ReleaseName,
-			"app.kubernetes.io/component": entry.component,
-		},
-	}
-}
-
-func (g *ControllerObjectGuard) verifyPolicy(entry controllerObjectGuardEntry, policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
-	if policy == nil || policy.Name != entry.name {
-		return fmt.Errorf("fixed %s policy %s is missing", entry.component, entry.name)
-	}
-	if err := g.verifyMetadata(entry, "ValidatingAdmissionPolicy", policy.ObjectMeta); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(policy.Spec, g.policy(entry).Spec) {
-		return fmt.Errorf("%s policy spec differs from the immutable contract", entry.component)
-	}
-	return nil
-}
-
-func (g *ControllerObjectGuard) verifyBinding(entry controllerObjectGuardEntry, binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
-	if binding == nil || binding.Name != entry.name {
-		return fmt.Errorf("fixed %s binding %s is missing", entry.component, entry.name)
-	}
-	if err := g.verifyMetadata(entry, "ValidatingAdmissionPolicyBinding", binding.ObjectMeta); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(binding.Spec, g.binding(entry).Spec) {
-		return fmt.Errorf("%s binding spec differs from the immutable contract", entry.component)
-	}
-	return nil
-}
-
-func (g *ControllerObjectGuard) verifyMetadata(entry controllerObjectGuardEntry, kind string, metadata metav1.ObjectMeta) error {
-	expected := g.metadata(entry)
-	if metadata.Name != expected.Name {
-		return fmt.Errorf("fixed controller object guard %s has an unexpected name", kind)
-	}
-	for key, value := range expected.Annotations {
-		if metadata.Annotations[key] != value {
-			return fmt.Errorf("fixed controller object guard %s has foreign or incomplete ownership", kind)
-		}
-	}
-	for key, value := range expected.Labels {
-		if metadata.Labels[key] != value {
-			return fmt.Errorf("fixed controller object guard %s has foreign or incomplete ownership", kind)
-		}
-	}
-	return nil
-}
-
-func (g *ControllerObjectGuard) validate(requirePoll bool) error {
-	if g == nil || g.Policies == nil || g.Bindings == nil {
-		return fmt.Errorf("controller object guard policy clients are required")
-	}
-	for description, value := range map[string]string{
-		"release name":                       g.ReleaseName,
-		"release namespace":                  g.ReleaseNamespace,
-		"controller ServiceAccount identity": g.ControllerServiceAccountName,
-	} {
-		if value == "" || value != strings.TrimSpace(value) {
-			return fmt.Errorf("controller object guard %s is required and must not contain surrounding whitespace", description)
-		}
-	}
-	if g.ReleaseSequence < 1 || g.ManagerImage == "" || g.ManagerImage != strings.TrimSpace(g.ManagerImage) {
-		return fmt.Errorf("controller object guard release identity is required")
-	}
-	if requirePoll && g.PollEvery <= 0 {
-		return fmt.Errorf("controller object guard poll interval must be positive")
-	}
-	return nil
 }
 
 // migrationJobShape derives the migration Job's sealed contract from the
@@ -459,13 +255,13 @@ func controllerJobWriteValidations(message string) []admissionregistrationv1.Val
 }
 
 // controllerJobAnnotationContractExpression admits the one Job annotation
-// envelope the workload builder writes. A create must carry the active
-// release's controller identity. An update, which can only be the cleanup
+// envelope the workload builder writes. A create must carry this release's
+// controller identity. An update, which can only be the cleanup
 // TTL, may carry any valid identity, because a Job can outlive the release
 // that created it.
 func controllerJobAnnotationContractExpression() string {
 	current := `has(object.metadata.annotations) && ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.run/operation-id", "operator.ptah.run/input-fingerprint", "operator.ptah.run/ptah-version", "operator.ptah.run/execution-binding-id", "operator.ptah.run/controller-image", "operator.ptah.run/controller-revision", "operator.ptah.run/controller-state-version", "operator.ptah.run/admission-snapshot-digest", "operator.ptah.run/plan-fingerprint", "operator.ptah.run/plan-content-digest", "cluster-autoscaler.kubernetes.io/safe-to-evict"]) && object.metadata.annotations["operator.ptah.run/operation-id"] != "" && object.metadata.annotations["operator.ptah.run/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/ptah-version"] != "" && object.metadata.annotations["operator.ptah.run/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.run/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.run/controller-revision"] != "" && object.metadata.annotations["operator.ptah.run/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.run/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && object.metadata.labels["app.kubernetes.io/component"] == "schema-operation" && "operator.ptah.run/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.run/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || ((object.metadata.labels["operator.ptah.run/operation"] != "apply" || object.metadata.labels["app.kubernetes.io/component"] == "migration-operation") && !("operator.ptah.run/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.run/plan-content-digest" in object.metadata.annotations))) && ((object.metadata.labels["operator.ptah.run/operation"] == "apply" && "cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations && object.metadata.annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] == "false") || (object.metadata.labels["operator.ptah.run/operation"] != "apply" && !("cluster-autoscaler.kubernetes.io/safe-to-evict" in object.metadata.annotations)))`
-	activeIdentity := `object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString`
+	activeIdentity := `object.metadata.annotations["operator.ptah.run/controller-image"] == variables.releaseControllerImage && object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.releaseControllerStateString`
 	return fmt.Sprintf(
 		`(%s) && (request.operation == "UPDATE" || (request.operation == "CREATE" && (%s)))`,
 		current,
@@ -532,8 +328,8 @@ func controllerChunkWriteValidations(message string) []admissionregistrationv1.V
 }
 
 func controllerPlanWriteValidations(message string) []admissionregistrationv1.Validation {
-	// Candidate fields are accessed through dyn because this policy is
-	// installed and type-checked before the predecessor CRD is upgraded.
+	// Fields are read through dyn, so the policy does not depend on the CRD
+	// revision the API server type-checks it against.
 	validations := controllerObjectValidations(message,
 		`has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.run/schema" in object.metadata.labels && object.metadata.labels["operator.ptah.run/schema"] != "" && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && dyn(object).spec.schemaRef.name == object.metadata.labels["operator.ptah.run/schema"] && dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
 		controllerPlanContractExpression(),
@@ -553,7 +349,7 @@ func controllerPlanWriteValidations(message string) []admissionregistrationv1.Va
 func controllerMigrationPlanWriteValidations(message string) []admissionregistrationv1.Validation {
 	return controllerObjectValidations(message,
 		`has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.run/migration" in object.metadata.labels && object.metadata.labels["operator.ptah.run/migration"] != "" && object.metadata.name.matches("^ptah-mplan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahMigration" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/migration"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && dyn(object).spec.migrationRef.name == object.metadata.labels["operator.ptah.run/migration"] && dyn(object).spec.migrationRef.uid == object.metadata.ownerReferences[0].uid`,
-		`dyn(object).spec.contractVersion == 1 && dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.historyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.currentVersion >= 0 && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.controllerImage == variables.activeControllerImage && dyn(object).spec.controllerRevision != "" && dyn(object).spec.controllerStateVersion >= 1 && dyn(object).spec.controllerStateVersion == variables.activeControllerState && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1`,
+		`dyn(object).spec.contractVersion == 1 && dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.historyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.currentVersion >= 0 && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.controllerImage == variables.releaseControllerImage && dyn(object).spec.controllerRevision != "" && dyn(object).spec.controllerStateVersion >= 1 && dyn(object).spec.controllerStateVersion == variables.releaseControllerState && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1`,
 		`dyn(object).spec.migrations.size() >= 1 && dyn(object).spec.migrations.size() <= 256 && dyn(object).spec.migrations.all(migration, migration.version >= 1 && migration.checksum != "" && migration.checksum.size() <= 128 && (!has(migration.transactionMode) || migration.transactionMode in ["file", "none"]))`,
 		`!has(dyn(object).status)`,
 	)
@@ -561,7 +357,7 @@ func controllerMigrationPlanWriteValidations(message string) []admissionregistra
 
 func controllerPlanContractExpression() string {
 	common := `dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1 && dyn(object).spec.dialect != "" && dyn(object).spec.statementCount >= 1 && dyn(object).spec.size >= 1 && dyn(object).spec.size <= 8388608`
-	current := `dyn(object).spec.contractVersion == 3 && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.activeControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.activeControllerState`
+	current := `dyn(object).spec.contractVersion == 3 && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.releaseControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.releaseControllerState`
 	return fmt.Sprintf(`(%s) && (%s)`, common, current)
 }
 

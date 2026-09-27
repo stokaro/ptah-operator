@@ -53,66 +53,16 @@ app.kubernetes.io/component: controller
 {{- end -}}
 
 {{/*
-Releases advance one sequence at a time, so the only inventory a release
-retires is the one the sequence before it sealed.
+Releases advance one sequence at a time, so an upgrade finds the admission
+singleton written by this sequence or by the one before it.
 */}}
 {{- define "ptah-operator.predecessorReleaseSequence" -}}
 {{- sub (atoi (include "ptah-operator.releaseSequence" .)) 1 -}}
 {{- end -}}
 
-{{/*
-The manager image the predecessor sequence ran, read from the admission
-inventory marker it sealed. The marker is the last object a retirement
-deletes, so a missing one means there is nothing left to retire, which is
-also what a fresh install finds.
-*/}}
-{{- define "ptah-operator.predecessorManagerImage" -}}
-{{- $sequence := include "ptah-operator.predecessorReleaseSequence" . -}}
-{{- if ne $sequence "0" -}}
-{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
-{{- $marker := lookup "v1" "ConfigMap" .Release.Namespace (printf "ptah-admission-convergence-v1-%s-%s" $sequence $releaseDigest) -}}
-{{- default "" (index (default (dict) (dig "metadata" "annotations" (dict) $marker)) "operator.ptah.run/manager-image") -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-The retained objects the predecessor sequence sealed, derived from its
-sequence and the manager image its marker records. Retiring a predecessor
-means reading and deleting exactly these, so the hook that retires it is
-granted them by name and nothing wider. The list mirrors the sealed inventory
-the predecessor wrote; crdupgrade builds the same names from the same identity.
-*/}}
-{{- define "ptah-operator.predecessorRetiredPolicyNames" -}}
-{{- $sequence := include "ptah-operator.predecessorReleaseSequence" . -}}
-{{- $managerImage := include "ptah-operator.predecessorManagerImage" . -}}
-{{- if $managerImage -}}
-{{- $digest := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $sequence $managerImage | sha256sum | trunc 12 -}}
-{{- range $name := list
-      (printf "ptah-operator-rollout-guard-v%s" $sequence)
-      (printf "ptah-operator-runtime-guard-v%s" $sequence)
-      (printf "ptah-operator-runtime-pod-identity-v%s" $sequence)
-      (printf "ptah-operator-hook-identity-v%s-%s" $sequence $digest)
-      (printf "ptah-operator-hook-probe-guard-v%s-%s" $sequence $digest)
-      (printf "ptah-operator-runtime-parent-guard-v2-%s" $digest)
-      (printf "ptah-operator-hook-parent-contract-v%s-%s" $sequence $digest)
-      (printf "ptah-operator-controller-write-guard-v2-%s" $digest)
-      (printf "ptah-operator-job-write-guard-v2-%s" $digest)
-      (printf "ptah-operator-chunk-write-guard-v2-%s" $digest)
-      (printf "ptah-operator-plan-write-guard-v2-%s" $digest)
-      (printf "ptah-operator-migration-plan-write-guard-v1-%s" $digest) }}
-- {{ $name }}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
 {{- define "ptah-operator.certRotatorServiceAccountName" -}}
 {{- $base := include "ptah-operator.fullname" . | trunc 39 | trimSuffix "-" -}}
 {{- printf "%s-cert-rotator" $base -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateDiscoveryRoleName" -}}
-{{- $digest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 40 -}}
-{{- printf "ptah-cert-discovery-v1-%s" $digest -}}
 {{- end -}}
 
 {{- define "ptah-operator.certRotationLeaseName" -}}
@@ -123,16 +73,6 @@ the predecessor wrote; crdupgrade builds the same names from the same identity.
 {{- define "ptah-operator.certRotationStagingSecretName" -}}
 {{- $base := include "ptah-operator.fullname" . | trunc 43 | trimSuffix "-" -}}
 {{- printf "%s-cert-rotation-stage" $base -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateTransitionServiceName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 39 | trimSuffix "-" -}}
-{{- printf "%s-cert-transition" $base -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateCanaryConfigMapName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 39 | trimSuffix "-" -}}
-{{- printf "%s-cert-canary" $base -}}
 {{- end -}}
 
 {{- define "ptah-operator.webhookSecretName" -}}
@@ -168,69 +108,29 @@ the predecessor wrote; crdupgrade builds the same names from the same identity.
 {{- printf "%s-crd-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
-{{- define "ptah-operator.teardownServiceAccountName" -}}
-{{- /* No release runs as this ServiceAccount any more. The retained guards and
-      the admission inventory marker still name it, so the name stays until
-      they go. */ -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
-{{- printf "%s-cleanup-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.teardownQuiesceJobName" -}}
-{{- /* Keep the generated Pod separator intact through the largest positive int32 release sequence. */ -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
-{{- printf "%s-quiesce-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
 {{- define "ptah-operator.validateLifecycleResourceIdentities" -}}
 {{- $releaseNamespace := .Release.Namespace -}}
 {{- $coordinationNamespace := include "ptah-operator.coordinationNamespace" . -}}
 {{- $controllerName := include "ptah-operator.fullname" . -}}
 {{- $controllerServiceAccount := include "ptah-operator.serviceAccountName" . -}}
-{{- $controllerRuntimeRole := printf "%s-runtime-admission" $controllerName -}}
 {{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
-{{- $certificateDiscoveryRoleName := include "ptah-operator.certificateDiscoveryRoleName" . -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 {{- $webhookSecretName := include "ptah-operator.webhookSecretName" . -}}
 {{- $webhookServiceName := include "ptah-operator.webhookServiceName" . -}}
 {{- $certificateStagingSecretName := include "ptah-operator.certRotationStagingSecretName" . -}}
-{{- $certificateTransitionServiceName := include "ptah-operator.certificateTransitionServiceName" . -}}
-{{- $certificateCanaryConfigMapName := include "ptah-operator.certificateCanaryConfigMapName" . -}}
 {{- $hookName := include "ptah-operator.crdManagerServiceAccountName" . -}}
-{{- $bootstrapName := printf "%s-bootstrap" ($hookName | trunc 53 | trimSuffix "-") -}}
-{{- $probeName := printf "%s-probe" ($hookName | trunc 57 | trimSuffix "-") -}}
-{{- $imageCheckName := printf "%s-image-check" ($hookName | trunc 51 | trimSuffix "-") -}}
-{{- $preflightName := printf "%s-preflight" ($hookName | trunc 53 | trimSuffix "-") -}}
-{{- $identityProbeName := include "ptah-operator.hookIdentityProbeJobName" . -}}
-{{- $quiesceName := include "ptah-operator.teardownQuiesceJobName" . -}}
 {{- $identities := list
       (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $controllerServiceAccount "source" "controller ServiceAccount")
       (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $hookName "source" "CRD manager hook ServiceAccount")
       (dict "kind" "ClusterRole" "namespace" "" "name" $controllerName "source" "controller ClusterRole")
-      (dict "kind" "ClusterRole" "namespace" "" "name" $bootstrapName "source" "hook bootstrap ClusterRole")
       (dict "kind" "ClusterRole" "namespace" "" "name" $hookName "source" "CRD manager ClusterRole")
-      (dict "kind" "ClusterRole" "namespace" "" "name" $quiesceName "source" "teardown quiesce ClusterRole")
       (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $controllerName "source" "controller ClusterRoleBinding")
-      (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $bootstrapName "source" "hook bootstrap ClusterRoleBinding")
       (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $hookName "source" "CRD manager ClusterRoleBinding")
-      (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $quiesceName "source" "teardown quiesce ClusterRoleBinding")
-      (dict "kind" "Role" "namespace" $releaseNamespace "name" $controllerRuntimeRole "source" "controller runtime Role")
-      (dict "kind" "Role" "namespace" $releaseNamespace "name" $bootstrapName "source" "hook bootstrap Role")
       (dict "kind" "Role" "namespace" $releaseNamespace "name" $hookName "source" "CRD manager Role")
-      (dict "kind" "Role" "namespace" $releaseNamespace "name" $probeName "source" "hook probe Role")
-      (dict "kind" "Role" "namespace" $releaseNamespace "name" $quiesceName "source" "teardown quiesce Role")
       (dict "kind" "Role" "namespace" $coordinationNamespace "name" $controllerName "source" "controller coordination Role")
-      (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $controllerRuntimeRole "source" "controller runtime RoleBinding")
-      (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $bootstrapName "source" "hook bootstrap RoleBinding")
       (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $hookName "source" "CRD manager RoleBinding")
-      (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $probeName "source" "hook probe RoleBinding")
-      (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $quiesceName "source" "teardown quiesce RoleBinding")
       (dict "kind" "RoleBinding" "namespace" $coordinationNamespace "name" $controllerName "source" "controller coordination RoleBinding")
-      (dict "kind" "Job" "namespace" $releaseNamespace "name" $imageCheckName "source" "manager image-check Job")
-      (dict "kind" "Job" "namespace" $releaseNamespace "name" $identityProbeName "source" "hook identity-probe Job")
-      (dict "kind" "Job" "namespace" $releaseNamespace "name" $preflightName "source" "CRD preflight Job")
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $hookName "source" "CRD reconcile Job")
-      (dict "kind" "Job" "namespace" $releaseNamespace "name" $quiesceName "source" "teardown quiesce Job")
 -}}
 {{- if $certificateRuntimeEnabled -}}
 {{- $identities = append $identities (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $certificateName "source" "certificate ServiceAccount") -}}
@@ -238,15 +138,9 @@ the predecessor wrote; crdupgrade builds the same names from the same identity.
 {{- $identities = append $identities (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $certificateName "source" "certificate ClusterRoleBinding") -}}
 {{- $identities = append $identities (dict "kind" "Role" "namespace" $releaseNamespace "name" $certificateName "source" "certificate Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $certificateName "source" "certificate RoleBinding") -}}
-{{- if ne $releaseNamespace "default" -}}
-{{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $certificateDiscoveryRoleName "source" "certificate API discovery Role") -}}
-{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $certificateDiscoveryRoleName "source" "certificate API discovery RoleBinding") -}}
-{{- end -}}
 {{- $identities = append $identities (dict "kind" "Secret" "namespace" $releaseNamespace "name" $webhookSecretName "source" "webhook TLS Secret") -}}
 {{- $identities = append $identities (dict "kind" "Secret" "namespace" $releaseNamespace "name" $certificateStagingSecretName "source" "certificate staging Secret") -}}
 {{- $identities = append $identities (dict "kind" "Service" "namespace" $releaseNamespace "name" $webhookServiceName "source" "webhook Service") -}}
-{{- $identities = append $identities (dict "kind" "Service" "namespace" $releaseNamespace "name" $certificateTransitionServiceName "source" "certificate transition Service") -}}
-{{- $identities = append $identities (dict "kind" "ConfigMap" "namespace" $releaseNamespace "name" $certificateCanaryConfigMapName "source" "certificate canary ConfigMap") -}}
 {{- end -}}
 {{- if .Values.approverClusterRole.create -}}
 {{- $identities = append $identities (dict "kind" "ClusterRole" "namespace" "" "name" (printf "%s-approver" $controllerName) "source" "approver ClusterRole") -}}
@@ -267,127 +161,39 @@ the predecessor wrote; crdupgrade builds the same names from the same identity.
 
 {{- define "ptah-operator.controllerStateVersion" -}}2{{- end -}}
 
-{{- define "ptah-operator.admissionContractVersion" -}}
-{{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}2{{- else -}}1{{- end -}}
-{{- end -}}
+{{- define "ptah-operator.admissionContractVersion" -}}2{{- end -}}
 
-{{- /* Increase for every published operator release. Guard resources are
-      append-only, so reusing a sequence would make a different runtime target
-      an already-retained object name. */ -}}
-{{/*
-Rewrite a create-time contract so it evaluates the retained object of an
-UPDATE or DELETE. Both spellings of the incoming object have to move: the
-typed field access object.spec and the dyn(object) wrapper that relaxes it.
-A DELETE carries no object, so a reference either rewrite misses evaluates
-dyn(null).spec, the validation errors, and the policy denies.
-*/}}
-{{- define "ptah-operator.oldObjectExpression" -}}
-{{- . | replace "dyn(object)" "dyn(oldObject)" | replace "object." "oldObject." -}}
-{{- end -}}
-
+{{- /* Increase for every published operator release. */ -}}
 {{- define "ptah-operator.releaseSequence" -}}1{{- end -}}
 
 {{- define "ptah-operator.hookIdentityDigest" -}}
 {{- printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name (include "ptah-operator.releaseSequence" .) (include "ptah-operator.managerImage" .) | sha256sum -}}
 {{- end -}}
 
-{{- define "ptah-operator.hookIdentityGuardPolicyName" -}}
-{{- printf "ptah-operator-hook-identity-v%s-%s" (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.hookIdentityProbeGuardPolicyName" -}}
-{{- printf "ptah-operator-hook-probe-guard-v%s-%s" (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.releaseActivationGuardPolicyName" -}}
-{{- printf "ptah-operator-release-activation-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.stagingSecretGuardPolicyName" -}}
-{{- printf "ptah-operator-cert-stage-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.admissionConvergenceMarkerName" -}}
-{{- printf "ptah-admission-convergence-v1-%s-%s" (include "ptah-operator.releaseSequence" .) (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.namespaceDeletionGuardPolicyName" -}}
-{{- printf "ptah-operator-namespace-deletion-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- /*
-A single cluster-wide name. The anchor is not release-scoped: it exists to keep
-the API server's ConfigMap parameter informer alive across the gap between one
-release being uninstalled and the next being installed, so it cannot carry a
-release identity that either release owns. templates/parameter-informer-anchor.yaml
-carries the measurement and the upstream references.
-*/ -}}
-{{- define "ptah-operator.parameterInformerAnchorName" -}}
-ptah-operator-parameter-informer-anchor
+{{- /* The release's own identity: what names its cluster-scoped objects apart
+      from another release's, and stays the same across its upgrades. */ -}}
+{{- define "ptah-operator.releaseDigest" -}}
+{{- printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-controller-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- printf "ptah-operator-controller-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerJobWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-job-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- printf "ptah-operator-job-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerChunkWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-chunk-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- printf "ptah-operator-chunk-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerPlanWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-plan-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- printf "ptah-operator-plan-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-migration-plan-write-guard-v1-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateMutatingWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-certificate-mutate-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateValidatingWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-certificate-validate-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.hookIdentityProbeJobName" -}}
-{{- printf "ptah-hook-identity-v%s-%s" (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.hookIdentityProbeObjectName" -}}
-{{- printf "ptah-hook-probe-v%s-%s" (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.rolloutGuardPolicyName" -}}
-{{- printf "ptah-operator-rollout-guard-v%s" (include "ptah-operator.releaseSequence" .) -}}
-{{- end -}}
-
-{{- define "ptah-operator.runtimeGuardPolicyName" -}}
-{{- printf "ptah-operator-runtime-guard-v%s" (include "ptah-operator.releaseSequence" .) -}}
-{{- end -}}
-
-{{- define "ptah-operator.runtimePodGuardPolicyName" -}}
-{{- printf "ptah-operator-runtime-pod-identity-v%s" (include "ptah-operator.releaseSequence" .) -}}
-{{- end -}}
-
-{{- define "ptah-operator.parentReplicaSetGuardPolicyName" -}}
-{{- printf "ptah-operator-runtime-parent-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.parentHookPodOriginGuardPolicyName" -}}
-{{- printf "ptah-operator-hook-pod-origin-guard-v2-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.parentHookJobOriginGuardPolicyName" -}}
-{{- printf "ptah-operator-hook-parent-origin-guard-v2-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.parentHookJobContractPolicyName" -}}
-{{- printf "ptah-operator-hook-parent-contract-v%s-%s" (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- printf "ptah-operator-migration-plan-write-guard-v1-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerRuntimeArgsJSON" -}}
@@ -413,26 +219,13 @@ ptah-operator-parameter-informer-anchor
 
 {{- define "ptah-operator.certificateRuntimeArgsJSON" -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
-{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 {{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run" -}}
 {{- $validatingWebhookNames := "vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run" -}}
 {{- $args := list
       (printf "--namespace=%s" .Release.Namespace)
       (printf "--release-name=%s" .Release.Name)
       (printf "--secret-name=%s" (include "ptah-operator.webhookSecretName" .))
-      (printf "--staging-secret-name=%s" (include "ptah-operator.certRotationStagingSecretName" .))
-      (printf "--candidate-service-name=%s" (include "ptah-operator.certificateTransitionServiceName" .)) -}}
-{{- if $certificateRuntimeEnabled -}}
-{{- $args = concat $args (list
-      (printf "--candidate-bind-address=:%v" .Values.certificateRotation.candidatePort)
-      (printf "--candidate-probe-config-map-name=%s" (include "ptah-operator.certificateCanaryConfigMapName" .))
-      (printf "--candidate-probe-username=system:serviceaccount:%s:%s" .Release.Namespace $rotatorName)
-      "--candidate-mutating-field-manager=ptah-certificate-rotation-canary-mutate-v1"
-      "--candidate-validating-field-manager=ptah-certificate-rotation-canary-validate-v1"
-      (printf "--candidate-stability-duration=%s" .Values.certificateRotation.admissionConvergence.stabilityDuration)
-      (printf "--candidate-poll-interval=%s" .Values.certificateRotation.admissionConvergence.pollInterval)
-      (printf "--candidate-request-timeout=%s" .Values.certificateRotation.admissionConvergence.requestTimeout)) -}}
-{{- end -}}
+      (printf "--staging-secret-name=%s" (include "ptah-operator.certRotationStagingSecretName" .)) -}}
 {{- if .Values.certificateRotation.recreateMissingSecret -}}
 {{- $args = append $args "--recreate-missing-secret=true" -}}
 {{- $args = append $args (printf "--secret-create-policy-name=%s" $rotatorName) -}}
@@ -465,272 +258,34 @@ ptah-operator-parameter-informer-anchor
 {{- $args | toJson -}}
 {{- end -}}
 
-{{- define "ptah-operator.celExactStringMapExpression" -}}
-{{- $path := .path -}}
-{{- $values := default (dict) .values -}}
-{{- if eq (len $values) 0 -}}
-{{- printf `(!has(%[1]s) || %[1]s.size() == 0)` $path -}}
-{{- else -}}
-{{- $parts := list (printf `has(%s)` $path) (printf `%s.size() == %d` $path (len $values)) -}}
-{{- range $key := keys $values | sortAlpha -}}
-{{- $parts = append $parts (printf `%q in %[2]s && %[2]s[%[1]q] == %[3]q` $key $path (index $values $key)) -}}
-{{- end -}}
-{{- join " && " $parts -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificatePresenceEqual" -}}
-{{- printf `has(%[1]s) == has(%[2]s) && (!has(%[1]s) || (has(%[2]s) && %[1]s == %[2]s))` .newPath .oldPath -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateMetadataValidation" -}}
-{{- $parts := list -}}
-{{- range $field := list "name" "generateName" "namespace" "selfLink" "uid" "resourceVersion" "creationTimestamp" "deletionTimestamp" "deletionGracePeriodSeconds" "labels" "annotations" "ownerReferences" "finalizers" -}}
-{{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "object.metadata.%s" $field) "oldPath" (printf "oldObject.metadata.%s" $field))) -}}
-{{- end -}}
-{{- $parts = append $parts `((dyn(object).webhooks == dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation) || (dyn(object).webhooks != dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation + 1))` -}}
-{{- join " && " $parts -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateWebhookNamesValidation" -}}
-{{- printf `dyn(object).webhooks.size() > 0 && dyn(object).webhooks.size() <= 64 && dyn(object).webhooks.map(webhook, webhook.name) == dyn(oldObject).webhooks.map(webhook, webhook.name)` -}}
-{{- end -}}
-
-{{- define "ptah-operator.certificateWebhookEntriesValidation" -}}
-{{- $newWebhook := "webhook" -}}
-{{- $oldWebhook := "previous" -}}
-{{- $exactServiceTarget := printf `has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[2]q && %[1]s.clientConfig.service.name == %[3]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == 443)` $newWebhook .serviceNamespace .serviceName -}}
-{{- $exactCanaryTarget := printf `%[1]s.name == %[2]q && has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[3]q && %[1]s.clientConfig.service.name == %[4]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == 443)` $newWebhook .canaryName .serviceNamespace .candidateServiceName -}}
-{{- $mutableTarget := printf `((%s) || (%s))` $exactServiceTarget $exactCanaryTarget -}}
-{{- $caBundleEquality := include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.caBundle" $newWebhook) "oldPath" (printf "%s.clientConfig.caBundle" $oldWebhook)) -}}
-{{- $mutableCABundle := printf `(((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s))` $mutableTarget $newWebhook $caBundleEquality -}}
-{{- $parts := list
-      (printf `%s.name == %s.name` $oldWebhook $newWebhook)
-      (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.service" $newWebhook) "oldPath" (printf "%s.clientConfig.service" $oldWebhook)))
-      (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.url" $newWebhook) "oldPath" (printf "%s.clientConfig.url" $oldWebhook)))
-      $mutableCABundle -}}
-{{- range $field := list "rules" "failurePolicy" "matchPolicy" "namespaceSelector" "objectSelector" "sideEffects" "timeoutSeconds" "admissionReviewVersions" "matchConditions" -}}
-{{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.%s" $newWebhook $field) "oldPath" (printf "%s.%s" $oldWebhook $field))) -}}
-{{- end -}}
-{{- if .includeReinvocation -}}
-{{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.reinvocationPolicy" $newWebhook) "oldPath" (printf "%s.reinvocationPolicy" $oldWebhook))) -}}
-{{- end -}}
-{{- printf `dyn(object).webhooks.all(webhook, dyn(oldObject).webhooks.exists(previous, %s))` (join " && " $parts) -}}
-{{- end -}}
-
-{{- define "ptah-operator.celExactOpaqueExpression" -}}
-{{- $path := .path -}}
-{{- $value := .value -}}
-{{- if empty $value -}}
-{{- if eq .kind "object" -}}
-{{- printf `!has(%s)` $path -}}
-{{- else -}}
-{{- printf `(!has(%[1]s) || %[1]s.size() == 0)` $path -}}
-{{- end -}}
-{{- else -}}
-{{- printf `has(%s) && dyn(%s) == %s` $path $path ($value | toJson) -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "ptah-operator.celExactResourcesExpression" -}}
-{{- $container := .container -}}
-{{- $resources := default (dict) .resources -}}
-{{- $resourcesPath := printf "dyn(%s.resources)" $container -}}
-{{- $parts := list (printf `has(%s.resources)` $container) -}}
-{{- range $bucket := list "limits" "requests" -}}
-{{- $values := default (dict) (index $resources $bucket) -}}
-{{- $path := printf "%s.%s" $resourcesPath $bucket -}}
-{{- if eq (len $values) 0 -}}
-{{- $parts = append $parts (printf `(!has(%[1]s) || %[1]s.size() == 0)` $path) -}}
-{{- else -}}
-{{- $parts = append $parts (printf `has(%s) && %s.size() == %d` $path $path (len $values)) -}}
-{{- range $key := keys $values | sortAlpha -}}
-{{- $parts = append $parts (printf `%q in %[2]s && quantity(string(%[2]s[%[1]q])).compareTo(quantity(%[3]q)) == 0` $key $path (printf "%v" (index $values $key))) -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- $parts = append $parts (printf `(!has(%[1]s.claims) || %[1]s.claims.size() == 0)` $resourcesPath) -}}
-{{- join " && " $parts -}}
-{{- end -}}
-
-{{- /* Pod API defaulting copies every limit into a missing same-key request.
-      Workload templates are not defaulted this way, so their retained
-      Deployment contract deliberately continues to use the raw values. */ -}}
-{{- define "ptah-operator.celExactPodResourcesExpression" -}}
-{{- $resources := deepCopy (default (dict) .resources) -}}
-{{- $limits := deepCopy (default (dict) (index $resources "limits")) -}}
-{{- $requests := deepCopy (default (dict) (index $resources "requests")) -}}
-{{- range $key, $value := $limits -}}
-{{- if not (hasKey $requests $key) -}}
-{{- $_ := set $requests $key $value -}}
-{{- end -}}
-{{- end -}}
-{{- $_ := set $resources "limits" $limits -}}
-{{- $_ := set $resources "requests" $requests -}}
-{{- include "ptah-operator.celExactResourcesExpression" (dict "container" .container "resources" $resources) -}}
-{{- end -}}
-
-{{- define "ptah-operator.celExactTolerationsExpression" -}}
-{{- $path := .path -}}
-{{- $values := default (list) .values -}}
-{{- $parts := list -}}
-{{- $suppressNotReady := false -}}
-{{- $suppressUnreachable := false -}}
-{{- range $index, $value := $values -}}
-{{- $key := default "" (index $value "key") -}}
-{{- $operator := default "Equal" (index $value "operator") -}}
-{{- $tolerationValue := default "" (index $value "value") -}}
-{{- $effect := default "" (index $value "effect") -}}
-{{- $entry := printf `(has(%[1]s[%[2]d].key) ? %[1]s[%[2]d].key : "") == %[3]q && (has(%[1]s[%[2]d].operator) ? (%[1]s[%[2]d].operator == "" ? "Equal" : %[1]s[%[2]d].operator) : "Equal") == %[4]q && (has(%[1]s[%[2]d].value) ? %[1]s[%[2]d].value : "") == %[5]q && (has(%[1]s[%[2]d].effect) ? %[1]s[%[2]d].effect : "") == %[6]q` $path $index $key $operator $tolerationValue $effect -}}
-{{- if hasKey $value "tolerationSeconds" -}}
-{{- $entry = printf `%s && has(%s[%d].tolerationSeconds) && %s[%d].tolerationSeconds == %d` $entry $path $index $path $index (int64 (index $value "tolerationSeconds")) -}}
-{{- else -}}
-{{- $entry = printf `%s && !has(%s[%d].tolerationSeconds)` $entry $path $index -}}
-{{- end -}}
-{{- $parts = append $parts (printf `(%s)` $entry) -}}
-{{- if and (or (eq $key "") (eq $key "node.kubernetes.io/not-ready")) (or (eq $effect "") (eq $effect "NoExecute")) -}}
-{{- $suppressNotReady = true -}}
-{{- end -}}
-{{- if and (or (eq $key "") (eq $key "node.kubernetes.io/unreachable")) (or (eq $effect "") (eq $effect "NoExecute")) -}}
-{{- $suppressUnreachable = true -}}
-{{- end -}}
-{{- end -}}
-{{- $expected := len $values -}}
-{{- if .includeDefaults -}}
-{{- if and .defaultTolerationsEnabled (not $suppressNotReady) -}}
-{{- $entry := printf `(has(%[1]s[%[2]d].key) ? %[1]s[%[2]d].key : "") == "node.kubernetes.io/not-ready" && (has(%[1]s[%[2]d].operator) ? (%[1]s[%[2]d].operator == "" ? "Equal" : %[1]s[%[2]d].operator) : "Equal") == "Exists" && (has(%[1]s[%[2]d].value) ? %[1]s[%[2]d].value : "") == "" && (has(%[1]s[%[2]d].effect) ? %[1]s[%[2]d].effect : "") == "NoExecute" && has(%[1]s[%[2]d].tolerationSeconds) && %[1]s[%[2]d].tolerationSeconds == %[3]d` $path $expected (int64 .defaultNotReadyTolerationSeconds) -}}
-{{- $parts = append $parts (printf `(%s)` $entry) -}}
-{{- $expected = add1 $expected -}}
-{{- end -}}
-{{- if and .defaultTolerationsEnabled (not $suppressUnreachable) -}}
-{{- $entry := printf `(has(%[1]s[%[2]d].key) ? %[1]s[%[2]d].key : "") == "node.kubernetes.io/unreachable" && (has(%[1]s[%[2]d].operator) ? (%[1]s[%[2]d].operator == "" ? "Equal" : %[1]s[%[2]d].operator) : "Equal") == "Exists" && (has(%[1]s[%[2]d].value) ? %[1]s[%[2]d].value : "") == "" && (has(%[1]s[%[2]d].effect) ? %[1]s[%[2]d].effect : "") == "NoExecute" && has(%[1]s[%[2]d].tolerationSeconds) && %[1]s[%[2]d].tolerationSeconds == %[3]d` $path $expected (int64 .defaultUnreachableTolerationSeconds) -}}
-{{- $parts = append $parts (printf `(%s)` $entry) -}}
-{{- $expected = add1 $expected -}}
-{{- end -}}
-{{- end -}}
-{{- if eq $expected 0 -}}
-{{- printf `(!has(%[1]s) || %[1]s.size() == 0)` $path -}}
-{{- else -}}
-{{- printf `has(%s) && %s.size() == %d && %s` $path $path $expected (join " && " $parts) -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "ptah-operator.runtimeDeploymentConfigExpressionsJSON" -}}
-{{- $root := . -}}
-{{- $controllerDeployment := include "ptah-operator.fullname" $root -}}
-{{- $isController := printf `request.name == %q` $controllerDeployment -}}
-{{- $template := "dyn(object).spec.template" -}}
-{{- $pod := printf "%s.spec" $template -}}
-{{- $init := printf "%s.initContainers[0]" $pod -}}
-{{- $app := printf "%s.containers[0]" $pod -}}
-{{- $selectorLabels := include "ptah-operator.selectorLabels" $root | fromYaml -}}
-{{- $controllerLabels := deepCopy $selectorLabels -}}
-{{- $_ := set $controllerLabels "app.kubernetes.io/component" "controller" -}}
-{{- range $key, $value := default (dict) $root.Values.podLabels -}}
-{{- $_ = set $controllerLabels $key $value -}}
-{{- end -}}
-{{- $certificateLabels := include "ptah-operator.labels" $root | fromYaml -}}
-{{- $_ = set $certificateLabels "app.kubernetes.io/component" "certificate-rotation" -}}
-{{- $controllerAnnotations := dict
-      "operator.ptah.run/controller-state-version" (include "ptah-operator.controllerStateVersion" $root)
-      "operator.ptah.run/release-sequence" (include "ptah-operator.releaseSequence" $root) -}}
-{{- range $key, $value := default (dict) $root.Values.podAnnotations -}}
-{{- $_ = set $controllerAnnotations $key $value -}}
-{{- end -}}
-{{- $certificateAnnotations := dict
-      "operator.ptah.run/controller-state-version" (include "ptah-operator.controllerStateVersion" $root)
-      "operator.ptah.run/release-sequence" (include "ptah-operator.releaseSequence" $root) -}}
-{{- $initResources := dict "requests" (dict "cpu" "5m" "memory" "16Mi") "limits" (dict "memory" "32Mi") -}}
-{{- $controllerSelector := deepCopy $selectorLabels -}}
-{{- $_ = set $controllerSelector "app.kubernetes.io/component" "controller" -}}
-{{- $certificateSelector := deepCopy $selectorLabels -}}
-{{- $_ = set $certificateSelector "app.kubernetes.io/component" "certificate-rotation" -}}
-{{- $selectorExpression := printf `%s ? (%s) : (%s)` $isController
-      (include "ptah-operator.celExactStringMapExpression" (dict "path" "dyn(object).spec.selector.matchLabels" "values" $controllerSelector))
-      (include "ptah-operator.celExactStringMapExpression" (dict "path" "dyn(object).spec.selector.matchLabels" "values" $certificateSelector)) -}}
-{{- $priorityExpression := printf `(!has(%[1]s.priorityClassName) || %[1]s.priorityClassName == "")` $pod -}}
-{{- if ne $root.Values.priorityClassName "" -}}
-{{- $priorityExpression = printf `has(%[1]s.priorityClassName) && %[1]s.priorityClassName == %[2]q` $pod $root.Values.priorityClassName -}}
-{{- end -}}
-{{- $expressions := list
-      (printf `dyn(object).spec.replicas == (%s ? %d : 1)` $isController (int $root.Values.replicaCount))
-      (printf `dyn(object).spec.strategy.type == "Recreate" && !has(dyn(object).spec.strategy.rollingUpdate) && (!has(dyn(object).spec.minReadySeconds) || dyn(object).spec.minReadySeconds == 0) && (!has(dyn(object).spec.paused) || !dyn(object).spec.paused) && has(dyn(object).spec.revisionHistoryLimit) && dyn(object).spec.revisionHistoryLimit == (%s ? 10 : 2) && has(dyn(object).spec.progressDeadlineSeconds) && dyn(object).spec.progressDeadlineSeconds == 600` $isController)
-      (printf `has(dyn(object).spec.selector) && (%s) && (!has(dyn(object).spec.selector.matchExpressions) || dyn(object).spec.selector.matchExpressions.size() == 0)` $selectorExpression)
-      (printf `%s ? (%s) : (%s)` $isController (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.labels" $template) "values" $controllerLabels)) (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.labels" $template) "values" $certificateLabels)))
-      (printf `%s ? (%s) : (%s)` $isController (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.annotations" $template) "values" $controllerAnnotations)) (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.annotations" $template) "values" $certificateAnnotations)))
-      (printf `%[1]s.restartPolicy == "Always" && %[1]s.dnsPolicy == "ClusterFirst" && %[1]s.schedulerName == "default-scheduler" && has(%[1]s.terminationGracePeriodSeconds) && %[1]s.terminationGracePeriodSeconds == 30 && (!has(%[1]s.nodeName) || %[1]s.nodeName == "") && !has(%[1]s.hostname) && !has(%[1]s.subdomain) && !has(%[1]s.dnsConfig) && (!has(%[1]s.hostAliases) || %[1]s.hostAliases.size() == 0) && (!has(%[1]s.readinessGates) || %[1]s.readinessGates.size() == 0) && (!has(%[1]s.schedulingGates) || %[1]s.schedulingGates.size() == 0) && !has(%[1]s.runtimeClassName) && !has(dyn(%[1]s).overhead) && !has(%[1]s.os) && (!has(%[1]s.setHostnameAsFQDN) || !%[1]s.setHostnameAsFQDN)` $pod)
-      (include "ptah-operator.celExactOpaqueExpression" (dict "path" (printf "%s.imagePullSecrets" $pod) "value" $root.Values.imagePullSecrets "kind" "list"))
-      (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.nodeSelector" $pod) "values" $root.Values.nodeSelector))
-      (include "ptah-operator.celExactOpaqueExpression" (dict "path" (printf "%s.affinity" $pod) "value" $root.Values.affinity "kind" "object"))
-      (include "ptah-operator.celExactTolerationsExpression" (dict "path" (printf "%s.tolerations" $pod) "values" $root.Values.tolerations "includeDefaults" false))
-      $priorityExpression
-      (printf `%[1]s.imagePullPolicy == %[3]q && %[2]s.imagePullPolicy == %[3]q` $init $app $root.Values.image.pullPolicy)
-      (include "ptah-operator.celExactResourcesExpression" (dict "container" $init "resources" $initResources))
-      (printf `%s ? (%s) : (%s)` $isController (include "ptah-operator.celExactResourcesExpression" (dict "container" $app "resources" $root.Values.resources)) (include "ptah-operator.celExactResourcesExpression" (dict "container" $app "resources" $root.Values.certificateRotation.resources)) ) -}}
-{{- $expressions | toJson -}}
-{{- end -}}
-
-{{- define "ptah-operator.runtimePodConfigExpressionsJSON" -}}
-{{- $root := . -}}
-{{- $pod := "dyn(object).spec" -}}
-{{- $init := "dyn(object).spec.initContainers[0]" -}}
-{{- $app := "dyn(object).spec.containers[0]" -}}
-{{- $initResources := dict "requests" (dict "cpu" "5m" "memory" "16Mi") "limits" (dict "memory" "32Mi") -}}
-{{- $podPullPolicy := $root.Values.image.pullPolicy -}}
-{{- if $root.Values.admission.alwaysPullImagesEnabled -}}
-{{- $podPullPolicy = "Always" -}}
-{{- end -}}
-{{- $priorityExpression := printf `(!has(%[1]s.priorityClassName) || %[1]s.priorityClassName == "") && has(%[1]s.priority) && %[1]s.priority == 0 && has(%[1]s.preemptionPolicy) && %[1]s.preemptionPolicy == "PreemptLowerPriority"` $pod -}}
-{{- if ne $root.Values.priorityClassName "" -}}
-{{- $priorityExpression = printf `has(%[1]s.priorityClassName) && %[1]s.priorityClassName == %[2]q && has(%[1]s.priority) && %[1]s.priority == %[3]d && has(%[1]s.preemptionPolicy) && %[1]s.preemptionPolicy == %[4]q` $pod $root.Values.priorityClassName (int $root.Values.priorityClassValue) $root.Values.priorityClassPreemptionPolicy -}}
-{{- end -}}
-{{- $expressions := list
-      (include "ptah-operator.celExactOpaqueExpression" (dict "path" (printf "%s.imagePullSecrets" $pod) "value" $root.Values.imagePullSecrets "kind" "list"))
-      (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.nodeSelector" $pod) "values" $root.Values.nodeSelector))
-      (include "ptah-operator.celExactOpaqueExpression" (dict "path" (printf "%s.affinity" $pod) "value" $root.Values.affinity "kind" "object"))
-      (include "ptah-operator.celExactTolerationsExpression" (dict
-        "path" (printf "%s.tolerations" $pod)
-        "values" $root.Values.tolerations
-        "includeDefaults" true
-        "defaultTolerationsEnabled" $root.Values.admission.defaultTolerationsEnabled
-        "defaultNotReadyTolerationSeconds" $root.Values.admission.defaultNotReadyTolerationSeconds
-        "defaultUnreachableTolerationSeconds" $root.Values.admission.defaultUnreachableTolerationSeconds))
-      $priorityExpression
-      (printf `%[1]s.imagePullPolicy == %[3]q && %[2]s.imagePullPolicy == %[3]q` $init $app $podPullPolicy)
-      (include "ptah-operator.celExactPodResourcesExpression" (dict "container" $init "resources" $initResources))
-      (printf `variables.isController ? (%s) : (%s)` (include "ptah-operator.celExactPodResourcesExpression" (dict "container" $app "resources" $root.Values.resources)) (include "ptah-operator.celExactPodResourcesExpression" (dict "container" $app "resources" $root.Values.certificateRotation.resources))) -}}
-{{- $expressions | toJson -}}
-{{- end -}}
-
-{{- define "ptah-operator.runtimeAdmissionContractJSON" -}}
-{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
-{{- $serviceAccountAnnotations := default (dict) .Values.serviceAccount.annotations -}}
-{{- $enforceMountableSecrets := default "" (index $serviceAccountAnnotations "kubernetes.io/enforce-mountable-secrets") -}}
-{{- dict
-      "version" 1
-      "namespace" .Release.Namespace
-      "commonInitContainerResources" (dict "requests" (dict "cpu" "5m" "memory" "16Mi") "limits" (dict "memory" "32Mi"))
-      "controllerContainerResources" .Values.resources
-      "certificateContainerResources" .Values.certificateRotation.resources
-      "imagePullSecrets" (default (list) .Values.imagePullSecrets)
-      "priorityClassName" .Values.priorityClassName
-      "priorityClassValue" (int .Values.priorityClassValue)
-      "priorityClassPreemptionPolicy" .Values.priorityClassPreemptionPolicy
-      "controllerServiceAccountName" (include "ptah-operator.serviceAccountName" .)
-      "certificateServiceAccountName" (include "ptah-operator.certRotatorServiceAccountName" .)
-      "controllerServiceAccountCreate" .Values.serviceAccount.create
-      "controllerServiceAccountEnforceMountableSecrets" (has $enforceMountableSecrets (list "1" "t" "T" "TRUE" "true" "True"))
-      "controllerSecretNames" (list (include "ptah-operator.webhookSecretName" .))
-      "certificateSecretNames" (list)
-      "certificateRuntimeEnabled" $certificateRuntimeEnabled
+{{/*
+The CRD reconcile hook's arguments. It stops the release's runtime when the
+manager image changes and then brings the CRDs to this release's schemas, so
+it needs the two Deployments it may stop and the image that tells whether it
+has to.
+*/}}
+{{- define "ptah-operator.crdReconcileArgsJSON" -}}
+{{- list
+      "reconcile"
+      "--timeout=360s"
+      (printf "--release-name=%s" .Release.Name)
+      (printf "--release-namespace=%s" .Release.Namespace)
+      (printf "--controller-deployment-name=%s" (include "ptah-operator.fullname" .))
+      (printf "--certificate-deployment-name=%s" (include "ptah-operator.certRotatorServiceAccountName" .))
+      (printf "--manager-image=%s" (include "ptah-operator.managerImage" .))
     | toJson -}}
 {{- end -}}
 
-{{- define "ptah-operator.crdManagerArgsJSON" -}}
+{{/*
+The arguments of the check each runtime Pod runs before it starts: the CRDs are
+this release's, and the admission singleton belongs to this release. The
+manager also refuses stored state it cannot read.
+*/}}
+{{- define "ptah-operator.runtimeVerifyArgsJSON" -}}
 {{- $root := .root -}}
 {{- $args := list
-      .mode
-      (printf "--timeout=%s" .timeout)
+      "runtime-verify"
+      "--timeout=60s"
       (printf "--release-name=%s" $root.Release.Name)
       (printf "--release-namespace=%s" $root.Release.Namespace)
       (printf "--coordination-namespace=%s" (include "ptah-operator.coordinationNamespace" $root))
@@ -738,21 +293,11 @@ ptah-operator-parameter-informer-anchor
       (printf "--leader-election-id=%s" (include "ptah-operator.leaderElectionID" $root))
       (printf "--webhook-service-name=%s" (include "ptah-operator.webhookServiceName" $root))
       (printf "--webhook-timeout-seconds=%v" $root.Values.webhook.timeoutSeconds)
-      (printf "--webhook-secret-name=%s" (include "ptah-operator.webhookSecretName" $root))
-      (printf "--webhook-port=%v" $root.Values.webhook.port)
-      (printf "--certificate-health-port=%v" $root.Values.certificateRotation.healthPort)
       (printf "--hook-service-account-name=%s" (include "ptah-operator.crdManagerServiceAccountName" $root))
       (printf "--controller-service-account-name=%s" (include "ptah-operator.serviceAccountName" $root))
       (printf "--controller-deployment-name=%s" (include "ptah-operator.fullname" $root))
-      (printf "--controller-replicas=%v" $root.Values.replicaCount)
       (printf "--certificate-deployment-name=%s" (include "ptah-operator.certRotatorServiceAccountName" $root))
-      (printf "--release-sequence=%s" (include "ptah-operator.releaseSequence" $root))
-      (printf "--manager-image=%s" (include "ptah-operator.managerImage" $root))
-      (printf "--controller-runtime-args-b64=%s" (include "ptah-operator.controllerRuntimeArgsJSON" $root | b64enc))
-      (printf "--certificate-runtime-args-b64=%s" (include "ptah-operator.certificateRuntimeArgsJSON" $root | b64enc))
-      (printf "--runtime-deployment-config-expressions-b64=%s" (include "ptah-operator.runtimeDeploymentConfigExpressionsJSON" $root | b64enc))
-      (printf "--runtime-pod-config-expressions-b64=%s" (include "ptah-operator.runtimePodConfigExpressionsJSON" $root | b64enc))
-      (printf "--runtime-admission-contract-b64=%s" (include "ptah-operator.runtimeAdmissionContractJSON" $root | b64enc)) -}}
+      (printf "--release-sequence=%s" (include "ptah-operator.releaseSequence" $root)) -}}
 {{- if .verifyControllerState -}}
 {{- $args = append $args "--verify-controller-state=true" -}}
 {{- end -}}
@@ -932,11 +477,11 @@ grants. NOTES.txt prints them as a warning and refuses nothing.
 
 A ServiceAccount is this release's when it lives in the release namespace and
 carries one of the names the chart runs Pods as, computed by the same helpers
-that name them: the manager, the certificate rotator, and the CRD hooks, which
-the uninstall hook runs as too. Names rather than the objects: a first install
-reads the bindings before Helm has created any of them. A ClusterRole is read from its rules, which for an aggregated role are the
-aggregated rules: the aggregation controller writes them into the object. An
-offline render reads nothing and lists nothing.
+that name them: the manager, the certificate rotator, and the CRD hook. Names
+rather than the objects: a first install reads the bindings before Helm has
+created any of them. A ClusterRole is read from its rules, which for an
+aggregated role are the aggregated rules: the aggregation controller writes
+them into the object. An offline render reads nothing and lists nothing.
 */}}
 {{- define "ptah-operator.releaseNamespaceGrantWarnings" -}}
 {{- $root := . -}}
@@ -1206,11 +751,3 @@ Secret it has to refuse.
 {{- end -}}
 {{- end -}}
 
-{{- define "ptah-operator.validateCertificatePorts" -}}
-{{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
-{{- $candidatePort := int .Values.certificateRotation.candidatePort -}}
-{{- if eq $candidatePort (int .Values.certificateRotation.healthPort) -}}
-{{- fail "certificateRotation.candidatePort must differ from certificateRotation.healthPort" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}

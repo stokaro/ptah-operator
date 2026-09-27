@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -26,7 +25,6 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/stokaro/ptah-operator/internal/certrotation"
-	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 )
 
 const (
@@ -45,10 +43,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	renderFinished := time.Now()
 	managerName := releaseName + "-ptah-operator"
 	rotatorName := releaseName + "-ptah-operator-cert-rotator"
-	discoveryRoleName, err := crdupgrade.CertificateDiscoveryRoleName(releaseNamespace, releaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
 	secretName := releaseName + "-ptah-operator-webhook-cert"
 	stagingSecretName := releaseName + "-ptah-operator-cert-rotation-stage"
 	leaseName := releaseName + "-ptah-operator-cert-rotation"
@@ -120,52 +114,40 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	assertNoResourceVerb(t, role, "", "secrets", "create")
 	assertExactRule(t, role, "coordination.k8s.io", "leases", []string{leaseName}, []string{"get", "update"})
 	assertExactRule(t, role, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
-	defaultDiscoveryRole := mustNamespacedObject(t, objects, "Role", "default", discoveryRoleName)
-	assertExactRule(t, defaultDiscoveryRole, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
-	assertExactCertificateRoleBinding(t, objects, "default", discoveryRoleName, rotatorName, releaseNamespace)
-	// The runtime verifier no longer proves the admission marker or reads the
-	// activation parameter, so its Role reaches no ConfigMap.
-	runtimeAdmissionRole := mustObject(t, objects, "Role", managerName+"-runtime-admission")
-	for _, verb := range []string{"get", "update"} {
-		assertNoResourceVerb(t, runtimeAdmissionRole, "", "configmaps", verb)
+	// The rotator lists the webhook Service's EndpointSlices in the release
+	// namespace and nowhere else, and nothing in the release reaches into
+	// default.
+	for _, object := range objects {
+		if object.GetNamespace() == "default" {
+			t.Fatalf("the release renders %s/%s into the default namespace", object.GetKind(), object.GetName())
+		}
 	}
+	// No runtime Pod checks its own admission any more, so no Role grants it
+	// the reads that check needed.
+	assertObjectAbsent(t, objects, "Role", managerName+"-runtime-admission")
+	assertObjectAbsent(t, objects, "RoleBinding", managerName+"-runtime-admission")
 
 	clusterRole := mustObject(t, objects, "ClusterRole", rotatorName)
 	assertNoResourceVerb(t, clusterRole, "discovery.k8s.io", "endpointslices", "list")
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "mutatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
-	runtimeGuardNames := []string{
-		"ptah-operator-rollout-guard-v1",
-		"ptah-operator-runtime-guard-v1",
-		"ptah-operator-runtime-pod-identity-v1",
-		"ptah-operator-hook-identity-v1-90a0385b562b",
-		"ptah-operator-hook-probe-guard-v1-90a0385b562b",
-		"ptah-operator-release-activation-guard-v1-f1e165dcd72a",
-		"ptah-operator-controller-write-guard-v2-90a0385b562b",
-		"ptah-operator-job-write-guard-v2-90a0385b562b",
-		"ptah-operator-chunk-write-guard-v2-90a0385b562b",
-		"ptah-operator-migration-plan-write-guard-v1-90a0385b562b",
-		"ptah-operator-plan-write-guard-v2-90a0385b562b",
-		"ptah-operator-certificate-mutate-guard-v1-f1e165dcd72a",
-		"ptah-operator-certificate-validate-guard-v1-f1e165dcd72a",
-		"ptah-operator-namespace-deletion-guard-v1-f1e165dcd72a",
-		"ptah-operator-runtime-parent-guard-v2-90a0385b562b",
-		"ptah-operator-hook-pod-origin-guard-v2-f1e165dcd72a",
-		"ptah-operator-hook-parent-origin-guard-v2-f1e165dcd72a",
-		"ptah-operator-cert-stage-guard-v1-f1e165dcd72a",
-		"ptah-operator-hook-parent-contract-v1-90a0385b562b",
+	// The rotator reads no admission policy: the guards it once verified are
+	// gone.
+	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", "get")
+	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", "get")
+	assertNoResourceVerb(t, clusterRole, "scheduling.k8s.io", "priorityclasses", "get")
+	// Helm deletes the staging Secret with the rest of the release, and no
+	// uninstall hook runs before it.
+	for _, object := range objects {
+		if strings.Contains(object.GetAnnotations()["helm.sh/hook"], "pre-delete") {
+			t.Fatalf("the release renders the uninstall hook object %s/%s", object.GetKind(), object.GetName())
+		}
 	}
-	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", runtimeGuardNames, []string{"get"})
-	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", runtimeGuardNames, []string{"get"})
-	// The uninstall hook deletes the staging Secret by name once its guard is
-	// gone, and never reads the pending CA private key it holds.
-	uninstallBase := managerName
-	if len(uninstallBase) > 24 {
-		uninstallBase = uninstallBase[:24]
+	for _, object := range []*unstructured.Unstructured{stagingSecret, secret} {
+		if policy := object.GetAnnotations()["helm.sh/resource-policy"]; policy != "" {
+			t.Fatalf("Secret %s outlives the release with resource policy %q", object.GetName(), policy)
+		}
 	}
-	uninstallRole := mustObject(t, objects, "Role", strings.TrimSuffix(uninstallBase, "-")+"-quiesce-v1-90a0385b562b")
-	assertExactRule(t, uninstallRole, "", "secrets", []string{stagingSecretName}, []string{"delete"})
-	assertNoResourceVerb(t, uninstallRole, "", "secrets", "get")
 	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicy", rotatorName)
 	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicyBinding", rotatorName)
 	mustObject(t, objects, "Lease", leaseName)
@@ -219,6 +201,7 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		t.Fatalf("rotator validating production webhook inventory = %v, want %v", got, want)
 	}
 	for _, forbiddenPrefix := range []string{
+		"--candidate-",
 		"--recreate-missing-secret",
 		"--secret-create-policy-name=",
 		"--secret-create-policy-binding-name=",
@@ -228,13 +211,11 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 			t.Errorf("rotator args unexpectedly contain %q: %v", forbiddenPrefix, args)
 		}
 	}
-	// The rotator no longer listens on the candidate port, but the release
-	// guards still require the container to declare it.
 	ports := container["ports"].([]any)
-	if len(ports) != 2 {
-		t.Fatalf("rotator ports = %d, want 2", len(ports))
+	if len(ports) != 1 {
+		t.Fatalf("rotator ports = %d, want the health port alone", len(ports))
 	}
-	wantPorts := map[string]int64{"health": 8081, "candidate": 9444}
+	wantPorts := map[string]int64{"health": 8081}
 	for _, value := range ports {
 		port := value.(map[string]any)
 		name, _ := port["name"].(string)
@@ -248,6 +229,21 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	}
 	assertHTTPProbe(t, container, "livenessProbe", "/healthz")
 	assertHTTPProbe(t, container, "readinessProbe", "/readyz")
+	// The admission canary is gone with the proof that used it, in either
+	// certificate mode.
+	assertObjectAbsent(t, objects, "ConfigMap", releaseName+"-ptah-operator-cert-canary")
+	assertObjectAbsent(t, objects, "Service", releaseName+"-ptah-operator-cert-transition")
+	for _, configuration := range []*unstructured.Unstructured{mutatingConfiguration, validatingConfiguration} {
+		webhooks, _, err := unstructured.NestedSlice(configuration.Object, "webhooks")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, webhook := range webhooks {
+			if name, _ := webhook.(map[string]any)["name"].(string); strings.Contains(name, "canary") {
+				t.Fatalf("%s carries the canary entry %s", configuration.GetKind(), name)
+			}
+		}
+	}
 
 	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
 	containers, _, err = unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
@@ -321,17 +317,9 @@ func TestCertificateEndpointSliceRBACIsNamespaceBound(t *testing.T) {
 			t.Parallel()
 			objects := renderChartInNamespace(t, namespace)
 			rotatorName := releaseName + "-ptah-operator-cert-rotator"
-			discoveryRoleName, err := crdupgrade.CertificateDiscoveryRoleName(namespace, releaseName)
-			if err != nil {
-				t.Fatal(err)
-			}
-			allowedIdentities := map[string]string{namespace + "/" + rotatorName: rotatorName}
-			if namespace != "default" {
-				allowedIdentities["default/"+discoveryRoleName] = rotatorName
-			}
 
-			roleCount := 0
-			bindingCount := 0
+			roles := 0
+			bindings := 0
 			for _, object := range objects {
 				switch object.GetKind() {
 				case "ClusterRole":
@@ -344,71 +332,28 @@ func TestCertificateEndpointSliceRBACIsNamespaceBound(t *testing.T) {
 						}
 					}
 				case "Role":
-					if object.GetName() != rotatorName && object.GetName() != discoveryRoleName {
-						continue
+					for _, rule := range objectRules(t, object) {
+						if slices.Contains(stringSlice(rule["apiGroups"]), "discovery.k8s.io") {
+							if object.GetNamespace() != namespace || object.GetName() != rotatorName {
+								t.Fatalf("Role %s/%s grants EndpointSlice authority outside the rotator's Role", object.GetNamespace(), object.GetName())
+							}
+							roles++
+						}
 					}
-					identity := object.GetNamespace() + "/" + object.GetName()
-					if _, allowed := allowedIdentities[identity]; !allowed {
-						t.Fatalf("certificate EndpointSlice Role rendered outside the namespace contract: %s", identity)
-					}
-					assertExactRule(t, object, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
-					roleCount++
 				case "RoleBinding":
-					if object.GetName() != rotatorName && object.GetName() != discoveryRoleName {
-						continue
+					if object.GetName() == rotatorName {
+						if object.GetNamespace() != namespace {
+							t.Fatalf("certificate RoleBinding rendered into %s, want %s", object.GetNamespace(), namespace)
+						}
+						assertExactCertificateRoleBinding(t, objects, namespace, rotatorName, rotatorName, namespace)
+						bindings++
 					}
-					identity := object.GetNamespace() + "/" + object.GetName()
-					subjectName, allowed := allowedIdentities[identity]
-					if !allowed {
-						t.Fatalf("certificate EndpointSlice RoleBinding rendered outside the namespace contract: %s", identity)
-					}
-					assertExactCertificateRoleBinding(t, objects, object.GetNamespace(), object.GetName(), subjectName, namespace)
-					bindingCount++
 				}
 			}
-			if roleCount != len(allowedIdentities) || bindingCount != len(allowedIdentities) {
-				t.Fatalf(
-					"certificate EndpointSlice RBAC objects = %d Roles and %d RoleBindings, want %d of each",
-					roleCount,
-					bindingCount,
-					len(allowedIdentities),
-				)
-			}
-			for name := range allowedIdentities {
-				_, objectName, _ := strings.Cut(name, "/")
-				assertObjectAbsentInNamespace(t, objects, "Role", "unrelated", objectName)
-				assertObjectAbsentInNamespace(t, objects, "RoleBinding", "unrelated", objectName)
+			if roles != 1 || bindings != 1 {
+				t.Fatalf("certificate EndpointSlice RBAC = %d rules and %d RoleBindings, want one of each", roles, bindings)
 			}
 		})
-	}
-}
-
-func TestCertificateDiscoveryRoleNameSeparatesEqualReleaseNamesAcrossNamespaces(t *testing.T) {
-	t.Parallel()
-	first, err := crdupgrade.CertificateDiscoveryRoleName("team-a", releaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := crdupgrade.CertificateDiscoveryRoleName("team-b", releaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first == second {
-		t.Fatalf("certificate discovery Role name %q collides across release namespaces", first)
-	}
-	for namespace, name := range map[string]string{"team-a": first, "team-b": second} {
-		const prefix = "ptah-cert-discovery-v1-"
-		if len(name) != 63 || !strings.HasPrefix(name, prefix) {
-			t.Fatalf("certificate discovery Role name %q is not an exact DNS-63 identity", name)
-		}
-		if suffix := strings.TrimPrefix(name, prefix); len(suffix) != 40 {
-			t.Fatalf("certificate discovery Role digest %q has length %d, want 40", suffix, len(suffix))
-		} else if _, err := hex.DecodeString(suffix); err != nil {
-			t.Fatalf("certificate discovery Role digest %q is not hexadecimal: %v", suffix, err)
-		}
-		objects := renderChartInNamespace(t, namespace)
-		mustNamespacedObject(t, objects, "Role", "default", name)
-		assertExactCertificateRoleBinding(t, objects, "default", name, releaseName+"-ptah-operator-cert-rotator", namespace)
 	}
 }
 
@@ -481,12 +426,13 @@ func TestExistingSecretDisablesBuiltInLifecycle(t *testing.T) {
 	assertObjectAbsent(t, objects, "Secret", releaseName+"-ptah-operator-cert-rotation-stage")
 	assertObjectAbsent(t, objects, "ConfigMap", releaseName+"-ptah-operator-cert-canary")
 	assertObjectAbsent(t, objects, "Service", releaseName+"-ptah-operator-cert-transition")
-	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicy", "ptah-operator-cert-stage-guard-v1-f1e165dcd72a")
-	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicyBinding", "ptah-operator-cert-stage-guard-v1-f1e165dcd72a")
+	// The admission contract no longer depends on how certificates are
+	// managed, so switching to an external Secret is not a contract downgrade
+	// the singleton check would refuse.
 	for _, kind := range []string{"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"} {
 		configuration := mustObject(t, objects, kind, "ptah-operator-admission")
-		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != "1" {
-			t.Fatalf("%s external-certificate admission contract version = %q, want 1", kind, got)
+		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != "2" {
+			t.Fatalf("%s external-certificate admission contract version = %q, want 2", kind, got)
 		}
 	}
 	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
@@ -570,12 +516,11 @@ func TestCertificateRotationValueValidation(t *testing.T) {
 		{flag: "--set-string", setting: "certificateRotation.operationTimeout=0s"},
 		{flag: "--set-string", setting: "certificateRotation.retryInitial=0s"},
 		{flag: "--set-string", setting: "certificateRotation.retryMax=0s"},
-		{flag: "--set-string", setting: "certificateRotation.admissionConvergence.stabilityDuration=0s"},
-		{flag: "--set-string", setting: "certificateRotation.admissionConvergence.pollInterval=0s"},
-		{flag: "--set-string", setting: "certificateRotation.admissionConvergence.requestTimeout=0s"},
 		{flag: "--set", setting: "certificateRotation.healthPort=0"},
-		{flag: "--set", setting: "certificateRotation.candidatePort=0"},
-		{flag: "--set", setting: "certificateRotation.candidatePort=8081"},
+		// The canary's settings are gone, and a values file that still sets
+		// one is refused rather than silently ignored.
+		{flag: "--set", setting: "certificateRotation.candidatePort=9444"},
+		{flag: "--set-string", setting: "certificateRotation.admissionConvergence.stabilityDuration=10s"},
 		{flag: "--set-string", setting: "certificateRotation.recreateMissingSecret=not-a-boolean"},
 		{flag: "--set-string", setting: "webhook.existingSecret=Bad_Name"},
 	} {
@@ -592,9 +537,6 @@ func TestCertificateRotationValueValidation(t *testing.T) {
 				t.Fatalf("Helm refused %q with %v, want a refusal naming %q", test.setting, renderRefusal(err), test.want)
 			}
 		})
-	}
-	if _, err := renderChartCommand(t, "--set", "certificateRotation.candidatePort=9443"); err != nil {
-		t.Fatalf("Helm rejected a candidate listener port reused only by a different Pod: %v", err)
 	}
 	for _, setting := range []string{
 		"certificateRotation.caSwitchDelay=60s",
@@ -835,43 +777,26 @@ func TestControllerServiceAccountNameKeepsTheKubernetesRange(t *testing.T) {
 	}
 }
 
-func TestConfiguredPriorityClassIsLimitedToReconcileHookJob(t *testing.T) {
+func TestConfiguredPriorityClassReachesTheReconcileHookJob(t *testing.T) {
 	t.Parallel()
 
 	const priorityClassName = "runtime-critical"
-	objects := renderChart(t,
-		"--set-string", "priorityClassName="+priorityClassName,
-		"--set", "priorityClassValue=1000",
-	)
-	wantClassless := map[string]bool{
-		"crd-manager-image-check":      false,
-		"hook-identity-probe":          false,
-		"crd-manager-preflight":        false,
-		"crd-manager-teardown-quiesce": false,
-	}
-	reconcileJobs := 0
+	objects := renderChart(t, "--set-string", "priorityClassName="+priorityClassName)
+	jobs := 0
 	for _, object := range objects {
 		if object.GetKind() != "Job" {
 			continue
 		}
-		component := object.GetLabels()["app.kubernetes.io/component"]
-		weight := object.GetAnnotations()["helm.sh/hook-weight"]
+		jobs++
+		if component := object.GetLabels()["app.kubernetes.io/component"]; component != "crd-manager" {
+			t.Fatalf("the release renders the hook Job %s of component %q, want the CRD reconcile hook alone", object.GetName(), component)
+		}
 		priorityClass, found, err := unstructured.NestedString(object.Object, "spec", "template", "spec", "priorityClassName")
 		if err != nil {
 			t.Fatalf("Job/%s priorityClassName: %v", object.GetName(), err)
 		}
-		if component == "crd-manager" && weight == "0" {
-			reconcileJobs++
-			if !found || priorityClass != priorityClassName {
-				t.Fatalf("reconcile Job priorityClassName = %q, found=%t; want %q", priorityClass, found, priorityClassName)
-			}
-		} else {
-			if found {
-				t.Fatalf("bootstrap or teardown Job/%s unexpectedly uses priorityClassName %q", object.GetName(), priorityClass)
-			}
-			if _, expected := wantClassless[component]; expected {
-				wantClassless[component] = true
-			}
+		if !found || priorityClass != priorityClassName {
+			t.Fatalf("reconcile Job priorityClassName = %q, found=%t; want %q", priorityClass, found, priorityClassName)
 		}
 		for _, field := range []string{"priority", "preemptionPolicy"} {
 			if value, found, err := unstructured.NestedFieldNoCopy(object.Object, "spec", "template", "spec", field); err != nil {
@@ -881,12 +806,14 @@ func TestConfiguredPriorityClassIsLimitedToReconcileHookJob(t *testing.T) {
 			}
 		}
 	}
-	if reconcileJobs != 1 {
-		t.Fatalf("configured priority class appears on %d reconcile hook Jobs, want exactly one", reconcileJobs)
+	if jobs != 1 {
+		t.Fatalf("the release renders %d hook Jobs, want the CRD reconcile hook alone", jobs)
 	}
-	for component, seen := range wantClassless {
-		if !seen {
-			t.Errorf("classless hook Job component %q was not rendered", component)
+	// The class's value and preemption policy are the PriorityClass's own:
+	// the chart no longer pins them, and refuses the values that did.
+	for _, setting := range []string{"priorityClassValue=1000", "priorityClassPreemptionPolicy=Never"} {
+		if _, err := renderChartCommand(t, "--set-string", "priorityClassName="+priorityClassName, "--set-string", setting); err == nil {
+			t.Fatalf("Helm accepted the removed value %s", setting)
 		}
 	}
 }
@@ -989,21 +916,6 @@ func mustNamespacedObject(
 	}
 	t.Fatalf("rendered object %s/%s/%s was not found", kind, namespace, name)
 	return nil
-}
-
-func assertObjectAbsentInNamespace(
-	t *testing.T,
-	objects []*unstructured.Unstructured,
-	kind string,
-	namespace string,
-	name string,
-) {
-	t.Helper()
-	for _, object := range objects {
-		if object.GetKind() == kind && object.GetNamespace() == namespace && object.GetName() == name {
-			t.Fatalf("rendered object %s/%s/%s must be absent", kind, namespace, name)
-		}
-	}
 }
 
 func assertExactCertificateRoleBinding(

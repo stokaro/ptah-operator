@@ -2,7 +2,6 @@ package crdupgrade
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,24 +10,29 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	celgo "github.com/google/cel-go/cel"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
 
+// The guards are ordinary release objects that an upgrade updates in place, so
+// their names follow the release and nothing that changes between versions of
+// it.
 func TestControllerObjectGuardNamesAreReleaseDistinctAndVersioned(t *testing.T) {
 	t.Parallel()
 
 	names := map[string]string{
-		ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1"):   controllerJobWriteGuardNamePrefix,
-		ControllerChunkWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1"): controllerChunkWriteGuardPrefix,
-		ControllerPlanWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1"):  controllerPlanWriteGuardNamePrefix,
+		ControllerJobWriteGuardPolicyName("ptah-system", "ptah"):           controllerJobWriteGuardNamePrefix,
+		ControllerChunkWriteGuardPolicyName("ptah-system", "ptah"):         controllerChunkWriteGuardPrefix,
+		ControllerPlanWriteGuardPolicyName("ptah-system", "ptah"):          controllerPlanWriteGuardNamePrefix,
+		ControllerMigrationPlanWriteGuardPolicyName("ptah-system", "ptah"): controllerMigrationPlanWriteGuardNamePrefix,
 	}
-	if len(names) != 3 {
+	if len(names) != 4 {
 		t.Fatal("typed controller object guards do not have distinct names")
 	}
 	for name, prefix := range names {
@@ -36,24 +40,15 @@ func TestControllerObjectGuardNamesAreReleaseDistinctAndVersioned(t *testing.T) 
 			t.Fatalf("controller object guard name %q is not bounded and versioned", name)
 		}
 	}
-	if ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") !=
-		ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") {
+	first := ControllerJobWriteGuardPolicyName("ptah-system", "ptah")
+	if again := ControllerJobWriteGuardPolicyName("ptah-system", "ptah"); again != first {
 		t.Fatal("controller object guard name is not deterministic")
 	}
-	if ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") ==
-		ControllerJobWriteGuardPolicyName("other", "ptah", 1, "manager:v1") ||
-		ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") ==
-			ControllerJobWriteGuardPolicyName("ptah-system", "other", 1, "manager:v1") {
+	if ControllerJobWriteGuardPolicyName("ptah-system", "ptah") ==
+		ControllerJobWriteGuardPolicyName("other", "ptah") ||
+		ControllerJobWriteGuardPolicyName("ptah-system", "ptah") ==
+			ControllerJobWriteGuardPolicyName("ptah-system", "other") {
 		t.Fatal("controller object guard name does not bind both release identity fields")
-	}
-
-	rollout := runtimePodGuardFixture()
-	other := *rollout
-	other.ReleaseSequence++
-	other.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("b", 64)
-	if ControllerJobWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage) ==
-		ControllerJobWriteGuardPolicyName(other.ReleaseNamespace, other.ReleaseName, other.ReleaseSequence, other.ManagerImage) {
-		t.Fatal("controller object guard name did not change with candidate release identity")
 	}
 }
 
@@ -87,8 +82,8 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			policy := guard.policy(entry)
 			native := policy
 			binding := guard.binding(entry)
-			if policy.Spec.ParamKind == nil || policy.Spec.ParamKind.APIVersion != "v1" || policy.Spec.ParamKind.Kind != "ConfigMap" {
-				t.Fatalf("controller object guard does not use the release activation ConfigMap: %#v", policy.Spec.ParamKind)
+			if policy.Spec.ParamKind != nil {
+				t.Fatalf("controller object guard reads a parameter: %#v", policy.Spec.ParamKind)
 			}
 			if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 				t.Fatal("controller object guard is not fail-closed")
@@ -105,32 +100,22 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				!reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
 				t.Fatalf("controller object binding is not exact deny-only enforcement: %#v", binding.Spec)
 			}
-			if binding.Spec.ParamRef == nil || binding.Spec.ParamRef.Name != ReleaseActivationName ||
-				binding.Spec.ParamRef.Namespace != guard.ReleaseNamespace ||
-				binding.Spec.ParamRef.ParameterNotFoundAction == nil ||
-				*binding.Spec.ParamRef.ParameterNotFoundAction != admissionregistrationv1.DenyAction {
-				t.Fatalf("controller object binding is not fail-closed on the exact activation parameter: %#v", binding.Spec.ParamRef)
+			if binding.Spec.ParamRef != nil {
+				t.Fatalf("controller object binding names a parameter: %#v", binding.Spec.ParamRef)
 			}
-			if !reflect.DeepEqual(native.Spec.Variables, controllerObjectActivationVariables(guard.ReleaseSequence)) {
-				t.Fatalf("controller object activation variables differ from the exact contract: %#v", native.Spec.Variables)
+			if !reflect.DeepEqual(native.Spec.Variables, controllerObjectReleaseVariables(guard.ManagerImage, guard.ControllerStateVersion)) {
+				t.Fatalf("controller object release variables differ from the exact contract: %#v", native.Spec.Variables)
 			}
-			variableNames := make([]string, len(native.Spec.Variables))
-			for index, variable := range native.Spec.Variables {
-				variableNames[index] = variable.Name
+			wantVariables := []admissionregistrationv1.Variable{
+				{Name: "releaseControllerStateString", Expression: strconv.Quote(strconv.Itoa(int(guard.ControllerStateVersion)))},
+				{Name: "releaseControllerState", Expression: strconv.Itoa(int(guard.ControllerStateVersion))},
+				{Name: "releaseControllerImage", Expression: strconv.Quote(guard.ManagerImage)},
 			}
-			wantVariableNames := []string{
-				"activeRelease",
-				"activeControllerStateString",
-				"activeControllerState",
-				"activeControllerImage",
-				"candidateRelease",
+			if !reflect.DeepEqual(native.Spec.Variables, wantVariables) {
+				t.Fatalf("controller object release variables = %#v, want the release's literals %#v", native.Spec.Variables, wantVariables)
 			}
-			if !reflect.DeepEqual(variableNames, wantVariableNames) {
-				t.Fatalf("controller object activation variable order = %v, want %v", variableNames, wantVariableNames)
-			}
-			if len(native.Spec.Validations) != len(entry.validations)+2 ||
-				native.Spec.Validations[0].Expression != guard.activationParameterExpression() {
-				t.Fatalf("controller object guard does not validate its activation parameter first: %#v", native.Spec.Validations)
+			if !reflect.DeepEqual(native.Spec.Validations, entry.validations) {
+				t.Fatalf("controller object guard validations differ from its structural contract: %#v", native.Spec.Validations)
 			}
 		})
 		if _, exists := seenResources[entry.resource]; exists {
@@ -236,11 +221,11 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	}
 	for _, required := range []string{
 		`request.operation == "UPDATE" || (request.operation == "CREATE" && (`,
-		`object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage`,
-		`object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString`,
+		`object.metadata.annotations["operator.ptah.run/controller-image"] == variables.releaseControllerImage`,
+		`object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.releaseControllerStateString`,
 	} {
 		if !strings.Contains(annotationContract, required) {
-			t.Fatalf("current Job envelope is not bound to active controller identity: missing %q", required)
+			t.Fatalf("current Job envelope is not bound to the release's controller identity: missing %q", required)
 		}
 	}
 	chunk := strings.Join(validationExpressions(entries[1].validations), "\n")
@@ -269,8 +254,8 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`dyn(dyn(object).spec).controllerRevision != ""`,
 		`has(dyn(dyn(object).spec).controllerStateVersion)`,
 		`dyn(dyn(object).spec).controllerStateVersion >= 1`,
-		`dyn(dyn(object).spec).controllerImage == variables.activeControllerImage`,
-		`dyn(dyn(object).spec).controllerStateVersion == variables.activeControllerState`,
+		`dyn(dyn(object).spec).controllerImage == variables.releaseControllerImage`,
+		`dyn(dyn(object).spec).controllerStateVersion == variables.releaseControllerState`,
 		`dyn(object).spec.statementCount >= 1`,
 		`dyn(object).spec.chunks.size() <= 16`,
 		`chunk.key == "chunk"`,
@@ -289,14 +274,14 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`dyn(object).spec.controllerStateVersion`,
 	} {
 		if strings.Contains(plan, staticReference) {
-			t.Fatalf("plan structural contract statically references candidate-only field %q and cannot type-check against the predecessor CRD", staticReference)
+			t.Fatalf("plan structural contract statically references field %q instead of reading it through dyn", staticReference)
 		}
 	}
 }
 
 // This white-box test evaluates the unexported CEL fragments directly because
-// their bootstrap-to-active transition is not observable through a public Go
-// API until the policy is installed in an API server.
+// they are not observable through a public Go API until the policy is
+// installed in an API server.
 func TestControllerJobPodTemplateContractRefusesAMissingServiceAccount(t *testing.T) {
 	t.Parallel()
 
@@ -394,7 +379,12 @@ func TestControllerJobPodTemplateContractRefusesAMissingServiceAccount(t *testin
 	}
 }
 
-func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
+// A Job or a plan the controller creates has to name this release's manager
+// image and controller-state version, so a manager left over from another
+// release cannot create either. A Job it updates may name any manager: the
+// only update is the cleanup TTL, and a Job outlives the release that created
+// it.
+func TestControllerObjectReleaseIdentityContractsEvaluate(t *testing.T) {
 	t.Parallel()
 
 	environment, err := celgo.NewEnv(
@@ -409,11 +399,11 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		t.Helper()
 		ast, issues := environment.Compile(expression)
 		if issues != nil && issues.Err() != nil {
-			t.Fatalf("compile activation contract: %v", issues.Err())
+			t.Fatalf("compile release identity contract: %v", issues.Err())
 		}
 		program, programErr := environment.Program(ast)
 		if programErr != nil {
-			t.Fatalf("build activation contract: %v", programErr)
+			t.Fatalf("build release identity contract: %v", programErr)
 		}
 		result, _, evaluationErr := program.Eval(map[string]any{
 			"object":    object,
@@ -421,89 +411,65 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 			"variables": variables,
 		})
 		if evaluationErr != nil {
-			t.Fatalf("evaluate activation contract: %v", evaluationErr)
+			t.Fatalf("evaluate release identity contract: %v", evaluationErr)
 		}
 		allowed, ok := result.Value().(bool)
 		if !ok {
-			t.Fatalf("activation contract result = %T(%v), want bool", result.Value(), result.Value())
+			t.Fatalf("release identity contract result = %T(%v), want bool", result.Value(), result.Value())
 		}
 		return allowed
 	}
 
-	const activeImage = "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	bootstrap := map[string]any{
-		"activeRelease":               int64(0),
-		"candidateRelease":            int64(1),
-		"activeControllerStateString": ourStateVersionString(),
-		"activeControllerState":       int64(ourStateVersion),
-		"activeControllerImage":       activeImage,
-	}
-	active := map[string]any{
-		"activeRelease":               int64(1),
-		"candidateRelease":            int64(1),
-		"activeControllerStateString": ourStateVersionString(),
-		"activeControllerState":       int64(ourStateVersion),
-		"activeControllerImage":       activeImage,
-	}
-	const nextActiveImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	nextActive := map[string]any{
-		"activeRelease":               int64(2),
-		"candidateRelease":            int64(1),
-		"activeControllerStateString": newerStateVersionString(),
-		"activeControllerState":       int64(newerStateVersion),
-		"activeControllerImage":       nextActiveImage,
+	const releaseImage = "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const otherImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	release := map[string]any{
+		"releaseControllerStateString": ourStateVersionString(),
+		"releaseControllerState":       int64(ourStateVersion),
+		"releaseControllerImage":       releaseImage,
 	}
 
 	provenanceFreeJob := controllerObjectJobCELObjectWithoutProvenance(false)
 	provenanceFreeApplyJob := controllerObjectJobCELObjectWithoutProvenance(true)
-	currentJob := controllerObjectCurrentJobCELObject(activeImage, int64(ourStateVersion))
+	releaseJob := controllerObjectCurrentJobCELObject(releaseImage, int64(ourStateVersion))
+	otherReleaseJob := controllerObjectCurrentJobCELObject(otherImage, int64(ourStateVersion))
 	jobExpression := controllerJobAnnotationContractExpression()
 	for _, test := range []struct {
 		name      string
 		object    map[string]any
 		operation string
-		variables map[string]any
 		want      bool
 	}{
-		{name: "create without controller provenance before cutover", object: provenanceFreeJob, operation: "CREATE", variables: bootstrap, want: false},
-		{name: "create without controller provenance after activation", object: provenanceFreeJob, operation: "CREATE", variables: active, want: false},
-		{name: "cleanup update without controller provenance", object: provenanceFreeJob, operation: "UPDATE", variables: active, want: false},
-		{name: "apply create without controller provenance before cutover", object: provenanceFreeApplyJob, operation: "CREATE", variables: bootstrap, want: false},
-		{name: "apply cleanup update without controller provenance", object: provenanceFreeApplyJob, operation: "UPDATE", variables: active, want: false},
-		{name: "current create after activation", object: currentJob, operation: "CREATE", variables: active, want: true},
-		{name: "active predecessor identity create before cutover", object: currentJob, operation: "CREATE", variables: bootstrap, want: true},
-		{name: "active predecessor identity update before cutover", object: currentJob, operation: "UPDATE", variables: bootstrap, want: true},
-		{name: "previous current update after newer activation", object: currentJob, operation: "UPDATE", variables: nextActive, want: true},
-		{name: "previous current create after newer activation", object: currentJob, operation: "CREATE", variables: nextActive, want: false},
-		{name: "current create with foreign image", object: controllerObjectCurrentJobCELObject(nextActiveImage, int64(ourStateVersion)), operation: "CREATE", variables: active, want: false},
-		{name: "current create with foreign state", object: controllerObjectCurrentJobCELObject(activeImage, int64(newerStateVersion)), operation: "CREATE", variables: active, want: false},
+		{name: "create without controller provenance", object: provenanceFreeJob, operation: "CREATE", want: false},
+		{name: "cleanup update without controller provenance", object: provenanceFreeJob, operation: "UPDATE", want: false},
+		{name: "apply create without controller provenance", object: provenanceFreeApplyJob, operation: "CREATE", want: false},
+		{name: "apply cleanup update without controller provenance", object: provenanceFreeApplyJob, operation: "UPDATE", want: false},
+		{name: "create by this release", object: releaseJob, operation: "CREATE", want: true},
+		{name: "update of this release's Job", object: releaseJob, operation: "UPDATE", want: true},
+		{name: "create by another release's manager", object: otherReleaseJob, operation: "CREATE", want: false},
+		{name: "update of another release's Job", object: otherReleaseJob, operation: "UPDATE", want: true},
+		{name: "create with another controller state", object: controllerObjectCurrentJobCELObject(releaseImage, int64(newerStateVersion)), operation: "CREATE", want: false},
 	} {
 		t.Run("Job/"+test.name, func(t *testing.T) {
-			if got := evaluate(jobExpression, test.object, test.operation, test.variables); got != test.want {
-				t.Fatalf("Job activation contract = %t, want %t", got, test.want)
+			if got := evaluate(jobExpression, test.object, test.operation, release); got != test.want {
+				t.Fatalf("Job release identity contract = %t, want %t", got, test.want)
 			}
 		})
 	}
 
-	identityFreePlan := controllerObjectPlanCELObject(2, "", 0)
-	currentPlan := controllerObjectPlanCELObject(3, activeImage, int64(ourStateVersion))
 	planExpression := controllerPlanContractExpression()
 	for _, test := range []struct {
-		name      string
-		object    map[string]any
-		variables map[string]any
-		want      bool
+		name   string
+		object map[string]any
+		want   bool
 	}{
-		{name: "v2 without controller identity before cutover", object: identityFreePlan, variables: bootstrap, want: false},
-		{name: "v2 without controller identity after activation", object: identityFreePlan, variables: active, want: false},
-		{name: "current v3 after activation", object: currentPlan, variables: active, want: true},
-		{name: "active predecessor v3 before cutover", object: currentPlan, variables: bootstrap, want: true},
-		{name: "current v3 with foreign image", object: controllerObjectPlanCELObject(3, "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", int64(ourStateVersion)), variables: active, want: false},
-		{name: "current v3 with foreign state", object: controllerObjectPlanCELObject(3, activeImage, int64(newerStateVersion)), variables: active, want: false},
+		{name: "v2 without controller identity", object: controllerObjectPlanCELObject(2, "", 0), want: false},
+		{name: "v3 by this release", object: controllerObjectPlanCELObject(3, releaseImage, int64(ourStateVersion)), want: true},
+		{name: "v3 by another release's manager", object: controllerObjectPlanCELObject(3, otherImage, int64(ourStateVersion)), want: false},
+		{name: "v3 with another controller state", object: controllerObjectPlanCELObject(3, releaseImage, int64(newerStateVersion)), want: false},
 	} {
 		t.Run("Plan/"+test.name, func(t *testing.T) {
-			if got := evaluate(planExpression, test.object, "CREATE", test.variables); got != test.want {
-				t.Fatalf("Plan activation contract = %t, want %t", got, test.want)
+			if got := evaluate(planExpression, test.object, "CREATE", release); got != test.want {
+				t.Fatalf("Plan release identity contract = %t, want %t", got, test.want)
 			}
 		})
 	}
@@ -745,108 +711,10 @@ func controllerJobCELContainerMutation(field string, value any) func(map[string]
 	}
 }
 
-func TestControllerObjectGuardsPrecedeControllerPrivileges(t *testing.T) {
-	t.Parallel()
-
-	weights := []string{
-		releaseActivationHookWeight,
-		certificateValidatingWriteBindingWeight,
-		controllerObjectPolicyWeight,
-		"-149",
-		"-148",
-		controllerObjectBindingWeight,
-	}
-	previous, err := strconv.Atoi(weights[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, weight := range weights[1:] {
-		current, err := strconv.Atoi(weight)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if current <= previous {
-			t.Fatalf("controller object policy, activation parameter/guard, and binding order is not strictly increasing: %v", weights)
-		}
-		previous = current
-	}
-}
-
-func TestControllerObjectGuardVerifyRejectsContractTampering(t *testing.T) {
-	t.Parallel()
-
-	guard := testControllerObjectGuard()
-	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy)
-	bindings := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding)
-	for _, entry := range guard.entries() {
-		policies[entry.name] = guard.policy(entry)
-		bindings[entry.name] = guard.binding(entry)
-	}
-	guard.Policies = &rolloutPolicyClient{objects: policies}
-	guard.Bindings = &rolloutBindingClient{objects: bindings}
-	if err := guard.Verify(context.Background()); err != nil {
-		t.Fatalf("verify exact controller object guards: %v", err)
-	}
-
-	job := guard.entries()[0]
-	policies[job.name].Spec.Validations[0].Expression = "true"
-	if err := guard.Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "immutable contract") {
-		t.Fatalf("tampered controller object policy error = %v", err)
-	}
-	policies[job.name] = guard.policy(job)
-
-	plan := guard.entries()[2]
-	bindings[plan.name].Spec.MatchResources.ResourceRules[0].RuleWithOperations.Operations =
-		[]admissionregistrationv1.OperationType{admissionregistrationv1.Update}
-	if err := guard.Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "immutable contract") {
-		t.Fatalf("tampered controller object binding error = %v", err)
-	}
-}
-
-func TestControllerObjectGuardWaitReady(t *testing.T) {
-	t.Parallel()
-
-	guard := testControllerObjectGuard()
-	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy)
-	bindings := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding)
-	for _, entry := range guard.entries() {
-		policies[entry.name] = readyPolicy(guard.policy(entry))
-		bindings[entry.name] = guard.binding(entry)
-	}
-	guard.Policies = &rolloutPolicyClient{objects: policies}
-	guard.Bindings = &rolloutBindingClient{objects: bindings}
-	if err := guard.WaitReady(context.Background()); err != nil {
-		t.Fatalf("wait for ready controller object guards: %v", err)
-	}
-}
-
-func TestControllerObjectGuardWaitReadyRejectsTypeWarnings(t *testing.T) {
-	t.Parallel()
-
-	guard := testControllerObjectGuard()
-	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy)
-	bindings := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding)
-	entries := guard.entries()
-	for _, entry := range entries {
-		policies[entry.name] = readyPolicy(guard.policy(entry))
-		bindings[entry.name] = guard.binding(entry)
-	}
-	policies[entries[1].name].Status.TypeChecking.ExpressionWarnings = []admissionregistrationv1.ExpressionWarning{{
-		FieldRef: "spec.validations[0].expression",
-		Warning:  "unexpected object type",
-	}}
-	guard.Policies = &rolloutPolicyClient{objects: policies}
-	guard.Bindings = &rolloutBindingClient{objects: bindings}
-	err := guard.WaitReady(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "CEL type-check warnings: unexpected object type") {
-		t.Fatalf("type-check warning error = %v", err)
-	}
-}
-
 func TestRenderedControllerObjectGuardsMatchCompiledContracts(t *testing.T) {
-	path := os.Getenv("PTAH_ROLLOUT_GUARD_RENDER")
+	path := os.Getenv("PTAH_CONTROLLER_GUARD_RENDER")
 	if path == "" {
-		t.Skip("PTAH_ROLLOUT_GUARD_RENDER is set by the chart contract gate")
+		t.Skip("PTAH_CONTROLLER_GUARD_RENDER is set by the chart contract gate")
 	}
 	rendered, err := os.ReadFile(path)
 	if err != nil {
@@ -856,6 +724,7 @@ func TestRenderedControllerObjectGuardsMatchCompiledContracts(t *testing.T) {
 	guard.ReleaseName = "ptah-e2e"
 	guard.ReleaseNamespace = "ptah-e2e"
 	guard.ManagerImage = renderedGuardManagerImage
+	guard.ControllerStateVersion = controllerstate.CurrentVersion
 	guard.ControllerServiceAccountName = renderedDeploymentServiceAccount(t, rendered, "ptah-e2e-ptah-operator")
 	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy)
 	bindings := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding)
@@ -890,32 +759,42 @@ func TestRenderedControllerObjectGuardsMatchCompiledContracts(t *testing.T) {
 			bindings[object.Name] = &object
 		}
 	}
+	if len(policies) != len(guard.entries()) || len(bindings) != len(guard.entries()) {
+		t.Fatalf("the chart renders %d policies and %d bindings, want the %d controller object guards", len(policies), len(bindings), len(guard.entries()))
+	}
 	for _, entry := range guard.entries() {
 		policy := policies[entry.name]
 		binding := bindings[entry.name]
-		if err := guard.verifyPolicy(entry, policy); err != nil {
-			expected := guard.policy(entry)
-			if policy != nil && len(policy.Spec.Validations) == len(expected.Spec.Validations) {
-				for index := range expected.Spec.Validations {
-					if policy.Spec.Validations[index].Expression != expected.Spec.Validations[index].Expression {
-						t.Fatalf(
-							"rendered %s policy validation %d differs\nactual:   %s\nexpected: %s",
-							entry.component,
-							index,
-							policy.Spec.Validations[index].Expression,
-							expected.Spec.Validations[index].Expression,
-						)
-					}
+		if policy == nil || binding == nil {
+			t.Fatalf("the chart does not render the %s policy and binding %s", entry.component, entry.name)
+		}
+		expected := guard.policy(entry)
+		if len(policy.Spec.Validations) == len(expected.Spec.Validations) {
+			for index := range expected.Spec.Validations {
+				if policy.Spec.Validations[index].Expression != expected.Spec.Validations[index].Expression {
+					t.Fatalf(
+						"rendered %s policy validation %d differs\nactual:   %s\nexpected: %s",
+						entry.component,
+						index,
+						policy.Spec.Validations[index].Expression,
+						expected.Spec.Validations[index].Expression,
+					)
 				}
 			}
-			t.Fatalf("rendered %s policy: %v", entry.component, err)
 		}
-		if err := guard.verifyBinding(entry, binding); err != nil {
-			t.Fatalf("rendered %s binding: %v", entry.component, err)
+		if !reflect.DeepEqual(policy.Spec, expected.Spec) {
+			t.Fatalf("rendered %s policy spec differs from the compiled contract:\nactual:   %#v\nexpected: %#v", entry.component, policy.Spec, expected.Spec)
 		}
-		if policy.Annotations["helm.sh/hook-weight"] != controllerObjectPolicyWeight ||
-			binding.Annotations["helm.sh/hook-weight"] != controllerObjectBindingWeight {
-			t.Fatalf("%s is not installed in its exact early hook order", entry.component)
+		if !reflect.DeepEqual(binding.Spec, guard.binding(entry).Spec) {
+			t.Fatalf("rendered %s binding spec differs from the compiled contract: %#v", entry.component, binding.Spec)
+		}
+		// Helm installs, updates and deletes the guards with the rest of the
+		// release: none of them is a hook, and none outlives an uninstall.
+		for _, metadata := range []metav1.ObjectMeta{policy.ObjectMeta, binding.ObjectMeta} {
+			if metadata.Annotations["helm.sh/hook"] != "" || metadata.Annotations["helm.sh/resource-policy"] != "" ||
+				metadata.Labels["app.kubernetes.io/managed-by"] != "Helm" {
+				t.Fatalf("rendered %s %s is not an ordinary release object: annotations %v, labels %v", entry.component, metadata.Name, metadata.Annotations, metadata.Labels)
+			}
 		}
 	}
 }
@@ -958,13 +837,10 @@ func assertExactControllerObjectMatch(
 
 func testControllerObjectGuard() *ControllerObjectGuard {
 	return &ControllerObjectGuard{
-		Policies:                     &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}},
-		Bindings:                     &rolloutBindingClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{}},
 		ReleaseName:                  "ptah",
 		ReleaseNamespace:             "ptah-system",
 		ControllerServiceAccountName: "ptah-controller",
-		ReleaseSequence:              1,
 		ManagerImage:                 "registry.example/ptah@sha256:" + strings.Repeat("a", 64),
-		PollEvery:                    time.Millisecond,
+		ControllerStateVersion:       controllerstate.CurrentVersion,
 	}
 }
