@@ -1252,6 +1252,17 @@ grant_rival_author_role() {
 		fail "the desired-state author example is not the Role and RoleBinding this row adapts"
 	k apply -f "$WORK_DIR/rival-author-role-applied.json" >/dev/null ||
 		fail "the desired-state author Role could not be installed in $MIGRATION_RIVAL_NAMESPACE"
+	# A new RoleBinding reaches each API server's authorizer through its own
+	# watch, so the first request after the apply can still be refused. Wait
+	# until the author may create a PtahSchema there, so the rows that follow
+	# measure the operator and not RBAC propagation.
+	rival_grant_deadline=$(($(date +%s) + 60))
+	until [ "$(k_as "$RIVAL_AUTHOR" "$RIVAL_AUTHOR_GROUP" auth can-i create \
+		ptahschemas.operator.ptah.run -n "$MIGRATION_RIVAL_NAMESPACE" 2>/dev/null)" = yes ]; do
+		[ "$(date +%s)" -lt "$rival_grant_deadline" ] ||
+			fail "the desired-state author Role did not take effect in $MIGRATION_RIVAL_NAMESPACE within 60s"
+		sleep 1
+	done
 }
 
 # The ownership row of the matrix, and the authority one: who may claim a
