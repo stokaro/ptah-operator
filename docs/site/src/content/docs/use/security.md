@@ -539,8 +539,6 @@ affected version, never the database's sentence about either, so there was
 nothing to seal.
 
 Approval admission fails closed. It binds names to UIDs, rejects a plan whose
-
-Approval admission fails closed. It binds names to UIDs, rejects a plan whose
 storage commit is incomplete, rejects changed policy bytes or target state, and
 makes the stamped decision immutable. Both approval webhook configurations use
 the non-configurable `Fail` policy, so an unavailable webhook cannot admit a
