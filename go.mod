@@ -8,7 +8,7 @@ require (
 	github.com/google/cel-go v0.30.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/prometheus/client_golang v1.24.1
-	github.com/prometheus/client_model v0.6.2
+	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/common v0.71.0
 	github.com/spf13/pflag v1.0.10
 	gopkg.in/yaml.v3 v3.0.1
