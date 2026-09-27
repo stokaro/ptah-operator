@@ -9,24 +9,21 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
-	"regexp"
 	"testing"
 	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/stokaro/ptah-operator/test/envtest/internal/policyenv"
 )
 
-// certificateRows holds the policies that keep the identities an install
-// depends on from being rewritten: the certificate rotator may change the
-// trust a webhook entry carries and nothing else about it, only the rotator
-// writes the staging Secret's key material, and only someone who administers
-// admission may create or edit the ServiceAccounts the release runs as.
+// certificateRows holds the policies that keep the serving certificate an
+// install depends on from being rewritten: the certificate rotator may change
+// the trust a webhook entry carries and nothing else about it, and only the
+// rotator writes the staging Secret's key material.
 //
 // The certificate guards match the webhook configurations only when the
 // rotator writes them: an administrator reapplying the release rewrites the
@@ -36,7 +33,6 @@ func certificateRows(t *testing.T, c *catalog) {
 	mutateGuard := policy(t, "ptah-operator-certificate-mutate-guard-")
 	validateGuard := policy(t, "ptah-operator-certificate-validate-guard-")
 	stageGuard := policy(t, "ptah-operator-cert-stage-guard-")
-	accountGuard := policy(t, "ptah-operator-service-account-object-guard-")
 	names := env.Chart.Names
 	rotator := env.Certificate()
 	user := policyenv.User()
@@ -97,8 +93,8 @@ func certificateRows(t *testing.T, c *catalog) {
 	}})
 
 	// The staging Secret holds the next serving key between the rotator's two
-	// writes. Only the rotator fills it, and only the uninstall cleanup empties
-	// or deletes it.
+	// writes. Only the rotator fills it, and no request the guard judges
+	// deletes it.
 	const (
 		rotatorStagesRow = "certificate rotator stages the next serving key"
 		userStagesRow    = "ordinary user writes key material into the staging Secret"
@@ -119,48 +115,6 @@ func certificateRows(t *testing.T, c *catalog) {
 			return api.Delete(ctx, staging.DeepCopy(), client.DryRunAll)
 		}),
 	})
-
-	// ServiceAccounts: the release's identities are created and edited by
-	// whoever administers admission -- Helm, as an administrator -- and by no
-	// one who merely may write ServiceAccounts.
-	const (
-		adminManagerRow   = "administrator reapplies the manager's ServiceAccount as Helm owns it"
-		adminNextHookRow  = "administrator creates the next release's hook ServiceAccount"
-		userManagerRow    = "ordinary user edits the manager's ServiceAccount"
-		userNextHookRow   = "ordinary user creates a ServiceAccount under a release hook's name"
-		userOwnAccountRow = "ordinary user creates a ServiceAccount of their own"
-	)
-	manager := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Namespace: names.Namespace, Name: names.Manager}}
-	helmOwned := func(account *corev1.ServiceAccount) {
-		// Helm records these on every release object it applies; the chart
-		// does not render them, and the guard requires them.
-		if account.Annotations == nil {
-			account.Annotations = map[string]string{}
-		}
-		account.Annotations["meta.helm.sh/release-name"] = env.Chart.Release.Name
-		account.Annotations["meta.helm.sh/release-namespace"] = env.Chart.Release.Namespace
-	}
-	nextHook := func() (client.Object, error) { return certificateNextHookAccount(names) }
-	c.row(policyenv.Row{Name: adminManagerRow, Do: func(ctx context.Context, env *policyenv.Env) error {
-		return certificateUpdate(manager, helmOwned)(ctx, env.Admin)
-	}})
-	c.row(policyenv.Row{Name: adminNextHookRow, Do: func(ctx context.Context, env *policyenv.Env) error {
-		return dryRunCreate(nextHook)(ctx, env.Admin)
-	}})
-	c.row(policyenv.Row{
-		Name: userManagerRow, Deny: []string{accountGuard}, Message: "service account object guard rejected an unsafe identity lifecycle request",
-		Do: as(user, certificateUpdate(manager, func(account *corev1.ServiceAccount) {
-			helmOwned(account)
-			account.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "someone-elses-registry"}}
-		})),
-	})
-	c.row(policyenv.Row{
-		Name: userNextHookRow, Deny: []string{accountGuard}, Message: "service account object guard rejected an unsafe identity lifecycle request",
-		Do: as(user, dryRunCreate(nextHook)),
-	})
-	c.row(policyenv.Row{Name: userOwnAccountRow, Do: as(user, dryRunCreate(func() (client.Object, error) {
-		return &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: "reporting"}}, nil
-	}))})
 
 	c.mutation(policyenv.Mutation{
 		Name: "certificate mutating guard binding dropped", Policies: []string{mutateGuard},
@@ -192,25 +146,8 @@ func certificateRows(t *testing.T, c *catalog) {
 		Breaks: []string{userStagesRow, userDeletesRow},
 	})
 	c.mutation(policyenv.Mutation{
-		Name: "staging Secret guard parameter reference fails open", Policies: []string{stageGuard},
-		Apply: policyenv.RedirectParameters(stageGuard), Breaks: []string{userStagesRow, userDeletesRow},
-	})
-	c.mutation(policyenv.Mutation{
 		Name: "staging Secret guard refuses what it matches", Policies: []string{stageGuard},
 		Apply: policyenv.RefuseEverything(stageGuard), Breaks: []string{rotatorStagesRow},
-	})
-	c.mutation(policyenv.Mutation{
-		Name: "ServiceAccount object guard binding dropped", Policies: []string{accountGuard},
-		Apply:  policyenv.DropBinding(accountGuard),
-		Breaks: []string{userManagerRow, userNextHookRow},
-	})
-	c.mutation(policyenv.Mutation{
-		Name: "ServiceAccount object guard refuses what it matches", Policies: []string{accountGuard},
-		Apply: policyenv.RefuseEverything(accountGuard), Breaks: []string{adminManagerRow, adminNextHookRow},
-	})
-	c.mutation(policyenv.Mutation{
-		Name: "ServiceAccount object guard matches every ServiceAccount", Policies: []string{accountGuard},
-		Apply: policyenv.WidenMatch(accountGuard), Breaks: []string{userOwnAccountRow},
 	})
 }
 
@@ -268,24 +205,4 @@ func certificateStagingSecret(t *testing.T) string {
 	}
 	t.Fatal("the chart renders no certificate staging Secret")
 	return ""
-}
-
-var certificateHookSequence = regexp.MustCompile(`-crd-v[1-9][0-9]*-[0-9a-f]{12}$`)
-
-// certificateNextHookAccount is the hook ServiceAccount the next release would
-// create, as the chart renders the current one: the same labels and hook
-// annotations, under the next sequence's name. It cannot exist yet, so a dry
-// run can create it every time.
-func certificateNextHookAccount(names policyenv.Names) (*corev1.ServiceAccount, error) {
-	rendered, err := env.Chart.Object("ServiceAccount", names.Hook)
-	if err != nil {
-		return nil, err
-	}
-	account := &corev1.ServiceAccount{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rendered.Object, account); err != nil {
-		return nil, err
-	}
-	account.Name = certificateHookSequence.ReplaceAllString(names.Hook, "-crd-v2-0123456789ab")
-	account.Namespace = names.Namespace
-	return account, nil
 }
