@@ -371,6 +371,11 @@ jobs:
         run: |
           mv "$GITHUB_WORKSPACE/.e2e/ptah" "$RUNNER_TEMP/ptah"
           rmdir "$GITHUB_WORKSPACE/.e2e"
+      # The operator refuses a drift category it does not know, and a unit test
+      # holds its vocabulary to support/ptah-drift-categories.json. This is where
+      # that file is held to the pinned source, which this job already has.
+      - name: Compare the recorded drift categories with the pinned Ptah
+        run: go run ./hack/ptahdriftcategories -ptah "$RUNNER_TEMP/ptah"
       - name: Install kind
         shell: bash
         run: |

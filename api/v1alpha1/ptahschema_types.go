@@ -727,7 +727,7 @@ type DriftFindingStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]{0,63}$`
-	// +kubebuilder:validation:Enum=columns_added;columns_modified;columns_removed;constraints_added;constraints_removed;data_rows_deleted;data_rows_inserted;data_rows_updated;enum_values_added;enum_values_removed;enums_added;enums_removed;extensions_added;extensions_modified;extensions_removed;functions_added;functions_modified;functions_removed;indexes_added;indexes_removed;rls_enabled_tables_added;rls_enabled_tables_removed;rls_policies_added;rls_policies_modified;rls_policies_removed;roles_added;roles_modified;roles_removed;table_constraints_added;table_constraints_removed;tables_added;tables_removed;unique_protections_removed;vector_dimension_changed
+	// +kubebuilder:validation:Enum=columns_added;columns_modified;columns_removed;constraints_added;constraints_removed;data_rows_deleted;data_rows_inserted;data_rows_updated;enum_values_added;enum_values_removed;enums_added;enums_removed;extensions_added;extensions_modified;extensions_removed;functions_added;functions_modified;functions_removed;indexes_added;indexes_removed;rls_enabled_tables_added;rls_enabled_tables_removed;rls_force_added;rls_force_removed;rls_policies_added;rls_policies_modified;rls_policies_removed;roles_added;roles_modified;roles_removed;table_constraints_added;table_constraints_removed;tables_added;tables_removed;unique_protections_removed;vector_dimension_changed
 	// Category is the kind of difference, never the object it was found in:
 	// a table name is part of the schema, and the status does not carry it.
 	Category string `json:"category"`
@@ -755,10 +755,14 @@ type TargetStatus struct {
 	DriftReportDigest string `json:"driftReportDigest,omitempty"`
 	// LastObservedAt is when that observation ran.
 	LastObservedAt *metav1.Time `json:"lastObservedAt,omitempty"`
-	// HighestDriftSeverity is the worst category the report found.
+	// HighestDriftSeverity is the worst category the report found. It is set
+	// whenever the report found drift and empty when it found none, so it also
+	// says which. A difference the report has no category for -- a grant, a
+	// default privilege, a view or a trigger -- is drift that reads safe here,
+	// with no findings and a zero count; the plan says what it changes.
 	HighestDriftSeverity string `json:"highestDriftSeverity,omitempty"`
 	// DriftFindingCount is how many findings the complete report held, whether
-	// or not the list below was truncated.
+	// or not the list below was truncated. Drift in no category counts none.
 	DriftFindingCount int32 `json:"driftFindingCount,omitempty"`
 	// DriftFindings contains only category-level aggregates. The total count
 	// above covers the complete report even when this list is truncated.

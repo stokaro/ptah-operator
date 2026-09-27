@@ -163,6 +163,16 @@ a full interval after the Plan Job completed, and the database has no such
 function. One exact approval then applies it, and the database holds the
 function with definer rights.
 
+A third artifact adds only `GRANT SELECT ON TABLE e2e_widgets TO PUBLIC`. Ptah's
+drift report has no category for a grant, so the observation has to be recorded
+as drift in no category -- a `safe` highest severity, no findings, no count --
+and the scoped plan that follows has to record `Grant` and nothing else. The
+reading that matched is the one asserted: the resource waits with
+`ApprovalRequired` reason `PrivilegeChanges`, no condition message and nothing
+in `status.target` names the table, the privilege or the grantee, no Apply Job
+runs, and PUBLIC still cannot read the table. One exact approval then applies
+it, the resource converges, and PUBLIC can.
+
 For each in-cluster engine the suite publishes a real schema
 artifact to a mutable tag, verifies tag-to-digest and artifact-type evidence,
 observes drift, publishes and exactly approves a plan, applies it, proves post-apply

@@ -1064,8 +1064,16 @@ func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []Drift
 	if !validDriftSeverity(severity) {
 		return "", 0, nil, false, errors.New("drift report contains an invalid highest severity")
 	}
+	// Ptah finds drift in objects its report has no category for: grants,
+	// default privileges, views and triggers among them. Such a report says
+	// drift with no findings, and its highest severity is the floor a list with
+	// nothing in it rates. It is still drift, and Plan still has to read it; the
+	// frame carries it as drift with a zero count.
 	if len(report.Findings) == 0 {
-		return "", 0, nil, false, errors.New("drift report contains no finding summaries")
+		if severity != "safe" {
+			return "", 0, nil, false, errors.New("drift report highest severity does not match its findings")
+		}
+		return severity, 0, nil, false, nil
 	}
 	count, err := driftFindingCount(report)
 	if err != nil {

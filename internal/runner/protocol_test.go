@@ -230,22 +230,104 @@ func TestFrameOfAnotherProtocolVersionIsRefused(t *testing.T) {
 	}
 }
 
-func TestProtocolFiveDriftRequiresStructuredFindings(t *testing.T) {
+// Drift the report has no category for, such as a grant, crosses the boundary
+// as drift with no findings, a zero count and a safe highest severity, and the
+// manager reads it back as it was written.
+func TestFrameCarriesDriftInNoCategory(t *testing.T) {
 	t.Parallel()
 
 	result := Result{
+		ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-uncategorized",
+		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+		ObservedDrift: true, HighestDriftSeverity: "safe",
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame(drift in no category) error = %v", err)
+	}
+	parsed, err := ParseResultFor(frame, result.Operation, result.OperationID)
+	if err != nil {
+		t.Fatalf("ParseResultFor(drift in no category) error = %v", err)
+	}
+	if !reflect.DeepEqual(parsed, result) {
+		t.Fatalf("parsed frame = %#v, want %#v", parsed, result)
+	}
+}
+
+// Drift with no findings has nothing to count, truncate or rate above safe. A
+// frame that says otherwise describes findings it does not carry, and neither
+// side accepts it.
+func TestFrameRefusesDriftWithoutFindingsThatClaimsSome(t *testing.T) {
+	t.Parallel()
+
+	base := Result{
 		ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-missing-findings",
 		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
 		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
 		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
-		ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
+		ObservedDrift: true, HighestDriftSeverity: "safe",
 	}
-	if _, err := MarshalFrame(result); !errors.Is(err, ErrMalformedFrame) {
-		t.Fatalf("MarshalFrame(v5 drift without findings) error = %v, want ErrMalformedFrame", err)
+	tests := []struct {
+		name   string
+		mutate func(*Result)
+	}{
+		{name: "a count", mutate: func(result *Result) { result.DriftFindingCount = 1 }},
+		{name: "a severity above safe", mutate: func(result *Result) { result.HighestDriftSeverity = "warning" }},
+		{name: "a count and a severity", mutate: func(result *Result) {
+			result.HighestDriftSeverity = "warning"
+			result.DriftFindingCount = 1
+		}},
+		{name: "truncation", mutate: func(result *Result) { result.DriftFindingsTruncated = true }},
+		{name: "no severity", mutate: func(result *Result) { result.HighestDriftSeverity = "" }},
 	}
-	frame := handcraftedIntegrityValidFrame(t, result)
-	if _, err := ParseResultFor(frame, result.Operation, result.OperationID); !errors.Is(err, ErrMalformedFrame) {
-		t.Fatalf("ParseResultFor(v5 drift without findings) error = %v, want ErrMalformedFrame", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := base
+			test.mutate(&candidate)
+			if _, err := MarshalFrame(candidate); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("MarshalFrame() error = %v, want ErrMalformedFrame", err)
+			}
+			frame := handcraftedIntegrityValidFrame(t, candidate)
+			if _, err := ParseResultFor(frame, candidate.Operation, candidate.OperationID); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
+	}
+}
+
+// The two FORCE ROW LEVEL SECURITY categories cross the boundary both ways: a
+// runner frames them, and a manager reads a frame that carries them.
+func TestFrameCarriesTheForcedRowSecurityCategories(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ category, severity string }{
+		{category: "rls_force_added", severity: "safe"},
+		{category: "rls_force_removed", severity: "destructive"},
+	} {
+		t.Run(test.category, func(t *testing.T) {
+			t.Parallel()
+			result := Result{
+				ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-" + test.category,
+				ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+				TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+				DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+				ObservedDrift: true, HighestDriftSeverity: test.severity, DriftFindingCount: 2,
+				DriftFindings: []DriftFindingSummary{{Category: test.category, Count: 2, Severity: test.severity}},
+			}
+			if _, err := MarshalFrame(result); err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			parsed, err := ParseResultFor(handcraftedIntegrityValidFrame(t, result), result.Operation, result.OperationID)
+			if err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+			if !reflect.DeepEqual(parsed, result) {
+				t.Fatalf("parsed frame = %#v, want %#v", parsed, result)
+			}
+		})
 	}
 }
 

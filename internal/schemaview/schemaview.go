@@ -201,13 +201,17 @@ func Load(ctx context.Context, reader client.Reader, namespace, name string) (Vi
 //
 // A target that was never observed has no timestamp and no findings, and says
 // nothing rather than reporting a converged database it never looked at.
+//
+// Drift is read from the highest severity, which the operator records exactly
+// when the report found drift, and not from the findings: a difference the
+// report has no category for, such as a grant, is drift with no findings.
 func observationOf(target operatorv1alpha1.TargetStatus) *ObservationView {
 	if target.LastObservedAt == nil && len(target.DriftFindings) == 0 {
 		return nil
 	}
 	observation := &ObservationView{
 		ObservedAt:      target.LastObservedAt,
-		Drift:           target.DriftFindingCount > 0,
+		Drift:           target.HighestDriftSeverity != "",
 		HighestSeverity: target.HighestDriftSeverity,
 		FindingCount:    target.DriftFindingCount,
 		Truncated:       target.DriftFindingsTruncated,

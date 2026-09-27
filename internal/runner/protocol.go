@@ -145,6 +145,10 @@ type TruncationMetadata struct {
 // DriftFindingSummary is the only per-category drift detail permitted across
 // the runner boundary. Category names are a fixed machine vocabulary; raw
 // object names, SQL, schema literals, and diff payloads are never included.
+//
+// ObservedDrift is the report's own verdict and does not imply a summary: a
+// difference the report has no category for, such as a grant, is drift with
+// no summaries, a zero count and a safe highest severity.
 type DriftFindingSummary struct {
 	Category string `json:"category"`
 	Count    int32  `json:"count"`
@@ -857,13 +861,25 @@ func validateResult(result Result, options ParseOptions) error {
 	return nil
 }
 
+// validateDriftFindingSummaries holds a drift observation's findings to its
+// count and its highest severity.
+//
+// Drift with no findings is a report that found differences in no category it
+// counts, such as a grant. It carries a zero count, no truncation, and the
+// severity an empty list rates, which is safe; a count or a severity above
+// that would describe findings the frame does not hold.
 func validateDriftFindingSummaries(result Result) error {
 	const maxFindings = 64
 	if len(result.DriftFindings) == 0 {
-		if result.DriftFindingsTruncated {
+		switch {
+		case result.DriftFindingsTruncated:
 			return fmt.Errorf("%w: truncated drift observation has no finding summaries", ErrMalformedFrame)
+		case result.DriftFindingCount != 0:
+			return fmt.Errorf("%w: drift finding summaries do not match the total count", ErrMalformedFrame)
+		case result.HighestDriftSeverity != "safe":
+			return fmt.Errorf("%w: drift finding summaries do not match the highest severity", ErrMalformedFrame)
 		}
-		return fmt.Errorf("%w: drift observation has no finding summaries", ErrMalformedFrame)
+		return nil
 	}
 	if len(result.DriftFindings) > maxFindings {
 		return fmt.Errorf("%w: drift observation has an invalid finding summary count", ErrMalformedFrame)
