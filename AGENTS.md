@@ -224,9 +224,15 @@ was given. `hack/e2e-timing-selftest.sh` is what keeps that true, and
 - Review the generated schema, not only the Go type. An `+optional` that does not
   reach the CRD, a list that lost its `listType`, a validation that silently
   widened: each is invisible in the Go diff and plain in the YAML one.
-- Treat an existing object as a user. A field that was required and is now
-  absent, an enum that lost a value, a default that changed — every one of them
-  is a stored object that stops validating.
+- Treat an existing object as a user. A field that goes from optional to
+  required, a new field that arrives already required, an enum that lost a
+  value, a tightened bound or pattern, a default that changed, a new CEL rule
+  an existing object can fail, a changed list-type or map-type — every one of
+  them is a stored object that stops validating, or starts reading back or
+  merging differently, on its next write. A field the schema drops is not:
+  apiextensions-apiserver prunes an undeclared field from a stored object on
+  the read that decodes it, required or not, so removing one reaches nothing
+  already stored.
 - Give the field a caller before it ships. A setting nothing exercises is found
   first by whoever needs it, which is the worst place to find it. Unit tests are
   not that caller: they measure the plumbing, and the question is whether the

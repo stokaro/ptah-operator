@@ -20,9 +20,24 @@ commit, by `make verify-crd-schema-history`:
 
 | Change | Why it is refused |
 | --- | --- |
-| A required field the new schema does not have | A stored object carries a value the new schema prunes on the next write, and the write then fails the requirement it no longer satisfies. |
+| A field that goes from optional to required, or a new field that arrives already required, without a default | A stored object that never set the field fails the requirement on its next write. A default rescues this: structural defaulting fills an absent field from its schema default before anything validates it, on every decode, so a field that carries one is exempt. |
 | An enum that lost a value | Every stored object holding the removed value stops validating, and there is no migration for it. |
+| A numeric or length bound that tightened — a minimum that rose, a maximum that fell, a bound that newly appeared, or one that turned exclusive at the same value | A stored value the old bound allowed and the new one refuses fails on the same next write. |
+| A pattern that changed, in either direction | Refused conservatively: proving a changed regular expression only ever widens is its own project, so any change is treated as tightening unless a declared break says otherwise. |
+| A new or changed `x-kubernetes-validations` rule on a field that already existed | The rule runs against the stored value the first time anything writes the object, whether or not the write touches that field. |
+| A changed `x-kubernetes-list-type` or `x-kubernetes-map-type` | Both are enforced against whatever the field already holds, not just against what a write changes: a list that was fine as `atomic` can hold entries a `set` or `map` list-type refuses. |
 | A default that appeared, changed, or was taken away | It changes what a stored object reads back as, on objects nobody edited. |
+
+A field the new schema no longer declares is **not** refused. Structural
+pruning drops a value for any property the current schema does not carry when
+it decodes a stored object, required or not, so removing a field — and
+whatever required-ness it had — reaches no object already in etcd. An earlier
+version of this check refused a removed required field anyway, on a claim
+about a decode order that pruning code in `k8s.io/apiextensions-apiserver`
+did not bear out; two changes that tightened validation the other way,
+[stokaro/ptah-operator#470](https://github.com/stokaro/ptah-operator/pull/470)
+and [#482](https://github.com/stokaro/ptah-operator/pull/482), went
+unrefused because the check was watching the harmless direction.
 
 The comparison is against the **storage** version of each kind, because that
 is the schema an object in etcd is read back through. A kind the baseline does

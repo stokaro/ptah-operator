@@ -27,9 +27,9 @@ func TestTheCompatibilityPagePromisesOnlyWhatIsEnforced(t *testing.T) {
 		refusal string
 	}{
 		{
-			stated:  "A required field the new schema does not have",
+			stated:  "or a new field that arrives already required, without a default",
 			source:  filepath.Join("hack", "crdschemahistory", "compatibility.go"),
-			refusal: "was required and the candidate does not have it",
+			refusal: "was optional and the candidate requires it, with no default to fill it in",
 		},
 		{
 			stated:  "An enum that lost a value",
@@ -37,9 +37,34 @@ func TestTheCompatibilityPagePromisesOnlyWhatIsEnforced(t *testing.T) {
 			refusal: "the enum lost ",
 		},
 		{
+			stated:  "A numeric or length bound that tightened",
+			source:  filepath.Join("hack", "crdschemahistory", "compatibility.go"),
+			refusal: "rose from ",
+		},
+		{
+			stated:  "A pattern that changed, in either direction",
+			source:  filepath.Join("hack", "crdschemahistory", "compatibility.go"),
+			refusal: "the pattern changed from ",
+		},
+		{
+			stated:  "A new or changed `x-kubernetes-validations` rule",
+			source:  filepath.Join("hack", "crdschemahistory", "compatibility.go"),
+			refusal: "x-kubernetes-validations gained or changed the rule ",
+		},
+		{
+			stated:  "A changed `x-kubernetes-list-type` or `x-kubernetes-map-type`",
+			source:  filepath.Join("hack", "crdschemahistory", "compatibility.go"),
+			refusal: "x-kubernetes-list-type changed from ",
+		},
+		{
 			stated:  "A default that appeared, changed, or was taken away",
 			source:  filepath.Join("hack", "crdschemahistory", "compatibility.go"),
 			refusal: "changed its default from ",
+		},
+		{
+			stated:  "removing a field",
+			source:  filepath.Join("hack", "crdschemahistory", "compatibility.go"),
+			refusal: "A field the candidate no longer declares is not in this list",
 		},
 		{
 			stated:  "strictly increase",
