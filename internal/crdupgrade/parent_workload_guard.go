@@ -121,28 +121,23 @@ func NewParentWorkloadGuard(rollout *RolloutGuard) *ParentWorkloadGuard {
 	return guard
 }
 
-// ReadinessMarkerTarget returns the exact stable readiness marker contract for
-// explicit deletion by the guarded final uninstall phase. The ordinary
-// resource is retained across rollback and no-hook operations, so Helm's
-// release-resource deletion must never be its only cleanup mechanism.
-func (g *ParentWorkloadGuard) ReadinessMarkerTarget() (TeardownRetirementMarkerTarget, error) {
+// verifyReadinessMarker checks the parent-origin readiness ConfigMap against
+// its exact stable contract before the uninstall deletes it. The object is an
+// ordinary manifest that Helm is told to keep, so Helm's own deletion never
+// removes it.
+func (g *ParentWorkloadGuard) verifyReadinessMarker(actual *corev1.ConfigMap) error {
 	if err := g.validate(); err != nil {
-		return TeardownRetirementMarkerTarget{}, err
+		return err
 	}
 	expected := g.readinessMarker()
-	return TeardownRetirementMarkerTarget{
-		Name: expected.Name,
-		Verify: func(actual *corev1.ConfigMap) error {
-			if actual == nil || actual.Name != expected.Name || actual.Namespace != expected.Namespace || actual.GenerateName != "" ||
-				actual.UID == "" || actual.ResourceVersion == "" || actual.DeletionTimestamp != nil || actual.DeletionGracePeriodSeconds != nil ||
-				len(actual.OwnerReferences) != 0 || len(actual.Finalizers) != 0 ||
-				!reflect.DeepEqual(actual.Annotations, expected.Annotations) || !reflect.DeepEqual(actual.Labels, expected.Labels) ||
-				!reflect.DeepEqual(actual.Data, expected.Data) || len(actual.BinaryData) != 0 || actual.Immutable == nil || !*actual.Immutable {
-				return fmt.Errorf("parent-origin readiness ConfigMap/%s differs from the exact stable contract", expected.Name)
-			}
-			return nil
-		},
-	}, nil
+	if actual == nil || actual.Name != expected.Name || actual.Namespace != expected.Namespace || actual.GenerateName != "" ||
+		actual.UID == "" || actual.ResourceVersion == "" || actual.DeletionTimestamp != nil || actual.DeletionGracePeriodSeconds != nil ||
+		len(actual.OwnerReferences) != 0 || len(actual.Finalizers) != 0 ||
+		!reflect.DeepEqual(actual.Annotations, expected.Annotations) || !reflect.DeepEqual(actual.Labels, expected.Labels) ||
+		!reflect.DeepEqual(actual.Data, expected.Data) || len(actual.BinaryData) != 0 || actual.Immutable == nil || !*actual.Immutable {
+		return fmt.Errorf("parent-origin readiness ConfigMap/%s differs from the exact stable contract", expected.Name)
+	}
+	return nil
 }
 
 // Verify requires all stable and candidate-specific policies and bindings to

@@ -78,21 +78,6 @@ func NewAdmissionConvergenceGuard(rollout *RolloutGuard) *AdmissionConvergenceGu
 	}
 }
 
-// MarkerTarget exposes only the current sealed immutable admission marker and its
-// exact verifier to the final teardown phase. The returned contract carries no
-// ConfigMap client or generic deletion authority; the finalizer must still
-// re-read the object and delete its observed UID/resourceVersion explicitly.
-func (g *AdmissionConvergenceGuard) MarkerTarget() (TeardownRetirementMarkerTarget, error) {
-	if err := g.validate(); err != nil {
-		return TeardownRetirementMarkerTarget{}, err
-	}
-	name := AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence)
-	return TeardownRetirementMarkerTarget{Name: name, Verify: func(marker *corev1.ConfigMap) error {
-		_, err := g.verifySealedMarker(marker)
-		return err
-	}}, nil
-}
-
 func (g *AdmissionConvergenceGuard) validate() error {
 	if g == nil {
 		return errors.New("admission convergence marker identity is required")
@@ -173,7 +158,12 @@ func (g *AdmissionConvergenceGuard) markerMetadata(name string) metav1.ObjectMet
 	}
 }
 
+// verifyMarker checks a stored marker, sealed or not, against the exact contract
+// of this release attempt.
 func (g *AdmissionConvergenceGuard) verifyMarker(marker *corev1.ConfigMap) error {
+	if err := g.validate(); err != nil {
+		return err
+	}
 	if marker != nil && marker.Immutable != nil && *marker.Immutable {
 		_, err := g.verifySealedMarker(marker)
 		return err

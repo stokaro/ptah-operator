@@ -24,11 +24,7 @@ import (
 
 	"github.com/stokaro/ptah-operator/internal/certrotation"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
@@ -144,68 +140,6 @@ func TestStagingSecretGuardAdmissionContract(t *testing.T) {
 	}
 }
 
-func TestStagingSecretGuardCleanupClearsThenDeletesExactIdentity(t *testing.T) {
-	t.Parallel()
-	guard := newReadyStagingSecretGuard(t)
-	client := &stagingSecretTestClient{object: stagingSecretObject(guard, map[string][]byte{"candidate": []byte("credential-material")})}
-
-	if err := guard.Cleanup(context.Background(), client); err != nil {
-		t.Fatal(err)
-	}
-	if client.object != nil || client.updates != 1 || client.deletes != 1 {
-		t.Fatalf("cleanup result: object=%v updates=%d deletes=%d", client.object, client.updates, client.deletes)
-	}
-	if client.deletedUID != "stage-uid" || client.deletedResourceVersion != "2" {
-		t.Fatalf("delete preconditions = uid=%q rv=%q, want stage-uid/2", client.deletedUID, client.deletedResourceVersion)
-	}
-}
-
-func TestStagingSecretGuardCleanupFailsClosed(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		mutate func(*stagingSecretTestClient)
-		want   string
-	}{
-		{
-			name: "foreign metadata",
-			mutate: func(client *stagingSecretTestClient) {
-				client.object.Annotations = map[string]string{"foreign": "true"}
-			},
-			want: "foreign or incomplete ownership metadata",
-		},
-		{
-			name: "concurrent replacement during clear",
-			mutate: func(client *stagingSecretTestClient) {
-				client.replaceOnUpdate = true
-			},
-			want: "changed identity",
-		},
-		{
-			name: "concurrent refill before delete",
-			mutate: func(client *stagingSecretTestClient) {
-				client.refillAfterUpdate = true
-			},
-			want: "changed identity or data before deletion",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			guard := newReadyStagingSecretGuard(t)
-			client := &stagingSecretTestClient{object: stagingSecretObject(guard, map[string][]byte{"candidate": []byte("credential-material")})}
-			test.mutate(client)
-			err := guard.Cleanup(context.Background(), client)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Cleanup() error = %v, want containing %q", err, test.want)
-			}
-			if client.deletes != 0 {
-				t.Fatalf("unsafe cleanup performed %d deletes", client.deletes)
-			}
-		})
-	}
-}
-
 func TestStagingSecretGuardWiresExactTeardownInventories(t *testing.T) {
 	t.Parallel()
 	guard := newReadyStagingSecretGuard(t)
@@ -225,26 +159,6 @@ func TestStagingSecretGuardWiresExactTeardownInventories(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("release teardown staging guard contracts = %d, want 1", count)
-	}
-
-	fixture := newPrivilegeTeardownFixture(t, true, true)
-	wantSecret := fixture.teardown.certificateStagingSecretName()
-	foundRule := false
-	for _, authorization := range fixture.teardown.authorizationContracts() {
-		if authorization.name != fixture.cleanupPrivilege || authorization.namespace != fixture.guard.ReleaseNamespace || authorization.cluster {
-			continue
-		}
-		for _, rule := range authorization.rules {
-			if reflect.DeepEqual(rule.APIGroups, []string{""}) &&
-				reflect.DeepEqual(rule.Resources, []string{"secrets"}) &&
-				reflect.DeepEqual(rule.ResourceNames, []string{wantSecret}) &&
-				reflect.DeepEqual(rule.Verbs, []string{"get", "update", "delete"}) {
-				foundRule = true
-			}
-		}
-	}
-	if !foundRule {
-		t.Fatalf("cleanup Role omits exact get/update/delete grant for Secret %q", wantSecret)
 	}
 
 	guard.rollout.CertificateRuntimeEnabled = false
@@ -436,83 +350,6 @@ func stagingSecretRequest(guard *StagingSecretGuard, operation, username string)
 func stagingCleanupUsername(guard *StagingSecretGuard) string {
 	name, _ := TeardownServiceAccountName(guard.rollout.HookServiceAccountName, guard.rollout.ReleaseSequence)
 	return "system:serviceaccount:" + guard.rollout.ReleaseNamespace + ":" + name
-}
-
-func stagingSecretObject(guard *StagingSecretGuard, data map[string][]byte) *corev1.Secret {
-	return &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            "ptah-webhook-cert-stage",
-			Namespace:       guard.rollout.ReleaseNamespace,
-			UID:             types.UID("stage-uid"),
-			ResourceVersion: "1",
-			Labels: map[string]string{
-				certrotation.StagingSecretLabel: certrotation.StagingSecretLabelValue,
-				certrotation.HelmManagedByLabel: certrotation.HelmManagedByLabelValue,
-			},
-			Annotations: map[string]string{
-				certrotation.HelmReleaseNameAnnotation:      guard.rollout.ReleaseName,
-				certrotation.HelmReleaseNamespaceAnnotation: guard.rollout.ReleaseNamespace,
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: data,
-	}
-}
-
-type stagingSecretTestClient struct {
-	object                 *corev1.Secret
-	updates                int
-	deletes                int
-	replaceOnUpdate        bool
-	refillAfterUpdate      bool
-	readAfterUpdate        bool
-	deletedUID             types.UID
-	deletedResourceVersion string
-}
-
-func (c *stagingSecretTestClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.Secret, error) {
-	if c.object == nil {
-		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, name)
-	}
-	if c.readAfterUpdate && c.refillAfterUpdate {
-		object := c.object.DeepCopy()
-		object.Data = map[string][]byte{"candidate": []byte("refilled")}
-		return object, nil
-	}
-	return c.object.DeepCopy(), nil
-}
-
-func (c *stagingSecretTestClient) Update(_ context.Context, object *corev1.Secret, _ metav1.UpdateOptions) (*corev1.Secret, error) {
-	c.updates++
-	if c.object == nil || object.UID != c.object.UID || object.ResourceVersion != c.object.ResourceVersion {
-		return nil, apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, object.Name, errors.New("identity precondition failed"))
-	}
-	updated := object.DeepCopy()
-	updated.ResourceVersion = "2"
-	if c.replaceOnUpdate {
-		updated.UID = "replacement"
-	}
-	c.object = updated.DeepCopy()
-	c.readAfterUpdate = true
-	return updated, nil
-}
-
-func (c *stagingSecretTestClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
-	c.deletes++
-	if c.object == nil {
-		return apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, name)
-	}
-	if options.Preconditions == nil || options.Preconditions.UID == nil || options.Preconditions.ResourceVersion == nil {
-		return errors.New("missing deletion preconditions")
-	}
-	c.deletedUID = *options.Preconditions.UID
-	c.deletedResourceVersion = *options.Preconditions.ResourceVersion
-	if c.deletedUID != c.object.UID || c.deletedResourceVersion != c.object.ResourceVersion {
-		return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, name, errors.New("identity precondition failed"))
-	}
-	c.object = nil
-	return nil
 }
 
 func renderedStagingSecretRollout(t *testing.T) *RolloutGuard {

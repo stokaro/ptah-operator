@@ -158,13 +158,15 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	}
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", runtimeGuardNames, []string{"get"})
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", runtimeGuardNames, []string{"get"})
-	cleanupBase := managerName
-	if len(cleanupBase) > 24 {
-		cleanupBase = cleanupBase[:24]
+	// The uninstall hook deletes the staging Secret by name once its guard is
+	// gone, and never reads the pending CA private key it holds.
+	uninstallBase := managerName
+	if len(uninstallBase) > 24 {
+		uninstallBase = uninstallBase[:24]
 	}
-	cleanupPrivilegeName := strings.TrimSuffix(cleanupBase, "-") + "-cleanup-priv-v1-90a0385b562b"
-	cleanupRole := mustObject(t, objects, "Role", cleanupPrivilegeName)
-	assertExactRule(t, cleanupRole, "", "secrets", []string{stagingSecretName}, []string{"get", "update", "delete"})
+	uninstallRole := mustObject(t, objects, "Role", strings.TrimSuffix(uninstallBase, "-")+"-quiesce-v1-90a0385b562b")
+	assertExactRule(t, uninstallRole, "", "secrets", []string{stagingSecretName}, []string{"delete"})
+	assertNoResourceVerb(t, uninstallRole, "", "secrets", "get")
 	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicy", rotatorName)
 	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicyBinding", rotatorName)
 	mustObject(t, objects, "Lease", leaseName)
@@ -786,7 +788,6 @@ func TestConfiguredPriorityClassIsLimitedToReconcileHookJob(t *testing.T) {
 		"hook-identity-probe":          false,
 		"crd-manager-preflight":        false,
 		"crd-manager-teardown-quiesce": false,
-		"crd-manager-teardown":         false,
 	}
 	reconcileJobs := 0
 	for _, object := range objects {

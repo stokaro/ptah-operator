@@ -1,7 +1,7 @@
 package crdupgrade
 
 // These tests intentionally use the package internals: safe deletion depends
-// on proving the same immutable contracts used by each private guard builder.
+// on checking the same contracts each private guard builder compiles.
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -17,15 +18,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 	t.Parallel()
 
-	fixture := newReleaseTeardownFixture(t)
+	fixture := newReleaseTeardownFixture(t, false)
 	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
-	if len(wantOrder) != 45 {
-		t.Fatalf("known teardown inventory has %d objects, want 45", len(wantOrder))
+	if len(wantOrder) != 44 {
+		t.Fatalf("known teardown inventory has %d objects, want 44", len(wantOrder))
 	}
 	if err := fixture.teardown.Preflight(context.Background()); err != nil {
 		t.Fatalf("read-only preflight: %v", err)
@@ -56,6 +58,9 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 			)
 		}
 	}
+	if remaining := fixture.remaining(); len(remaining) != 0 {
+		t.Fatalf("teardown left %v behind", remaining)
+	}
 	activationName := ReleaseActivationGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
 	tail := fixture.recorder.deletes[len(fixture.recorder.deletes)-4:]
 	wantTail := []string{
@@ -69,10 +74,50 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 	}
 }
 
+// The certificate staging Secret is guarded against a Helm deletion, so the
+// teardown deletes it itself, after that guard and without reading it: it
+// holds a pending CA private key.
+func TestReleaseTeardownDeletesTheStagingSecretAfterItsGuardWithoutReadingIt(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t, true)
+	order := expectedReleaseTeardownOrder(fixture.guard)
+	if len(order) != 47 {
+		t.Fatalf("certificate runtime teardown inventory has %d objects, want 47", len(order))
+	}
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fixture.recorder.deletes, order) {
+		t.Fatalf("delete order:\n got: %v\nwant: %v", fixture.recorder.deletes, order)
+	}
+	stagingGuard := StagingSecretGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	secretKey := teardownKey("Secret", "ptah-webhook-cert-stage")
+	secretIndex := slicesIndex(order, secretKey)
+	if slicesIndex(order, teardownKey("ValidatingAdmissionPolicyBinding", stagingGuard)) > secretIndex ||
+		slicesIndex(order, teardownKey("ValidatingAdmissionPolicy", stagingGuard)) > secretIndex {
+		t.Fatalf("the staging Secret is deleted before its guard: %v", order)
+	}
+	if options := fixture.recorder.options[secretKey]; options.Preconditions != nil {
+		t.Fatalf("the staging Secret delete carries preconditions it could only have from a read: %#v", options)
+	}
+	if fixture.secrets.present {
+		t.Fatal("the staging Secret survived the teardown")
+	}
+
+	fixture.recorder.deletes = nil
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("repeated teardown: %v", err)
+	}
+	if want := []string{secretKey}; !reflect.DeepEqual(fixture.recorder.deletes, want) {
+		t.Fatalf("repeated teardown deletes = %v, want only the blind Secret delete %v", fixture.recorder.deletes, want)
+	}
+}
+
 func TestReleaseTeardownKeepsActivationSelfGuardUntilConsumersAreRemoved(t *testing.T) {
 	t.Parallel()
 
-	fixture := newReleaseTeardownFixture(t)
+	fixture := newReleaseTeardownFixture(t, false)
 	targets, err := fixture.teardown.targets()
 	if err != nil {
 		t.Fatalf("targets() error = %v", err)
@@ -117,87 +162,164 @@ func TestReleaseTeardownKeepsActivationSelfGuardUntilConsumersAreRemoved(t *test
 			t.Fatalf("activation self-guard binding precedes consumer policy %s", name)
 		}
 	}
-}
-
-func TestReleaseTeardownRetriesOnlyActivationSelfGuardCacheDenial(t *testing.T) {
-	t.Parallel()
-
-	t.Run("stale self-guard denial", func(t *testing.T) {
-		t.Parallel()
-		fixture := newReleaseTeardownFixture(t)
-		order := expectedReleaseTeardownOrder(fixture.guard)
-		activationKey := teardownKey("ConfigMap", ReleaseActivationName)
-		activationIndex := slicesIndex(order, activationKey)
-		attempts := 0
-		fixture.recorder.beforeDelete[activationKey] = func() {
-			attempts++
-			if attempts == 1 {
-				fixture.recorder.errors[activationKey] = apierrors.NewForbidden(
-					teardownGroupResource("ConfigMap"),
-					ReleaseActivationName,
-					errors.New(releaseActivationGuardDenialMessage()),
-				)
-				return
-			}
-			delete(fixture.recorder.errors, activationKey)
+	// Every ConfigMap a guard protects comes after the guards that could
+	// refuse its deletion.
+	lastGuardPolicy := 0
+	for targetIndex, target := range targets {
+		if target.kind == "ValidatingAdmissionPolicy" && target.name != activationName {
+			lastGuardPolicy = targetIndex
 		}
-
-		if err := fixture.teardown.Teardown(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		if attempts != 2 {
-			t.Fatalf("activation delete attempts = %d, want 2", attempts)
-		}
-		want := append([]string{}, order[:activationIndex]...)
-		want = append(want, activationKey, activationKey)
-		want = append(want, order[activationIndex+1:]...)
-		if !reflect.DeepEqual(fixture.recorder.deletes, want) {
-			t.Fatalf("delete calls = %v, want one exact activation retry in %v", fixture.recorder.deletes, want)
-		}
-	})
-
-	t.Run("foreign forbidden error", func(t *testing.T) {
-		t.Parallel()
-		fixture := newReleaseTeardownFixture(t)
-		activationKey := teardownKey("ConfigMap", ReleaseActivationName)
-		fixture.recorder.errors[activationKey] = apierrors.NewForbidden(
-			teardownGroupResource("ConfigMap"),
-			ReleaseActivationName,
-			errors.New("foreign admission denial"),
-		)
-
-		err := fixture.teardown.Teardown(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "foreign admission denial") {
-			t.Fatalf("Teardown error = %v, want foreign denial", err)
-		}
-		attempts := 0
-		for _, key := range fixture.recorder.deletes {
-			if key == activationKey {
-				attempts++
-			}
-		}
-		if attempts != 1 {
-			t.Fatalf("foreign activation denial attempts = %d, want 1", attempts)
-		}
-	})
-}
-
-func TestReleaseTeardownRejectsSequenceWithoutPredecessorIdentityInventory(t *testing.T) {
-	t.Parallel()
-
-	fixture := newReleaseTeardownFixture(t)
-	// The inventory records the sequences this release knows how to clean up
-	// after, so the refusal is pinned to one it does not name.
-	fixture.guard.ReleaseSequence = 3
-	base := strings.Split(fixture.guard.HookServiceAccountName, "-crd-v")[0]
-	fixture.guard.HookServiceAccountName = fmt.Sprintf("%s-crd-v3-%s", base, hookIdentityDigest(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 3, fixture.guard.ManagerImage)[:12])
-	fixture.guard.ControllerServiceAccountName = "ptah-controller-v3"
-	err := fixture.teardown.Preflight(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "no explicit predecessor identity inventory") {
-		t.Fatalf("Preflight error = %v, want missing predecessor inventory refusal", err)
 	}
-	if len(fixture.recorder.deletes) != 0 {
-		t.Fatalf("predecessor inventory refusal mutated resources: %v", fixture.recorder.deletes)
+	for targetIndex, target := range targets {
+		if target.kind == "ConfigMap" && targetIndex < lastGuardPolicy {
+			t.Fatalf("ConfigMap/%s is deleted before the guard policies that protect it", target.name)
+		}
+	}
+}
+
+func TestReleaseTeardownRetriesOnlyErrorsALaterAttemptCanClear(t *testing.T) {
+	t.Parallel()
+
+	readinessName := ParentOriginReadyMarkerName("ptah-system", "ptah")
+	readinessKey := teardownKey("ConfigMap", readinessName)
+	policyDenial := func(reason string) error {
+		message := fmt.Sprintf("ValidatingAdmissionPolicy 'guard' with binding 'guard' denied request: %s", reason)
+		return apierrors.NewForbidden(teardownGroupResource("ConfigMap"), readinessName, errors.New(message))
+	}
+	invalidDenial := apierrors.NewInvalid(
+		schema.GroupKind{Kind: "ConfigMap"},
+		readinessName,
+		field.ErrorList{field.Forbidden(field.NewPath(""), "ValidatingAdmissionPolicy 'guard' with binding 'guard' denied request: refused")},
+	)
+	for _, test := range []struct {
+		name      string
+		transient error
+	}{
+		{name: "a cached admission policy refusal", transient: policyDenial("refused")},
+		{name: "a cached admission policy refusal answered as invalid", transient: invalidDenial},
+		{name: "an API server that is not answering", transient: apierrors.NewServiceUnavailable("etcd leader changed")},
+		{name: "a server timeout", transient: apierrors.NewServerTimeout(teardownGroupResource("ConfigMap"), "delete", 1)},
+		{name: "a precondition that moved", transient: apierrors.NewConflict(teardownGroupResource("ConfigMap"), readinessName, errors.New("precondition failed"))},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newReleaseTeardownFixture(t, false)
+			order := expectedReleaseTeardownOrder(fixture.guard)
+			readinessIndex := slicesIndex(order, readinessKey)
+			attempts := 0
+			fixture.recorder.beforeDelete[readinessKey] = func() {
+				attempts++
+				if attempts < 3 {
+					fixture.recorder.errors[readinessKey] = test.transient
+					return
+				}
+				delete(fixture.recorder.errors, readinessKey)
+			}
+
+			if err := fixture.teardown.Teardown(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if attempts != 3 {
+				t.Fatalf("readiness marker delete attempts = %d, want 3", attempts)
+			}
+			want := append([]string{}, order[:readinessIndex]...)
+			want = append(want, readinessKey, readinessKey, readinessKey)
+			want = append(want, order[readinessIndex+1:]...)
+			if !reflect.DeepEqual(fixture.recorder.deletes, want) {
+				t.Fatalf("delete calls = %v, want two retries of %s in %v", fixture.recorder.deletes, readinessKey, want)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "a refusal that no admission policy gave",
+			err:  apierrors.NewForbidden(teardownGroupResource("ConfigMap"), readinessName, errors.New("RBAC: access denied")),
+			want: "RBAC: access denied",
+		},
+		{name: "an error that says nothing about the API", err: errors.New("injected delete failure"), want: "injected delete failure"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newReleaseTeardownFixture(t, false)
+			fixture.recorder.errors[readinessKey] = test.err
+
+			err := fixture.teardown.Teardown(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Teardown error = %v, want %q", err, test.want)
+			}
+			attempts := 0
+			for _, key := range fixture.recorder.deletes {
+				if key == readinessKey {
+					attempts++
+				}
+			}
+			if attempts != 1 {
+				t.Fatalf("readiness marker delete attempts = %d, want 1", attempts)
+			}
+		})
+	}
+}
+
+// The activation goes back to its bootstrap state before it is deleted, and
+// the delete is held to the identity of that reset rather than the read before
+// it.
+func TestReleaseTeardownReturnsTheActivationToBootstrapBeforeDeletingIt(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t, false)
+	activation := fixture.configMaps.objects[ReleaseActivationName]
+	activation.Data = map[string]string{
+		activeReleaseDataKey:                "1",
+		controllerCredentialsDataKey:        string(ControllerCredentialsDraining),
+		controllerCredentialsTargetDataKey:  "1",
+		controllerCredentialsAttemptDataKey: fixture.guard.releaseActivationGuard().candidateAttempt(),
+	}
+	if reflect.DeepEqual(activation.Data, ReleaseActivationBootstrapData()) {
+		t.Fatal("the fixture activation already holds the bootstrap state, so the reset would not be exercised")
+	}
+
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.configMaps.updates) != 1 {
+		t.Fatalf("activation updates = %d, want exactly the reset", len(fixture.configMaps.updates))
+	}
+	reset := fixture.configMaps.updates[0]
+	if reset.Name != ReleaseActivationName || !reflect.DeepEqual(reset.Data, ReleaseActivationBootstrapData()) {
+		t.Fatalf("activation update = %s %v, want the bootstrap state", reset.Name, reset.Data)
+	}
+	options := fixture.recorder.options[teardownKey("ConfigMap", ReleaseActivationName)]
+	if options.Preconditions == nil || options.Preconditions.ResourceVersion == nil || *options.Preconditions.ResourceVersion != reset.ResourceVersion {
+		t.Fatalf("activation delete preconditions = %#v, want the reset's resource version %q", options.Preconditions, reset.ResourceVersion)
+	}
+	if _, present := fixture.configMaps.objects[ReleaseActivationName]; present {
+		t.Fatal("the activation survived the teardown")
+	}
+}
+
+// A refusal that never clears ends with the context, and the error says what
+// the last attempt was told rather than only that time ran out.
+func TestReleaseTeardownNamesThePersistentRefusalWhenItsTimeRunsOut(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t, false)
+	activationKey := teardownKey("ConfigMap", ReleaseActivationName)
+	fixture.recorder.errors[activationKey] = apierrors.NewForbidden(
+		teardownGroupResource("ConfigMap"),
+		ReleaseActivationName,
+		errors.New("ValidatingAdmissionPolicy 'guard' with binding 'guard' denied request: "+releaseActivationGuardDenialMessage()),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := fixture.teardown.Teardown(ctx)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), releaseActivationGuardDenialMessage()) {
+		t.Fatalf("Teardown error = %v, want the deadline together with the last refusal", err)
 	}
 }
 
@@ -209,13 +331,6 @@ func TestReleaseTeardownPreflightsCompleteInventoryBeforeMutation(t *testing.T) 
 		mutate func(*releaseTeardownFixture)
 		want   string
 	}{
-		{
-			name: "foreign mutating webhook owner",
-			mutate: func(f *releaseTeardownFixture) {
-				f.mutating.object.Annotations[helmReleaseNameAnnotation] = "foreign"
-			},
-			want: "is not owned by Helm release",
-		},
 		{
 			name: "parameterized binding drift",
 			mutate: func(f *releaseTeardownFixture) {
@@ -263,13 +378,20 @@ func TestReleaseTeardownPreflightsCompleteInventoryBeforeMutation(t *testing.T) 
 			},
 			want: "shape is not exact",
 		},
+		{
+			name: "readiness marker drift",
+			mutate: func(f *releaseTeardownFixture) {
+				name := ParentOriginReadyMarkerName(f.guard.ReleaseNamespace, f.guard.ReleaseName)
+				f.configMaps.objects[name].Data = map[string]string{"foreign": "true"}
+			},
+			want: "differs from the exact stable contract",
+		},
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			fixture := newReleaseTeardownFixture(t)
+			fixture := newReleaseTeardownFixture(t, false)
 			test.mutate(fixture)
 			err := fixture.teardown.Teardown(context.Background())
 			if err == nil || !strings.Contains(err.Error(), test.want) {
@@ -293,7 +415,7 @@ func TestReleaseTeardownRejectsObjectsThatMayRemainAfterDelete(t *testing.T) {
 		{
 			name: "finalizer",
 			mutate: func(f *releaseTeardownFixture) {
-				f.mutating.object.Finalizers = []string{"operator.example/hold"}
+				f.bindings.objects[RolloutGuardPolicyName(f.guard.ReleaseSequence)].Finalizers = []string{"operator.example/hold"}
 			},
 			want: "has finalizers",
 		},
@@ -316,7 +438,8 @@ func TestReleaseTeardownRejectsObjectsThatMayRemainAfterDelete(t *testing.T) {
 		{
 			name: "owner reference",
 			mutate: func(f *releaseTeardownFixture) {
-				f.validating.object.OwnerReferences = []metav1.OwnerReference{{
+				name := NamespaceDeletionGuardPolicyName(f.guard.ReleaseNamespace, f.guard.ReleaseName)
+				f.bindings.objects[name].OwnerReferences = []metav1.OwnerReference{{
 					APIVersion: "v1", Kind: "Namespace", Name: f.guard.ReleaseNamespace, UID: "owner-uid",
 				}}
 			},
@@ -325,10 +448,9 @@ func TestReleaseTeardownRejectsObjectsThatMayRemainAfterDelete(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			fixture := newReleaseTeardownFixture(t)
+			fixture := newReleaseTeardownFixture(t, false)
 			test.mutate(fixture)
 
 			err := fixture.teardown.Teardown(context.Background())
@@ -345,7 +467,7 @@ func TestReleaseTeardownRejectsObjectsThatMayRemainAfterDelete(t *testing.T) {
 func TestReleaseTeardownStopsAtFirstDeleteFailureAndResumes(t *testing.T) {
 	t.Parallel()
 
-	fixture := newReleaseTeardownFixture(t)
+	fixture := newReleaseTeardownFixture(t, false)
 	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
 	failureIndex := 8
 	failureKey := wantOrder[failureIndex]
@@ -369,68 +491,64 @@ func TestReleaseTeardownStopsAtFirstDeleteFailureAndResumes(t *testing.T) {
 	}
 }
 
-func TestReleaseTeardownAllowsOnlyContiguousDeletedPrefix(t *testing.T) {
+// Whatever is already gone is skipped, wherever it sat in the order: an
+// uninstall that stopped partway, or an object an administrator removed,
+// leaves the rest for the next attempt to delete.
+func TestReleaseTeardownDeletesWhateverRemains(t *testing.T) {
 	t.Parallel()
 
-	t.Run("contiguous prefix and completed retry", func(t *testing.T) {
-		t.Parallel()
-		fixture := newReleaseTeardownFixture(t)
-		order := expectedReleaseTeardownOrder(fixture.guard)
-		const removed = 6
-		for _, key := range order[:removed] {
-			fixture.remove(key)
-		}
+	for _, test := range []struct {
+		name    string
+		removed func(order []string) []string
+	}{
+		{name: "a deleted prefix", removed: func(order []string) []string { return order[:6] }},
+		{name: "a hole in the middle", removed: func(order []string) []string { return []string{order[5], order[20]} }},
+		{name: "the activation parameter", removed: func([]string) []string {
+			return []string{teardownKey("ConfigMap", ReleaseActivationName)}
+		}},
+		{name: "everything", removed: func(order []string) []string { return order }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newReleaseTeardownFixture(t, false)
+			order := expectedReleaseTeardownOrder(fixture.guard)
+			removed := map[string]bool{}
+			for _, key := range test.removed(order) {
+				fixture.remove(key)
+				removed[key] = true
+			}
+			var want []string
+			for _, key := range order {
+				if !removed[key] {
+					want = append(want, key)
+				}
+			}
 
-		if err := fixture.teardown.Teardown(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		if want := order[removed:]; !reflect.DeepEqual(fixture.recorder.deletes, want) {
-			t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, want)
-		}
+			if err := fixture.teardown.Teardown(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(fixture.recorder.deletes, want) {
+				t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, want)
+			}
+			if remaining := fixture.remaining(); len(remaining) != 0 {
+				t.Fatalf("teardown left %v behind", remaining)
+			}
 
-		fixture.recorder.deletes = nil
-		if err := fixture.teardown.Teardown(context.Background()); err != nil {
-			t.Fatalf("completed teardown retry: %v", err)
-		}
-		if len(fixture.recorder.deletes) != 0 {
-			t.Fatalf("completed retry issued deletes: %v", fixture.recorder.deletes)
-		}
-	})
-
-	t.Run("noncontiguous hole", func(t *testing.T) {
-		t.Parallel()
-		fixture := newReleaseTeardownFixture(t)
-		order := expectedReleaseTeardownOrder(fixture.guard)
-		fixture.remove(order[5])
-
-		err := fixture.teardown.Teardown(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "inventory is incomplete") {
-			t.Fatalf("Teardown error = %v, want incomplete inventory", err)
-		}
-		if len(fixture.recorder.deletes) != 0 {
-			t.Fatalf("incomplete inventory mutated resources: %v", fixture.recorder.deletes)
-		}
-	})
-
-	t.Run("missing activation anchor", func(t *testing.T) {
-		t.Parallel()
-		fixture := newReleaseTeardownFixture(t)
-		fixture.remove(teardownKey("ConfigMap", ReleaseActivationName))
-
-		err := fixture.teardown.Teardown(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "inventory is incomplete") {
-			t.Fatalf("Teardown error = %v, want missing activation anchor", err)
-		}
-		if len(fixture.recorder.deletes) != 0 {
-			t.Fatalf("missing anchor mutated resources: %v", fixture.recorder.deletes)
-		}
-	})
+			fixture.recorder.deletes = nil
+			if err := fixture.teardown.Teardown(context.Background()); err != nil {
+				t.Fatalf("completed teardown retry: %v", err)
+			}
+			if len(fixture.recorder.deletes) != 0 {
+				t.Fatalf("completed retry issued deletes: %v", fixture.recorder.deletes)
+			}
+		})
+	}
 }
 
-func TestReleaseTeardownAcceptsDeleteNotFoundOnlyAfterVerification(t *testing.T) {
+func TestReleaseTeardownAcceptsDeleteNotFoundAfterVerification(t *testing.T) {
 	t.Parallel()
 
-	fixture := newReleaseTeardownFixture(t)
+	fixture := newReleaseTeardownFixture(t, false)
 	order := expectedReleaseTeardownOrder(fixture.guard)
 	notFoundKey := order[4]
 	fixture.recorder.notFound[notFoundKey] = true
@@ -443,54 +561,93 @@ func TestReleaseTeardownAcceptsDeleteNotFoundOnlyAfterVerification(t *testing.T)
 	}
 }
 
-func TestReleaseTeardownDeletionPreconditionsRejectConcurrentReplacement(t *testing.T) {
+// A precondition that no longer holds is read again: a replacement that
+// still matches the contract is the release's own object and is deleted with
+// its own identity, and one that does not match stops the teardown untouched.
+func TestReleaseTeardownRereadsAReplacedObjectBeforeDeletingIt(t *testing.T) {
 	t.Parallel()
 
-	fixture := newReleaseTeardownFixture(t)
-	order := expectedReleaseTeardownOrder(fixture.guard)
-	target := teardownKey("ValidatingAdmissionPolicyBinding", RuntimeGuardPolicyName(fixture.guard.ReleaseSequence))
-	targetIndex := slicesIndex(order, target)
-	fixture.recorder.beforeDelete[target] = func() {
-		name := RuntimeGuardPolicyName(fixture.guard.ReleaseSequence)
-		fixture.bindings.objects[name].UID = "replacement-uid"
-		fixture.bindings.objects[name].ResourceVersion = "replacement-version"
-	}
+	name := RuntimeGuardPolicyName(1)
+	target := teardownKey("ValidatingAdmissionPolicyBinding", name)
 
-	err := fixture.teardown.Teardown(context.Background())
-	if err == nil || !apierrors.IsConflict(err) {
-		t.Fatalf("Teardown error = %v, want precondition conflict", err)
-	}
-	if want := order[:targetIndex+1]; !reflect.DeepEqual(fixture.recorder.deletes, want) {
-		t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, want)
-	}
-	if fixture.bindings.objects[RuntimeGuardPolicyName(fixture.guard.ReleaseSequence)] == nil {
-		t.Fatal("concurrently replaced object was deleted")
-	}
+	t.Run("a replacement that matches the contract", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t, false)
+		order := expectedReleaseTeardownOrder(fixture.guard)
+		targetIndex := slicesIndex(order, target)
+		replaced := false
+		fixture.recorder.beforeDelete[target] = func() {
+			if replaced {
+				return
+			}
+			replaced = true
+			fixture.bindings.objects[name].UID = "replacement-uid"
+			fixture.bindings.objects[name].ResourceVersion = "replacement-version"
+		}
+
+		if err := fixture.teardown.Teardown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		want := append([]string{}, order[:targetIndex+1]...)
+		want = append(want, order[targetIndex:]...)
+		if !reflect.DeepEqual(fixture.recorder.deletes, want) {
+			t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, want)
+		}
+		options := fixture.recorder.options[target]
+		if options.Preconditions == nil || options.Preconditions.UID == nil || *options.Preconditions.UID != types.UID("replacement-uid") {
+			t.Fatalf("the replacement was deleted with preconditions %#v, want its own identity", options.Preconditions)
+		}
+	})
+
+	t.Run("a replacement that does not", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t, false)
+		order := expectedReleaseTeardownOrder(fixture.guard)
+		targetIndex := slicesIndex(order, target)
+		fixture.recorder.beforeDelete[target] = func() {
+			fixture.bindings.objects[name].UID = "replacement-uid"
+			fixture.bindings.objects[name].ResourceVersion = "replacement-version"
+			fixture.bindings.objects[name].Spec.ParamRef = nil
+		}
+
+		err := fixture.teardown.Teardown(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "binding spec differs") {
+			t.Fatalf("Teardown error = %v, want the replacement refused", err)
+		}
+		if want := order[:targetIndex+1]; !reflect.DeepEqual(fixture.recorder.deletes, want) {
+			t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, want)
+		}
+		if fixture.bindings.objects[name] == nil {
+			t.Fatal("a replacement outside the contract was deleted")
+		}
+	})
 }
 
 func TestReleaseTeardownValidatesDependencies(t *testing.T) {
 	t.Parallel()
 
-	fixture := newReleaseTeardownFixture(t)
+	fixture := newReleaseTeardownFixture(t, false)
+	stopped := *fixture.guard
+	stopped.PollEvery = 0
 	tests := []struct {
 		name     string
 		teardown *ReleaseTeardown
+		want     string
 	}{
-		{name: "nil receiver"},
-		{name: "nil rollout", teardown: NewReleaseTeardown(nil, fixture.mutating, fixture.validating, fixture.policies, fixture.bindings, fixture.configMaps)},
-		{name: "nil mutating", teardown: NewReleaseTeardown(fixture.guard, nil, fixture.validating, fixture.policies, fixture.bindings, fixture.configMaps)},
-		{name: "nil validating", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, nil, fixture.policies, fixture.bindings, fixture.configMaps)},
-		{name: "nil policies", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, fixture.validating, nil, fixture.bindings, fixture.configMaps)},
-		{name: "nil bindings", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, fixture.validating, fixture.policies, nil, fixture.configMaps)},
-		{name: "nil ConfigMaps", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, fixture.validating, fixture.policies, fixture.bindings, nil)},
+		{name: "nil receiver", want: "clients and rollout identity are required"},
+		{name: "nil rollout", teardown: NewReleaseTeardown(nil, fixture.policies, fixture.bindings, fixture.configMaps, fixture.secrets), want: "clients and rollout identity are required"},
+		{name: "nil policies", teardown: NewReleaseTeardown(fixture.guard, nil, fixture.bindings, fixture.configMaps, fixture.secrets), want: "clients and rollout identity are required"},
+		{name: "nil bindings", teardown: NewReleaseTeardown(fixture.guard, fixture.policies, nil, fixture.configMaps, fixture.secrets), want: "clients and rollout identity are required"},
+		{name: "nil ConfigMaps", teardown: NewReleaseTeardown(fixture.guard, fixture.policies, fixture.bindings, nil, fixture.secrets), want: "clients and rollout identity are required"},
+		{name: "nil Secrets", teardown: NewReleaseTeardown(fixture.guard, fixture.policies, fixture.bindings, fixture.configMaps, nil), want: "clients and rollout identity are required"},
+		{name: "no poll interval", teardown: NewReleaseTeardown(&stopped, fixture.policies, fixture.bindings, fixture.configMaps, fixture.secrets), want: "poll interval must be positive"},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			err := test.teardown.Teardown(context.Background())
-			if err == nil || !strings.Contains(err.Error(), "clients and rollout identity are required") {
-				t.Fatalf("Teardown error = %v, want dependency validation", err)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Teardown error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -500,35 +657,20 @@ type releaseTeardownFixture struct {
 	guard      *RolloutGuard
 	teardown   *ReleaseTeardown
 	recorder   *teardownRecorder
-	mutating   *teardownMutatingClient
-	validating *teardownValidatingClient
 	policies   *teardownPolicyClient
 	bindings   *teardownBindingClient
 	configMaps *teardownConfigMapClient
+	secrets    *teardownSecretClient
 	identities map[string]teardownIdentity
 }
 
-func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
+func newReleaseTeardownFixture(t *testing.T, certificateRuntime bool) *releaseTeardownFixture {
 	t.Helper()
 	guard, policySource, bindingSource, _ := readyRolloutGuard()
-	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
-	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
-	policySource.objects[rolloutName] = readyPolicy(guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion))
-	policySource.objects[runtimeName] = readyPolicy(guard.runtimePolicy(guard.ControllerStateVersion, guard.ReleaseSequence, guard.ManagerImage))
-	bindingSource.objects[rolloutName] = guard.binding(rolloutName)
-	bindingSource.objects[runtimeName] = guard.binding(runtimeName)
-	namespace := NewNamespaceDeletionGuard(guard)
-	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
-	policySource.objects[namespaceName] = readyPolicy(namespace.policy())
-	bindingSource.objects[namespaceName] = namespace.binding()
-	admissionConvergence := NewAdmissionConvergenceGuard(guard)
-	serviceAccountObject := NewServiceAccountObjectGuard(guard)
-	serviceAccountObjectPolicy, serviceAccountObjectBinding, err := serviceAccountObject.ExpectedObjects()
-	if err != nil {
-		t.Fatal(err)
-	}
-	policySource.objects[serviceAccountObjectPolicy.Name] = readyPolicy(serviceAccountObjectPolicy)
-	bindingSource.objects[serviceAccountObjectBinding.Name] = serviceAccountObjectBinding
+	guard.CertificateRuntimeEnabled = certificateRuntime
+	policySource.objects = map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}
+	bindingSource.objects = map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
+	installReleaseTeardownGuards(t, guard, policySource.objects, bindingSource.objects)
 
 	recorder := &teardownRecorder{
 		options:      map[string]metav1.DeleteOptions{},
@@ -544,41 +686,6 @@ func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
 	for name, object := range bindings.objects {
 		setTeardownObjectIdentity(object, "binding-"+name)
 	}
-
-	expected := teardownRuntimeInvariants(guard)
-	webhookAnnotations := copyStrings(expected.annotations())
-	webhookAnnotations[helmReleaseNameAnnotation] = guard.ReleaseName
-	webhookAnnotations[helmReleaseNamespaceAnnotation] = guard.ReleaseNamespace
-	webhookLabels := map[string]string{
-		managedByLabel: "Helm",
-		instanceLabel:  guard.ReleaseName,
-	}
-	mutatingObject := &admissionregistrationv1.MutatingWebhookConfiguration{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: AdmissionConfigurationName, Annotations: copyStrings(webhookAnnotations),
-			Labels: copyStrings(webhookLabels),
-		},
-		Webhooks: []admissionregistrationv1.MutatingWebhook{
-			readyMutatingApprovalWebhook(expected),
-			readyMutatingMigrationApprovalWebhook(expected),
-		},
-	}
-	setTeardownObjectIdentity(mutatingObject, "mutating-webhook")
-	validatingObject := &admissionregistrationv1.ValidatingWebhookConfiguration{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: AdmissionConfigurationName, Annotations: copyStrings(webhookAnnotations),
-			Labels: copyStrings(webhookLabels),
-		},
-		Webhooks: []admissionregistrationv1.ValidatingWebhook{
-			readyValidatingApprovalWebhook(expected),
-			readyValidatingMigrationApprovalWebhook(expected),
-			readyPodIntentWebhook(expected),
-			readyControllerWriteWebhook(expected),
-		},
-	}
-	setTeardownObjectIdentity(validatingObject, "validating-webhook")
-	mutating := &teardownMutatingClient{object: mutatingObject, recorder: recorder}
-	validating := &teardownValidatingClient{object: validatingObject, recorder: recorder}
 
 	probeName := HookIdentityProbeObjectName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	probePolicyName := HookIdentityProbeGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
@@ -600,40 +707,95 @@ func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
 		Data: map[string]string{"probe": "ready-for-denial-proof"},
 	}
 	setTeardownObjectIdentity(probe, "probe-marker")
+	readiness := NewParentWorkloadGuard(guard).readinessMarker()
+	setTeardownObjectIdentity(readiness, "readiness-marker")
 	activation := guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName].DeepCopy()
 	setTeardownObjectIdentity(activation, "activation")
-	admissionConvergenceMarker := admissionConvergence.unsealedMarker()
+	admissionConvergenceMarker := NewAdmissionConvergenceGuard(guard).unsealedMarker()
 	setTeardownObjectIdentity(admissionConvergenceMarker, "admission-convergence-marker")
 	configMaps := &teardownConfigMapClient{objects: map[string]*corev1.ConfigMap{
 		probeName:             probe,
+		readiness.Name:        readiness,
 		ReleaseActivationName: activation,
 		AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence): admissionConvergenceMarker,
 	}, recorder: recorder}
+	secrets := &teardownSecretClient{present: certificateRuntime, recorder: recorder}
 	guard.Policies = policies
 	guard.Bindings = bindings
 
 	fixture := &releaseTeardownFixture{
 		guard: guard, recorder: recorder,
-		mutating: mutating, validating: validating,
-		policies: policies, bindings: bindings, configMaps: configMaps,
+		policies: policies, bindings: bindings, configMaps: configMaps, secrets: secrets,
 		identities: map[string]teardownIdentity{},
 	}
-	fixture.teardown = NewReleaseTeardown(guard, mutating, validating, policies, bindings, configMaps)
+	fixture.teardown = NewReleaseTeardown(guard, policies, bindings, configMaps, secrets)
 	for _, key := range expectedReleaseTeardownOrder(guard) {
 		fixture.identities[key] = fixture.identity(key)
 	}
 	return fixture
 }
 
-func installTeardownGuardPair(
-	fixture *releaseTeardownFixture,
-	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
-	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+// installReleaseTeardownGuards stores every guard pair the release keeps, in
+// the form its builder compiles for this guard's settings.
+func installReleaseTeardownGuards(
+	t *testing.T,
+	guard *RolloutGuard,
+	policies map[string]*admissionregistrationv1.ValidatingAdmissionPolicy,
+	bindings map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding,
 ) {
-	setTeardownObjectIdentity(policy, "policy-"+policy.Name)
-	setTeardownObjectIdentity(binding, "binding-"+binding.Name)
-	fixture.policies.objects[policy.Name] = policy
-	fixture.bindings.objects[binding.Name] = binding
+	t.Helper()
+	install := func(policy *admissionregistrationv1.ValidatingAdmissionPolicy, binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) {
+		policies[policy.Name] = readyPolicy(policy)
+		bindings[binding.Name] = binding
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
+	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
+	install(guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion), guard.binding(rolloutName))
+	install(guard.runtimePolicy(guard.ControllerStateVersion, guard.ReleaseSequence, guard.ManagerImage), guard.binding(runtimeName))
+	runtimePodPolicy, err := guard.runtimePodIdentityPolicy()
+	must(err)
+	runtimePodBinding, err := guard.runtimePodIdentityBinding()
+	must(err)
+	install(runtimePodPolicy, runtimePodBinding)
+	hookName := HookIdentityGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	install(guard.hookIdentityPolicy(), guard.binding(hookName))
+	hookProbeName := HookIdentityProbeGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	install(guard.hookIdentityProbePolicy(), guard.binding(hookProbeName))
+	activation := guard.releaseActivationGuard()
+	install(activation.policy(), activation.binding())
+	origin := NewServiceAccountOriginGuard(guard)
+	originPolicy, err := origin.policy()
+	must(err)
+	install(originPolicy, origin.binding())
+	serviceAccountObjectPolicy, serviceAccountObjectBinding, err := NewServiceAccountObjectGuard(guard).ExpectedObjects()
+	must(err)
+	install(serviceAccountObjectPolicy, serviceAccountObjectBinding)
+	namespaceGuard := NewNamespaceDeletionGuard(guard)
+	install(namespaceGuard.policy(), namespaceGuard.binding())
+	controllerWrite := NewControllerWriteGuard(guard)
+	install(controllerWrite.policy(), controllerWrite.binding())
+	certificateWrite := NewCertificateWriteGuard(guard)
+	for _, entry := range certificateWrite.entries() {
+		install(certificateWrite.policy(entry), certificateWrite.binding(entry))
+	}
+	controllerObjects := NewControllerObjectGuard(guard)
+	for _, entry := range controllerObjects.entries() {
+		install(controllerObjects.policy(entry), controllerObjects.binding(entry))
+	}
+	for _, entry := range NewParentWorkloadGuard(guard).entries() {
+		install(entry.policy, entry.binding)
+	}
+	if guard.CertificateRuntimeEnabled {
+		stagingPolicy, stagingBinding, err := NewStagingSecretGuard(guard).ExpectedObjects()
+		must(err)
+		install(stagingPolicy, stagingBinding)
+	}
 }
 
 func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
@@ -657,6 +819,7 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	certificateMutatingWriteName := CertificateMutatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	certificateValidatingWriteName := CertificateValidatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	stagingName := StagingSecretGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 
 	parameterized := []string{
 		rolloutName, runtimeName, runtimePodName,
@@ -664,13 +827,16 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
 		controllerMigrationPlanWriteName,
 	}
+	if guard.CertificateRuntimeEnabled {
+		parameterized = append(parameterized, stagingName)
+	}
 	remaining := []string{
 		hookName, hookProbeName,
 		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
 		serviceAccountObjectName,
 		certificateMutatingWriteName, certificateValidatingWriteName,
+		namespaceName,
 	}
-	remaining = append(remaining, namespaceName)
 	policies := []string{
 		rolloutName, runtimeName, runtimePodName,
 		hookName, hookProbeName,
@@ -680,13 +846,13 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
 		controllerMigrationPlanWriteName,
 		certificateMutatingWriteName, certificateValidatingWriteName,
+		namespaceName,
 	}
-	policies = append(policies, namespaceName)
+	if guard.CertificateRuntimeEnabled {
+		policies = append(policies, stagingName)
+	}
 
-	order := []string{
-		teardownKey("MutatingWebhookConfiguration", AdmissionConfigurationName),
-		teardownKey("ValidatingWebhookConfiguration", AdmissionConfigurationName),
-	}
+	var order []string
 	for _, name := range parameterized {
 		order = append(order, teardownKey("ValidatingAdmissionPolicyBinding", name))
 	}
@@ -696,8 +862,12 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	for _, name := range policies {
 		order = append(order, teardownKey("ValidatingAdmissionPolicy", name))
 	}
+	if guard.CertificateRuntimeEnabled {
+		order = append(order, teardownKey("Secret", "ptah-webhook-cert-stage"))
+	}
 	order = append(order,
 		teardownKey("ConfigMap", HookIdentityProbeObjectName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)),
+		teardownKey("ConfigMap", ParentOriginReadyMarkerName(guard.ReleaseNamespace, guard.ReleaseName)),
 		teardownKey("ValidatingAdmissionPolicyBinding", activationName),
 		teardownKey("ValidatingAdmissionPolicy", activationName),
 		teardownKey("ConfigMap", AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence)),
@@ -709,16 +879,14 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 func (f *releaseTeardownFixture) identity(key string) teardownIdentity {
 	kind, name := splitTeardownKey(key)
 	switch kind {
-	case "MutatingWebhookConfiguration":
-		return objectTeardownIdentity(f.mutating.object)
-	case "ValidatingWebhookConfiguration":
-		return objectTeardownIdentity(f.validating.object)
 	case "ValidatingAdmissionPolicyBinding":
 		return objectTeardownIdentity(f.bindings.objects[name])
 	case "ValidatingAdmissionPolicy":
 		return objectTeardownIdentity(f.policies.objects[name])
 	case "ConfigMap":
 		return objectTeardownIdentity(f.configMaps.objects[name])
+	case "Secret":
+		return teardownIdentity{}
 	default:
 		panic("unknown teardown kind " + kind)
 	}
@@ -727,19 +895,35 @@ func (f *releaseTeardownFixture) identity(key string) teardownIdentity {
 func (f *releaseTeardownFixture) remove(key string) {
 	kind, name := splitTeardownKey(key)
 	switch kind {
-	case "MutatingWebhookConfiguration":
-		f.mutating.object = nil
-	case "ValidatingWebhookConfiguration":
-		f.validating.object = nil
 	case "ValidatingAdmissionPolicyBinding":
 		delete(f.bindings.objects, name)
 	case "ValidatingAdmissionPolicy":
 		delete(f.policies.objects, name)
 	case "ConfigMap":
 		delete(f.configMaps.objects, name)
+	case "Secret":
+		f.secrets.present = false
 	default:
 		panic("unknown teardown kind " + kind)
 	}
+}
+
+// remaining names every object of the inventory the fake API still holds.
+func (f *releaseTeardownFixture) remaining() []string {
+	var names []string
+	for name := range f.bindings.objects {
+		names = append(names, teardownKey("ValidatingAdmissionPolicyBinding", name))
+	}
+	for name := range f.policies.objects {
+		names = append(names, teardownKey("ValidatingAdmissionPolicy", name))
+	}
+	for name := range f.configMaps.objects {
+		names = append(names, teardownKey("ConfigMap", name))
+	}
+	if f.secrets.present {
+		names = append(names, teardownKey("Secret", "ptah-webhook-cert-stage"))
+	}
+	return names
 }
 
 func setTeardownObjectIdentity(object metav1.Object, value string) {
@@ -780,7 +964,10 @@ type teardownRecorder struct {
 	beforeDelete map[string]func()
 }
 
-func (r *teardownRecorder) record(kind, name string, options metav1.DeleteOptions, object metav1.Object) error {
+// record logs one delete call and answers it as the API server would: an
+// injected error, a NotFound, or a precondition check against the object the
+// fake still holds. A delete with no preconditions is accepted as it stands.
+func (r *teardownRecorder) record(kind, name string, options metav1.DeleteOptions, object func() metav1.Object) error {
 	key := teardownKey(kind, name)
 	r.deletes = append(r.deletes, key)
 	r.options[key] = options
@@ -790,11 +977,15 @@ func (r *teardownRecorder) record(kind, name string, options metav1.DeleteOption
 	if err := r.errors[key]; err != nil {
 		return err
 	}
-	if r.notFound[key] {
+	current := object()
+	if r.notFound[key] || current == nil {
 		return apierrors.NewNotFound(teardownGroupResource(kind), name)
 	}
-	if options.Preconditions == nil || options.Preconditions.UID == nil || options.Preconditions.ResourceVersion == nil ||
-		object == nil || *options.Preconditions.UID != object.GetUID() || *options.Preconditions.ResourceVersion != object.GetResourceVersion() {
+	if options.Preconditions == nil {
+		return nil
+	}
+	if options.Preconditions.UID == nil || options.Preconditions.ResourceVersion == nil ||
+		*options.Preconditions.UID != current.GetUID() || *options.Preconditions.ResourceVersion != current.GetResourceVersion() {
 		return apierrors.NewConflict(teardownGroupResource(kind), name, errors.New("deletion precondition failed"))
 	}
 	return nil
@@ -802,65 +993,17 @@ func (r *teardownRecorder) record(kind, name string, options metav1.DeleteOption
 
 func teardownGroupResource(kind string) schema.GroupResource {
 	switch kind {
-	case "MutatingWebhookConfiguration":
-		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "mutatingwebhookconfigurations"}
-	case "ValidatingWebhookConfiguration":
-		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "validatingwebhookconfigurations"}
 	case "ValidatingAdmissionPolicyBinding":
 		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "validatingadmissionpolicybindings"}
 	case "ValidatingAdmissionPolicy":
 		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "validatingadmissionpolicies"}
 	case "ConfigMap":
 		return schema.GroupResource{Resource: "configmaps"}
+	case "Secret":
+		return schema.GroupResource{Resource: "secrets"}
 	default:
 		panic(fmt.Sprintf("unknown teardown kind %q", kind))
 	}
-}
-
-type teardownMutatingClient struct {
-	object   *admissionregistrationv1.MutatingWebhookConfiguration
-	recorder *teardownRecorder
-}
-
-func (c *teardownMutatingClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error) {
-	if c.object == nil {
-		return nil, apierrors.NewNotFound(teardownGroupResource("MutatingWebhookConfiguration"), name)
-	}
-	return c.object.DeepCopy(), nil
-}
-
-func (c *teardownMutatingClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
-	if err := c.recorder.record("MutatingWebhookConfiguration", name, options, c.object); err != nil {
-		if apierrors.IsNotFound(err) {
-			c.object = nil
-		}
-		return err
-	}
-	c.object = nil
-	return nil
-}
-
-type teardownValidatingClient struct {
-	object   *admissionregistrationv1.ValidatingWebhookConfiguration
-	recorder *teardownRecorder
-}
-
-func (c *teardownValidatingClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*admissionregistrationv1.ValidatingWebhookConfiguration, error) {
-	if c.object == nil {
-		return nil, apierrors.NewNotFound(teardownGroupResource("ValidatingWebhookConfiguration"), name)
-	}
-	return c.object.DeepCopy(), nil
-}
-
-func (c *teardownValidatingClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
-	if err := c.recorder.record("ValidatingWebhookConfiguration", name, options, c.object); err != nil {
-		if apierrors.IsNotFound(err) {
-			c.object = nil
-		}
-		return err
-	}
-	c.object = nil
-	return nil
 }
 
 type teardownPolicyClient struct {
@@ -877,15 +1020,16 @@ func (c *teardownPolicyClient) Get(_ context.Context, name string, _ metav1.GetO
 }
 
 func (c *teardownPolicyClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
-	object := c.objects[name]
-	if err := c.recorder.record("ValidatingAdmissionPolicy", name, options, object); err != nil {
-		if apierrors.IsNotFound(err) {
-			delete(c.objects, name)
+	err := c.recorder.record("ValidatingAdmissionPolicy", name, options, func() metav1.Object {
+		if object := c.objects[name]; object != nil {
+			return object
 		}
-		return err
+		return nil
+	})
+	if err == nil || apierrors.IsNotFound(err) {
+		delete(c.objects, name)
 	}
-	delete(c.objects, name)
-	return nil
+	return err
 }
 
 type teardownBindingClient struct {
@@ -902,20 +1046,39 @@ func (c *teardownBindingClient) Get(_ context.Context, name string, _ metav1.Get
 }
 
 func (c *teardownBindingClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
-	object := c.objects[name]
-	if err := c.recorder.record("ValidatingAdmissionPolicyBinding", name, options, object); err != nil {
-		if apierrors.IsNotFound(err) {
-			delete(c.objects, name)
+	err := c.recorder.record("ValidatingAdmissionPolicyBinding", name, options, func() metav1.Object {
+		if object := c.objects[name]; object != nil {
+			return object
 		}
-		return err
+		return nil
+	})
+	if err == nil || apierrors.IsNotFound(err) {
+		delete(c.objects, name)
 	}
-	delete(c.objects, name)
-	return nil
+	return err
 }
 
 type teardownConfigMapClient struct {
 	objects  map[string]*corev1.ConfigMap
 	recorder *teardownRecorder
+	updates  []*corev1.ConfigMap
+}
+
+// Update stores the object under a new resource version when the one it was
+// read at still holds, as the API server does.
+func (c *teardownConfigMapClient) Update(_ context.Context, object *corev1.ConfigMap, _ metav1.UpdateOptions) (*corev1.ConfigMap, error) {
+	current := c.objects[object.Name]
+	if current == nil {
+		return nil, apierrors.NewNotFound(teardownGroupResource("ConfigMap"), object.Name)
+	}
+	if object.ResourceVersion != current.ResourceVersion {
+		return nil, apierrors.NewConflict(teardownGroupResource("ConfigMap"), object.Name, errors.New("resource version changed"))
+	}
+	stored := object.DeepCopy()
+	stored.ResourceVersion = current.ResourceVersion + "-updated"
+	c.objects[object.Name] = stored
+	c.updates = append(c.updates, stored.DeepCopy())
+	return stored.DeepCopy(), nil
 }
 
 func (c *teardownConfigMapClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.ConfigMap, error) {
@@ -927,21 +1090,41 @@ func (c *teardownConfigMapClient) Get(_ context.Context, name string, _ metav1.G
 }
 
 func (c *teardownConfigMapClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
-	object := c.objects[name]
-	if err := c.recorder.record("ConfigMap", name, options, object); err != nil {
-		if apierrors.IsNotFound(err) {
-			delete(c.objects, name)
+	err := c.recorder.record("ConfigMap", name, options, func() metav1.Object {
+		if object := c.objects[name]; object != nil {
+			return object
 		}
-		return err
+		return nil
+	})
+	if err == nil || apierrors.IsNotFound(err) {
+		delete(c.objects, name)
 	}
-	delete(c.objects, name)
-	return nil
+	return err
+}
+
+// teardownSecretClient can only delete, as the Secret client the teardown is
+// given can: the staging Secret is never read.
+type teardownSecretClient struct {
+	present  bool
+	recorder *teardownRecorder
+}
+
+func (c *teardownSecretClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
+	err := c.recorder.record("Secret", name, options, func() metav1.Object {
+		if c.present {
+			return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		}
+		return nil
+	})
+	if err == nil || apierrors.IsNotFound(err) {
+		c.present = false
+	}
+	return err
 }
 
 var (
-	_ MutatingWebhookTeardownClient                  = (*teardownMutatingClient)(nil)
-	_ ValidatingWebhookTeardownClient                = (*teardownValidatingClient)(nil)
 	_ ValidatingAdmissionPolicyTeardownClient        = (*teardownPolicyClient)(nil)
 	_ ValidatingAdmissionPolicyBindingTeardownClient = (*teardownBindingClient)(nil)
 	_ ConfigMapTeardownClient                        = (*teardownConfigMapClient)(nil)
+	_ SecretTeardownClient                           = (*teardownSecretClient)(nil)
 )

@@ -1,7 +1,7 @@
 package crdupgrade
 
 // This render test intentionally uses the package under test because it
-// compares the unexported teardown inventory with the exact rendered hook
+// compares the unexported release RBAC inventory with the exact rendered hook
 // roles. A public API for mutable security contracts would be less safe.
 
 import (
@@ -94,16 +94,16 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 		ControllerServiceAccountCreate: true,
 		CertificateRuntimeEnabled:      true,
 	}
-	teardown := &PrivilegeTeardown{rollout: rollout, contract: runtimeContract}
-	clusterContract := findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hookServiceAccount, "", true)
-	roleContract := findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hookServiceAccount, rollout.ReleaseNamespace, false)
-	discoveryContract := findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hookServiceAccount, "default", false)
+	inventory := releaseRBACInventory{rollout: rollout, contract: runtimeContract}
+	clusterContract := findTransitionAuthorizationContract(t, inventory.contracts(), hookServiceAccount, "", true)
+	roleContract := findTransitionAuthorizationContract(t, inventory.contracts(), hookServiceAccount, rollout.ReleaseNamespace, false)
+	discoveryContract := findTransitionAuthorizationContract(t, inventory.contracts(), hookServiceAccount, "default", false)
 	var renderedClusterRole rbacv1.ClusterRole
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(role.Object, &renderedClusterRole); err != nil {
 		t.Fatalf("decode rendered controller RBAC cutover ClusterRole: %v", err)
 	}
 	if !reflect.DeepEqual(renderedClusterRole.Rules, clusterContract.rules) {
-		t.Fatal("rendered controller RBAC cutover ClusterRole differs from the exact teardown inventory")
+		t.Fatal("rendered controller RBAC cutover ClusterRole differs from the exact release RBAC inventory")
 	}
 	assertTransitionRenderedRoleRules(t, objects, rollout.ReleaseNamespace, hookServiceAccount, roleContract.rules)
 	assertTransitionRenderedRoleRules(t, objects, "default", hookServiceAccount, discoveryContract.rules)
@@ -155,7 +155,7 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 	)
 }
 
-func TestControllerRBACCutoverHookNamespacesMatchRetirementInventory(t *testing.T) {
+func TestControllerRBACCutoverHookNamespacesMatchReleaseInventory(t *testing.T) {
 	t.Parallel()
 	for _, namespaces := range [][2]string{
 		{"ptah-system", "ptah-system"},
@@ -175,7 +175,7 @@ func TestControllerRBACCutoverHookNamespacesMatchRetirementInventory(t *testing.
 				ReleaseName: "rbac-cutover", ReleaseNamespace: namespaces[0], CoordinationNamespace: namespaces[1],
 				HookServiceAccountName: hook, ControllerDeploymentName: "rbac-cutover-ptah-operator",
 			}
-			teardown := &PrivilegeTeardown{rollout: rollout}
+			inventory := releaseRBACInventory{rollout: rollout}
 			wantNamespaces := map[string]bool{namespaces[0]: true, namespaces[1]: true, "default": true}
 			seenRoles, seenBindings := map[string]bool{}, map[string]bool{}
 			for _, object := range objects {
@@ -202,7 +202,7 @@ func TestControllerRBACCutoverHookNamespacesMatchRetirementInventory(t *testing.
 					}
 					assertTransitionRenderNoResourceVerb(t, object, "rbac.authorization.k8s.io", "roles", "bind")
 					assertTransitionRenderNoBindingCreate(t, object)
-					for _, rule := range teardown.hookBindingTransitionRules(namespace) {
+					for _, rule := range inventory.hookBindingTransitionRules(namespace) {
 						assertTransitionRenderRule(t, object, rbacv1.GroupName, rule.Resources[0], rule.ResourceNames, rule.Verbs)
 					}
 					// No other RBAC resources, names, or verbs are allowed in this namespace.
@@ -216,7 +216,7 @@ func TestControllerRBACCutoverHookNamespacesMatchRetirementInventory(t *testing.
 							rbacRules = append(rbacRules, rule)
 						}
 					}
-					if !reflect.DeepEqual(rbacRules, teardown.hookBindingTransitionRules(namespace)) {
+					if !reflect.DeepEqual(rbacRules, inventory.hookBindingTransitionRules(namespace)) {
 						t.Fatalf("hook Role in %q has unexpected RBAC authority", namespace)
 					}
 				case "RoleBinding":
@@ -231,44 +231,14 @@ func TestControllerRBACCutoverHookNamespacesMatchRetirementInventory(t *testing.
 			if !reflect.DeepEqual(seenRoles, wantNamespaces) || !reflect.DeepEqual(seenBindings, wantNamespaces) {
 				t.Fatalf("hook roles/bindings = %v/%v, want namespaces %v", seenRoles, seenBindings, wantNamespaces)
 			}
-			residual, err := TeardownGuardRoleName(hook)
-			if err != nil {
-				t.Fatal(err)
-			}
-			residualRole := findTransitionRenderObjectInNamespace(t, objects, "Role", namespaces[0], residual)
-			assertTransitionRenderRule(t, residualRole, "", "pods", nil, []string{"list"})
-			assertTransitionRenderNoResourceVerb(t, residualRole, "", "pods", "watch")
 			for _, namespace := range []string{namespaces[0], namespaces[1], "default"} {
-				findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hook, namespace, false)
-				found := false
-				for _, contract := range teardown.bindingContracts() {
-					if !contract.cluster && contract.name == hook && contract.namespace == namespace {
-						found = true
-					}
-				}
-				if !found {
-					t.Fatalf("hook RoleBinding in %q missing from retirement inventory", namespace)
-				}
-			}
-			if namespaces[1] != namespaces[0] {
-				cleanup, err := TeardownPrivilegeRoleName(hook)
-				if err != nil {
-					t.Fatal(err)
-				}
-				role := findTransitionRenderObjectInNamespace(t, objects, "Role", namespaces[1], cleanup)
-				var rendered rbacv1.Role
-				if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(role.Object, &rendered); err != nil {
-					t.Fatal(err)
-				}
-				if len(rendered.Rules) != 1 || !slices.Contains(rendered.Rules[0].ResourceNames, hook) {
-					t.Fatal("coordination cleanup Role omits the exact hook RoleBinding")
-				}
+				findTransitionAuthorizationContract(t, inventory.contracts(), hook, namespace, false)
 			}
 		})
 	}
 }
 
-func TestControllerRBACCutoverPredecessorHookRolesMatchRetirementInventory(t *testing.T) {
+func TestControllerRBACCutoverPredecessorHookRolesMatchReleaseInventory(t *testing.T) {
 	t.Parallel()
 	chart := newControllerRBACPredecessorChart(t)
 	for _, namespaces := range [][2]string{
@@ -291,11 +261,11 @@ func TestControllerRBACCutoverPredecessorHookRolesMatchRetirementInventory(t *te
 					ControllerStateVersion:         guard.ControllerStateVersion, AdmissionContractVersion: guard.AdmissionContractVersion,
 					ReleaseSequence: guard.ReleaseSequence, ManagerImage: guard.ManagerImage,
 				}
-				teardown := &PrivilegeTeardown{rollout: rollout, contract: RuntimeAdmissionContract{
+				inventory := releaseRBACInventory{rollout: rollout, contract: RuntimeAdmissionContract{
 					Namespace: guard.ReleaseNamespace, ControllerServiceAccountName: guard.ControllerServiceAccountName,
 					CertificateServiceAccountName: guard.CertificateServiceAccountName, CertificateRuntimeEnabled: true,
 				}}
-				for _, contract := range teardown.retiredAuthorizationContracts() {
+				for _, contract := range inventory.contracts() {
 					if contract.name != guard.HookServiceAccountName {
 						continue
 					}
@@ -447,10 +417,10 @@ func renderControllerRBACChartObjects(t *testing.T, args []string, values []byte
 
 func findTransitionAuthorizationContract(
 	t *testing.T,
-	contracts []privilegeAuthorizationContract,
+	contracts []releaseRBACContract,
 	name, namespace string,
 	cluster bool,
-) privilegeAuthorizationContract {
+) releaseRBACContract {
 	t.Helper()
 	for _, contract := range contracts {
 		if contract.name == name && contract.namespace == namespace && contract.cluster == cluster {
@@ -458,7 +428,7 @@ func findTransitionAuthorizationContract(
 		}
 	}
 	t.Fatalf("exact transition authorization contract for cluster=%t namespace=%q name=%q was not found", cluster, namespace, name)
-	return privilegeAuthorizationContract{}
+	return releaseRBACContract{}
 }
 
 func assertTransitionRenderedClusterRoleRules(

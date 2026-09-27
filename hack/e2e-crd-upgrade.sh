@@ -121,7 +121,6 @@ RUNNING_APPLY_BARRIER_DATABASE=
 RUNNING_APPLY_BARRIER_APPLICATION=ptah-operator-running-apply-barrier
 BLOCKED_STABILITY_SECONDS=10
 BLOCKED_FAILURE_TIMEOUT_SECONDS=150
-FOREIGN_TEARDOWN_BINDING=
 CERTIFICATE_SECRET_NAME=
 CERTIFICATE_STAGING_SECRET_NAME=
 LATE_ACTIVATION_BLOCKER_WEBHOOK=
@@ -261,12 +260,6 @@ cleanup() {
 		wait "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true
 		LATE_ACTIVATION_RECONCILE_CAPTURE_PID=
 	fi
-	if [ "$retain" -eq 0 ] && [ -n "$FOREIGN_TEARDOWN_BINDING" ]; then
-		if ! kube delete clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" \
-			--ignore-not-found=true >/dev/null 2>&1; then
-			status=1
-		fi
-	fi
 	if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then
 		if [ "$retain" -eq 0 ] && ! kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
 			--ignore-not-found=true >/dev/null 2>&1; then
@@ -290,8 +283,6 @@ cleanup() {
 			"$WORK_DIR" "$E2E_OPERATOR_NAMESPACE" "$PROOF_NAMESPACE" >&2
 		[ "$HOOK_PROGRESS_RESOURCES_ACTIVE" -eq 0 ] ||
 			printf 'e2e crd: retaining cluster-scoped hold policy and binding %s\n' "$HOOK_PROGRESS_HOLD_POLICY" >&2
-		[ -z "$FOREIGN_TEARDOWN_BINDING" ] ||
-			printf 'e2e crd: retaining cluster role binding %s\n' "$FOREIGN_TEARDOWN_BINDING" >&2
 		[ -z "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ] ||
 			printf 'e2e crd: retaining validating webhook configuration %s\n' "$LATE_ACTIVATION_BLOCKER_WEBHOOK" >&2
 	else
@@ -5007,13 +4998,8 @@ run_next_release_upgrade_proof() {
 }
 
 # failed_hook_refusals prints what every failed hook left in its termination
-# message, one "pod: message" line each.
-#
-# A pre-delete hook that fails is retained, so its Pod is still there to read.
-# It reads every failed Pod rather than the quiescence one alone because Helm
-# stops at the first hook that refuses, and that is not always the hook a
-# reader expected: a refusal from an earlier one used to reach this proof as an
-# empty file and a failure that named no cause.
+# message, one "pod: message" line each. A pre-delete hook that fails is
+# retained, so its Pod is still there to read.
 failed_hook_refusals() {
 	kube -n "$E2E_OPERATOR_NAMESPACE" get pods -o json 2>/dev/null |
 		jq -r '
@@ -5022,6 +5008,21 @@ failed_hook_refusals() {
           select((.state.terminated.exitCode // 0) != 0) |
           "\($pod): \(.state.terminated.message // "<no termination message>")"
         ' 2>/dev/null || true
+}
+
+# fail_uninstall ends the proof on an uninstall Helm reported as failed. Helm
+# says only that the hook Job failed, so this prints what the hook itself said
+# before failing: the reason is in its termination message, and a run that
+# prints nothing here costs a whole lifecycle to ask again.
+fail_uninstall() {
+	uninstall_refusals=$(failed_hook_refusals)
+	if [ -n "$uninstall_refusals" ]; then
+		printf '%s\n' 'e2e crd: the uninstall hook said:' >&2
+		printf '%s\n' "$uninstall_refusals" | sed 's/^/e2e crd:   /' >&2
+	else
+		printf '%s\n' 'e2e crd: no failed hook Pod carried a termination message' >&2
+	fi
+	fail "$1 failed; Helm's own error is above"
 }
 
 run_uninstall_proof() {
@@ -5044,54 +5045,10 @@ run_uninstall_proof() {
 	run_next_release_upgrade_proof
 	next_sequence_marker_name=$(jq -er '.metadata.name' "$next_sequence_marker")
 
-	printf '%s\n' 'e2e crd: proving foreign controller RBAC blocks uninstall before quiescence'
-	runtime_deployment_evidence >"$WORK_DIR/runtime-before-blocked-uninstall.json"
-	controller_service_account=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$CONTROLLER_DEPLOYMENT" \
-		-o jsonpath='{.spec.template.spec.serviceAccountName}')
-	[ -n "$controller_service_account" ] || fail "controller ServiceAccount is missing from its Deployment"
-	FOREIGN_TEARDOWN_BINDING=ptah-e2e-foreign-controller-binding
-	kube create clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" \
-		--clusterrole=view \
-		--serviceaccount="$E2E_OPERATOR_NAMESPACE:$controller_service_account" >/dev/null
-	if helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
-		--wait --timeout 2m >"$WORK_DIR/blocked-uninstall.out" 2>"$WORK_DIR/blocked-uninstall.err"; then
-		fail "uninstall with a foreign controller binding unexpectedly succeeded"
-	fi
-	# Helm reports a failed hook as "Job Failed" and carries nothing of the
-	# hook's own words, so the refusal reaches an administrator where Kubernetes
-	# keeps it: the failed hook Pod's termination message, which is what kubectl
-	# shows for that Job. Accept Helm's output too, in case a later Helm surfaces
-	# the message itself.
-	blocked_reason=$WORK_DIR/blocked-uninstall.reason
-	failed_hook_refusals >"$blocked_reason"
-	if ! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
-		"$WORK_DIR/blocked-uninstall.err" >/dev/null &&
-		! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
-			"$WORK_DIR/blocked-uninstall.out" >/dev/null &&
-		! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
-			"$blocked_reason" >/dev/null; then
-		# The uninstall was refused, which is the point; what the refusal said
-		# is what a reader needs, and a run that prints nothing here costs a
-		# whole lifecycle to ask again.
-		if [ -s "$blocked_reason" ]; then
-			printf '%s\n' 'e2e crd: the hooks that refused the uninstall said:' >&2
-			sed 's/^/e2e crd:   /' "$blocked_reason" >&2
-		else
-			printf '%s\n' 'e2e crd: no failed hook Pod carried a termination message' >&2
-		fi
-		fail "blocked uninstall did not report the foreign controller binding"
-	fi
-	runtime_deployment_evidence >"$WORK_DIR/runtime-after-blocked-uninstall.json"
-	cmp "$WORK_DIR/runtime-before-blocked-uninstall.json" \
-		"$WORK_DIR/runtime-after-blocked-uninstall.json" ||
-		fail "blocked uninstall mutated a runtime Deployment before privilege preflight"
-	kube delete clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" --wait=true >/dev/null
-	FOREIGN_TEARDOWN_BINDING=
-
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null ||
-		fail "the uninstall after the foreign-binding refusal failed; its own error is above"
+		fail_uninstall "the uninstall of the upgraded release"
 	assert_release_runtime_removed
 	assert_inventory_resources_absent \
 		"$next_sequence_inventory" "$next_sequence_marker_name"
@@ -5140,7 +5097,7 @@ run_uninstall_proof() {
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null ||
-		fail "the uninstall of the release reinstalled over retained CRDs failed; its own error is above"
+		fail_uninstall "the uninstall of the release reinstalled over retained CRDs"
 	assert_release_runtime_removed
 	assert_inventory_resources_absent \
 		"$reinstalled_next_inventory" "$reinstalled_next_marker_name"
@@ -5200,7 +5157,7 @@ run_uninstall_proof() {
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null ||
-		fail "the uninstall of the exported current-release chart failed; its own error is above"
+		fail_uninstall "the uninstall of the exported current-release chart"
 	assert_release_runtime_removed
 	assert_release_sequence_candidate_residue_absent "$E2E_CURRENT_RELEASE_SEQUENCE"
 	assert_inventory_resources_absent \

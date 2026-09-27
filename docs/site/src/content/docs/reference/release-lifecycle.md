@@ -31,7 +31,7 @@ before proceeding:
 | `preflight` | Whether the install or upgrade may start at all: ownership, RBAC, namespaces, PriorityClass, resource quota |
 | `reconcile` | The CRDs themselves, against the stored schema history |
 | `verify`, `runtime-verify` | That what was applied is what runs |
-| `teardown-quiesce`, `teardown`, `teardown-retirement-final` | Uninstall, privilege teardown and the final retirement record |
+| `teardown-quiesce` | Uninstall: stop the runtime, then delete what the release keeps outside Helm's own deletion |
 
 A refusal is written to the container's termination message as well as to
 stderr, because Helm reports only that a hook Job failed: without that, an
@@ -226,50 +226,48 @@ CRDs immediately before allowing the process to start. A losing release or a
 Pod launched while Helm is repairing a drifted singleton can neither reconcile
 schemas nor patch the winning release's CA bundle.
 
-## Uninstall as retirement
+## Uninstall
 
-An uninstall returns the release activation ConfigMap to the state a fresh
-install starts from and only then deletes it. Kubernetes keeps serving a
-deleted policy parameter to the bindings that read it, so what it keeps serving
-has to be the bootstrap state; otherwise a reinstall in the same namespace
-meets guards reading the sequence the removed release last activated, and its
-first hook cannot get a Deployment past them.
+An uninstall is one pre-delete hook Job, `teardown-quiesce`, running as the
+release's CRD manager ServiceAccount. It keeps the name and arguments of the
+quiesce step it grew out of, because the admission guards that are still in
+place while it runs admit exactly that Job.
 
-Uninstall is an ordered retirement. Two release-stable validating admission
-fences are ordinary chart resources and therefore exist before an uninstall
-starts. Pre-delete replaces fence A and then fence B with the complete uninstall
-boundary before any hook Job runs.
+The Job first reads every object it is about to delete and checks each one
+against the contract this release compiles, without changing anything, so an
+inventory it would refuse to delete fails before the runtime stops. It then
+stops the runtime: it records a drain toward the active sequence in the
+release activation, which is what the retained rollout guards require before
+they admit the stop, scales both runtime Deployments to zero, and waits until
+no Pod in the namespace runs as a runtime identity. Only then does it delete
+the admission guards that fence the controller's writes, so no controller runs
+once they are gone.
 
-The broad fences constrain the controller, certificate rotator, quiesce, and
-cleanup identities; their bound TokenRequests; and the complete Job and Pod
-execution contracts used by the remaining hooks. Job and Pod status updates are
-restricted to exact Kubernetes controller, scheduler, or node principals and to
-the fields those principals legitimately own. Deleting a protected Job is
-allowed only to a principal with admission-management authority and only after
-its authenticated status contains a terminal `Complete=True` or `Failed=True`
-condition.
+It deletes, by exact name, what the release keeps outside Helm's own deletion:
+every admission guard binding, then every guard policy, the certificate
+staging Secret when the chart generates certificates, the hook identity probe
+and parent-origin readiness ConfigMaps, the release activation guard, the
+admission inventory marker, and the release activation parameter last. Each
+object is read, checked and deleted with the UID and resourceVersion of that
+read; the staging Secret is deleted by name without being read, because it
+holds a pending CA private key. An object already gone is skipped, so rerunning
+the uninstall after a failure deletes what is left.
 
-The quiesce hook verifies the complete release, admission, RBAC,
-ServiceAccount, and workload inventory before scaling the two exact runtime
-Deployments to zero, and waits until no runtime Pod remains. A separate cleanup
-identity removes only the candidate release's exact bindings and chart-created
-ServiceAccounts.
+A guard the Job has just deleted can still be cached by an API server for a
+moment, so a refusal that names a ValidatingAdmissionPolicy, a conflict, and an
+API server that does not answer are retried until the Job's own deadline. Any
+other refusal, and an object that differs from its contract, stops the Job with
+that reason in its termination message.
 
-Helm, not a Pod credential, performs every admission-policy mutation. While A
-and B remain broad, Helm replaces each original validating policy and binding
-with an exact inert marker-only form. A retry accepts only the narrowly defined
-original, retired, or temporarily absent side states reachable from that
-ordered replacement; foreign or ambiguous combinations fail closed. The final
-Job verifies all stored retired pairs before deleting the secondary markers and
-the exact release activation object, and then deletes its own cleanup
-ServiceAccount with immutable UID and resource-version preconditions.
+The release activation goes back to the state a fresh install starts from
+before it is deleted. An API server can go on serving a deleted policy
+parameter, and a reinstall in the same namespace needs what it serves to be the
+bootstrap state rather than the sequence the removed release last activated.
 
-The immutable retirement marker remains until the entire pre-delete event has
-succeeded. Helm then removes that marker and the inert retirement pairs under
-`hook-succeeded`; ordinary release deletion finally removes A and B by their
-stable manifest identities. No essential cleanup depends on a post-delete
-hook. A webhook entry an API server still caches after uninstall is an
-availability residue, not authority a retired release credential keeps.
+Helm then deletes everything else in the release. The CRDs and their objects
+stay, and so does the parameter informer anchor below. A webhook entry an API server still
+caches after the uninstall is an availability residue, not authority a
+removed release keeps.
 
 ### The parameter informer anchor
 

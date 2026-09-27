@@ -203,8 +203,6 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 		{mode: "identity-probe", flag: "--verify-controller-state=true"},
 		{mode: "reconcile", flag: "--verify-controller-state=true"},
 		{mode: "teardown-quiesce", flag: "--verify-controller-state=true"},
-		{mode: "teardown", flag: "--verify-controller-state=true"},
-		{mode: "teardown-retirement-final", flag: "--verify-controller-state=true"},
 		{mode: "image-check", flag: "--timeout=1s"},
 	}
 	for _, test := range tests {
@@ -217,11 +215,16 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 	}
 }
 
-// The two teardown proof modes and the certificate recovery proof are gone
-// with the per-API-server barriers they ran; a hook left over from an older
-// chart must be refused rather than run as something else.
+// The uninstall proof and cleanup modes and the certificate recovery proof are
+// gone with the protocol that ran them; a hook left over from an older chart
+// must be refused rather than run as something else.
 func TestRemovedProofModesAndFlagsAreRefused(t *testing.T) {
-	for _, mode := range []string{"teardown-retirement-probe-a", "teardown-retirement-gate"} {
+	for _, mode := range []string{
+		"teardown-retirement-probe-a",
+		"teardown-retirement-gate",
+		"teardown",
+		"teardown-retirement-final",
+	} {
 		err := run(context.Background(), []string{mode}, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "unsupported mode") {
 			t.Fatalf("run(%s) error = %v, want unsupported mode", mode, err)
@@ -230,53 +233,6 @@ func TestRemovedProofModesAndFlagsAreRefused(t *testing.T) {
 	err := run(context.Background(), []string{"runtime-verify", "--verify-certificate-recovery=true"}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "verify-certificate-recovery") {
 		t.Fatalf("runtime-verify with --verify-certificate-recovery error = %v, want refusal", err)
-	}
-}
-
-func TestTeardownRetirementDrainAuthorizationDistinguishesActiveAndTerminal(t *testing.T) {
-	guard := teardownRetirementManagerTestGuard()
-	draining := teardownRetirementManagerTestActivation(t, guard)
-	drainingClient := fake.NewSimpleClientset(draining).CoreV1().ConfigMaps(draining.Namespace)
-	if err := verifyTeardownRetirementDrainAuthorization(
-		context.Background(),
-		guard,
-		drainingClient,
-		crdupgrade.TeardownRetirementActive,
-	); err != nil {
-		t.Fatalf("exact draining authorization failed: %v", err)
-	}
-
-	active := draining.DeepCopy()
-	active.Data = map[string]string{
-		"active-release-sequence": "1",
-		"controller-credentials":  "active",
-	}
-	activeClient := fake.NewSimpleClientset(active).CoreV1().ConfigMaps(active.Namespace)
-	if err := verifyTeardownRetirementDrainAuthorization(
-		context.Background(),
-		guard,
-		activeClient,
-		crdupgrade.TeardownRetirementActive,
-	); err == nil || !strings.Contains(err.Error(), "want") {
-		t.Fatalf("credential-active authorization error = %v, want draining refusal", err)
-	}
-
-	terminalClient := fake.NewSimpleClientset().CoreV1().ConfigMaps(draining.Namespace)
-	if err := verifyTeardownRetirementDrainAuthorization(
-		context.Background(),
-		guard,
-		terminalClient,
-		crdupgrade.TeardownRetirementTerminal,
-	); err != nil {
-		t.Fatalf("terminal authorization failed: %v", err)
-	}
-	if err := verifyTeardownRetirementDrainAuthorization(
-		context.Background(),
-		guard,
-		terminalClient,
-		crdupgrade.TeardownRetirementPhase("unknown"),
-	); err == nil || !strings.Contains(err.Error(), "unknown teardown retirement phase") {
-		t.Fatalf("unknown phase error = %v, want refusal", err)
 	}
 }
 

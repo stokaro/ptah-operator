@@ -17,7 +17,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -31,7 +30,7 @@ import (
 
 const (
 	defaultTimeout = 2 * time.Minute
-	supportedModes = "image-check, identity-probe, preflight, reconcile, teardown-quiesce, teardown, teardown-retirement-final, verify, or runtime-verify"
+	supportedModes = "image-check, identity-probe, preflight, reconcile, teardown-quiesce, verify, or runtime-verify"
 )
 
 func main() {
@@ -118,7 +117,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	if *timeout <= 0 {
 		return fmt.Errorf("timeout must be positive")
 	}
-	if mode != "image-check" && mode != "identity-probe" && mode != "preflight" && mode != "reconcile" && mode != "teardown-quiesce" && mode != "teardown" && mode != "teardown-retirement-final" && mode != "verify" && mode != "runtime-verify" {
+	if mode != "image-check" && mode != "identity-probe" && mode != "preflight" && mode != "reconcile" && mode != "teardown-quiesce" && mode != "verify" && mode != "runtime-verify" {
 		return fmt.Errorf("unsupported mode %q: use %s", mode, supportedModes)
 	}
 	if err := validateModeFlags(mode, flags); err != nil {
@@ -475,7 +474,11 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				return nil
 			},
 		)
-	case "teardown-quiesce", "teardown", "teardown-retirement-final":
+	case "teardown-quiesce":
+		// The retained guards pin the uninstall hook's arguments, mode name
+		// included, so the one uninstall hook keeps the name of the step it
+		// began as: it stops the runtime and then deletes the retained
+		// inventory.
 		expected, expectedErr := runtimeInvariants(
 			*releaseName,
 			*releaseNamespace,
@@ -504,7 +507,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
-		err = runTeardownMode(ctx, mode, clientset, rollout, runtimeAdmissionContract)
+		err = runTeardownMode(ctx, clientset, rollout)
 	case "verify":
 		err = manager.Verify(ctx)
 	case "runtime-verify":
@@ -586,15 +589,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		return err
 	}
 	if mode == "teardown-quiesce" {
-		_, err = fmt.Fprintln(output, "release teardown inventory verified and runtime quiesced")
-		return err
-	}
-	if mode == "teardown" {
-		_, err = fmt.Fprintln(output, "release privilege revoked and admission retirement authorized")
-		return err
-	}
-	if mode == "teardown-retirement-final" {
-		_, err = fmt.Fprintln(output, "release admission retirement finalized")
+		_, err = fmt.Fprintln(output, "release runtime stopped and retained inventory deleted")
 		return err
 	}
 	if mode == "runtime-verify" {
@@ -729,242 +724,6 @@ func newRolloutGuard(
 	}
 }
 
-func runTeardownMode(
-	ctx context.Context,
-	mode string,
-	clientset kubernetes.Interface,
-	rollout *crdupgrade.RolloutGuard,
-	contract crdupgrade.RuntimeAdmissionContract,
-) error {
-	if ctx == nil || clientset == nil || rollout == nil {
-		return errors.New("teardown mode dependencies are required")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	guard, err := newConfiguredTeardownRetirementGuard(rollout, contract)
-	if err != nil {
-		return fmt.Errorf("configure teardown retirement: %w", err)
-	}
-	admission := clientset.AdmissionregistrationV1()
-	policies := admission.ValidatingAdmissionPolicies()
-	bindings := admission.ValidatingAdmissionPolicyBindings()
-	configMaps := clientset.CoreV1().ConfigMaps(rollout.ReleaseNamespace)
-	phase, err := guard.Phase(ctx, configMaps)
-	if err != nil {
-		return fmt.Errorf("derive teardown retirement phase: %w", err)
-	}
-
-	switch mode {
-	case "teardown-quiesce":
-		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, false); err != nil {
-			return fmt.Errorf("preflight teardown retirement state before quiescence: %w", err)
-		}
-		_, privilegeTeardown, err := newTeardownPhases(clientset, rollout, contract)
-		if err != nil {
-			return err
-		}
-		inventory := newWorkloadInventory(clientset, rollout)
-		if err := privilegeTeardown.Preflight(ctx); err != nil {
-			return fmt.Errorf("preflight exact privilege teardown inventory: %w", err)
-		}
-		if err := inventory.VerifyRuntimeBeforeQuiesce(ctx); err != nil {
-			return fmt.Errorf("verify pre-staged teardown workloads: %w", err)
-		}
-		if phase == crdupgrade.TeardownRetirementActive {
-			if _, err := rollout.BeginControllerCredentialDrain(ctx); err != nil {
-				return fmt.Errorf("begin teardown controller credential drain: %w", err)
-			}
-		}
-		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, true); err != nil {
-			return fmt.Errorf("verify teardown retirement state after the credential drain: %w", err)
-		}
-		if err := rollout.Quiesce(ctx); err != nil {
-			return fmt.Errorf("quiesce release runtime: %w", err)
-		}
-		if err := waitForNoProtectedRuntimePods(ctx, inventory, rollout.PollEvery); err != nil {
-			return fmt.Errorf("wait for namespace-wide runtime Pod quiescence: %w", err)
-		}
-		return nil
-
-	case "teardown":
-		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, true); err != nil {
-			return fmt.Errorf("preflight teardown retirement state before privilege removal: %w", err)
-		}
-		_, privilegeTeardown, err := newTeardownPhases(clientset, rollout, contract)
-		if err != nil {
-			return err
-		}
-		if err := privilegeTeardown.Preflight(ctx); err != nil {
-			return fmt.Errorf("preflight exact privilege teardown inventory: %w", err)
-		}
-		if rollout.CertificateRuntimeEnabled {
-			if err := crdupgrade.NewStagingSecretGuard(rollout).Cleanup(
-				ctx,
-				clientset.CoreV1().Secrets(rollout.ReleaseNamespace),
-			); err != nil {
-				return fmt.Errorf("drain certificate staging Secret before guard retirement: %w", err)
-			}
-		}
-		if err := privilegeTeardown.Teardown(ctx); err != nil {
-			return fmt.Errorf("remove release privilege: %w", err)
-		}
-		return nil
-
-	case "teardown-retirement-final":
-		if err := verifyTeardownRetirementFinalState(ctx, guard, configMaps, policies, bindings, phase); err != nil {
-			return fmt.Errorf("preflight final teardown retirement state: %w", err)
-		}
-		_, privilegeTeardown, err := newTeardownPhases(clientset, rollout, contract)
-		if err != nil {
-			return err
-		}
-		if err := privilegeTeardown.Preflight(ctx); err != nil {
-			return fmt.Errorf("preflight exact privilege teardown inventory: %w", err)
-		}
-		convergenceMarker, err := crdupgrade.NewAdmissionConvergenceGuard(rollout).MarkerTarget()
-		if err != nil {
-			return fmt.Errorf("derive admission convergence retirement marker: %w", err)
-		}
-		readinessMarker, err := crdupgrade.NewParentWorkloadGuard(rollout).ReadinessMarkerTarget()
-		if err != nil {
-			return fmt.Errorf("derive parent origin readiness retirement marker: %w", err)
-		}
-		probeMarker, err := crdupgrade.HookIdentityProbeMarkerTarget(rollout)
-		if err != nil {
-			return fmt.Errorf("derive hook identity probe retirement marker: %w", err)
-		}
-		finalizer, err := newTeardownRetirementFinalizer(configMaps, guard, convergenceMarker, readinessMarker, probeMarker)
-		if err != nil {
-			return fmt.Errorf("configure teardown retirement finalizer: %w", err)
-		}
-		if err := finalizer.Finalize(ctx); err != nil {
-			return fmt.Errorf("finalize teardown retirement: %w", err)
-		}
-		if err := privilegeTeardown.RetireCleanupServiceAccount(ctx); err != nil {
-			return fmt.Errorf("retire cleanup ServiceAccount: %w", err)
-		}
-		return nil
-
-	default:
-		return fmt.Errorf("unsupported teardown mode %q", mode)
-	}
-}
-
-func verifyTeardownRetirementPhase(
-	ctx context.Context,
-	guard *crdupgrade.TeardownRetirementGuard,
-	activation crdupgrade.TeardownRetirementActivationReader,
-	want crdupgrade.TeardownRetirementPhase,
-) error {
-	phase, err := guard.Phase(ctx, activation)
-	if err != nil {
-		return err
-	}
-	if phase != want {
-		return fmt.Errorf("teardown retirement phase changed from %q to %q", want, phase)
-	}
-	return nil
-}
-
-func verifyTeardownRetirementTransitionState(
-	ctx context.Context,
-	guard *crdupgrade.TeardownRetirementGuard,
-	activation crdupgrade.TeardownRetirementActivationReader,
-	policies crdupgrade.ValidatingAdmissionPolicyReader,
-	bindings crdupgrade.ValidatingAdmissionPolicyBindingReader,
-	phase crdupgrade.TeardownRetirementPhase,
-	requireDrain bool,
-) error {
-	if err := verifyTeardownRetirementPhase(ctx, guard, activation, phase); err != nil {
-		return err
-	}
-	if err := guard.VerifyOriginalFences(
-		ctx,
-		policies,
-		bindings,
-		crdupgrade.TeardownFenceA,
-		crdupgrade.TeardownFenceB,
-	); err != nil {
-		return err
-	}
-	if err := verifyTeardownRetirementTransitionInventory(ctx, guard, activation, policies, bindings, phase, requireDrain); err != nil {
-		return err
-	}
-	return verifyTeardownRetirementPhase(ctx, guard, activation, phase)
-}
-
-func verifyTeardownRetirementTransitionInventory(
-	ctx context.Context,
-	guard *crdupgrade.TeardownRetirementGuard,
-	activation crdupgrade.TeardownRetirementActivationReader,
-	policies crdupgrade.ValidatingAdmissionPolicyReader,
-	bindings crdupgrade.ValidatingAdmissionPolicyBindingReader,
-	phase crdupgrade.TeardownRetirementPhase,
-	requireDrain bool,
-) error {
-	if requireDrain {
-		if err := verifyTeardownRetirementDrainAuthorization(ctx, guard, activation, phase); err != nil {
-			return err
-		}
-	}
-	_, err := guard.PreflightPairsForPhase(ctx, policies, bindings, phase)
-	return err
-}
-
-func verifyTeardownRetirementDrainAuthorization(
-	ctx context.Context,
-	guard *crdupgrade.TeardownRetirementGuard,
-	activation crdupgrade.TeardownRetirementActivationReader,
-	phase crdupgrade.TeardownRetirementPhase,
-) error {
-	switch phase {
-	case crdupgrade.TeardownRetirementTerminal:
-		return nil
-	case crdupgrade.TeardownRetirementActive:
-	default:
-		return fmt.Errorf("unknown teardown retirement phase %q", phase)
-	}
-	object, err := activation.Get(ctx, crdupgrade.ReleaseActivationName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("get teardown retirement drain authorization: %w", err)
-	}
-	return guard.VerifyFinalActivation(object)
-}
-
-func verifyTeardownRetirementFinalState(
-	ctx context.Context,
-	guard *crdupgrade.TeardownRetirementGuard,
-	activation crdupgrade.TeardownRetirementActivationReader,
-	policies crdupgrade.ValidatingAdmissionPolicyReader,
-	bindings crdupgrade.ValidatingAdmissionPolicyBindingReader,
-	phase crdupgrade.TeardownRetirementPhase,
-) error {
-	if err := verifyTeardownRetirementPhase(ctx, guard, activation, phase); err != nil {
-		return err
-	}
-	if err := verifyTeardownRetirementDrainAuthorization(ctx, guard, activation, phase); err != nil {
-		return err
-	}
-	if err := guard.VerifyOriginalFences(
-		ctx,
-		policies,
-		bindings,
-		crdupgrade.TeardownFenceA,
-		crdupgrade.TeardownFenceB,
-	); err != nil {
-		return err
-	}
-	if err := guard.VerifyRetiredPairs(ctx, policies, bindings); err != nil {
-		return err
-	}
-	if err := verifyTeardownRetirementDrainAuthorization(ctx, guard, activation, phase); err != nil {
-		return err
-	}
-	return verifyTeardownRetirementPhase(ctx, guard, activation, phase)
-}
-
 func validateModeFlags(mode string, flags *flag.FlagSet) error {
 	allowed := map[string]struct{}{}
 	switch mode {
@@ -973,7 +732,7 @@ func validateModeFlags(mode string, flags *flag.FlagSet) error {
 		allowed["manager-image"] = struct{}{}
 	case "verify":
 		allowed["timeout"] = struct{}{}
-	case "identity-probe", "preflight", "reconcile", "teardown-quiesce", "teardown", "teardown-retirement-final", "runtime-verify":
+	case "identity-probe", "preflight", "reconcile", "teardown-quiesce", "runtime-verify":
 		for _, name := range []string{
 			"timeout",
 			"release-name",
