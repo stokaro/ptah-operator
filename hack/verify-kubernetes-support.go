@@ -4243,7 +4243,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				// the hook itself, before anything changes.
 				exactSourceLineSequence("chart and image of different releases refused before any change", []string{
 					`UPGRADE_VALUES_FILE=$mismatched_values_file`,
-					`expect_upgrade_failure_without_deployment_change "current chart with the next release manager image"`,
+					`expect_mismatched_pairing_refused "current chart with the next release manager image"`,
 					`for crd_name in \`,
 				}),
 				exactSourceLineSequence("successor read-only Job dispatch before the late failure", []string{

@@ -4781,7 +4781,7 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD mismatched chart and image upgrade removed",
 			child:       "crd-upgrade",
-			old:         "\texpect_upgrade_failure_without_deployment_change \"current chart with the next release manager image\"\n",
+			old:         "\texpect_mismatched_pairing_refused \"current chart with the next release manager image\"\n",
 			replacement: "\t: # mismatched pairing accepted\n",
 			wantError:   "chart and image of different releases refused before any change",
 		},
