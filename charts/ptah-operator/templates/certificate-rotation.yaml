@@ -205,9 +205,6 @@ kind: Deployment
 metadata:
   name: {{ $rotatorName }}
   namespace: {{ .Release.Namespace }}
-  annotations:
-    operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: certificate-rotation
@@ -223,9 +220,6 @@ spec:
       app.kubernetes.io/component: certificate-rotation
   template:
     metadata:
-      annotations:
-        operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-        operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
       labels:
         {{- include "ptah-operator.labels" . | nindent 8 }}
         app.kubernetes.io/component: certificate-rotation

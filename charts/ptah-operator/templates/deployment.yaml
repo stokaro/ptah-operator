@@ -2,11 +2,6 @@
 {{- include "ptah-operator.validatePtahVersion" . }}
 {{- include "ptah-operator.validateLeaderElection" . }}
 {{- include "ptah-operator.validateAdmissionSingleton" . }}
-{{- range $key := list "operator.ptah.run/controller-state-version" "operator.ptah.run/release-sequence" }}
-{{- if hasKey (default (dict) $.Values.podAnnotations) $key }}
-{{- fail (printf "podAnnotations must not override %s" $key) }}
-{{- end }}
-{{- end }}
 {{- range $key := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" }}
 {{- if hasKey (default (dict) $.Values.podLabels) $key }}
 {{- fail (printf "podLabels must not override reserved selector label %s" $key) }}
@@ -17,9 +12,6 @@ kind: Deployment
 metadata:
   name: {{ include "ptah-operator.fullname" . }}
   namespace: {{ .Release.Namespace }}
-  annotations:
-    operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
@@ -40,12 +32,10 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- with .Values.podAnnotations }}
       annotations:
-        operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-        operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
-        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-        {{- end }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "ptah-operator.serviceAccountName" . }}
       automountServiceAccountToken: false
