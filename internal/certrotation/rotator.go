@@ -43,6 +43,9 @@ const (
 	minimumLeaseDuration  = 30 * time.Second
 	maximumValidity       = 20 * 365 * 24 * time.Hour
 	maximumOperationTime  = 24 * time.Hour
+	// minimumCASwitchDelay keeps the overlap long enough for every API server
+	// to pick up a webhook configuration change, which takes seconds.
+	minimumCASwitchDelay = time.Minute
 )
 
 // Config names the exact objects in one chart-managed certificate lifecycle.
@@ -1071,8 +1074,8 @@ func validateConfig(config Config) error {
 	}
 	// A transition starts once the CA or the serving certificate is within the
 	// renewal threshold of expiry, so the switch has to fit inside it.
-	if config.CASwitchDelay <= 0 || config.CASwitchDelay >= config.RenewalThreshold {
-		return errors.New("CA switch delay must be positive and shorter than the renewal threshold")
+	if config.CASwitchDelay < minimumCASwitchDelay || config.CASwitchDelay >= config.RenewalThreshold {
+		return fmt.Errorf("CA switch delay must be at least %s and shorter than the renewal threshold", minimumCASwitchDelay)
 	}
 	if config.ProbeInterval <= 0 || config.ProbeTimeout <= config.ProbeInterval || config.ProbeTimeout > maximumOperationTime {
 		return errors.New("probe timeout must exceed the positive probe interval and be at most 24 hours")

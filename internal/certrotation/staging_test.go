@@ -274,6 +274,11 @@ func TestCertificateRotationConfigRequiresStagingBoundaries(t *testing.T) {
 			mutate: func(config *Config) { config.CASwitchDelay = config.RenewalThreshold },
 			want:   "CA switch delay",
 		},
+		{
+			name:   "CA switch delay one second under the floor",
+			mutate: func(config *Config) { config.CASwitchDelay = minimumCASwitchDelay - time.Second },
+			want:   "CA switch delay must be at least 1m0s",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -285,6 +290,11 @@ func TestCertificateRotationConfigRequiresStagingBoundaries(t *testing.T) {
 				t.Fatalf("New() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+	atFloor := testConfig()
+	atFloor.CASwitchDelay = minimumCASwitchDelay
+	if _, err := New(fake.NewClientset(), atFloor); err != nil {
+		t.Fatalf("New() rejected a CA switch delay at the floor: %v", err)
 	}
 }
 
@@ -1290,8 +1300,7 @@ func TestPrimarySecretCreateAcceptsOnlyExactLiveObject(t *testing.T) {
 				return true, nil, errors.New("injected response loss")
 			})
 
-			switchAt := mustExpandCATransition(t, client, config, now, &recordingProber{})
-			_, err := mustNewTestRotator(t, client, config, switchAt, &recordingProber{}).Run(context.Background())
+			_, err := mustNewTestRotator(t, client, config, now, &recordingProber{}).Run(context.Background())
 			if (err != nil) != test.wantError {
 				t.Fatalf("Run() error = %v, wantError %v", err, test.wantError)
 			}

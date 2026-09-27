@@ -215,6 +215,16 @@ switched_after_delay() {
 	' >/dev/null
 }
 
+# rotator_container_started_at prints when a Pod's certificate-rotator
+# container last started, from the Pod's own status.
+rotator_container_started_at() {
+	jq -e -r '
+		[.status.containerStatuses[]? | select(.name == "certificate-rotator") |
+			.state.running.startedAt // empty] |
+		if length == 1 then .[0] else empty end
+	' "$1"
+}
+
 # primary_secret_state prints the generated Secret's ca.crt and
 # resourceVersion, or "absent" when the Secret does not exist.
 primary_secret_state() {
@@ -269,7 +279,7 @@ assert_entry_trusts() {
 		fail "caBundle for ${trust_webhook} is not valid base64"
 	for trusted_certificate in "$@"; do
 		bundle_contains_certificate "$trust_file" "$trusted_certificate" ||
-			fail "caBundle for ${trust_webhook} does not trust ${trusted_certificate##*/} while the switch waits"
+			fail "caBundle for ${trust_webhook} does not trust ${trusted_certificate##*/}"
 	done
 }
 
@@ -278,7 +288,8 @@ assert_entry_trusts() {
 # being served and the staged CA while the generated Secret still held its
 # pre-switch state. Reading the Secret before and after the entries brackets
 # that read: the old CA leaves an entry only after the Secret switches. It
-# sets EXPANDED_AT and writes the staged CA to STAGED_CA_FILE.
+# sets EXPANDED_AT and writes the staged CA and serving certificate to
+# STAGED_CA_FILE and STAGED_CERT_FILE.
 observe_expanded_trust() {
 	observed_stage=$1
 	serving_ca_file=$2
@@ -301,15 +312,14 @@ observe_expanded_trust() {
 		fail "${observed_stage}: could not read the staged CA"
 	openssl verify -CAfile "$STAGED_CA_FILE" "$STAGED_CA_FILE" >/dev/null 2>&1 ||
 		fail "${observed_stage}: the staged CA is not a valid self-signed root"
+	secret_field_bytes "$STAGING_OBSERVATION" candidate.tls.crt >"$STAGED_CERT_FILE" ||
+		fail "${observed_stage}: could not read the staged serving certificate"
+	openssl verify -CAfile "$STAGED_CA_FILE" "$STAGED_CERT_FILE" >/dev/null 2>&1 ||
+		fail "${observed_stage}: the staged serving certificate is not issued by the staged CA"
 
 	before_state=$(primary_secret_state)
-	if [ "$pre_switch_ca" = absent ]; then
-		[ "$before_state" = absent ] ||
-			fail "${observed_stage}: the generated Secret existed before the switch was due"
-	else
-		[ "${before_state%% *}" = "$pre_switch_ca" ] ||
-			fail "${observed_stage}: the generated Secret switched before its expansion could be read"
-	fi
+	[ "${before_state%% *}" = "$pre_switch_ca" ] ||
+		fail "${observed_stage}: the generated Secret switched before its expansion could be read"
 	while read -r entry_kind entry_configuration entry_name; do
 		assert_entry_trusts "$entry_kind" "$entry_configuration" "$entry_name" \
 			"$serving_ca_file" "$STAGED_CA_FILE"
@@ -692,13 +702,15 @@ assert_approval_admission_callable "after the Helm upgrade"
 
 # A CA transition publishes the old and the new CA in every managed entry,
 # records when, and switches the generated Secret no earlier than the
-# configured delay after that. The rows below prove that order from the
-# objects' own timestamps.
+# configured delay after that. The corrupt-CA row proves that order from the
+# objects' own timestamps; the missing-Secret row proves a deleted Secret
+# does not wait.
 CA_SWITCH_DELAY_SECONDS=$(ca_switch_delay_seconds)
 STAGING_OBSERVATION=$UPGRADE_WORK_DIR/staging-observation.json
 PRIMARY_OBSERVATION=$UPGRADE_WORK_DIR/primary-observation.json
 PRIMARY_OBSERVATION_ERROR=$UPGRADE_WORK_DIR/primary-observation.err
 STAGED_CA_FILE=$UPGRADE_WORK_DIR/staged-ca.pem
+STAGED_CERT_FILE=$UPGRADE_WORK_DIR/staged-cert.pem
 
 # Corrupt ca.crt while leaving the serving leaf and key intact. One malformed
 # webhook entry proves that recovery filters candidates independently and can
@@ -731,6 +743,7 @@ NEW_ROTATOR_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPAC
 	get pod "$NEW_ROTATOR_POD" -o jsonpath='{.metadata.uid}')
 [ "$NEW_ROTATOR_UID" != "$OLD_ROTATOR_UID" ] || fail "certificate rotator Pod was not replaced"
 observe_expanded_trust "corrupt-CA recovery" "$CURRENT_CA_FILE" "$BROKEN_CA_BUNDLE"
+assert_approval_admission_callable "while the CA switch waits"
 
 rotation_deadline=$(($(date +%s) + 660))
 rotation_ready=0
@@ -752,10 +765,16 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	fail "could not read the switched generated Secret"
 printf '%s' "$NEW_CA" | openssl base64 -d -A | cmp -s - "$STAGED_CA_FILE" ||
 	fail "the switch installed a CA other than the one staged at ${EXPANDED_AT}"
+# The serving certificate must still be the staged one, so the rotator's last
+# write of tls.crt is the switch itself and not a later renewal that would
+# hide an early switch.
+secret_field_bytes "$PRIMARY_OBSERVATION" tls.crt | cmp -s - "$STAGED_CERT_FILE" ||
+	fail "the generated Secret serves a certificate other than the one staged at ${EXPANDED_AT}"
 SWITCHED_AT=$(rotator_certificate_write_time "$PRIMARY_OBSERVATION") ||
 	fail "the generated Secret does not record exactly one rotator write of its serving certificate"
 switched_after_delay "$SWITCHED_AT" "$EXPANDED_AT" "$CA_SWITCH_DELAY_SECONDS" ||
 	fail "the rotator switched the generated Secret at ${SWITCHED_AT}, less than ${CA_SWITCH_DELAY_SECONDS}s after the expansion it recorded at ${EXPANDED_AT}"
+assert_approval_admission_callable "after the corrupt-CA recovery"
 if ! ROTATION_LOGS=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	logs "$NEW_ROTATOR_POD" 2>/dev/null); then
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" describe \
@@ -793,6 +812,40 @@ ROTATOR_UID_BEFORE_RECREATE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERA
 	get pod "$ROTATOR_POD_BEFORE_RECREATE" -o jsonpath='{.metadata.uid}')
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	delete pod "$ROTATOR_POD_BEFORE_RECREATE" --wait=false >/dev/null
+
+# A missing Secret is already broken: a manager Pod that restarts cannot mount
+# its certificate. The rotator publishes the new CA in every managed entry and
+# recreates the Secret in the same pass, without waiting out the switch delay.
+# Watch for the Secret from the moment the rotator is replaced, so the entries
+# are read as close to its return as this harness can.
+first_seen_deadline=$(($(date +%s) + 660))
+first_seen=0
+while [ "$(date +%s)" -lt "$first_seen_deadline" ]; do
+	if kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+		get secret "$SECRET_NAME" -o json >"$PRIMARY_OBSERVATION" 2>/dev/null; then
+		first_seen=1
+		break
+	fi
+	sleep 1
+done
+[ "$first_seen" -eq 1 ] || fail "certificate rotator did not recreate the deleted Secret within 660 seconds"
+FIRST_SEEN_CA_FILE=$UPGRADE_WORK_DIR/first-seen-ca.pem
+secret_field_bytes "$PRIMARY_OBSERVATION" ca.crt >"$FIRST_SEEN_CA_FILE" ||
+	fail "could not read the recreated Secret's CA"
+openssl verify -CAfile "$FIRST_SEEN_CA_FILE" "$FIRST_SEEN_CA_FILE" >/dev/null 2>&1 ||
+	fail "the recreated Secret's CA is not a valid self-signed root"
+RECREATED_AT=$(jq -r '.metadata.creationTimestamp' "$PRIMARY_OBSERVATION")
+while read -r entry_kind entry_configuration entry_name; do
+	assert_entry_trusts "$entry_kind" "$entry_configuration" "$entry_name" "$FIRST_SEEN_CA_FILE"
+done <<EOF
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mapproval.operator.ptah.run
+mutatingwebhookconfiguration $MUTATING_CONFIGURATION mmigrationapproval.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vapproval.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vmigrationapproval.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vpodintent.operator.ptah.run
+validatingwebhookconfiguration $VALIDATING_CONFIGURATION vcontrollerwrite.operator.ptah.run
+EOF
+
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$ROTATOR_DEPLOYMENT" --timeout=5m >/dev/null; then
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" describe \
@@ -800,16 +853,20 @@ if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout st
 	fail "certificate rotator Deployment could not restart with a missing TLS Secret"
 fi
 ROTATOR_POD_AFTER_RECREATE=$(live_pod_name certificate-rotation)
-ROTATOR_UID_AFTER_RECREATE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-	get pod "$ROTATOR_POD_AFTER_RECREATE" -o jsonpath='{.metadata.uid}')
+ROTATOR_POD_OBSERVATION=$UPGRADE_WORK_DIR/rotator-pod-after-recreate.json
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	get pod "$ROTATOR_POD_AFTER_RECREATE" -o json >"$ROTATOR_POD_OBSERVATION" ||
+	fail "could not read the replacement certificate rotator Pod"
+ROTATOR_UID_AFTER_RECREATE=$(jq -r '.metadata.uid' "$ROTATOR_POD_OBSERVATION")
 [ "$ROTATOR_UID_AFTER_RECREATE" != "$ROTATOR_UID_BEFORE_RECREATE" ] ||
 	fail "certificate rotator Pod was not replaced for missing-Secret recovery"
-# Running manager Pods keep serving the certificate the previous row issued,
-# so the recreated Secret waits out the switch delay as well.
-RECOVERED_CA_FILE=$UPGRADE_WORK_DIR/recovered-ca.pem
-printf '%s' "$NEW_CA" | openssl base64 -d -A >"$RECOVERED_CA_FILE" ||
-	fail "the recovered CA is not valid base64"
-observe_expanded_trust "missing-Secret recovery" "$RECOVERED_CA_FILE" absent
+ROTATOR_STARTED_AT=$(rotator_container_started_at "$ROTATOR_POD_OBSERVATION") ||
+	fail "the replacement certificate rotator Pod does not record when its rotator container started"
+# Both instants come from the objects: the rotator container's start and the
+# Secret's creation. A recreation that waited out the delay lands after both.
+if switched_after_delay "$RECREATED_AT" "$ROTATOR_STARTED_AT" "$CA_SWITCH_DELAY_SECONDS"; then
+	fail "the rotator recreated the generated Secret at ${RECREATED_AT}, ${CA_SWITCH_DELAY_SECONDS}s or more after its container started at ${ROTATOR_STARTED_AT}; a missing Secret must not wait out the switch delay"
+fi
 
 recreate_deadline=$(($(date +%s) + 660))
 RECREATED_SECRET_JSON=
@@ -847,11 +904,8 @@ while [ "$(date +%s)" -lt "$recreate_deadline" ]; do
 done
 [ "$recreate_ready" -eq 1 ] ||
 	fail "certificate rotator did not recreate the deleted Secret with the exact recovery contract"
-printf '%s' "$RECREATED_CA" | openssl base64 -d -A | cmp -s - "$STAGED_CA_FILE" ||
-	fail "the recreated Secret carries a CA other than the one staged at ${EXPANDED_AT}"
-RECREATED_AT=$(printf '%s' "$RECREATED_SECRET_JSON" | jq -r '.metadata.creationTimestamp')
-switched_after_delay "$RECREATED_AT" "$EXPANDED_AT" "$CA_SWITCH_DELAY_SECONDS" ||
-	fail "the rotator recreated the generated Secret at ${RECREATED_AT}, less than ${CA_SWITCH_DELAY_SECONDS}s after the expansion it recorded at ${EXPANDED_AT}"
+printf '%s' "$RECREATED_CA" | openssl base64 -d -A | cmp -s - "$FIRST_SEEN_CA_FILE" ||
+	fail "the recreated Secret's CA changed after it was first seen"
 
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$DEPLOYMENT" --timeout=5m >/dev/null ||
@@ -860,6 +914,7 @@ MUTATING_CA=$(uniform_service_bundle mutatingwebhookconfiguration "$MUTATING_CON
 VALIDATING_CA=$(uniform_service_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION")
 [ "$MUTATING_CA" = "$RECREATED_CA" ] || fail "mutating webhook trust did not contract after Secret recreation"
 [ "$VALIDATING_CA" = "$RECREATED_CA" ] || fail "validating webhook trust did not contract after Secret recreation"
+assert_approval_admission_callable "after the Secret recreation"
 
 if ! RECREATE_LOGS=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	logs "$ROTATOR_POD_AFTER_RECREATE" 2>/dev/null); then

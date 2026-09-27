@@ -41,10 +41,11 @@ operator is told an uninstall was refused and never why.
 at a time, serialized by a Lease of its own: it issues or renews the CA
 through a staged transition, issues the serving certificate, repairs the trust
 bundles on both webhook configurations, and probes every endpoint directly to
-confirm the replacement is being served before it adopts it. A CA transition
-publishes the old and the new CA side by side, switches the serving certificate
-no earlier than a configured delay later, and withdraws the old CA once every
-endpoint serves the new certificate; each step is recorded before the next.
+confirm the replacement is being served before it adopts it. A planned CA
+renewal publishes the old and the new CA side by side, switches the serving
+certificate no earlier than a configured delay later, and withdraws the old CA
+once every endpoint serves the new certificate; each step is recorded before
+the next. A missing Secret is recreated without the delay.
 The manager never receives permission to read the Secret this writes.
 
 ## What the CRD hook does

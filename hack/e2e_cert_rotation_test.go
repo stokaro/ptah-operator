@@ -252,6 +252,47 @@ func TestCertificateE2ERotatorCertificateWriteTime(t *testing.T) {
 	}
 }
 
+func TestCertificateE2ERotatorContainerStartedAt(t *testing.T) {
+	t.Parallel()
+	status := func(name string, state map[string]any) map[string]any {
+		return map[string]any{"name": name, "state": state}
+	}
+	running := map[string]any{"running": map[string]any{"startedAt": "2026-09-26T12:00:00Z"}}
+	for _, test := range []struct {
+		name     string
+		statuses []any
+		want     bool
+	}{
+		{name: "rotator running", want: true, statuses: []any{
+			status("certificate-rotator", running),
+		}},
+		{name: "rotator waiting", statuses: []any{
+			status("certificate-rotator", map[string]any{"waiting": map[string]any{"reason": "ContainerCreating"}}),
+		}},
+		{name: "rotator terminated", statuses: []any{
+			status("certificate-rotator", map[string]any{"terminated": map[string]any{"startedAt": "2026-09-26T12:00:00Z"}}),
+		}},
+		{name: "another container running", statuses: []any{status("verify-candidate-runtime", running)}},
+		{name: "two rotator statuses", statuses: []any{
+			status("certificate-rotator", running), status("certificate-rotator", running),
+		}},
+		{name: "no status"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newCertificateShellFixture(t)
+			fixture.writeJSON("pod.json", map[string]any{"status": map[string]any{"containerStatuses": test.statuses}})
+			output, err := fixture.run("rotator_container_started_at \"$UPGRADE_WORK_DIR/pod.json\"\n")
+			if (err == nil) != test.want {
+				t.Fatalf("accepted = %v, output %q", err == nil, output)
+			}
+			if test.want && strings.TrimSpace(output) != "2026-09-26T12:00:00Z" {
+				t.Fatalf("start time = %q", output)
+			}
+		})
+	}
+}
+
 func TestCertificateE2ESwitchedAfterDelay(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

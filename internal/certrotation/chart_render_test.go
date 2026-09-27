@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"io"
 	"maps"
 	"os"
@@ -522,7 +523,7 @@ func TestCASwitchDelayRendersFromTheIntervalUnlessSet(t *testing.T) {
 	}{
 		{name: "default", want: "--ca-switch-delay=6h"},
 		{name: "interval only", args: []string{"--set-string", "certificateRotation.interval=3h"}, want: "--ca-switch-delay=3h"},
-		{name: "explicit delay", args: []string{"--set-string", "certificateRotation.caSwitchDelay=30s"}, want: "--ca-switch-delay=30s"},
+		{name: "explicit delay", args: []string{"--set-string", "certificateRotation.caSwitchDelay=90s"}, want: "--ca-switch-delay=90s"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -546,16 +547,28 @@ func TestCASwitchDelayRendersFromTheIntervalUnlessSet(t *testing.T) {
 	}
 }
 
+// renewalThresholdRefusal is what the chart says when the renewal threshold is
+// shorter than the bootstrap CA it generates, which
+// TestGeneratedCertificateLifecycleRender pins to two days.
+const renewalThresholdRefusal = "certificateRotation.renewalThreshold must be at least 48h"
+
 func TestCertificateRotationValueValidation(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		flag    string
 		setting string
+		// want, when set, is the refusal the render must name, for a value
+		// the schema admits and only a template refuses.
+		want string
 	}{
 		{flag: "--set-string", setting: "certificateRotation.probeTimeout=0s"},
 		{flag: "--set-string", setting: "certificateRotation.interval=0s"},
 		{flag: "--set-string", setting: "certificateRotation.caSwitchDelay=0s"},
 		{flag: "--set-string", setting: "certificateRotation.caSwitchDelay=soon"},
+		{flag: "--set-string", setting: "certificateRotation.caSwitchDelay=59s"},
+		{flag: "--set-string", setting: "certificateRotation.caSwitchDelay=59999ms"},
+		{flag: "--set-string", setting: "certificateRotation.renewalThreshold=47h", want: renewalThresholdRefusal},
+		{flag: "--set-string", setting: "certificateRotation.renewalThreshold=172799s", want: renewalThresholdRefusal},
 		{flag: "--set-string", setting: "certificateRotation.operationTimeout=0s"},
 		{flag: "--set-string", setting: "certificateRotation.retryInitial=0s"},
 		{flag: "--set-string", setting: "certificateRotation.retryMax=0s"},
@@ -569,13 +582,40 @@ func TestCertificateRotationValueValidation(t *testing.T) {
 		{flag: "--set-string", setting: "webhook.existingSecret=Bad_Name"},
 	} {
 		t.Run(test.setting, func(t *testing.T) {
-			if _, err := renderChartCommand(t, test.flag, test.setting); err == nil {
+			_, err := renderChartCommand(t, test.flag, test.setting)
+			if err == nil {
 				t.Fatalf("Helm accepted invalid value %q", test.setting)
+			}
+			if test.want == "" {
+				return
+			}
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) || !strings.Contains(string(exitError.Stderr), test.want) {
+				t.Fatalf("Helm refused %q with %v, want a refusal naming %q", test.setting, renderRefusal(err), test.want)
 			}
 		})
 	}
 	if _, err := renderChartCommand(t, "--set", "certificateRotation.candidatePort=9443"); err != nil {
 		t.Fatalf("Helm rejected a candidate listener port reused only by a different Pod: %v", err)
+	}
+	for _, setting := range []string{
+		"certificateRotation.caSwitchDelay=60s",
+		"certificateRotation.caSwitchDelay=1m",
+		"certificateRotation.renewalThreshold=48h",
+		"certificateRotation.renewalThreshold=172800s",
+	} {
+		if _, err := renderChartCommand(t, "--set-string", setting); err != nil {
+			t.Errorf("Helm rejected the boundary value %q: %v", setting, err)
+		}
+	}
+	// With the built-in lifecycle off there is no bootstrap CA to replace,
+	// so a short threshold is not the chart's concern.
+	if _, err := renderChartCommand(t,
+		"--set-string", "certificateRotation.renewalThreshold=24h",
+		"--set-string", "webhook.existingSecret=provided-webhook-cert",
+		"--set-string", "webhook.caBundle="+base64.StdEncoding.EncodeToString([]byte("provided-ca")),
+	); err != nil {
+		t.Errorf("Helm rejected a short threshold without the built-in lifecycle: %v", err)
 	}
 }
 
@@ -858,6 +898,16 @@ func renderChartInNamespace(t *testing.T, namespace string, additionalArgs ...st
 		objects = append(objects, object)
 	}
 	return objects
+}
+
+// renderRefusal returns what Helm printed when it refused a render, or the
+// error itself when Helm did not run to a refusal.
+func renderRefusal(err error) string {
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return strings.TrimSpace(string(exitError.Stderr))
+	}
+	return err.Error()
 }
 
 func renderChartCommand(t *testing.T, additionalArgs ...string) ([]byte, error) {
