@@ -53,9 +53,13 @@ structural form: Jobs, plan chunks, schema plans and migration plans, plus a
 fifth policy over `PtahSchema` and `PtahMigration` updates.
 One policy per kind avoids cross-type CEL assumptions. The Job policy admits a
 Job that satisfies the schema shape or the migration shape and nothing else.
-The policies are ordinary release objects: each carries the release's manager
-image and controller-state version as literals, and an upgrade updates it in
-place, so a Job or a plan stamped by another manager release is refused.
+The policies are ordinary release objects, and an upgrade updates them in
+place. The Job, schema plan and migration plan policies carry the release's
+manager image and controller-state version as literals, so a Job or a plan
+stamped by another manager release is refused. The chunk policy carries
+neither: a chunk is bound to its plan by name and owner, and the plan names
+the manager. Nor does the policy over `PtahSchema` and `PtahMigration`
+updates, which judges resources a person owns and no manager stamps.
 
 **Webhooks** perform the stronger semantic check by reading the owning resource
 and plan and reconstructing the exact expected object. Six ship:

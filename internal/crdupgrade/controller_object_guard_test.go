@@ -103,13 +103,15 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			if binding.Spec.ParamRef != nil {
 				t.Fatalf("controller object binding names a parameter: %#v", binding.Spec.ParamRef)
 			}
-			if !reflect.DeepEqual(native.Spec.Variables, controllerObjectReleaseVariables(guard.ManagerImage, guard.ControllerStateVersion)) {
-				t.Fatalf("controller object release variables differ from the exact contract: %#v", native.Spec.Variables)
-			}
-			wantVariables := []admissionregistrationv1.Variable{
-				{Name: "releaseControllerStateString", Expression: strconv.Quote(strconv.Itoa(int(guard.ControllerStateVersion)))},
-				{Name: "releaseControllerState", Expression: strconv.Itoa(int(guard.ControllerStateVersion))},
-				{Name: "releaseControllerImage", Expression: strconv.Quote(guard.ManagerImage)},
+			// A chunk is bound to its plan, which names the manager; the chunk
+			// guard carries no release value it would not read.
+			var wantVariables []admissionregistrationv1.Variable
+			if entry.component != controllerChunkWriteGuardComponent {
+				wantVariables = []admissionregistrationv1.Variable{
+					{Name: "releaseControllerStateString", Expression: strconv.Quote(strconv.Itoa(int(guard.ControllerStateVersion)))},
+					{Name: "releaseControllerState", Expression: strconv.Itoa(int(guard.ControllerStateVersion))},
+					{Name: "releaseControllerImage", Expression: strconv.Quote(guard.ManagerImage)},
+				}
 			}
 			if !reflect.DeepEqual(native.Spec.Variables, wantVariables) {
 				t.Fatalf("controller object release variables = %#v, want the release's literals %#v", native.Spec.Variables, wantVariables)

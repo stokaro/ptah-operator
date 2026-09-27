@@ -54,10 +54,10 @@
       (dict "expression" `dyn(object).spec.migrations.size() >= 1 && dyn(object).spec.migrations.size() <= 256 && dyn(object).spec.migrations.all(migration, migration.version >= 1 && migration.checksum != "" && migration.checksum.size() <= 128 && (!has(migration.transactionMode) || migration.transactionMode in ["file", "none"]))` "message" $migrationPlanMessage)
       (dict "expression" `!has(dyn(object).status)` "message" $migrationPlanMessage) -}}
 {{- $entries := list
-      (dict "name" (include "ptah-operator.controllerJobWriteGuardPolicyName" .) "component" "controller-job-write-guard" "apiGroups" (list "batch") "apiVersions" (list "v1") "resource" "jobs" "operations" (list "CREATE" "UPDATE") "denialMessage" $jobMessage "validations" $jobValidations)
-      (dict "name" (include "ptah-operator.controllerChunkWriteGuardPolicyName" .) "component" "controller-chunk-write-guard" "apiGroups" (list "") "apiVersions" (list "v1") "resource" "configmaps" "operations" (list "CREATE") "denialMessage" $chunkMessage "validations" $chunkValidations)
-      (dict "name" (include "ptah-operator.controllerPlanWriteGuardPolicyName" .) "component" "controller-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahschemaplans" "operations" (list "CREATE") "denialMessage" $planMessage "validations" $planValidations)
-      (dict "name" (include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" .) "component" "controller-migration-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahmigrationplans" "operations" (list "CREATE") "denialMessage" $migrationPlanMessage "validations" $migrationPlanValidations) -}}
+      (dict "name" (include "ptah-operator.controllerJobWriteGuardPolicyName" .) "component" "controller-job-write-guard" "apiGroups" (list "batch") "apiVersions" (list "v1") "resource" "jobs" "operations" (list "CREATE" "UPDATE") "denialMessage" $jobMessage "validations" $jobValidations "releaseValues" true)
+      (dict "name" (include "ptah-operator.controllerChunkWriteGuardPolicyName" .) "component" "controller-chunk-write-guard" "apiGroups" (list "") "apiVersions" (list "v1") "resource" "configmaps" "operations" (list "CREATE") "denialMessage" $chunkMessage "validations" $chunkValidations "releaseValues" false)
+      (dict "name" (include "ptah-operator.controllerPlanWriteGuardPolicyName" .) "component" "controller-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahschemaplans" "operations" (list "CREATE") "denialMessage" $planMessage "validations" $planValidations "releaseValues" true)
+      (dict "name" (include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" .) "component" "controller-migration-plan-write-guard" "apiGroups" (list "operator.ptah.run") "apiVersions" (list "v1alpha1") "resource" "ptahmigrationplans" "operations" (list "CREATE") "denialMessage" $migrationPlanMessage "validations" $migrationPlanValidations "releaseValues" true) -}}
 {{- range $entry := $entries }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -81,6 +81,9 @@ spec:
   matchConditions:
     - name: controller-service-account
       expression: {{ $controllerUsernameMatch | quote }}
+  {{- /* A chunk is bound to its plan by name and owner, and the plan names
+        the manager, so the chunk guard reads no release value. */}}
+  {{- if $entry.releaseValues }}
   variables:
     - name: releaseControllerStateString
       expression: {{ printf "%q" $releaseControllerState | quote }}
@@ -88,6 +91,7 @@ spec:
       expression: {{ $releaseControllerState | quote }}
     - name: releaseControllerImage
       expression: {{ printf "%q" $releaseControllerImage | quote }}
+  {{- end }}
   validations:
 {{- range $validation := $entry.validations }}
     - expression: {{ $validation.expression | quote }}
