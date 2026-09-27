@@ -1012,15 +1012,15 @@ whenever the report found drift and absent when it found none, so read it, not
 the count, to tell the two apart. Planning runs either way, and the plan names
 the statements and the privilege kinds they change.
 
-Those categories describe structure. A reference row that someone changed in
-the database is real drift and is reconciled like any other, but it appears in
-the plan rather than in `driftFindings`: the drift report has no managed-data
-section to read, and the operator will not infer one by matching SQL, because a
-component that must never read row values may not start reading them to
-classify them. So for managed rows the plan is the authority — an unconverged
-row keeps `InSync` off and produces a non-empty plan even when no DDL changed.
-stokaro/ptah#3250 tracks the drift report growing a section the operator can
-publish instead.
+Declared reference rows are counted in the same list. A row the database is
+missing, one whose managed columns someone changed, and one the declaration no
+longer holds appear as `data_rows_inserted`, `data_rows_updated` and
+`data_rows_deleted`, each a count with a severity and nothing else: no key, no
+column name and no value. Which rows those are is in the plan, and reading a
+data plan is data access. `kubectl ptah schema` restates the three as its
+reference-data line. The counts say that rows drifted; the plan decides what to
+do about it, so an unconverged row keeps `InSync` off and produces a non-empty
+plan even when no DDL changed.
 
 `EngineSupported=False` with reason `UnsupportedEngine` is an explicit
 non-authorizing state, not a reconciliation crash. It creates no operation Job,
