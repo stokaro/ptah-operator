@@ -49,7 +49,7 @@ command arguments; please keep them out of the issue too.
 ### A feature request
 
 Say which part of the lifecycle it belongs to: resolve, verify, observe, plan,
-approve, apply, or the convergence proof after it. The safety model is the
+approve, apply, or the post-Apply verification after it. The safety model is the
 reason for most of the current shape, so a request that names the guarantee it
 needs is easier to place than one that names a field.
 
