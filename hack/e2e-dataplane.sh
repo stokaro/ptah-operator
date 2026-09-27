@@ -6312,6 +6312,154 @@ assert_privileged_plan_waits_under_always() {
 	printf '%s\n' 'e2e data plane: PASS privileged plan held for a person under apply Always'
 }
 
+# external_public_select_grant prints t when PUBLIC may read the fixture table
+# and f when it may not, as the database answers.
+external_public_select_grant() {
+	public_select=$(external_pg_query \
+		"SELECT has_table_privilege('public', 'public.e2e_widgets', 'SELECT')")
+	printf '%s' "$public_select" | tr -d '[:space:]'
+}
+
+# wait_for_grant_gate polls until the schema holds its grant-only plan for a
+# person, and keeps the reading that matched in the output file: every claim
+# about the gate is made against that document rather than a later read. The
+# Apply checkpoint is read on every poll, so an Apply that starts while the
+# gate is awaited fails the row where it happens.
+wait_for_grant_gate() {
+	grant_gate_schema=$1
+	grant_gate_digest=$2
+	grant_gate_apply_checkpoint=$3
+	grant_gate_output=$4
+	grant_gate_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$grant_gate_deadline" ]; do
+		audit_completed_jobs
+		assert_no_new_jobs "$grant_gate_schema" apply "$grant_gate_apply_checkpoint"
+		if k -n "$TEST_NAMESPACE" get ptahschema "$grant_gate_schema" -o json >"$grant_gate_output" 2>/dev/null; then
+			chmod 600 "$grant_gate_output"
+			if jq -e --arg digest "$grant_gate_digest" \
+				-f "$ROOT_DIR/testdata/e2e/grant-only-approval-gate.jq" "$grant_gate_output" >/dev/null; then
+				scan_file_for_credentials "$grant_gate_output" "the $grant_gate_schema grant-only approval gate"
+				return 0
+			fi
+			[ "$(jq -r '.status.phase // ""' "$grant_gate_output")" != Failed ] ||
+				fail "$grant_gate_schema entered Failed while waiting for its grant-only plan"
+		fi
+		sleep 2
+	done
+	grant_gate_seen=$(jq -c '{
+	    generation: .metadata.generation, observedGeneration: .status.observedGeneration,
+	    phase: .status.phase, digest: .status.source.digest,
+	    activeOperation: .status.activeOperation.type,
+	    target: (.status.target | if . == null then null
+	      else {highestDriftSeverity, driftFindingCount, driftFindings, lastObservedAt} end),
+	    plan: (.status.plan | if . == null then null
+	      else {name, uid, fingerprint, destructive, privilegeChanges, approved: (.approval != null)} end),
+	    conditions: [.status.conditions[]? |
+	      select(.type == "DriftDetected" or .type == "ApprovalRequired" or
+	        .type == "ReconciliationFailed") | {type, status, reason}]
+	  }' "$grant_gate_output" 2>/dev/null || printf '%s' 'no readable PtahSchema')
+	fail "timed out waiting for $grant_gate_schema to observe its grant-only change as drift in no category, plan Grant and hold it for a person; last reading: $grant_gate_seen"
+}
+
+# A change that touches only a grant is observed, planned, and held for a
+# person under apply: Always.
+#
+# Ptah's drift report has no category for a grant: it says drift and lists no
+# finding. The runner used to refuse that report, so the resource never left
+# Observe and no grant-only change could reach a plan under any policy. The
+# artifact adds one GRANT to PUBLIC to the converged external schema, which
+# Ptah plans as one statement it rates safe. The row holds the path to what it
+# is for:
+#
+# - the observation is recorded as drift in no category, and the scoped plan
+#   that follows names Grant and nothing else;
+# - under Always the plan waits for a person, with no Apply and no grant in the
+#   database while it waits;
+# - one exact approval applies it, the resource converges, and PUBLIC may read
+#   the table.
+#
+# It starts from the suspended, converged resource the privileged row leaves,
+# and leaves it suspended again.
+assert_grant_only_change_plans_under_always() {
+	grant_schema=$1
+	grant_publish_reference=$2
+	grant_coordination_key=$3
+	grant_coordination_digest=$4
+	grant_approval=e2e-postgresql-external-grant
+	grant_before="$WORK_DIR/${grant_schema}-grant-before.json"
+	grant_gate_file="$WORK_DIR/${grant_schema}-grant-gate.json"
+	grant_apply_checkpoint="$WORK_DIR/${grant_schema}-grant-apply-before.json"
+	grant_after="$WORK_DIR/${grant_schema}-grant-after.json"
+	[ "$RBAC_PAUSED" -eq 0 ] || fail "the grant-only row requires active controller status writes"
+	[ "$(external_public_select_grant)" = f ] ||
+		fail "external PostgreSQL grants PUBLIC SELECT on e2e_widgets before any plan did"
+
+	grant_digest=$(publish_schema postgresql-external v3 postgres "$grant_publish_reference" \
+		"$ROOT_DIR/testdata/e2e/postgresql-external-v3-grant.sql")
+	grant_reference="${grant_publish_reference%:stable}@${grant_digest}"
+	checkpoint_schema_jobs "$grant_schema" "$grant_before"
+	grant_patch=$(jq -nc \
+		--arg reference "$grant_reference" \
+		--arg interval "$QUIESCENT_INTERVAL" '
+      {spec: {suspend: false, interval: $interval, desired: {ociRef: $reference}}}')
+	k -n "$TEST_NAMESPACE" patch ptahschema "$grant_schema" --type=merge \
+		-p "$grant_patch" >/dev/null
+	k -n "$TEST_NAMESPACE" get ptahschema "$grant_schema" -o json | jq -e \
+		--arg interval "$QUIESCENT_INTERVAL" '
+      .spec.policy.apply == "Always" and .spec.policy.allowDestructive == false and
+      .spec.suspend == false and .spec.interval == $interval
+    ' >/dev/null || fail "$grant_schema did not keep apply Always and allowDestructive false"
+
+	wait_for_grant_gate "$grant_schema" "$grant_digest" "$grant_before" "$grant_gate_file"
+	grant_plan=$(jq -er '.status.plan.name' "$grant_gate_file")
+	grant_plan_uid=$(jq -er '.status.plan.uid' "$grant_gate_file")
+	grant_fingerprint=$(jq -er '.status.plan.fingerprint' "$grant_gate_file")
+	k -n "$TEST_NAMESPACE" get ptahschemaplan "$grant_plan" -o json | jq -e \
+		--arg uid "$grant_plan_uid" \
+		--arg fingerprint "$grant_fingerprint" \
+		--arg digest "$grant_digest" '
+      .metadata.uid == $uid and .spec.fingerprint == $fingerprint and
+      .spec.artifactDigest == $digest and .spec.destructive == false and
+      .spec.privilegeChanges == ["Grant"] and
+      (.status.conditions | any(.type == "Ready" and .status == "True"))
+    ' >/dev/null || fail "$grant_plan does not record the Grant its statement changes"
+	[ "$(external_public_select_grant)" = f ] ||
+		fail "the grant reached the database while its plan waited for a person"
+
+	checkpoint_schema_jobs "$grant_schema" "$grant_apply_checkpoint"
+	assert_no_job_between_checkpoints "$grant_schema" apply \
+		"$grant_before" "$grant_apply_checkpoint"
+	create_exact_approval "$grant_schema" "$grant_plan" "$grant_approval" \
+		"$grant_coordination_key" "$grant_coordination_digest"
+	wait_for_schema "$grant_schema" "
+      .status.observedGeneration == .metadata.generation and
+      .status.source.digest == \"$grant_digest\" and
+      .status.applied.artifactDigest == \"$grant_digest\" and
+      .status.applied.planFingerprint == \"$grant_fingerprint\" and
+      .status.applied.planRef.uid == \"$grant_plan_uid\" and
+      .status.plan == null and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null and
+      (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))
+    " "the approved grant-only plan applied and converged"
+	checkpoint_schema_jobs "$grant_schema" "$grant_after"
+	assert_one_job_between_checkpoints "$grant_schema" apply \
+		"$grant_apply_checkpoint" "$grant_after"
+	assert_approval_consumed "$grant_approval" "$grant_plan_uid"
+	[ "$(external_public_select_grant)" = t ] ||
+		fail "the approved plan did not leave PUBLIC SELECT on e2e_widgets in external PostgreSQL"
+	assert_external_postgresql_catalog
+
+	k -n "$TEST_NAMESPACE" patch ptahschema "$grant_schema" --type=merge \
+		-p '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_schema "$grant_schema" '
+      .status.observedGeneration == .metadata.generation and
+      .status.phase == "Suspended" and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null
+    ' "external PostgreSQL acceptance to suspend after the grant-only plan"
+	audit_runtime_credentials
+	printf '%s\n' 'e2e data plane: PASS grant-only change observed, planned and held for a person under apply Always'
+}
+
 run_external_postgresql_lifecycle() {
 	external_publish_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"
 	external_coordination_digest=$(coordination_digest postgresql "$TEST_NAMESPACE" "$EXTERNAL_PG_COORDINATION_KEY")
@@ -6357,6 +6505,9 @@ run_external_postgresql_lifecycle() {
 	assert_external_postgresql_catalog
 	audit_runtime_credentials
 	assert_privileged_plan_waits_under_always "$EXTERNAL_PG_SCHEMA" \
+		"$external_publish_reference" "$EXTERNAL_PG_COORDINATION_KEY" \
+		"$external_coordination_digest"
+	assert_grant_only_change_plans_under_always "$EXTERNAL_PG_SCHEMA" \
 		"$external_publish_reference" "$EXTERNAL_PG_COORDINATION_KEY" \
 		"$external_coordination_digest"
 	printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'

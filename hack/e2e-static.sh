@@ -2948,6 +2948,91 @@ if (assert_privileged_gate_source_contract \
 	exit 1
 fi
 
+# The grant-only row. What it proves is that a change the drift report has no
+# category for reaches a plan, and then that the plan waits: drop the Apply read
+# from the wait, the database read from the hold, or the gate filter that
+# carries the observation, and the row still passes, having measured less.
+grant_gate_section=$(sed -n '/^assert_grant_only_change_plans_under_always() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+grant_wait_section=$(sed -n '/^wait_for_grant_gate() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for required_grant_section in "$grant_gate_section" "$grant_wait_section"; do
+	[ -n "$required_grant_section" ] || {
+		printf '%s\n' 'e2e static: the grant-only row is missing' >&2
+		exit 1
+	}
+done
+
+# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
+assert_grant_gate_source_contract() {
+	grant_row_section=$1
+	grant_wait_row_section=$2
+	static_require_order "$grant_row_section" 'grant-only row' \
+		'[ "$(external_public_select_grant)" = f ]' \
+		'publish_schema postgresql-external v3 postgres' \
+		'"$ROOT_DIR/testdata/e2e/postgresql-external-v3-grant.sql"' \
+		'checkpoint_schema_jobs "$grant_schema" "$grant_before"' \
+		'.spec.policy.apply == "Always" and .spec.policy.allowDestructive == false and' \
+		'wait_for_grant_gate "$grant_schema" "$grant_digest" "$grant_before" "$grant_gate_file"' \
+		'.spec.privilegeChanges == ["Grant"] and' \
+		'[ "$(external_public_select_grant)" = f ]' \
+		'assert_no_job_between_checkpoints "$grant_schema" apply' \
+		'"$grant_before" "$grant_apply_checkpoint"' \
+		'create_exact_approval "$grant_schema" "$grant_plan"' \
+		'assert_one_job_between_checkpoints "$grant_schema" apply' \
+		'assert_approval_consumed "$grant_approval" "$grant_plan_uid"' \
+		'[ "$(external_public_select_grant)" = t ]'
+	static_require_order "$grant_wait_row_section" 'grant-only gate wait' \
+		'audit_completed_jobs' \
+		'assert_no_new_jobs "$grant_gate_schema" apply "$grant_gate_apply_checkpoint"' \
+		'-f "$ROOT_DIR/testdata/e2e/grant-only-approval-gate.jq" "$grant_gate_output"' \
+		'fail "timed out waiting for $grant_gate_schema to observe its grant-only change'
+}
+
+assert_grant_gate_source_contract "$grant_gate_section" "$grant_wait_section"
+# shellcheck disable=SC2016 # Exact source markers retain shell variables literally.
+static_require_order "$external_pg_lifecycle_section" 'grant-only row placement' \
+	'assert_privileged_plan_waits_under_always "$EXTERNAL_PG_SCHEMA"' \
+	'assert_grant_only_change_plans_under_always "$EXTERNAL_PG_SCHEMA"' \
+	'e2e data plane: PASS external PostgreSQL bridge lifecycle'
+
+# shellcheck disable=SC2016 # Mutation retains the literal shell variables.
+grant_wait_without_apply=$(printf '%s\n' "$grant_wait_section" |
+	sed '/assert_no_new_jobs "\$grant_gate_schema" apply/d')
+[ "$grant_wait_without_apply" != "$grant_wait_section" ] || {
+	printf '%s\n' 'e2e static: grant gate Apply-read mutation did not change its baseline' >&2
+	exit 1
+}
+if (assert_grant_gate_source_contract \
+	"$grant_gate_section" "$grant_wait_without_apply") >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: grant gate contract accepted a wait that never reads Apply Jobs' >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # Mutation retains the literal shell variables.
+grant_without_database_check=$(printf '%s\n' "$grant_gate_section" |
+	sed 's/\[ "\$(external_public_select_grant)" = f \]/true/')
+[ "$grant_without_database_check" != "$grant_gate_section" ] || {
+	printf '%s\n' 'e2e static: grant database-absence mutation did not change its baseline' >&2
+	exit 1
+}
+if (assert_grant_gate_source_contract \
+	"$grant_without_database_check" "$grant_wait_section") >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: grant gate contract accepted a hold that never read the database' >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # Mutation retains the literal shell variables.
+grant_wait_without_filter=$(printf '%s\n' "$grant_wait_section" |
+	sed 's|-f "\$ROOT_DIR/testdata/e2e/grant-only-approval-gate.jq"|-n true|')
+[ "$grant_wait_without_filter" != "$grant_wait_section" ] || {
+	printf '%s\n' 'e2e static: grant gate filter mutation did not change its baseline' >&2
+	exit 1
+}
+if (assert_grant_gate_source_contract \
+	"$grant_gate_section" "$grant_wait_without_filter") >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: grant gate contract accepted a wait that never reads the observation' >&2
+	exit 1
+fi
+
 external_pg_main_wiring_count() {
 	printf '%s\n' "$1" | awk '
     /^[[:space:]]*create_registry_service[[:space:]]*$/ && stage == 0 { stage = 1; next }
