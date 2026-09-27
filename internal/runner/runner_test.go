@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 )
 
 type scriptedResponse struct {
@@ -229,9 +231,82 @@ func TestPlanRecordsExactContentDigest(t *testing.T) {
 	if result.CoordinationDigest != testCoordinationDigest() {
 		t.Fatalf("coordination digest = %q, want %q", result.CoordinationDigest, testCoordinationDigest())
 	}
-	if result.Error != nil || result.Stdout != plan || result.PlanContentDigest != sha256Digest([]byte(plan)) ||
+	if result.Error != nil || result.PlanContentDigest != sha256Digest([]byte(plan)) ||
 		result.PlanOutcome != PlanOutcomeChanges {
 		t.Fatalf("Run() = %#v", result)
+	}
+	if got := openSealedPlan(t, result.Stdout); got != plan {
+		t.Fatalf("sealed plan opened to %q, want %q", got, plan)
+	}
+}
+
+// TestPlanStdoutNeverCarriesThePlaintextPlan is the leak #449 closes: a
+// successful Plan frame's Stdout must not contain the plan text (or any
+// declared row value in it) in a form a Pod-log reader could recover without
+// the manager's private key.
+func TestPlanStdoutNeverCarriesThePlaintextPlan(t *testing.T) {
+	t.Parallel()
+
+	const declaredRowValue = "alice@example.com"
+	plan := validPlanDocument("INSERT INTO users (email) VALUES ('" + declaredRowValue + "')")
+	executor := &scriptedExecutor{t: t, responses: stablePlanResponses(t, plan)}
+	result := Run(context.Background(), Config{
+		Operation:   OperationPlan,
+		Environment: withRunnerProtocol(databaseEnvironment("plan-leak-check")),
+		Executor:    executor,
+	})
+	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges {
+		t.Fatalf("Run() = %#v", result)
+	}
+	if strings.Contains(result.Stdout, declaredRowValue) || strings.Contains(result.Stdout, plan) {
+		t.Fatalf("Stdout carries the plaintext plan or its declared row value: %s", result.Stdout)
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	if bytes.Contains(frame, []byte(declaredRowValue)) {
+		t.Fatalf("the framed result -- what reaches the Pod log -- carries the declared row value: %s", frame)
+	}
+	if got := openSealedPlan(t, result.Stdout); got != plan {
+		t.Fatalf("sealed plan opened to %q, want %q", got, plan)
+	}
+}
+
+// A Plan Job that is not given a well-formed manager public key refuses
+// before it starts its executor: no plan is computed and no child runs, so
+// there is nothing to seal and nothing that could leak unsealed.
+func TestPlanRefusesBeforeStartingItsExecutorWithoutAWellFormedSealKey(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{name: "missing", value: ""},
+		{name: "not base64", value: "not-base64!!"},
+		{name: "wrong length", value: base64.StdEncoding.EncodeToString([]byte("too short"))},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			environment := withRunnerProtocol(environmentWithout(databaseEnvironment("plan-bad-key"), EnvPlanSealPublicKey))
+			if test.value != "" {
+				environment = append(environment, EnvPlanSealPublicKey+"="+test.value)
+			}
+			executor := &scriptedExecutor{t: t}
+			result := Run(context.Background(), Config{
+				Operation:   OperationPlan,
+				Environment: environment,
+				Executor:    executor,
+			})
+			if result.Error == nil || result.Error.Code != "missing_plan_seal_key" {
+				t.Fatalf("Run() error = %#v, want a missing_plan_seal_key refusal", result.Error)
+			}
+			if len(executor.calls) != 0 {
+				t.Fatalf("executor was called %d times, want the refusal before any child dispatch", len(executor.calls))
+			}
+		})
 	}
 }
 
@@ -278,8 +353,8 @@ func TestPlanContentDigestIsTheDigestOfTheSavedBytes(t *testing.T) {
 	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges {
 		t.Fatalf("Run(Plan) = %#v", result)
 	}
-	if result.Stdout != canonicalPlanDocument {
-		t.Fatalf("published plan = %q, want the saved bytes unchanged", result.Stdout)
+	if got := openSealedPlan(t, result.Stdout); got != canonicalPlanDocument {
+		t.Fatalf("published plan = %q, want the saved bytes unchanged", got)
 	}
 	if result.PlanContentDigest != canonicalPlanContentDigest {
 		t.Fatalf("plan content digest = %s, want %s", result.PlanContentDigest, canonicalPlanContentDigest)
@@ -311,8 +386,13 @@ func TestPlanContentDigestIsTheDigestOfTheSavedBytes(t *testing.T) {
 
 func TestExecutablePlanSizeBoundary(t *testing.T) {
 	// This test intentionally exercises multi-megabyte buffers serially. Its
-	// exact-limit plan is dominated by '<' bytes, forcing encoding/json's
-	// worst-case six-byte HTML escape in the framed result.
+	// exact-limit plan is dominated by '<' bytes. Before sealing, that forced
+	// encoding/json's worst-case six-byte HTML escape in the framed result;
+	// the frame now carries the sealed plan as base64, whose alphabet has
+	// nothing for JSON to escape, so the byte that dominates the plaintext no
+	// longer dominates the frame. The exact-limit plan itself is still worth
+	// generating this way: it is still the boundary the plan-read and
+	// plan-save paths below have to hold exactly, sealing aside.
 	exactPlan := exactSizePlanDocument(t, int(DefaultMaxPlanBytes))
 	if exactPlan[len(exactPlan)-1] != '\n' {
 		t.Fatal("exact-limit plan does not count its trailing newline")
@@ -332,9 +412,22 @@ func TestExecutablePlanSizeBoundary(t *testing.T) {
 		TempDir:     t.TempDir(),
 	})
 	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges ||
-		len(result.Stdout) != int(DefaultMaxPlanBytes) || result.PlanContentDigest != sha256Digest([]byte(exactPlan)) {
-		t.Fatalf("exact-limit Run(Plan) = error %#v, outcome %q, stdout bytes %d, digest %q",
-			result.Error, result.PlanOutcome, len(result.Stdout), result.PlanContentDigest)
+		result.PlanContentDigest != sha256Digest([]byte(exactPlan)) {
+		t.Fatalf("exact-limit Run(Plan) = error %#v, outcome %q, digest %q",
+			result.Error, result.PlanOutcome, result.PlanContentDigest)
+	}
+	// The sealed box adds a fixed 48 bytes to the plaintext -- a prepended
+	// 32-byte ephemeral public key and a 16-byte Poly1305 tag -- whatever the
+	// plaintext is, and base64 then expands that by exactly 4/3, rounded up
+	// to a multiple of 4. An exact-limit plan is the one input that pins both
+	// terms of that arithmetic at once.
+	wantSealedLength := base64.StdEncoding.EncodedLen(int(DefaultMaxPlanBytes) + 48)
+	if len(result.Stdout) != wantSealedLength {
+		t.Fatalf("sealed plan bytes = %d, want %d (plaintext %d plus the fixed sealed-box and base64 overhead)",
+			len(result.Stdout), wantSealedLength, DefaultMaxPlanBytes)
+	}
+	if got := openSealedPlan(t, result.Stdout); got != exactPlan {
+		t.Fatal("sealed plan opened to different bytes than the exact-limit plaintext")
 	}
 	frame, err := MarshalFrame(result)
 	if err != nil {
@@ -347,12 +440,16 @@ func TestExecutablePlanSizeBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseResultFor(exact-limit plan) error = %v", err)
 	}
-	if parsed.Stdout != exactPlan || parsed.PlanContentDigest != result.PlanContentDigest {
+	if parsed.Stdout != result.Stdout || parsed.PlanContentDigest != result.PlanContentDigest {
 		t.Fatal("frame round trip changed exact-limit plan bytes")
+	}
+	openedPlan := openSealedPlan(t, parsed.Stdout)
+	if openedPlan != exactPlan {
+		t.Fatal("frame round trip changed the sealed plan's opened bytes")
 	}
 
 	planDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(planDir, "000.plan"), []byte(parsed.Stdout), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(planDir, "000.plan"), []byte(openedPlan), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	applyExecutor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
@@ -575,8 +672,11 @@ func TestPlanIgnoresWhatPtahWritesForAPerson(t *testing.T) {
 		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-person-text")),
 		Executor: executor, Diagnostics: &diagnostics,
 	})
-	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges || result.Stdout != plan {
+	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges {
 		t.Fatalf("Run() = %#v", result)
+	}
+	if got := openSealedPlan(t, result.Stdout); got != plan {
+		t.Fatalf("sealed plan opened to %q, want %q", got, plan)
 	}
 	if diagnostics.Len() != 0 {
 		t.Fatalf("diagnostics = %q, want nothing from Ptah's standard error", diagnostics.String())
@@ -1032,6 +1132,7 @@ func TestRunRedactsCredentialsAndURLPasswords(t *testing.T) {
 			"PTAH_OCI_PASSWORD=" + registryPassword,
 			"PTAH_OCI_TOKEN=" + registryToken,
 			envExpectedDatabaseEngine + "=PostgreSQL",
+			envPlanSealPublicKey + "=" + testPlanSealKey.PublicKey().Encode(),
 		}),
 		Diagnostics: &diagnostics,
 		Executor:    executor,
@@ -3011,7 +3112,35 @@ func databaseEnvironment(operationID string) []string {
 		envDispatchNotAfter + "=2099-01-01T00:00:00Z",
 		envExecutionNotAfter + "=2099-01-01T00:00:00Z",
 		envTerminationGracePeriod + "=30",
+		envPlanSealPublicKey + "=" + testPlanSealKey.PublicKey().Encode(),
 	}
+}
+
+// testPlanSealKey is the one key pair every test environment built by
+// databaseEnvironment carries the public half of. Only a Plan operation reads
+// it; every other operation ignores it the same way it ignores any other
+// input it has no use for.
+var testPlanSealKey = mustGenerateTestPlanSealKey()
+
+func mustGenerateTestPlanSealKey() planseal.KeyPair {
+	key, err := planseal.Generate()
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
+// openSealedPlan decrypts a Plan result's Stdout with testPlanSealKey, the
+// key databaseEnvironment gives every Plan Job under test, and fails the test
+// if it cannot: a plan the runner sealed correctly always opens with the key
+// it was sealed to.
+func openSealedPlan(t *testing.T, sealed string) string {
+	t.Helper()
+	plaintext, err := testPlanSealKey.Open(sealed)
+	if err != nil {
+		t.Fatalf("Open(sealed plan) error = %v", err)
+	}
+	return string(plaintext)
 }
 
 func testCoordinationDigest() string { return "sha256:" + strings.Repeat("9", 64) }
@@ -3130,6 +3259,90 @@ func mustDecodePlan(t *testing.T, plan string) dataplane.PlanFile {
 // migrationRunDocument is what `ptah migrations up --json` writes: the outcome
 // the database accounted for, which is the only thing that says what a stopped
 // run left behind.
+// migrationRunDocumentWithDirtyError is migrationRunDocument, with a database
+// error at both places Ptah's own account of a dirty revision can carry one:
+// the run's own top-level error, and the dirty revision's.
+func migrationRunDocumentWithDirtyError(outcome, runError, dirtyError string) string {
+	return fmt.Sprintf(
+		`{"contract_version":1,"direction":"up","outcome":%q,"planned":[3],"applied":[],`+
+			`"error":%q,`+
+			`"status":{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
+			`"dirty_revision":{"version":3,"applied":2,"total":5,"error":%q}}}`,
+		outcome, runError, dirtyError,
+	)
+}
+
+// TestMigrationRunRedactsTheDatabasesFreeTextError proves the runner drops
+// Ptah's own free-text account of why a migration run left a dirty revision,
+// at both places it can appear, before the frame is ever written. Neither
+// string is read by anything downstream of this frame -- the controller
+// names the outcome and the affected version, never Ptah's sentence -- so
+// this is a redaction rather than a seal: there is no reader on the other
+// end for a key to protect.
+func TestMigrationRunRedactsTheDatabasesFreeTextError(t *testing.T) {
+	t.Parallel()
+
+	const declaredRowValue = "duplicate key value violates unique constraint \"users_email_key\": Key (email)=(alice@example.com) already exists"
+	document := migrationRunDocumentWithDirtyError("partial", "failed to apply migration 3: "+declaredRowValue, declaredRowValue)
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document, exitCode: 1}}}
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-redact-error")),
+		Executor:    executor,
+	})
+	if result.MigrationRun == nil || result.MigrationRun.Status == nil || result.MigrationRun.Status.DirtyRevision == nil {
+		t.Fatalf("Run() = %#v, want the run report the child wrote", result)
+	}
+	if result.MigrationRun.Error != "" {
+		t.Fatalf("MigrationRun.Error = %q, want it redacted", result.MigrationRun.Error)
+	}
+	if result.MigrationRun.Status.DirtyRevision.Error != "" {
+		t.Fatalf("MigrationRun.Status.DirtyRevision.Error = %q, want it redacted", result.MigrationRun.Status.DirtyRevision.Error)
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	if bytes.Contains(frame, []byte(declaredRowValue)) {
+		t.Fatalf("the framed result -- what reaches the Pod log -- carries the database's free-text error: %s", frame)
+	}
+}
+
+// TestMigrationHistoryRedactsTheDirtyRevisionError is the read-only twin: a
+// history read that finds an existing dirty revision must not carry forward
+// whatever database error left it dirty, since a migration-history operation
+// runs on every reconciliation and would otherwise repeat the leak on every
+// pass rather than once per failed apply.
+func TestMigrationHistoryRedactsTheDirtyRevisionError(t *testing.T) {
+	t.Parallel()
+
+	const declaredRowValue = "check constraint \"countries_code_check\" is violated by some row"
+	document := fmt.Sprintf(
+		`{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
+			`"pending_migrations":[3],"dirty_revision":{"version":3,"applied":2,"total":5,"error":%q}}`,
+		declaredRowValue,
+	)
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document}}}
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationHistory,
+		Environment: withRunnerProtocol(migrationEnvironment("migration-history-redact-error")),
+		Executor:    executor,
+	})
+	if result.MigrationHistory == nil || result.MigrationHistory.DirtyRevision == nil {
+		t.Fatalf("Run() = %#v, want the history report the child wrote", result)
+	}
+	if result.MigrationHistory.DirtyRevision.Error != "" {
+		t.Fatalf("MigrationHistory.DirtyRevision.Error = %q, want it redacted", result.MigrationHistory.DirtyRevision.Error)
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	if bytes.Contains(frame, []byte(declaredRowValue)) {
+		t.Fatalf("the framed result -- what reaches the Pod log -- carries the dirty revision's free-text error: %s", frame)
+	}
+}
+
 func migrationRunDocument(outcome string) string {
 	return fmt.Sprintf(
 		`{"contract_version":1,"direction":"up","outcome":%q,"planned":[3],"applied":[],`+

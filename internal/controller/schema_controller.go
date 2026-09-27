@@ -41,6 +41,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
@@ -133,8 +134,14 @@ type SchemaReconciler struct {
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
 	Jobs       JobBuilder
-	Plans      planstore.Store
-	Locks      *targetlock.Locker
+	// SealKey is this manager process's key pair. The Plan Job builder is
+	// given its public half; this reconciler opens the Plan payload sealed
+	// to it. The private half is never persisted, so a process that
+	// generated a different key pair before a restart cannot open a Plan
+	// result it dispatched before that restart, and re-plans instead.
+	SealKey planseal.KeyPair
+	Plans   planstore.Store
+	Locks   *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// PtahSchema, including schemas that live in different namespaces.
 	LockNamespace string
@@ -1265,6 +1272,15 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		if operationNeedsTargetLock(schema) && !operation.DispatchStarted {
 			before := schema.DeepCopy()
 			schema.Status.ActiveOperation.DispatchStarted = true
+			if operation.Type == operatorv1alpha1.OperationPlan {
+				// Recorded in the same patch as the boundary it describes: the
+				// Job just built above is sealed to this process's current
+				// public key, and this is that Job's one dispatch attempt.
+				// Harvest compares its own current key against this digest
+				// rather than trying to open a payload it may not hold the
+				// matching private key for.
+				schema.Status.ActiveOperation.PlanSealPublicKeyDigest = planSealPublicKeyDigest(r.SealKey.PublicKey())
+			}
 			if err := r.patchStatus(ctx, before, schema); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -2029,7 +2045,22 @@ func (r *SchemaReconciler) consumeResult(
 				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "A newer resource generation is pending")
 			}
 		} else {
-			planDocument := []byte(result.Stdout)
+			// The claim recorded, at dispatch, the digest of the key this Job
+			// was sealed to. A mismatch means this process cannot be the one
+			// that dispatched it -- most likely a restart generated a new key
+			// in between -- so the payload is unreadable by construction, not
+			// merely rejected. Plan is read-only: retrying costs a fresh Job
+			// sealed to the current key, which is exactly what harvesting the
+			// old one would have cost anyway.
+			if operation.PlanSealPublicKeyDigest == "" ||
+				operation.PlanSealPublicKeyDigest != planSealPublicKeyDigest(r.SealKey.PublicKey()) {
+				return r.retryOperation(ctx, schema, job,
+					fmt.Errorf("plan was sealed to a manager key this process does not hold"))
+			}
+			planDocument, err := r.SealKey.Open(result.Stdout)
+			if err != nil {
+				return r.retryOperation(ctx, schema, job, fmt.Errorf("open sealed plan payload: %w", err))
+			}
 			if result.PlanContentDigest == "" || result.PlanContentDigest != fingerprint.DigestBytes(planDocument) {
 				return r.retryOperation(ctx, schema, job, fmt.Errorf("plan result content digest is missing or mismatched"))
 			}
@@ -4150,6 +4181,13 @@ func (r *SchemaReconciler) acquireOperationLock(ctx context.Context, schema *ope
 	default:
 		return true, 0, nil
 	}
+}
+
+// planSealPublicKeyDigest is the digest recorded on a Plan claim and compared
+// against at harvest, over the exact bytes the Job's environment carries so
+// the two are computed the same way wherever either is read.
+func planSealPublicKeyDigest(key planseal.PublicKey) string {
+	return fingerprint.DigestBytes([]byte(key.Encode()))
 }
 
 func operationNeedsTargetLock(schema *operatorv1alpha1.PtahSchema) bool {

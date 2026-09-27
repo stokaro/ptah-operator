@@ -86,6 +86,12 @@ const (
 	// so Ptah chooses.
 	EnvTransactionMode = "PTAH_TRANSACTION_MODE"
 
+	// EnvPlanSealPublicKey is the manager's ephemeral public key a Plan Job
+	// seals its plan payload to, base64-encoded (see internal/planseal). Only
+	// a Plan operation reads it; the runner refuses before starting its
+	// executor if it is missing or malformed.
+	EnvPlanSealPublicKey = "PTAH_PLAN_SEAL_PUBLIC_KEY"
+
 	envOperationID            = EnvOperationID
 	envRequestedReference     = EnvRequestedReference
 	envResolvedReference      = EnvResolvedReference
@@ -107,6 +113,7 @@ const (
 	envExpectedDatabaseEngine = EnvExpectedDatabaseEngine
 	envMigrationsDir          = EnvMigrationsDir
 	envTransactionMode        = EnvTransactionMode
+	envPlanSealPublicKey      = EnvPlanSealPublicKey
 )
 
 // Inputs are the runner-specific environment values used to construct one of
@@ -131,6 +138,9 @@ type Inputs struct {
 	PlanPath                   string
 	MigrationsDir              string
 	TransactionMode            string
+	// PlanSealPublicKey is the base64-encoded manager public key a Plan
+	// operation seals its plan payload to before writing the frame.
+	PlanSealPublicKey string
 	// ExpectedSequencePath is the file the runner wrote the approved sequence
 	// to for `migrations up --expect-sequence`. The runner sets it; nothing
 	// reads it from the environment.
@@ -162,6 +172,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		ExpectedDatabaseEngine:     values[envExpectedDatabaseEngine],
 		MigrationsDir:              values[envMigrationsDir],
 		TransactionMode:            values[envTransactionMode],
+		PlanSealPublicKey:          values[envPlanSealPublicKey],
 	}
 }
 
@@ -227,6 +238,7 @@ func childEnvironment(environment []string) []string {
 		EnvOCIHasCA,
 		EnvOCICASourceFile,
 		EnvOCICASHA256Grant,
+		EnvPlanSealPublicKey,
 	)
 }
 

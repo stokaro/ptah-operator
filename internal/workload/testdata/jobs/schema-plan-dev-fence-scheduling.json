@@ -204,7 +204,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "6"
+                "value": "7"
               }
             ],
             "resources": {
@@ -427,12 +427,16 @@
                 "value": "operation-01"
               },
               {
+                "name": "PTAH_PLAN_SEAL_PUBLIC_KEY",
+                "value": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+              },
+              {
                 "name": "PTAH_PROTECTED_TABLES",
                 "value": "public.orders,audit.log"
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "6"
+                "value": "7"
               },
               {
                 "name": "PTAH_SCHEMA_FILE",

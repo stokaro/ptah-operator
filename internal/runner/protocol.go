@@ -36,7 +36,12 @@ const (
 	// keeps the number, unless support/runner-protocol.json declares why the
 	// contract stayed the same. Every Job names this number in
 	// EnvRunnerProtocolVersion, and a runner of another protocol refuses it.
-	ProtocolVersion = 6
+	//
+	// 7 adds the Plan payload seal: a Plan Job now refuses to start its
+	// executor without a well-formed manager public key
+	// (EnvPlanSealPublicKey), and Result.Stdout carries the plan sealed to it
+	// rather than in the clear.
+	ProtocolVersion = 7
 
 	// JSON escaping can expand a bounded plan payload. This shared cap includes
 	// the worst-case expansion plus fixed result-envelope headroom.

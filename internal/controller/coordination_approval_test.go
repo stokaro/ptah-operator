@@ -197,12 +197,13 @@ func publishSchemaPlanThroughTheController(t *testing.T) (*operatorv1alpha1.Ptah
 		DriftReportDigest:  safetyOtherDigest,
 	}
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-		Type:      operatorv1alpha1.OperationPlan,
-		ID:        "published-plan-operation",
-		JobName:   "published-plan-job",
-		JobUID:    "job-uid",
-		StartedAt: metav1.Now(),
-		Attempt:   1,
+		Type:                    operatorv1alpha1.OperationPlan,
+		ID:                      "published-plan-operation",
+		JobName:                 "published-plan-job",
+		JobUID:                  "job-uid",
+		StartedAt:               metav1.Now(),
+		Attempt:                 1,
+		PlanSealPublicKeyDigest: planSealPublicKeyDigest(testSchemaSealKey.PublicKey()),
 	}
 	bindActiveInput(t, schema)
 	planDocument := safetyPlanDocument(t, "observed-state")
@@ -211,7 +212,7 @@ func publishSchemaPlanThroughTheController(t *testing.T) (*operatorv1alpha1.Ptah
 		Operation:            runner.OperationPlan,
 		OperationID:          schema.Status.ActiveOperation.ID,
 		ChildExitCode:        0,
-		Stdout:               string(planDocument),
+		Stdout:               safetySealPlan(t, planDocument),
 		CoordinationDigest:   schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest: schema.Status.Target.IdentityDigest,
 		PlanContentDigest:    fingerprint.DigestBytes(planDocument),

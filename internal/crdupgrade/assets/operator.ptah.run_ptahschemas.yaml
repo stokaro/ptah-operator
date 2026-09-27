@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "25"
-    operator.ptah.run/crd-schema-digest: "sha256:0e91177b96caeb88fcddf9aca05971f2823eaa2cbb51dc703910befce4c44926"
+    operator.ptah.run/crd-schema-version: "26"
+    operator.ptah.run/crd-schema-digest: "sha256:c1e7d6a0a6b2aa3e1166e7a18e3de273951f0afe8fb26bd3a6ee02c7a681f41a"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1100,6 +1100,8 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                   observationSeverity:
+                    type: string
+                  planSealPublicKeyDigest:
                     type: string
                   source:
                     properties:

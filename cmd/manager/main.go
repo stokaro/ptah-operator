@@ -31,6 +31,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/managercache"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -98,6 +99,15 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 	log := ctrl.Log.WithName("setup")
 
+	// Generated once per process and never persisted: a restart gets a new
+	// key, which is exactly what makes a Plan sealed to the old one safe to
+	// abandon and re-plan rather than wait for. See internal/planseal.
+	sealKey, err := planseal.Generate()
+	if err != nil {
+		log.Error(err, "generate the Plan payload seal key")
+		os.Exit(1)
+	}
+
 	builder := workload.Builder{
 		ExecutorImage:          executorImage,
 		RunnerImage:            runnerImage,
@@ -105,6 +115,7 @@ func main() {
 		ControllerImage:        controllerImage,
 		ControllerRevision:     controllerRevision,
 		ControllerStateVersion: controllerstate.CurrentVersion,
+		PlanSealPublicKey:      sealKey.PublicKey(),
 	}
 	if err := builder.Validate(); err != nil {
 		log.Error(err, "invalid immutable execution configuration")
@@ -203,6 +214,7 @@ func main() {
 		Recorder:         manager.GetEventRecorderFor("ptah-schema-controller"),
 		Logs:             controller.ClientsetPodLogs{Client: clientset},
 		Jobs:             builder,
+		SealKey:          sealKey,
 		Plans:            planstore.Store{Client: manager.GetClient(), Reader: manager.GetAPIReader()},
 		Locks:            targetlock.New(manager.GetAPIReader(), manager.GetClient(), nil),
 		LockNamespace:    targetLockNamespace,

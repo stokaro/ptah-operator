@@ -1106,6 +1106,15 @@ type ActiveOperationStatus struct {
 	// LeaseContinuityLost is set before any result can be harvested when the
 	// persisted epoch no longer owns an uninterrupted lock interval.
 	LeaseContinuityLost bool `json:"leaseContinuityLost,omitempty"`
+
+	// PlanSealPublicKeyDigest is the digest of the manager public key a Plan
+	// Job's runner was given to seal its plan payload, persisted immediately
+	// before the Job is created. A manager whose own current key no longer
+	// matches this digest -- because it restarted and generated a new one --
+	// cannot open that Job's result and retries instead of waiting: Plan is
+	// read-only, so a fresh attempt sealed to the current key costs nothing
+	// the first attempt did not already cost. Plan operations only.
+	PlanSealPublicKeyDigest string `json:"planSealPublicKeyDigest,omitempty"`
 }
 
 const (

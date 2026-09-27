@@ -33,6 +33,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -1529,20 +1530,22 @@ func planHarvestFixture(
 		},
 	}
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-		Type:      operatorv1alpha1.OperationPlan,
-		ID:        "blocked-plan-operation",
-		JobName:   "blocked-plan-job",
-		JobUID:    "job-uid",
-		StartedAt: metav1.Now(),
-		Attempt:   1,
+		Type:                    operatorv1alpha1.OperationPlan,
+		ID:                      "blocked-plan-operation",
+		JobName:                 "blocked-plan-job",
+		JobUID:                  "job-uid",
+		StartedAt:               metav1.Now(),
+		Attempt:                 1,
+		PlanSealPublicKeyDigest: planSealPublicKeyDigest(testSchemaSealKey.PublicKey()),
 	}
 	bindActiveInput(t, schema)
+	sealedPlan := safetySealPlan(t, planDocument)
 	frame := safetyRunnerFrame(t, runner.Result{
 		ProtocolVersion:      runner.ProtocolVersion,
 		Operation:            runner.OperationPlan,
 		OperationID:          schema.Status.ActiveOperation.ID,
 		ChildExitCode:        0,
-		Stdout:               string(planDocument),
+		Stdout:               sealedPlan,
 		CoordinationDigest:   schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest: schema.Status.Target.IdentityDigest,
 		PlanContentDigest:    fingerprint.DigestBytes(planDocument),
@@ -5156,6 +5159,18 @@ func safetyRunnerFrame(t *testing.T, result runner.Result) []byte {
 		t.Fatalf("MarshalFrame() error = %v", err)
 	}
 	return frame
+}
+
+// safetySealPlan seals a plan document to the key every fakeReconciler is
+// given (testSchemaSealKey), for a fixture that must read like a real Plan
+// frame: sealed, never plaintext, in Result.Stdout.
+func safetySealPlan(t *testing.T, planDocument []byte) string {
+	t.Helper()
+	sealed, err := planseal.Seal(planDocument, testSchemaSealKey.PublicKey())
+	if err != nil {
+		t.Fatalf("Seal() error = %v", err)
+	}
+	return sealed
 }
 
 func safetyGetSchema(t *testing.T, api client.Client, expected *operatorv1alpha1.PtahSchema) *operatorv1alpha1.PtahSchema {

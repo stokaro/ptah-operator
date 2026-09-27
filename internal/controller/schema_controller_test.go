@@ -28,6 +28,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -2850,6 +2851,20 @@ func jobControllerReference(job *batchv1.Job) metav1.OwnerReference {
 	return *metav1.NewControllerRef(job, batchv1.SchemeGroupVersion.WithKind("Job"))
 }
 
+// testSchemaSealKey is the one key pair every fakeReconciler is given, so a
+// test that seals a fixture Plan result with it can rely on the reconciler
+// under test being able to open it, and a test proving a restart -- a
+// different key pair -- can prove it against this one specifically.
+var testSchemaSealKey = mustGenerateTestSealKey()
+
+func mustGenerateTestSealKey() planseal.KeyPair {
+	key, err := planseal.Generate()
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
 func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (*SchemaReconciler, client.Client) {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -2880,6 +2895,7 @@ func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (
 	testClock := &safetyClock{now: clock}
 	reconciler := &SchemaReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
+		SealKey:          testSchemaSealKey,
 		LockNamespace:    "ptah-system",
 		Clock:            testClock.Now,
 		AdmissionOptions: podintent.DefaultOptions(),

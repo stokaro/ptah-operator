@@ -22,6 +22,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
@@ -1627,6 +1628,7 @@ func builderFixture() Builder {
 		ControllerImage:        "example.invalid/manager@" + digest('f'),
 		ControllerRevision:     "controller-test-revision",
 		ControllerStateVersion: 1,
+		PlanSealPublicKey:      testPlanSealPublicKey(),
 	}
 }
 
@@ -1769,6 +1771,17 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 }
 
 func digest(character byte) string { return "sha256:" + strings.Repeat(string(character), 64) }
+
+// testPlanSealPublicKey is a fixed, recognizable stand-in for the manager's
+// real ephemeral public key: incrementing bytes rather than random ones, so
+// golden fixtures stay stable across test runs.
+func testPlanSealPublicKey() planseal.PublicKey {
+	var key planseal.PublicKey
+	for i := range key {
+		key[i] = byte(i)
+	}
+	return key
+}
 
 func testCoordinationDigest() string {
 	digest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-a", "prod/team-a/orders-primary")

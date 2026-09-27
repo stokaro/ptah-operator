@@ -156,7 +156,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "6"
+                "value": "7"
               }
             ],
             "resources": {},
@@ -337,7 +337,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "6"
+                "value": "7"
               },
               {
                 "name": "TMPDIR",
