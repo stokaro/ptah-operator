@@ -72,6 +72,7 @@ jobs:
           npm run check:compatibility:selftest
           npm run check:demo:selftest
           npm run check:demo-page:selftest
+          npm run check:version-picker:selftest
           npm run check:translations:selftest
       - name: The values table matches the chart
         working-directory: docs/site
@@ -142,6 +143,7 @@ jobs:
           npm run check:faq-page
           npm run check:build-info
           npm run check:demo-page
+          npm run check:version-picker
       # A release's pages are built from that release's own revision, so the
       # pull request proves that path too rather than only the one master
       # happens to take. It runs only when a release is declared: until then

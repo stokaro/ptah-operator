@@ -15,6 +15,7 @@ The faces under `src/fonts/` are Instrument Sans and IBM Plex Mono, both under
 the SIL Open Font License. Their license texts sit beside them.
 
 `src/components/` carries the three header surfaces the design shapes: the
-brand row with the version pill, the text links across to Ptah, and the
-light/dark toggle. They came from the same place and were adapted to name this
-site rather than that one.
+brand row with the version picker's mount point, the text links across to
+Ptah, and the light/dark toggle. They came from the same place and were adapted
+to name this site rather than that one. The picker's own script and stylesheet
+are copies too, in `public/`; the site README says how they are served.

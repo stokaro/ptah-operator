@@ -33,7 +33,9 @@
     "check:demo": "node scripts/check-demo.mjs",
     "check:demo:selftest": "node scripts/check-demo.mjs --selftest",
     "check:demo-page": "node scripts/check-demo-page.mjs",
-    "check:demo-page:selftest": "node scripts/check-demo-page.mjs --selftest"
+    "check:demo-page:selftest": "node scripts/check-demo-page.mjs --selftest",
+    "check:version-picker": "node scripts/check-version-picker.mjs",
+    "check:version-picker:selftest": "node scripts/check-version-picker.mjs --selftest"
   },
   "dependencies": {
     "@astrojs/markdown-satteri": "0.4.2",

@@ -11,7 +11,7 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { aliasVersion, isVersionFolder, order, ROOT_ALIASES } from './gen-versions.mjs';
+import { aliasVersion, isVersionFolder, latestRelease, order, parseSemver, publicDir, ROOT_ALIASES, ROOT_ASSETS } from './gen-versions.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
@@ -38,11 +38,32 @@ export function inspect(root) {
     }
     for (const entry of index.versions ?? []) {
       if (!entry?.slug || !entry?.label) {
-        problems.push(`versions.json carries an entry with no slug or label; the version pill reads both`);
+        problems.push(`versions.json carries an entry with no slug or label; the version picker reads both`);
       }
+      if (entry?.slug && parseSemver(entry.slug) !== null && !/^\d{4}-\d{2}-\d{2}$/.test(entry.released ?? '')) {
+        problems.push(`versions.json lists ${entry.slug} with no release date; the version picker shows one per release`);
+      }
+    }
+    // The picker badges this release, and a page from an older one links to
+    // it, so naming anything but the newest sends readers backwards.
+    const newest = latestRelease(directories);
+    if ((index.latest ?? undefined) !== newest) {
+      problems.push(`versions.json names ${index.latest} as latest, want ${newest}`);
     }
     if (!directories.includes(index.default)) {
       problems.push(`versions.json serves ${index.default}, which is not a published directory`);
+    }
+  }
+
+  // Every version loads the picker from the root, so a root without it leaves
+  // every header with the plain version text, and a stale copy runs an older
+  // picker on every page at once.
+  for (const name of ROOT_ASSETS) {
+    const published = join(root, name);
+    if (!existsSync(published)) {
+      problems.push(`/${name} is missing, and every version loads the version picker from the root`);
+    } else if (!readFileSync(published).equals(readFileSync(join(publicDir, name)))) {
+      problems.push(`/${name} differs from public/${name}, so the root serves another picker than this revision`);
     }
   }
 
@@ -102,16 +123,16 @@ function selftest() {
 
   write('edge', { documentation_version: 'edge', source_commit: commit });
   write('v0.1.0', { documentation_version: 'v0.1.0', source_commit: other });
-  writeFileSync(
-    join(root, 'versions.json'),
-    JSON.stringify({
-      default: 'v0.1.0',
-      versions: [
-        { slug: 'edge', label: 'edge' },
-        { slug: 'v0.1.0', label: 'v0.1.0' },
-      ],
-    }),
-  );
+  const index = {
+    default: 'v0.1.0',
+    latest: 'v0.1.0',
+    versions: [
+      { slug: 'edge', label: 'edge' },
+      { slug: 'v0.1.0', label: 'v0.1.0', released: '2030-01-01' },
+    ],
+  };
+  writeFileSync(join(root, 'versions.json'), JSON.stringify(index));
+  for (const name of ROOT_ASSETS) writeFileSync(join(root, name), readFileSync(join(publicDir, name)));
   for (const alias of ROOT_ALIASES) {
     const { route } = alias;
     const version = aliasVersion(alias, 'v0.1.0');
@@ -122,6 +143,23 @@ function selftest() {
   }
   let problems = inspect(root);
   if (problems.length !== 0) throw new Error(`a correct root was refused: ${problems.join('; ')}`);
+
+  // The picker's files and the index fields it reads.
+  const refused = (label, mutate, restore, fragment) => {
+    mutate();
+    const found = inspect(root);
+    restore();
+    if (!found.some((problem) => problem.includes(fragment))) {
+      throw new Error(`${label} was accepted: ${found.join('; ')}`);
+    }
+  };
+  const asset = join(root, ROOT_ASSETS[0]);
+  const bytes = readFileSync(asset);
+  refused('a root without the picker', () => rmSync(asset), () => writeFileSync(asset, bytes), 'is missing, and every version');
+  refused('a stale root picker', () => writeFileSync(asset, '/* old */'), () => writeFileSync(asset, bytes), 'differs from public/');
+  const writeIndex = (value) => writeFileSync(join(root, 'versions.json'), JSON.stringify(value));
+  refused('an undated release', () => writeIndex({ ...index, versions: [index.versions[0], { slug: 'v0.1.0', label: 'v0.1.0' }] }), () => writeIndex(index), 'with no release date');
+  refused('no latest release', () => writeIndex({ ...index, latest: undefined }), () => writeIndex(index), 'as latest, want v0.1.0');
 
   // An alias nothing is behind is the failure another site would carry.
   for (const { route } of ROOT_ALIASES) rmSync(join(root, route), { recursive: true, force: true });
@@ -165,8 +203,8 @@ function selftest() {
 
   rmSync(root, { recursive: true, force: true });
   console.log(
-    'check-versions.mjs --selftest: OK (correct root, missing alias, alias into its own version, ' +
-      'relabeled build, mislabeled directory)',
+    'check-versions.mjs --selftest: OK (correct root, missing and stale root picker, undated release, ' +
+      'latest release, missing alias, alias into its own version, relabeled build, mislabeled directory)',
   );
 }
 

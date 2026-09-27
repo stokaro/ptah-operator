@@ -74,6 +74,35 @@ own `build-info.json` naming itself and the commit it came from, and no two
 directories may name the same commit. A switcher that only changed a label
 fails there.
 
+### The version picker
+
+The picker in the header is the one Ptah's documentation serves:
+`public/version-picker.js` and `public/version-picker.css` are copies of the
+files in `stokaro/ptah`, apart from their header comments. `gen-versions.mjs`
+copies both to the site root, and every version loads them from there, so a
+change to them reaches every published version on the next deploy. A version
+carries only `src/components/VersionPicker.astro`, the mount point, which
+`SiteTitle.astro` renders. Because the root files load into pages they were not
+built with, the script has no imports and the stylesheet reads only Starlight's
+`--sl-*` properties.
+
+The picker reads `versions.json`: edge, then the releases newest first, each
+release with the day its tag was made, and `latest` naming the newest release.
+Each version is a link to the same page in that version, or to its home page
+when the page does not exist there.
+
+A page from a release older than `latest` also gets a banner at the top of its
+content, since a reader who arrives from a search engine may never open the
+picker. It names the page's version and links to the same page in the latest
+release, or to that release's home page. Edge, the latest release, a newer
+version and a page with no index show no banner.
+
+`check-versions.mjs` requires the root to carry both files byte for byte as
+`public/` has them, every release in `versions.json` to carry a date, and
+`latest` to name the newest release. `npm run check:version-picker` runs the
+picker and the banner in a browser against the built site; it needs Playwright's
+chromium and, like the other page checks, fails under `CI=1` without it.
+
 ## Publishing
 
 `.github/workflows/docs-publish.yml` assembles every published version on every
