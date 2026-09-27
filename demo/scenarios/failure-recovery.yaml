@@ -57,10 +57,14 @@ steps:
   # for the credential this scenario planted rather than only for the ones the
   # lab generated and the recorder scans for. What it prints afterwards is two
   # fields, so the transcript stays short; the fields are not the check, and a
-  # reader is told so.
+  # reader is told so. A status it could not read is a refusal: an empty one
+  # contains no credential, and the check would have passed on nothing.
   - note: No credential in any of it, and the check reads all of it.
     run: |
-      status=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o json | jq -c '.status')
+      status=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o json | jq -ce '.status | objects') || {
+        printf 'could not read the status, so nothing was checked\n' >&2
+        exit 1
+      }
       for planted in 'nobody:nobody' 'no-such-database.demo.svc.cluster.local'; do
         if printf '%s' "$status" | grep -qF "$planted"; then
           printf 'the status carries the credential this scenario planted\n' >&2
