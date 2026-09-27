@@ -1539,7 +1539,7 @@ func planHarvestFixture(
 		PlanSealPublicKeyDigest: planSealPublicKeyDigest(testSchemaSealKey.PublicKey()),
 	}
 	bindActiveInput(t, schema)
-	sealedPlan := safetySealPlan(t, planDocument)
+	sealedPlan := safetySealPlan(t, schema.Status.ActiveOperation, planDocument)
 	frame := safetyRunnerFrame(t, runner.Result{
 		ProtocolVersion:      runner.ProtocolVersion,
 		Operation:            runner.OperationPlan,
@@ -5164,11 +5164,15 @@ func safetyRunnerFrame(t *testing.T, result runner.Result) []byte {
 // safetySealPlan seals a plan document to the key every fakeReconciler is
 // given (testSchemaSealKey), for a fixture that must read like a real Plan
 // frame: sealed, never plaintext, in Result.Stdout.
-func safetySealPlan(t *testing.T, planDocument []byte) string {
+func safetySealPlan(t *testing.T, operation *operatorv1alpha1.ActiveOperationStatus, planDocument []byte) string {
 	t.Helper()
-	sealed, err := planseal.Seal(planDocument, testSchemaSealKey.PublicKey())
+	sealed, err := planseal.SealPlan(
+		planDocument,
+		planseal.Envelope{OperationID: operation.ID, JobName: operation.JobName},
+		testSchemaSealKey.PublicKey(),
+	)
 	if err != nil {
-		t.Fatalf("Seal() error = %v", err)
+		t.Fatalf("SealPlan() error = %v", err)
 	}
 	return sealed
 }

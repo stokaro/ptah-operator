@@ -16,8 +16,10 @@
 package planseal
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -110,4 +112,68 @@ func (k KeyPair) Open(sealed string) ([]byte, error) {
 		return nil, errors.New("sealed payload could not be opened with this key pair")
 	}
 	return message, nil
+}
+
+// Envelope binds a sealed plan to the exact operation and Job it was
+// computed for.
+//
+// A NaCl sealed box carries no associated data: any plaintext sealed to a
+// given public key opens the same way regardless of what it is, so opening
+// successfully proves only that the manager's own key sealed it, never that
+// it was sealed for the harvest now reading it. A validly sealed plan from
+// one operation, with a self-consistent content digest, would otherwise open
+// and validate as another's. The envelope closes that: it travels inside the
+// sealed plaintext, where nothing that lacks the public key can forge it
+// undetected, and the harvest path refuses a mismatch instead of trusting
+// that the frame it read named the right operation.
+//
+// JobName rather than a Job UID, because the runner seals before the Job it
+// runs in exists as an API object: the UID is assigned on create, but the
+// deterministic name is computed from the claim before dispatch and is
+// already what the runner is given. It changes on every retry of the same
+// operation, so it also tells apart two attempts the OperationID alone
+// would not.
+type Envelope struct {
+	OperationID string `json:"operationID"`
+	JobName     string `json:"jobName"`
+}
+
+// SealPlan seals plan for recipient, wrapped in an envelope binding it to
+// envelope's operation and Job. The wrapping is a compact JSON header,
+// followed by one newline the header itself cannot contain, followed by plan
+// unchanged: encoding/json never emits a literal newline for a struct of
+// plain strings, so the split before decoding it back is unambiguous however
+// many newlines the plan itself carries.
+func SealPlan(plan []byte, envelope Envelope, recipient PublicKey) (string, error) {
+	header, err := json.Marshal(envelope)
+	if err != nil {
+		return "", fmt.Errorf("marshal seal envelope: %w", err)
+	}
+	message := make([]byte, 0, len(header)+1+len(plan))
+	message = append(message, header...)
+	message = append(message, '\n')
+	message = append(message, plan...)
+	return Seal(message, recipient)
+}
+
+// OpenPlan opens a payload SealPlan produced and refuses one whose envelope
+// is not exactly want: a plan sealed for a different operation or a
+// different attempt of the same one, however validly it opens.
+func (k KeyPair) OpenPlan(sealed string, want Envelope) ([]byte, error) {
+	message, err := k.Open(sealed)
+	if err != nil {
+		return nil, err
+	}
+	newline := bytes.IndexByte(message, '\n')
+	if newline < 0 {
+		return nil, errors.New("sealed plan payload carries no envelope")
+	}
+	var got Envelope
+	if err := json.Unmarshal(message[:newline], &got); err != nil {
+		return nil, fmt.Errorf("decode sealed plan envelope: %w", err)
+	}
+	if got != want {
+		return nil, errors.New("sealed plan envelope does not match the operation being harvested")
+	}
+	return message[newline+1:], nil
 }

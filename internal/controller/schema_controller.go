@@ -2057,7 +2057,16 @@ func (r *SchemaReconciler) consumeResult(
 				return r.retryOperation(ctx, schema, job,
 					fmt.Errorf("plan was sealed to a manager key this process does not hold"))
 			}
-			planDocument, err := r.SealKey.Open(result.Stdout)
+			// The envelope inside the sealed payload names the exact operation
+			// and Job it was sealed for. A NaCl sealed box carries no
+			// associated data, so opening successfully proves only that this
+			// process's key sealed it, never that it was sealed for this
+			// harvest -- a validly sealed plan from another operation, or
+			// another attempt of this one, would otherwise open and validate
+			// just as well.
+			planDocument, err := r.SealKey.OpenPlan(result.Stdout, planseal.Envelope{
+				OperationID: operation.ID, JobName: operation.JobName,
+			})
 			if err != nil {
 				return r.retryOperation(ctx, schema, job, fmt.Errorf("open sealed plan payload: %w", err))
 			}

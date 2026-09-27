@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -145,6 +146,113 @@ func TestRestartedManagerRePlansRatherThanWaitingOnAnUnopenablePlan(t *testing.T
 	condition := findCondition(after.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
 	if condition == nil || !strings.Contains(condition.Message, "plan was sealed to a manager key this process does not hold") {
 		t.Fatalf("ReconciliationFailed = %#v, want the claim's own key-mismatch message", condition)
+	}
+}
+
+// TestHarvestRefusesAPlanSealedForAnotherOperation reproduces the review's
+// second finding directly: a NaCl sealed box carries no associated data, so a
+// plan validly sealed to the manager's real key for one operation opens and
+// digest-checks just as well when presented as another's. Only the envelope
+// bound inside the plaintext -- checked after Open, against the operation
+// being harvested -- can refuse it; the Job UID and owner-reference checks
+// this fixture leaves untouched are not what is under test here.
+func TestHarvestRefusesAPlanSealedForAnotherOperation(t *testing.T) {
+	t.Parallel()
+
+	const declaredRowValueB = "operation-b-row@example.com"
+	planDocumentB := safetyPlanDocumentWithStatement(t, "observed-state",
+		`INSERT INTO users (email) VALUES ('`+declaredRowValueB+`')`)
+	// Sealed with the real key this reconciler holds (testSchemaSealKey), for
+	// a different operation ID and Job name than the one it will be harvested
+	// under -- a genuinely valid seal, swapped into the wrong harvest.
+	sealedForB, err := planseal.SealPlan(
+		planDocumentB,
+		planseal.Envelope{OperationID: "operation-b", JobName: "plan-job-b"},
+		testSchemaSealKey.PublicKey(),
+	)
+	if err != nil {
+		t.Fatalf("SealPlan() error = %v", err)
+	}
+
+	policyBytes := "policy"
+	policyDigest := fingerprint.DigestBytes([]byte(policyBytes))
+	schema := schemaFixture()
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhasePlanning
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+		ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
+		Digest:                   testDigest,
+		ArtifactType:             dataplane.SchemaArtifactType,
+		Verified:                 true,
+		VerificationPolicyUID:    testPolicyUID,
+		VerificationPolicyDigest: policyDigest,
+	}
+	schema.Status.Target = operatorv1alpha1.TargetStatus{
+		CoordinationDigest: testCoordinationDigest,
+		IdentityDigest:     testDigest,
+		DriftReportDigest:  safetyOtherDigest,
+	}
+	// operation-a is what this harvest is actually for; the sealed payload
+	// above names operation-b.
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type:                    operatorv1alpha1.OperationPlan,
+		ID:                      "operation-a",
+		JobName:                 "plan-job-a",
+		JobUID:                  "job-uid",
+		StartedAt:               metav1.Now(),
+		Attempt:                 1,
+		PlanSealPublicKeyDigest: planSealPublicKeyDigest(testSchemaSealKey.PublicKey()),
+	}
+	bindActiveInput(t, schema)
+	frame := safetyRunnerFrame(t, runner.Result{
+		ProtocolVersion:      runner.ProtocolVersion,
+		Operation:            runner.OperationPlan,
+		OperationID:          schema.Status.ActiveOperation.ID,
+		ChildExitCode:        0,
+		Stdout:               sealedForB,
+		CoordinationDigest:   schema.Status.Target.CoordinationDigest,
+		TargetIdentityDigest: schema.Status.Target.IdentityDigest,
+		// Self-consistent with the swapped-in Stdout, the way a genuine frame
+		// for operation A's own plan would be -- proving the digest match
+		// alone is not what refuses this.
+		PlanContentDigest: fingerprint.DigestBytes(planDocumentB),
+		PlanOutcome:       runner.PlanOutcomeChanges,
+	})
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	immutable := true
+	policyConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace,
+			Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
+			UID:       testPolicyUID,
+		},
+		Immutable: &immutable,
+		Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: policyBytes},
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
+	reconciler.Plans = planstore.Store{Client: api, Reader: api}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	after := safetyGetSchema(t, api, schema)
+	if after.Status.Plan != nil {
+		t.Fatalf("status.plan = %#v, want nothing published from another operation's sealed plan", after.Status.Plan)
+	}
+	condition := findCondition(after.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if condition == nil || !strings.Contains(condition.Message, "envelope") {
+		t.Fatalf("ReconciliationFailed = %#v, want a message naming the envelope mismatch", condition)
+	}
+	scan := safetyGetSchema(t, api, schema)
+	statusBytes, err := json.Marshal(scan.Status)
+	if err != nil {
+		t.Fatalf("Marshal(status) error = %v", err)
+	}
+	if strings.Contains(string(statusBytes), declaredRowValueB) {
+		t.Fatalf("status carries operation B's declared row value: %s", statusBytes)
 	}
 }
 

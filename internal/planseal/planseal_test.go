@@ -137,3 +137,83 @@ func TestGenerateProducesDistinctKeyPairs(t *testing.T) {
 		t.Fatal("Generate() produced the same public key twice")
 	}
 }
+
+func TestSealPlanOpenPlanRoundTrip(t *testing.T) {
+	t.Parallel()
+	key, err := planseal.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	plan := []byte("{\n  \"format_version\": 1,\n  \"statements\": []\n}\n")
+	envelope := planseal.Envelope{OperationID: "operation-1", JobName: "ptah-plan-orders-a1b2c3"}
+	sealed, err := planseal.SealPlan(plan, envelope, key.PublicKey())
+	if err != nil {
+		t.Fatalf("SealPlan() error = %v", err)
+	}
+	opened, err := key.OpenPlan(sealed, envelope)
+	if err != nil {
+		t.Fatalf("OpenPlan() error = %v", err)
+	}
+	if string(opened) != string(plan) {
+		t.Fatalf("OpenPlan() = %q, want %q", opened, plan)
+	}
+}
+
+// TestOpenPlanRefusesAnotherOperationsEnvelope is the leak a sealed box alone
+// cannot close: any plaintext sealed to this key opens the same way
+// regardless of what it is, so a plan genuinely sealed for one operation
+// must still be refused when it is presented as another's.
+func TestOpenPlanRefusesAnotherOperationsEnvelope(t *testing.T) {
+	t.Parallel()
+	key, err := planseal.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	sealedForB, err := planseal.SealPlan(
+		[]byte("plan for operation B, INSERT ... VALUES ('declared row')"),
+		planseal.Envelope{OperationID: "operation-B", JobName: "ptah-plan-orders-b"},
+		key.PublicKey(),
+	)
+	if err != nil {
+		t.Fatalf("SealPlan() error = %v", err)
+	}
+	wantA := planseal.Envelope{OperationID: "operation-A", JobName: "ptah-plan-orders-a"}
+	if _, err := key.OpenPlan(sealedForB, wantA); err == nil {
+		t.Fatal("OpenPlan() accepted operation B's payload as operation A's")
+	}
+}
+
+// TestOpenPlanRefusesARetriedAttemptsEnvelope proves the reason JobName is
+// bound alongside OperationID: a retry keeps the same operation ID and gets
+// a fresh Job name, so OperationID alone would not tell two attempts apart.
+func TestOpenPlanRefusesARetriedAttemptsEnvelope(t *testing.T) {
+	t.Parallel()
+	key, err := planseal.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	firstAttempt := planseal.Envelope{OperationID: "operation-1", JobName: "ptah-plan-orders-attempt-1"}
+	sealed, err := planseal.SealPlan([]byte("plan"), firstAttempt, key.PublicKey())
+	if err != nil {
+		t.Fatalf("SealPlan() error = %v", err)
+	}
+	secondAttempt := planseal.Envelope{OperationID: "operation-1", JobName: "ptah-plan-orders-attempt-2"}
+	if _, err := key.OpenPlan(sealed, secondAttempt); err == nil {
+		t.Fatal("OpenPlan() accepted the first attempt's payload for the second attempt")
+	}
+}
+
+func TestOpenPlanRefusesAPayloadWithNoEnvelope(t *testing.T) {
+	t.Parallel()
+	key, err := planseal.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	sealed, err := planseal.Seal([]byte("plan bytes with no envelope at all"), key.PublicKey())
+	if err != nil {
+		t.Fatalf("Seal() error = %v", err)
+	}
+	if _, err := key.OpenPlan(sealed, planseal.Envelope{OperationID: "operation-1", JobName: "job-1"}); err == nil {
+		t.Fatal("OpenPlan() accepted a payload sealed without an envelope")
+	}
+}

@@ -212,7 +212,7 @@ func publishSchemaPlanThroughTheController(t *testing.T) (*operatorv1alpha1.Ptah
 		Operation:            runner.OperationPlan,
 		OperationID:          schema.Status.ActiveOperation.ID,
 		ChildExitCode:        0,
-		Stdout:               safetySealPlan(t, planDocument),
+		Stdout:               safetySealPlan(t, schema.Status.ActiveOperation, planDocument),
 		CoordinationDigest:   schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest: schema.Status.Target.IdentityDigest,
 		PlanContentDigest:    fingerprint.DigestBytes(planDocument),

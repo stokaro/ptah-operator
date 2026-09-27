@@ -476,6 +476,7 @@ func (i buildInput) dataPlane() (
 			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.operation.ObservationConnectTimeout.Duration, 10*time.Second)),
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.operation.ObservationLockTimeout.Duration, 30*time.Second)),
 			literalEnv(runner.EnvPlanSealPublicKey, i.planSealPublicKey.Encode()),
+			literalEnv(runner.EnvSealedPlanJobName, i.operation.JobName),
 		)
 		if i.operation.ObservationDev != nil {
 			environment = append(environment, databaseEnv(runner.EnvDevelopmentDatabaseURL, i.operation.ObservationDev.URLFrom))

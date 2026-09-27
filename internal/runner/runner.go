@@ -533,6 +533,12 @@ func runPlan(
 		setResultError(&result, "missing_plan_seal_key", fmt.Errorf("%s: %w", EnvPlanSealPublicKey, err), redactor, config.Diagnostics)
 		return result
 	}
+	if strings.TrimSpace(inputs.SealedPlanJobName) == "" {
+		setResultError(&result, "missing_plan_seal_key",
+			fmt.Errorf("%s is required", EnvSealedPlanJobName), redactor, config.Diagnostics)
+		return result
+	}
+	sealEnvelope := planseal.Envelope{OperationID: inputs.OperationID, JobName: inputs.SealedPlanJobName}
 
 	// Each read saves into a directory only this process writes, under a name
 	// no earlier read used, so a file found there after a read is that read's.
@@ -644,7 +650,10 @@ func runPlan(
 	// frame carries them sealed. A reader of the Pod log, or of anything that
 	// copies it, holds ciphertext -- only the manager that holds the matching
 	// private key, generated in memory and never persisted, can read the plan.
-	sealed, err := planseal.Seal(rawPlan, sealKey)
+	// The envelope binds the sealed bytes to this operation and this Job, so a
+	// validly sealed plan from a different operation or a different attempt
+	// of this one cannot be substituted for this result at harvest.
+	sealed, err := planseal.SealPlan(rawPlan, sealEnvelope, sealKey)
 	if err != nil {
 		setResultError(&result, "plan_seal_failed", err, redactor, config.Diagnostics)
 		return result

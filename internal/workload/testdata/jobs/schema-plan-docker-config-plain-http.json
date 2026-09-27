@@ -346,6 +346,9 @@
                 "value": "/source/schema.hcl"
               },
               {
+                "name": "PTAH_SEALED_PLAN_JOB_NAME"
+              },
+              {
                 "name": "TMPDIR",
                 "value": "/work"
               }

@@ -416,15 +416,22 @@ func TestExecutablePlanSizeBoundary(t *testing.T) {
 		t.Fatalf("exact-limit Run(Plan) = error %#v, outcome %q, digest %q",
 			result.Error, result.PlanOutcome, result.PlanContentDigest)
 	}
-	// The sealed box adds a fixed 48 bytes to the plaintext -- a prepended
+	// The sealed box adds a fixed 48 bytes to what it seals -- a prepended
 	// 32-byte ephemeral public key and a 16-byte Poly1305 tag -- whatever the
-	// plaintext is, and base64 then expands that by exactly 4/3, rounded up
-	// to a multiple of 4. An exact-limit plan is the one input that pins both
-	// terms of that arithmetic at once.
-	wantSealedLength := base64.StdEncoding.EncodedLen(int(DefaultMaxPlanBytes) + 48)
+	// message is, and base64 then expands that by exactly 4/3, rounded up to
+	// a multiple of 4. What it seals is the envelope header, the newline that
+	// closes it, and the plaintext plan; databaseEnvironment fixes the
+	// operation ID and, from it, the Job name, so the header's own length is
+	// as pinned as the plan's. An exact-limit plan is the one input that pins
+	// every term of that arithmetic at once.
+	header, err := json.Marshal(planseal.Envelope{OperationID: "plan-exact-limit", JobName: "ptah-plan-plan-exact-limit"})
+	if err != nil {
+		t.Fatalf("Marshal(envelope) error = %v", err)
+	}
+	wantSealedLength := base64.StdEncoding.EncodedLen(len(header) + 1 + int(DefaultMaxPlanBytes) + 48)
 	if len(result.Stdout) != wantSealedLength {
-		t.Fatalf("sealed plan bytes = %d, want %d (plaintext %d plus the fixed sealed-box and base64 overhead)",
-			len(result.Stdout), wantSealedLength, DefaultMaxPlanBytes)
+		t.Fatalf("sealed plan bytes = %d, want %d (envelope %d, newline, plaintext %d, sealed-box and base64 overhead)",
+			len(result.Stdout), wantSealedLength, len(header), DefaultMaxPlanBytes)
 	}
 	if got := openSealedPlan(t, result.Stdout); got != exactPlan {
 		t.Fatal("sealed plan opened to different bytes than the exact-limit plaintext")
@@ -1133,6 +1140,7 @@ func TestRunRedactsCredentialsAndURLPasswords(t *testing.T) {
 			"PTAH_OCI_TOKEN=" + registryToken,
 			envExpectedDatabaseEngine + "=PostgreSQL",
 			envPlanSealPublicKey + "=" + testPlanSealKey.PublicKey().Encode(),
+			envSealedPlanJobName + "=ptah-plan-redact-1",
 		}),
 		Diagnostics: &diagnostics,
 		Executor:    executor,
@@ -3113,6 +3121,7 @@ func databaseEnvironment(operationID string) []string {
 		envExecutionNotAfter + "=2099-01-01T00:00:00Z",
 		envTerminationGracePeriod + "=30",
 		envPlanSealPublicKey + "=" + testPlanSealKey.PublicKey().Encode(),
+		envSealedPlanJobName + "=ptah-plan-" + operationID,
 	}
 }
 
@@ -3133,13 +3142,21 @@ func mustGenerateTestPlanSealKey() planseal.KeyPair {
 // openSealedPlan decrypts a Plan result's Stdout with testPlanSealKey, the
 // key databaseEnvironment gives every Plan Job under test, and fails the test
 // if it cannot: a plan the runner sealed correctly always opens with the key
-// it was sealed to.
+// it was sealed to. It skips the leading envelope line without checking it,
+// since callers proving the plan content round-tripped do not know or care
+// which operation ID and Job name databaseEnvironment used; the envelope's
+// own binding is proven separately.
 func openSealedPlan(t *testing.T, sealed string) string {
 	t.Helper()
 	plaintext, err := testPlanSealKey.Open(sealed)
 	if err != nil {
 		t.Fatalf("Open(sealed plan) error = %v", err)
 	}
+	newline := bytes.IndexByte(plaintext, '\n')
+	if newline < 0 {
+		t.Fatalf("sealed plan carries no envelope: %s", plaintext)
+	}
+	plaintext = plaintext[newline+1:]
 	return string(plaintext)
 }
 

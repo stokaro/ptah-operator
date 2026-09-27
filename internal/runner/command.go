@@ -91,6 +91,13 @@ const (
 	// a Plan operation reads it; the runner refuses before starting its
 	// executor if it is missing or malformed.
 	EnvPlanSealPublicKey = "PTAH_PLAN_SEAL_PUBLIC_KEY"
+	// EnvSealedPlanJobName is this Job's deterministic name, known before the
+	// Job exists because it is computed from the claim rather than assigned
+	// by the API server. The runner binds it into the sealed plan payload
+	// alongside the operation ID, so a payload sealed for one Job cannot be
+	// substituted for another's at harvest, even a retried attempt of the
+	// same operation under a fresh name.
+	EnvSealedPlanJobName = "PTAH_SEALED_PLAN_JOB_NAME"
 
 	envOperationID            = EnvOperationID
 	envRequestedReference     = EnvRequestedReference
@@ -114,6 +121,7 @@ const (
 	envMigrationsDir          = EnvMigrationsDir
 	envTransactionMode        = EnvTransactionMode
 	envPlanSealPublicKey      = EnvPlanSealPublicKey
+	envSealedPlanJobName      = EnvSealedPlanJobName
 )
 
 // Inputs are the runner-specific environment values used to construct one of
@@ -141,6 +149,9 @@ type Inputs struct {
 	// PlanSealPublicKey is the base64-encoded manager public key a Plan
 	// operation seals its plan payload to before writing the frame.
 	PlanSealPublicKey string
+	// SealedPlanJobName is this Plan Job's deterministic name, bound inside
+	// the sealed plan payload alongside the operation ID.
+	SealedPlanJobName string
 	// ExpectedSequencePath is the file the runner wrote the approved sequence
 	// to for `migrations up --expect-sequence`. The runner sets it; nothing
 	// reads it from the environment.
@@ -173,6 +184,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		MigrationsDir:              values[envMigrationsDir],
 		TransactionMode:            values[envTransactionMode],
 		PlanSealPublicKey:          values[envPlanSealPublicKey],
+		SealedPlanJobName:          values[envSealedPlanJobName],
 	}
 }
 
@@ -239,6 +251,7 @@ func childEnvironment(environment []string) []string {
 		EnvOCICASourceFile,
 		EnvOCICASHA256Grant,
 		EnvPlanSealPublicKey,
+		EnvSealedPlanJobName,
 	)
 }
 
