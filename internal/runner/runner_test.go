@@ -176,10 +176,10 @@ func TestResolveRecordsStrictTopLevelDigest(t *testing.T) {
 	)}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationResolve,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=resolve-1",
 			envRequestedReference + "=oci://registry.example/schema:main",
-		},
+		}),
 		Executor: executor,
 	})
 	if result.Error != nil || result.ResolvedDigest != digest || result.Stdout != "" ||
@@ -205,10 +205,10 @@ func TestResolveCannotRedirectDigestSelectedRequest(t *testing.T) {
 	)}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationResolve,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=resolve-digest-redirect",
 			envRequestedReference + "=oci://registry.example/schema@" + requestedDigest,
-		},
+		}),
 		Executor: executor,
 	})
 	if result.Error == nil || result.Error.Code != "invalid_resolve_output" || result.ResolvedDigest != "" || result.ResolvedReference != "" {
@@ -223,7 +223,7 @@ func TestPlanRecordsExactContentDigest(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: stablePlanResponses(t, plan)}
 	result := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: databaseEnvironment("plan-1"),
+		Environment: withRunnerProtocol(databaseEnvironment("plan-1")),
 		Executor:    executor,
 	})
 	if result.CoordinationDigest != testCoordinationDigest() {
@@ -271,7 +271,7 @@ func TestPlanContentDigestIsTheDigestOfTheSavedBytes(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: stablePlanResponses(t, canonicalPlanDocument)}
 	result := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: databaseEnvironment("plan-canonical"),
+		Environment: withRunnerProtocol(databaseEnvironment("plan-canonical")),
 		Executor:    executor,
 		TempDir:     t.TempDir(),
 	})
@@ -294,12 +294,12 @@ func TestPlanContentDigestIsTheDigestOfTheSavedBytes(t *testing.T) {
 	}}}
 	applied := Run(context.Background(), Config{
 		Operation: OperationApply,
-		Environment: append(databaseEnvironment("apply-canonical"),
+		Environment: withRunnerProtocol(append(databaseEnvironment("apply-canonical"),
 			envPlanDir+"="+planDir,
 			envExpectedPlanDigest+"="+canonicalPlanContentDigest,
 			envExpectedCoordination+"="+testCoordinationDigest(),
 			envExpectedTargetDigest+"="+databaseTargetDigest(t),
-		),
+		)),
 		Executor: applyExecutor,
 		TempDir:  t.TempDir(),
 	})
@@ -327,7 +327,7 @@ func TestExecutablePlanSizeBoundary(t *testing.T) {
 	planExecutor := &scriptedExecutor{t: t, responses: stablePlanResponses(t, exactPlan)}
 	result := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: databaseEnvironment("plan-exact-limit"),
+		Environment: withRunnerProtocol(databaseEnvironment("plan-exact-limit")),
 		Executor:    planExecutor,
 		TempDir:     t.TempDir(),
 	})
@@ -366,7 +366,7 @@ func TestExecutablePlanSizeBoundary(t *testing.T) {
 	)
 	applyResult := Run(context.Background(), Config{
 		Operation:   OperationApply,
-		Environment: applyEnvironment,
+		Environment: withRunnerProtocol(applyEnvironment),
 		Executor:    applyExecutor,
 		TempDir:     t.TempDir(),
 	})
@@ -381,7 +381,7 @@ func TestExecutablePlanSizeBoundary(t *testing.T) {
 	oversizedExecutor := &scriptedExecutor{t: t, responses: []scriptedResponse{planResponse(oversizedPlan)}}
 	oversizedResult := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: databaseEnvironment("plan-over-limit"),
+		Environment: withRunnerProtocol(databaseEnvironment("plan-over-limit")),
 		Executor:    oversizedExecutor,
 		TempDir:     t.TempDir(),
 	})
@@ -424,7 +424,7 @@ func TestRunRejectsSizeContractDrift(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			test.config.Environment = databaseEnvironment("invalid-size-contract")
+			test.config.Environment = withRunnerProtocol(databaseEnvironment("invalid-size-contract"))
 			test.config.Executor = &scriptedExecutor{t: t}
 			result := Run(context.Background(), test.config)
 			if result.Error == nil || result.Error.Code != "invalid_configuration" {
@@ -441,7 +441,7 @@ func TestPlanRejectsUnstableConsecutiveSnapshots(t *testing.T) {
 	second := validPlanDocument("CREATE TABLE example (id bigint, name text);")
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{planResponse(first), planResponse(second)}}
 	result := Run(context.Background(), Config{
-		Operation: OperationPlan, Environment: databaseEnvironment("plan-unstable"), Executor: executor,
+		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-unstable")), Executor: executor,
 	})
 	if result.Error == nil || result.Error.Code != "unstable_plan" || result.Stdout != "" || result.PlanOutcome != "" {
 		t.Fatalf("Run() = %#v", result)
@@ -460,7 +460,7 @@ func TestPlanRejectsMixedChangesAndNoChangesSnapshots(t *testing.T) {
 	plan := validPlanDocument("CREATE TABLE example (id bigint);")
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{planNoChangesResponse(), planResponse(plan)}}
 	result := Run(context.Background(), Config{
-		Operation: OperationPlan, Environment: databaseEnvironment("plan-mixed"), Executor: executor,
+		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-mixed")), Executor: executor,
 	})
 	if result.Error == nil || result.Error.Code != "unstable_plan" || result.PlanOutcome != "" {
 		t.Fatalf("Run() = %#v", result)
@@ -473,7 +473,7 @@ func TestPlanValidatesDialectAgainstConfiguredDatabaseEngine(t *testing.T) {
 	plan := strings.Replace(validPlanDocument("CREATE TABLE example (id bigint);"), `"dialect":"postgres"`, `"dialect":"mysql"`, 1)
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{planResponse(plan), planResponse(plan)}}
 	result := Run(context.Background(), Config{
-		Operation: OperationPlan, Environment: databaseEnvironment("plan-wrong-dialect"), Executor: executor,
+		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-wrong-dialect")), Executor: executor,
 	})
 	if result.Error == nil || result.Error.Code != "invalid_plan_output" || result.Stdout != "" || len(executor.calls) != 2 {
 		t.Fatalf("Run() = %#v, calls = %d", result, len(executor.calls))
@@ -542,7 +542,7 @@ func TestPlanRequiresNativeDryRunToMatchReviewedStatements(t *testing.T) {
 			t.Parallel()
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{planResponse(plan), planResponse(plan), test.validation}}
 			result := Run(context.Background(), Config{
-				Operation: OperationPlan, Environment: databaseEnvironment("plan-validation-mismatch"), Executor: executor,
+				Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-validation-mismatch")), Executor: executor,
 			})
 			if result.Error == nil || result.Error.Code != "invalid_plan_output" || result.Stdout != "" ||
 				result.PlanContentDigest != "" || result.PlanOutcome != "" {
@@ -572,7 +572,7 @@ func TestPlanIgnoresWhatPtahWritesForAPerson(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: responses}
 	var diagnostics bytes.Buffer
 	result := Run(context.Background(), Config{
-		Operation: OperationPlan, Environment: databaseEnvironment("plan-person-text"),
+		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-person-text")),
 		Executor: executor, Diagnostics: &diagnostics,
 	})
 	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges || result.Stdout != plan {
@@ -590,7 +590,7 @@ func TestPlanRejectsATruncatedValidationReport(t *testing.T) {
 	responses := []scriptedResponse{planResponse(plan), planResponse(plan), {stdout: strings.Repeat("x", 1024)}}
 	executor := &scriptedExecutor{t: t, responses: responses}
 	result := Run(context.Background(), Config{
-		Operation: OperationPlan, Environment: databaseEnvironment("plan-validation-truncation"),
+		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-validation-truncation")),
 		Executor: executor, MaxResultBytes: 512, MaxPlanBytes: 512,
 	})
 	if result.Error == nil || result.Error.Code != "invalid_plan_output" || result.Stdout != "" {
@@ -610,7 +610,7 @@ func TestPlanWithCredentialSubstringFailsWithoutEmittingMutatedPayload(t *testin
 	environment := append(databaseEnvironment("plan-secret"), EnvOCIToken+"="+secret)
 	result := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: environment,
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 	})
 	if result.Error == nil || result.Error.Code != "credential_leak" {
@@ -628,7 +628,7 @@ func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationObserve,
-		Environment: append(databaseEnvironment("observe-1"), "PTAH_EXCLUDE=audit.*,\"legacy,archive\""),
+		Environment: withRunnerProtocol(append(databaseEnvironment("observe-1"), "PTAH_EXCLUDE=audit.*,\"legacy,archive\"")),
 		Executor:    executor,
 	})
 	if result.ChildExitCode != 0 || result.Error != nil {
@@ -679,7 +679,7 @@ func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := Run(context.Background(), Config{
-		Operation: OperationObserve, Environment: databaseEnvironment("observe-bounded-findings"),
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-bounded-findings")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(report), exitCode: 1}}},
 	})
 	if result.Error != nil || result.DriftFindingCount != 6 || len(result.DriftFindings) != 3 ||
@@ -796,7 +796,7 @@ func TestObserveRejectsUnknownIdentifierFindingCategory(t *testing.T) {
 
 	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"private_schema_name","count":1,"severity":"warning"}],"diff":{}}`
 	result := Run(context.Background(), Config{
-		Operation: OperationObserve, Environment: databaseEnvironment("observe-unknown-finding"),
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-unknown-finding")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
 	})
 	if result.Error == nil || result.Error.Code != "invalid_observed_state" || len(result.DriftFindings) != 0 {
@@ -809,7 +809,7 @@ func TestObserveRejectsFindingSeverityInconsistentWithHighest(t *testing.T) {
 
 	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{}}`
 	result := Run(context.Background(), Config{
-		Operation: OperationObserve, Environment: databaseEnvironment("observe-inconsistent-finding-severity"),
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-inconsistent-finding-severity")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
 	})
 	if result.Error == nil || result.Error.Code != "invalid_observed_state" || len(result.DriftFindings) != 0 {
@@ -823,7 +823,7 @@ func TestObserveNormalizesNativeConvergedSafeSeverity(t *testing.T) {
 	report := `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[],"diff":{"tables_added":[],"tables_removed":[],"columns_added":[],"columns_removed":[],"columns_changed":[]}}`
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report}}}
 	result := Run(context.Background(), Config{
-		Operation: OperationObserve, Environment: databaseEnvironment("observe-converged-safe"), Executor: executor,
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-converged-safe")), Executor: executor,
 	})
 	if result.Error != nil || result.ChildExitCode != 0 || result.DriftReportDigest == "" ||
 		result.ObservedDialect != "postgres" || result.ObservedDrift ||
@@ -845,7 +845,7 @@ func TestObservePreservesSafeSeverityForRealDrift(t *testing.T) {
 	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":" SAFE ","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{"tables_added":["app.audit"]}}`
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}}
 	result := Run(context.Background(), Config{
-		Operation: OperationObserve, Environment: databaseEnvironment("observe-real-safe-drift"), Executor: executor,
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-real-safe-drift")), Executor: executor,
 	})
 	if result.Error != nil || result.ChildExitCode != 0 || result.DriftReportDigest == "" ||
 		!result.ObservedDrift || result.HighestDriftSeverity != "safe" || result.DriftFindingCount != 1 {
@@ -958,7 +958,7 @@ func TestObserveFramesInconsistentConvergedSummaryAsInvalid(t *testing.T) {
 			operationID := "observe-inconsistent-" + strings.ReplaceAll(test.name, " ", "-")
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: test.report}}}
 			result := Run(context.Background(), Config{
-				Operation: OperationObserve, Environment: databaseEnvironment(operationID), Executor: executor,
+				Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment(operationID)), Executor: executor,
 			})
 			if result.Error == nil || result.Error.Code != "invalid_observed_state" ||
 				result.DriftReportDigest != "" || result.ObservedDialect != "" || result.ObservedDrift ||
@@ -991,7 +991,7 @@ func TestObserveNeverPublishesNativeFailureDetails(t *testing.T) {
 	}}}
 	diagnostics := &bytes.Buffer{}
 	result := Run(context.Background(), Config{
-		Operation: OperationObserve, Environment: databaseEnvironment("observe-private-failure"),
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-private-failure")),
 		Executor: executor, Diagnostics: diagnostics,
 	})
 	if result.Error == nil || result.Error.Code != "invalid_observed_state" || result.Stdout != "" {
@@ -1024,7 +1024,7 @@ func TestRunRedactsCredentialsAndURLPasswords(t *testing.T) {
 	var diagnostics bytes.Buffer
 	result := Run(context.Background(), Config{
 		Operation: OperationPlan,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=redact-1",
 			envDatabaseURL + "=" + databaseURL,
 			envCoordinationDigest + "=" + testCoordinationDigest(),
@@ -1032,7 +1032,7 @@ func TestRunRedactsCredentialsAndURLPasswords(t *testing.T) {
 			"PTAH_OCI_PASSWORD=" + registryPassword,
 			"PTAH_OCI_TOKEN=" + registryToken,
 			envExpectedDatabaseEngine + "=PostgreSQL",
-		},
+		}),
 		Diagnostics: &diagnostics,
 		Executor:    executor,
 	})
@@ -1062,10 +1062,10 @@ func TestRunBoundsOutputWithoutTreatingWritesAsShort(t *testing.T) {
 	var diagnostics bytes.Buffer
 	result := Run(context.Background(), Config{
 		Operation: OperationResolve,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=bounded-1",
 			envRequestedReference + "=oci://registry.example/schema:main",
-		},
+		}),
 		MaxResultBytes: 8,
 		Diagnostics:    &diagnostics,
 		Executor:       executor,
@@ -1134,7 +1134,7 @@ func TestApplyReconstructsChunksInLexicalOrderAndRemovesTempPlan(t *testing.T) {
 	)
 	result := Run(context.Background(), Config{
 		Operation:   OperationApply,
-		Environment: environment,
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 		TempDir:     t.TempDir(),
 	})
@@ -1176,7 +1176,7 @@ func TestApplyNeverPublishesTheStatementsItsReportLists(t *testing.T) {
 		envExpectedTargetDigest+"="+databaseTargetDigest(t),
 	)
 	result := Run(context.Background(), Config{
-		Operation: OperationApply, Environment: environment, Executor: executor, Diagnostics: diagnostics,
+		Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor, Diagnostics: diagnostics,
 	})
 	if result.Error != nil || result.Stdout != "" || !result.MutationStarted || result.Uncertain {
 		t.Fatalf("Run() = %#v", result)
@@ -1260,7 +1260,7 @@ func TestApplyNeverPublishesNativeFailureDiagnostics(t *testing.T) {
 				envExpectedTargetDigest+"="+databaseTargetDigest(t),
 			)
 			result := Run(context.Background(), Config{
-				Operation: OperationApply, Environment: environment, Executor: executor, Diagnostics: diagnostics,
+				Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor, Diagnostics: diagnostics,
 			})
 			if result.Error == nil || result.Error.Code != test.errorCode || result.Stdout != "" ||
 				!result.MutationStarted || !result.Uncertain {
@@ -1298,7 +1298,7 @@ func TestApplyRejectsTheHumanTranscriptAsUncertain(t *testing.T) {
 		envExpectedCoordination+"="+testCoordinationDigest(),
 		envExpectedTargetDigest+"="+databaseTargetDigest(t),
 	)
-	result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
+	result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 	if result.Error == nil || result.Error.Code != "invalid_apply_output" || result.Stdout != "" ||
 		!result.MutationStarted || !result.Uncertain {
 		t.Fatalf("Run() = %#v", result)
@@ -1319,7 +1319,7 @@ func TestApplyRejectsDigestMismatchBeforeExecution(t *testing.T) {
 		envExpectedCoordination+"="+testCoordinationDigest(),
 		envExpectedTargetDigest+"="+databaseTargetDigest(t),
 	)
-	result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
+	result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 	if result.Error == nil || result.Error.Code != "plan_digest_mismatch" {
 		t.Fatalf("error = %#v, want plan_digest_mismatch", result.Error)
 	}
@@ -1374,7 +1374,7 @@ func TestApplyChecksTargetIdentityBeforeDispatch(t *testing.T) {
 				envExecutionNotAfter + "=2099-01-01T00:00:00Z",
 				envTerminationGracePeriod + "=30",
 			}
-			result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
+			result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 			if test.wantError {
 				if result.Error == nil || result.Error.Code != "target_binding_mismatch" {
 					t.Fatalf("error = %#v, want target_binding_mismatch", result.Error)
@@ -1425,7 +1425,7 @@ func TestDatabaseOperationsRejectInvalidOrMismatchedCoordinationBinding(t *testi
 				environment = append(environment, envExpectedCoordination+"="+test.expected)
 			}
 			executor := &scriptedExecutor{t: t}
-			result := Run(context.Background(), Config{Operation: test.operation, Environment: environment, Executor: executor})
+			result := Run(context.Background(), Config{Operation: test.operation, Environment: withRunnerProtocol(environment), Executor: executor})
 			if result.Error == nil || result.Error.Code != test.wantCode {
 				t.Fatalf("Run() error = %#v, want %s", result.Error, test.wantCode)
 			}
@@ -1452,11 +1452,11 @@ func TestReadOnlyOperationsRejectMySQLConnectionSQLBeforeDispatch(t *testing.T) 
 				executor := &scriptedExecutor{t: t}
 				result := Run(context.Background(), Config{
 					Operation: operation,
-					Environment: []string{
+					Environment: withRunnerProtocol([]string{
 						envOperationID + "=mysql-connection-sql",
 						envDatabaseURL + "=" + databaseURL,
 						envCoordinationDigest + "=" + testCoordinationDigest(),
-					},
+					}),
 					Executor: executor,
 				})
 				if result.Error == nil || result.Error.Code != "invalid_target" || len(executor.calls) != 0 {
@@ -1498,7 +1498,7 @@ func TestApplyRejectsLateOrMissingDispatchDeadlineBeforeExecution(t *testing.T) 
 			}
 			result := Run(context.Background(), Config{
 				Operation:   OperationApply,
-				Environment: environment,
+				Environment: withRunnerProtocol(environment),
 				Executor:    executor,
 				Clock: func() time.Time {
 					return time.Date(2026, 8, 30, 12, 0, 1, 0, time.UTC)
@@ -1544,7 +1544,7 @@ func TestApplyRechecksDispatchDeadlineImmediatelyBeforeExecution(t *testing.T) {
 	}
 	result := Run(context.Background(), Config{
 		Operation:   OperationApply,
-		Environment: environment,
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 		Clock: func() time.Time {
 			if clockCalls >= len(times) {
@@ -1586,7 +1586,7 @@ func TestApplyExecutionDeadlineCancelsAStartedChild(t *testing.T) {
 		envExecutionNotAfter+"="+deadline.Format(time.RFC3339Nano),
 	)
 	started := time.Now()
-	result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
+	result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("deadline cancellation took %s", elapsed)
 	}
@@ -1617,7 +1617,7 @@ func TestApplyFailureIsUncertainAndMustNotBeReplayed(t *testing.T) {
 		envExpectedCoordination+"="+testCoordinationDigest(),
 		envExpectedTargetDigest+"="+databaseTargetDigest(t),
 	)
-	result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
+	result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 	if result.Error == nil || result.Error.Code != "apply_outcome_unknown" || !result.MutationStarted || !result.Uncertain {
 		t.Fatalf("Run() = %#v, want an uncertain dispatched mutation", result)
 	}
@@ -1666,7 +1666,7 @@ func TestApplyNativeStalePlanAfterDispatchStillHasUnknownOutcome(t *testing.T) {
 				envExpectedCoordination+"="+testCoordinationDigest(),
 				envExpectedTargetDigest+"="+databaseTargetDigest(t),
 			)
-			result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
+			result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 			if result.Error == nil || result.Error.Code != "stale_plan" || !result.MutationStarted || !result.Uncertain ||
 				result.ChildExitCode != 2 {
 				t.Fatalf("Run() = %#v", result)
@@ -1769,7 +1769,7 @@ func TestApplyReadsItsReportOnEveryExit(t *testing.T) {
 				envExpectedCoordination+"="+testCoordinationDigest(),
 				envExpectedTargetDigest+"="+databaseTargetDigest(t),
 			)
-			result := Run(context.Background(), Config{Operation: OperationApply, Environment: environment, Executor: executor})
+			result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 			if _, err := MarshalFrame(result); err != nil {
 				t.Fatalf("MarshalFrame() error = %v for %#v", err, result)
 			}
@@ -1830,7 +1830,7 @@ func TestPlanPassesEveryExactExclusionAsASeparateArgument(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: responses}
 	result := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: append(databaseEnvironment("plan-scope"), "PTAH_EXCLUDE=\"legacy,archive\",audit.*", "PTAH_JSON=false"),
+		Environment: withRunnerProtocol(append(databaseEnvironment("plan-scope"), "PTAH_EXCLUDE=\"legacy,archive\",audit.*", "PTAH_JSON=false")),
 		Executor:    executor,
 	})
 	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges {
@@ -1875,7 +1875,7 @@ func TestPlanPassesEveryProtectedTableAsASeparateArgument(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: responses}
 	result := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: append(databaseEnvironment("plan-fence"), "PTAH_PROTECTED_TABLES=ref.regions,countries"),
+		Environment: withRunnerProtocol(append(databaseEnvironment("plan-fence"), "PTAH_PROTECTED_TABLES=ref.regions,countries")),
 		Executor:    executor,
 	})
 	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges {
@@ -1952,7 +1952,7 @@ func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{test.response}}
 			result := Run(context.Background(), Config{
 				Operation:   OperationPlan,
-				Environment: append(databaseEnvironment("plan-refused"), "PTAH_PROTECTED_TABLES=countries"),
+				Environment: withRunnerProtocol(append(databaseEnvironment("plan-refused"), "PTAH_PROTECTED_TABLES=countries")),
 				Executor:    executor,
 			})
 			if result.Error == nil || result.Error.Code != test.wantCode {
@@ -1977,7 +1977,7 @@ func TestPlanRefusesAFenceThatIsNotATableName(t *testing.T) {
 		executor := &scriptedExecutor{t: t, responses: nil}
 		result := Run(context.Background(), Config{
 			Operation:   OperationPlan,
-			Environment: append(databaseEnvironment("plan-bad-fence"), "PTAH_PROTECTED_TABLES="+value),
+			Environment: withRunnerProtocol(append(databaseEnvironment("plan-bad-fence"), "PTAH_PROTECTED_TABLES="+value)),
 			Executor:    executor,
 		})
 		if result.Error == nil || result.Error.Code != "invalid_input" {
@@ -1993,7 +1993,7 @@ func TestPlanRejectsOutputThatDoesNotBindRequestedScope(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{planResponse(plan), planResponse(plan)}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationPlan,
-		Environment: append(databaseEnvironment("plan-wrong-scope"), "PTAH_EXCLUDE=audit.*"),
+		Environment: withRunnerProtocol(append(databaseEnvironment("plan-wrong-scope"), "PTAH_EXCLUDE=audit.*")),
 		Executor:    executor,
 	})
 	if result.Error == nil || result.Error.Code != "invalid_plan_output" || result.Stdout != "" {
@@ -2031,7 +2031,7 @@ func TestPlanNoChangesComesFromTheReport(t *testing.T) {
 			t.Parallel()
 			executor := &scriptedExecutor{t: t, responses: test.responses}
 			result := Run(context.Background(), Config{
-				Operation: OperationPlan, Environment: databaseEnvironment("plan-no-change"), Executor: executor,
+				Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-no-change")), Executor: executor,
 			})
 			if test.valid {
 				if result.Error != nil || result.PlanOutcome != PlanOutcomeNoChanges || result.Stdout != "" ||
@@ -2090,7 +2090,7 @@ func TestPlanRefusesAReportItCannotAccountFor(t *testing.T) {
 			t.Parallel()
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{test.response}}
 			result := Run(context.Background(), Config{
-				Operation: OperationPlan, Environment: databaseEnvironment("plan-bad-report"), Executor: executor,
+				Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-bad-report")), Executor: executor,
 			})
 			if result.Error == nil || result.Error.Code != "invalid_plan_output" || result.Stdout != "" ||
 				result.PlanContentDigest != "" || len(executor.calls) != 1 {
@@ -2115,7 +2115,7 @@ func TestPlanReadsItsReportWhateverTheExitStatus(t *testing.T) {
 	var diagnostics bytes.Buffer
 	executor := &scriptedExecutor{t: t, responses: responses}
 	result := Run(context.Background(), Config{
-		Operation: OperationPlan, Environment: databaseEnvironment("plan-terminated"),
+		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("plan-terminated")),
 		Executor: executor, Diagnostics: &diagnostics,
 	})
 	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges || result.ChildExitCode != 0 {
@@ -2138,7 +2138,7 @@ func TestObserveRejectsAReportWithoutSameReadDiffIdentity(t *testing.T) {
 	} {
 		executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report}}}
 		result := Run(context.Background(), Config{
-			Operation: OperationObserve, Environment: databaseEnvironment("observe-invalid-report"), Executor: executor,
+			Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-invalid-report")), Executor: executor,
 		})
 		if result.Error == nil || result.Error.Code != "invalid_observed_state" || result.DriftReportDigest != "" {
 			t.Fatalf("Run() = %#v", result)
@@ -2171,13 +2171,13 @@ func TestVerifyUsesResolvedDigestForMutableReferenceWhenPolicyPermitsTags(t *tes
 	}}
 	result := Run(context.Background(), Config{
 		Operation: OperationVerify,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=verify-1",
 			envRequestedReference + "=" + requested,
 			envResolvedReference + "=" + resolved,
 			envVerificationPolicy + "=" + policyPath,
 			envExpectedArtifactType + "=" + artifactType,
-		},
+		}),
 		Executor: executor,
 	})
 	if result.Error != nil || result.ResolvedDigest != digest || result.ObservedArtifactType != artifactType || result.VerificationPolicyDigest != sha256Digest(policy) {
@@ -2235,13 +2235,13 @@ func TestVerifyAppliesDigestPinPolicyToOriginalRequestedReference(t *testing.T) 
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report}}}
 			result := Run(context.Background(), Config{
 				Operation: OperationVerify,
-				Environment: []string{
+				Environment: withRunnerProtocol([]string{
 					envOperationID + "=verify-tag-pin-policy",
 					envRequestedReference + "=" + requested,
 					envResolvedReference + "=" + resolved,
 					envVerificationPolicy + "=" + policyPath,
 					envExpectedArtifactType + "=" + artifactType,
-				},
+				}),
 				Executor: executor,
 			})
 			if result.Error == nil || result.Error.Code != "verification_refused" || result.ChildExitCode != 0 ||
@@ -2267,13 +2267,13 @@ func TestVerifyAppliesDigestPinPolicyToOriginalRequestedReference(t *testing.T) 
 		}}
 		result := Run(context.Background(), Config{
 			Operation: OperationVerify,
-			Environment: []string{
+			Environment: withRunnerProtocol([]string{
 				envOperationID + "=verify-digest-pin-policy",
 				envRequestedReference + "=" + resolved,
 				envResolvedReference + "=" + resolved,
 				envVerificationPolicy + "=" + policyPath,
 				envExpectedArtifactType + "=" + artifactType,
-			},
+			}),
 			Executor: executor,
 		})
 		if result.Error != nil || result.ChildExitCode != 0 || result.ResolvedDigest != digest ||
@@ -2309,13 +2309,13 @@ func TestVerifyRejectsInvalidRequestedBindingBeforeChild(t *testing.T) {
 			executor := &scriptedExecutor{t: t}
 			result := Run(context.Background(), Config{
 				Operation: OperationVerify,
-				Environment: []string{
+				Environment: withRunnerProtocol([]string{
 					envOperationID + "=verify-invalid-requested-binding",
 					envRequestedReference + "=" + test.requested,
 					envResolvedReference + "=" + resolved,
 					envVerificationPolicy + "=" + policyPath,
 					envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
-				},
+				}),
 				Executor: executor,
 			})
 			if result.Error == nil || result.Error.Code != test.wantCode || result.ChildExitCode != -1 || len(executor.calls) != 0 ||
@@ -2351,7 +2351,7 @@ func TestVerifyFailsClosedOnMovedSourceAndArtifactTypeMismatch(t *testing.T) {
 			`{"reference":%q,"digest":%q,"satisfied":[],"findings":[]}`,
 			"oci://registry.example/schema@"+digestB, digestB,
 		)}}}
-		result := Run(context.Background(), Config{Operation: OperationVerify, Environment: baseEnvironment, Executor: executor})
+		result := Run(context.Background(), Config{Operation: OperationVerify, Environment: withRunnerProtocol(baseEnvironment), Executor: executor})
 		if result.Error == nil || result.Error.Code != "stale_source" || len(executor.calls) != 1 {
 			t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
 		}
@@ -2362,7 +2362,7 @@ func TestVerifyFailsClosedOnMovedSourceAndArtifactTypeMismatch(t *testing.T) {
 			{stdout: fmt.Sprintf(`{"reference":%q,"digest":%q,"satisfied":[],"findings":[]}`, "oci://registry.example/schema@"+digestA, digestA)},
 			{stdout: inspectReport("oci://registry.example/schema@"+digestA, digestA, "application/octet-stream")},
 		}}
-		result := Run(context.Background(), Config{Operation: OperationVerify, Environment: baseEnvironment, Executor: executor})
+		result := Run(context.Background(), Config{Operation: OperationVerify, Environment: withRunnerProtocol(baseEnvironment), Executor: executor})
 		if result.Error == nil || result.Error.Code != "artifact_type_mismatch" || len(executor.calls) != 2 {
 			t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
 		}
@@ -2385,13 +2385,13 @@ func TestVerifyModelsPolicyRefusalAsTypedNonRetryableEvidence(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 2}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationVerify,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=verify-refused",
 			envRequestedReference + "=" + resolved,
 			envResolvedReference + "=" + resolved,
 			envVerificationPolicy + "=" + policyPath,
 			envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
-		},
+		}),
 		Executor: executor,
 	})
 	if result.Error == nil || result.Error.Code != "verification_refused" || result.Uncertain {
@@ -2420,13 +2420,13 @@ func TestVerifyUnionsRequestedDigestPinRefusalWithNativeFindings(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 2}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationVerify,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=verify-combined-refusal",
 			envRequestedReference + "=oci://registry.example/schema:stable",
 			envResolvedReference + "=" + resolved,
 			envVerificationPolicy + "=" + policyPath,
 			envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
-		},
+		}),
 		Executor: executor,
 	})
 	if result.Error == nil || result.Error.Code != "verification_refused" || result.ChildExitCode != 2 ||
@@ -2448,13 +2448,13 @@ func TestVerifyRejectsMalformedExitTwoAsInfrastructureFailure(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: `{"findings":[]}`, exitCode: 2}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationVerify,
-		Environment: []string{
+		Environment: withRunnerProtocol([]string{
 			envOperationID + "=verify-malformed-refusal",
 			envRequestedReference + "=oci://registry.example/schema@" + digest,
 			envResolvedReference + "=oci://registry.example/schema@" + digest,
 			envVerificationPolicy + "=" + policyPath,
 			envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
-		},
+		}),
 		Executor: executor,
 	})
 	if result.Error == nil || result.Error.Code != "invalid_verification_output" {
@@ -2540,7 +2540,7 @@ func TestNativeResolveAndVerifyTextNeverCrossesTheFrameBoundary(t *testing.T) {
 			}
 			var diagnostics bytes.Buffer
 			result := Run(context.Background(), Config{
-				Operation: test.operation, Environment: environment,
+				Operation: test.operation, Environment: withRunnerProtocol(environment),
 				Executor: &scriptedExecutor{t: t, responses: test.responses}, Diagnostics: &diagnostics,
 			})
 			if result.Error == nil || result.Error.Code != test.wantError || result.Stdout != "" {
@@ -3199,7 +3199,7 @@ func TestMigrationApplyKeepsItsReportWhenPtahStops(t *testing.T) {
 	}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: migrationApplyEnvironment(t, "migration-apply-stopped"),
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-apply-stopped")),
 		Executor:    executor,
 	})
 
@@ -3248,7 +3248,7 @@ func TestMigrationApplyHandsPtahTheApprovedSequence(t *testing.T) {
 	}}}
 	Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: migrationApplyEnvironment(t, "migration-apply-sequence"),
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-apply-sequence")),
 		Executor:    executor,
 		TempDir:     temporary,
 	})
@@ -3280,7 +3280,7 @@ func TestMigrationApplyClaimsTheMutationWhenTheChildCannotBeRead(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{err: errors.New("context canceled")}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: migrationApplyEnvironment(t, "migration-apply-ambiguous"),
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-apply-ambiguous")),
 		Executor:    executor,
 	})
 
@@ -3327,7 +3327,7 @@ func TestMigrationOperationsNeverReachTheRegistry(t *testing.T) {
 				)
 			}
 			result := Run(context.Background(), Config{
-				Operation: operation, Environment: environment, Executor: executor,
+				Operation: operation, Environment: withRunnerProtocol(environment), Executor: executor,
 			})
 			if result.Error == nil || result.Error.Code != "invalid_input" || len(executor.calls) != 0 {
 				t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
@@ -3345,7 +3345,7 @@ func TestAcceptanceReviewMigrationRejectsChangedTargetBeforeDispatch(t *testing.
 		envExpectedTargetDigest+"=sha256:"+strings.Repeat("a", 64),
 		envExpectedCoordination+"="+testCoordinationDigest(),
 	)
-	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: environment, Executor: executor})
+	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 	if len(executor.calls) != 0 {
 		t.Fatalf("migration child was invoked despite a mismatched approved target digest; MutationStarted=%t", result.MutationStarted)
 	}
@@ -3355,7 +3355,7 @@ func TestAcceptanceReviewMigrationRejectsExpiredDispatch(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
 	environment := environmentWithout(migrationEnvironment("review-expired-dispatch"), envDispatchNotAfter, envExecutionNotAfter)
 	environment = append(environment, envDispatchNotAfter+"=2000-01-01T00:00:00Z", envExecutionNotAfter+"=2000-01-01T00:00:00Z")
-	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: environment, Executor: executor,
+	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: withRunnerProtocol(environment), Executor: executor,
 		Clock: func() time.Time { return time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC) },
 	})
 	if len(executor.calls) != 0 {
@@ -3365,7 +3365,7 @@ func TestAcceptanceReviewMigrationRejectsExpiredDispatch(t *testing.T) {
 
 func TestAcceptanceReviewMigrationRequiresApprovedPlanBeforeDispatch(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
-	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: migrationEnvironment("review-unbound-plan"), Executor: executor})
+	result := Run(context.Background(), Config{Operation: OperationMigrationApply, Environment: withRunnerProtocol(migrationEnvironment("review-unbound-plan")), Executor: executor})
 	if len(executor.calls) != 0 {
 		t.Fatalf("migration child was invoked without an approved sequence or history fingerprint: args=%v MutationStarted=%t", executor.calls[0].Args, result.MutationStarted)
 	}
@@ -3517,7 +3517,7 @@ func TestMigrationApplyRefusesEveryUnauthorizedDispatch(t *testing.T) {
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: migrationRunDocument("partial"), exitCode: 1}}}
 			result := Run(context.Background(), Config{
 				Operation:   OperationMigrationApply,
-				Environment: test.mutate(t, migrationApplyEnvironment(t, "unauthorized-migration-apply")),
+				Environment: withRunnerProtocol(test.mutate(t, migrationApplyEnvironment(t, "unauthorized-migration-apply"))),
 				Executor:    executor,
 				Clock:       func() time.Time { return now },
 			})
@@ -3551,7 +3551,7 @@ func TestMigrationApplyDispatchesWhenOnlyThePasswordRotated(t *testing.T) {
 	)
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: environment,
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 	})
 
@@ -3582,7 +3582,7 @@ func TestMigrationApplyRechecksDeadlinesImmediatelyBeforeExecution(t *testing.T)
 	)
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: environment,
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 		Clock: func() time.Time {
 			if clockCalls >= len(times) {
@@ -3618,7 +3618,7 @@ func TestMigrationApplyExecutionDeadlineCancelsAStartedChild(t *testing.T) {
 	started := time.Now()
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: environment,
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 	})
 	if executor.calls != 1 {

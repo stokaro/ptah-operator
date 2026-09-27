@@ -272,7 +272,7 @@ func TestRunWritesTheFrameWhenNoTerminationLogIsMounted(t *testing.T) {
 		code := run(context.Background(),
 			[]string{"--ptah-binary", echo, "--operation", "resolve"},
 			&stdout, &stderr,
-			[]string{"PTAH_OPERATION_ID=resolve-summary", "PTAH_REQUESTED_REFERENCE=oci://registry.example/schema:main"},
+			[]string{"PTAH_OPERATION_ID=resolve-summary", "PTAH_REQUESTED_REFERENCE=oci://registry.example/schema:main", runnerProtocol},
 			row.path,
 		)
 		if code != 0 {
@@ -331,5 +331,6 @@ func migrationApplyEnvironment(t *testing.T, operationID string, grace time.Dura
 		runner.EnvExecutionNotAfter + "=2099-01-01T00:00:00Z",
 		runner.EnvTerminationGracePeriod + "=" + strconv.FormatInt(int64(grace/time.Second), 10),
 		runner.EnvMigrationsDir + "=/source/migrations",
+		runnerProtocol,
 	}
 }

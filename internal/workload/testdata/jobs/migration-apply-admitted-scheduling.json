@@ -219,6 +219,10 @@
               {
                 "name": "PTAH_PLAIN_HTTP",
                 "value": "false"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "5"
               }
             ],
             "resources": {
@@ -437,6 +441,10 @@
               {
                 "name": "PTAH_OPERATION_ID",
                 "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "5"
               },
               {
                 "name": "PTAH_TERMINATION_GRACE_PERIOD_SECONDS",

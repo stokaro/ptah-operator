@@ -69,7 +69,7 @@ func TestMigrationApplyReadsTheReportOfAChildItStopped(t *testing.T) {
 			}}}
 			result := Run(context.Background(), Config{
 				Operation:   OperationMigrationApply,
-				Environment: migrationApplyEnvironment(t, "migration-apply-stopped"),
+				Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-apply-stopped")),
 				Executor:    executor,
 			})
 			if len(executor.calls) != 1 {
@@ -174,7 +174,7 @@ func TestMutatingOperationsRefuseAPodWithoutItsGraceBeforeDispatch(t *testing.T)
 			t.Parallel()
 			environment := environmentWithout(migrationApplyEnvironment(t, "missing-grace"), envTerminationGracePeriod)
 			executor := &scriptedExecutor{t: t}
-			result := Run(context.Background(), Config{Operation: operation, Environment: environment, Executor: executor})
+			result := Run(context.Background(), Config{Operation: operation, Environment: withRunnerProtocol(environment), Executor: executor})
 			if result.Error == nil || result.Error.Code != "missing_termination_grace" {
 				t.Fatalf("Run() error = %#v, want missing_termination_grace", result.Error)
 			}
@@ -196,7 +196,7 @@ func TestTheChildIsNotToldTheGrace(t *testing.T) {
 	}}}
 	Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: migrationApplyEnvironment(t, "grace-not-inherited"),
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "grace-not-inherited")),
 		Executor:    executor,
 		TempDir:     t.TempDir(),
 	})

@@ -593,6 +593,10 @@ func (b Builder) artifactFetch(
 		runner.EnvOCICASourceFile,
 		runner.EnvOCICASHA256Grant,
 	)
+	// The guard is the runner from execution.runnerImage, and it authorizes
+	// the fetch that follows it. It refuses a protocol other than its own
+	// before it authorizes anything; the fetch is Ptah, and is not told.
+	guardEnvironment = append(guardEnvironment, runnerProtocolEnv())
 	fetchEnvironment := omitEnvironment(environment,
 		runner.EnvOCIAuthMode,
 		runner.EnvOCIAuthRegistryGrant,

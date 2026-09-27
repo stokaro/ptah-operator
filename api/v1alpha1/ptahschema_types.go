@@ -1173,6 +1173,7 @@ const (
 	ReasonRefreshSuspended             ConditionReason = "RefreshSuspended"
 	ReasonRequested                    ConditionReason = "Requested"
 	ReasonResolveFailed                ConditionReason = "ResolveFailed"
+	ReasonRunnerProtocolMismatch       ConditionReason = "RunnerProtocolMismatch"
 	ReasonSatisfied                    ConditionReason = "Satisfied"
 	ReasonScopedChanges                ConditionReason = "ScopedChanges"
 	ReasonScopedConverged              ConditionReason = "ScopedConverged"

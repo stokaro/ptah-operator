@@ -189,6 +189,10 @@
                 "value": "oci://registry.example:5000/acme/schema:latest"
               },
               {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "5"
+              },
+              {
                 "name": "TMPDIR",
                 "value": "/work"
               }

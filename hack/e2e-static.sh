@@ -3513,7 +3513,8 @@ source_job_fixture() {
         literalEnv("TMPDIR"; "/work"),
         literalEnv("PTAH_OPERATION_ID"; operationID($operation)),
         literalEnv("PTAH_REQUESTED_REFERENCE";
-          "oci://registry.example:5000/acme/schema:latest")
+          "oci://registry.example:5000/acme/schema:latest"),
+        literalEnv("PTAH_RUNNER_PROTOCOL_VERSION"; "5")
       ] +
       (if $operation == "verify" then [
         literalEnv("PTAH_RESOLVED_REFERENCE";
@@ -3674,6 +3675,15 @@ assert_source_isolation_mutation_rejected() {
 
 assert_source_isolation_mutation_rejected 'missing Verify Job' \
 	"$source_environment_fixture" Environment 'del(.items[1])'
+assert_source_isolation_mutation_rejected 'source Job that names no runner protocol' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.containers[0].env |= map(select(.name != "PTAH_RUNNER_PROTOCOL_VERSION"))'
+assert_source_isolation_mutation_rejected 'runner protocol read from a Secret' \
+	"$source_environment_fixture" Environment \
+	'(.items[0].spec.template.spec.containers[0].env[] | select(.name == "PTAH_RUNNER_PROTOCOL_VERSION")) |= {name, valueFrom: {secretKeyRef: {name: "registry-auth", key: "protocol"}}}'
+assert_source_isolation_mutation_rejected 'runner protocol that is not a version' \
+	"$source_environment_fixture" Environment \
+	'(.items[0].spec.template.spec.containers[0].env[] | select(.name == "PTAH_RUNNER_PROTOCOL_VERSION")).value = "05"'
 assert_source_isolation_mutation_rejected 'extra source Job' \
 	"$source_environment_fixture" Environment '.items += [.items[1]]'
 assert_source_isolation_mutation_rejected 'duplicate Resolve operation' \

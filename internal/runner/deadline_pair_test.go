@@ -41,7 +41,7 @@ func TestNoDeadlinePairProducesTheExecutionRefusal(t *testing.T) {
 			}}
 			result := Run(context.Background(), Config{
 				Operation:   OperationMigrationApply,
-				Environment: environment,
+				Environment: withRunnerProtocol(environment),
 				Executor:    executor,
 				Clock:       func() time.Time { return now },
 			})

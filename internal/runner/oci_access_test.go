@@ -197,7 +197,7 @@ func TestRunnerRejectsUnauthorizedRegistryGrantBeforeChild(t *testing.T) {
 					}
 					result := Run(t.Context(), Config{
 						Operation:   operation,
-						Environment: environment,
+						Environment: withRunnerProtocol(environment),
 						Executor:    executor,
 					})
 					if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
@@ -239,12 +239,12 @@ func TestRunnerRejectsClientCertificateBeforeChild(t *testing.T) {
 			executor := &scriptedExecutor{t: t}
 			result := Run(t.Context(), Config{
 				Operation: operation,
-				Environment: []string{
+				Environment: withRunnerProtocol([]string{
 					envOperationID + "=" + string(operation) + "-client-certificate-refusal",
 					envRequestedReference + "=oci://registry.example/team/schema:stable",
 					envOCIClientCertificate + "=/credentials/tls.crt",
 					envOCIClientKey + "=/credentials/tls.key",
-				},
+				}),
 				Executor: executor,
 			})
 			if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
@@ -291,7 +291,7 @@ func TestRunnerRejectsUnauthorizedCABeforeChild(t *testing.T) {
 				}
 				result := Run(t.Context(), Config{
 					Operation:   operation,
-					Environment: environment,
+					Environment: withRunnerProtocol(environment),
 					Executor:    executor,
 				})
 				if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
@@ -416,7 +416,7 @@ func TestRunnerPassesOnlyCASnapshotToPtahAndRemovesIt(t *testing.T) {
 	)
 	result := Run(t.Context(), Config{
 		Operation:   OperationResolve,
-		Environment: environment,
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 		TempDir:     directory,
 	})

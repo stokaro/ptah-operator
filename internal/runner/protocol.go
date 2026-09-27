@@ -30,6 +30,12 @@ const (
 	// old checks run under the new ones. The rule starts with the first
 	// tagged release: until one ships, no installation holds an approval to
 	// carry over, and the contract changes in place.
+	//
+	// hack/verifyrunnerprotocol, under make verify-source, holds this number
+	// to the source the runner is built from: it refuses a source change that
+	// keeps the number, unless support/runner-protocol.json declares why the
+	// contract stayed the same. Every Job names this number in
+	// EnvRunnerProtocolVersion, and a runner of another protocol refuses it.
 	ProtocolVersion = 5
 
 	// JSON escaping can expand a bounded plan payload. This shared cap includes
@@ -290,6 +296,9 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	sawOversized := false
 	var last *Result
 	var rejection error
+	// A refusal a runner of another protocol wrote. It is reported only when
+	// no frame of this protocol was found, and ahead of every other reason.
+	var mismatch *ProtocolMismatchError
 	searchBudget := maxFrameSearchBytes
 	reject := func(reason string) { rejection = fmt.Errorf("%w: %s", ErrMalformedFrame, reason) }
 	rejectIncomplete := func(reason string) { rejection = incompleteFrameError{reason: reason} }
@@ -398,6 +407,11 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 			searchAt = start + len(marker)
 			continue
 		}
+		if refusal, ok := foreignProtocolRefusal(payload, result, options); ok {
+			mismatch = refusal
+			searchAt = search.footerEnd
+			continue
+		}
 		if err := validateResult(result, options); err != nil {
 			rejection = err
 			searchAt = start + len(marker)
@@ -410,6 +424,9 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 
 	if last != nil {
 		return *last, nil
+	}
+	if mismatch != nil {
+		return Result{}, mismatch
 	}
 	if sawOversized {
 		return Result{}, ErrFrameTooLarge

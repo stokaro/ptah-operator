@@ -152,7 +152,7 @@ func TestTheSummaryCarriesNoCredentialAndNoChildText(t *testing.T) {
 		exitCode: 1,
 	}}}
 	result := Run(context.Background(), Config{
-		Operation: OperationMigrationApply, Environment: environment, Executor: executor, TempDir: t.TempDir(),
+		Operation: OperationMigrationApply, Environment: withRunnerProtocol(environment), Executor: executor, TempDir: t.TempDir(),
 	})
 	if len(executor.calls) != 1 || result.MigrationRun == nil {
 		t.Fatalf("Run() = %#v after %d calls, want a run that reached the child and kept its report",

@@ -490,6 +490,17 @@ states the rule. The runner's enforcement is bound through the runner protocol
 version rather than its digest, and a release that changes what the runner
 enforces bumps that version.
 
+Two checks hold that rule. `make verify-source` runs `hack/verifyrunnerprotocol`,
+which digests the source the runner is built from -- every non-test Go file of
+this module that `./cmd/ptah-runner` imports, and the `go.sum` lines of every
+other module it imports -- and refuses a digest that moved while
+`runner.ProtocolVersion` did not. A change that leaves the runner's contract as
+it was is declared in `support/runner-protocol.json` with its reason, under the
+protocol version it was made in. At run time, every Job names the protocol its
+manager speaks in `PTAH_RUNNER_PROTOCOL_VERSION`, and a runner that speaks
+another one -- an `execution.runnerImage` from another release -- refuses the
+Job before the executor starts.
+
 `status.executionBinding` exposes the controller-state contract, Ptah version,
 executor image, runner protocol, and its opaque `epoch` for audit. Every
 transition of those components creates a new epoch, including rollback to an

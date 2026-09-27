@@ -81,6 +81,14 @@ func Run(ctx context.Context, config Config) Result {
 		setResultError(&result, "missing_operation_id", errors.New("PTAH_OPERATION_ID is required"), redactor, config.Diagnostics)
 		return result
 	}
+	// First, and before anything that reads another input: a Job built for
+	// another protocol is refused by what this runner enforces, not by the
+	// contract the Job was built under. The result is the protocol refusal
+	// document and nothing else, which a manager of any protocol reads.
+	if err := checkProtocolBinding(values); err != nil {
+		setResultError(&result, CodeRunnerProtocolMismatch, err, redactor, config.Diagnostics)
+		return result
+	}
 	if config.MaxResultBytes <= 0 {
 		config.MaxResultBytes = DefaultMaxResultBytes
 	}

@@ -13,7 +13,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test test-envtest test-race vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
+.PHONY: all build test test-envtest test-race vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-runner-protocol verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -112,7 +112,7 @@ docs-reference-check:
 
 verify: verify-source test-race
 
-verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-release e2e-static vet build test test-envtest
+verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release e2e-static vet build test test-envtest
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets
 
 verify-crd-schema-history: manifests
@@ -123,6 +123,13 @@ verify-kubernetes-support:
 
 verify-ptah-support:
 	$(GO) run ./hack/verifyptahsupport
+
+# A plan and its approval bind the runner protocol version, not the runner
+# image, so the version has to move when the runner's source does. This refuses
+# a source change the version did not follow, unless support/runner-protocol.json
+# declares why the contract stayed the same.
+verify-runner-protocol:
+	$(GO) run ./hack/verifyrunnerprotocol
 
 # The PA-01 coverage table for an acceptance record, derived from the two
 # support catalogs and the driver rather than typed beside them. The table's

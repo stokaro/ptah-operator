@@ -107,6 +107,11 @@ type artifactFetchRequest struct {
 }
 
 // buildOperationJob is the one place an operation Job and its Pod are shaped.
+// runnerProtocolEnv names the runner protocol this build of the manager speaks.
+func runnerProtocolEnv() corev1.EnvVar {
+	return literalEnv(runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion))
+}
+
 func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 	annotations := make(map[string]string, len(spec.annotations)+8)
 	maps.Copy(annotations, spec.annotations)
@@ -151,6 +156,11 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 
 	resources := *spec.execution.Resources.DeepCopy()
 	environment := append([]corev1.EnvVar(nil), spec.env...)
+	// The protocol this manager speaks. The runner comes from
+	// execution.runnerImage, which nothing ties to this manager, and it
+	// refuses a Job built for a protocol other than its own before the
+	// executor starts.
+	environment = append(environment, runnerProtocolEnv())
 	if spec.mutating {
 		// The same number the Pod spec carries below. The runner sizes the
 		// time it gives a stopped child against it, and refuses a mutating
