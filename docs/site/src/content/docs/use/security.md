@@ -67,11 +67,10 @@ about RoleBindings in the release namespace, and in a separate coordination
 namespace, that give a subject other than this release's ServiceAccounts
 `create` on `pods`, `pods/exec`, `serviceaccounts/token`, a workload kind or
 `leases`, or that bind the `admin`, `edit` or `cluster-admin` ClusterRole.
-This release's ServiceAccounts are the ones its Pods run as: the manager, and
-during an upgrade the manager it succeeds, the certificate rotator, and the
-install and uninstall hooks. The chart knows them by the names it gives them,
-so a binding the release made for a ServiceAccount it has not created yet is
-still its own. A ClusterRole is judged by the rules it carries. For an
+This release's ServiceAccounts are the ones its Pods run as: the manager, the
+certificate rotator, and the CRD hook. The chart knows them by the names it
+gives them, so a binding the release made for a ServiceAccount it has not
+created yet is still its own. A ClusterRole is judged by the rules it carries. For an
 aggregated ClusterRole those are the rules the aggregation controller wrote
 into it, so a grant that arrives through aggregation is warned about too.
 
@@ -135,12 +134,9 @@ is an ordinary failure, and these checks exist for it:
   bug cannot create a Job, a plan or a chunk outside its shape. See
   [Admission](../../reference/credentials-and-admission/#admission).
 
-None of these is a defense against an administrator acting in bad faith. The
-release machinery also carries mechanisms that assume a hostile writer inside
-the release namespace, such as the hook-progress policies that
-[Release lifecycle](../../reference/release-lifecycle/) describes. They sit
-outside this contract, and
-[#443](https://github.com/stokaro/ptah-operator/issues/443) removes them.
+None of these is a defense against an administrator acting in bad faith, and
+the release machinery does not try to be one: the contract above is what
+answers that.
 
 ## Trust boundaries
 
@@ -157,11 +153,11 @@ The operator separates five authorities:
    immutable approvals for either family. The chart creates an optional
    ClusterRole but never binds it automatically.
 3. The controller may manage plans, Jobs, ConfigMaps, Leases, status, and
-   Events. Its shipped ClusterRole contains no Secret permission. Retained,
-   typed admission policies constrain its main-resource writes to structural
-   Job, immutable plan, and immutable chunk shapes; a fail-closed webhook then
-   reconstructs and compares the complete write intent through direct API
-   reads.
+   Events. Its shipped ClusterRole contains no Secret permission. Typed
+   admission policies that ship with the release constrain its main-resource
+   writes to structural Job, immutable plan, and immutable chunk shapes; a
+   fail-closed webhook then reconstructs and compares the complete write
+   intent through direct API reads.
 4. A Job receives only the credentials needed for its fixed operation through
    same-namespace Secret selectors resolved by the kubelet.
 5. A realm administrator decides which namespaces may manage a database more

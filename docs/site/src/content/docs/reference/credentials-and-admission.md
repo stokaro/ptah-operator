@@ -51,18 +51,17 @@ The manager's own writes pass through two independent fail-closed layers.
 **Typed policies**, one per kind, reject objects outside their narrow
 structural form: Jobs, plan chunks, schema plans and migration plans, plus a
 fifth policy over `PtahSchema` and `PtahMigration` updates.
-One policy per kind avoids cross-type CEL assumptions while keeping the
-boundary closed during a rollout. The Job policy admits a Job that satisfies
-the schema shape or the migration shape and nothing else.
+One policy per kind avoids cross-type CEL assumptions. The Job policy admits a
+Job that satisfies the schema shape or the migration shape and nothing else.
+The policies are ordinary release objects: each carries the release's manager
+image and controller-state version as literals, and an upgrade updates it in
+place, so a Job or a plan stamped by another manager release is refused.
 
 **Webhooks** perform the stronger semantic check by reading the owning resource
-and plan and reconstructing the exact expected object. Eight ship:
-`mapproval`, `mmigrationapproval` and `certificate-rotation-canary-mutate` on
-the mutating side; `vapproval`, `vmigrationapproval`, `vpodintent`,
-`vcontrollerwrite` and `certificate-rotation-canary-validate` on the validating
-side. The two canary entries match only a dry-run update the certificate
-rotator no longer sends, so nothing calls them; the release verifiers still
-require them.
+and plan and reconstructing the exact expected object. Six ship:
+`mapproval` and `mmigrationapproval` on the mutating side; `vapproval`,
+`vmigrationapproval`, `vpodintent` and `vcontrollerwrite` on the validating
+side.
 
 A Job carries an annotation envelope that admission checks as a set: eight
 annotations, including the manager image, revision and controller-state

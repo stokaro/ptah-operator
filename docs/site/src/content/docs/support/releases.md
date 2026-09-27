@@ -126,20 +126,21 @@ installer decides to pin it, and can pin another verified executor instead.
 
 ## Release sequence
 
-Every published chart version advances the append-only rollout-guard sequence,
-even when the controller-state and admission contracts do not change. Prepare a
-release by updating the chart `version`, `appVersion`, and default manager image
-tag; increment both `ptah-operator.releaseSequence` in
+Every published chart version advances the release sequence, even when the
+controller-state and admission contracts do not change. Prepare a release by
+updating the chart `version`, `appVersion`, and default manager image tag;
+increment both `ptah-operator.releaseSequence` in
 `charts/ptah-operator/templates/_helpers.tpl` and `CurrentReleaseSequence` in
-`internal/crdupgrade/rollout.go`; then append the matching record to
+`internal/crdupgrade/release_sequence.go`; then append the matching record to
 `hack/releaseverify/release-sequence-history.json`.
 
 The release verifier requires the Helm and Go values to match the final history
 record. CI compares the history with its exact Git baseline: existing release
 records are immutable, unchanged release metadata must retain its recorded
 sequence, and one newly prepared version must use a strictly greater sequence.
-This prevents a different manager image contract from reusing the names of
-retained rollout guards.
+The admission configurations record the sequence of the release that wrote
+them, and the chart refuses an upgrade to a lower one, so a sequence reused by
+a different manager image would let an older release pass as a newer one.
 
 ## Controller-state contract
 
@@ -167,10 +168,10 @@ refuses a tree where the two disagree.
 
 ### What a refusal looks like
 
-The state preflight runs in the chart's pre-upgrade hook, before the first CRD
-update, again before the release cutover, and once more after it. A refusal
-fails the hook and leaves the active release running; the message names the
-resource and the location it read, for example:
+The state preflight runs in the chart's CRD hook on install, upgrade and
+rollback, before the hook stops the running release and before the first CRD
+update. A refusal fails the hook and leaves the running release as it was; the
+message names the resource and the location it read, for example:
 
 ```text
 controller downgrade refused: PtahMigration orders/billing stores controller
@@ -188,13 +189,13 @@ operator.ptah.run/controller-state-version=1
 does not match compiled controller-state version 2
 ```
 
-Install the chart that was published with that image. A candidate release that
-predates the state contract the active release records is refused before any
-CRD is touched:
+Install the chart that was published with that image. A candidate whose CRDs
+predate the state contract the installed CRDs record is refused before any CRD
+is touched, whether it arrives as an upgrade or as a rollback:
 
 ```text
-release activation controller-state rollback refused:
-active version 2 is newer than candidate 1
+controller-state rollback refused: existing operator.ptah.run/controller-state-version=2
+is newer than candidate version 1
 ```
 
 None of the three is recoverable by retrying. A cluster whose resources carry
@@ -455,15 +456,6 @@ release is unchanged. Release builds also inject the exact manager source
 revision. The manager refuses to start without both a digest-pinned manager
 image identity and that revision, and records them on every plan it publishes
 and every Job it dispatches. They are a record, not a binding.
-
-The retained rollout guards pin that contract for the life of a release
-sequence. The runtime Pod guard carries a digest of the manager's own arguments,
-and the hook parent contract pins the Job that carries them, so a `helm upgrade`
-that changes `execution.ptahVersion`, `execution.executorImage`,
-`execution.runnerImage`, or the manager image on an installed release is refused
-while the sequence is unchanged: the guard reports that it pins the executable
-contract of that sequence. Ship such a change as a chart version, which advances
-the sequence and creates guards for the new contract.
 
 Changing `execution.ptahVersion` or `execution.executorImage`, or rolling out a
 release with a different controller-state contract or runner protocol,

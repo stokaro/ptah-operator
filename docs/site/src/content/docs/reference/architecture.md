@@ -114,7 +114,7 @@ Five programs ship from `cmd/`:
 | `manager` | The reconcilers for both resource families, plus the admission webhook server |
 | `ptah-runner` | Runs inside every operation Pod: validates inputs, bounds output, redacts credentials, frames the result |
 | `ptah-cert-rotator` | Issues and replaces the webhook serving certificates |
-| `ptah-crd-manager` | The Helm hooks and the runtime verifier: the install and upgrade preflight, the reconcile that stops the previous runtime, updates the CRDs and activates the release, the uninstall Job, and the init container that holds a manager until its CRDs and admission singleton match |
+| `ptah-crd-manager` | The Helm hook and the runtime verifier: the reconcile that checks the stored state, stops the previous runtime when the manager image changes and updates the CRDs, on install, upgrade and rollback alike, and the init container that holds a manager until its CRDs and admission singleton match |
 | `kubectl-ptah` | A read-only plugin that reconstructs a published plan for a person to read |
 
 ### What the manager keeps in memory
@@ -198,7 +198,7 @@ is the one to change when the contract changes.
 | [Plans and approvals](../plans-and-approvals/) | What a plan binds, how its bytes are stored, what a decision authorizes, and declared rows |
 | [Credentials and admission](../credentials-and-admission/) | Which process holds which credential, and what the admission contract refuses |
 | [Mutation lifecycle](../mutation-lifecycle/) | The obligations a mutating operation carries, and where each family enforces them |
-| [Release lifecycle](../release-lifecycle/) | Install, upgrade, retirement and uninstall, and the certificate handoffs inside them |
+| [Release lifecycle](../release-lifecycle/) | Install, upgrade, rollback and uninstall, and the certificate handoffs inside them |
 | [Execution guarantees](../guarantees/) | Each promise mapped to the enforcement point in each family, and the test that proves it |
 
 ## Where the code lives
@@ -231,10 +231,10 @@ is the one to change when the contract changes.
 Unit tests measure this code. The envtest suites under `test/envtest` measure
 the API contract against a real kube-apiserver and etcd: the CRDs' schemas and
 CEL rules, every ValidatingAdmissionPolicy the chart installs together with its
-binding and parameter, and the manager's webhooks behind the chart's own webhook
+binding, and the manager's webhooks behind the chart's own webhook
 configurations. Each policy is held to a request it refuses, the write it must
-admit from the identity that makes it, and a mutation of its binding, match or
-parameter reference under which those rows have to fail. They do not measure
+admit from the identity that makes it, and a mutation of its binding, its match
+or the release values it carries under which those rows have to fail. They do not measure
 what Kubernetes would do: envtest runs no built-in controllers, so nothing there
 reconciles a Deployment into Pods or garbage-collects by owner reference.
 

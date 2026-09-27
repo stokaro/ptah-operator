@@ -41,9 +41,9 @@ Some of what a recovery needs lives outside those objects:
   coordination digest -- the engine hashed together with either the namespace
   and its coordination key, or the name of the `PtahRealm` a resource names.
   It is how two resources addressing one database take turns.
-- The release identity is a ConfigMap named `ptah-operator-release-activation`
-  in the operator namespace, beside the admission singleton
-  `ptah-operator-admission` and the webhook certificate Secret.
+- The release identity is recorded on the admission singleton
+  `ptah-operator-admission`, and the webhook certificate is a Secret in the
+  operator namespace.
 
 ## Recovery modes
 
@@ -98,8 +98,8 @@ A backup that omits any of these turns a consistent restore into a rebuild.
 - The Secrets holding database URLs and registry credentials. These are usually
   managed outside the operator; note where, because a restore that recreates
   them with new content changes the target identity the plans were bound to.
-- The release activation ConfigMap, the admission singleton, and the webhook
-  certificate Secret — or plan to reinstall the chart, which recreates them.
+- The admission singleton and the webhook certificate Secret — or plan to
+  reinstall the chart, which recreates them.
 - The OCI artifacts the resources name, by digest. They are outside the
   cluster; a registry that garbage-collected the digest a plan was built from
   makes that plan unreproducible.
@@ -114,7 +114,7 @@ holder that no longer exists and makes it wait out an interval for nothing.
    manager can still reach the database is the one way this procedure can cause
    the harm it exists to prevent.
 2. Restore or reinstall the release: CRDs, the chart, the admission singleton,
-   the certificate Secret, the release activation ConfigMap.
+   the certificate Secret.
 3. Restore the Secrets and the verification-policy ConfigMaps.
 4. Restore the `PtahRealm` objects and the plan ConfigMaps, then the six
    namespaced kinds with their status.
