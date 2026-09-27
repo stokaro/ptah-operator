@@ -34,7 +34,7 @@ Each matrix lifecycle installs a reproducibly packaged `.tgz`, rather than the
 chart source directory, and exports those exact bytes only after the complete
 upgrade and uninstall sequence succeeds. After the synthetic successor proof,
 the lifecycle fresh-installs that exact current-release package, verifies its
-active sequence and sealed admission inventory, then proves every captured
+controller identity and admission inventory, then proves every captured
 inventory object absent after uninstall before export. CI retains one artifact
 per supported minor for the completed run. Release preflight accepts only the
 complete, unexpired artifact set from the exact successful default-branch run, requires all copies
@@ -123,24 +123,6 @@ reference in that repository.
 The chart still has no executor default. The release names a build; the
 installer decides to pin it, and can pin another verified executor instead.
 [Ptah compatibility](../ptah/) says what the pinned build was run against.
-
-## Release sequence
-
-Every published chart version advances the release sequence, even when the
-controller-state and admission contracts do not change. Prepare a release by
-updating the chart `version`, `appVersion`, and default manager image tag;
-increment both `ptah-operator.releaseSequence` in
-`charts/ptah-operator/templates/_helpers.tpl` and `CurrentReleaseSequence` in
-`internal/crdupgrade/release_sequence.go`; then append the matching record to
-`hack/releaseverify/release-sequence-history.json`.
-
-The release verifier requires the Helm and Go values to match the final history
-record. CI compares the history with its exact Git baseline: existing release
-records are immutable, unchanged release metadata must retain its recorded
-sequence, and one newly prepared version must use a strictly greater sequence.
-The admission configurations record the sequence of the release that wrote
-them, and the chart refuses an upgrade to a lower one, so a sequence reused by
-a different manager image would let an older release pass as a newer one.
 
 ## Controller-state contract
 

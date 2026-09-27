@@ -77,9 +77,9 @@ func TestTheCompatibilityPagePromisesOnlyWhatIsEnforced(t *testing.T) {
 			refusal: "must equal baseline version",
 		},
 		{
-			stated:  "release sequence one above",
-			source:  filepath.Join("charts", "ptah-operator", "templates", "_helpers.tpl"),
-			refusal: "is newer than candidate",
+			stated:  "controller-state version its own manager image does not compile",
+			source:  filepath.Join("cmd", "ptah-crd-manager", "main.go"),
+			refusal: "and this manager image compiles",
 		},
 		{
 			stated:  "refuses stored state newer than that release reads",

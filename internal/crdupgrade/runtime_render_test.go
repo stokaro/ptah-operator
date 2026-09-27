@@ -118,6 +118,5 @@ func runtimeInvariantsFromRenderedAnnotations(t *testing.T, annotations map[stri
 		CertificateDeploymentName:    required(CertificateDeploymentAnnotation),
 		ControllerStateVersion:       parseInt32(ControllerStateVersionAnnotation),
 		AdmissionContractVersion:     parseInt32(AdmissionContractVersionAnnotation),
-		ReleaseSequence:              parseInt32(ReleaseSequenceAnnotation),
 	}
 }

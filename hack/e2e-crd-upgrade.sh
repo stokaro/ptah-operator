@@ -33,8 +33,6 @@ E2E_CANDIDATE_IMAGE=${E2E_CANDIDATE_IMAGE:-}
 E2E_NEXT_CHART_PACKAGE=${E2E_NEXT_CHART_PACKAGE:-}
 E2E_NEXT_VALUES_FILE=${E2E_NEXT_VALUES_FILE:-}
 E2E_NEXT_CONTROLLER_IMAGE=${E2E_NEXT_CONTROLLER_IMAGE:-}
-E2E_CURRENT_RELEASE_SEQUENCE=${E2E_CURRENT_RELEASE_SEQUENCE:-}
-E2E_NEXT_RELEASE_SEQUENCE=${E2E_NEXT_RELEASE_SEQUENCE:-}
 E2E_DOCKER_CONTEXT=${E2E_DOCKER_CONTEXT:-}
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}
 
@@ -307,21 +305,6 @@ production_controller_image_from_values() {
 	printf '%s\n' "$controller_image"
 }
 
-validate_release_sequence_transition() {
-	printf '%s\n' "$E2E_CURRENT_RELEASE_SEQUENCE" |
-		grep -Eq '^[1-9][0-9]{0,9}$' ||
-		fail "E2E_CURRENT_RELEASE_SEQUENCE must be a positive base-10 int32"
-	printf '%s\n' "$E2E_NEXT_RELEASE_SEQUENCE" |
-		grep -Eq '^[1-9][0-9]{0,9}$' ||
-		fail "E2E_NEXT_RELEASE_SEQUENCE must be a positive base-10 int32"
-	[ "$E2E_CURRENT_RELEASE_SEQUENCE" -le 2147483646 ] ||
-		fail "E2E_CURRENT_RELEASE_SEQUENCE cannot be advanced within positive int32 bounds"
-	[ "$E2E_NEXT_RELEASE_SEQUENCE" -le 2147483647 ] ||
-		fail "E2E_NEXT_RELEASE_SEQUENCE exceeds positive int32 bounds"
-	[ "$E2E_NEXT_RELEASE_SEQUENCE" -eq $((E2E_CURRENT_RELEASE_SEQUENCE + 1)) ] ||
-		fail "E2E_NEXT_RELEASE_SEQUENCE must exactly advance E2E_CURRENT_RELEASE_SEQUENCE by one"
-}
-
 object_evidence() {
 	resource=$1
 	name=$2
@@ -424,48 +407,6 @@ deployment_evidence() {
           ownerReferences: (.metadata.ownerReferences // []),
           spec: .spec
         }] | sort_by(.name)'
-}
-
-# The reconcile hook runs before Helm applies anything else, so an upgrade it
-# refuses leaves the release where it was: a failed revision whose one failed
-# hook is this revision's reconcile Job, and every runtime Deployment
-# unchanged. The wording of the refusal is measured where it is observable, in
-# the Manager unit tests: Helm reports only that the Job failed.
-# A chart and an image of different releases must be refused before anything
-# changes. Two layers refuse it: the chart's render-time singleton check, while
-# the hook ServiceAccount name still derives from the manager image, and the
-# reconcile hook's pairing check, which does not depend on that name. Either
-# one is the invariant; the row requires one of the two exact refusals, no
-# deployed revision, and no Deployment change.
-expect_mismatched_pairing_refused() {
-	description=$1
-	before=$WORK_DIR/deployment-before-mismatch.json
-	after=$WORK_DIR/deployment-after-mismatch.json
-	[ -n "$UPGRADE_VALUES_FILE" ] || fail "upgrade values file is not configured"
-	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" -o json | jq -er '.version | select(type == "number" and . >= 1)')
-	deployment_evidence >"$before"
-	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \
-		--wait --timeout 2m >"$WORK_DIR/mismatch-upgrade.out" 2>"$WORK_DIR/mismatch-upgrade.err"; then
-		fail "$description unexpectedly succeeded"
-	fi
-	after_status=$(helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" -o json)
-	after_revision=$(printf '%s\n' "$after_status" | jq -er '.version')
-	if [ "$after_revision" -eq "$before_revision" ]; then
-		grep -Fq 'annotation operator.ptah.run/hook-service-account-name is' "$WORK_DIR/mismatch-upgrade.err" ||
-			fail "$description was refused before a revision, but not by the singleton's hook identity check"
-	else
-		[ "$after_revision" -eq $((before_revision + 1)) ] ||
-			fail "$description left revision $after_revision after $before_revision"
-		printf '%s\n' "$after_status" | jq -e '.info.status == "failed"' >/dev/null ||
-			fail "$description left revision $after_revision in a state other than failed"
-		grep -Eq 'the chart (is release sequence|carries controller-state version) [0-9]+ and this manager image' \
-			"$WORK_DIR/mismatch-upgrade.err" ||
-			fail "$description failed revision $after_revision without the hook's pairing refusal"
-	fi
-	deployment_evidence >"$after"
-	cmp "$before" "$after" || fail "$description mutated runtime Deployments"
 }
 
 expect_upgrade_failure_without_deployment_change() {
@@ -700,7 +641,7 @@ prove_late_failure_recovery() {
             ' >/dev/null || fail "the late failure did not leave $deployment_name stopped on the predecessor's template"
 	done
 	kube -n "$E2E_OPERATOR_NAMESPACE" get pods -o json |
-		jq -e --arg controller "$current_sequence_service_account" --arg certificate "$ROTATOR_DEPLOYMENT" '
+		jq -e --arg controller "$current_service_account" --arg certificate "$ROTATOR_DEPLOYMENT" '
           all(.items[]; .spec.serviceAccountName != $controller and .spec.serviceAccountName != $certificate)
         ' >/dev/null || fail "the late failure left a runtime Pod after the runtime stop"
 	printf '%s\n' 'e2e crd: the late failure left the runtime stopped on the predecessor template'
@@ -1134,9 +1075,8 @@ runtime_deployment_evidence() {
 }
 
 capture_controller_service_account_identity() {
-	release_sequence=$1
-	expected_manager_image=$2
-	destination=$3
+	expected_manager_image=$1
+	destination=$2
 	deployment_list=${destination}.deployments
 	deployment_identity=${destination}.deployment-identity
 	service_account_object=${destination}.service-account
@@ -1145,7 +1085,6 @@ capture_controller_service_account_identity() {
 		-o json >"$deployment_list"
 	jq -e \
 		--arg release "$E2E_HELM_RELEASE" \
-		--arg sequence "$release_sequence" \
 		--arg image "$expected_manager_image" '
       [.items[] | select(
         .metadata.labels["app.kubernetes.io/instance"] == $release and
@@ -1165,11 +1104,10 @@ capture_controller_service_account_identity() {
         deploymentName: .metadata.name,
         deploymentUID: .metadata.uid,
         serviceAccountName: .spec.template.spec.serviceAccountName,
-        managerImage: $image,
-        releaseSequence: $sequence
+        managerImage: $image
       }
     ' "$deployment_list" >"$deployment_identity" ||
-		fail "sequence-$release_sequence controller Deployment does not have the exact runtime identity"
+		fail "controller Deployment does not have the exact runtime identity for image $expected_manager_image"
 	controller_service_account=$(jq -er '.serviceAccountName' "$deployment_identity")
 	kube -n "$E2E_OPERATOR_NAMESPACE" get serviceaccount "$controller_service_account" \
 		-o json >"$service_account_object"
@@ -1188,7 +1126,7 @@ capture_controller_service_account_identity() {
       ) |
       .metadata.uid
     ' "$service_account_object") ||
-		fail "sequence-$release_sequence controller ServiceAccount does not have the exact live identity"
+		fail "controller ServiceAccount does not have the exact live identity for image $expected_manager_image"
 	jq --arg service_account_uid "$controller_service_account_uid" \
 		'. + {serviceAccountUID: $service_account_uid}' \
 		"$deployment_identity" >"$destination"
@@ -2916,9 +2854,6 @@ run_next_release_upgrade_proof() {
 	# Managed lifecycle coverage advances an already active release: the
 	# current release is the predecessor, and the synthetic next release is
 	# the candidate that replaces it.
-	validate_release_sequence_transition
-	current_release_sequence=$E2E_CURRENT_RELEASE_SEQUENCE
-	next_release_sequence=$E2E_NEXT_RELEASE_SEQUENCE
 	if [ ! -f "$E2E_NEXT_CHART_PACKAGE" ] || [ -L "$E2E_NEXT_CHART_PACKAGE" ]; then
 		fail "E2E_NEXT_CHART_PACKAGE must name a regular synthetic next-release chart package"
 	fi
@@ -2939,42 +2874,15 @@ run_next_release_upgrade_proof() {
 	[ "$CURRENT_RELEASE_CONTROLLER_IMAGE" != "$E2E_NEXT_CONTROLLER_IMAGE" ] ||
 		fail "current and synthetic next-release controller images must be distinct"
 
-	current_sequence_identity=$WORK_DIR/current-sequence-${current_release_sequence}-controller-identity.json
-	next_sequence_identity=$WORK_DIR/next-sequence-${next_release_sequence}-controller-identity.json
+	current_release_identity=$WORK_DIR/current-release-controller-identity.json
+	next_release_identity=$WORK_DIR/next-release-controller-identity.json
 	capture_controller_service_account_identity \
-		"$current_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE" \
-		"$current_sequence_identity"
-	current_sequence_service_account=$(jq -er '.serviceAccountName' "$current_sequence_identity")
+		"$CURRENT_RELEASE_CONTROLLER_IMAGE" \
+		"$current_release_identity"
+	current_service_account=$(jq -er '.serviceAccountName' "$current_release_identity")
 	current_release_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er 'select(.info.status == "deployed") | .version | select(type == "number" and . >= 1)')
-
-	# A chart runs the image its values name, and values carried from one
-	# release to the next keep the image they named. The hook refuses a chart of
-	# another release than its image before it reads or changes anything. The
-	# pairing here is the current chart with the next release's image, whose
-	# hook would otherwise stop the runtime and update the CRDs first.
-	printf '%s\n' 'e2e crd: proving the hook refuses the current chart with the next release manager image'
-	mismatched_values_file=$WORK_DIR/current-chart-next-image-values.json
-	jq --arg repository "${E2E_NEXT_CONTROLLER_IMAGE%@*}" --arg digest "${E2E_NEXT_CONTROLLER_IMAGE#*@}" \
-		'.image.repository = $repository | .image.digest = $digest' \
-		"$WORK_DIR/current-release-values.json" >"$mismatched_values_file"
-	prepare_expected_hook_names "$E2E_CHART_PACKAGE" "$mismatched_values_file"
-	for crd_name in \
-		ptahschemas.operator.ptah.run \
-		ptahschemaplans.operator.ptah.run \
-		ptahschemaapprovals.operator.ptah.run; do
-		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-mismatched-image.json"
-	done
-	UPGRADE_VALUES_FILE=$mismatched_values_file
-	expect_mismatched_pairing_refused "current chart with the next release manager image"
-	for crd_name in \
-		ptahschemas.operator.ptah.run \
-		ptahschemaplans.operator.ptah.run \
-		ptahschemaapprovals.operator.ptah.run; do
-		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-mismatched-image.json"
-	done
-	UPGRADE_VALUES_FILE=
 
 	prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"
 	# The late failure leaves the runtime stopped; stage the handoff while no
@@ -3003,8 +2911,7 @@ run_next_release_upgrade_proof() {
 		jq -er '.version | select(type == "number" and . >= 1)')
 	[ "$before_retry_revision" -eq "$late_revision" ] ||
 		fail "late-failure recovery did not resume the exact failed Helm revision"
-	printf 'e2e crd: retrying the upgrade from release sequence %s to the same synthetic sequence %s\n' \
-		"$current_release_sequence" "$next_release_sequence"
+	printf '%s\n' 'e2e crd: retrying the upgrade to the same synthetic next release'
 	retry_same_candidate
 	wait_runtime_ready
 	wait_for_read_only_job_cleanup
@@ -3020,21 +2927,21 @@ run_next_release_upgrade_proof() {
 		fail "same-candidate recovery did not create exactly one retry Helm revision"
 
 	capture_controller_service_account_identity \
-		"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE" \
-		"$next_sequence_identity"
-	current_sequence_deployment=$(jq -er '.deploymentName' "$current_sequence_identity")
-	next_sequence_deployment=$(jq -er '.deploymentName' "$next_sequence_identity")
-	[ "$next_sequence_deployment" = "$current_sequence_deployment" ] ||
+		"$E2E_NEXT_CONTROLLER_IMAGE" \
+		"$next_release_identity"
+	current_deployment=$(jq -er '.deploymentName' "$current_release_identity")
+	next_deployment=$(jq -er '.deploymentName' "$next_release_identity")
+	[ "$next_deployment" = "$current_deployment" ] ||
 		fail "synthetic next-release upgrade changed the controller Deployment identity"
 	# Every release runs the controller as the same ServiceAccount, and Helm
 	# keeps that object across the upgrade: the name and the UID both hold.
-	current_sequence_service_account_uid=$(jq -er '.serviceAccountUID' "$current_sequence_identity")
-	next_sequence_service_account=$(jq -er '.serviceAccountName' "$next_sequence_identity")
-	next_sequence_service_account_uid=$(jq -er '.serviceAccountUID' "$next_sequence_identity")
-	[ "$next_sequence_service_account" = "$current_sequence_service_account" ] ||
-		fail "synthetic sequence-$next_release_sequence upgrade moved the controller from ServiceAccount $current_sequence_service_account to $next_sequence_service_account"
-	[ "$next_sequence_service_account_uid" = "$current_sequence_service_account_uid" ] ||
-		fail "synthetic sequence-$next_release_sequence upgrade replaced controller ServiceAccount $current_sequence_service_account (UID $current_sequence_service_account_uid became $next_sequence_service_account_uid)"
+	current_service_account_uid=$(jq -er '.serviceAccountUID' "$current_release_identity")
+	next_service_account=$(jq -er '.serviceAccountName' "$next_release_identity")
+	next_service_account_uid=$(jq -er '.serviceAccountUID' "$next_release_identity")
+	[ "$next_service_account" = "$current_service_account" ] ||
+		fail "synthetic next-release upgrade moved the controller from ServiceAccount $current_service_account to $next_service_account"
+	[ "$next_service_account_uid" = "$current_service_account_uid" ] ||
+		fail "synthetic next-release upgrade replaced controller ServiceAccount $current_service_account (UID $current_service_account_uid became $next_service_account_uid)"
 	# The synthetic next release differs from this one in its manager image
 	# alone: the executor, the Ptah version, the runner protocol and the
 	# controller-state version are the same. None of that is in the execution
@@ -3061,8 +2968,7 @@ run_next_release_upgrade_proof() {
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
-	printf 'e2e crd: synthetic sequence-%s upgrade kept the controller identity, and the rollback to sequence %s went through its hook\n' \
-		"$next_release_sequence" "$current_release_sequence"
+	printf '%s\n' 'e2e crd: synthetic next-release upgrade kept the controller identity, and the rollback to the current release went through its hook'
 }
 
 run_uninstall_proof() {
@@ -3124,8 +3030,8 @@ run_uninstall_proof() {
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
 	capture_controller_service_account_identity \
-		"$E2E_NEXT_RELEASE_SEQUENCE" "$E2E_NEXT_CONTROLLER_IMAGE" \
-		"$WORK_DIR/reinstalled-sequence-${E2E_NEXT_RELEASE_SEQUENCE}-controller-identity.json"
+		"$E2E_NEXT_CONTROLLER_IMAGE" \
+		"$WORK_DIR/reinstalled-next-release-controller-identity.json"
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null ||
@@ -3158,12 +3064,12 @@ run_uninstall_proof() {
 	[ "$description" != "exact released-chart install drift" ] ||
 		fail "the exact released-chart install did not reconcile a retained CRD another manager drifted"
 	capture_controller_service_account_identity \
-		"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \
-		"$WORK_DIR/fresh-current-sequence-${E2E_CURRENT_RELEASE_SEQUENCE}-controller-identity.json"
+		"$E2E_CANDIDATE_IMAGE" \
+		"$WORK_DIR/fresh-current-release-controller-identity.json"
 	# This install puts a different manager in place and changes nothing the
 	# execution binding holds, so the schema, its plan and its approval stay
-	# exactly as they were, as they do across the sequence upgrade. Everything
-	# after this, including this release's own
+	# exactly as they were, as they do across the next-release upgrade.
+	# Everything after this, including this release's own
 	# uninstall, is held to the state it leaves behind.
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"

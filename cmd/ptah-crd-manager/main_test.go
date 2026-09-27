@@ -168,6 +168,7 @@ func TestRemovedModesAndFlagsAreRefused(t *testing.T) {
 		"--controller-service-account-managed=true",
 		"--previous-controller-service-account-name=ptah-operator-v1",
 		"--previous-controller-release-sequence=1",
+		"--release-sequence=1",
 	} {
 		name := strings.TrimPrefix(strings.SplitN(flag, "=", 2)[0], "--")
 		for _, mode := range []string{"reconcile", "runtime-verify"} {
@@ -179,47 +180,26 @@ func TestRemovedModesAndFlagsAreRefused(t *testing.T) {
 	}
 }
 
-// The runtime verifier compares the admission singleton's annotations with the
-// release sequence it was built for, so an init container handed another one
-// is refused before it reads the cluster.
-func TestRuntimeVerifyRefusesAnotherReleaseSequence(t *testing.T) {
-	err := run(context.Background(), []string{
-		"runtime-verify",
-		"--release-sequence=" + strconv.FormatInt(int64(crdupgrade.CurrentReleaseSequence+1), 10),
-	}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "release-sequence must equal the binary contract") {
-		t.Fatalf("runtime-verify error = %v, want the release-sequence refusal", err)
-	}
-}
-
 // The reconcile hook runs the image the values name with the arguments the
 // chart renders, and a --reuse-values upgrade keeps the old image under a new
 // chart. The hook refuses a chart of another release before it reads the
-// cluster, whichever of its two identities differs. A pair that matches reaches
-// the cluster, which a test process has none of, so the in-cluster error is
-// what shows the check let it through.
+// cluster, when the controller-state version differs. A pair that matches
+// reaches the cluster, which a test process has none of, so the in-cluster
+// error is what shows the check let it through.
 func TestReconcileRefusesAChartFromAnotherRelease(t *testing.T) {
-	sequence := int64(crdupgrade.CurrentReleaseSequence)
 	state := int64(controllerstate.CurrentVersion)
 	for _, test := range []struct {
-		name     string
-		sequence string
-		state    string
-		refusal  string
+		name    string
+		state   string
+		refusal string
 	}{
-		{name: "the chart published with the image", sequence: strconv.FormatInt(sequence, 10), state: strconv.FormatInt(state, 10)},
-		{name: "a later chart", sequence: strconv.FormatInt(sequence+1, 10), state: strconv.FormatInt(state, 10), refusal: "release sequence"},
-		{name: "an earlier chart", sequence: strconv.FormatInt(sequence-1, 10), state: strconv.FormatInt(state, 10), refusal: "release sequence"},
-		{name: "a chart that names no release sequence", state: strconv.FormatInt(state, 10), refusal: "release sequence"},
-		{name: "a chart of a later state contract", sequence: strconv.FormatInt(sequence, 10), state: strconv.FormatInt(state+1, 10), refusal: "controller-state version"},
-		{name: "a chart of an earlier state contract", sequence: strconv.FormatInt(sequence, 10), state: strconv.FormatInt(state-1, 10), refusal: "controller-state version"},
-		{name: "a chart that names no state contract", sequence: strconv.FormatInt(sequence, 10), refusal: "controller-state version"},
+		{name: "the chart published with the image", state: strconv.FormatInt(state, 10)},
+		{name: "a chart of a later state contract", state: strconv.FormatInt(state+1, 10), refusal: "controller-state version"},
+		{name: "a chart of an earlier state contract", state: strconv.FormatInt(state-1, 10), refusal: "controller-state version"},
+		{name: "a chart that names no state contract", refusal: "controller-state version"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			args := []string{"reconcile"}
-			if test.sequence != "" {
-				args = append(args, "--release-sequence="+test.sequence)
-			}
 			if test.state != "" {
 				args = append(args, "--controller-state-version="+test.state)
 			}

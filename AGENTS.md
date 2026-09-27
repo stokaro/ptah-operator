@@ -177,19 +177,19 @@ E2E_STOP_AFTER=images E2E_IMAGE_EXPORT_DIR=/tmp/task-images make e2e
 
 That is the same driver a lifecycle runs, stopped where the images exist and no
 cluster does. Beside them it writes `images.json`: the commit they were built
-from, the Ptah commit the executor carries, the two release sequences, and each
-image's own identity. A lifecycle reads them back:
+from, the Ptah commit the executor carries, and each image's own identity. A
+lifecycle reads them back:
 
 ```bash
 E2E_PREBUILT_IMAGE_DIR=/tmp/task-images make e2e
 ```
 
 and refuses anything that is not its own inputs — a manifest from another
-commit, an executor built from a Ptah the catalog does not pin, a next release
-of the wrong sequence, an image whose identity or role label disagrees with the
-manifest it travelled with. The content audits still run over whatever was
-loaded. `make e2e` on its own builds for itself, so there is one build path
-rather than a CI-only one, and `hack/e2e-shared-images-selftest.sh` measures
+commit, an executor built from a Ptah the catalog does not pin, an image whose
+identity or role label disagrees with the manifest it travelled with. The
+content audits still run over whatever was loaded. `make e2e` on its own builds
+for itself, so there is one build path rather than a CI-only one, and
+`hack/e2e-shared-images-selftest.sh` measures
 every refusal.
 
 ## Where a run's time went

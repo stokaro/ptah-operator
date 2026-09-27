@@ -75,7 +75,6 @@ var modeFlags = map[string][]string{
 		"controller-deployment-name",
 		"certificate-deployment-name",
 		"manager-image",
-		"release-sequence",
 		"controller-state-version",
 	},
 	"verify": {"timeout"},
@@ -92,7 +91,6 @@ var modeFlags = map[string][]string{
 		"controller-service-account-name",
 		"controller-deployment-name",
 		"certificate-deployment-name",
-		"release-sequence",
 		"verify-controller-state",
 		"require-distinct-approver",
 	},
@@ -120,7 +118,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	controllerServiceAccountName := flags.String("controller-service-account-name", "", "exact controller ServiceAccount name")
 	controllerDeploymentName := flags.String("controller-deployment-name", "", "exact controller Deployment name")
 	certificateDeploymentName := flags.String("certificate-deployment-name", "", "exact certificate-rotator Deployment name")
-	releaseSequence := flags.Int64("release-sequence", 0, "monotonic published operator release sequence")
 	managerImage := flags.String("manager-image", "", "exact manager image this release runs")
 	controllerStateVersion := flags.Int64("controller-state-version", 0, "controller-state version the chart was published with")
 	verifyControllerState := flags.Bool("verify-controller-state", false, "reject controller downgrades incompatible with stored PtahSchema state")
@@ -138,15 +135,12 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		return err
 	}
 	if mode == "reconcile" {
-		if err := verifyChartPairing(*releaseSequence, *controllerStateVersion); err != nil {
+		if err := verifyChartPairing(*controllerStateVersion); err != nil {
 			return err
 		}
 	}
 	var expected crdupgrade.RuntimeInvariants
 	if mode == "runtime-verify" {
-		if *releaseSequence != int64(crdupgrade.CurrentReleaseSequence) {
-			return fmt.Errorf("release-sequence must equal the binary contract %d", crdupgrade.CurrentReleaseSequence)
-		}
 		var err error
 		expected, err = runtimeInvariants(
 			*releaseName,
@@ -160,7 +154,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*controllerServiceAccountName,
 			*controllerDeploymentName,
 			*certificateDeploymentName,
-			int32(*releaseSequence),
 			*requireDistinctApprover,
 		)
 		if err != nil {
@@ -258,14 +251,9 @@ func run(parent context.Context, args []string, output io.Writer) error {
 // CRD, and Helm would then replace the running Pods with ones whose verifier
 // refuses to start. The other pairing is worse, an old chart with a new image,
 // whose hook would stop the runtime and update the CRDs first. The chart says
-// which release it is by its release sequence and its controller-state
-// version, and the binary compiles both.
-func verifyChartPairing(releaseSequence, controllerStateVersion int64) error {
-	if releaseSequence != int64(crdupgrade.CurrentReleaseSequence) {
-		return fmt.Errorf(
-			"the chart is release sequence %d and this manager image is %d: install the chart published with the image, or the image published with the chart",
-			releaseSequence, crdupgrade.CurrentReleaseSequence)
-	}
+// which controller-state contract it was published with, and the binary
+// compiles the one it can serve.
+func verifyChartPairing(controllerStateVersion int64) error {
 	if controllerStateVersion != int64(controllerstate.CurrentVersion) {
 		return fmt.Errorf(
 			"the chart carries controller-state version %d and this manager image compiles %d: install the chart published with the image, or the image published with the chart",
@@ -278,7 +266,7 @@ func runtimeInvariants(
 	releaseName, releaseNamespace, coordinationNamespace, leaderElection,
 	leaderElectionID, webhookServiceName string, webhookTimeoutSeconds int,
 	hookServiceAccountName, controllerServiceAccountName, controllerDeploymentName,
-	certificateDeploymentName string, releaseSequence int32, requireDistinctApprover bool,
+	certificateDeploymentName string, requireDistinctApprover bool,
 ) (crdupgrade.RuntimeInvariants, error) {
 	if leaderElection != "true" && leaderElection != "false" {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("leader-election must be exactly true or false")
@@ -304,7 +292,6 @@ func runtimeInvariants(
 		CertificateDeploymentName:    certificateDeploymentName,
 		ControllerStateVersion:       controllerstate.CurrentVersion,
 		AdmissionContractVersion:     crdupgrade.CurrentAdmissionContractVersion,
-		ReleaseSequence:              releaseSequence,
 		RequireDistinctApprover:      requireDistinctApprover,
 	}, nil
 }

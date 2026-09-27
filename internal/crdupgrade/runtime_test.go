@@ -139,7 +139,6 @@ func TestRuntimeVerifierRejectsEveryInvariantMismatch(t *testing.T) {
 		ControllerServiceAccountAnnotation,
 		ControllerDeploymentAnnotation,
 		CertificateDeploymentAnnotation,
-		ReleaseSequenceAnnotation,
 	}
 	for _, annotation := range tests {
 		t.Run(annotation, func(t *testing.T) {
@@ -999,7 +998,6 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		CertificateDeploymentName:    "ptah-cert-rotator",
 		ControllerStateVersion:       ourStateVersion,
 		AdmissionContractVersion:     CurrentAdmissionContractVersion,
-		ReleaseSequence:              1,
 		RequireDistinctApprover:      true,
 	}
 	annotations := expected.annotations()
