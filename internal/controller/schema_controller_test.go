@@ -303,8 +303,8 @@ func TestPendingSchemaClaimsResolveBeforeCreatingJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatal("Reconcile() did not immediately continue a persisted claim")
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
@@ -340,8 +340,8 @@ func TestInitialExecutionBindingIsDurableBeforeOperationClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("persist initial execution binding: %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("initial execution-binding result = %#v, want durable-boundary requeue", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("initial execution-binding result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	bound := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), bound); err != nil {
@@ -382,8 +382,8 @@ func TestUnsupportedEnginePersistsExplicitStatusWithoutCreatingWork(t *testing.T
 	if err != nil {
 		t.Fatalf("reconcile unsupported engine: %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("unsupported-engine fence result = %#v, want immediate cleanup pass", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("unsupported-engine fence result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), request.NamespacedName, actual); err != nil {
@@ -411,7 +411,7 @@ func TestUnsupportedEnginePersistsExplicitStatusWithoutCreatingWork(t *testing.T
 	if err != nil {
 		t.Fatalf("reconcile stable unsupported engine: %v", err)
 	}
-	if result.Requeue || result.RequeueAfter != 0 {
+	if result.RequeueAfter != 0 {
 		t.Fatalf("stable unsupported-engine result = %#v, want event-driven wait", result)
 	}
 	assertNoSchemaWork(t, api, actual)
@@ -1026,8 +1026,8 @@ func TestSourceRefreshConditionsPreserveLastKnownEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Reconcile() error = %v", err)
 		}
-		if !result.Requeue {
-			t.Fatalf("Reconcile() result = %#v, want immediate Resolve dispatch", result)
+		if result.RequeueAfter != statusPatchRequeue {
+			t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 		}
 		actual := &operatorv1alpha1.PtahSchema{}
 		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
@@ -1191,7 +1191,7 @@ func TestSourceRefreshConditionsPreserveLastKnownEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("suspend Reconcile() error = %v", err)
 		}
-		if result.Requeue || result.RequeueAfter != 0 {
+		if result.RequeueAfter != 0 {
 			t.Fatalf("suspend Reconcile() result = %#v", result)
 		}
 		actual := &operatorv1alpha1.PtahSchema{}
@@ -1901,8 +1901,8 @@ func TestVerificationPolicyRefusalBlocksWithoutHotRetry(t *testing.T) {
 			if err != nil {
 				t.Fatalf("due blocked Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("due blocked Reconcile() result = %#v, want Resolve claim", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("due blocked Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			refreshing := &operatorv1alpha1.PtahSchema{}
 			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), refreshing); err != nil {
@@ -1962,8 +1962,8 @@ func TestVerificationResultCannotOutrunPolicyConfigMapUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatal("changed verification policy did not trigger a fresh verification")
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("changed-verification-policy result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
@@ -2464,7 +2464,7 @@ func TestBlockedPolicyWaitsUntilPersistedRefreshDeadline(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if result.Requeue || result.RequeueAfter != 4*time.Minute {
+			if result.RequeueAfter != 4*time.Minute {
 				t.Fatalf("Reconcile() result = %#v, want persisted-deadline wait", result)
 			}
 			actual := &operatorv1alpha1.PtahSchema{}
@@ -2503,8 +2503,8 @@ func TestDueBlockedPolicyClaimsResolveWithoutClearingCurrentPlan(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want Resolve claim", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			actual := &operatorv1alpha1.PtahSchema{}
 			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
@@ -2529,8 +2529,8 @@ func TestBlockedStatusWithoutDeadlineClaimsResolveImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("Reconcile() result = %#v, want immediate Resolve claim", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
@@ -2557,7 +2557,7 @@ func TestWaitBlockedPersistsFutureRefreshDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("waitBlocked() error = %v", err)
 	}
-	if result.Requeue || result.RequeueAfter != 7*time.Minute {
+	if result.RequeueAfter != 7*time.Minute {
 		t.Fatalf("waitBlocked() result = %#v", result)
 	}
 	actual := &operatorv1alpha1.PtahSchema{}
@@ -2574,7 +2574,7 @@ func TestWaitBlockedPersistsFutureRefreshDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restart Reconcile() error = %v", err)
 	}
-	if restartResult.Requeue || restartResult.RequeueAfter != 7*time.Minute {
+	if restartResult.RequeueAfter != 7*time.Minute {
 		t.Fatalf("restart Reconcile() result = %#v, want persisted-deadline wait", restartResult)
 	}
 	afterRestart := &operatorv1alpha1.PtahSchema{}

@@ -335,8 +335,8 @@ func TestMissingDispatchedApplyJobForcesObservationWithoutRecreation(t *testing.
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want immediate post-apply observation", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 
 			actual := safetyGetSchema(t, api, schema)
@@ -438,8 +438,8 @@ func TestRunningApplyContinuityLossPersistsUnknownThroughValidatedCleanup(t *tes
 	if err != nil {
 		t.Fatalf("Reconcile() continuity loss error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("Reconcile() result = %#v, want immediate outcome-unknown follow-up", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	if validating.jobUpdates != 1 {
 		t.Fatalf("validated Job cleanup updates = %d, want 1", validating.jobUpdates)
@@ -635,7 +635,7 @@ func TestDeletingUntrustedApplySkipsJobCleanupAndPersistsUncertainty(t *testing.
 			if err != nil {
 				t.Fatalf("Reconcile() uncertainty boundary error = %v", err)
 			}
-			if !result.Requeue || validating.jobUpdates != 0 {
+			if result.RequeueAfter != statusPatchRequeue || validating.jobUpdates != 0 {
 				t.Fatalf("uncertainty boundary = %#v, validated Job updates %d", result, validating.jobUpdates)
 			}
 			persisted := safetyGetSchema(t, api, schema)
@@ -727,7 +727,7 @@ func TestDeletingReadOnlyContinuityLossSkipsJobCleanupAndProgresses(t *testing.T
 			if err != nil {
 				t.Fatalf("Reconcile() continuity-loss deletion error = %v", err)
 			}
-			if !result.Requeue || validating.jobUpdates != 0 {
+			if result.RequeueAfter != statusPatchRequeue || validating.jobUpdates != 0 {
 				t.Fatalf("continuity-loss boundary = %#v, validated Job updates %d", result, validating.jobUpdates)
 			}
 			persistedJob := &batchv1.Job{}
@@ -789,8 +789,8 @@ func TestMissingTerminalApplyPodWaitsThroughAbsoluteExecutionHorizon(t *testing.
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("Reconcile() result = %#v, want outcome-unknown proof", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := safetyGetSchema(t, api, schema)
 	if actual.Status.PendingObservation == nil || actual.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown {
@@ -968,8 +968,8 @@ func TestApprovalRevocationLockReleaseSurvivesFailureAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("release restart Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("release restart result = %#v, want finalizer-cleanup pass", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("release restart result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	drained := safetyGetSchema(t, api, schema)
 	if drained.Status.PendingLockRelease != nil || !safetyTimesEqual(drained.Status.NextReconciliationTime, &next) {
@@ -983,7 +983,7 @@ func TestApprovalRevocationLockReleaseSurvivesFailureAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finalizer cleanup Reconcile() error = %v", err)
 	}
-	if result.Requeue || result.RequeueAfter != 4*time.Minute {
+	if result.RequeueAfter != 4*time.Minute {
 		t.Fatalf("finalizer cleanup result = %#v, want original refresh deadline", result)
 	}
 	completed := safetyGetSchema(t, api, schema)
@@ -1375,8 +1375,8 @@ func TestChildPreMutationRefusalAfterApplyDispatchRequiresProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("Reconcile() result = %#v, want fresh observation", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 
 	actual := safetyGetSchema(t, api, schema)
@@ -1473,8 +1473,8 @@ func TestStalePlanEvidenceForcesFreshObservation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want immediate observation", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 
 			actual := safetyGetSchema(t, api, schema)
@@ -1619,8 +1619,8 @@ func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) 
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want persisted plan-policy transition", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			actual := safetyGetSchema(t, api, schema)
 			wantNext := reconciler.now().Add(schema.Spec.Interval.Duration)
@@ -1789,7 +1789,7 @@ func TestAwaitingApprovalWaitsForPersistedRefreshDeadlineWithoutSliding(t *testi
 		if err != nil {
 			t.Fatalf("Reconcile() pass %d error = %v", reconciliation, err)
 		}
-		if result.Requeue || result.RequeueAfter != next.Sub(now) {
+		if result.RequeueAfter != next.Sub(now) {
 			t.Fatalf("Reconcile() pass %d result = %#v, want persisted-deadline wait", reconciliation, result)
 		}
 		actual := safetyGetSchema(t, api, schema)
@@ -1841,8 +1841,8 @@ func TestExpiredAwaitingApprovalRefreshesBeforeExactApproval(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want Resolve claim", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
@@ -1881,8 +1881,8 @@ func TestReadyToApplyRestartRefreshesExpiredPlanBeforeAutomaticApply(t *testing.
 			if err != nil {
 				t.Fatalf("restart Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("restart Reconcile() result = %#v, want Resolve claim", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("restart Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
@@ -1936,8 +1936,8 @@ func TestReadyToApplyAuthorizationUsesOneDurableTimestamp(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want operation claim", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != test.expectedOperation ||
@@ -2011,8 +2011,8 @@ func TestAwaitingApprovalAuthorizationUsesOneDurableTimestamp(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want operation claim", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("Reconcile() result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			actual := safetyGetSchema(t, api, schema)
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != test.expectedOperation ||
@@ -2049,8 +2049,8 @@ func TestApprovalRevocationPreservesRefreshDeadlineAcrossRestart(t *testing.T) {
 			name: "future deadline", deadline: ptrTime(metav1.NewTime(now.Add(4 * time.Minute))),
 			initialResult: ctrl.Result{RequeueAfter: 4 * time.Minute},
 		},
-		{name: "due deadline", deadline: ptrTime(metav1.NewTime(now)), initialResult: ctrl.Result{Requeue: true}},
-		{name: "legacy missing deadline", initialResult: ctrl.Result{Requeue: true}},
+		{name: "due deadline", deadline: ptrTime(metav1.NewTime(now)), initialResult: ctrl.Result{RequeueAfter: dueRequeue}},
+		{name: "legacy missing deadline", initialResult: ctrl.Result{RequeueAfter: dueRequeue}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -2092,7 +2092,7 @@ func TestApprovalRevocationPreservesRefreshDeadlineAcrossRestart(t *testing.T) {
 				}
 				return
 			}
-			if !restartResult.Requeue || afterRestart.Status.ActiveOperation == nil ||
+			if restartResult.RequeueAfter != statusPatchRequeue || afterRestart.Status.ActiveOperation == nil ||
 				afterRestart.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
 				afterRestart.Status.NextReconciliationTime != nil {
 				t.Fatalf("restart did not refresh due approval state: result %#v, status %#v", restartResult, afterRestart.Status)
@@ -2141,8 +2141,8 @@ func TestRequeueAtDeadlineNeverReturnsAnEmptyDueResult(t *testing.T) {
 		result ctrl.Result
 	}{
 		{name: "future", next: &future, result: ctrl.Result{RequeueAfter: 2 * time.Minute}},
-		{name: "due", next: &dueAt, result: ctrl.Result{Requeue: true}},
-		{name: "missing", result: ctrl.Result{Requeue: true}},
+		{name: "due", next: &dueAt, result: ctrl.Result{RequeueAfter: dueRequeue}},
+		{name: "missing", result: ctrl.Result{RequeueAfter: dueRequeue}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -2179,7 +2179,7 @@ func TestFailedActiveOperationUsesOneDeadlineSample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if result.Requeue || result.RequeueAfter != time.Second || clockCalls != 1 {
+	if result.RequeueAfter != time.Second || clockCalls != 1 {
 		t.Fatalf("failed-operation wait = %#v with %d clock calls, want 1s from one sample", result, clockCalls)
 	}
 	actual := safetyGetSchema(t, api, schema)
@@ -2200,8 +2200,8 @@ func TestApprovalReservationRequiresFreshGenerationPassBeforeApply(t *testing.T)
 	if err != nil {
 		t.Fatalf("approval reservation Reconcile() error = %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("approval reservation result = %#v, want a fresh pass", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("approval reservation result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := safetyGetSchema(t, api, schema)
 	if actual.Status.Plan == nil || actual.Status.Plan.Approval == nil {
@@ -2296,8 +2296,8 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Reconcile() after execution binding change: %v", err)
 				}
-				if !result.Requeue {
-					t.Fatalf("binding invalidation result = %#v, want immediate full refresh", result)
+				if result.RequeueAfter != statusPatchRequeue {
+					t.Fatalf("binding invalidation result = %#v, want the next pass after %s", result, statusPatchRequeue)
 				}
 				actual := safetyGetSchema(t, api, schema)
 				if actual.Status.ActiveOperation != nil || actual.Status.Plan == nil || actual.Status.Plan.UID != retiredPlanUID ||
@@ -3186,8 +3186,8 @@ func TestExecutionBindingChangeTakesPrecedenceOverPolicyChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() after simultaneous policy and binding change: %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("binding invalidation result = %#v, want immediate refresh", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("binding invalidation result = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := safetyGetSchema(t, api, schema)
 	verified := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
@@ -3337,8 +3337,8 @@ func TestExecutionBindingChangeInvalidatesClaimDespiteTargetLockContention(t *te
 	if err != nil {
 		t.Fatalf("Reconcile() under target-lock contention: %v", err)
 	}
-	if !result.Requeue {
-		t.Fatalf("binding invalidation under contention = %#v", result)
+	if result.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("binding invalidation under contention = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := safetyGetSchema(t, api, schema)
 	if actual.Status.ActiveOperation != nil || actual.Status.Plan == nil || actual.Status.PendingLockRelease == nil ||
@@ -3436,8 +3436,8 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 			if err != nil {
 				t.Fatalf("Reconcile() after dispatched binding change: %v", err)
 			}
-			if !result.Requeue {
-				t.Fatalf("dispatched binding change result = %#v", result)
+			if result.RequeueAfter != statusPatchRequeue {
+				t.Fatalf("dispatched binding change result = %#v, want the next pass after %s", result, statusPatchRequeue)
 			}
 			actual := safetyGetSchema(t, api, schema)
 			pending := actual.Status.PendingObservation
@@ -4650,8 +4650,8 @@ func TestFreshLeaseEpochPersistenceAlwaysSchedulesJobDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim(Plan) error = %v", err)
 	}
-	if !claimResult.Requeue {
-		t.Fatalf("claim(Plan) result = %#v, want an immediate reconciliation", claimResult)
+	if claimResult.RequeueAfter != statusPatchRequeue {
+		t.Fatalf("claim(Plan) result = %#v, want the next pass after %s", claimResult, statusPatchRequeue)
 	}
 
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}

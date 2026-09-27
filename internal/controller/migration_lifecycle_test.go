@@ -222,10 +222,12 @@ func (h *migrationLifecycle) settle() {
 		if err != nil {
 			h.t.Fatalf("Reconcile() error = %v", err)
 		}
-		if !result.Requeue && result.RequeueAfter == 0 {
-			return
-		}
-		if result.RequeueAfter > 0 && !result.Requeue {
+		// Nothing more to do, or an explicit wait for a real interval: both are
+		// settled. An immediate follow-up asks again at statusPatchRequeue or
+		// dueRequeue, both far shorter than any interval this fixture uses, so
+		// the threshold tells the two apart without a deprecated Requeue flag
+		// that is now always false.
+		if result.RequeueAfter == 0 || result.RequeueAfter > statusPatchRequeue {
 			return
 		}
 	}

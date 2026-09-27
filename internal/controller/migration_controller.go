@@ -140,7 +140,7 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		if err := r.completeMigrationPendingLockRelease(ctx, migration); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
@@ -538,10 +538,17 @@ func (r *MigrationReconciler) claimMigration(
 	operationType operatorv1alpha1.MigrationOperationType,
 ) (ctrl.Result, error) {
 	if migration.Status.ActiveOperation != nil {
-		return ctrl.Result{Requeue: true}, nil
+		// Unreachable in the normal dispatch: reconcile's own ActiveOperation
+		// check sends a resource carrying one to reconcileActiveMigration before
+		// this function is ever called. Requeuing rather than erroring keeps
+		// that true if it ever stops being true.
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if migration.Status.ExecutionBinding == nil {
-		return ctrl.Result{Requeue: true}, nil
+		// Unreachable for the same reason: reconcileMigrationExecutionBinding
+		// runs first and only reports itself unhandled once the binding is
+		// current, which requires it to be non-nil.
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	inputFingerprint, err := r.migrationInputFingerprint(ctx, migration, operationType)
 	if err != nil {
@@ -597,7 +604,7 @@ func (r *MigrationReconciler) claimMigration(
 		return ctrl.Result{}, err
 	}
 	ctrl.LoggerFrom(ctx).Info("migration operation claimed", "operation", operationType, "phase", migration.Status.Phase)
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 func (r *MigrationReconciler) reconcileActiveMigration(
@@ -904,7 +911,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		}
 		// The snapshot is its own durable boundary: it is persisted before the
 		// Job that carries its digest exists.
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
 		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("validate persisted Pod admission snapshot: %w", err))
@@ -1084,7 +1091,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 			return ctrl.Result{}, err
 		}
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // migrationUnresolvedRunSettledBy reports that this reading is the proof the
@@ -1549,7 +1556,11 @@ func (r *MigrationReconciler) retryMigrationOperationAs(
 	}
 	operation := migration.Status.ActiveOperation
 	if operation == nil {
-		return ctrl.Result{Requeue: true}, nil
+		// Unreachable in the normal dispatch: every caller of retryMigrationOperation
+		// and retryMigrationOperationAs is already inside the ActiveOperation
+		// handling reconcile's own guard sends a claimed resource to. Requeuing
+		// rather than erroring keeps that true if it ever stops being true.
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	before := migration.DeepCopy()
 	next := operation.DeepCopy()
@@ -1605,7 +1616,7 @@ func (r *MigrationReconciler) discardMigrationOperation(
 		r.Telemetry.ObserveFailure(telemetry.FamilyMigration,
 			telemetry.StageForMigrationOperation(operation.Type), telemetry.FailureStaleInput)
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
 // discardUndispatchedMigrationOperation retires a claim that never became a
