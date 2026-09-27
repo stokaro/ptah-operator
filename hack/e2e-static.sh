@@ -6468,11 +6468,11 @@ controller_guard_names=$(controller_guard_policy_names "$CRD_FULL_RENDER")
 	exit 1
 }
 for controller_guard_family in \
-	controller-write-guard-v2 \
-	job-write-guard-v2 \
-	chunk-write-guard-v2 \
-	plan-write-guard-v2 \
-	migration-plan-write-guard-v1; do
+	controller-write-guard \
+	job-write-guard \
+	chunk-write-guard \
+	plan-write-guard \
+	migration-plan-write-guard; do
 	[ "$(printf '%s\n' "$controller_guard_names" |
 		grep -Ec "^ptah-operator-${controller_guard_family}-[0-9a-f]{12}\$")" -eq 1 ] || {
 		printf 'e2e static: the release does not render one %s policy\n' "$controller_guard_family" >&2

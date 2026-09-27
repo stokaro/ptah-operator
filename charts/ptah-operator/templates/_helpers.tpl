@@ -177,23 +177,23 @@ singleton written by this sequence or by the one before it.
 {{- end -}}
 
 {{- define "ptah-operator.controllerWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-controller-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- printf "ptah-operator-controller-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerJobWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-job-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- printf "ptah-operator-job-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerChunkWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-chunk-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- printf "ptah-operator-chunk-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerPlanWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-plan-write-guard-v2-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- printf "ptah-operator-plan-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-migration-plan-write-guard-v1-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- printf "ptah-operator-migration-plan-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerRuntimeArgsJSON" -}}
