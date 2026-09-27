@@ -332,19 +332,16 @@ func serveManagerHandlers() (func(), error) {
 		Host: options.LocalServingHost, Port: options.LocalServingPort, CertDir: options.LocalServingCertDir,
 	})
 	decoder := cradmission.NewDecoder(scheme)
+	// Approvals are judged against what the manager executes with, as
+	// cmd/manager/main.go derives it from the builder.
+	var execution approvaladmission.Execution
+	execution.ControllerStateVersion, execution.PtahVersion, execution.ExecutorImage,
+		execution.RunnerProtocolVersion = manager.builder().ExecutionBinding()
 	approval := func(mutate bool) *approvaladmission.ApprovalHandler {
-		return &approvaladmission.ApprovalHandler{
-			Reader: admin, Decoder: decoder, Mutate: mutate,
-			ControllerImage: manager.controllerImage, ControllerRevision: controllerRevision,
-			ControllerStateVersion: controllerstate.CurrentVersion,
-		}
+		return &approvaladmission.ApprovalHandler{Reader: admin, Decoder: decoder, Mutate: mutate, Execution: execution}
 	}
 	migrationApproval := func(mutate bool) *approvaladmission.MigrationApprovalHandler {
-		return &approvaladmission.MigrationApprovalHandler{
-			Reader: admin, Decoder: decoder, Mutate: mutate,
-			ControllerImage: manager.controllerImage, ControllerRevision: controllerRevision,
-			ControllerStateVersion: controllerstate.CurrentVersion,
-		}
+		return &approvaladmission.MigrationApprovalHandler{Reader: admin, Decoder: decoder, Mutate: mutate, Execution: execution}
 	}
 	server.Register(mutateApprovalPath, &cradmission.Webhook{Handler: approval(true)})
 	server.Register(validateApprovalPath, &cradmission.Webhook{Handler: approval(false)})

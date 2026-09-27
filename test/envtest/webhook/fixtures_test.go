@@ -142,16 +142,15 @@ func createSchema(t *testing.T, namespace, name string) *operatorv1alpha1.PtahSc
 }
 
 // executionBinding is the binding the manager records before it dispatches or
-// plans: the chart's images and version, and this suite's revision.
+// plans: what executes a plan -- the controller-state version, the chart's Ptah
+// version and executor image, and the runner protocol. The manager's own
+// build binds nothing.
 func executionBinding() *operatorv1alpha1.ExecutionBindingStatus {
 	return &operatorv1alpha1.ExecutionBindingStatus{
 		Epoch:                  executionBindingID,
-		ControllerImage:        manager.controllerImage,
-		ControllerRevision:     controllerRevision,
 		ControllerStateVersion: controllerstate.CurrentVersion,
 		PtahVersion:            manager.ptahVersion,
 		ExecutorImage:          manager.executorImage,
-		RunnerImage:            manager.runnerImage,
 		RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 	}
 }
