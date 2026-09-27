@@ -5943,6 +5943,7 @@ fi
 grep -F -- '--default-tolerations-enabled=true' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--extended-resource-toleration-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--always-pull-images-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
+grep -F -- '--require-distinct-approver=false' "$RENDERED_WEBHOOKS" >/dev/null
 rendered_manager_container=$(awk '
   /^# Source: ptah-operator\/templates\/deployment[.]yaml$/ {deployment = 1; next}
   deployment && /^---$/ {exit}

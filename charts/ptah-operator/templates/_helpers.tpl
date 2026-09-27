@@ -213,7 +213,8 @@ singleton written by this sequence or by the one before it.
       (printf "--default-not-ready-toleration-seconds=%v" .Values.admission.defaultNotReadyTolerationSeconds)
       (printf "--default-unreachable-toleration-seconds=%v" .Values.admission.defaultUnreachableTolerationSeconds)
       (printf "--extended-resource-toleration-enabled=%t" .Values.admission.extendedResourceTolerationEnabled)
-      (printf "--always-pull-images-enabled=%t" .Values.admission.alwaysPullImagesEnabled) -}}
+      (printf "--always-pull-images-enabled=%t" .Values.admission.alwaysPullImagesEnabled)
+      (printf "--require-distinct-approver=%t" .Values.approvals.requireDistinctApprover) -}}
 {{- $args | toJson -}}
 {{- end -}}
 

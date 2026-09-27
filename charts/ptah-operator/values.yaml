@@ -58,6 +58,19 @@ admission:
   # to Always. The guards accept that rewrite only when this says so.
   alwaysPullImagesEnabled: false
 
+# Approval policy the installer owns rather than any PtahSchema or
+# PtahMigration author.
+approvals:
+  # The four-eyes control: refuse an approval whose approver is exactly the
+  # identity that last created or last changed the spec of the resource it
+  # approves, or refuse it outright when no such identity was recorded. A
+  # desired-state author cannot reach this from their own resource's spec, so
+  # turning it on binds every approval this installation admits rather than
+  # binding one resource an author could edit back off. It defaults to false,
+  # so an existing installation that never sets it keeps admitting the
+  # approvals it always did.
+  requireDistinctApprover: false
+
 # Required whenever replicaCount is greater than one. Disable only for an
 # isolated single-replica installation. Exactly one Helm release is supported
 # per cluster; scale this release for high availability.

@@ -79,6 +79,14 @@ type ApprovalHandler struct {
 	Clock     Clock
 	Mutate    bool
 	Execution Execution
+
+	// RequireDistinctApprover is the four-eyes control, set once for the whole
+	// installation from the manager's own flag: an author who can also reach
+	// the RBAC an approver needs cannot turn this off from inside a schema's
+	// own spec, because it is not there to turn off. When true, every approval
+	// is refused if its approver is exactly the identity refuseSelfApproval
+	// finds recorded as the schema's last spec writer, or if none is recorded.
+	RequireDistinctApprover bool
 }
 
 // Handle implements controller-runtime admission.Handler.
@@ -331,7 +339,7 @@ func (h *ApprovalHandler) validateBinding(
 	if schema.Status.Plan.Approval != nil {
 		return fmt.Errorf("referenced plan already has a recorded approval")
 	}
-	if schema.Spec.Policy.RequireDistinctApprover {
+	if h.RequireDistinctApprover {
 		if err := refuseSelfApproval("schema", schema.Annotations, approval.Spec.Approver); err != nil {
 			return err
 		}

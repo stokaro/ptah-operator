@@ -714,6 +714,44 @@ func TestChartPreservesExplicitPtahVersionAsOneExactArgument(t *testing.T) {
 	}
 }
 
+// TestChartRequireDistinctApproverReachesManagerArgs proves the four-eyes
+// switch travels from the chart value to the manager's own flag: it is the
+// installer's control precisely because nothing on a PtahSchema or
+// PtahMigration can set it, so the only path from a value to the running
+// handlers is this one.
+func TestChartRequireDistinctApproverReachesManagerArgs(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default off", want: "--require-distinct-approver=false"},
+		{
+			name: "explicit on",
+			args: []string{"--set", "approvals.requireDistinctApprover=true"},
+			want: "--require-distinct-approver=true",
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			objects := renderChart(t, test.args...)
+			deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
+			containers, _, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+			if err != nil || len(containers) != 1 {
+				t.Fatalf("manager Deployment containers = %d, want 1", len(containers))
+			}
+			managerArgs := stringSlice(containers[0].(map[string]any)["args"])
+			if !slices.Contains(managerArgs, test.want) {
+				t.Fatalf("manager args = %v, want %s", managerArgs, test.want)
+			}
+		})
+	}
+}
+
 // The controller runs as one ServiceAccount in every release: the configured
 // name, or the release's full name when none is configured. An external one is
 // used as named and never rendered.

@@ -56,6 +56,8 @@ reader of a converged schema can see exactly what produced it.
 | `admission.defaultUnreachableTolerationSeconds` | `300` | The DefaultTolerationSeconds value for node.kubernetes.io/unreachable. |
 | `admission.extendedResourceTolerationEnabled` | `false` | Whether ExtendedResourceToleration is enabled, which adds a toleration for every extended resource a Pod requests. |
 | `admission.alwaysPullImagesEnabled` | `false` | Whether AlwaysPullImages is enabled, which rewrites every imagePullPolicy to Always. The guards accept that rewrite only when this says so. |
+| `approvals` |  | Approval policy the installer owns rather than any PtahSchema or PtahMigration author. |
+| `approvals.requireDistinctApprover` | `false` | The four-eyes control: refuse an approval whose approver is exactly the identity that last created or last changed the spec of the resource it approves, or refuse it outright when no such identity was recorded. A desired-state author cannot reach this from their own resource's spec, so turning it on binds every approval this installation admits rather than binding one resource an author could edit back off. It defaults to false, so an existing installation that never sets it keeps admitting the approvals it always did. |
 | `leaderElection` | `true` | Required whenever replicaCount is greater than one. Disable only for an isolated single-replica installation. Exactly one Helm release is supported per cluster; scale this release for high availability. |
 | `coordination` |  | Where the operator's Leases live. |
 | `coordination.namespace` | `""` | Leave empty to use the Helm release namespace. This namespace contains both database target Leases and the manager leader-election Lease for the cluster's one supported operator release. |
