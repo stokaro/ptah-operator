@@ -62,13 +62,15 @@ joins them in index order and checks the whole document against
 reading the SQL they refer to is not an independent review, and neither is
 reading one chunk of a plan that has several.
 
-The chunk Role limits who reads a plan through its chunks, and the chunks are
-not the only copy. The Plan Pod hands the whole document to the controller
-through its log, so whoever may read Pod logs in the namespace, or the log
-store a node agent ships them to, reads every plan published there without any
-chunk Role. Keep `pods/log` for the people who may read every plan in the
-namespace, and keep Plan Pod logs out of shared log stores;
-[Pod logs carry plans](../security/#pod-logs-carry-plans) says how.
+The chunk Role limits who reads a plan through its chunks. It used to be that
+the chunks were not the only copy: the Plan Pod hands the whole document to
+the controller through its log, and whoever could read Pod logs in the
+namespace, or the log store a node agent ships them to, read every plan
+published there without any chunk Role. The runner now seals that document to
+the manager's own key before writing it, so those copies hold ciphertext, and
+`pods/log` grants nothing a plan approval needs;
+[Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) has the
+detail.
 
 Fill those values in the approval and use server-side dry run to inspect the
 object after authenticated identity and derived bindings are stamped:
