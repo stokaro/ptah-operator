@@ -1200,6 +1200,20 @@ assert_release_runtime_removed() {
 		fail "generated certificate Secret identity was not captured before uninstall"
 	[ -n "$CERTIFICATE_STAGING_SECRET_NAME" ] ||
 		fail "certificate staging Secret identity was not captured before uninstall"
+	# helm uninstall --wait waits for the objects Helm deletes. The ReplicaSets
+	# and Pods behind the Deployments go through garbage collection and the
+	# Pods' termination grace afterwards, so give them that time before the
+	# inventory below asserts that nothing labeled is left.
+	runtime_removal_deadline=$(($(date +%s) + 180))
+	while :; do
+		remaining_runtime=$(kube -n "$E2E_OPERATOR_NAMESPACE" get replicaset,pod \
+			-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json |
+			jq -r '.items | length')
+		[ "$remaining_runtime" -eq 0 ] && break
+		[ "$(date +%s)" -lt "$runtime_removal_deadline" ] ||
+			fail "$remaining_runtime labeled ReplicaSet or Pod objects outlived uninstall by 180s"
+		sleep 2
+	done
 	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
 		remaining=$(kube get "$singleton_resource" ptah-operator-admission \
 			--ignore-not-found=true -o name)
