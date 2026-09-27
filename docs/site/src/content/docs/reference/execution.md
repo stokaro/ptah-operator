@@ -302,8 +302,12 @@ metadata-lock waiter.
 
 Raw drift is advisory on purpose: its selector language is not reused as a
 planning scope, and its detail never authorizes an Apply. The authoritative
-Plan uses the exact `spec.policy.exclude` scope twice, requires byte identity,
-and passes those bytes through the native Apply parser in dry-run mode. Apply
-recognizes a stale-plan refusal only when the strict native diagnostic names
-the reconstructed plan's source fingerprint; that refusal is pre-mutation,
-while every other Apply failure after dispatch stays outcome-unknown.
+Plan uses the exact `spec.policy.exclude` scope twice, saves each read with
+`schema plan --output`, requires the two files to be byte-identical, and passes
+those bytes through `schema apply --dry-run`, whose report must name their
+digest and list their statements in order. Each step is read from the JSON
+document Ptah prints under `--json`, never from the text it writes for a
+person. Apply reads its own report on every exit status, and only `applied`
+naming the approved plan's digest is a success. A `stale-plan` refusal is
+reported as such, and every Apply failure after dispatch, that refusal
+included, stays outcome-unknown until an observation settles it.

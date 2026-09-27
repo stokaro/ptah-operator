@@ -135,6 +135,10 @@ type Inputs struct {
 	// to for `migrations up --expect-sequence`. The runner sets it; nothing
 	// reads it from the environment.
 	ExpectedSequencePath string
+	// PlanOutputPath is where `schema plan --output` saves the plan it
+	// computes. The runner sets it to a file in a directory of its own, and
+	// nothing reads it from the environment.
+	PlanOutputPath string
 }
 
 func InputsFromEnvironment(environment []string) Inputs {
@@ -189,9 +193,16 @@ func environmentWithout(environment []string, excludedKeys ...string) []string {
 	return filtered
 }
 
+// ptahJSONEnvironment fills the --json flag of every Ptah command that has
+// one. The runner chooses the output of each command it starts and passes
+// --json itself wherever it reads a document, so the variable is removed from
+// every child rather than left to disagree with the flag.
+const ptahJSONEnvironment = "PTAH_JSON"
+
 func childEnvironment(environment []string) []string {
 	return environmentWithout(
 		environment,
+		ptahJSONEnvironment,
 		EnvOperationID,
 		EnvRequestedReference,
 		EnvResolvedReference,
@@ -250,12 +261,19 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 	case OperationObserve:
 		spec.Args = []string{"schema", "drift", "--format", "json"}
 	case OperationPlan:
-		spec.Args = []string{"schema", "plan", "--dry-run"}
+		// The plan is read from the file --output writes, and how the run
+		// ended from the document --json prints. The file holds the bytes
+		// `--dry-run` printed before, so a plan's content digest does not
+		// depend on which of the two this runner asked for.
+		if !strings.HasPrefix(inputs.PlanOutputPath, "/") {
+			return CommandSpec{}, errors.New("plan needs the absolute path to save its plan to")
+		}
+		spec.Args = []string{"schema", "plan", "--output", inputs.PlanOutputPath, "--json"}
 	case OperationApply:
 		if inputs.PlanPath == "" {
 			return CommandSpec{}, errors.New("reconstructed plan path is empty")
 		}
-		spec.Args = []string{"schema", "apply", "--plan", inputs.PlanPath, "--auto-approve"}
+		spec.Args = []string{"schema", "apply", "--plan", inputs.PlanPath, "--auto-approve", "--json"}
 	case OperationMigrationHistory, OperationMigrationApply:
 		// A local path, never a reference: validateMigrationsDir says why.
 		if err := validateMigrationsDir(inputs.MigrationsDir); err != nil {

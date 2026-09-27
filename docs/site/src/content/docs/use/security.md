@@ -497,17 +497,26 @@ before a small typed descriptor or requirement-name set is emitted, arbitrary
 verification details and inspection metadata are discarded, and native stderr
 or executor errors can produce only generic typed failures. No Resolve,
 Verify, Observe, or Apply frame carries native stdout.
-Planning executes twice under the target Lease, requires byte-identical native
-plans, and validates the accepted bytes through a native Apply dry-run before
-publication. The independent operator classifier may raise destructive
-severity from the rendered SQL and never lowers executor metadata. It also
-rejects credential-bearing principal DDL.
+Planning executes twice under the target Lease, reads each plan from the file
+`schema plan --output` saved, requires the two files to be byte-identical, and
+validates the accepted bytes through a native Apply dry-run before
+publication. Every Plan and Apply read goes through the versioned JSON document
+Ptah prints under `--json`: a document of another contract version, an outcome
+the runner does not know, or a digest that does not name the exact plan bytes is
+refused, and nothing is matched in the text Ptah writes for a person. The
+independent operator classifier may raise destructive severity from the
+rendered SQL and never lowers executor metadata. It also rejects
+credential-bearing principal DDL.
 
-Apply native stdout and stderr are never copied into the framed result or
-runner diagnostics, including failure paths. Only generic typed failures leave
-the runner. Stale Apply is classified as pre-mutation only for the exact native
-diagnostic bound to the reconstructed plan's source fingerprint; altered,
-extra, or truncated output is treated as uncertain.
+Native stderr from Plan and Apply is discarded rather than forwarded: under
+`--json` it lists the planned statements, which can carry declared row values.
+Apply native stdout is never copied into the framed result or runner
+diagnostics, including failure paths, and neither is the error sentence its
+report carries. Only generic typed failures leave the runner. A stale plan is
+reported as `stale_plan`, whether the schema or the declared rows moved, and
+like every other Apply failure it stays uncertain until an observation settles
+it: another Pod of the same Job may have run, so no one child's report proves
+that nothing was sent.
 
 A successful Plan frame is the one frame that carries the plan: it transports
 the exact plan bytes to the controller before they are committed to immutable

@@ -1208,10 +1208,11 @@ and it is a statement that nothing is executing against that database any more.
   history read that follows confirms it. Where the log holding that account is
   gone, the summary in the Pod's termination message stands in for it
   ([The termination summary](../../reference/execution/#the-termination-summary)).
-- A native stale-plan refusal is accepted as pre-mutation only when its exact,
-  untruncated diagnostic names the source fingerprint in the reconstructed
-  immutable plan. The plan is cleared, its recorded approval becomes stale,
-  and reconciliation observes the database again.
+- A stale-plan refusal is read from the `refusal` Ptah's apply report carries,
+  whether the schema or the declared rows moved, and reported as `stale_plan`.
+  It is still `OutcomeUnknown`, because another Pod of the same Job may have
+  run: the plan is cleared, its recorded approval becomes stale, and
+  reconciliation observes the database again.
 - A controller restart resumes the persisted operation and existing Job UID.
   Replacement or unrelated Jobs are rejected.
 - A successful apply transitions to `VerifyingConvergence`; only a later
@@ -1429,7 +1430,7 @@ managed object identity; lifecycle records add the closed `operation`, numeric
 `attempt`, and `phase` fields. Reconciliation completion records include
 `requeue` and `requeueAfter`. Executor stdout and stderr are treated as
 untrusted secret-bearing data: only a strictly validated Plan may transport
-native stdout. Resolve and Verify emit bounded typed evidence, Observe emits
+the plan Ptah saved. Resolve and Verify emit bounded typed evidence, Observe emits
 only summaries, and Apply emits no native output. Native stderr never crosses
 those operation boundaries; controller-facing failures are generic and typed.
 

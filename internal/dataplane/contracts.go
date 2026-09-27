@@ -156,6 +156,13 @@ type PlanFile struct {
 	FromFingerprint string   `json:"from_fingerprint"`
 	ToFingerprint   string   `json:"to_fingerprint"`
 	Exclude         []string `json:"exclude,omitempty"`
+	// SchemasBeyondURL names the schemas the source fingerprint covers that the
+	// connection URL's own scope does not: a desired state that names a schema
+	// other than the one a schema-scoped URL connects to. Ptah reads the same
+	// set again when it verifies the plan before applying it. The operator
+	// carries the plan bytes as they are and reads nothing from this field; it
+	// is declared so the strict decoder accepts a plan that has it.
+	SchemasBeyondURL []string `json:"schemas_beyond_url,omitempty"`
 	// ManagedRows and RowsFingerprint describe the declared row sets this plan
 	// read, and the state it read them in. A plan that changes declared rows
 	// carries both, and a plan that changes only structure carries neither.
