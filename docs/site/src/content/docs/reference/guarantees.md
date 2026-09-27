@@ -118,8 +118,8 @@ is refused itself and contests nothing.
 | --- | --- | --- |
 | Enforced in | `takeRealmCensus`, before any Job is dispatched, reading the `PtahRealm` from the manager's cache | the same function, in the same place |
 | Bound to | the namespace in a key's digest; for a realm reference, the namespaces and the engine the `PtahRealm` lists | the same |
-| Failure behavior | `Blocked` with reason `RealmNotAuthorized`, left out of every admitted claimant's census; re-taken on a bounded cadence and when the realm changes | the same |
-| Proved by | `TestSchemaRefusesARealmThatDoesNotAdmitItsNamespace` | `TestAnUnlistedNamespaceIsRefusedAndBlocksNobody`, `TestAKeyWrittenInAnotherNamespaceContestsNothing` |
+| Failure behavior | `Blocked` with reason `RealmNotAuthorized`, left out of every admitted claimant's census; re-taken on a bounded cadence, so a new grant lifts it within a minute, while a withdrawn grant refuses an admitted claimant on the pass the realm change starts | the same |
+| Proved by | `TestSchemaRefusesARealmThatDoesNotAdmitItsNamespace` | `TestMigrationRefusesARealmThatDoesNotAdmitItsNamespace`, `TestAnUnlistedNamespaceIsRefusedAndBlocksNobody`, `TestAKeyWrittenInAnotherNamespaceContestsNothing`, `TestAGrantLiftsARefusalAtItsDeadline` |
 
 ## Stored state is never interpreted by a manager that predates it
 

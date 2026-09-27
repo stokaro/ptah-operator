@@ -165,3 +165,43 @@ func BenchmarkRealmCensus(b *testing.B) {
 		})
 	}
 }
+
+// One realm, one namespace it grants, one claimant there, and N claimants in
+// namespaces it does not list. The unlisted ones are what anybody who can
+// create a resource can add, so what they cost the admitted claimant's census
+// is the question: it has to stay what one claimant costs, whatever N is.
+//
+// Each unlisted claimant lives in a namespace of its own, the shape of many
+// tenants naming one realm. The census reads through the index in each granted
+// namespace, so neither the fake client here nor a manager's cache copies an
+// unlisted claimant; before, it listed the realm's whole bucket and dropped
+// them afterwards, one deep copy each, on every pass.
+func BenchmarkRealmCensusWithUnlistedClaimants(b *testing.B) {
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		b.Fatal(err)
+	}
+	for _, unlisted := range []int{0, 200, 1000} {
+		b.Run(fmt.Sprintf("unlisted/%d", unlisted), func(b *testing.B) {
+			realm := realmFixture("orders-primary", operatorv1alpha1.RealmSharingExclusive, "team-a")
+			tenant := realmBoundMigrationFixture(realm.Name, false)
+			objects := []client.Object{realm, tenant}
+			for index := range unlisted {
+				objects = append(objects, realmBoundSchemaFixture(
+					fmt.Sprintf("intruder-%d", index), "intruder", realm.Name, false))
+			}
+			api := withRealmIndexes(fake.NewClientBuilder().WithScheme(scheme)).WithObjects(objects...).Build()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				verdict, err := takeRealmCensus(context.Background(), api, tenant.Namespace, tenant.Spec.Target)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if !verdict.Authorized || verdict.Census.total() != 1 {
+					b.Fatalf("the census = %+v, want the one admitted claimant", verdict)
+				}
+			}
+		})
+	}
+}

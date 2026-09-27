@@ -236,9 +236,10 @@ func takeRealmCensus(
 	}
 	verdict := realmVerdict{Namespace: namespace, Realm: coordination.RealmName(target), Authorized: true}
 
-	// admitted is the grant the census counts under. A coordination key admits
-	// its own namespace, which is the only one its digest can come from.
-	admitted := func(string) bool { return true }
+	// granted are the namespaces the census reads. A coordination key names a
+	// realm in its own namespace, which is the only one its digest can come
+	// from.
+	granted := []string{namespace}
 	if verdict.Realm != "" {
 		realm := &operatorv1alpha1.PtahRealm{}
 		if err := reader.Get(ctx, client.ObjectKey{Name: verdict.Realm}, realm); err != nil {
@@ -253,42 +254,46 @@ func takeRealmCensus(
 			return verdict, nil
 		}
 		verdict.Exclusive = realm.Spec.Sharing != operatorv1alpha1.RealmSharingShared
-		// Every member of this index bucket derived its digest from the same
-		// realm name and the same engine, which realmAdmits just held to the
-		// realm's own. So the namespace is what is left to decide.
-		admitted = func(member string) bool { return slices.Contains(realm.Spec.Namespaces, member) }
+		// Every member of the realm's index bucket derived its digest from
+		// the same realm name and the same engine, which realmAdmits just held
+		// to the realm's own, so the namespace is what is left to decide. The
+		// census reads only the namespaces the realm lists: a claimant
+		// elsewhere is never read, so any number of them costs a census
+		// nothing, and a list of the whole bucket would copy each of them out
+		// of the cache on every pass of every admitted claimant.
+		granted = realm.Spec.Namespaces
 	}
 
 	members := client.MatchingFields{RealmDigestIndex: digest}
-	schemas := &operatorv1alpha1.PtahSchemaList{}
-	if err := reader.List(ctx, schemas, members); err != nil {
-		return realmVerdict{}, fmt.Errorf("list schemas claiming the coordination realm: %w", err)
-	}
-	for index := range schemas.Items {
-		schema := &schemas.Items[index]
-		if !admitted(schema.Namespace) ||
-			!claimsRealm(schema.DeletionTimestamp != nil || schema.Spec.Suspend, schema.Namespace, schema.Spec.Target, digest) {
-			continue
+	for _, member := range granted {
+		schemas := &operatorv1alpha1.PtahSchemaList{}
+		if err := reader.List(ctx, schemas, client.InNamespace(member), members); err != nil {
+			return realmVerdict{}, fmt.Errorf("list schemas claiming the coordination realm: %w", err)
 		}
-		verdict.Census.Schemas++
-		if !schema.Spec.Target.SharedRealm {
-			verdict.Census.Undeclared++
+		for index := range schemas.Items {
+			schema := &schemas.Items[index]
+			if !claimsRealm(schema.DeletionTimestamp != nil || schema.Spec.Suspend, schema.Namespace, schema.Spec.Target, digest) {
+				continue
+			}
+			verdict.Census.Schemas++
+			if !schema.Spec.Target.SharedRealm {
+				verdict.Census.Undeclared++
+			}
 		}
-	}
 
-	migrations := &operatorv1alpha1.PtahMigrationList{}
-	if err := reader.List(ctx, migrations, members); err != nil {
-		return realmVerdict{}, fmt.Errorf("list migrations claiming the coordination realm: %w", err)
-	}
-	for index := range migrations.Items {
-		migration := &migrations.Items[index]
-		if !admitted(migration.Namespace) ||
-			!claimsRealm(migration.DeletionTimestamp != nil || migration.Spec.Suspend, migration.Namespace, migration.Spec.Target, digest) {
-			continue
+		migrations := &operatorv1alpha1.PtahMigrationList{}
+		if err := reader.List(ctx, migrations, client.InNamespace(member), members); err != nil {
+			return realmVerdict{}, fmt.Errorf("list migrations claiming the coordination realm: %w", err)
 		}
-		verdict.Census.Migrations++
-		if !migration.Spec.Target.SharedRealm {
-			verdict.Census.Undeclared++
+		for index := range migrations.Items {
+			migration := &migrations.Items[index]
+			if !claimsRealm(migration.DeletionTimestamp != nil || migration.Spec.Suspend, migration.Namespace, migration.Spec.Target, digest) {
+				continue
+			}
+			verdict.Census.Migrations++
+			if !migration.Spec.Target.SharedRealm {
+				verdict.Census.Undeclared++
+			}
 		}
 	}
 	return verdict, nil
@@ -330,12 +335,20 @@ func claimsRealm(dormant bool, namespace string, target operatorv1alpha1.Databas
 
 // realmClaimantRequests wakes the resources of one kind that name realm.
 //
-// A grant changing is another object's event, like a peer's declaration, and
-// the bounded re-check below would reach every claimant within a minute
-// anyway. The watch is what makes that immediate, and what makes the manager
-// sync its PtahRealm cache before any reconcile reads one: a census that
-// started the informer on its first read would wait for that sync inside a
-// reconcile, with nothing bounding the wait.
+// A grant changing is another object's event, like a peer's declaration. What
+// the wake-up does depends on the direction. A withdrawal takes effect at
+// once: the census runs before every phase decision, so an idle resource the
+// realm stopped admitting is refused on the pass this starts. A new grant
+// lifts a standing refusal no sooner than the refusal's own deadline, the
+// bounded re-check below: the pass this starts finds the census passing and a
+// Blocked resource not yet due, and a Blocked resource carries nothing typed
+// that says which refusal put it there. The grant is noticed within a minute,
+// the same bound a peer's declaration has.
+//
+// The watch is also what makes the manager sync its PtahRealm cache before
+// any reconcile reads one: a census that started the informer on its first
+// read would wait for that sync inside a reconcile, with nothing bounding the
+// wait.
 //
 // A claimant that names the realm with another engine derived another digest
 // and is not found here. It is refused whatever the realm says, and the

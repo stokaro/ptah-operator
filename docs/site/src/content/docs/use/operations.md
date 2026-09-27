@@ -613,9 +613,21 @@ realm's absence a way into a database that the realm, once created, would not
 admit.
 
 The census reads the realm from the manager's cache before every claim, and a
-change to a realm wakes the resources that name it. Removing a namespace does
-not stop an operation already running there: the resource is refused at its
-next claim, the same way a conflict is.
+change to a realm wakes the resources that name it. What the wake-up does
+depends on the direction. Removing a namespace refuses an idle resource there
+on the pass the change starts, and does not stop an operation already running:
+that resource is refused at its next claim, the same way a conflict is. Adding
+a namespace lifts a standing refusal at the refusal's own re-check, which is
+at most a minute away, the same bound a peer's declaration has.
+
+A namespace name in a realm is a grant to whoever holds a namespace of that
+name. Remove a namespace from every realm that lists it before deleting it,
+because whoever creates a namespace of that name next inherits the grant. Where
+tenants choose their own namespace names -- OpenShift project self-provisioning,
+Capsule tenants, HNC subnamespaces -- do not list a name before its namespace
+exists either: the first tenant to create it claims the database, and can
+contest it for the namespaces the realm meant to admit, which is the refusal
+realms exist to withhold.
 
 Only an administrator should be able to write a realm. The chart grants the
 manager `get`, `list` and `watch` on `ptahrealms` and nothing more, and
