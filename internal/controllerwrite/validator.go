@@ -230,6 +230,15 @@ func (v *Validator) validateJobCreate(ctx context.Context, req admissionv1.Admis
 	if err != nil {
 		return denyf("active operation cannot reconstruct the submitted Job: %v", err)
 	}
+	// The webhook request may land on a replica other than the one that
+	// dispatched this Job, and every replica generates its own Plan seal key
+	// at startup: rebuilding with this replica's own key would refuse a Job
+	// this same manager just created. The claim's recorded digest, not
+	// byte-equality with this process's key, is what proves live was sealed
+	// to an authorized one.
+	if err := workload.CarrySealedPlanKey(expected, job, *operation); err != nil {
+		return denyf("Job seal key is invalid: %v", err)
+	}
 	if err := validateAdmissionSnapshot(operation, expected); err != nil {
 		return denyf("active operation Pod admission snapshot is invalid: %v", err)
 	}
@@ -1107,6 +1116,14 @@ func (v *Validator) validatePlanSourceJob(ctx context.Context, schema *operatorv
 	// Plan Job. Its recorded identity is taken from the Job, and the snapshot
 	// check that follows holds what was taken to the claim.
 	workload.CarryManagerIdentity(expected, harvested)
+	// The same manager may have restarted between dispatching this Plan Job
+	// and this validation, generating a new seal key; or a different replica
+	// dispatched it. Either way this process's own key is not what live was
+	// sealed to. Checked against the claim's recorded digest, not trusted
+	// outright, for the same reason CarrySealedPlanKey documents.
+	if err := workload.CarrySealedPlanKey(expected, harvested, *operation); err != nil {
+		return denyf("terminal Plan Job seal key is invalid: %v", err)
+	}
 	if err := validateAdmissionSnapshot(operation, expected); err != nil {
 		return denyf("active Plan operation Pod admission snapshot is invalid: %v", err)
 	}
