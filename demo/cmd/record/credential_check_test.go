@@ -50,6 +50,18 @@ func TestTheCredentialCheckReadsPastTheBytesItPrints(t *testing.T) {
 			status:  statusDocument(t, plantedCredential, 0),
 			refused: true,
 		},
+		// An empty reading holds no credential, so a check that searched it
+		// would pass having read nothing.
+		{
+			name:    "kubectl printed nothing",
+			status:  "",
+			refused: true,
+		},
+		{
+			name:    "a resource with no status yet",
+			status:  `{"metadata":{"name":"storefront"}}`,
+			refused: true,
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -57,7 +69,7 @@ func TestTheCredentialCheckReadsPastTheBytesItPrints(t *testing.T) {
 			stdout, stderr, err := runCredentialCheck(t, script, row.status)
 			switch {
 			case row.refused && err == nil:
-				t.Fatalf("the check accepted a status carrying the credential:\n%s", stdout)
+				t.Fatalf("the check accepted a status it must refuse:\n%s", stdout)
 			case !row.refused && err != nil:
 				t.Fatalf("the check refused a clean status: %v\n%s\n%s", err, stdout, stderr)
 			}

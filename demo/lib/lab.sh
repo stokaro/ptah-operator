@@ -373,18 +373,39 @@ lab_reset() {
 	# is not a detail to carry on from: the next scenario would be recorded
 	# against whatever the last one left, and the failure would surface as a
 	# plan nobody can explain several steps later.
-	# The revision table goes too. A migration history the next scenario did not
-	# create is a history it would continue from, and the versioned workflow
-	# reads that table before it reads anything else.
+	#
+	# Every table goes, not a list of the ones the scenarios declare: Ptah keeps
+	# its migration history in tables of its own, and a list missed
+	# schema_migrations_log until manual-approval found it where an empty
+	# database belonged. A history the next scenario did not create is one it
+	# would continue from. The count afterwards is what says the drop happened.
 	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- \
-		psql -qAt -c "DROP TABLE IF EXISTS orders, customers, shipments CASCADE;
-		              DROP TABLE IF EXISTS countries, regions CASCADE;
-		              DROP TABLE IF EXISTS schema_migrations CASCADE;
-		              DROP SCHEMA IF EXISTS atlas_schema_revisions CASCADE" >/dev/null ||
+		psql -qAt -v ON_ERROR_STOP=1 -c "SET client_min_messages = warning" -c "DO \$\$
+		DECLARE relation record;
+		BEGIN
+			FOR relation IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+				EXECUTE format('DROP TABLE IF EXISTS public.%I CASCADE', relation.tablename);
+			END LOOP;
+		END \$\$" -c "DROP SCHEMA IF EXISTS atlas_schema_revisions CASCADE" >/dev/null ||
 		lab_fail "could not empty the demonstration database"
-	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-mysql-client -- \
-		mysql demo -e "DROP TABLE IF EXISTS deliveries, schema_migrations" >/dev/null ||
-		lab_fail "could not empty the demonstration MySQL database"
+	lab_reset_left=$(k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- \
+		psql -qAt -c "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'") ||
+		lab_fail "could not count what the reset left in the demonstration database"
+	[ "$lab_reset_left" = 0 ] ||
+		lab_fail "the reset left $lab_reset_left tables in the demonstration database"
+	lab_reset_tables=$(k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-mysql-client -- \
+		mysql demo -N -e "SELECT GROUP_CONCAT(CONCAT('\`', table_name, '\`')) FROM information_schema.tables WHERE table_schema = 'demo'") ||
+		lab_fail "could not list the demonstration MySQL tables"
+	if [ -n "$lab_reset_tables" ] && [ "$lab_reset_tables" != NULL ]; then
+		k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-mysql-client -- \
+			mysql demo -e "SET FOREIGN_KEY_CHECKS = 0; DROP TABLE IF EXISTS $lab_reset_tables" >/dev/null ||
+			lab_fail "could not empty the demonstration MySQL database"
+	fi
+	lab_reset_left=$(k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-mysql-client -- \
+		mysql demo -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'demo'") ||
+		lab_fail "could not count what the reset left in the demonstration MySQL database"
+	[ "$lab_reset_left" = 0 ] ||
+		lab_fail "the reset left $lab_reset_left tables in the demonstration MySQL database"
 	# The shadow starts every scenario empty, the way baseline expects one.
 	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-shadow -- \
 		psql -U postgres -qc "DROP DATABASE IF EXISTS shadow WITH (FORCE)" -c "CREATE DATABASE shadow" >/dev/null ||

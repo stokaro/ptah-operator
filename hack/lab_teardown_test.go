@@ -332,6 +332,22 @@ func TestLabResetFailsWhenTheDatabaseCannotBeEmptied(t *testing.T) {
 	}
 }
 
+// A drop that ran is not a database that is empty. The reset drops every table
+// it finds and then counts, so a table the drop missed stops the reset instead
+// of the scenario that expects an empty database.
+func TestLabResetFailsWhenTablesRemain(t *testing.T) {
+	t.Parallel()
+	lab := newResetLab(t)
+
+	output, err := lab.reset(t, map[string]string{"STUB_LEFT": "3"})
+	if err == nil {
+		t.Fatalf("lab reset reported success with tables left behind:\n%s", output)
+	}
+	if !strings.Contains(string(output), "the reset left 3 tables in the demonstration database") {
+		t.Fatalf("lab reset did not say what it left:\n%s", output)
+	}
+}
+
 // The control: the same reset over a database it could empty.
 func TestLabResetSucceedsWhenTheDatabaseWasEmptied(t *testing.T) {
 	t.Parallel()
@@ -362,10 +378,13 @@ func newResetLab(t *testing.T) resetLab {
 		t.Fatalf("write the environment: %v", err)
 	}
 	directory := t.TempDir()
+	// The reset counts the tables it left, and the stub answers that count
+	// with STUB_LEFT, zero unless a row says otherwise.
 	stub := "#!/bin/sh\n" +
 		"for argument in \"$@\"; do\n" +
 		"  case \"$argument\" in\n" +
 		"  \"${STUB_FAIL:-nothing-fails}\") exit 1 ;;\n" +
+		"  *'count(*)'* | *'COUNT(*)'*) printf '%s\\n' \"${STUB_LEFT:-0}\"; exit 0 ;;\n" +
 		"  esac\n" +
 		"done\n" +
 		"exit 0\n"
