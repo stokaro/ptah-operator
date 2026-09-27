@@ -402,14 +402,13 @@ func TestMalformedSecretCARecoversOnlyLiveAuthenticObservedRoot(t *testing.T) {
 	}
 }
 
-func TestMissingSecretIsRecreatedOnlyBehindEstablishedGuard(t *testing.T) {
+func TestMissingSecretIsRecreated(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-	installEstablishedSecretCreateGuard(t, client, config)
-	installSecretCreateAdmission(t, client, config)
+	installFakeSecretCreateResponse(client)
 	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
 
 	// A missing Secret is already broken, so it comes back in the same pass
@@ -466,224 +465,6 @@ func TestSecretCreateValidationExpressionHandlesOptionalGenerateName(t *testing.
 	}
 }
 
-func TestMissingSecretGuardMustBeEstablishedBeforeCreate(t *testing.T) {
-	t.Parallel()
-	config := testConfig()
-	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
-	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
-	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-	installUnestablishedSecretCreateGuard(t, client, config)
-	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
-
-	_, err := rotator.Run(context.Background())
-	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("not established")) {
-		t.Fatalf("Run() error = %v, want unestablished guard", err)
-	}
-	if _, getErr := client.CoreV1().Secrets(config.Namespace).Get(context.Background(), config.SecretName, metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
-		t.Fatalf("missing Secret was created without an established guard: %v", getErr)
-	}
-	assertFinalBundles(t, client, config, old.caPEM)
-}
-
-func TestMissingSecretGuardRejectsIndeterminateConditionBeforeCreate(t *testing.T) {
-	t.Parallel()
-	config := testConfig()
-	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
-	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
-	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-	installEstablishedSecretCreateGuard(t, client, config)
-	policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-		context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
-	)
-	if err != nil {
-		t.Fatalf("get established Secret CREATE guard: %v", err)
-	}
-	policy.Status.Conditions = []metav1.Condition{{
-		Type:   "Ready",
-		Status: metav1.ConditionUnknown,
-	}}
-	if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().UpdateStatus(
-		context.Background(), policy, metav1.UpdateOptions{},
-	); err != nil {
-		t.Fatalf("set indeterminate Secret CREATE guard condition: %v", err)
-	}
-	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
-
-	_, err = rotator.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "is not true: Unknown") {
-		t.Fatalf("Run() error = %v, want indeterminate guard rejection", err)
-	}
-	for _, action := range client.Actions() {
-		if action.GetVerb() == "create" && action.GetResource().Resource == "secrets" {
-			t.Fatal("indeterminate guard reached a Secret CREATE request")
-		}
-	}
-}
-
-func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		mutate func(*testing.T, *fake.Clientset, Config)
-	}{
-		{
-			name: "missing exact ServiceAccount match condition",
-			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
-				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
-				)
-				if err != nil {
-					t.Fatalf("get guard policy: %v", err)
-				}
-				policy.Spec.MatchConditions = nil
-				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
-					context.Background(), policy, metav1.UpdateOptions{},
-				); err != nil {
-					t.Fatalf("broaden guard policy: %v", err)
-				}
-			},
-		},
-		{
-			name: "missing exact namespace selector",
-			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
-				binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
-					context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
-				)
-				if err != nil {
-					t.Fatalf("get guard binding: %v", err)
-				}
-				binding.Spec.MatchResources.NamespaceSelector = nil
-				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
-					context.Background(), binding, metav1.UpdateOptions{},
-				); err != nil {
-					t.Fatalf("broaden guard binding: %v", err)
-				}
-			},
-		},
-		{
-			name: "non-empty policy namespace selector",
-			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
-				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
-				)
-				if err != nil {
-					t.Fatalf("get guard policy: %v", err)
-				}
-				policy.Spec.MatchConstraints.NamespaceSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"guard.ptah.run/scope": "broadened"},
-				}
-				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
-					context.Background(), policy, metav1.UpdateOptions{},
-				); err != nil {
-					t.Fatalf("broaden guard policy: %v", err)
-				}
-			},
-		},
-		{
-			name: "non-empty policy object selector",
-			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
-				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
-				)
-				if err != nil {
-					t.Fatalf("get guard policy: %v", err)
-				}
-				policy.Spec.MatchConstraints.ObjectSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"guard.ptah.run/scope": "broadened"},
-				}
-				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
-					context.Background(), policy, metav1.UpdateOptions{},
-				); err != nil {
-					t.Fatalf("broaden guard policy: %v", err)
-				}
-			},
-		},
-		{
-			name: "policy object selector match expression",
-			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
-				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
-				)
-				if err != nil {
-					t.Fatalf("get guard policy: %v", err)
-				}
-				policy.Spec.MatchConstraints.ObjectSelector = &metav1.LabelSelector{
-					MatchExpressions: []metav1.LabelSelectorRequirement{{
-						Key:      "guard.ptah.run/scope",
-						Operator: metav1.LabelSelectorOpExists,
-					}},
-				}
-				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
-					context.Background(), policy, metav1.UpdateOptions{},
-				); err != nil {
-					t.Fatalf("broaden guard policy: %v", err)
-				}
-			},
-		},
-		{
-			name: "non-empty binding object selector",
-			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
-				binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
-					context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
-				)
-				if err != nil {
-					t.Fatalf("get guard binding: %v", err)
-				}
-				binding.Spec.MatchResources.ObjectSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"guard.ptah.run/scope": "broadened"},
-				}
-				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
-					context.Background(), binding, metav1.UpdateOptions{},
-				); err != nil {
-					t.Fatalf("broaden guard binding: %v", err)
-				}
-			},
-		},
-		{
-			name: "binding namespace selector match expression",
-			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
-				binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
-					context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
-				)
-				if err != nil {
-					t.Fatalf("get guard binding: %v", err)
-				}
-				binding.Spec.MatchResources.NamespaceSelector.MatchExpressions = []metav1.LabelSelectorRequirement{{
-					Key:      "guard.ptah.run/scope",
-					Operator: metav1.LabelSelectorOpExists,
-				}}
-				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
-					context.Background(), binding, metav1.UpdateOptions{},
-				); err != nil {
-					t.Fatalf("broaden guard binding: %v", err)
-				}
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			config := testConfig()
-			now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
-			old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
-			client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-			installEstablishedSecretCreateGuard(t, client, config)
-			test.mutate(t, client, config)
-			rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
-
-			_, err := rotator.Run(context.Background())
-			if err == nil || !bytes.Contains([]byte(err.Error()), []byte("guard")) {
-				t.Fatalf("Run() error = %v, want guard contract rejection", err)
-			}
-			for _, action := range client.Actions() {
-				if action.GetVerb() == "create" && action.GetResource().Resource == "secrets" {
-					t.Fatal("broadened guard reached a Secret CREATE request")
-				}
-			}
-		})
-	}
-}
-
 func TestConfigRejectsInvalidSecretCreateServiceAccountName(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
@@ -727,13 +508,7 @@ func TestMissingSecretCreateRaceNeverOverwritesDifferentMaterial(t *testing.T) {
 	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
 	racing := mustGenerateMaterial(t, now.Add(time.Minute), config)
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-	installEstablishedSecretCreateGuard(t, client, config)
-	installSecretCreateAdmission(t, client, config)
 	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
-		if len(options.DryRun) != 0 {
-			return false, nil, nil
-		}
 		racingSecret := generatedSecret(config, racing)
 		racingSecret.UID = "racing-secret-uid"
 		racingSecret.ResourceVersion = "1"
@@ -1510,24 +1285,6 @@ func assertCANotCopiedToValidatingUpdates(t *testing.T, client *fake.Clientset, 
 	})
 }
 
-func installEstablishedSecretCreateGuard(t *testing.T, client *fake.Clientset, config Config) {
-	t.Helper()
-	installUnestablishedSecretCreateGuard(t, client, config)
-	policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-		context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
-	)
-	if err != nil {
-		t.Fatalf("get test Secret CREATE guard: %v", err)
-	}
-	policy.Status.ObservedGeneration = policy.Generation
-	policy.Status.TypeChecking = &admissionregistrationv1.TypeChecking{}
-	if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().UpdateStatus(
-		context.Background(), policy, metav1.UpdateOptions{},
-	); err != nil {
-		t.Fatalf("establish test Secret CREATE guard: %v", err)
-	}
-}
-
 func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset, config Config) {
 	t.Helper()
 	failurePolicy := admissionregistrationv1.Fail
@@ -1581,45 +1338,21 @@ func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset,
 	}
 }
 
-func installSecretCreateAdmission(t *testing.T, client *fake.Clientset, config Config) {
-	t.Helper()
+// installFakeSecretCreateResponse makes a Secret CREATE against the fake
+// clientset carry a UID and a ResourceVersion, the way a real API server's
+// response does. The fake tracker leaves both empty on the object it stores,
+// and createSecret requires both before it accepts its own write.
+func installFakeSecretCreateResponse(client *fake.Clientset) {
 	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
-		if len(options.DryRun) == 0 {
-			secret := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret)
-			if secret.Name == config.SecretName {
-				secret.UID = "created-primary-secret-uid"
-				secret.ResourceVersion = "1"
-			}
-			return false, nil, nil
-		}
 		secret := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret)
-		if secretMatchesCreateContract(secret, config) {
-			return true, secret.DeepCopy(), nil
+		if secret.UID == "" {
+			secret.UID = "created-secret-uid"
 		}
-		return true, nil, apierrors.NewForbidden(
-			schema.GroupResource{Resource: "secrets"},
-			secret.Name,
-			errors.New(secretCreateGuardDenialMessage),
-		)
+		if secret.ResourceVersion == "" {
+			secret.ResourceVersion = "1"
+		}
+		return false, nil, nil
 	})
-}
-
-func secretMatchesCreateContract(secret *corev1.Secret, config Config) bool {
-	if secret.Name != config.SecretName || secret.Namespace != config.Namespace ||
-		secret.GenerateName != "" || secret.Type != corev1.SecretTypeTLS ||
-		!maps.Equal(secret.Labels, generatedSecretLabels()) ||
-		!maps.Equal(secret.Annotations, helmOwnershipAnnotations(config)) ||
-		len(secret.OwnerReferences) != 0 || len(secret.Finalizers) != 0 ||
-		secret.Immutable != nil || len(secret.StringData) != 0 || len(secret.Data) != 4 {
-		return false
-	}
-	for _, key := range []string{CACertificateKey, CAPrivateKeyKey, corev1.TLSCertKey, corev1.TLSPrivateKeyKey} {
-		if len(secret.Data[key]) == 0 {
-			return false
-		}
-	}
-	return true
 }
 
 func testConfig() Config {

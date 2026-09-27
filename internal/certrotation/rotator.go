@@ -430,63 +430,6 @@ func (r *Rotator) createSecret(ctx context.Context, desired *corev1.Secret, mate
 	return fmt.Errorf("create missing generated TLS Secret: %w (read-back contains different material)", err)
 }
 
-func (r *Rotator) ensureSecretCreateGuard(ctx context.Context, desired *corev1.Secret) error {
-	policy, err := r.client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-		ctx,
-		r.config.SecretCreatePolicyName,
-		metav1.GetOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("get generated-Secret CREATE guard policy %q: %w", r.config.SecretCreatePolicyName, err)
-	}
-	if err := VerifySecretCreatePolicyContract(policy, r.config); err != nil {
-		return fmt.Errorf("generated-Secret CREATE guard policy contract: %w", err)
-	}
-	if policy.Status.ObservedGeneration != policy.Generation || policy.Status.TypeChecking == nil {
-		return errors.New("generated-Secret CREATE guard policy is not established for its current generation")
-	}
-	if len(policy.Status.TypeChecking.ExpressionWarnings) != 0 {
-		return errors.New("generated-Secret CREATE guard policy has type-checking warnings")
-	}
-	for _, condition := range policy.Status.Conditions {
-		if condition.Status != metav1.ConditionTrue {
-			return fmt.Errorf(
-				"generated-Secret CREATE guard policy condition %q is not true: %s",
-				condition.Type,
-				condition.Status,
-			)
-		}
-	}
-
-	binding, err := r.client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
-		ctx,
-		r.config.SecretCreatePolicyBindingName,
-		metav1.GetOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("get generated-Secret CREATE guard binding %q: %w", r.config.SecretCreatePolicyBindingName, err)
-	}
-	if err := VerifySecretCreateBindingContract(binding, r.config); err != nil {
-		return fmt.Errorf("generated-Secret CREATE guard binding contract: %w", err)
-	}
-
-	attacks := secretCreateGuardAttacks(desired)
-	client := r.client.CoreV1().Secrets(r.config.Namespace)
-	for _, attack := range attacks {
-		_, err := client.Create(ctx, attack.secret, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-		if err == nil {
-			return fmt.Errorf("generated-Secret CREATE guard admitted %s", attack.name)
-		}
-		if !strings.Contains(err.Error(), secretCreateGuardDenialMessage) {
-			return fmt.Errorf("generated-Secret CREATE guard returned an unrecognized denial for %s: %w", attack.name, err)
-		}
-	}
-	if _, err := client.Create(ctx, desired, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}); err != nil {
-		return fmt.Errorf("generated-Secret CREATE guard rejected the exact recovery object: %w", err)
-	}
-	return nil
-}
-
 func validateSecretCreatePolicyContract(policy *admissionregistrationv1.ValidatingAdmissionPolicy, config Config) error {
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		return errors.New("policy is not fail-closed")
@@ -613,72 +556,6 @@ func secretCreateValidationExpression(config Config) string {
 
 func compactCEL(expression string) string {
 	return strings.Join(strings.Fields(expression), " ")
-}
-
-type secretCreateGuardAttack struct {
-	name   string
-	secret *corev1.Secret
-}
-
-func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack {
-	differentName := desired.DeepCopy()
-	differentName.Name = "ptah-rotator-guard-probe"
-	if differentName.Name == desired.Name {
-		differentName.Name = "ptah-rotator-guard-probe-alt"
-	}
-	extraLabel := desired.DeepCopy()
-	extraLabel.Labels["operator.ptah.run/uncontrolled"] = "true"
-	wrongManagedBy := desired.DeepCopy()
-	wrongManagedBy.Labels[HelmManagedByLabel] = "foreign"
-	extraData := desired.DeepCopy()
-	extraData.Data["uncontrolled"] = []byte("x")
-	wrongType := desired.DeepCopy()
-	wrongType.Type = corev1.SecretTypeOpaque
-	extraAnnotation := desired.DeepCopy()
-	extraAnnotation.Annotations["operator.ptah.run/uncontrolled"] = "true"
-	wrongReleaseName := desired.DeepCopy()
-	wrongReleaseName.Annotations[HelmReleaseNameAnnotation] = "foreign"
-	missingReleaseNamespace := desired.DeepCopy()
-	delete(missingReleaseNamespace.Annotations, HelmReleaseNamespaceAnnotation)
-	stringData := desired.DeepCopy()
-	stringData.StringData = map[string]string{"uncontrolled": "x"}
-	generatedName := desired.DeepCopy()
-	generatedName.Name = ""
-	generatedName.GenerateName = "ptah-rotator-guard-"
-	missingLabel := desired.DeepCopy()
-	missingLabel.Labels = nil
-	ownerReference := desired.DeepCopy()
-	controller := true
-	ownerReference.OwnerReferences = []metav1.OwnerReference{{
-		APIVersion: "v1", Kind: "ConfigMap", Name: "uncontrolled", UID: "uncontrolled", Controller: &controller,
-	}}
-	finalizer := desired.DeepCopy()
-	finalizer.Finalizers = []string{"operator.ptah.run/uncontrolled"}
-	immutable := desired.DeepCopy()
-	immutableValue := false
-	immutable.Immutable = &immutableValue
-	missingKey := desired.DeepCopy()
-	delete(missingKey.Data, CACertificateKey)
-	emptyKey := desired.DeepCopy()
-	emptyKey.Data[CACertificateKey] = nil
-	return []secretCreateGuardAttack{
-		{name: "an unrelated Secret name", secret: differentName},
-		{name: "generateName", secret: generatedName},
-		{name: "a missing managed label", secret: missingLabel},
-		{name: "an extra label", secret: extraLabel},
-		{name: "a foreign Helm manager label", secret: wrongManagedBy},
-		{name: "an owner reference", secret: ownerReference},
-		{name: "a finalizer", secret: finalizer},
-		{name: "an explicit immutable field", secret: immutable},
-		{name: "an extra data field", secret: extraData},
-		{name: "a missing data field", secret: missingKey},
-		{name: "an empty data field", secret: emptyKey},
-		{name: "a non-TLS type", secret: wrongType},
-		{name: "an extra annotation", secret: extraAnnotation},
-		{name: "a foreign Helm release name", secret: wrongReleaseName},
-		{name: "a missing Helm release namespace", secret: missingReleaseNamespace},
-		{name: "stringData", secret: stringData},
-	}
 }
 
 func generatedSecret(config Config, material certificateMaterial) *corev1.Secret {

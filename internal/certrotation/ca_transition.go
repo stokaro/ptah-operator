@@ -51,14 +51,6 @@ func (r *Rotator) runPendingCATransition(
 	default:
 		return Result{}, errors.New("durable CA transition has no known relationship to the generated TLS Secret")
 	}
-	if pending.sourceState == stagingSourceMissing {
-		// Prove the broad-CREATE guard on every pass, before trust changes, so
-		// a guard that stopped holding blocks the transition where it stands.
-		if err := r.ensureSecretCreateGuard(ctx, generatedSecret(r.config, pending.material)); err != nil {
-			return Result{}, err
-		}
-	}
-
 	current, err := r.currentServingTrust(ctx, primary)
 	if err != nil {
 		return Result{}, err

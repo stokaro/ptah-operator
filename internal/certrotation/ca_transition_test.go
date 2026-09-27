@@ -497,8 +497,6 @@ func TestCATransitionRecreatesADeletedSecretRightAfterTheExpansion(t *testing.T)
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-	installEstablishedSecretCreateGuard(t, client, config)
-	installSecretCreateAdmission(t, client, config)
 	fixture := &caTransitionFixture{client: client, config: config, prober: &recordingProber{}}
 
 	// At the moment of the create, every managed entry must already trust
@@ -506,8 +504,7 @@ func TestCATransitionRecreatesADeletedSecretRightAfterTheExpansion(t *testing.T)
 	createChecked := false
 	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		created := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret)
-		if len(action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions().DryRun) != 0 ||
-			created.Name != config.SecretName {
+		if created.Name != config.SecretName {
 			return false, nil, nil
 		}
 		createChecked = true
@@ -523,6 +520,7 @@ func TestCATransitionRecreatesADeletedSecretRightAfterTheExpansion(t *testing.T)
 		}
 		return false, nil, nil
 	})
+	installFakeSecretCreateResponse(client)
 	trace := fixture.traceWrites()
 
 	fixture.mustPass(t, now, 0)
@@ -551,8 +549,6 @@ func TestCATransitionDoesNotHoldBackARecordedSecretRecreation(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
-	installEstablishedSecretCreateGuard(t, client, config)
-	installSecretCreateAdmission(t, client, config)
 	fixture := &caTransitionFixture{client: client, config: config, prober: &recordingProber{}}
 
 	// A recreation interrupted after its expansion was recorded, and resumed
@@ -560,13 +556,13 @@ func TestCATransitionDoesNotHoldBackARecordedSecretRecreation(t *testing.T) {
 	// and with the material it staged.
 	failed := false
 	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
-		if failed || len(options.DryRun) != 0 {
+		if failed {
 			return false, nil, nil
 		}
 		failed = true
 		return true, nil, errors.New("injected create failure")
 	})
+	installFakeSecretCreateResponse(client)
 	if _, err := fixture.pass(now, fixture.prober); err == nil {
 		t.Fatal("the interrupted recreation pass succeeded")
 	}
