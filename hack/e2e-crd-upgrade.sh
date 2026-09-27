@@ -489,7 +489,19 @@ assert_object_execution_binding_refreshed() {
 	before=$3
 	expected_controller_image=$4
 	after=$WORK_DIR/${resource}-after.json
-	object_evidence "$resource" "$name" "$after"
+	# The refresh is a status write the candidate makes after it starts, so a
+	# single read either lands before it or after a later pass has moved the
+	# object on. Poll until the epoch moves and assert that document: it is
+	# the first version the candidate wrote, which is the refresh itself.
+	before_epoch=$(jq -r '.status.executionBinding.epoch // ""' "$before")
+	refresh_deadline=$(($(date +%s) + 300))
+	while :; do
+		object_evidence "$resource" "$name" "$after"
+		[ "$(jq -r '.status.executionBinding.epoch // ""' "$after")" = "$before_epoch" ] || break
+		[ "$(date +%s)" -lt "$refresh_deadline" ] ||
+			fail "$resource/$name did not record the candidate execution binding within 300s"
+		sleep 1
+	done
 	jq -e --arg image "$expected_controller_image" '
       .status.executionBinding.controllerImage == $image and
       (.status.executionBinding.epoch | test("^v1-[0-9a-f]{32}$"))
@@ -505,8 +517,10 @@ assert_object_execution_binding_refreshed() {
           .status.conditions
         )' "$evidence_side" >"$evidence_side.binding-invariant"
 	done
-	cmp "$before.binding-invariant" "$after.binding-invariant" ||
+	if ! cmp -s "$before.binding-invariant" "$after.binding-invariant"; then
+		diff -u "$before.binding-invariant" "$after.binding-invariant" >&2 || true
 		fail "$resource/$name changed outside the execution-binding refresh"
+	fi
 	jq -S '[.status.conditions[] | {type, status, reason, message}]' "$before" >"$before.conditions"
 	jq -S --slurpfile before_conditions "$before.conditions" '
       [.status.conditions[] | {type, status, reason, message}] as $after_conditions |

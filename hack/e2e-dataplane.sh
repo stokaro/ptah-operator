@@ -4690,7 +4690,7 @@ wait_for_in_sync() {
 	wait_for_schema "$sync_schema" \
 		".status.phase == \"InSync\" and .status.source.digest == \"$sync_digest\" and .status.applied.artifactDigest == \"$sync_digest\" and .status.pendingObservation == null and .status.activeOperation == null and .status.pendingLockRelease == null and (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))" \
 		"post-apply convergence for $sync_digest"
-	k -n "$TEST_NAMESPACE" get ptahschema "$sync_schema" -o json |
+	printf '%s\n' "$wait_object" |
 		jq -e \
 			--arg controllerImage "$CONTROLLER_IMAGE" \
 			--arg controllerRevision "$CONTROLLER_REVISION" \
@@ -5151,7 +5151,7 @@ assert_mysql_destructive_refusal_durable() {
 	wait_for_schema "$MYSQL_DESTRUCTIVE_SCHEMA" \
 		'.status.phase == "Blocked" and .status.activeOperation == null and .status.pendingObservation == null and .status.pendingLockRelease == null' \
 		"the long-window MySQL DROP INDEX refusal"
-	k -n "$TEST_NAMESPACE" get ptahschema "$MYSQL_DESTRUCTIVE_SCHEMA" -o json |
+	printf '%s\n' "$wait_object" |
 		jq -e \
 			--arg plan "$MYSQL_DESTRUCTIVE_PLAN" \
 			--arg planUID "$MYSQL_DESTRUCTIVE_PLAN_UID" \
@@ -5657,7 +5657,7 @@ assert_automatic_external_postgresql_lifecycle() {
 	wait_for_schema "$automatic_schema" \
 		".status.phase == \"InSync\" and .status.source.digest == \"$automatic_digest\" and .status.applied.artifactDigest == \"$automatic_digest\" and .status.plan == null and .status.pendingObservation == null and .status.activeOperation == null and .status.pendingLockRelease == null and (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))" \
 		"automatic safe-plan application and independent convergence"
-	k -n "$TEST_NAMESPACE" get ptahschema "$automatic_schema" -o json >"$automatic_schema_file"
+	printf '%s\n' "$wait_object" >"$automatic_schema_file"
 	chmod 600 "$automatic_schema_file"
 	scan_file_for_credentials "$automatic_schema_file" \
 		"the automatic-policy final PtahSchema"
