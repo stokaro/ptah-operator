@@ -6144,7 +6144,7 @@ assert_privileged_plan_waits_under_always() {
 		--arg digest "$privileged_digest" '
       .metadata.uid == $uid and .spec.fingerprint == $fingerprint and
       .spec.artifactDigest == $digest and .spec.destructive == false and
-      .spec.privilegeChanges == ["SecurityDefiner", "FunctionReplacement"] and
+      .spec.privilegeChanges == ["SecurityDefiner"] and
       (.status.conditions | any(.type == "Ready" and .status == "True"))
     ' >/dev/null || fail "$privileged_plan does not record the kinds its statement changes"
 	[ "$(external_privileged_function_count)" = 0 ] ||
@@ -6187,7 +6187,7 @@ assert_privileged_plan_waits_under_always() {
       [.items[] | select(
         .involvedObject.kind == "PtahSchema" and .involvedObject.uid == $schemaUID and
         .reason == "ApprovalRequired" and
-        (.message | contains("changes privileges (SecurityDefiner, FunctionReplacement)")))] |
+        (.message | contains("changes privileges (SecurityDefiner)")))] |
       length >= 1
     ' >/dev/null || fail "$privileged_schema emitted no ApprovalRequired Event naming the kinds"
 

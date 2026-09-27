@@ -161,9 +161,15 @@ never what a clause evaluates to, so it raises every policy: `USING (true)` and
 a tenant filter look alike to it, and so does `USING (tenant_id = tenant_id)`,
 which opens the table as surely as `true` does. It raises every
 `CREATE OR REPLACE FUNCTION`, because a plan does not say whether the function
-existed. Ptah writes a new PostgreSQL function that way too, trigger functions
-included, so under `Always` any plan that creates or changes one waits for an
-approval. It reads function bodies, so a `GRANT` that only runs when the
+existed, and the reading cannot tell a rewrite of code other things already
+call from a definition nothing yet calls. Ptah writes a PostgreSQL function
+that way only when it is replacing one that already exists; a routine created
+for the first time, including the function a new trigger runs, renders as a
+plain `CREATE FUNCTION` and raises no `FunctionReplacement`. So under `Always`,
+a plan that only adds a routine waits for an approval when the routine is
+`SECURITY DEFINER` or changes some other kind of authority, not for being new;
+a plan that replaces an existing routine waits regardless of the rights it
+declares. It reads function bodies, so a `GRANT` that only runs when the
 function is called is raised as well. And it reads each statement under both
 string-escaping modes the server might be in, and reads dollar-quoted bodies,
 `E''` strings and nested comments the way PostgreSQL does, so a quote cannot
