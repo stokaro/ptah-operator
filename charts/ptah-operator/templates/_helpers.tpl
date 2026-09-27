@@ -192,7 +192,6 @@ app.kubernetes.io/component: controller
       "reserved" (list
         (dict "name" (include "ptah-operator.serviceAccountName" .root) "description" "candidate controller ServiceAccount")
         (dict "name" (include "ptah-operator.crdManagerServiceAccountName" .root) "description" "CRD manager hook ServiceAccount")
-        (dict "name" (include "ptah-operator.teardownServiceAccountName" .root) "description" "teardown ServiceAccount")
         (dict "name" (include "ptah-operator.teardownQuiesceJobName" .root) "description" "teardown quiesce identity")
         (dict "name" (include "ptah-operator.certRotatorServiceAccountName" .root) "description" "certificate ServiceAccount"))) -}}
 {{- if or
@@ -326,7 +325,6 @@ upgrades from it.
       "reserved" (list
         (dict "name" (include "ptah-operator.serviceAccountName" $root) "description" "candidate controller ServiceAccount")
         (dict "name" (include "ptah-operator.crdManagerServiceAccountName" $root) "description" "CRD manager hook ServiceAccount")
-        (dict "name" (include "ptah-operator.teardownServiceAccountName" $root) "description" "teardown ServiceAccount")
         (dict "name" (include "ptah-operator.teardownQuiesceJobName" $root) "description" "teardown quiesce identity")
         (dict "name" (include "ptah-operator.certRotatorServiceAccountName" $root) "description" "certificate ServiceAccount"))) -}}
 {{- $managerContainers := list -}}
@@ -604,30 +602,11 @@ wrote; crdupgrade builds the same names from the same identity.
 {{- end -}}
 
 {{- define "ptah-operator.teardownServiceAccountName" -}}
-{{- /* Keep every generated Pod prefix intact through the largest positive int32 release sequence. */ -}}
+{{- /* No release runs as this ServiceAccount any more. The retained guards and
+      the admission inventory marker still name it, so the name stays until
+      they go. */ -}}
 {{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
 {{- printf "%s-cleanup-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- /* The uninstall bootstrap identity: its ServiceAccount, Role, RoleBinding
-      and Jobs share the name, which is stable across release sequences. */ -}}
-{{- define "ptah-operator.teardownBootstrapName" -}}
-{{- printf "ptah-teardown-bootstrap-v1-%s" (printf "1\n%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.teardownPrivilegeRoleName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
-{{- printf "%s-cleanup-priv-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.teardownGuardRoleName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
-{{- printf "%s-cleanup-guard-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
-{{- end -}}
-
-{{- define "ptah-operator.teardownDiscoveryRoleName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 20 | trimSuffix "-" -}}
-{{- printf "%s-cleanup-discovery-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.teardownQuiesceJobName" -}}
@@ -656,57 +635,39 @@ wrote; crdupgrade builds the same names from the same identity.
 {{- $imageCheckName := printf "%s-image-check" ($hookName | trunc 51 | trimSuffix "-") -}}
 {{- $preflightName := printf "%s-preflight" ($hookName | trunc 53 | trimSuffix "-") -}}
 {{- $identityProbeName := include "ptah-operator.hookIdentityProbeJobName" . -}}
-{{- $cleanupName := include "ptah-operator.teardownServiceAccountName" . -}}
 {{- $quiesceName := include "ptah-operator.teardownQuiesceJobName" . -}}
-{{- $cleanupPrivilegeName := include "ptah-operator.teardownPrivilegeRoleName" . -}}
-{{- $cleanupGuardName := include "ptah-operator.teardownGuardRoleName" . -}}
-{{- $cleanupDiscoveryName := include "ptah-operator.teardownDiscoveryRoleName" . -}}
 {{- $identities := list
       (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $controllerServiceAccount "source" "controller ServiceAccount")
       (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $hookName "source" "CRD manager hook ServiceAccount")
-      (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $cleanupName "source" "teardown ServiceAccount")
       (dict "kind" "ClusterRole" "namespace" "" "name" $controllerName "source" "controller ClusterRole")
       (dict "kind" "ClusterRole" "namespace" "" "name" $bootstrapName "source" "hook bootstrap ClusterRole")
       (dict "kind" "ClusterRole" "namespace" "" "name" $hookName "source" "CRD manager ClusterRole")
       (dict "kind" "ClusterRole" "namespace" "" "name" $quiesceName "source" "teardown quiesce ClusterRole")
-      (dict "kind" "ClusterRole" "namespace" "" "name" $cleanupPrivilegeName "source" "teardown privilege ClusterRole")
-      (dict "kind" "ClusterRole" "namespace" "" "name" $cleanupGuardName "source" "teardown residual ClusterRole")
       (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $controllerName "source" "controller ClusterRoleBinding")
       (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $bootstrapName "source" "hook bootstrap ClusterRoleBinding")
       (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $hookName "source" "CRD manager ClusterRoleBinding")
       (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $quiesceName "source" "teardown quiesce ClusterRoleBinding")
-      (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $cleanupPrivilegeName "source" "teardown privilege ClusterRoleBinding")
-      (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $cleanupGuardName "source" "teardown residual ClusterRoleBinding")
       (dict "kind" "Role" "namespace" $releaseNamespace "name" $controllerRuntimeRole "source" "controller runtime Role")
       (dict "kind" "Role" "namespace" $releaseNamespace "name" $bootstrapName "source" "hook bootstrap Role")
       (dict "kind" "Role" "namespace" $releaseNamespace "name" $hookName "source" "CRD manager Role")
       (dict "kind" "Role" "namespace" $releaseNamespace "name" $probeName "source" "hook probe Role")
       (dict "kind" "Role" "namespace" $releaseNamespace "name" $quiesceName "source" "teardown quiesce Role")
-      (dict "kind" "Role" "namespace" $releaseNamespace "name" $cleanupPrivilegeName "source" "teardown privilege release Role")
-      (dict "kind" "Role" "namespace" $releaseNamespace "name" $cleanupGuardName "source" "teardown residual release Role")
       (dict "kind" "Role" "namespace" $coordinationNamespace "name" $controllerName "source" "controller coordination Role")
-      (dict "kind" "Role" "namespace" "default" "name" $cleanupDiscoveryName "source" "teardown discovery Role")
       (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $controllerRuntimeRole "source" "controller runtime RoleBinding")
       (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $bootstrapName "source" "hook bootstrap RoleBinding")
       (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $hookName "source" "CRD manager RoleBinding")
       (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $probeName "source" "hook probe RoleBinding")
       (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $quiesceName "source" "teardown quiesce RoleBinding")
-      (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $cleanupPrivilegeName "source" "teardown privilege release RoleBinding")
-      (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $cleanupGuardName "source" "teardown residual release RoleBinding")
       (dict "kind" "RoleBinding" "namespace" $coordinationNamespace "name" $controllerName "source" "controller coordination RoleBinding")
-      (dict "kind" "RoleBinding" "namespace" "default" "name" $cleanupDiscoveryName "source" "teardown discovery RoleBinding")
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $imageCheckName "source" "manager image-check Job")
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $identityProbeName "source" "hook identity-probe Job")
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $preflightName "source" "CRD preflight Job")
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $hookName "source" "CRD reconcile Job")
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $quiesceName "source" "teardown quiesce Job")
-      (dict "kind" "Job" "namespace" $releaseNamespace "name" $cleanupName "source" "teardown cleanup Job")
 -}}
 {{- if ne $releaseNamespace "default" -}}
 {{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $hookName "source" "CRD manager API discovery Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $hookName "source" "CRD manager API discovery RoleBinding") -}}
-{{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $quiesceName "source" "teardown quiesce API discovery Role") -}}
-{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $quiesceName "source" "teardown quiesce API discovery RoleBinding") -}}
 {{- end -}}
 {{- if $certificateRuntimeEnabled -}}
 {{- $identities = append $identities (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $certificateName "source" "certificate ServiceAccount") -}}
@@ -727,17 +688,9 @@ wrote; crdupgrade builds the same names from the same identity.
 {{- if .Values.approverClusterRole.create -}}
 {{- $identities = append $identities (dict "kind" "ClusterRole" "namespace" "" "name" (printf "%s-approver" $controllerName) "source" "approver ClusterRole") -}}
 {{- end -}}
-{{- if ne $coordinationNamespace $releaseNamespace -}}
-{{- $identities = append $identities (dict "kind" "Role" "namespace" $coordinationNamespace "name" $cleanupPrivilegeName "source" "teardown privilege coordination Role") -}}
-{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $coordinationNamespace "name" $cleanupPrivilegeName "source" "teardown privilege coordination RoleBinding") -}}
-{{- end -}}
 {{- if and (ne $coordinationNamespace $releaseNamespace) (ne $coordinationNamespace "default") -}}
 {{- $identities = append $identities (dict "kind" "Role" "namespace" $coordinationNamespace "name" $hookName "source" "CRD manager coordination Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $coordinationNamespace "name" $hookName "source" "CRD manager coordination RoleBinding") -}}
-{{- end -}}
-{{- if and (ne $releaseNamespace "default") (ne $coordinationNamespace "default") -}}
-{{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $cleanupPrivilegeName "source" "teardown privilege API discovery Role") -}}
-{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $cleanupPrivilegeName "source" "teardown privilege API discovery RoleBinding") -}}
 {{- end -}}
 {{- $seen := dict -}}
 {{- range $identity := $identities -}}
@@ -1427,8 +1380,8 @@ grants. NOTES.txt prints them as a warning and refuses nothing.
 A ServiceAccount is this release's when it lives in the release namespace and
 carries one of the names the chart runs Pods as, computed by the same helpers
 that name them: the manager at this release sequence, the predecessor manager
-this release succeeds, the certificate rotator, the CRD and teardown hooks and
-the uninstall bootstrap. Names rather than the objects: on a retried upgrade the
+this release succeeds, the certificate rotator, and the CRD hooks, which the
+uninstall hook runs as too. Names rather than the objects: on a retried upgrade the
 stable bindings already name this sequence's manager before Helm has created
 it. A ClusterRole is read from its rules, which for an aggregated role are the
 aggregated rules: the aggregation controller writes them into the object. An
@@ -1446,8 +1399,7 @@ offline render reads nothing and lists nothing.
       (include "ptah-operator.serviceAccountName" .)
       (include "ptah-operator.previousControllerServiceAccountName" .)
       (include "ptah-operator.certRotatorServiceAccountName" .)
-      (include "ptah-operator.crdManagerServiceAccountName" .)
-      (include "ptah-operator.teardownServiceAccountName" .) -}}
+      (include "ptah-operator.crdManagerServiceAccountName" .) -}}
 {{- if $name -}}
 {{- $_ := set $own $name true -}}
 {{- end -}}

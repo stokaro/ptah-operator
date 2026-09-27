@@ -195,12 +195,6 @@ func TestControllerPredecessorProvenanceRender(t *testing.T) {
 			},
 		},
 		{
-			name: "predecessor collides with cleanup ServiceAccount",
-			mutate: func(fixture map[string]any) {
-				setPredecessorPrincipalName(fixture, provenanceCleanupServiceAccount(2))
-			},
-		},
-		{
 			name: "predecessor collides with quiesce identity",
 			mutate: func(fixture map[string]any) {
 				setPredecessorPrincipalName(fixture, provenanceQuiesceIdentity(2))
@@ -539,10 +533,6 @@ func provenanceHookBase() string {
 
 func provenanceHookServiceAccount(sequence int) string {
 	return fmt.Sprintf("%s-crd-v%d-%s", provenanceHookBase(), sequence, provenanceHookIdentityDigest(sequence, provenanceManagerImage())[:12])
-}
-
-func provenanceCleanupServiceAccount(sequence int) string {
-	return fmt.Sprintf("%s-cleanup-v%d-%s", provenanceHookBase(), sequence, provenanceHookIdentityDigest(sequence, provenanceManagerImage())[:12])
 }
 
 func provenanceQuiesceIdentity(sequence int) string {

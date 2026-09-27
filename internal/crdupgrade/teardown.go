@@ -2,6 +2,7 @@ package crdupgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -11,24 +12,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const hookIdentityProbeMarkerWeight = "-125"
-
-// MutatingWebhookTeardownClient is the exact API surface required to verify
-// and remove the release-owned mutating admission singleton.
-type MutatingWebhookTeardownClient interface {
-	Get(context.Context, string, metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error)
-	Delete(context.Context, string, metav1.DeleteOptions) error
-}
-
-// ValidatingWebhookTeardownClient is the exact API surface required to verify
-// and remove the release-owned validating admission singleton.
-type ValidatingWebhookTeardownClient interface {
-	Get(context.Context, string, metav1.GetOptions) (*admissionregistrationv1.ValidatingWebhookConfiguration, error)
-	Delete(context.Context, string, metav1.DeleteOptions) error
-}
 
 // ValidatingAdmissionPolicyTeardownClient is the exact API surface required
 // to verify and remove the release-owned admission policies.
@@ -45,130 +33,179 @@ type ValidatingAdmissionPolicyBindingTeardownClient interface {
 }
 
 // ConfigMapTeardownClient is the exact API surface required to verify and
-// remove the retained release-activation parameter.
+// remove the ConfigMaps a release keeps across upgrades. Update returns the
+// release activation to its bootstrap state before it is deleted.
 type ConfigMapTeardownClient interface {
 	Get(context.Context, string, metav1.GetOptions) (*corev1.ConfigMap, error)
+	Update(context.Context, *corev1.ConfigMap, metav1.UpdateOptions) (*corev1.ConfigMap, error)
 	Delete(context.Context, string, metav1.DeleteOptions) error
 }
 
-// ReleaseTeardown removes only the exact admission resources compiled into a
-// release. The caller must invoke Preflight before quiescing both runtime
-// Deployments, then prove that no protected runtime Pods remain before
-// invoking Teardown.
+// SecretTeardownClient deletes the certificate staging Secret by name. It
+// cannot read the Secret, which holds a pending CA private key.
+type SecretTeardownClient interface {
+	Delete(context.Context, string, metav1.DeleteOptions) error
+}
+
+// ReleaseTeardown deletes, by exact name, what a release keeps outside Helm's
+// own deletion. Helm is told to keep the admission guards and their bindings,
+// the hook identity probe, the admission inventory marker, the parent-origin
+// readiness marker and the release activation parameter across upgrades, so an
+// uninstall that left them to Helm would leave them behind. The certificate
+// staging Secret is an ordinary release object, but its own guard refuses a
+// Helm deletion, so it is deleted here once that guard is gone.
+//
+// The caller stops the runtime first: no controller may run once the guards
+// that fence its writes are gone.
 type ReleaseTeardown struct {
 	rollout    *RolloutGuard
-	mutating   MutatingWebhookTeardownClient
-	validating ValidatingWebhookTeardownClient
 	policies   ValidatingAdmissionPolicyTeardownClient
 	bindings   ValidatingAdmissionPolicyBindingTeardownClient
 	configMaps ConfigMapTeardownClient
+	secrets    SecretTeardownClient
 }
 
-// NewReleaseTeardown constructs a fail-closed release admission teardown.
-// Every supplied client is used for both the ownership check and deletion so
-// callers cannot accidentally verify through a different API identity.
+// NewReleaseTeardown constructs the deletion of a release's retained
+// inventory. Every supplied client is used for both the check and the deletion
+// so the two cannot run as different API identities.
 func NewReleaseTeardown(
 	rollout *RolloutGuard,
-	mutating MutatingWebhookTeardownClient,
-	validating ValidatingWebhookTeardownClient,
 	policies ValidatingAdmissionPolicyTeardownClient,
 	bindings ValidatingAdmissionPolicyBindingTeardownClient,
 	configMaps ConfigMapTeardownClient,
+	secrets SecretTeardownClient,
 ) *ReleaseTeardown {
 	return &ReleaseTeardown{
 		rollout:    rollout,
-		mutating:   mutating,
-		validating: validating,
 		policies:   policies,
 		bindings:   bindings,
 		configMaps: configMaps,
+		secrets:    secrets,
 	}
 }
 
-// Preflight performs the complete exact inventory, ownership, object-shape,
-// and resumability check without mutating any object. Callers run it before
-// quiescing the release so an unsafe teardown cannot cause avoidable downtime.
+// Preflight reads every object of the inventory and checks the ones present
+// against the contract this release compiles, without changing anything. An
+// object that is already gone is accepted, so a retry after a partial
+// uninstall passes. Callers run it before stopping the runtime, so an
+// inventory this release cannot delete fails before any downtime.
 func (t *ReleaseTeardown) Preflight(ctx context.Context) error {
-	_, _, err := t.preflight(ctx)
-	return err
-}
-
-// Teardown repeats the complete preflight after runtime quiescence, then
-// removes the inventory in a fail-safe order. Each object is re-read
-// immediately before deletion and deleted with UID and resource-version
-// preconditions.
-func (t *ReleaseTeardown) Teardown(ctx context.Context) error {
-	targets, present, err := t.preflight(ctx)
+	targets, err := t.targets()
 	if err != nil {
 		return err
 	}
-	if len(targets) == 0 || !anyTeardownTargetPresent(present) {
-		return nil
-	}
+	return t.preflight(ctx, targets)
+}
 
+func (t *ReleaseTeardown) preflight(ctx context.Context, targets []teardownTarget) error {
 	for _, target := range targets {
-		identity, found, inspectErr := target.inspect(ctx)
-		if inspectErr != nil {
-			return fmt.Errorf("re-verify teardown %s/%s: %w", target.kind, target.name, inspectErr)
-		}
-		if !found {
-			// A NotFound is safe here only when the complete preflight either
-			// observed this exact object or established that it belonged to the
-			// already-deleted contiguous prefix.
+		if target.inspect == nil {
 			continue
 		}
-		deleteOptions := identity.deleteOptions()
-		if deleteErr := target.delete(ctx, deleteOptions); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-			return fmt.Errorf("delete teardown %s/%s: %w", target.kind, target.name, deleteErr)
+		if err := t.retry(ctx, target, func(attemptCtx context.Context) (bool, error) {
+			_, _, inspectErr := target.inspect(attemptCtx)
+			return inspectErr == nil, inspectErr
+		}); err != nil {
+			return fmt.Errorf("preflight teardown %s/%s: %w", target.kind, target.name, err)
 		}
 	}
 	return nil
 }
 
-func (t *ReleaseTeardown) preflight(ctx context.Context) ([]teardownTarget, []bool, error) {
+// Teardown repeats the preflight, then deletes the inventory in order: every
+// guard binding, then every guard policy, then the objects those guards
+// protected, and the release activation guard and its parameter last. Each
+// object is read again, checked, and deleted with the UID and resourceVersion
+// of that read. An object already gone is skipped, so a retry after a partial
+// run deletes the rest.
+//
+// A refusal from an admission policy is retried until the context ends: the
+// guard that refused has just been deleted, and an API server may still
+// evaluate its cached copy for a moment.
+func (t *ReleaseTeardown) Teardown(ctx context.Context) error {
 	targets, err := t.targets()
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-
-	present := make([]bool, len(targets))
-	for index, target := range targets {
-		_, found, inspectErr := target.inspect(ctx)
-		if inspectErr != nil {
-			return nil, nil, fmt.Errorf("preflight teardown %s/%s: %w", target.kind, target.name, inspectErr)
+	if err := t.preflight(ctx, targets); err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if err := t.retry(ctx, target, func(attemptCtx context.Context) (bool, error) {
+			options := metav1.DeleteOptions{}
+			if target.inspect != nil {
+				identity, found, inspectErr := target.inspect(attemptCtx)
+				if inspectErr != nil {
+					return false, inspectErr
+				}
+				if !found {
+					return true, nil
+				}
+				if target.prepare != nil {
+					prepared, prepareErr := target.prepare(attemptCtx)
+					if prepareErr != nil {
+						return false, prepareErr
+					}
+					identity = prepared
+				}
+				options = identity.deleteOptions()
+			}
+			deleteErr := target.delete(attemptCtx, options)
+			if deleteErr == nil || apierrors.IsNotFound(deleteErr) {
+				return true, nil
+			}
+			return false, deleteErr
+		}); err != nil {
+			return fmt.Errorf("delete teardown %s/%s: %w", target.kind, target.name, err)
 		}
-		present[index] = found
 	}
-	if !anyTeardownTargetPresent(present) {
-		return targets, present, nil
-	}
-	// A retry may observe only a contiguous prefix already removed by an
-	// earlier invocation, so a gap is only a gap once something after it is
-	// still there.
-	seenPresent := false
-	for index, found := range present {
-		if found {
-			seenPresent = true
-			continue
-		}
-		if seenPresent {
-			return nil, nil, fmt.Errorf(
-				"release teardown inventory is incomplete: %s/%s is missing after a retained object",
-				targets[index].kind,
-				targets[index].name,
-			)
-		}
-	}
-	return targets, present, nil
+	return nil
 }
 
-func anyTeardownTargetPresent(present []bool) bool {
-	for _, found := range present {
-		if found {
-			return true
+// retry runs attempt until it reports done, retrying only errors a later
+// attempt can clear. Anything else, including an object that differs from its
+// contract, stops the teardown at once.
+func (t *ReleaseTeardown) retry(
+	ctx context.Context,
+	target teardownTarget,
+	attempt func(context.Context) (bool, error),
+) error {
+	var last error
+	err := wait.PollUntilContextCancel(ctx, t.rollout.PollEvery, true, func(attemptCtx context.Context) (bool, error) {
+		done, attemptErr := attempt(attemptCtx)
+		if attemptErr == nil {
+			return done, nil
 		}
+		if !retryableTeardownError(attemptErr) {
+			return false, attemptErr
+		}
+		last = attemptErr
+		return false, nil
+	})
+	if err != nil && last != nil && ctx.Err() != nil {
+		return fmt.Errorf("%w; the last attempt said: %w", err, last)
 	}
-	return false
+	return err
+}
+
+// retryableTeardownError reports an error that says nothing about the object
+// itself: a precondition that changed under the read, a refusal by an
+// admission policy the teardown has just deleted, or an API server that did
+// not answer.
+func retryableTeardownError(err error) bool {
+	switch {
+	case apierrors.IsConflict(err),
+		apierrors.IsServerTimeout(err),
+		apierrors.IsTimeout(err),
+		apierrors.IsTooManyRequests(err),
+		apierrors.IsServiceUnavailable(err),
+		apierrors.IsInternalError(err),
+		apierrors.IsUnexpectedServerError(err):
+		return true
+	case apierrors.IsForbidden(err), apierrors.IsInvalid(err):
+		return strings.Contains(err.Error(), "ValidatingAdmissionPolicy")
+	}
+	return utilnet.IsConnectionRefused(err) || utilnet.IsConnectionReset(err) || utilnet.IsProbableEOF(err)
 }
 
 type teardownIdentity struct {
@@ -185,10 +222,14 @@ func (i teardownIdentity) deleteOptions() metav1.DeleteOptions {
 	}}
 }
 
+// teardownTarget is one object of the inventory. A target without inspect is
+// deleted by name without being read. prepare, where set, runs between the
+// read and the delete and returns the identity the delete must match.
 type teardownTarget struct {
 	kind    string
 	name    string
 	inspect func(context.Context) (teardownIdentity, bool, error)
+	prepare func(context.Context) (teardownIdentity, error)
 	delete  func(context.Context, metav1.DeleteOptions) error
 }
 
@@ -208,13 +249,8 @@ func (t *ReleaseTeardown) targets() ([]teardownTarget, error) {
 	if err != nil {
 		return nil, err
 	}
-	expectedAdmission := teardownRuntimeInvariants(guard)
 
-	targets := make([]teardownTarget, 0, 2+len(contracts)*2+3)
-	targets = append(targets,
-		t.mutatingWebhookTarget(expectedAdmission),
-		t.validatingWebhookTarget(expectedAdmission),
-	)
+	targets := make([]teardownTarget, 0, len(contracts)*2+5)
 	activationName := ReleaseActivationGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	var activationContract *teardownGuardContract
 	for _, contract := range contracts {
@@ -240,9 +276,17 @@ func (t *ReleaseTeardown) targets() ([]teardownTarget, error) {
 			targets = append(targets, t.policyTarget(contract))
 		}
 	}
+	if guard.CertificateRuntimeEnabled {
+		staging, stagingErr := NewStagingSecretGuard(guard).contract()
+		if stagingErr != nil {
+			return nil, fmt.Errorf("derive certificate staging Secret: %w", stagingErr)
+		}
+		targets = append(targets, t.stagingSecretTarget(staging.stagingSecretName))
+	}
+	targets = append(targets, t.hookIdentityProbeMarkerTarget(guard))
+	targets = append(targets, t.parentOriginReadinessMarkerTarget(NewParentWorkloadGuard(guard)))
 	// Keep the activation self-guard bound until every earlier policy that
 	// consults the parameter is unbound.
-	targets = append(targets, t.hookIdentityProbeMarkerTarget(guard))
 	targets = append(targets, t.bindingTarget(*activationContract))
 	targets = append(targets, t.policyTarget(*activationContract))
 	targets = append(targets, t.admissionConvergenceMarkerTarget(NewAdmissionConvergenceGuard(guard)))
@@ -251,8 +295,7 @@ func (t *ReleaseTeardown) targets() ([]teardownTarget, error) {
 }
 
 func (t *ReleaseTeardown) validatedGuard() (*RolloutGuard, error) {
-	if t == nil || t.rollout == nil || t.mutating == nil || t.validating == nil ||
-		t.policies == nil || t.bindings == nil || t.configMaps == nil {
+	if t == nil || t.rollout == nil || t.policies == nil || t.bindings == nil || t.configMaps == nil || t.secrets == nil {
 		return nil, fmt.Errorf("release teardown clients and rollout identity are required")
 	}
 	guard := *t.rollout
@@ -261,24 +304,42 @@ func (t *ReleaseTeardown) validatedGuard() (*RolloutGuard, error) {
 	if err := guard.validateIdentity(); err != nil {
 		return nil, fmt.Errorf("validate release teardown identity: %w", err)
 	}
-	if _, recorded := releaseTeardownPredecessorInventory[guard.ReleaseSequence]; !recorded {
-		return nil, fmt.Errorf("release teardown sequence %d has no explicit predecessor identity inventory; refusing incomplete cleanup", guard.ReleaseSequence)
+	if guard.PollEvery <= 0 {
+		return nil, errors.New("release teardown poll interval must be positive")
 	}
 	return &guard, nil
 }
 
-// releaseTeardownPredecessorInventory records what a predecessor may still have
-// left for this teardown to remove, one entry per release sequence, written
-// when that sequence is prepared and never edited afterwards.
-//
-// Nothing precedes the first sequence. The second records nothing either: a
-// release-sequence cutover retires the predecessor's admission pairs and
-// controller identity before it activates, and the lifecycle proves exactly
-// that in the upgrade before it reaches an uninstall. A sequence nobody
-// recorded is still refused.
-var releaseTeardownPredecessorInventory = map[int32][]string{
-	1: {},
-	2: {},
+// releaseTeardownGuardNames lists every admission guard a release keeps: the
+// names the uninstall deletes, and the names its ClusterRole may delete. Each
+// guard's policy and binding share the name.
+func releaseTeardownGuardNames(guard *RolloutGuard) []string {
+	names := []string{
+		ReleaseActivationGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
+		RolloutGuardPolicyName(guard.ReleaseSequence),
+		RuntimeGuardPolicyName(guard.ReleaseSequence),
+		RuntimePodGuardPolicyName(guard.ReleaseSequence),
+		HookIdentityGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		HookIdentityProbeGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ParentReplicaSetGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ParentHookJobOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
+		ParentHookPodOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
+		ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ServiceAccountObjectGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
+		ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ControllerJobWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ControllerChunkWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ControllerPlanWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		ControllerMigrationPlanWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage),
+		CertificateMutatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
+		CertificateValidatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
+		NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName),
+	}
+	if guard.CertificateRuntimeEnabled {
+		names = append(names, StagingSecretGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName))
+	}
+	return names
 }
 
 func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error) {
@@ -318,10 +379,9 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 		return nil, fmt.Errorf("build release teardown ServiceAccount object contract: %w", err)
 	}
 
-	// This literal is the exact admission inventory known by this release.
-	// When the release sequence advances, predecessor-generation contracts are
-	// appended here explicitly; teardown must never discover deletion targets
-	// from a label selector or an unbounded name prefix.
+	// This literal is the exact admission inventory this release installs and
+	// keeps. Teardown never discovers what to delete from a label selector or
+	// a name prefix.
 	contracts := []teardownGuardContract{
 		{
 			name: activationName, parameterized: true,
@@ -431,10 +491,21 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 			},
 		})
 	}
+	want := make(map[string]bool, len(contracts))
+	for _, name := range releaseTeardownGuardNames(guard) {
+		want[name] = true
+	}
 	for index, contract := range contracts {
 		if contract.name == "" || contract.verifyPolicy == nil || contract.verifyBinding == nil {
 			return nil, fmt.Errorf("release teardown guard contract %d is incomplete", index)
 		}
+		if !want[contract.name] {
+			return nil, fmt.Errorf("release teardown guard %s is missing from the named inventory", contract.name)
+		}
+		delete(want, contract.name)
+	}
+	if len(want) != 0 {
+		return nil, fmt.Errorf("release teardown names %d guards it has no contract for", len(want))
 	}
 	return contracts, nil
 }
@@ -442,91 +513,6 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 func parentTeardownContract(entry parentGuardEntry) teardownGuardContract {
 	return teardownGuardContract{
 		name: entry.name, verifyPolicy: entry.verifyPolicy, verifyBinding: entry.verifyBinding,
-	}
-}
-
-func teardownRuntimeInvariants(guard *RolloutGuard) RuntimeInvariants {
-	return RuntimeInvariants{
-		ReleaseName:                  guard.ReleaseName,
-		ReleaseNamespace:             guard.ReleaseNamespace,
-		CoordinationNamespace:        guard.CoordinationNamespace,
-		LeaderElection:               guard.LeaderElection,
-		LeaderElectionID:             guard.LeaderElectionID,
-		WebhookServiceName:           guard.WebhookServiceName,
-		WebhookTimeoutSeconds:        guard.WebhookTimeoutSeconds,
-		HookServiceAccountName:       guard.HookServiceAccountName,
-		ControllerServiceAccountName: guard.ControllerServiceAccountName,
-		ControllerDeploymentName:     guard.ControllerDeploymentName,
-		CertificateDeploymentName:    guard.CertificateDeploymentName,
-		ControllerStateVersion:       guard.ControllerStateVersion,
-		AdmissionContractVersion:     guard.AdmissionContractVersion,
-		ReleaseSequence:              guard.ReleaseSequence,
-	}
-}
-
-func (t *ReleaseTeardown) mutatingWebhookTarget(expected RuntimeInvariants) teardownTarget {
-	const kind = "MutatingWebhookConfiguration"
-	return teardownTarget{
-		kind: kind, name: AdmissionConfigurationName,
-		inspect: func(ctx context.Context) (teardownIdentity, bool, error) {
-			object, err := t.mutating.Get(ctx, AdmissionConfigurationName, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				return teardownIdentity{}, false, nil
-			}
-			if err != nil {
-				return teardownIdentity{}, false, fmt.Errorf("get object: %w", err)
-			}
-			if object == nil {
-				return teardownIdentity{}, false, fmt.Errorf("API returned a nil object")
-			}
-			if err := verifyHelmOwnership(kind, object.ObjectMeta, expected); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			if err := verifyAnnotations(kind, object.Name, object.Annotations, expected.annotations()); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			if err := verifyMutatingWebhookContract(object, expected); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			identity, err := deletionIdentity(kind, AdmissionConfigurationName, object)
-			return identity, true, err
-		},
-		delete: func(ctx context.Context, options metav1.DeleteOptions) error {
-			return t.mutating.Delete(ctx, AdmissionConfigurationName, options)
-		},
-	}
-}
-
-func (t *ReleaseTeardown) validatingWebhookTarget(expected RuntimeInvariants) teardownTarget {
-	const kind = "ValidatingWebhookConfiguration"
-	return teardownTarget{
-		kind: kind, name: AdmissionConfigurationName,
-		inspect: func(ctx context.Context) (teardownIdentity, bool, error) {
-			object, err := t.validating.Get(ctx, AdmissionConfigurationName, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				return teardownIdentity{}, false, nil
-			}
-			if err != nil {
-				return teardownIdentity{}, false, fmt.Errorf("get object: %w", err)
-			}
-			if object == nil {
-				return teardownIdentity{}, false, fmt.Errorf("API returned a nil object")
-			}
-			if err := verifyHelmOwnership(kind, object.ObjectMeta, expected); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			if err := verifyAnnotations(kind, object.Name, object.Annotations, expected.annotations()); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			if err := verifyValidatingWebhookContract(object, expected); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			identity, err := deletionIdentity(kind, AdmissionConfigurationName, object)
-			return identity, true, err
-		},
-		delete: func(ctx context.Context, options metav1.DeleteOptions) error {
-			return t.validating.Delete(ctx, AdmissionConfigurationName, options)
-		},
 	}
 }
 
@@ -584,9 +570,9 @@ func (t *ReleaseTeardown) policyTarget(contract teardownGuardContract) teardownT
 	}
 }
 
-func (t *ReleaseTeardown) admissionConvergenceMarkerTarget(guard *AdmissionConvergenceGuard) teardownTarget {
+// configMapTarget reads, checks and deletes one retained ConfigMap.
+func (t *ReleaseTeardown) configMapTarget(name string, verify func(*corev1.ConfigMap) error) teardownTarget {
 	const kind = "ConfigMap"
-	name := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence)
 	return teardownTarget{
 		kind: kind, name: name,
 		inspect: func(ctx context.Context) (teardownIdentity, bool, error) {
@@ -600,7 +586,7 @@ func (t *ReleaseTeardown) admissionConvergenceMarkerTarget(guard *AdmissionConve
 			if object == nil {
 				return teardownIdentity{}, false, fmt.Errorf("API returned a nil object")
 			}
-			if err := guard.verifyMarker(object); err != nil {
+			if err := verify(object); err != nil {
 				return teardownIdentity{}, false, err
 			}
 			identity, err := deletionIdentity(kind, name, object)
@@ -610,112 +596,73 @@ func (t *ReleaseTeardown) admissionConvergenceMarkerTarget(guard *AdmissionConve
 			return t.configMaps.Delete(ctx, name, options)
 		},
 	}
+}
+
+func (t *ReleaseTeardown) stagingSecretTarget(name string) teardownTarget {
+	return teardownTarget{
+		kind: "Secret", name: name,
+		delete: func(ctx context.Context, options metav1.DeleteOptions) error {
+			return t.secrets.Delete(ctx, name, options)
+		},
+	}
+}
+
+func (t *ReleaseTeardown) admissionConvergenceMarkerTarget(guard *AdmissionConvergenceGuard) teardownTarget {
+	name := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence)
+	return t.configMapTarget(name, guard.verifyMarker)
 }
 
 func (t *ReleaseTeardown) activationTarget(activation *ReleaseActivationGuard, guard *RolloutGuard) teardownTarget {
-	const kind = "ConfigMap"
-	return teardownTarget{
-		kind: kind, name: ReleaseActivationName,
-		inspect: func(ctx context.Context) (teardownIdentity, bool, error) {
-			object, err := t.configMaps.Get(ctx, ReleaseActivationName, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				return teardownIdentity{}, false, nil
-			}
-			if err != nil {
-				return teardownIdentity{}, false, fmt.Errorf("get object: %w", err)
-			}
-			if object == nil {
-				return teardownIdentity{}, false, fmt.Errorf("API returned a nil object")
-			}
-			identity, err := activation.verifyActivationObject(object)
-			if err != nil {
-				return teardownIdentity{}, false, err
-			}
-			if err := activation.verifyCandidateCompatibility(identity); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			deleteIdentity, err := deletionIdentity(kind, ReleaseActivationName, object)
-			if err != nil {
-				return teardownIdentity{}, false, err
-			}
-			if object.Namespace != guard.ReleaseNamespace {
-				return teardownIdentity{}, false, fmt.Errorf("release activation ConfigMap is in namespace %q, expected %q", object.Namespace, guard.ReleaseNamespace)
-			}
-			return deleteIdentity, true, nil
-		},
-		delete: func(ctx context.Context, options metav1.DeleteOptions) error {
-			var lastCacheDenial error
-			err := wait.PollUntilContextCancel(ctx, guard.PollEvery, true, func(pollCtx context.Context) (bool, error) {
-				deleteErr := t.configMaps.Delete(pollCtx, ReleaseActivationName, options)
-				if deleteErr == nil || apierrors.IsNotFound(deleteErr) {
-					return true, nil
-				}
-				if !apierrors.IsForbidden(deleteErr) || !strings.Contains(deleteErr.Error(), releaseActivationGuardDenialMessage()) {
-					return false, deleteErr
-				}
-				// The binding and policy were deleted immediately before this
-				// target, but admission may still evaluate a stale cached copy.
-				// Retry only its exact denial and keep the original UID/resource-
-				// version preconditions on every attempt.
-				lastCacheDenial = deleteErr
-				return false, nil
-			})
-			if err != nil && lastCacheDenial != nil {
-				return fmt.Errorf("wait for release activation self-guard cache propagation after %v: %w", lastCacheDenial, err)
-			}
+	verify := func(object *corev1.ConfigMap) error {
+		if object.Namespace != guard.ReleaseNamespace {
+			return fmt.Errorf("release activation ConfigMap is in namespace %q, expected %q", object.Namespace, guard.ReleaseNamespace)
+		}
+		identity, err := activation.verifyActivationObject(object)
+		if err != nil {
 			return err
-		},
+		}
+		return activation.verifyCandidateCompatibility(identity)
 	}
+	target := t.configMapTarget(ReleaseActivationName, verify)
+	// Return the parameter to the state a fresh install starts from before it
+	// is deleted. An API server can go on serving a policy parameter after it
+	// is deleted, and a reinstall in this namespace needs what it serves to be
+	// the bootstrap state rather than the sequence this release last
+	// activated.
+	target.prepare = func(ctx context.Context) (teardownIdentity, error) {
+		object, err := t.configMaps.Get(ctx, ReleaseActivationName, metav1.GetOptions{})
+		if err != nil {
+			return teardownIdentity{}, fmt.Errorf("re-read release activation before its reset: %w", err)
+		}
+		if err := verify(object); err != nil {
+			return teardownIdentity{}, err
+		}
+		bootstrap := ReleaseActivationBootstrapData()
+		if !reflect.DeepEqual(object.Data, bootstrap) {
+			reset := object.DeepCopy()
+			reset.Data = bootstrap
+			updated, updateErr := t.configMaps.Update(ctx, reset, metav1.UpdateOptions{})
+			if updateErr != nil {
+				return teardownIdentity{}, fmt.Errorf("return release activation to its bootstrap state: %w", updateErr)
+			}
+			object = updated
+		}
+		return deletionIdentity("ConfigMap", ReleaseActivationName, object)
+	}
+	return target
 }
 
 func (t *ReleaseTeardown) hookIdentityProbeMarkerTarget(guard *RolloutGuard) teardownTarget {
-	const kind = "ConfigMap"
 	name := HookIdentityProbeObjectName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	policyName := HookIdentityProbeGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
-	return teardownTarget{
-		kind: kind, name: name,
-		inspect: func(ctx context.Context) (teardownIdentity, bool, error) {
-			object, err := t.configMaps.Get(ctx, name, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				return teardownIdentity{}, false, nil
-			}
-			if err != nil {
-				return teardownIdentity{}, false, fmt.Errorf("get object: %w", err)
-			}
-			if object == nil {
-				return teardownIdentity{}, false, fmt.Errorf("API returned a nil object")
-			}
-			if err := verifyHookIdentityProbeMarker(object, guard, name, policyName); err != nil {
-				return teardownIdentity{}, false, err
-			}
-			identity, err := deletionIdentity(kind, name, object)
-			return identity, true, err
-		},
-		delete: func(ctx context.Context, options metav1.DeleteOptions) error {
-			return t.configMaps.Delete(ctx, name, options)
-		},
-	}
+	return t.configMapTarget(name, func(object *corev1.ConfigMap) error {
+		return verifyHookIdentityProbeMarker(object, guard, name, policyName)
+	})
 }
 
-// HookIdentityProbeMarkerTarget returns the retirement target for the probe
-// ConfigMap the release keeps across upgrades. Helm is told to keep it, so
-// nothing in the ordinary deletion phase removes it and the last teardown hook
-// has to.
-func HookIdentityProbeMarkerTarget(rollout *RolloutGuard) (TeardownRetirementMarkerTarget, error) {
-	if rollout == nil {
-		return TeardownRetirementMarkerTarget{}, fmt.Errorf("hook identity probe marker rollout is required")
-	}
-	name := HookIdentityProbeObjectName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
-	policyName := HookIdentityProbeGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
-	if name == "" || policyName == "" {
-		return TeardownRetirementMarkerTarget{}, fmt.Errorf("hook identity probe marker identity is incomplete")
-	}
-	return TeardownRetirementMarkerTarget{
-		Name: name,
-		Verify: func(actual *corev1.ConfigMap) error {
-			return verifyHookIdentityProbeMarker(actual, rollout, name, policyName)
-		},
-	}, nil
+func (t *ReleaseTeardown) parentOriginReadinessMarkerTarget(guard *ParentWorkloadGuard) teardownTarget {
+	name := ParentOriginReadyMarkerName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName)
+	return t.configMapTarget(name, guard.verifyReadinessMarker)
 }
 
 func verifyHookIdentityProbeMarker(object *corev1.ConfigMap, guard *RolloutGuard, name, policyName string) error {

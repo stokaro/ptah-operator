@@ -429,7 +429,7 @@ func (g *ServiceAccountObjectGuard) patterns() (serviceAccountObjectPatterns, er
 		hook:        "^" + regexp.QuoteMeta(contract.HookServiceAccountBase+"-crd-v") + `[1-9][0-9]*-[0-9a-f]{12}$`,
 		cleanup:     "^" + regexp.QuoteMeta(contract.HookServiceAccountBase+"-cleanup-v") + `[1-9][0-9]*-[0-9a-f]{12}$`,
 		quiesce:     "^" + regexp.QuoteMeta(contract.HookServiceAccountBase+"-quiesce-v") + `[1-9][0-9]*-[0-9a-f]{12}$`,
-		bootstrap:   teardownRetirementBootstrapPrefix + teardownRetirementReleaseDigest(g.rollout.ReleaseNamespace, g.rollout.ReleaseName),
+		bootstrap:   serviceAccountObjectBootstrapName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName),
 		certificate: contract.CertificateServiceAccountName,
 	}
 	if contract.ControllerServiceAccountManaged {
@@ -645,4 +645,13 @@ func (g *ServiceAccountObjectGuard) validate(requireReaders bool) error {
 		return err
 	}
 	return nil
+}
+
+// serviceAccountObjectBootstrapName is the uninstall bootstrap ServiceAccount
+// this guard still lists as protected. No chart creates it any more; the name
+// stays until the guard itself is removed, because the chart renders the same
+// name into its copy of the policy.
+func serviceAccountObjectBootstrapName(releaseNamespace, releaseName string) string {
+	digest := sha256.Sum256([]byte("1\n" + releaseNamespace + "\n" + releaseName))
+	return "ptah-teardown-bootstrap-v1-" + fmt.Sprintf("%x", digest)[:12]
 }

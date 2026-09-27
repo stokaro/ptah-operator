@@ -10,8 +10,6 @@ import (
 
 	"github.com/stokaro/ptah-operator/internal/certrotation"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -23,14 +21,6 @@ const (
 	stagingSecretGuardPolicyWeight  = "-162"
 	stagingSecretGuardBindingWeight = "-161"
 )
-
-// StagingSecretClient is the exact Secret API surface needed to drain the
-// durable certificate candidate before its retained admission guard retires.
-type StagingSecretClient interface {
-	Get(context.Context, string, metav1.GetOptions) (*corev1.Secret, error)
-	Update(context.Context, *corev1.Secret, metav1.UpdateOptions) (*corev1.Secret, error)
-	Delete(context.Context, string, metav1.DeleteOptions) error
-}
 
 // StagingSecretGuard is the release-stable admission boundary around the
 // durable certificate-rotation staging Secret. It excludes candidate release
@@ -219,75 +209,6 @@ func (g *StagingSecretGuard) WaitReady(ctx context.Context) error {
 	})
 }
 
-// Cleanup atomically drains the exact staging object and deletes that same
-// persisted identity. Admission independently limits both mutations to the
-// teardown cleanup ServiceAccount and rejects deletion while data is present.
-func (g *StagingSecretGuard) Cleanup(ctx context.Context, secrets StagingSecretClient) error {
-	contract, err := g.contract()
-	if err != nil {
-		return err
-	}
-	if secrets == nil {
-		return errors.New("staging Secret cleanup client is required")
-	}
-	if err := g.Verify(ctx); err != nil {
-		return fmt.Errorf("verify staging Secret guard before cleanup: %w", err)
-	}
-
-	secret, err := secrets.Get(ctx, contract.stagingSecretName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("get staging Secret for cleanup: %w", err)
-	}
-	if err := contract.verifyLiveSecret(secret); err != nil {
-		return err
-	}
-	originalUID := secret.UID
-	if len(secret.Data) != 0 {
-		update := secret.DeepCopy()
-		update.Data = nil
-		updated, updateErr := secrets.Update(ctx, update, metav1.UpdateOptions{})
-		if updateErr != nil {
-			return fmt.Errorf("atomically clear staging Secret data: %w", updateErr)
-		}
-		if err := contract.verifyLiveSecret(updated); err != nil {
-			return fmt.Errorf("verify cleared staging Secret update: %w", err)
-		}
-		if updated.UID != originalUID || len(updated.Data) != 0 {
-			return errors.New("cleared staging Secret update changed identity or retained data")
-		}
-	}
-
-	secret, err = secrets.Get(ctx, contract.stagingSecretName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("re-read cleared staging Secret: %w", err)
-	}
-	if err := contract.verifyLiveSecret(secret); err != nil {
-		return err
-	}
-	if secret.UID != originalUID || len(secret.Data) != 0 {
-		return errors.New("staging Secret changed identity or data before deletion")
-	}
-	uid := secret.UID
-	resourceVersion := secret.ResourceVersion
-	err = secrets.Delete(ctx, contract.stagingSecretName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
-		UID:             &uid,
-		ResourceVersion: &resourceVersion,
-	}})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("delete cleared staging Secret: %w", err)
-	}
-	return nil
-}
-
 type stagingSecretContract struct {
 	namespace              string
 	releaseName            string
@@ -361,40 +282,6 @@ func (c stagingSecretContract) secretShape(path string, requireLiveIdentity bool
 		certrotation.StagingSecretLabelValue,
 		c.releaseName,
 	)
-}
-
-func (c stagingSecretContract) verifyLiveSecret(secret *corev1.Secret) error {
-	if secret == nil {
-		return errors.New("staging Secret API returned a nil object")
-	}
-	if secret.APIVersion != "" && secret.APIVersion != "v1" {
-		return fmt.Errorf("staging Secret has unexpected API version %q", secret.APIVersion)
-	}
-	if secret.Kind != "" && secret.Kind != "Secret" {
-		return fmt.Errorf("staging Secret has unexpected kind %q", secret.Kind)
-	}
-	if secret.Name != c.stagingSecretName || secret.Namespace != c.namespace || secret.GenerateName != "" {
-		return errors.New("staging Secret has an unexpected object identity")
-	}
-	if secret.UID == "" || secret.ResourceVersion == "" {
-		return errors.New("staging Secret has no persisted identity")
-	}
-	if secret.DeletionTimestamp != nil || secret.DeletionGracePeriodSeconds != nil || len(secret.OwnerReferences) != 0 || len(secret.Finalizers) != 0 {
-		return errors.New("staging Secret has unsafe lifecycle metadata")
-	}
-	if !reflect.DeepEqual(secret.Labels, map[string]string{
-		certrotation.StagingSecretLabel: certrotation.StagingSecretLabelValue,
-		certrotation.HelmManagedByLabel: certrotation.HelmManagedByLabelValue,
-	}) || !reflect.DeepEqual(secret.Annotations, map[string]string{
-		certrotation.HelmReleaseNameAnnotation:      c.releaseName,
-		certrotation.HelmReleaseNamespaceAnnotation: c.namespace,
-	}) {
-		return errors.New("staging Secret has foreign or incomplete ownership metadata")
-	}
-	if secret.Type != corev1.SecretTypeOpaque || secret.Immutable != nil || len(secret.StringData) != 0 {
-		return errors.New("staging Secret has an unsafe type or write-only fields")
-	}
-	return nil
 }
 
 func exactServiceAccountPrincipalExpression(namespace, serviceAccount string) string {

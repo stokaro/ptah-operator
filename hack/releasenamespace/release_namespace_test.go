@@ -257,11 +257,11 @@ func TestTheNotesWarnAboutAdministratorGrants(t *testing.T) {
 }
 
 // chartIdentities is the number of distinct ServiceAccounts a release runs
-// its Pods as: the manager, the certificate rotator, the CRD manager hook and
-// the teardown cleanup hook. A render that yields another number is a chart
-// that grew or lost an identity, and the warning's list of its own names has
-// to follow it.
-const chartIdentities = 4
+// its Pods as: the manager, the certificate rotator and the CRD manager hook,
+// which the uninstall hook runs as too. A render that yields another number is
+// a chart that grew or lost an identity, and the warning's list of its own
+// names has to follow it.
+const chartIdentities = 3
 
 // The warning knows a release's own identities by the names the chart gives
 // them, not by the objects: on a retried upgrade the stable coordination

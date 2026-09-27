@@ -386,27 +386,26 @@ the release is not repairable in place and
 
 ### Uninstall the release {#uninstall}
 
-Uninstall is a fail-closed, ordered retirement protocol rather than a delete.
+Uninstall stops the runtime first and then deletes what the release keeps
+across upgrades, so no controller runs once the guards that fence its writes
+are gone.
 
 #### Before you start {#uninstall-before}
 
-You need `cluster-admin`. The retirement protocol replaces and then removes
-cluster-scoped admission policies.
+You need `cluster-admin`. The uninstall deletes cluster-scoped admission
+policies and their bindings.
 
 Back up the CRDs and their custom resources. Helm retains both, and an
 uninstall removes the controller and admission resources rather than the
 database changes Ptah previously executed, but a backup is what makes the next
 install a decision rather than a hope.
 
-Remove or migrate any RoleBinding or ClusterRoleBinding of your own that names
-an active or retained epoch, in any namespace, for the same reason an upgrade
-needs it gone. A ServiceAccount you created is never deleted by the chart, not
-even after its epoch is retired, and any credential or grant issued outside
-Kubernetes RBAC has to be retired by hand first.
+A ServiceAccount you created is never deleted by the chart, and any credential
+or grant issued outside Kubernetes RBAC has to be retired by hand.
 
 #### Run it {#uninstall-run}
 
-The hooks stop the runtime and wait for its Pods to go, so give the uninstall
+The hook stops the runtime and waits for its Pods to go, so give the uninstall
 room for that:
 
 ```sh
@@ -415,9 +414,9 @@ helm uninstall <release> --timeout 5m
 
 #### What proves it worked {#uninstall-evidence}
 
-Helm reports success only after the final Job verified every stored retired
-pair, deleted the release activation parameter and the retained markers, and
-deleted its own cleanup ServiceAccount.
+Helm reports success only after its one pre-delete Job stopped the runtime and
+deleted every admission guard, binding and ConfigMap the release keeps, and the
+release activation parameter last.
 
 What remains afterwards is deliberate: the seven CRDs with their custom
 resources, and one cluster-scoped pair named
@@ -427,22 +426,20 @@ carries the upstream defect it works around.
 
 #### Where to stop {#uninstall-stop}
 
-Do not delete the remaining guards by hand to make an uninstall pass, and do
-not delete a failed or still-running hook Job as a shortcut to success.
+Do not delete a failed or still-running hook Job as a shortcut to success.
 
 Delete the informer anchor only while another bound ConfigMap-parameter policy
 exists, or before the API servers restart. Reinstalling the chart recreates it.
 
 #### If it fails {#uninstall-recovery}
 
-Every stage of the protocol fails toward the boundary staying in place. An API
-failure during the two-Deployment quiesce can leave one exact Deployment at
-zero, and at least one broad fence remains active. A later cleanup failure
-likewise leaves the admission boundary standing.
+The Job writes its reason to its termination message, which `kubectl describe`
+on its Pod shows. It stops the runtime only after it has checked everything it
+is about to delete, so a refusal before that point leaves the release running.
+A failure after it leaves the runtime at zero and some of the guards in place.
 
-Correct the reported conflict or API reachability problem and rerun the same
-`helm uninstall`. The hooks revalidate live state and resume idempotently from
-the exact reachable identities.
+Correct the reported problem and rerun the same `helm uninstall`. The Job skips
+what an earlier attempt already deleted and deletes the rest.
 
 ### Offline singleton migration {#offline-singleton-migration}
 

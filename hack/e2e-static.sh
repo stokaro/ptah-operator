@@ -194,10 +194,8 @@ assert_webhook_runtime_argument_owners() {
       expected["Job/ptah-hook-identity-v1-a4221dfdc0df"] = 1
       expected["Job/ptah-e2e-ptah-operator-crd-v1-a4221dfdc0df-preflight"] = 1
       expected["Job/ptah-e2e-ptah-operator-crd-v1-a4221dfdc0df"] = 1
-      expected["Job/ptah-e2e-ptah-operator-retire-v1-a4221dfdc0df"] = 1
       expected["Job/ptah-e2e-ptah-operator-quiesce-v1-a4221dfdc0df"] = 1
-      expected["Job/ptah-e2e-ptah-operator-cleanup-v1-a4221dfdc0df"] = 1
-      expected_count = 8
+      expected_count = 6
       reset_document()
     }
     /^---$/ {
@@ -6255,25 +6253,25 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace default \
 	--show-only templates/teardown.yaml \
 	$crd_render_args >"$TEARDOWN_DEFAULT_NAMESPACE_RENDER"
 
-cleanup_privilege_name=$(awk '
+uninstall_role_name=$(awk '
   /^kind:/ {kind = $2}
   kind == "ClusterRole" && /^  name:/ {
-    count++
-    if (count == 2) {
-      print $2
-      exit
-    }
+    print $2
+    exit
   }
 ' "$TEARDOWN_RENDER")
-[ -n "$cleanup_privilege_name" ]
-cleanup_identity_digest=${cleanup_privilege_name##*-}
-fixed_point_fullname="abcdefghijklmnopqrstuvwx-cleanup-priv-v1-$cleanup_identity_digest"
+printf '%s\n' "$uninstall_role_name" | grep -Eq -- '-quiesce-v1-[0-9a-f]{12}$' || {
+	printf 'e2e static: the uninstall ClusterRole is named %s, not after the quiesce Job\n' "$uninstall_role_name" >&2
+	exit 1
+}
+uninstall_identity_digest=${uninstall_role_name##*-}
+fixed_point_fullname="abcdefghijklmnopqrstuvwx-quiesce-v1-$uninstall_identity_digest"
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/teardown.yaml \
 	--set-string "fullnameOverride=$fixed_point_fullname" \
 	$crd_render_args >/dev/null 2>"$TEARDOWN_FULLNAME_COLLISION_ERROR"; then
-	printf '%s\n' 'e2e static: teardown accepted a fixed-point fullname collision with cleanup RBAC' >&2
+	printf '%s\n' 'e2e static: teardown accepted a fixed-point fullname collision with its own RBAC' >&2
 	exit 1
 fi
 grep -F 'lifecycle resource identity collision:' "$TEARDOWN_FULLNAME_COLLISION_ERROR" >/dev/null
@@ -6392,20 +6390,26 @@ assert_webhook_runtime_argument_owners "$CRD_FULL_RENDER" || {
 grep -F -- '--controller-image=ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
 	"$CRD_FULL_RENDER" >/dev/null
 [ "$(grep -Fc 'resources: ["customresourcedefinitions"]' "$CRD_FULL_RENDER")" -eq 3 ]
-[ "$(grep -Fc 'resourceNames: ["ptah-operator-admission"]' "$CRD_FULL_RENDER")" -eq 11 ]
+[ "$(grep -Fc 'resourceNames: ["ptah-operator-admission"]' "$CRD_FULL_RENDER")" -eq 9 ]
+# The uninstall is one pre-delete Job and the identity it runs as: a
+# ServiceAccount, a ClusterRole and a Role, and their two bindings.
 teardown_resource_count=$(grep -Ec '^apiVersion:' "$TEARDOWN_RENDER")
-[ "$teardown_resource_count" -eq 22 ]
+[ "$teardown_resource_count" -eq 6 ]
 [ "$(grep -Fc 'helm.sh/hook: pre-delete' "$TEARDOWN_RENDER")" -eq "$teardown_resource_count" ]
 [ "$(grep -Fc 'helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded' "$TEARDOWN_RENDER")" -eq "$teardown_resource_count" ]
-[ "$(grep -Fc 'kind: Job' "$TEARDOWN_RENDER")" -eq 2 ]
+[ "$(grep -Fc 'kind: Job' "$TEARDOWN_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- '- "teardown-quiesce"' "$TEARDOWN_RENDER")" -eq 1 ]
-[ "$(grep -Fc -- '- "teardown"' "$TEARDOWN_RENDER")" -eq 1 ]
-assert_crd_manager_job_container_contract "$TEARDOWN_RENDER" 2 || {
+assert_crd_manager_job_container_contract "$TEARDOWN_RENDER" 1 || {
 	printf '%s\n' 'e2e static: teardown hook containers expose an unsafe termination or restart contract' >&2
 	exit 1
 }
 [ "$(grep -Fc 'helm.sh/hook-weight: "-10"' "$TEARDOWN_RENDER")" -eq 1 ]
-[ "$(grep -Fc 'helm.sh/hook-weight: "0"' "$TEARDOWN_RENDER")" -eq 1 ]
+# Nothing the uninstall renders outside teardown.yaml runs as a pre-delete
+# hook: the fences and the retirement pairs are gone.
+[ "$(grep -Fc 'helm.sh/hook: pre-delete' "$CRD_FULL_RENDER")" -eq "$teardown_resource_count" ] || {
+	printf '%s\n' 'e2e static: the chart renders a pre-delete hook outside the uninstall Job and its identity' >&2
+	exit 1
+}
 if grep -F 'hook-failed' "$TEARDOWN_RENDER" >/dev/null || grep -F '["*"]' "$TEARDOWN_RENDER" >/dev/null; then
 	printf '%s\n' 'e2e static: teardown hooks delete failed diagnostics or contain wildcard RBAC' >&2
 	exit 1
@@ -6468,7 +6472,7 @@ controller_write_guard_name=$(awk '
 	printf '%s\n' 'e2e static: controller write binding does not target its exact policy' >&2
 	exit 1
 }
-[ "$(grep -Fxc -- "      - $controller_write_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
+[ "$(grep -Fxc -- "      - $controller_write_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
 	printf '%s\n' 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share the exact controller write guard' >&2
 	exit 1
 }
@@ -6509,7 +6513,7 @@ for controller_object_guard_name in $controller_object_guard_names; do
 			"$controller_object_guard_name" >&2
 		exit 1
 	}
-	[ "$(grep -Fxc -- "      - $controller_object_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
+	[ "$(grep -Fxc -- "      - $controller_object_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
 		printf 'e2e static: lifecycle RBAC does not share controller object guard %s\n' \
 			"$controller_object_guard_name" >&2
 		exit 1
@@ -6636,7 +6640,7 @@ for certificate_write_guard_name in $certificate_write_guard_names; do
 			"$certificate_write_guard_name" >&2
 		exit 1
 	}
-	[ "$(grep -Fxc -- "      - $certificate_write_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
+	[ "$(grep -Fxc -- "      - $certificate_write_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
 		printf 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share certificate guard %s\n' \
 			"$certificate_write_guard_name" >&2
 		exit 1
@@ -6684,7 +6688,7 @@ for parent_guard_name in $parent_guard_names; do
 			"$parent_guard_name" >&2
 		exit 1
 	}
-	[ "$(grep -Fxc -- "      - $parent_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
+	[ "$(grep -Fxc -- "      - $parent_guard_name" "$CRD_FULL_RENDER")" -eq 7 ] || {
 		printf 'e2e static: manager, rotator, and hook RBAC do not reference parent guard %s exactly\n' \
 			"$parent_guard_name" >&2
 		exit 1
@@ -6749,29 +6753,27 @@ done
 	PTAH_PRIVILEGE_RECOVERY_RENDER="$CRD_FULL_RECOVERY_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceMarkerMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceMarkerMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedTeardownRBACMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
-	PTAH_TEARDOWN_CERTIFICATE_RUNTIME_ENABLED=false \
+	PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED=false \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedPrivilegeTeardownRulesMatchCompiledContract$' -count=1)
+	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_SA_RENDER" \
-	PTAH_TEARDOWN_CONTROLLER_SERVICE_ACCOUNT_NAME=external-controller-v1 \
-	PTAH_TEARDOWN_CONTROLLER_SERVICE_ACCOUNT_CREATE=false \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedPrivilegeTeardownRulesMatchCompiledContract$' -count=1)
+	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_COORDINATION_RENDER" \
-	PTAH_TEARDOWN_COORDINATION_NAMESPACE=ptah-coordination \
+	PTAH_RBAC_COORDINATION_NAMESPACE=ptah-coordination \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedPrivilegeTeardownRulesMatchCompiledContract$' -count=1)
+	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_DEFAULT_NAMESPACE_RENDER" \
-	PTAH_TEARDOWN_RELEASE_NAMESPACE=default \
+	PTAH_RBAC_RELEASE_NAMESPACE=default \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedPrivilegeTeardownRulesMatchCompiledContract$' -count=1)
-# Exercise each namespace merge branch in both the cleanup and retired grants.
+	go test ./internal/crdupgrade -run '^TestRenderedTeardownRBACMatchesCompiledContract$' -count=1)
+# Exercise each namespace merge branch in both the uninstall and release grants.
 for namespace_pair in default:ptah-coordination ptah-e2e:default; do
 	release_namespace=${namespace_pair%:*}
 	coordination_namespace=${namespace_pair#*:}
@@ -6791,11 +6793,11 @@ for namespace_pair in default:ptah-coordination ptah-e2e:default; do
 	(cd "$ROOT_DIR" && \
 		PTAH_TEARDOWN_RENDER="$merged_teardown_render" \
 		PTAH_PRIVILEGE_RENDER="$merged_privilege_render" \
-		PTAH_TEARDOWN_RELEASE_NAMESPACE="$release_namespace" \
-		PTAH_TEARDOWN_COORDINATION_NAMESPACE="$coordination_namespace" \
+		PTAH_RBAC_RELEASE_NAMESPACE="$release_namespace" \
+		PTAH_RBAC_COORDINATION_NAMESPACE="$coordination_namespace" \
 		GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 		go test ./internal/crdupgrade \
-			-run '^(TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+			-run '^(TestRenderedTeardownRBACMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
 done
 for singleton_guard_marker in \
 	'lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration"' \

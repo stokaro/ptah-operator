@@ -129,25 +129,21 @@ func stringDifferenceWindow(value string, position int) string {
 	return value[start:end]
 }
 
-func TestAdmissionConvergenceMarkerTargetUsesExactCurrentContract(t *testing.T) {
+// The uninstall deletes the marker only after this check, sealed or not.
+func TestAdmissionConvergenceMarkerVerifierUsesExactCurrentContract(t *testing.T) {
 	t.Parallel()
 
 	rollout, _, _, _ := readyRolloutGuard()
 	guard := NewAdmissionConvergenceGuard(rollout)
-	markerName := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence)
 	marker := guard.unsealedMarker()
 	marker.UID = types.UID("marker-uid")
 	marker.ResourceVersion = "marker-rv"
+	if err := guard.verifyMarker(marker.DeepCopy()); err != nil {
+		t.Fatalf("verify exact unsealed marker: %v", err)
+	}
 	sealAdmissionConvergenceMarkerForTest(t, guard, marker)
-	target, err := guard.MarkerTarget()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if target.Name != markerName || target.Verify == nil {
-		t.Fatalf("MarkerTarget() = %#v, want exact current marker %q", target, markerName)
-	}
-	if err := target.Verify(marker.DeepCopy()); err != nil {
-		t.Fatalf("verify exact current marker: %v", err)
+	if err := guard.verifyMarker(marker.DeepCopy()); err != nil {
+		t.Fatalf("verify exact sealed marker: %v", err)
 	}
 
 	for _, test := range []struct {
@@ -173,9 +169,8 @@ func TestAdmissionConvergenceMarkerTargetUsesExactCurrentContract(t *testing.T) 
 			},
 		},
 		{
-			name: "unsealed",
+			name: "sealed without its inventory",
 			mutate: func(object *corev1.ConfigMap) {
-				object.Immutable = nil
 				delete(object.Data, PredecessorRetirementInventoryDataKey)
 			},
 		},
@@ -184,14 +179,14 @@ func TestAdmissionConvergenceMarkerTargetUsesExactCurrentContract(t *testing.T) 
 			t.Parallel()
 			foreign := marker.DeepCopy()
 			test.mutate(foreign)
-			if err := target.Verify(foreign); err == nil {
+			if err := guard.verifyMarker(foreign); err == nil {
 				t.Fatalf("marker verifier accepted foreign object: %#v", foreign)
 			}
 		})
 	}
 }
 
-func TestAdmissionConvergenceMarkerTargetRefusesAnIncompleteIdentity(t *testing.T) {
+func TestAdmissionConvergenceGuardRefusesAnIncompleteIdentity(t *testing.T) {
 	t.Parallel()
 
 	rollout, _, _, _ := readyRolloutGuard()
@@ -213,8 +208,8 @@ func TestAdmissionConvergenceMarkerTargetRefusesAnIncompleteIdentity(t *testing.
 				guard = NewAdmissionConvergenceGuard(rollout)
 				test.mutate(guard)
 			}
-			if _, err := guard.MarkerTarget(); err == nil {
-				t.Fatal("MarkerTarget() accepted an incomplete identity")
+			if err := guard.validate(); err == nil {
+				t.Fatal("validate() accepted an incomplete identity")
 			}
 		})
 	}
