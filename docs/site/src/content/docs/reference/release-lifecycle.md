@@ -58,15 +58,24 @@ rollback, the image of the revision being restored.
 
 In order, it:
 
-1. scans every durable controller-state version, as described below;
-2. checks the schema identity of every CRD against the one it embeds, and
+1. refuses a chart of another release than its image, before it reads the
+   cluster: the chart hands it its release sequence and its controller-state
+   version, and the image compiles both;
+2. scans every durable controller-state version, as described below;
+3. checks the schema identity of every CRD against the one it embeds, and
    dry-runs every required schema change;
-3. scans the stored state again, and stops the running release when its
+4. scans the stored state again, and stops the running release when its
    manager image differs from the hook's;
-4. scans the stored state a third time, now that no old manager can write it;
-5. updates only the `spec` and the two owned schema-identity annotations of
+5. scans the stored state a third time, now that no old manager can write it;
+6. updates only the `spec` and the two owned schema-identity annotations of
    each existing CRD, and waits for both `Established=True` and
    `NamesAccepted=True`.
+
+The first step is what refuses a `--reuse-values` upgrade that keeps the
+previous `image.digest` under a new chart, and a new image under an old chart.
+Without it, the first pairing would leave the running release to the new
+chart's Deployments, whose verifier refuses to start the old image, and the
+second would stop the runtime and update the CRDs before anything noticed.
 
 A refusal before the stop leaves the running release exactly as it was,
 because nothing before it changes anything. A refusal after it leaves the
@@ -91,16 +100,21 @@ status, and all custom resources.
 The approval webhooks answer with a patch computed from the object the manager
 decoded, so a manager older than the schema would drop every field it does not
 know from the objects it mutates. The hook therefore stops the running release
-before the first CRD update whenever its manager image differs from the
-running one: it scales the certificate rotator and then the manager to zero and
-waits until neither Deployment selects a Pod. A release already running the
-hook's image is left alone, because the image fixes the CRDs it serves.
+before the first CRD update whenever its manager image differs from the running
+one, in either Deployment's template or in any Pod carrying the release's
+runtime labels: it scales the certificate rotator and then the manager to zero.
+It waits until each Deployment reports that it observed the scale-down and runs
+no replica, and until no Pod carrying the release's instance and component
+labels is left, terminating or not. A release already running the hook's image
+is left alone, because the image fixes the CRDs it serves.
 
-A Deployment that does not exist has nothing to stop, and one that Helm did not
-install for this release is refused rather than scaled. Stopping twice changes
-nothing: a stopped Deployment stays at zero, and the wait finds no Pod. That is
-what makes rerunning the same upgrade the recovery for one that failed after
-the hook.
+A Deployment that Helm did not install for this release is refused rather than
+scaled. One that does not exist has nothing to scale, but its Pods are looked
+for all the same: a Deployment deleted with orphaned dependents leaves Pods
+that still serve, and the hook refuses at its deadline rather than update a CRD
+under them. Stopping twice changes nothing: a stopped Deployment stays at zero,
+and the wait finds no Pod. That is what makes rerunning the same upgrade the
+recovery for one that failed after the hook.
 
 The scale-down leaves `.spec.replicas` owned by the hook's field manager, and
 Helm 4 applies the release server-side, so the apply that raises it again is a
@@ -149,9 +163,13 @@ approval.
 Every kind is read through exhaustive pagination anchored to its own single
 collection `resourceVersion`. A nonzero version newer than the binary's
 supported controller-state version blocks the release, even if another stored
-location records none yet. During a Helm downgrade or rollback, the hook fails
-before it stops anything, so the newer manager keeps running and the older
+location records none yet. During a Helm downgrade or rollback, the scans
+before the stop refuse with the newer manager still running, and the older
 candidate never gets an opportunity to reinterpret or rewrite future state.
+State the newer manager writes between those scans and the stop is found by
+the scan after it, which refuses with the runtime already stopped: the older
+candidate still never runs, and the runtime stays down until an upgrade or a
+rollback to a release that reads the state.
 A location that records no version, such as a resource the manager has not
 reconciled yet, blocks nothing. A malformed or negative stored version also
 blocks. The hook repeats the scan after all server-side dry-runs, and again
@@ -192,14 +210,24 @@ schemas nor patch the winning release's CA bundle.
 
 `helm rollback` runs the reconcile hook of the revision it restores, with that
 revision's image. The hook refuses stored state or CRD schemas newer than that
-release reads, before it stops anything, so a rollback the cluster has outgrown
-leaves the running release in place. A rollback it allows stops the running
-release, because the images differ, and Helm brings the restored revision up.
+release reads. The checks before the stop refuse a rollback the cluster has
+outgrown with the running release in place; state written in the moment
+between them and the stop is found by the scan after it, and then the runtime
+stays stopped. A rollback the hook allows stops the running release, because
+the images differ, and Helm brings the restored revision up.
 
 Helm records the rollback revision before it runs the hook. A refused rollback
 therefore leaves that revision `pending-rollback`, and a later `helm upgrade`
 refuses to start while it is. Another `helm rollback`, to a revision the
 stored state allows, clears it.
+
+`helm upgrade --rollback-on-failure` rolls back to the last deployed revision
+when the upgrade fails. After an upgrade that failed once its hook had updated
+the CRDs, that rollback runs the previous release's hook, which refuses the
+newer schemas, and the release is left `pending-rollback`. `helm rollback
+<release>` with no revision rolls back to the revision before the pending one,
+which is the upgrade that failed: its hook reads the schemas it wrote, and Helm
+brings that release up.
 
 ## Uninstall
 
