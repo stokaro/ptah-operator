@@ -205,11 +205,8 @@ func TestApprovalWebhooks(t *testing.T) {
 			"verificationPolicyUID":    {string(spec.VerificationPolicyUID), string(plan.VerificationPolicyUID)},
 			"verificationPolicyDigest": {spec.VerificationPolicyDigest, plan.VerificationPolicyDigest},
 			"executionBindingID":       {spec.ExecutionBindingID, plan.ExecutionBindingID},
-			"controllerImage":          {spec.ControllerImage, plan.ControllerImage},
-			"controllerRevision":       {spec.ControllerRevision, plan.ControllerRevision},
 			"ptahVersion":              {spec.PtahVersion, plan.PtahVersion},
 			"executorImage":            {spec.ExecutorImage, plan.ExecutorImage},
-			"runnerImage":              {spec.RunnerImage, plan.RunnerImage},
 		} {
 			if pair[0] != pair[1] {
 				t.Errorf("stored approval %s = %q, want the plan's %q", field, pair[0], pair[1])

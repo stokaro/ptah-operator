@@ -290,7 +290,8 @@ func publishPlan(ctx context.Context, api client.Client) error {
 }
 
 // migrationPlan is the plan the migration controller publishes, built by the
-// same function.
+// same function. The manager's image, revision and runner image are recorded
+// on the plan and bind nothing, so the fingerprint leaves them out.
 func migrationPlan(controllerImage string) (*operatorv1alpha1.PtahMigrationPlan, error) {
 	builder := managerBuilder()
 	planned := []operatorv1alpha1.PlannedMigration{{Version: 1, Checksum: digest("1")}}
@@ -309,12 +310,9 @@ func migrationPlan(controllerImage string) (*operatorv1alpha1.PtahMigrationPlan,
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: digest("c"),
 		ExecutionBindingID:       executionBindingID,
-		ControllerImage:          controllerImage,
-		ControllerRevision:       builder.ControllerRevision,
 		ControllerStateVersion:   builder.ControllerStateVersion,
 		PtahVersion:              builder.PtahVersion,
 		ExecutorImage:            builder.ExecutorImage,
-		RunnerImage:              builder.RunnerImage,
 		RunnerProtocolVersion:    int32(runner.ProtocolVersion),
 	}
 	planFingerprint, err := binding.Fingerprint()
@@ -333,12 +331,12 @@ func migrationPlan(controllerImage string) (*operatorv1alpha1.PtahMigrationPlan,
 		VerificationPolicyUID:    binding.VerificationPolicyUID,
 		VerificationPolicyDigest: binding.VerificationPolicyDigest,
 		ExecutionBindingID:       binding.ExecutionBindingID,
-		ControllerImage:          binding.ControllerImage,
-		ControllerRevision:       binding.ControllerRevision,
+		ControllerImage:          controllerImage,
+		ControllerRevision:       builder.ControllerRevision,
 		ControllerStateVersion:   binding.ControllerStateVersion,
 		PtahVersion:              binding.PtahVersion,
 		ExecutorImage:            binding.ExecutorImage,
-		RunnerImage:              binding.RunnerImage,
+		RunnerImage:              builder.RunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 		Migrations:               planned,
 		CreatedAt:                metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)),

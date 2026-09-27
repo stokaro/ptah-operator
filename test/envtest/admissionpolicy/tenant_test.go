@@ -54,12 +54,9 @@ func executionBinding() *operatorv1alpha1.ExecutionBindingStatus {
 	builder := managerBuilder()
 	return &operatorv1alpha1.ExecutionBindingStatus{
 		Epoch:                  executionBindingID,
-		ControllerImage:        builder.ControllerImage,
-		ControllerRevision:     builder.ControllerRevision,
 		ControllerStateVersion: builder.ControllerStateVersion,
 		PtahVersion:            builder.PtahVersion,
 		ExecutorImage:          builder.ExecutorImage,
-		RunnerImage:            builder.RunnerImage,
 		RunnerProtocolVersion:  int32(runner.ProtocolVersion),
 	}
 }

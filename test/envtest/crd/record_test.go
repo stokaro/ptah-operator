@@ -35,18 +35,25 @@ const (
 	mutationRequestUID       = "6f4b2a18-8c3e-4d5a-b1f7-2e0c9d8a7b64"
 )
 
-// executionBinding is what every plan and approval carries about the build
-// that computed or will run it.
+// executionBinding is what every plan and approval binds: what executes the
+// plan.
 func executionBinding() map[string]any {
 	return map[string]any{
 		"executionBindingID":     executionBindingID,
 		"ptahVersion":            ptahVersion,
 		"executorImage":          executorImage,
-		"runnerImage":            runnerImage,
 		"runnerProtocolVersion":  int64(5),
-		"controllerImage":        controllerImage,
-		"controllerRevision":     controllerRevision,
 		"controllerStateVersion": int64(2),
+	}
+}
+
+// managerRecord is the manager build a plan records beside its binding. It
+// binds nothing, and an approval does not carry it.
+func managerRecord() map[string]any {
+	return map[string]any{
+		"runnerImage":        runnerImage,
+		"controllerImage":    controllerImage,
+		"controllerRevision": controllerRevision,
 	}
 }
 
@@ -61,7 +68,7 @@ func merged(parts ...map[string]any) map[string]any {
 }
 
 func schemaPlanSpec() map[string]any {
-	return merged(executionBinding(), map[string]any{
+	return merged(executionBinding(), managerRecord(), map[string]any{
 		"schemaRef":      map[string]any{"name": "application", "uid": schemaUID},
 		"fingerprint":    planFingerprint,
 		"dialect":        "postgres",
@@ -86,7 +93,7 @@ func schemaPlanSpec() map[string]any {
 }
 
 func migrationPlanSpec() map[string]any {
-	return merged(executionBinding(), map[string]any{
+	return merged(executionBinding(), managerRecord(), map[string]any{
 		"migrationRef":       map[string]any{"name": "orders", "uid": migrationUID},
 		"fingerprint":        desiredStateFingerprint,
 		"createdAt":          "2026-09-20T09:12:44Z",
@@ -159,9 +166,9 @@ func basedOn(kind, namespace, name string, spec func() map[string]any) func() *u
 	return func() *unstructured.Unstructured { return resource(kind, namespace, name, spec()) }
 }
 
-// bindingRefusals hold for every plan and approval: the fields that identify
-// the build are patterned, and a controller state version starts at one.
-func bindingRefusals() []refusal {
+// managerRecordRefusals hold for every plan: the manager build it records is
+// patterned and required, though it binds nothing.
+func managerRecordRefusals() []refusal {
 	return []refusal{
 		{
 			name:   "controllerImage by tag rather than digest",
@@ -179,6 +186,18 @@ func bindingRefusals() []refusal {
 			want:   []cause{{"spec.controllerRevision", "Too long"}},
 		},
 		{
+			name:   "controllerImage is required",
+			mutate: removing("spec", "controllerImage"),
+			want:   []cause{{"spec.controllerImage", "Required value"}},
+		},
+	}
+}
+
+// bindingRefusals hold for every plan and approval: the binding's fields are
+// patterned, and a controller state version starts at one.
+func bindingRefusals() []refusal {
+	return []refusal{
+		{
 			name:   "controllerStateVersion zero",
 			mutate: setting(int64(0), "spec", "controllerStateVersion"),
 			want:   []cause{{"spec.controllerStateVersion", "greater than or equal to 1"}},
@@ -192,11 +211,6 @@ func bindingRefusals() []refusal {
 			name:   "executionBindingID is required",
 			mutate: removing("spec", "executionBindingID"),
 			want:   []cause{{"spec.executionBindingID", "Required value"}},
-		},
-		{
-			name:   "controllerImage is required",
-			mutate: removing("spec", "controllerImage"),
-			want:   []cause{{"spec.controllerImage", "Required value"}},
 		},
 		{
 			name:   "spec is required",
@@ -214,7 +228,7 @@ func TestPtahSchemaPlanRefusals(t *testing.T) {
 	chunk := func(index int64) map[string]any {
 		return map[string]any{"index": index, "name": "ptah-plan-71c480df93d6ae2f14efe3c4-000", "key": "chunk", "size": int64(1), "digest": contentDigest}
 	}
-	rows := append(bindingRefusals(),
+	rows := append(append(bindingRefusals(), managerRecordRefusals()...),
 		refusal{
 			name:   "fingerprint is required",
 			mutate: removing("spec", "fingerprint"),
@@ -300,7 +314,7 @@ func TestPtahMigrationPlanRefusals(t *testing.T) {
 	step := func(version int64) map[string]any {
 		return map[string]any{"version": version, "checksum": contentDigest}
 	}
-	rows := append(bindingRefusals(),
+	rows := append(append(bindingRefusals(), managerRecordRefusals()...),
 		refusal{
 			name:   "historyFingerprint is required",
 			mutate: removing("spec", "historyFingerprint"),
