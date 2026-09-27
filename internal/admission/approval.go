@@ -331,6 +331,11 @@ func (h *ApprovalHandler) validateBinding(
 	if schema.Status.Plan.Approval != nil {
 		return fmt.Errorf("referenced plan already has a recorded approval")
 	}
+	if schema.Spec.Policy.RequireDistinctApprover {
+		if err := refuseSelfApproval("schema", schema.Annotations, approval.Spec.Approver); err != nil {
+			return err
+		}
+	}
 
 	if err := approvalMatchesPlan(approval.Spec, plan.Spec); err != nil {
 		return err

@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "23"
-    operator.ptah.run/crd-schema-digest: "sha256:77b58e846d82d2e416e9786a1b1f1dbe4ad55330a1d1932fc465d3fb4cd30282"
+    operator.ptah.run/crd-schema-version: "24"
+    operator.ptah.run/crd-schema-digest: "sha256:12bc8fda3e121613a8c5e075b5f0280b486c07039f407e87e9148f5270d4eb0a"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -683,6 +683,9 @@ spec:
                     - message: policy.lockTimeout must be between 1s and 1h
                       rule: duration(self) >= duration('1s') && duration(self) <=
                         duration('1h')
+                  requireDistinctApprover:
+                    default: false
+                    type: boolean
                   transactionMode:
                     enum:
                     - file

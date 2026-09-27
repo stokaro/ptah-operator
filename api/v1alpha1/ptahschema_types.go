@@ -314,6 +314,23 @@ type ReconciliationPolicy struct {
 	// +kubebuilder:default=false
 	AllowDestructive bool `json:"allowDestructive,omitempty"`
 
+	// RequireDistinctApprover is the four-eyes control: on its own, an approval
+	// proves an authenticated approver, not a second person. When true, the
+	// approval webhook refuses an approval whose approver is the identity that
+	// last created this schema or last changed its spec.
+	//
+	// It defaults to false, so an existing schema that never sets it keeps
+	// admitting the approvals it always did. Identity here is exactly what the
+	// cluster's authentication reports for a request: a username, and a UID
+	// where the authenticator supplies one. A ServiceAccount counts like any
+	// other identity, so the same ServiceAccount editing the spec and later
+	// approving it is refused exactly like a person doing both; group
+	// membership plays no part in the comparison. Impersonation, or a
+	// credential more than one person uses, defeats this control, because the
+	// cluster's own audit trail cannot tell those requests apart.
+	// +kubebuilder:default=false
+	RequireDistinctApprover bool `json:"requireDistinctApprover,omitempty"`
+
 	// DriftSeverity decides which differences count as drift worth applying:
 	// every difference, or only the destructive ones.
 	// +kubebuilder:validation:Enum=all;destructive
