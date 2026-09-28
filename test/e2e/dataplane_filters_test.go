@@ -14,11 +14,11 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
-// These are the samples the shell gates held testdata/e2e's filters to, each
-// built the way hack/e2e-static.sh and hack/migration-refusal-filter-selftest.sh
-// built it and changed the way they changed it: as a JSON document, before the
-// typed decoding the phase reads the API through. A filter is shown to accept
-// the reading it exists for and to refuse every mistake that was made.
+// These are the samples the shell gates held the filters to, each built the
+// way the static gate and the filter self-test built it and changed the way
+// they changed it: as a JSON document, before the typed decoding the phase
+// reads the API through. A filter is shown to accept the reading it exists
+// for and to refuse every mistake that was made.
 
 // fixture is a JSON document a test edits in place, as the shell edited its
 // samples with jq.
@@ -1262,7 +1262,7 @@ func TestSourceJobIsolationFilter(t *testing.T) {
 	})
 }
 
-// gateSample is one reading hack/migration-refusal-filter-selftest.sh judged
+// gateSample is one reading the filter self-test judged
 // an approval gate by, with whether the gate has to accept it.
 type gateSample struct {
 	name     string

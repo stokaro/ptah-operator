@@ -241,11 +241,81 @@ var DataPlane = define[DataPlaneInputs](Phase{
 	Preparation: 1,
 })
 
+// MigrationsInputs is what the driver hands the migration phases. Each phase
+// runs one engine, and the driver names it: a phase that fell back to one
+// engine because nobody named one would be coverage nobody noticed was gone.
+type MigrationsInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// TestNamespace is the namespace the data plane stood up in preparation:
+	// its registry Service, its databases and its admission fixtures.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// ExecutorImage publishes the migration artifacts, with the command a
+	// person would use.
+	ExecutorImage string `env:"E2E_EXECUTOR_IMAGE"`
+	// RunnerImage is the runner image the migration Jobs carry.
+	RunnerImage string `env:"E2E_RUNNER_IMAGE"`
+	// ControllerImage is the candidate manager image, pinned by digest.
+	ControllerImage string `env:"E2E_CONTROLLER_IMAGE"`
+	// ControllerRevision is the commit the candidate was built from.
+	ControllerRevision string `env:"E2E_CONTROLLER_REVISION"`
+	// ControllerStateVersion is the controller-state version the chart was
+	// stamped with.
+	ControllerStateVersion string `env:"E2E_CONTROLLER_STATE_VERSION"`
+	// RegistryService is the Service the cluster reaches the registry by.
+	RegistryService string `env:"E2E_REGISTRY_SERVICE"`
+	// RegistryHostAddress is the same registry as the host reaches it, for the
+	// one artifact no product command can produce.
+	RegistryHostAddress string `env:"E2E_REGISTRY_HOST_ADDRESS"`
+	// RegistryCredentialsFile holds the registry's username and password.
+	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
+	// DockerContext and KindClusterName reach the isolation worker's node
+	// container, which the phase cuts off from the API server.
+	DockerContext   string `env:"E2E_DOCKER_CONTEXT"`
+	KindClusterName string `env:"E2E_KIND_CLUSTER_NAME"`
+	// Engine is postgresql or mysql, and has to be the phase's own.
+	Engine string `env:"E2E_ENGINE"`
+}
+
+// MigrationsPostgreSQL proves the versioned-migration path against
+// PostgreSQL: the approval gate, the applied sequence, the history it leaves,
+// and every refusal and fault the path owes a person.
+var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
+	Name:    "migrations-postgresql",
+	Test:    "TestMigrationsPostgreSQL",
+	Timeout: 150 * time.Minute,
+	Scenarios: []string{
+		"migration-policy",
+		"postgresql-migrations",
+	},
+	// The isolated-node row cuts the isolation worker off from the API
+	// server, so only a suite that declares the worker may run the phase.
+	IsolatesNode: true,
+})
+
+// MigrationsMySQL proves the same path against MySQL, after the row that
+// says which transaction mode a MySQL sequence may name.
+var MigrationsMySQL = define[MigrationsInputs](Phase{
+	Name:    "migrations-mysql",
+	Test:    "TestMigrationsMySQL",
+	Timeout: 150 * time.Minute,
+	Scenarios: []string{
+		"migration-policy",
+		"mysql-transaction-mode",
+		"mysql-migrations",
+	},
+	// The isolated-node row cuts the isolation worker off from the API
+	// server, so only a suite that declares the worker may run the phase.
+	IsolatesNode: true,
+})
+
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
 	ControlPlane.Phase,
 	CertRotation.Phase,
 	DataPlane.Phase,
+	MigrationsPostgreSQL.Phase,
+	MigrationsMySQL.Phase,
 }
 
 func init() {

@@ -379,7 +379,10 @@ Job.
 The phases are moving from shell scripts under `hack/` to Go tests in this
 directory, one suite at a time. The certificates suite and the data-plane
 suite are ported: the control-plane phase, `assert`, and the data plane
-itself, `dataplane`, restart and fault injection included. The driver keeps
+itself, `dataplane`, restart and fault injection included. So are the two
+migration phases, `migrations-postgresql` and `migrations-mysql`; the reference
+data and the alerting phase that share their suites are still scripts. The
+driver keeps
 the bootstrap: the kind cluster, the images, the registry, the
 databases and the chart install. Before it creates the cluster it builds one
 test binary from the snapshot:
@@ -466,3 +469,35 @@ The filters that were files under `testdata/e2e` are Go predicates in
 the mistakes it refuses, and so is every other predicate the phase decides a
 row by. SQL runs through `kubectl exec` into the database Deployments, as it
 did from the shell.
+
+`TestMigrationsPostgreSQL` and `TestMigrationsMySQL` are the migration phases,
+one engine each, and each refuses an `E2E_ENGINE` other than its own. Both
+start with `migration-policy`; MySQL then runs `mysql-transaction-mode`, since
+the sequence it applies names a transaction mode. The lifecycle publishes the
+migration directory with the Ptah the operator runs, takes a database nothing
+has migrated through the approval gate, the run and the history it leaves, and
+then runs every row that holds the path to a refusal or a fault, in the
+namespace the data plane prepared:
+
+- `migrations_lifecycle_e2e_test.go`: the main lifecycle, the approval stamp,
+  and the refusal of an approval that names a consumed plan.
+- `migrations_realm_e2e_test.go`: the realm, the partial run, the older
+  artifact, the modified file and the branch applied out of order.
+- `migrations_guard_e2e_test.go`: the apply-policy guard, adoption of an
+  existing schema and the checkpoint bootstrap.
+- `migrations_uncertain_e2e_test.go`: the uncertain Apply, the late dispatch
+  and the restored history.
+- `migrations_faults_e2e_test.go`: deletion, a stopped Apply, a lost log, the
+  retry interval, suspension and the lock-release fault.
+- `migrations_isolation_e2e_test.go`: the isolated node, the unknown layer,
+  egress, the retarget before dispatch, the rebuild drill and the transaction
+  mode.
+
+The phase stops at its first failure, as the script did, and a cleanup
+registered before it creates anything puts back the isolation rules, the
+egress policies and the apply gate however it ends. The isolated-node row cuts
+the isolation worker's node container off from the API server, which is why
+the phase reads the Docker context and the kind cluster's name, and why only a
+suite that declares the worker may run it. The Job and status filters are Go
+predicates beside the rows that use them, each held by a unit test to the
+readings it accepts and the mistakes it refuses.

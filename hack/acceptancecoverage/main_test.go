@@ -155,7 +155,7 @@ func TestReadDriverPhasesBindsAnEngineToOnePhase(t *testing.T) {
 			source: []string{
 				`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
 				`E2E_ENGINE=postgresql \`,
-				"\trun_recorded_phase migrations-postgresql \"$ROOT_DIR/hack/e2e-migrations.sh\"",
+				"\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql",
 				``,
 				`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
 				"\trun_recorded_phase uninstall \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
@@ -168,7 +168,7 @@ func TestReadDriverPhasesBindsAnEngineToOnePhase(t *testing.T) {
 			name: "phases with nothing between them",
 			source: []string{
 				`E2E_ENGINE=postgresql \`,
-				"\trun_recorded_phase migrations-postgresql \"$ROOT_DIR/hack/e2e-migrations.sh\"",
+				"\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql",
 				"\trun_recorded_phase uninstall \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
 			},
 		},
@@ -181,7 +181,7 @@ func TestReadDriverPhasesBindsAnEngineToOnePhase(t *testing.T) {
 				t.Fatalf("read %d phases, want 2: %#v", len(phases), phases)
 			}
 			if phases[0].name != "migrations-postgresql" || phases[0].engine != "postgresql" ||
-				phases[0].script != "e2e-migrations.sh" {
+				phases[0].goPhase != "migrations-postgresql" || phases[0].script != "" {
 				t.Fatalf("first phase = %#v", phases[0])
 			}
 			if phases[1].engine != "" {
@@ -242,6 +242,41 @@ func TestGoPhasesReadTheirDeclaredScenarios(t *testing.T) {
 	}
 	if listed != len(table.minors) {
 		t.Fatalf("cert-rotation is listed in %d cells, want one per minor (%d)", listed, len(table.minors))
+	}
+}
+
+// The migration phases are Go phases that each run one engine. The table reads
+// the engine from the driver's binding and the scenarios from the declaration,
+// so a cell that listed the other engine, or no engine, would report coverage
+// the job never ran.
+func TestMigrationPhasesReadTheirEngineAndDeclaredScenarios(t *testing.T) {
+	t.Parallel()
+	table, err := buildCoverage(repositoryRoot, "edge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, declared := range []e2ephases.Phase{e2ephases.MigrationsPostgreSQL.Phase, e2ephases.MigrationsMySQL.Phase} {
+		engine := strings.TrimPrefix(declared.Name, "migrations-")
+		listed := 0
+		for _, cell := range table.cells {
+			for _, phase := range cell.phases {
+				if phase.name != declared.Name {
+					continue
+				}
+				listed++
+				if phase.engine != engine || phase.script != "" {
+					t.Fatalf("%s lists %s with engine %q and script %q, want the Go phase on %s",
+						cell.ciJobName, phase.name, phase.engine, phase.script, engine)
+				}
+				if strings.Join(phase.scenarios, ",") != strings.Join(declared.Scenarios, ",") {
+					t.Fatalf("%s lists %v for %s, want the declared %v",
+						cell.ciJobName, phase.scenarios, phase.name, declared.Scenarios)
+				}
+			}
+		}
+		if listed != len(table.minors) {
+			t.Fatalf("%s is listed in %d cells, want one per minor (%d)", declared.Name, listed, len(table.minors))
+		}
 	}
 }
 

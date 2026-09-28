@@ -213,6 +213,17 @@ func failedBeforeResolveChild(schema *ptahv1alpha1.PtahSchema) bool {
 		})
 }
 
+// failedForCurrentSpec is a schema whose status reports Failed for the spec
+// it holds now. Right after a spec edit the status still describes the spec
+// before it: a schema that had failed reads Failed until the controller
+// observes the edit, and that reading is no verdict on the new spec. A wait
+// that ended on it would fail on the poll that came too soon, which is what the
+// suspension after a refused Resolve did once the poll no longer paid for a
+// kubectl process.
+func failedForCurrentSpec(schema *ptahv1alpha1.PtahSchema) bool {
+	return schema.Status.Phase == ptahv1alpha1.PhaseFailed && schema.Status.ObservedGeneration == schema.Generation
+}
+
 var decimalCount = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // tlsProxyCounter reads the request count the proxy serves on its admin

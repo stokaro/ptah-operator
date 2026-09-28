@@ -25,17 +25,15 @@ import (
 // operator's the same way.
 
 // shellDerivation is one phase script's realm digest: the helper that hashes
-// stdin, the function that builds the canonical document, and what it takes.
+// stdin and the function that builds the canonical document.
 type shellDerivation struct {
 	script   string
 	hash     string
 	function string
-	realm    bool
 }
 
 var shellDerivations = []shellDerivation{
 	{script: "e2e-reference-data.sh", hash: "sha256", function: "coordination_digest"},
-	{script: "e2e-migrations.sh", hash: "sha256", function: "realm_digest", realm: true},
 }
 
 func TestEveryShellRealmDigestIsTheOperators(t *testing.T) {
@@ -60,18 +58,8 @@ func TestEveryShellRealmDigestIsTheOperators(t *testing.T) {
 				{engine: "PostgreSQL", canonical: "postgresql", namespace: "ptah-test-a-1234", name: "e2e/admission/postgresql"},
 				{engine: "MySQL", canonical: "mysql", namespace: "team-b", name: "e2e/migrations/mysql"},
 			} {
-				var want string
-				var arguments []string
-				var err error
-				if derivation.realm {
-					// A realm is named by a DNS subdomain, not by a key.
-					name := strings.ReplaceAll(sample.name, "/", "-")
-					want, err = fingerprint.DatabaseRealmDigest(sample.engine, name)
-					arguments = []string{sample.canonical, name}
-				} else {
-					want, err = fingerprint.DatabaseCoordinationDigest(sample.engine, sample.namespace, sample.name)
-					arguments = []string{sample.canonical, sample.namespace, sample.name}
-				}
+				want, err := fingerprint.DatabaseCoordinationDigest(sample.engine, sample.namespace, sample.name)
+				arguments := []string{sample.canonical, sample.namespace, sample.name}
 				if err != nil {
 					t.Fatal(err)
 				}

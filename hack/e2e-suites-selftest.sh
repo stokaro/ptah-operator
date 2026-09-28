@@ -162,28 +162,29 @@ done <"$SUITE_NAMES_FILE"
 grep -Fq 'E2E_DATAPLANE_MODE=$DATAPLANE_MODE' "$ROOT_DIR/hack/e2e-kind.sh" ||
 	fail "the driver does not tell the data plane which mode to run in"
 
-# Two suites run the same two scripts, so the engine is an input rather than a
-# default: a phase that picked one on its own would cover one engine and report
-# the coverage of two. Each script reads the engine the driver names and refuses
-# a run that names none.
-for engine_phase_script in e2e-migrations.sh e2e-reference-data.sh; do
-	# shellcheck disable=SC2016 # Match the literal import in each phase.
-	grep -Fq 'PHASE_ENGINE=${E2E_ENGINE:-}' "$ROOT_DIR/hack/$engine_phase_script" ||
-		fail "$engine_phase_script does not read the engine the driver names"
-	grep -Fq 'fail "E2E_ENGINE must name postgresql or mysql, and names' \
-		"$ROOT_DIR/hack/$engine_phase_script" ||
-		fail "$engine_phase_script does not refuse a run with no engine named"
-	# shellcheck disable=SC2016 # Match the literal selection in each phase.
-	grep -Fq 'case "$PHASE_ENGINE" in' "$ROOT_DIR/hack/$engine_phase_script" ||
-		fail "$engine_phase_script does not select its scenarios by engine"
-	# An if/else would hand the stopwatch the branch test's own failure, and the
-	# stopwatch returns what it is handed, so the phase would end under set -e
-	# with no proof and no reason. A case leaves the previous command's status.
-	# shellcheck disable=SC2016 # Match the shape that must not come back.
-	! grep -Fq 'if [ "$PHASE_ENGINE" = postgresql ]; then' \
-		"$ROOT_DIR/hack/$engine_phase_script" ||
-		fail "$engine_phase_script selects its scenarios in a branch whose test reaches the stopwatch"
-done
+# Two suites run the same reference-data script, so the engine is an input
+# rather than a default: a phase that picked one on its own would cover one
+# engine and report the coverage of two. The script reads the engine the driver
+# names and refuses a run that names none. The migration phases are Go tests
+# that refuse an engine other than their own, and
+# hack/verify-kubernetes-support.go holds each call to it.
+engine_phase_script=e2e-reference-data.sh
+# shellcheck disable=SC2016 # Match the literal import in the phase.
+grep -Fq 'PHASE_ENGINE=${E2E_ENGINE:-}' "$ROOT_DIR/hack/$engine_phase_script" ||
+	fail "$engine_phase_script does not read the engine the driver names"
+grep -Fq 'fail "E2E_ENGINE must name postgresql or mysql, and names' \
+	"$ROOT_DIR/hack/$engine_phase_script" ||
+	fail "$engine_phase_script does not refuse a run with no engine named"
+# shellcheck disable=SC2016 # Match the literal selection in the phase.
+grep -Fq 'case "$PHASE_ENGINE" in' "$ROOT_DIR/hack/$engine_phase_script" ||
+	fail "$engine_phase_script does not select its scenarios by engine"
+# An if/else would hand the stopwatch the branch test's own failure, and the
+# stopwatch returns what it is handed, so the phase would end under set -e
+# with no proof and no reason. A case leaves the previous command's status.
+# shellcheck disable=SC2016 # Match the shape that must not come back.
+! grep -Fq 'if [ "$PHASE_ENGINE" = postgresql ]; then' \
+	"$ROOT_DIR/hack/$engine_phase_script" ||
+	fail "$engine_phase_script selects its scenarios in a branch whose test reaches the stopwatch"
 # Every engine-named phase the driver runs binds the engine its name says. A
 # name and a binding that disagree would run one engine twice and skip the
 # other, and both jobs would pass.

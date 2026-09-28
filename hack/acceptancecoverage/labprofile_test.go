@@ -118,7 +118,8 @@ func expectedLabRecovery(t *testing.T, r labReading) string {
 		"Operator process: with every manager replaced at once the workload reconverged in %s, "+
 			"and after a %s registry outage it reconverged in %s. "+
 			"Operator state: a rebuild from backed-up specs runs nothing a lost approval authorized "+
-			"(run_rebuild_drill); status and run evidence newer than the backup are lost, "+
+			"(the rebuild drill in test/e2e/migrations_isolation_e2e_test.go); "+
+			"status and run evidence newer than the backup are lost, "+
 			"so its recovery point is the age of the backup, and no recovery time is measured. "+
 			"Database: none is claimed. The lab restores no database, and its recovery point and "+
 			"recovery time belong to the deployment's own backup system.",

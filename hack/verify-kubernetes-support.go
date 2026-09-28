@@ -55,7 +55,6 @@ const (
 	e2eStaticPath                  = "hack/e2e-static.sh"
 	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
 	e2eHAPath                      = "hack/e2e-ha.sh"
-	e2eMigrationsPath              = "hack/e2e-migrations.sh"
 	e2eReferenceDataPath           = "hack/e2e-reference-data.sh"
 	e2eAlertingPath                = "hack/e2e-alerting.sh"
 	failedHookEvidencePath         = "hack/failed-hook-evidence.jq"
@@ -230,7 +229,6 @@ func main() {
 		staticChecks:               e2eStaticPath,
 		crdUpgrade:                 e2eCRDUpgradePath,
 		highAvailability:           e2eHAPath,
-		migrations:                 e2eMigrationsPath,
 		referenceData:              e2eReferenceDataPath,
 		alerting:                   e2eAlertingPath,
 		failedHookEvidence:         failedHookEvidencePath,
@@ -2269,7 +2267,6 @@ type e2eWiringFiles struct {
 	admissionSchemaSelftest    string
 	controllerSchemaContract   string
 	controllerSchemaSelftest   string
-	migrations                 string
 	referenceData              string
 	alerting                   string
 }
@@ -3367,8 +3364,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert run_go_phase assert`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation run_go_phase cert-rotation`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane run_go_phase dataplane`),
-		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`),
-		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"`),
+		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql`),
+		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql run_go_phase migrations-mysql`),
 		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"`),
 		exactSourceLine("MySQL reference-data lifecycle", `run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"`),
 		exactSourceLine("uninstall lifecycle", `run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
@@ -4305,17 +4302,16 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	return nil
 }
 
-// The statements the migrations and reference-data phases run by hand -- an
-// external edit, a column undone, a revision row taken out of the history --
-// are guarded with `|| fail`, and the exit status of a pipeline belongs to its
-// last stage. The value helper ends in the trim, so a guard on one reads tr
-// and never the exec: the statement is skipped in silence and the phase dies
-// at its next wait, accusing the operator of a state the harness never set up.
-// The statement helper differs from the value helper it sits among by one
-// word, with thirty-odd neighboring calls reading the same, which is what this
-// refuses: SQL that changes a database handed to the value helper.
+// The statements the reference-data phase runs by hand -- an external edit
+// among them -- are guarded with `|| fail`, and the exit status of a pipeline
+// belongs to its last stage. The value helper ends in the trim, so a guard on
+// one reads tr and never the exec: the statement is skipped in silence and the
+// phase dies at its next wait, accusing the operator of a state the harness
+// never set up. The statement helper differs from the value helper it sits
+// among by one word, with neighboring calls reading the same, which is what
+// this refuses: SQL that changes a database handed to the value helper.
 var mutatingValueQuery = regexp.MustCompile(
-	`(?m)^[^#\r\n]*\b(?:migration_query|reference_query)\b[ \t]*(?:\\\r?\n[ \t]*)?` +
+	`(?m)^[^#\r\n]*\breference_query\b[ \t]*(?:\\\r?\n[ \t]*)?` +
 		`"[ \t]*(?i:ALTER|CREATE|DELETE|DROP|GRANT|INSERT|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE)\b`)
 
 // verifySQLStatementGuards refuses a call site that went back to the helper
@@ -4323,7 +4319,7 @@ var mutatingValueQuery = regexp.MustCompile(
 // a variable is beyond it; hack/e2e-sql-selftest.sh drives the helpers
 // themselves for the half a reader cannot see.
 func verifySQLStatementGuards(files e2eWiringFiles) error {
-	for _, path := range []string{files.migrations, files.referenceData} {
+	for _, path := range []string{files.referenceData} {
 		contents, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
@@ -5167,56 +5163,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 			},
 		},
 		{
-			phase:  "migrations-postgresql",
-			script: "hack/e2e-migrations.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
-				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
-				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
-				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
-				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
-				{name: "E2E_CONTROLLER_STATE_VERSION", value: `$CONTROLLER_STATE_VERSION`},
-				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
-				{name: "E2E_REGISTRY_HOST_ADDRESS", value: `$REMOTE_REGISTRY`},
-				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
-				// The isolation worker's node container, which the phase cuts
-				// off from the API server.
-				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
-				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
-				// One engine per phase: the suite that ran both was the longest
-				// stage of the matrix, and a phase with no engine named refuses
-				// to run rather than quietly covering one of the two.
-				{name: "E2E_ENGINE", value: `postgresql`},
-			},
-			isolatesNode: true,
-		},
-		{
-			phase:  "migrations-mysql",
-			script: "hack/e2e-migrations.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
-				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
-				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
-				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
-				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
-				{name: "E2E_CONTROLLER_STATE_VERSION", value: `$CONTROLLER_STATE_VERSION`},
-				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
-				{name: "E2E_REGISTRY_HOST_ADDRESS", value: `$REMOTE_REGISTRY`},
-				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
-				// The isolation worker's node container, which the phase cuts
-				// off from the API server.
-				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
-				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
-				// One engine per phase: the suite that ran both was the longest
-				// stage of the matrix, and a phase with no engine named refuses
-				// to run rather than quietly covering one of the two.
-				{name: "E2E_ENGINE", value: `mysql`},
-			},
-			isolatesNode: true,
-		},
-		{
 			phase:  "reference-data-postgresql",
 			script: "hack/e2e-reference-data.sh",
 			bindings: []phaseEnvironmentBinding{
@@ -5311,8 +5257,14 @@ var goPhaseBindings = map[string]string{
 	"E2E_REGISTRY_SERVICE":          `$REGISTRY_SERVICE`,
 	"E2E_REGISTRY_PORT":             `$E2E_REGISTRY_PORT`,
 	"E2E_REGISTRY_CREDENTIALS_FILE": `$REGISTRY_CREDENTIALS_FILE`,
-	"E2E_DOCKER_CONTEXT":            `$DOCKER_CONTEXT`,
-	"E2E_REGISTRY_CONTAINER_ID":     `$REGISTRY_CONTAINER_ID`,
+	// The registry as the host reaches it, for the one migration artifact no
+	// product command can produce.
+	"E2E_REGISTRY_HOST_ADDRESS": `$REMOTE_REGISTRY`,
+	"E2E_DOCKER_CONTEXT":        `$DOCKER_CONTEXT`,
+	"E2E_REGISTRY_CONTAINER_ID": `$REGISTRY_CONTAINER_ID`,
+	// The kind cluster's name, which the isolation worker's node container is
+	// named from.
+	"E2E_KIND_CLUSTER_NAME": `$CLUSTER_NAME`,
 	// The external PostgreSQL runs from the digest the source image resolved
 	// to, and the kind cluster's name is the owner its container is labeled
 	// with.
@@ -5520,6 +5472,26 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 	return nil
 }
 
+// goPhaseBinding is what the driver binds one input of a Go phase to.
+// E2E_ENGINE is the one input whose value differs between the phases that read
+// it: each migration phase runs the engine its name ends in, so a phase bound
+// to the other engine would cover one engine twice and leave the other
+// unproven, with both jobs green.
+func goPhaseBinding(phase, input string) (string, bool) {
+	if input == engineInput {
+		engine, migration := strings.CutPrefix(phase, "migrations-")
+		if !migration || (engine != "postgresql" && engine != "mysql") {
+			return "", false
+		}
+		return engine, true
+	}
+	value, known := goPhaseBindings[input]
+	return value, known
+}
+
+// engineInput is the input goPhaseBinding derives from the phase's name.
+const engineInput = "E2E_ENGINE"
+
 // verifyGoPhaseInvocation holds the driver's call of a Go phase to the inputs
 // test/e2e/phases declares for it: every one bound, to the driver variable
 // goPhaseBindings names, and nothing else. The phase cannot read an input it
@@ -5550,7 +5522,7 @@ func verifyGoPhaseInvocation(path string, phase phases.Phase, invocation phaseIn
 		bound[binding.name] = binding.value
 	}
 	for _, name := range phase.Inputs() {
-		want, known := goPhaseBindings[name]
+		want, known := goPhaseBinding(phase.Name, name)
 		if !known {
 			return fmt.Errorf("%s: %s phase reads %s, and goPhaseBindings does not say which driver variable feeds it",
 				path, phase.Name, name)
@@ -5642,8 +5614,6 @@ func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
 		return files.crdUpgrade
 	case e2eHAPath:
 		return files.highAvailability
-	case e2eMigrationsPath:
-		return files.migrations
 	case e2eReferenceDataPath:
 		return files.referenceData
 	case e2eAlertingPath:
