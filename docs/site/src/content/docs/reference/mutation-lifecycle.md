@@ -234,12 +234,24 @@ dispatch beside a Job that may already be running SQL.
 
 The created Job is read back and its whole intent compared against what the
 builder produced -- owner reference, labels, annotations and a semantic
-comparison of the spec -- before its UID is persisted.
+comparison of the spec -- before its UID is persisted. The same comparison
+holds the Job to the epoch its claim was made under, that epoch to the binding
+in force, and its Pod template to the one the admission snapshot recorded.
+
+Whether a Job is the one its claim built is decided in one place,
+`jobclaim.Match`, and every reader asks it: the read-back after the create,
+the adoption of a Job a stopped pass created, the cleanup of a Job a rotation
+retired, and the controller-write webhook when it admits the create, the
+cleanup TTL or a plan published from a Job. A reader that can rebuild the Job
+holds it to the rebuild; one that cannot, because the inputs may have moved
+since dispatch, holds it to the labels and annotations the claim fixes. The
+webhook therefore refuses a Job the controller would not recognize as its
+claim's, and the controller never touches one the webhook would refuse.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `validateJobIntent`, then the UID written by `mutationlifecycle.Dispatch` |
-| `PtahMigration` | `validateMigrationJobIntent`, then the UID written by `mutationlifecycle.Dispatch` |
+| `PtahSchema` | `jobclaim.Match`, then the UID written by `mutationlifecycle.Dispatch` |
+| `PtahMigration` | `jobclaim.Match`, then the UID written by `mutationlifecycle.Dispatch` |
 
 A crash between the create and the UID write is covered by the dispatch marker:
 the next pass adopts the Job found under the reserved name, having checked that
@@ -253,7 +265,7 @@ in any of those is an uncertain outcome for a mutating claim, never a discard.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `reconcileActive`, `validateJobIntent` on every pass |
+| `PtahSchema` | `reconcileActive`, `jobclaim.Match` on every pass |
 | `PtahMigration` | `reconcileActiveMigration`, UID and owner compared each pass |
 
 Suspension cannot discard a dispatched mutating claim in either family. A
@@ -429,9 +441,9 @@ of the retired epoch that no pass harvested, stays in
 for: its UID adopted from a late create, or given up on at the Apply's
 `ObserveAfter` horizon, and its cleanup TTL set once it stops. The
 controller-write webhook admits either TTL only for the Job the record names,
-and judges the Job's metadata by the rule the controller uses,
-`workload.ValidateClaimedMetadata`, so declared Pod metadata neither hides a
-Job from the controller nor passes the webhook unchecked.
+and judges the Job by the matcher the controller uses, `jobclaim.Match`, so
+declared Pod metadata neither hides a Job from the controller nor passes the
+webhook unchecked.
 
 Each obligation is removed as it is met, and the record with its last one. No
 condition reason and no phase takes part in any of these decisions, so a later

@@ -1339,7 +1339,7 @@ func TestValidationHandlerReadsMaximumApplyPlanChunksConcurrently(t *testing.T) 
 	}
 	schema.Status.Plan = currentPlan(plan)
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-		Type: operatorv1alpha1.OperationApply, JobName: "ptah-apply-orders",
+		Type: operatorv1alpha1.OperationApply, ID: "operation-id", JobName: "ptah-apply-orders",
 		ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
 	}
 	expected := expectedJob(schema, schema.Status.ActiveOperation)
@@ -1562,6 +1562,14 @@ func planManifestHandlerFixture(
 func requestFor(t *testing.T, operation admissionv1.Operation, object client.Object) cradmission.Request {
 	t.Helper()
 
+	// The API server assigns a created object's UID before validating
+	// admission sees it (FillObjectMetaSystemFields runs ahead of
+	// createValidation in the generic registry store), so a create request
+	// never carries an object without one.
+	if operation == admissionv1.Create && object.GetUID() == "" {
+		object = object.DeepCopyObject().(client.Object)
+		object.SetUID("created-object-uid")
+	}
 	request := cradmission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
 		UID:       "request-uid",
 		Name:      object.GetName(),
@@ -1705,6 +1713,7 @@ func expectedJob(
 		labels[key] = value
 	}
 	annotations[workload.AnnotationOperationID] = operation.ID
+	annotations[workload.AnnotationExecutionBindingID] = operation.ExecutionBindingID
 	job := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -2058,7 +2067,7 @@ func applyProjectionFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operat
 	}}
 	schema.Status.Plan = currentPlan(plan)
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-		Type: operatorv1alpha1.OperationApply, JobName: "ptah-apply-orders",
+		Type: operatorv1alpha1.OperationApply, ID: "operation-id", JobName: "ptah-apply-orders",
 		ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
 	}
 	return schema, plan, chunks

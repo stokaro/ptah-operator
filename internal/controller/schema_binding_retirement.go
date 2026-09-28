@@ -3,9 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"strconv"
-	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -13,9 +10,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
-	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -342,101 +338,28 @@ func (r *SchemaReconciler) cleanupRetiredApplyJob(
 }
 
 // retiredPredecessorApplyJobMatches holds the Apply Job a retirement record
-// names to the exact envelope the retired claim dispatched: the record's name
-// and UID, the retired epoch, and the pending observation's plan, operation
-// and admission snapshot. Beside the keys the envelope fixes, the Job may
-// carry what spec.execution.podMetadata declared when it was dispatched, by
-// the rule the controller-write validator applies; the template digest pins
-// what that was.
+// names to the claim its pending observation keeps: the record's name and
+// UID, the retired epoch, and the observation's plan, operation and admission
+// snapshot. The Job is matched without a rebuild, by jobclaim.Match, which is
+// the rule the controller-write webhook applies to the cleanup this admits.
 func retiredPredecessorApplyJobMatches(
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 	job *batchv1.Job,
 ) bool {
 	retired := retiredApplyJob(schema, pending)
-	if retired == nil || job == nil || job.UID == "" || schema.Status.ExecutionBinding == nil ||
+	if retired == nil || schema.Status.ExecutionBinding == nil ||
 		pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
-		retired.UID != pending.ApplyJobUID || job.Name != retired.Name ||
-		(retired.UID != "" && job.UID != retired.UID) ||
-		pending.ApplyOperationID == "" ||
-		!retiredEpochIs(schema, pending.Plan.ExecutionBindingID) ||
-		!exactControllerOwner(
-			job.OwnerReferences,
-			operatorv1alpha1.GroupVersion.String(),
-			"PtahSchema",
-			schema.Name,
-			schema.UID,
-		) {
+		retired.UID != pending.ApplyJobUID ||
+		!retiredEpochIs(schema, pending.Plan.ExecutionBindingID) {
 		return false
 	}
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   "apply",
-		workload.LabelOperationID: workload.OperationIDLabelValue(pending.ApplyOperationID),
-	}
-	if workload.ValidateClaimedMetadata(job.Labels, wantLabels) != nil ||
-		!sha256DigestPattern.MatchString(pending.Plan.Fingerprint) ||
-		!sha256DigestPattern.MatchString(pending.Plan.ContentDigest) ||
-		strings.TrimSpace(pending.Plan.PtahVersion) == "" ||
-		pending.Plan.PtahVersion != strings.TrimSpace(pending.Plan.PtahVersion) {
-		return false
-	}
-	inputFingerprint := job.Annotations[workload.AnnotationInputFingerprint]
-	snapshotDigest := job.Annotations[workload.AnnotationAdmissionSnapshotDigest]
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             pending.ApplyOperationID,
-		workload.AnnotationInputFingerprint:        inputFingerprint,
-		workload.AnnotationPtahVersion:             pending.Plan.PtahVersion,
-		workload.AnnotationExecutionBindingID:      pending.Plan.ExecutionBindingID,
-		workload.AnnotationPlanFingerprint:         pending.Plan.Fingerprint,
-		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
-		workload.AnnotationAdmissionSnapshotDigest: snapshotDigest,
-	}
-	workload.MarkMutatingOperation(wantAnnotations)
-	// The manager that dispatched the Job is read from the Job: a plan names
-	// the manager that published it, and a later manager of the same
-	// execution binding may have applied it. What is read is held below to
-	// the exact annotation set on the Job and its Pod template, and pinned by
-	// the Pod template digest the claim persisted before dispatch.
-	controllerImage := job.Annotations[workload.AnnotationControllerImage]
-	controllerRevision := job.Annotations[workload.AnnotationControllerRevision]
-	if pending.Plan.Name == "" || pending.Plan.UID == "" ||
-		pending.AdmissionSnapshot == nil ||
-		podintent.ValidateSnapshot(pending.AdmissionSnapshot) != nil ||
-		pending.AdmissionSnapshot.Digest != snapshotDigest ||
-		!controllerImagePattern.MatchString(controllerImage) ||
-		controllerstate.ValidateRevision(controllerRevision) != nil ||
-		pending.Plan.ControllerStateVersion < 1 {
-		return false
-	}
-	wantAnnotations[workload.AnnotationControllerImage] = controllerImage
-	wantAnnotations[workload.AnnotationControllerRevision] = controllerRevision
-	wantAnnotations[workload.AnnotationControllerStateVersion] = strconv.FormatInt(
-		int64(pending.Plan.ControllerStateVersion),
-		10,
-	)
-	if !sha256DigestPattern.MatchString(inputFingerprint) ||
-		!sha256DigestPattern.MatchString(snapshotDigest) ||
-		workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations) != nil ||
-		!reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
-		return false
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeGeneratedJobSelector(normalized); err != nil {
-		return false
-	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
-		return false
-	}
-	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
-	return err == nil && templateDigest == pending.AdmissionSnapshot.TemplateDigest
+	return jobclaim.Match(job, jobclaim.PendingApply(schema, pending)) == nil
 }
 
 // readOnlyJobEnvelopeMatches holds the read-only Job a retirement record names
-// to the exact envelope the workload builder writes, declared Pod metadata
-// admitted as retiredPredecessorApplyJobMatches admits it. Its two callers differ in
+// to the claim that dispatched it, matched without a rebuild as
+// retiredPredecessorApplyJobMatches matches an Apply. Its two callers differ in
 // one thing: what they know about the committed Job UID. After an ordinary
 // dispatch the claim and the record carry it and the live object must repeat
 // it; after a cutover that lost it, neither carries one and the caller is
@@ -453,76 +376,17 @@ func readOnlyJobEnvelopeMatches(
 		return false
 	}
 	retired := retiredReadOnlyJob(schema)
-	if retired == nil || job == nil || operation.ID == "" || job.UID == "" ||
-		retired.Operation != operation.Type || retired.Name != operation.JobName ||
-		retired.UID != operation.JobUID ||
-		!retiredEpochIs(schema, operation.ExecutionBindingID) ||
-		!exactControllerOwner(
-			job.OwnerReferences,
-			operatorv1alpha1.GroupVersion.String(),
-			"PtahSchema",
-			schema.Name,
-			schema.UID,
-		) {
+	if retired == nil || retired.Operation != operation.Type || retired.Name != operation.JobName ||
+		retired.UID != operation.JobUID || committedUID != (operation.JobUID != "") ||
+		!retiredEpochIs(schema, operation.ExecutionBindingID) {
 		return false
 	}
-	if committedUID {
-		if operation.JobUID == "" || operation.JobUID != job.UID {
-			return false
-		}
-	} else if operation.JobUID != "" {
+	// The builder refuses any other name, so a claim naming one reserved
+	// nothing.
+	if name, err := workload.NameFor(schema, *operation.DeepCopy()); err != nil || name != operation.JobName {
 		return false
 	}
-	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
-	if err != nil || operation.JobName != expectedName || job.Name != expectedName ||
-		operation.AdmissionSnapshot == nil ||
-		podintent.ValidateSnapshot(operation.AdmissionSnapshot) != nil {
-		return false
-	}
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
-		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
-	}
-	if workload.ValidateClaimedMetadata(job.Labels, wantLabels) != nil {
-		return false
-	}
-	ptahVersion := job.Annotations[workload.AnnotationPtahVersion]
-	if ptahVersion == "" || len(ptahVersion) > 128 || strings.TrimSpace(ptahVersion) != ptahVersion {
-		return false
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             operation.ID,
-		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
-		workload.AnnotationPtahVersion:             ptahVersion,
-		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
-	}
-	controllerImage := job.Annotations[workload.AnnotationControllerImage]
-	controllerRevision := job.Annotations[workload.AnnotationControllerRevision]
-	controllerStateVersion := job.Annotations[workload.AnnotationControllerStateVersion]
-	parsedStateVersion, parseErr := strconv.ParseInt(controllerStateVersion, 10, 32)
-	if !controllerImagePattern.MatchString(controllerImage) ||
-		controllerstate.ValidateRevision(controllerRevision) != nil || parseErr != nil ||
-		parsedStateVersion < 1 || strconv.FormatInt(parsedStateVersion, 10) != controllerStateVersion {
-		return false
-	}
-	wantAnnotations[workload.AnnotationControllerImage] = controllerImage
-	wantAnnotations[workload.AnnotationControllerRevision] = controllerRevision
-	wantAnnotations[workload.AnnotationControllerStateVersion] = controllerStateVersion
-	if workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations) != nil ||
-		!reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
-		return false
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeGeneratedJobSelector(normalized); err != nil ||
-		!reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
-		return false
-	}
-	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
-	return err == nil && templateDigest == operation.AdmissionSnapshot.TemplateDigest
+	return jobclaim.Match(job, jobclaim.SchemaOperation(schema, operation)) == nil
 }
 
 func retiredReadOnlyJobMatches(

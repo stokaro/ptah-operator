@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -56,10 +55,10 @@ func (v *Validator) validateMigrationJobCreate(
 	if err != nil {
 		return denyf("migration operation cannot reconstruct the submitted Job: %v", err)
 	}
-	if err := validateMigrationAdmissionSnapshot(operation, expected); err != nil {
-		return denyf("migration operation Pod admission snapshot is invalid: %v", err)
-	}
-	if err := validateJobIntent(job, expected, migrationSubject(migration), true); err != nil {
+	claim := jobclaim.MigrationOperation(migration, operation)
+	claim.Binding = migration.Status.ExecutionBinding
+	claim.Built = expected
+	if err := jobclaim.Match(job, claim); err != nil {
 		return denyf("Job is outside the migration operation intent: %v", err)
 	}
 	return nil
@@ -140,98 +139,12 @@ func validateClaimBoundMigrationJobCleanup(
 	if err != nil {
 		return fmt.Errorf("derive claimed Job name: %w", err)
 	}
-	if job.Namespace != migration.Namespace || operation.JobName != expectedName || job.Name != expectedName ||
-		operation.JobUID == "" || operation.JobUID != job.UID {
-		return errors.New("Job name, namespace, or UID does not match the persisted operation claim")
+	if operation.JobName != expectedName || operation.JobUID == "" {
+		return errors.New("the persisted operation claim does not name the Job it reserved")
 	}
-	if _, err := exactNamedControllerOwner(
-		job.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahMigration",
-		migration.Name,
-		migration.UID,
-	); err != nil {
-		return fmt.Errorf("Job owner does not match the current migration UID: %w", err)
-	}
-	if operation.ExecutionBindingID != migration.Status.ExecutionBinding.Epoch {
-		return errors.New("operation claim was authorized under a retired execution binding")
-	}
-	if err := validateCurrentExecutionEnvelope(migration.Status.ExecutionBinding, job.Annotations); err != nil {
-		return err
-	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return fmt.Errorf("persisted Pod admission snapshot is invalid: %w", err)
-	}
-
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   workload.ComponentMigrationOperation,
-		workload.LabelMigration:   migration.Name,
-		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
-		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
-	}
-	if err := workload.ValidateClaimedMetadata(job.Labels, wantLabels); err != nil {
-		return fmt.Errorf("Job labels do not match the persisted operation claim: %w", err)
-	}
-	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
-		return err
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             operation.ID,
-		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
-		workload.AnnotationPtahVersion:             job.Annotations[workload.AnnotationPtahVersion],
-		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationControllerImage:         job.Annotations[workload.AnnotationControllerImage],
-		workload.AnnotationControllerRevision:      job.Annotations[workload.AnnotationControllerRevision],
-		workload.AnnotationControllerStateVersion:  job.Annotations[workload.AnnotationControllerStateVersion],
-		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
-	}
-	if operation.Type == operatorv1alpha1.MigrationOperationApply {
-		workload.MarkMutatingOperation(wantAnnotations)
-	}
-	if err := workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
-		return fmt.Errorf("Job annotations are not the exact current operation envelope: %w", err)
-	}
-	// The template carries what the object carries, declared metadata
-	// included, and the digest below pins both to the snapshot.
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
-		return errors.New("Job Pod template annotations differ from the current operation envelope")
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeJobForComparison(normalized, true); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
-		return errors.New("Job Pod template labels differ from the persisted operation claim")
-	}
-	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
-	if err != nil {
-		return fmt.Errorf("digest claimed Job Pod template: %w", err)
-	}
-	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return errors.New("Job Pod template does not match the persisted admission snapshot")
-	}
-	return nil
-}
-
-func validateMigrationAdmissionSnapshot(
-	operation *operatorv1alpha1.MigrationOperationStatus,
-	expected *batchv1.Job,
-) error {
-	if operation == nil || expected == nil {
-		return errors.New("migration operation or reconstructed Job is missing")
-	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return err
-	}
-	templateDigest, err := podintent.DigestTemplate(&expected.Spec.Template)
-	if err != nil {
-		return err
-	}
-	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return errors.New("snapshot template digest does not match the reconstructed Job")
-	}
-	return nil
+	claim := jobclaim.MigrationOperation(migration, operation)
+	claim.Binding = migration.Status.ExecutionBinding
+	return jobclaim.Match(job, claim)
 }
 
 func (v *Validator) readMigration(

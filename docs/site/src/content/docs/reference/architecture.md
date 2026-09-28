@@ -227,6 +227,8 @@ is the one to change when the contract changes.
 | Concept | Package |
 | --- | --- |
 | Reconcilers for both families | `internal/controller` |
+| What each operation type is, the dispatch sequence, what retiring a claim releases | `internal/mutationlifecycle` |
+| Whether a Job is the one its claim built | `internal/jobclaim` |
 | Bounded Job and Pod construction | `internal/workload` |
 | Result framing, redaction, input validation | `internal/runner` |
 | Machine-readable data-plane contracts | `internal/dataplane` |

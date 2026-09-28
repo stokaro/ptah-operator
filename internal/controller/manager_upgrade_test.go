@@ -269,13 +269,7 @@ func TestAdoptedJobIntentTakesOnlyTheRecordedManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	templateDigest, err := podintent.DigestTemplate(&built.Spec.Template)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation.AdmissionSnapshot = &operatorv1alpha1.PodAdmissionSnapshot{
-		Version: podintent.SnapshotVersion, TemplateDigest: templateDigest, Digest: testDigest,
-	}
+	operation.AdmissionSnapshot = testAdmissionSnapshotOf(&built.Spec.Template)
 	live, err := previous.Build(schema, *operation, nil)
 	if err != nil {
 		t.Fatal(err)
