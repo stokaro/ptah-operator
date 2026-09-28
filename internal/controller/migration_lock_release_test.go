@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -92,33 +91,6 @@ func TestAPassThatOwesADatabaseDoesNothingElse(t *testing.T) {
 	}
 	if actual := readMigration(t, api, migration); actual.Status.ActiveOperation != nil {
 		t.Fatalf("the pass that owed a database took a new claim: %#v", actual.Status.ActiveOperation)
-	}
-}
-
-// A release that fails is written down. Without the record the realm stays
-// claimed and nothing in status says so.
-func TestAFailedReleaseIsRecordedAsOwed(t *testing.T) {
-	t.Parallel()
-
-	migration, plan := awaitingApprovalFixture(t)
-	operation := applyClaimFor(t, migration, plan)
-	operation.DispatchStarted = true
-	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
-	holdMigrationApplyLease(t, reconciler, api, migration)
-
-	stored := readMigration(t, api, migration)
-	claim := stored.Status.ActiveOperation.DeepCopy()
-	reconciler.recordOwedMigrationLockRelease(context.Background(), stored, claim,
-		errors.New("the API server refused the release"))
-
-	actual := readMigration(t, api, migration)
-	owed := actual.Status.PendingLockRelease
-	if owed == nil {
-		t.Fatal("a release that failed left nothing saying the database is still claimed")
-	}
-	if owed.CoordinationDigest != claim.CoordinationDigest || owed.OperationID != claim.ID ||
-		owed.LeaseEpoch != claim.LeaseEpoch || owed.LeaseDurationSeconds != claim.LeaseDurationSeconds {
-		t.Fatalf("the record does not reproduce the claim that took the Lease: %#v vs %#v", owed, claim)
 	}
 }
 

@@ -3310,9 +3310,12 @@ func TestExecutionBindingChangeAfterApplyClaimReleasesAuthorizationBeforeDispatc
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("invalidate claimed Apply: %v", err)
 	}
+	// The claim goes in the write that installs the new epoch, carrying its
+	// release, and the release follows the write in the same pass. The
+	// retired plan's approvals are swept on the next.
 	actual := safetyGetSchema(t, api, schema)
 	if retirement := actual.Status.PendingBindingRetirement; actual.Status.ActiveOperation != nil || actual.Status.Plan != nil ||
-		retirement == nil || retirement.Plan == nil || retirement.Job != nil || actual.Status.PendingLockRelease == nil ||
+		retirement == nil || retirement.Plan == nil || retirement.Job != nil || actual.Status.PendingLockRelease != nil ||
 		actual.Status.Phase != operatorv1alpha1.PhasePending || !contains(actual.Finalizers, activeOperationFinalizer) {
 		t.Fatalf("claimed Apply binding fence = %#v, finalizers %v", actual.Status, actual.Finalizers)
 	}
@@ -3322,14 +3325,6 @@ func TestExecutionBindingChangeAfterApplyClaimReleasesAuthorizationBeforeDispatc
 	}
 	if len(jobs.Items) != 0 {
 		t.Fatalf("binding change dispatched %d Jobs from the old approval", len(jobs.Items))
-	}
-	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-		t.Fatalf("release retired Apply lock: %v", err)
-	}
-	released := safetyGetSchema(t, api, schema)
-	if released.Status.PendingLockRelease != nil || released.Status.PendingBindingRetirement == nil ||
-		released.Status.PendingBindingRetirement.Plan == nil {
-		t.Fatalf("lock release crossed plan cleanup boundary: %#v", released.Status)
 	}
 	leaseName, err := targetlock.LeaseName(testCoordinationDigest)
 	if err != nil {
@@ -3398,13 +3393,13 @@ func TestExecutionBindingChangeInvalidatesClaimDespiteTargetLockContention(t *te
 		t.Fatalf("binding invalidation under contention = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := safetyGetSchema(t, api, schema)
+	// The retired claim's release follows the write that retires it, in the
+	// same pass, and names the claim's own epoch, so it leaves the contender
+	// holding what it holds.
 	if actual.Status.ActiveOperation != nil || actual.Status.Plan != nil || actual.Status.PendingBindingRetirement == nil ||
-		actual.Status.PendingBindingRetirement.Plan == nil || actual.Status.PendingLockRelease == nil ||
+		actual.Status.PendingBindingRetirement.Plan == nil || actual.Status.PendingLockRelease != nil ||
 		actual.Status.Phase != operatorv1alpha1.PhasePending {
 		t.Fatalf("contended binding fence = %#v", actual.Status)
-	}
-	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-		t.Fatalf("release retired contended lock: %v", err)
 	}
 	if got := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); got != wantHolder {
 		t.Fatalf("stale release changed contending holder from %q to %q", wantHolder, got)

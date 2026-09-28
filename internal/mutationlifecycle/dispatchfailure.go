@@ -23,10 +23,14 @@ const (
 	StageIntent DispatchStage = "intent"
 )
 
-// Disposition is what a claim owes after something goes wrong with it.
+// Disposition is what a claim owes when it stops: after something goes wrong
+// with it, or, for DispositionAccounted, when its own result was read.
 type Disposition string
 
 const (
+	// DispositionAccounted retires the claim with the outcome its own result
+	// established.
+	DispositionAccounted Disposition = "accounted"
 	// DispositionUnaccounted retires the claim with an outcome nobody
 	// established. A mutating run may already have opened the database, and no
 	// later pass can establish that it did not.

@@ -152,7 +152,7 @@ func TestARotationRetiresAnUndispatchedClaimAndSweepsItsPlan(t *testing.T) {
 			rotated := safetyGetSchema(t, api, schema)
 			rolloutEpoch := rotated.Status.ExecutionBinding.Epoch
 			if rolloutEpoch == retiredEpoch || rotated.Status.ActiveOperation != nil || rotated.Status.Plan != nil ||
-				rotated.Status.PendingLockRelease == nil {
+				rotated.Status.PendingLockRelease != nil {
 				t.Fatalf("rotation over an undispatched claim = %#v", rotated.Status)
 			}
 			wantRetirement(t, rotated, &operatorv1alpha1.BindingRetirementStatus{
@@ -163,7 +163,6 @@ func TestARotationRetiresAnUndispatchedClaimAndSweepsItsPlan(t *testing.T) {
 			})
 
 			rewriteRetirementVerdicts(t, api, schema, row.breakRecord)
-			reconcileRetirementPass(t, reconciler, request, "release the retired claim's Lease")
 			reconcileRetirementPass(t, reconciler, request, "sweep the retired plan's approvals")
 			swept := safetyGetSchema(t, api, schema)
 			if swept.Status.ExecutionBinding.Epoch != rolloutEpoch || swept.Status.PendingLockRelease != nil ||
@@ -572,11 +571,10 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 				t.Fatalf("stopped retired Plan Job cleanup TTL = %v, want scheduled %t", ttl, row.wantCleanup)
 			}
 			if retired.Status.ActiveOperation != nil || retired.Status.PendingBindingRetirement != nil ||
-				retired.Status.PendingLockRelease == nil || retired.Status.PendingLockRelease.OperationID != retained.ID ||
+				retired.Status.PendingLockRelease != nil ||
 				retired.Status.ExecutionBinding.Epoch != rolloutEpoch || logs.reads != 0 {
-				t.Fatalf("the stopped Plan's claim was not retired with its Lease staged: %#v", retired.Status)
+				t.Fatalf("the stopped Plan's claim was not retired with its Lease handed back: %#v", retired.Status)
 			}
-			reconcileRetirementPass(t, reconciler, request, "hand the stopped Plan's Lease back")
 			if got := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); got != "" {
 				t.Fatalf("the retired Plan's Lease is still held by %q", got)
 			}

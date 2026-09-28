@@ -7,12 +7,14 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/telemetry"
 )
 
 // One obligation, two families, and an order rather than a state.
@@ -29,14 +31,13 @@ import (
 // statement later and only in memory. The window is between two writes, so the
 // writes are what these rows read.
 
-// One retirement is deliberately not in this table. An Apply that finished
-// uncertainly releases only where a live read proves the dispatched Job can no
-// longer write, and that read answers "may still be writing" to anything it
-// cannot settle, a transient error included. Recording the obligation ahead of
-// that answer would write down a release that must not happen, and the next
-// pass would perform it. There the claim outliving the write is the safe
-// failure: the Lease stays held until it expires, which is what the lock is
-// for.
+// A migration Apply retired as uncertain is in the table too, with both of its
+// answers. It hands the database back only where a live read proves the
+// dispatched Job can no longer write, and that read answers "may still be
+// writing" to anything it cannot settle, a transient error included. The read
+// is taken before the write, so the obligation is recorded where the answer
+// was "stopped" and nowhere else: recording it ahead of the answer would write
+// down a release that must not happen, and the next pass would perform it.
 
 // retiredClaim is what one status write said about the claim and about the
 // obligation that has to outlive it.
@@ -145,13 +146,13 @@ func migrationClaimRetirements() []claimRetirement {
 	}
 
 	cannotDispatch := retire(func(r *MigrationReconciler, migration *operatorv1alpha1.PtahMigration) error {
-		_, err := r.failUndispatchedMigrationOperation(
+		_, err := r.migrationOperationFailure(
 			context.Background(), migration, errors.New("the Job could not be created"))
 		return err
 	})
 	wentStale := retire(func(r *MigrationReconciler, migration *operatorv1alpha1.PtahMigration) error {
-		_, err := r.discardUndispatchedMigrationOperation(
-			context.Background(), migration, errors.New("the dispatch deadline passed"))
+		_, err := r.discardMigrationOperation(
+			context.Background(), migration, telemetry.OperationStale, errors.New("the dispatch deadline passed"))
 		return err
 	})
 
@@ -177,12 +178,57 @@ func migrationClaimRetirements() []claimRetirement {
 		return err
 	})
 
+	// The claim recorded no UID and nothing stands under the name it
+	// reserved, so nothing it dispatched can still write.
+	unaccountedStopped := retire(func(r *MigrationReconciler, migration *operatorv1alpha1.PtahMigration) error {
+		_, err := r.finishUncertainMigrationApply(context.Background(), migration, nil,
+			errors.New("the Apply Job create result is uncertain"), "")
+		return err
+	})
+	// The Job the claim recorded is still running.
+	unaccountedRunning := retire(func(r *MigrationReconciler, migration *operatorv1alpha1.PtahMigration) error {
+		operation := migration.Status.ActiveOperation
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: migration.Namespace, Name: operation.JobName}}
+		if err := r.Client.Create(context.Background(), job); err != nil {
+			return err
+		}
+		operation.JobUID = job.UID
+		_, err := r.finishUncertainMigrationApply(context.Background(), migration, nil,
+			errors.New("the database lock epoch changed under the dispatched run"), "")
+		return err
+	})
+	// The binding changes under a claim that never dispatched.
+	bindingChanged := retire(func(r *MigrationReconciler, migration *operatorv1alpha1.PtahMigration) error {
+		migration.Status.ActiveOperation.DispatchStarted = false
+		r.Jobs = executionBindingJobs{
+			ptahVersion:   migration.Status.ExecutionBinding.PtahVersion,
+			executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+			protocol:      migration.Status.ExecutionBinding.RunnerProtocolVersion,
+		}
+		_, _, err := r.reconcileMigrationExecutionBinding(context.Background(), migration)
+		return err
+	})
+	// A deleting resource whose Apply never dispatched, and one whose
+	// dispatched Apply has stopped.
+	deleted := func(dispatched bool) func(*testing.T, bool) []retiredClaim {
+		return retire(func(r *MigrationReconciler, migration *operatorv1alpha1.PtahMigration) error {
+			migration.Status.ActiveOperation.DispatchStarted = dispatched
+			_, err := r.reconcileMigrationDeletion(context.Background(), migration)
+			return err
+		})
+	}
+
 	return []claimRetirement{
 		{family: "PtahMigration", name: "a run that finished", leased: true, owes: true, retire: runFinished},
 		{family: "PtahMigration", name: "a run that finished, holding no Lease", leased: false, owes: false, retire: runFinished},
 		{family: "PtahMigration", name: "a claim that cannot dispatch", leased: true, owes: true, retire: cannotDispatch},
 		{family: "PtahMigration", name: "a claim that cannot dispatch, holding no Lease", leased: false, owes: false, retire: cannotDispatch},
 		{family: "PtahMigration", name: "a claim whose dispatch deadline passed", leased: true, owes: true, retire: wentStale},
+		{family: "PtahMigration", name: "a run nobody accounted for, that nothing can still write for", leased: true, owes: true, retire: unaccountedStopped},
+		{family: "PtahMigration", name: "a run nobody accounted for, whose Job is still running", leased: true, owes: false, retire: unaccountedRunning},
+		{family: "PtahMigration", name: "an undispatched claim under a changed execution binding", leased: true, owes: true, retire: bindingChanged},
+		{family: "PtahMigration", name: "an undispatched claim on a deleting resource", leased: true, owes: true, retire: deleted(false)},
+		{family: "PtahMigration", name: "a stopped run on a deleting resource", leased: true, owes: true, retire: deleted(true)},
 	}
 }
 
@@ -235,6 +281,63 @@ func schemaRetirement(
 	}
 }
 
+// schemaApplyHarvest runs one pass over an Apply whose Job has finished, and
+// records the status writes it made. The claim holds the realm under the epoch
+// the fixture seeded; twoPods makes the run one nobody can account for, since
+// one result frame cannot speak for a second executor.
+func schemaApplyHarvest(twoPods bool) func(*testing.T, bool) []retiredClaim {
+	return func(t *testing.T, _ bool) []retiredClaim {
+		t.Helper()
+
+		schema, plan, policyConfig := dispatchedApplyWithPlan(t)
+		job, pod := terminalWorkload(schema, batchv1.JobComplete)
+		objects := []client.Object{schema, plan, policyConfig, job, pod}
+		if twoPods {
+			objects = append(objects, secondExecutorPod(job, pod))
+		}
+		frame := safetyRunnerFrame(t, runner.Result{
+			ProtocolVersion:      runner.ProtocolVersion,
+			Operation:            runner.OperationApply,
+			OperationID:          schema.Status.ActiveOperation.ID,
+			MutationStarted:      true,
+			CoordinationDigest:   schema.Status.Plan.CoordinationDigest,
+			TargetIdentityDigest: schema.Status.Plan.TargetIdentityDigest,
+		})
+		reconciler, _ := fakeReconciler(t, staticLogs{content: frame}, objects...)
+		writes := &[]retiredClaim{}
+		reconciler.Client = &claimWriteRecorder{Client: reconciler.Client, writes: writes}
+		if _, err := reconciler.Reconcile(context.Background(),
+			ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+			t.Fatal(err)
+		}
+		return *writes
+	}
+}
+
+// schemaProofSettled runs one pass over the post-Apply Plan that finds the
+// managed scope converged, which settles the proof the Apply owed.
+func schemaProofSettled(t *testing.T, _ bool) []retiredClaim {
+	t.Helper()
+
+	schema, objects := convergedProofPlan(t, operatorv1alpha1.PendingObservationApplySucceeded)
+	frame := safetyRunnerFrame(t, runner.Result{
+		ProtocolVersion:      runner.ProtocolVersion,
+		Operation:            runner.OperationPlan,
+		OperationID:          schema.Status.ActiveOperation.ID,
+		CoordinationDigest:   schema.Status.PendingObservation.CoordinationDigest,
+		TargetIdentityDigest: schema.Status.PendingObservation.Plan.TargetIdentityDigest,
+		PlanOutcome:          runner.PlanOutcomeNoChanges,
+	})
+	reconciler, _ := fakeReconciler(t, staticLogs{content: frame}, objects...)
+	writes := &[]retiredClaim{}
+	reconciler.Client = &claimWriteRecorder{Client: reconciler.Client, writes: writes}
+	if _, err := reconciler.Reconcile(context.Background(),
+		ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatal(err)
+	}
+	return *writes
+}
+
 func schemaClaimRetirements() []claimRetirement {
 	policyChanged := schemaRetirement(operatorv1alpha1.OperationApply, false,
 		func(r *SchemaReconciler, schema *operatorv1alpha1.PtahSchema) error {
@@ -255,8 +358,26 @@ func schemaClaimRetirements() []claimRetirement {
 			_, err := r.approvalBecameInvalid(context.Background(), schema)
 			return err
 		})
+	suspended := func(proof bool) func(*testing.T, bool) []retiredClaim {
+		return schemaRetirement(operatorv1alpha1.OperationPlan, proof,
+			func(r *SchemaReconciler, schema *operatorv1alpha1.PtahSchema) error {
+				_, err := r.suspendActiveOperation(context.Background(), schema)
+				return err
+			})
+	}
 
 	return []claimRetirement{
+		{family: "PtahSchema", name: "a Plan suspended before its Job ran", leased: true, owes: true, retire: suspended(false)},
+		{family: "PtahSchema", name: "a Plan suspended before its Job ran, holding no Lease", leased: false, owes: false, retire: suspended(false)},
+		{family: "PtahSchema", name: "a Plan carrying out a proof, suspended", leased: true, owes: false, retire: suspended(true)},
+		// A mutating run's own retirement. The pending observation it writes
+		// inherits the epoch, so the realm stays held through the reading
+		// that accounts for the run, whether the run's result was read or not.
+		{family: "PtahSchema", name: "an Apply whose result was read", leased: true, owes: false, retire: schemaApplyHarvest(false)},
+		{family: "PtahSchema", name: "an Apply nobody accounted for", leased: true, owes: false, retire: schemaApplyHarvest(true)},
+		// The write that settles a proof owes the proof's epoch back, and it
+		// is the only write that does.
+		{family: "PtahSchema", name: "a Plan that settles the proof it was carrying out", leased: true, owes: true, retire: schemaProofSettled},
 		{family: "PtahSchema", name: "a verification policy that changed under the claim", leased: true, owes: true, retire: policyChanged},
 		{family: "PtahSchema", name: "the same, holding no Lease", leased: false, owes: false, retire: policyChanged},
 		{family: "PtahSchema", name: "inputs that changed under a Plan", leased: true, owes: true, retire: staleInputs(false)},
