@@ -118,6 +118,7 @@ PLAN_FILE=$WORK_DIR/reference-plan.json
 APPROVAL_FILE=$WORK_DIR/reference-approval.json
 EVENTS_FILE=$WORK_DIR/reference-events.json
 LOG_ERROR_FILE=$WORK_DIR/reference-log-read.err
+PLAN_POD_LOG_FILE=$WORK_DIR/reference-plan-pod-log.txt
 ROW_PATTERNS_FILE=$WORK_DIR/declared-rows.txt
 REFERENCE_PLAN=
 
@@ -973,7 +974,15 @@ assert_a_protected_table_refuses_the_change() {
 }
 
 # The refusal that has to hold through every step above: no declared row value
-# reaches status, an Event, or the controller's own log.
+# reaches status, an Event, the controller's own log, or a Plan Pod's log.
+#
+# The last of those used to be the one place this phase could not check: before
+# stokaro/ptah-operator#449 sealed the plan payload, a Plan Pod's log carried
+# the plan Ptah computed, declared row values included, and reading it here
+# would have failed on every run rather than proven anything. Sealing made the
+# read worth taking: the Plan Job's runner now seals the plan to the manager's
+# key before writing its frame, so the Pod's own log is exactly what a reader
+# with pods/log, or a node log shipper, would see.
 #
 # The log read is not allowed to fail quietly. scan_for_rows returns success on
 # an empty file, which is right for an evidence file that may legitimately carry
@@ -981,7 +990,8 @@ assert_a_protected_table_refuses_the_change() {
 # a kubectl that errored would all produce an empty file and a passing scan, and
 # the strongest of the three checks would report success about a log it never
 # read. The controller has been reconciling this schema through every step
-# above, so it has logged something.
+# above, so it has logged something, and so has the most recent Plan Job: every
+# step that reaches AwaitingApproval dispatches one.
 assert_rows_never_left_the_database() {
 	reference_status
 	k -n "$TEST_NAMESPACE" get events -o json >"$EVENTS_FILE" ||
@@ -995,6 +1005,43 @@ assert_rows_never_left_the_database() {
 		fail "the controller log is empty, so the row scan would have measured nothing"
 	scan_for_credentials "$LOG_FILE" "the controller log"
 	scan_for_rows "$LOG_FILE" "the controller log"
+	assert_plan_pod_log_carries_no_plan_text
+}
+
+# assert_plan_pod_log_carries_no_plan_text reads the most recent Plan Job's
+# Pod directly, the same way pods/log or a node log shipper would, and proves
+# it holds neither a declared row value nor the plan document's own shape.
+#
+# The Pod is found by the same labels the approver-facing docs and the
+# diagnostic reader role describe: operator.ptah.run/schema and
+# operator.ptah.run/operation=plan. Sorting by creation time and taking the
+# last one picks the most recent attempt without needing a Job name this
+# script never captured -- every scenario above that reached AwaitingApproval
+# ran one, and a Job survives at least five minutes after it finishes, so the
+# latest is still there.
+#
+# "format_version" is the plan document's own top-level key, present in every
+# plaintext plan Ptah has ever written and vanishingly unlikely to appear by
+# chance in the base64 of a sealed box. Its absence is the proof that what
+# survived a decode-free grep is ciphertext, not a plan this scanner simply
+# failed to recognize.
+assert_plan_pod_log_carries_no_plan_text() {
+	plan_pod=$(k -n "$TEST_NAMESPACE" get pods \
+		-l "operator.ptah.run/schema=${REFERENCE_SCHEMA},operator.ptah.run/operation=plan" \
+		--sort-by=.metadata.creationTimestamp \
+		-o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)
+	[ -n "$plan_pod" ] ||
+		fail "no Plan Pod remained for $REFERENCE_SCHEMA, so its log could not be checked for a sealed payload"
+	k -n "$TEST_NAMESPACE" logs pod/"$plan_pod" -c ptah \
+		>"$PLAN_POD_LOG_FILE" 2>"$LOG_ERROR_FILE" ||
+		fail "the Plan Pod log could not be read: $(cat "$LOG_ERROR_FILE")"
+	[ -s "$PLAN_POD_LOG_FILE" ] ||
+		fail "the Plan Pod log is empty, so the row scan would have measured nothing"
+	scan_for_credentials "$PLAN_POD_LOG_FILE" "the Plan Pod log"
+	scan_for_rows "$PLAN_POD_LOG_FILE" "the Plan Pod log"
+	if grep -F '"format_version"' "$PLAN_POD_LOG_FILE" >/dev/null; then
+		fail "the Plan Pod log carries the plan document's own shape in the clear, not sealed"
+	fi
 }
 
 # run_engine_reference_data drives one engine from a database with no tables to

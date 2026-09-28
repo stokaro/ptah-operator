@@ -7,8 +7,9 @@ The SQL the operator applies is not in a status field or the manager's log. It
 is a document the operator publishes into immutable ConfigMaps, bound to a
 `PtahSchemaPlan` by index, key, size and digest, and read back only after every
 one of those bindings has held. On its way there it passes through the Plan
-Pod's log, which is why [Pod logs carry plans](../security/#pod-logs-carry-plans)
-treats reading that log as reading the plan.
+Pod's log sealed to the manager's own key, so that log no longer carries the
+plan; [Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) says
+what still does.
 
 `kubectl ptah` is how you read it. It reads Kubernetes objects and never
 creates or changes a resource, starts a Job, or connects to your database.

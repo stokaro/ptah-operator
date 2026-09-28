@@ -28,6 +28,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -161,11 +162,17 @@ func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1a
 	if operation.AdmissionSnapshot != nil {
 		annotations[workload.AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
 	}
+	template := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}
+	// Matches terminalWorkload's container exactly: CarrySealedPlanKey
+	// requires a container carrying this env var on the rebuild it is asked
+	// to overwrite, the same way a real Plan Job's rebuild always has one to
+	// overwrite.
+	template.Spec.Containers = testPlanSealKeyContainers(operation.Type)
 	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Namespace: schema.Namespace, Name: operation.JobName,
 		Annotations:     annotations,
 		OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
-	}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}}}, nil
+	}, Spec: batchv1.JobSpec{Template: template}}, nil
 }
 
 func (fakeJobs) ExecutionBinding() (int32, string, string, int32) {
@@ -2644,13 +2651,16 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 
 func terminalWorkload(schema *operatorv1alpha1.PtahSchema, conditionType batchv1.JobConditionType) (*batchv1.Job, *corev1.Pod) {
 	ensureTestAdmissionSnapshot(schema)
+	ensureTestPlanSealKeyDigest(schema)
 	annotations := map[string]string{
 		workload.AnnotationAdmissionSnapshotDigest: schema.Status.ActiveOperation.AdmissionSnapshot.Digest,
 		workload.AnnotationExecutionBindingID:      schema.Status.ActiveOperation.ExecutionBindingID,
 	}
+	template := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}
+	template.Spec.Containers = testPlanSealKeyContainers(schema.Status.ActiveOperation.Type)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Status.ActiveOperation.JobName, UID: "job-uid", Annotations: annotations, OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)}},
-		Spec:       batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}},
+		Spec:       batchv1.JobSpec{Template: template},
 		Status:     batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: conditionType, Status: corev1.ConditionTrue}}},
 	}
 	priority := int32(0)
@@ -2661,6 +2671,11 @@ func terminalWorkload(schema *operatorv1alpha1.PtahSchema, conditionType batchv1
 		Labels: map[string]string{"job-name": job.Name}, Annotations: annotations, OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
 	}, Spec: corev1.PodSpec{
 		ServiceAccountName: "default", Priority: &priority, PreemptionPolicy: &preemption,
+		// ValidatePodSpec accepts only the admission mutations its snapshot
+		// declares and otherwise requires an exact match with the Job
+		// template above, so a live Pod for a Plan operation carries the
+		// same container that template does.
+		Containers: template.Spec.Containers,
 		Tolerations: []corev1.Toleration{
 			{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
 			{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
@@ -2679,16 +2694,55 @@ func generatedTerminalPodName(jobName, suffix string) string {
 	return prefix + suffix
 }
 
+// testPlanSealKeyContainers is the one container a Plan operation's Pod
+// template carries in these fixtures, holding the seal key
+// validateAdoptedJobIntent's CarrySealedPlanKey requires on a live Plan Job.
+// Every other operation type carries none, matching the real Builder.
+// ensureTestAdmissionSnapshot and terminalWorkload both build their template
+// from this, so a Plan claim's persisted snapshot digest and its Job's own
+// template digest agree exactly the way a real dispatch's always do.
+func testPlanSealKeyContainers(operationType operatorv1alpha1.OperationType) []corev1.Container {
+	return testPlanSealKeyContainersFor(operationType, testSchemaSealKey.PublicKey())
+}
+
+// testPlanSealKeyContainersFor is testPlanSealKeyContainers with an explicit
+// key, for a fixture that simulates a Plan Job dispatched under a key other
+// than testSchemaSealKey (a restart, before the current process's key).
+func testPlanSealKeyContainersFor(operationType operatorv1alpha1.OperationType, key planseal.PublicKey) []corev1.Container {
+	if operationType != operatorv1alpha1.OperationPlan {
+		return nil
+	}
+	return []corev1.Container{{
+		Name: executorContainerName,
+		Env:  []corev1.EnvVar{{Name: runner.EnvPlanSealPublicKey, Value: key.Encode()}},
+	}}
+}
+
 func ensureTestAdmissionSnapshot(schema *operatorv1alpha1.PtahSchema) {
 	if schema.Status.ActiveOperation.AdmissionSnapshot != nil {
 		return
 	}
+	schema.Status.ActiveOperation.AdmissionSnapshot = testAdmissionSnapshotFor(schema.Status.ActiveOperation, testSchemaSealKey.PublicKey())
+}
+
+// testAdmissionSnapshotFor computes the admission snapshot a real dispatch
+// would have persisted for operation's Pod template, its Plan seal key
+// container (if any) sealed to key. planSealMismatchFixture calls it
+// directly, with the key a Plan Job was actually dispatched under, so a
+// stale-restart fixture's persisted snapshot stays consistent with the Job
+// it describes rather than with this package's default key.
+func testAdmissionSnapshotFor(
+	operation *operatorv1alpha1.ActiveOperationStatus, key planseal.PublicKey,
+) *operatorv1alpha1.PodAdmissionSnapshot {
 	policy := corev1.PreemptLowerPriority
-	templateDigest, err := podintent.DigestTemplate(&corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{
-		Annotations: map[string]string{
-			workload.AnnotationExecutionBindingID: schema.Status.ActiveOperation.ExecutionBindingID,
+	templateDigest, err := podintent.DigestTemplate(&corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				workload.AnnotationExecutionBindingID: operation.ExecutionBindingID,
+			},
 		},
-	}})
+		Spec: corev1.PodSpec{Containers: testPlanSealKeyContainersFor(operation.Type, key)},
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -2711,7 +2765,22 @@ func ensureTestAdmissionSnapshot(schema *operatorv1alpha1.PtahSchema) {
 		panic(err)
 	}
 	snapshot.Digest = digest
-	schema.Status.ActiveOperation.AdmissionSnapshot = snapshot
+	return snapshot
+}
+
+// ensureTestPlanSealKeyDigest backfills the digest a real dispatch always
+// records for a Plan claim, the same way ensureTestAdmissionSnapshot backfills
+// the snapshot: a fixture that predates the seal key, or that never mentions
+// it, gets the one every fakeReconciler can actually open (testSchemaSealKey)
+// rather than an empty digest CarrySealedPlanKey refuses outright. A fixture
+// proving a stale or mismatched key sets its own digest first, which this
+// leaves alone.
+func ensureTestPlanSealKeyDigest(schema *operatorv1alpha1.PtahSchema) {
+	if schema.Status.ActiveOperation.Type != operatorv1alpha1.OperationPlan ||
+		schema.Status.ActiveOperation.PlanSealPublicKeyDigest != "" {
+		return
+	}
+	schema.Status.ActiveOperation.PlanSealPublicKeyDigest = planSealPublicKeyDigest(testSchemaSealKey.PublicKey())
 }
 
 func TestTerminalWorkloadFixtureMatchesImmutableIntent(t *testing.T) {
@@ -2850,6 +2919,20 @@ func jobControllerReference(job *batchv1.Job) metav1.OwnerReference {
 	return *metav1.NewControllerRef(job, batchv1.SchemeGroupVersion.WithKind("Job"))
 }
 
+// testSchemaSealKey is the one key pair every fakeReconciler is given, so a
+// test that seals a fixture Plan result with it can rely on the reconciler
+// under test being able to open it, and a test proving a restart -- a
+// different key pair -- can prove it against this one specifically.
+var testSchemaSealKey = mustGenerateTestSealKey()
+
+func mustGenerateTestSealKey() planseal.KeyPair {
+	key, err := planseal.Generate()
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
 func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (*SchemaReconciler, client.Client) {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -2880,6 +2963,7 @@ func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (
 	testClock := &safetyClock{now: clock}
 	reconciler := &SchemaReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
+		SealKey:          testSchemaSealKey,
 		LockNamespace:    "ptah-system",
 		Clock:            testClock.Now,
 		AdmissionOptions: podintent.DefaultOptions(),

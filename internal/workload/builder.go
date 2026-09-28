@@ -29,6 +29,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
@@ -143,6 +144,13 @@ type Builder struct {
 	ControllerImage        string
 	ControllerRevision     string
 	ControllerStateVersion int32
+	// PlanSealPublicKey is this manager process's current public key. A Plan
+	// Job's runner seals its plan payload to it; nothing else reads it. It
+	// travels as an ordinary literal environment variable, so the Pod
+	// admission snapshot that binds the rest of the Job template binds this
+	// value too -- a tampered Job that carries a different key fails
+	// admission the same way a tampered coordination digest does.
+	PlanSealPublicKey planseal.PublicKey
 }
 
 // Validate checks the immutable execution configuration before the manager
@@ -259,7 +267,7 @@ func (b Builder) Build(
 		return nil, fmt.Errorf("active operation Job name %q does not match deterministic name %q", operation.JobName, name)
 	}
 
-	jobInput := buildInput{schema: schema, operation: operation, plan: plan}
+	jobInput := buildInput{schema: schema, operation: operation, plan: plan, planSealPublicKey: b.PlanSealPublicKey}
 	if err := jobInput.validate(); err != nil {
 		return nil, err
 	}
@@ -319,6 +327,9 @@ type buildInput struct {
 	schema    *operatorv1alpha1.PtahSchema
 	operation operatorv1alpha1.ActiveOperationStatus
 	plan      *operatorv1alpha1.PtahSchemaPlan
+	// planSealPublicKey is the manager's current public key, carried into a
+	// Plan Job's environment. No other operation reads it.
+	planSealPublicKey planseal.PublicKey
 }
 
 func (i buildInput) validate() error {
@@ -464,6 +475,8 @@ func (i buildInput) dataPlane() (
 			literalEnv(runner.EnvSchemaFile, sourceFilePath),
 			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.operation.ObservationConnectTimeout.Duration, 10*time.Second)),
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.operation.ObservationLockTimeout.Duration, 30*time.Second)),
+			literalEnv(runner.EnvPlanSealPublicKey, i.planSealPublicKey.Encode()),
+			literalEnv(runner.EnvSealedPlanJobName, i.operation.JobName),
 		)
 		if i.operation.ObservationDev != nil {
 			environment = append(environment, databaseEnv(runner.EnvDevelopmentDatabaseURL, i.operation.ObservationDev.URLFrom))

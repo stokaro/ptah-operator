@@ -93,7 +93,7 @@ spec:
   ptahVersion: v0.9.0-73-gf6e562c5b
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   # What the runner enforces and returns, versioned; not the runner's image.
-  runnerProtocolVersion: 6
+  runnerProtocolVersion: 7
   controllerStateVersion: 2
 ```
 

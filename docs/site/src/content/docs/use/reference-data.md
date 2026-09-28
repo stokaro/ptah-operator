@@ -135,11 +135,12 @@ statements a plan holds, and for a data change those statements carry the
 values. Access to a plan is access to data. Treat it that way when you decide
 who may read plans.
 
-That includes the Plan Pod's log. The runner hands the plan to the controller
-through it, so the values are in that log, on the node, and in any log store
-the cluster ships container logs to.
-[Pod logs carry plans](../security/#pod-logs-carry-plans) says who should be
-able to read it and how to keep it out of shared stores.
+That access no longer includes the Plan Pod's log. The runner seals the plan
+to the manager's own key before writing it there, so the log, the node's copy
+of it, and any store the cluster ships container logs to all hold ciphertext.
+[Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) says how,
+and what to do about the chunk store and the approval Role, which still carry
+the plan in the clear to whoever they are granted to.
 
 ## Order between tables
 

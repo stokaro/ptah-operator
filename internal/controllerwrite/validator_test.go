@@ -25,6 +25,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -1483,9 +1484,38 @@ func schemaFixture(operationType operatorv1alpha1.OperationType) *operatorv1alph
 		operation.CoordinationDigest = schema.Status.Target.CoordinationDigest
 		operation.TargetIdentityDigest = schema.Status.Target.IdentityDigest
 		operation.Source = &operatorv1alpha1.OCIArtifactAccessBinding{Digest: schema.Status.Source.Digest}
+		operation.PlanSealPublicKeyDigest = testPlanSealPublicKeyDigest()
 	}
 	schema.Status.ActiveOperation = operation
 	return schema
+}
+
+// testSealKey is the one key pair schemaFixture's Plan claims are recorded
+// against and expectedJob's Plan Jobs are built with, so a test that wants
+// two disagreeing sides -- the shape a live replica pair actually produces --
+// generates and uses its own key instead of this one.
+var testSealKey = mustGenerateTestSealKey()
+
+func mustGenerateTestSealKey() planseal.KeyPair {
+	key, err := planseal.Generate()
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
+func testPlanSealPublicKeyDigest() string {
+	return fingerprint.DigestBytes([]byte(testSealKey.PublicKey().Encode()))
+}
+
+// planOperationEnv is the one environment variable expectedJob's Plan Jobs
+// need for CarrySealedPlanKey to have anything to check: every other
+// operation type carries none, matching the real Builder.
+func planOperationEnv(operationType operatorv1alpha1.OperationType) []corev1.EnvVar {
+	if operationType != operatorv1alpha1.OperationPlan {
+		return nil
+	}
+	return []corev1.EnvVar{{Name: runner.EnvPlanSealPublicKey, Value: testSealKey.PublicKey().Encode()}}
 }
 
 func expectedJob(
@@ -1528,6 +1558,7 @@ func expectedJob(
 				RestartPolicy:      corev1.RestartPolicyNever,
 				Containers: []corev1.Container{{
 					Name: "ptah", Image: "example.test/executor@" + digest('2'), Command: []string{"/runner/ptah-runner"},
+					Env: planOperationEnv(operation.Type),
 				}},
 			},
 		}},

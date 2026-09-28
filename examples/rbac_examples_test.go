@@ -42,7 +42,7 @@ func TestDiagnosticReaderRoleCannotChangeStateOrReadPlansOrCredentials(t *testin
 			"ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals",
 		}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch"}},
 	}
 	if !reflect.DeepEqual(role.Rules, wantRules) {
@@ -56,12 +56,18 @@ func TestDiagnosticReaderRoleCannotChangeStateOrReadPlansOrCredentials(t *testin
 
 // The exact-rules comparison above fails on any edit, and says nothing about
 // why a rule was left out. This check is the reason, so it has to refuse each
-// grant it is there for, including the pods/log rule the example carried until
-// stokaro/ptah-operator#449.
+// grant it is there for.
+//
+// pods/log left this table with stokaro/ptah-operator#449: the Plan Job's
+// runner now seals its plan payload to the manager's own key before writing
+// its frame, so a Plan Pod's log holds ciphertext rather than the plan, and
+// granting a diagnostic reader that log is no longer granting it the plan.
+// pods/attach and pods/exec stay refused for a reason sealing does not touch:
+// a live process inside an Observe, Plan or Apply Pod still holds the target
+// database credential in its environment.
 func TestTheDiagnosticReaderCheckRefusesPlanAndCredentialAccess(t *testing.T) {
 	read := []string{"get", "list", "watch"}
 	for name, rule := range map[string]rbacv1.PolicyRule{
-		"Pod logs":            {APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
 		"Pod attach":          {APIGroups: []string{""}, Resources: []string{"pods/attach"}, Verbs: []string{"get"}},
 		"Pod exec":            {APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"get"}},
 		"every Pod resource":  {APIGroups: []string{""}, Resources: []string{"pods/*"}, Verbs: read},
@@ -81,15 +87,17 @@ func TestTheDiagnosticReaderCheckRefusesPlanAndCredentialAccess(t *testing.T) {
 }
 
 // diagnosticReaderRefuses maps each resource a diagnostic reader must not reach
-// to what it would read. A Plan Pod hands the whole plan to the controller
-// through its log, so every stream out of an operation Pod is plan access, and
-// exec reaches an Apply Pod's database credentials as well.
+// to what it would read. pods/log is deliberately absent: the sealed plan
+// payload made it safe to grant, and the exact-rules comparison in
+// TestDiagnosticReaderRoleCannotChangeStateOrReadPlansOrCredentials is what
+// holds the example role to granting exactly that and nothing more. Attach and
+// exec remain refused because either reaches a live Pod's database credential,
+// which sealing the plan payload does not change.
 var diagnosticReaderRefuses = map[string]string{
 	"secrets":     "database and registry credentials",
 	"configmaps":  "plan chunks",
-	"pods/log":    "the Plan frame, which carries the plan",
-	"pods/attach": "the Plan frame, which carries the plan",
-	"pods/exec":   "a process beside the plan and the credentials",
+	"pods/attach": "a live Pod's database credential",
+	"pods/exec":   "a live Pod's database credential",
 	"pods/*":      "every Pod stream",
 	"*":           "every resource",
 }

@@ -490,53 +490,55 @@ restricted to the current plan chunk names, as described in
 those ConfigMaps and nothing else; [Read a plan](../read-a-plan/) carries the
 Role and the [install](../read-a-plan/#install).
 
-### Pod logs carry plans {#pod-logs-carry-plans}
+### Pod logs carry a sealed plan {#pod-logs-carry-plans}
 
 A Plan Job reports to the controller through its container log. The runner
-writes one framed result to stdout, and a successful Plan frame holds the whole
-plan document: every statement, and for
-[declared reference data](../reference-data/) the row values in them. The
-controller reads the frame through the `pods/log` API, checks it, and only then
-commits the same bytes to the chunk ConfigMaps. The frame also stays where the
-chunk Role does not reach:
+writes one framed result to stdout, and until
+[#449](https://github.com/stokaro/ptah-operator/issues/449) a successful Plan
+frame held the whole plan document in the clear: every statement, and for
+[declared reference data](../reference-data/) the row values in them. It no
+longer does. Before writing the frame, the runner seals the plan to a public
+key the manager generates fresh at process startup, using an anonymous NaCl
+sealed box: the frame carries ciphertext, and only the private half of that
+key -- held in the manager's memory, never written to a Secret, a ConfigMap,
+or disk -- can open it. The controller reads the same frame through the
+`pods/log` API it always has, opens the seal in memory, checks the plaintext,
+and only then commits it to the chunk ConfigMaps.
 
-- in the Pod's log, readable by anyone with `get` on `pods/log` in the
-  namespace until the Job is removed, which is five minutes after it finished
-  at the earliest;
-- in the container log file on the node, until the kubelet garbage-collects the
+That closes what used to be true of every copy of the frame:
+
+- the Pod's log, readable by anyone with `get` on `pods/log` in the namespace
+  until the Job is removed, which is five minutes after it finished at the
+  earliest;
+- the container log file on the node, until the kubelet garbage-collects the
   container;
-- in any log store a node agent ships container logs to, with that store's
+- any log store a node agent ships container logs to, with that store's
   readers and its retention.
 
-RBAC cannot narrow `pods/log` to the operation Pods that carry no plan. A rule
-has no label selector, and `resourceNames` cannot name a Pod whose name is
-generated for each attempt. A grant of `pods/log` in an application namespace
-therefore reads every plan published there, including plans its holder was
-never asked to review, which is broader than the exact-chunk Role in
-[Exact-plan approvals](../approvals/).
+Each of those now holds ciphertext. `pods/log` in an application namespace is
+no longer plan access, and the diagnostic reader
+(`examples/diagnostic-reader-role.yaml`) example grants it for that reason.
 
-What to do about it:
+The key is scoped to the process, not to any one Plan. A manager restart
+generates a new key pair, and each replica of the default two-replica install
+holds a key pair of its own, so a Plan Job dispatched before a restart or a
+leadership change is sealed to a key the process harvesting it does not hold.
+That process keeps the running Job rather than retire it, and once the Job
+finishes it retries the Plan under its current key rather than wait on a
+payload it cannot open. Plan is read-only, so that retry costs nothing the
+original attempt did not already cost. The claim a schema persists while a
+Plan Job runs records the digest of the key it was sealed to, so the mismatch
+is detected before the manager even attempts to open the payload.
 
-- Treat `pods/log` in an application namespace as plan access. Grant it in a
-  Role of its own, only to people who may read every plan in that namespace,
-  and keep it out of diagnostic and developer Roles. The diagnostic reader
-  example leaves it out for this reason; status, conditions and Events carry
-  what the controller made of each result.
-- Keep Plan Pod logs out of shared log stores, or store them with the access
-  control and retention a plan needs. Plan Pods carry the labels
-  `app.kubernetes.io/component: schema-operation` and
-  `operator.ptah.run/operation: plan`, which an agent that adds Pod labels to
-  each record can match to drop or reroute them. Dropping them costs the
-  operator nothing: it reads the frame from the kubelet, never from a log
-  store.
-- Check what the pipeline already shipped. Changing it does not recall a plan
-  it copied earlier, which stays in the store until that store's retention
-  ends.
-
-The manager's own ClusterRole keeps `get` on `pods/log`, because reading the
-frame is how it learns every result. Only a Plan frame carries the plan.
-Sealing that payload to the manager, so that the log holds only ciphertext, is
-tracked in [#449](https://github.com/stokaro/ptah-operator/issues/449).
+Sealing covers the plan payload specifically, because that is the one frame
+field that must round-trip byte for byte into an approval. Two more places
+Ptah's own free-text account of a failure can quote a database value --
+`migrations up`'s run error, and the error a dirty revision records -- are
+handled differently: the runner drops that text before it ever reaches the
+frame, because nothing this operator does with a migration result reads it.
+The controller's own account of a migration failure names the outcome and the
+affected version, never the database's sentence about either, so there was
+nothing to seal.
 
 Approval admission fails closed. It binds names to UIDs, rejects a plan whose
 storage commit is incomplete, rejects changed policy bytes or target state, and

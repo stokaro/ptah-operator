@@ -129,9 +129,12 @@ is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
 
-for command_name in kubectl jq awk sed grep tr mktemp mkfifo date sleep base64 wc tail mkdir mv; do
+for command_name in kubectl jq awk sed grep tr mktemp mkfifo date sleep base64 wc tail mkdir mv cmp; do
 	require_command "$command_name"
 done
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+	fail "sha256sum or shasum is required"
+fi
 for value_name in \
 	KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE FIXTURE_IMAGE \
 	CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION RESULT_ASSERT_BINARY \
@@ -584,6 +587,118 @@ scan_fault_file() {
 		scan_status=$?
 		[ "$scan_status" -eq 1 ] ||
 			fail "fault credential scanner failed closed while checking $scan_context"
+	fi
+}
+
+sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum | awk '{print $1}'
+		return
+	fi
+	shasum -a 256 | awk '{print $1}'
+}
+
+# rebuild_plan_document reads a plan document back the way the controller
+# does: from the immutable chunk ConfigMaps the PtahSchemaPlan names, in
+# .spec.chunks order, each chunk's binaryData[key] decoded and the bytes
+# concatenated. Since runner protocol 7 a Plan result's stdout carries the
+# plan sealed to the manager's per-process key, so the chunks are the only
+# place the plaintext a content digest covers can be read from.
+#
+# The first argument is a file holding the PtahSchemaPlan object, so that the
+# chunks read here belong to the exact object whose spec.contentDigest the
+# caller compares against; the second is where the document goes. The number
+# of chunks read is left in REBUILT_PLAN_CHUNK_COUNT, and a plan that names
+# none is refused rather than rebuilt as an empty document.
+rebuild_plan_document() {
+	rebuild_plan_file=$1
+	rebuild_document_file=$2
+	rebuild_plan_name=$(jq -er '.metadata.name' "$rebuild_plan_file") ||
+		fail "the plan object to rebuild a document from has no name"
+	rebuild_chunks_file="$WORK_DIR/${rebuild_plan_name}-rebuild-chunks.tsv"
+	jq -er '
+      .spec.chunks |
+      if type == "array" then . else error("plan spec.chunks must be a list") end |
+      .[] | [.index, .name, .key, .size] | @tsv
+    ' "$rebuild_plan_file" >"$rebuild_chunks_file" ||
+		fail "$rebuild_plan_name has no plan chunks to rebuild its document from"
+	: >"$rebuild_document_file"
+	chmod 600 "$rebuild_document_file"
+	REBUILT_PLAN_CHUNK_COUNT=0
+	while IFS="$(printf '\t')" read -r rebuild_index rebuild_name rebuild_key rebuild_size; do
+		[ "$rebuild_index" = "$REBUILT_PLAN_CHUNK_COUNT" ] ||
+			fail "$rebuild_plan_name chunk at position $REBUILT_PLAN_CHUNK_COUNT carries index ${rebuild_index:-none}"
+		if [ -z "$rebuild_name" ] || [ -z "$rebuild_key" ] || [ -z "$rebuild_size" ]; then
+			fail "$rebuild_plan_name chunk $rebuild_index is an incomplete reference"
+		fi
+		rebuild_chunk_object=$(k -n "$TEST_NAMESPACE" get configmap "$rebuild_name" -o json) ||
+			fail "$rebuild_plan_name chunk $rebuild_index ConfigMap $rebuild_name could not be read"
+		rebuild_chunk_value=$(printf '%s\n' "$rebuild_chunk_object" |
+			jq -er --arg key "$rebuild_key" '
+              .binaryData[$key] |
+              if type == "string" then . else error("chunk key is absent") end
+            ') ||
+			fail "$rebuild_name has no binaryData[$rebuild_key] to rebuild $rebuild_plan_name chunk $rebuild_index from"
+		rebuild_chunk_file="$WORK_DIR/${rebuild_plan_name}-rebuild-chunk-${rebuild_index}.bin"
+		printf '%s' "$rebuild_chunk_value" | base64 -d >"$rebuild_chunk_file" ||
+			fail "$rebuild_name binaryData[$rebuild_key] does not decode as base64"
+		rebuild_chunk_bytes=$(wc -c <"$rebuild_chunk_file" | tr -d ' ')
+		[ "$rebuild_chunk_bytes" = "$rebuild_size" ] ||
+			fail "$rebuild_plan_name chunk $rebuild_index decoded to $rebuild_chunk_bytes bytes; its manifest says $rebuild_size"
+		cat "$rebuild_chunk_file" >>"$rebuild_document_file" ||
+			fail "$rebuild_plan_name chunk $rebuild_index could not be appended to its document"
+		rm -f "$rebuild_chunk_file"
+		REBUILT_PLAN_CHUNK_COUNT=$((REBUILT_PLAN_CHUNK_COUNT + 1))
+	done <"$rebuild_chunks_file"
+	[ "$REBUILT_PLAN_CHUNK_COUNT" -gt 0 ] ||
+		fail "$rebuild_plan_name has no plan chunks to rebuild its document from"
+}
+
+# assert_plan_result_stdout_is_sealed proves a Plan result carried its plan
+# sealed rather than in the clear. Since runner protocol 7 the frame's stdout
+# is the plan encrypted to the manager's per-process key, so the document
+# whose digest the result names must not be readable from the result itself:
+# stdout is non-empty, it is not the document, and it holds neither the
+# document's own "format_version" key nor the opening of any statement in it.
+# Each opening is searched for both as SQL and as the JSON string a plan
+# document spells it in, since a document escapes a quote or a newline.
+#
+# An opening shorter than eight characters is not searched for: a fragment
+# that short can sit inside a base64 payload by chance, and the document's
+# own key catches a plaintext document regardless.
+assert_plan_result_stdout_is_sealed() {
+	sealed_result_file=$1
+	sealed_document_file=$2
+	sealed_context=$3
+	sealed_stdout_file="${sealed_result_file%.json}-stdout.txt"
+	sealed_patterns_file="${sealed_result_file%.json}-plan-text-patterns.txt"
+	jq -e '(.stdout | type) == "string" and (.stdout | length) > 0' \
+		"$sealed_result_file" >/dev/null ||
+		fail "$sealed_context Plan result carries no sealed payload in stdout"
+	jq -jr '.stdout' "$sealed_result_file" >"$sealed_stdout_file" ||
+		fail "$sealed_context Plan result stdout could not be extracted"
+	chmod 600 "$sealed_stdout_file"
+	if cmp -s "$sealed_stdout_file" "$sealed_document_file"; then
+		fail "$sealed_context Plan result carries the plan document itself in stdout, not a sealed payload"
+	fi
+	[ "$(jq -r '.statements | if type == "array" then length else 0 end' "$sealed_document_file")" -gt 0 ] ||
+		fail "$sealed_context plan document has no statements to check the sealed payload against"
+	{
+		jq -r '
+          .statements[].sql | .[0:40] |
+          ((split("\n")[] | select(length >= 8)),
+           (tojson | .[1:-1] | select(length >= 8)))
+        ' "$sealed_document_file" &&
+			printf '%s\n' '"format_version"'
+	} >"$sealed_patterns_file" ||
+		fail "$sealed_context plan statements could not be read to check the sealed payload"
+	chmod 600 "$sealed_patterns_file"
+	if grep -F -f "$sealed_patterns_file" "$sealed_stdout_file" >/dev/null; then
+		fail "$sealed_context Plan result stdout carries plan text in the clear"
+	else
+		sealed_scan_status=$?
+		[ "$sealed_scan_status" -eq 1 ] ||
+			fail "$sealed_context sealed payload scan failed closed"
 	fi
 }
 
@@ -4915,23 +5030,37 @@ printf '%s\n' "$MYSQL_POSTFAULT_SCHEMA" | jq -e \
 	  $observe.targetIdentityDigest == .status.target.identityDigest and
 	  $observe.driftReportDigest == .status.target.driftReportDigest
     ' >/dev/null || fail "recovery Observe did not advance the target observation evidence"
+# The result's stdout is the plan sealed to the manager's key, so the document
+# its content digest covers is read back from the fresh plan's own chunks, and
+# the digest has to name it in the result, on the schema and on the plan.
 MYSQL_RECOVERY_PLAN_DOCUMENT=$WORK_DIR/mysql-recovery-plan.json
-jq -jr '.stdout' "$MYSQL_RECOVERY_PLAN_RESULT" >"$MYSQL_RECOVERY_PLAN_DOCUMENT"
-chmod 600 "$MYSQL_RECOVERY_PLAN_DOCUMENT"
+MYSQL_FRESH_PLAN_OBJECT=$WORK_DIR/mysql-recovery-plan-object.json
+k -n "$TEST_NAMESPACE" get ptahschemaplan "$MYSQL_FRESH_PLAN_NAME" -o json >"$MYSQL_FRESH_PLAN_OBJECT" ||
+	fail "fresh MySQL plan $MYSQL_FRESH_PLAN_NAME could not be read to rebuild its plan document"
+rebuild_plan_document "$MYSQL_FRESH_PLAN_OBJECT" "$MYSQL_RECOVERY_PLAN_DOCUMENT"
 scan_fault_file "$MYSQL_RECOVERY_PLAN_DOCUMENT" "the exact recovery native plan"
-k -n "$TEST_NAMESPACE" get ptahschemaplan "$MYSQL_FRESH_PLAN_NAME" -o json | jq -e \
+MYSQL_RECOVERY_PLAN_DIGEST="sha256:$(sha256 <"$MYSQL_RECOVERY_PLAN_DOCUMENT")"
+printf '%s\n' "$MYSQL_POSTFAULT_SCHEMA" | jq -e \
 	--slurpfile result "$MYSQL_RECOVERY_PLAN_RESULT" \
 	--slurpfile document "$MYSQL_RECOVERY_PLAN_DOCUMENT" \
+	--slurpfile plan "$MYSQL_FRESH_PLAN_OBJECT" \
+	--arg contentDigest "$MYSQL_RECOVERY_PLAN_DIGEST" \
 	--arg uid "$MYSQL_FRESH_PLAN_UID" '
-	  $result[0] as $result | $document[0] as $document |
-	  .metadata.uid == $uid and $result.error == null and
+	  $result[0] as $result | $document[0] as $document | $plan[0] as $plan |
+	  $plan.metadata.uid == $uid and $result.error == null and
 	  $result.childExitCode == 0 and $result.planOutcome == "Changes" and
-	  $result.planContentDigest == .spec.contentDigest and
-	  $result.coordinationDigest == .spec.coordinationDigest and
-	  $result.targetIdentityDigest == .spec.targetIdentityDigest and
-	  .spec.actualStateFingerprint == $document.from_fingerprint and
-	  .spec.desiredStateFingerprint == $document.to_fingerprint
+	  $result.planContentDigest == $contentDigest and
+	  .status.plan.contentDigest == $contentDigest and
+	  $plan.spec.contentDigest == $contentDigest and
+	  $result.coordinationDigest == $plan.spec.coordinationDigest and
+	  $result.targetIdentityDigest == $plan.spec.targetIdentityDigest and
+	  $plan.spec.actualStateFingerprint == $document.from_fingerprint and
+	  $plan.spec.desiredStateFingerprint == $document.to_fingerprint
 	' >/dev/null || fail "fresh MySQL plan is not bound to the exact recovery Plan result"
+assert_plan_result_stdout_is_sealed "$MYSQL_RECOVERY_PLAN_RESULT" "$MYSQL_RECOVERY_PLAN_DOCUMENT" \
+	"the MySQL recovery"
+printf 'e2e faults: the MySQL recovery Plan result is sealed, and its content digest covers the %s-chunk plan document\n' \
+	"$REBUILT_PLAN_CHUNK_COUNT"
 assert_approval_consumed "$MYSQL_UNKNOWN_APPROVAL" "$MYSQL_ORIGINAL_PLAN_UID"
 [ "$(watch_added_uid_count "$MYSQL_UNKNOWN_SCHEMA" apply)" -eq 1 ] ||
 	fail "the uncertain MySQL Apply was replayed without a fresh approval"
@@ -5550,23 +5679,36 @@ printf '%s\n' "$MANUAL_FRESH_SCHEMA" | jq -e \
       $observe.targetIdentityDigest == .status.target.identityDigest and
       $observe.driftReportDigest == .status.target.driftReportDigest
     ' >/dev/null || fail "manual-drift fresh Observe result is not bound to its exact target evidence"
+# As for the MySQL recovery above: the plan document comes from the fresh
+# plan's chunks, not from the sealed stdout, and one digest names it everywhere.
 MANUAL_FRESH_PLAN_DOCUMENT=$WORK_DIR/manual-fresh-plan.json
-jq -jr '.stdout' "$MANUAL_FRESH_PLAN_RESULT" >"$MANUAL_FRESH_PLAN_DOCUMENT"
-chmod 600 "$MANUAL_FRESH_PLAN_DOCUMENT"
+MANUAL_FRESH_PLAN_OBJECT=$WORK_DIR/manual-fresh-plan-object.json
+k -n "$TEST_NAMESPACE" get ptahschemaplan "$MANUAL_FRESH_PLAN_NAME" -o json >"$MANUAL_FRESH_PLAN_OBJECT" ||
+	fail "manual-drift fresh plan $MANUAL_FRESH_PLAN_NAME could not be read to rebuild its plan document"
+rebuild_plan_document "$MANUAL_FRESH_PLAN_OBJECT" "$MANUAL_FRESH_PLAN_DOCUMENT"
 scan_fault_file "$MANUAL_FRESH_PLAN_DOCUMENT" "the manual-drift fresh native plan"
-k -n "$TEST_NAMESPACE" get ptahschemaplan "$MANUAL_FRESH_PLAN_NAME" -o json | jq -e \
+MANUAL_FRESH_PLAN_DIGEST="sha256:$(sha256 <"$MANUAL_FRESH_PLAN_DOCUMENT")"
+printf '%s\n' "$MANUAL_FRESH_SCHEMA" | jq -e \
 	--slurpfile result "$MANUAL_FRESH_PLAN_RESULT" \
 	--slurpfile document "$MANUAL_FRESH_PLAN_DOCUMENT" \
+	--slurpfile plan "$MANUAL_FRESH_PLAN_OBJECT" \
+	--arg contentDigest "$MANUAL_FRESH_PLAN_DIGEST" \
 	--arg oldUID "$MANUAL_OLD_PLAN_UID" '
-      $result[0] as $result | $document[0] as $document |
-      .metadata.uid != $oldUID and $result.error == null and
+      $result[0] as $result | $document[0] as $document | $plan[0] as $plan |
+      $plan.metadata.uid != $oldUID and $result.error == null and
       $result.childExitCode == 0 and $result.planOutcome == "Changes" and
-      $result.planContentDigest == .spec.contentDigest and
-      $result.coordinationDigest == .spec.coordinationDigest and
-      $result.targetIdentityDigest == .spec.targetIdentityDigest and
-      .spec.actualStateFingerprint == $document.from_fingerprint and
-      .spec.desiredStateFingerprint == $document.to_fingerprint
+      $result.planContentDigest == $contentDigest and
+      .status.plan.contentDigest == $contentDigest and
+      $plan.spec.contentDigest == $contentDigest and
+      $result.coordinationDigest == $plan.spec.coordinationDigest and
+      $result.targetIdentityDigest == $plan.spec.targetIdentityDigest and
+      $plan.spec.actualStateFingerprint == $document.from_fingerprint and
+      $plan.spec.desiredStateFingerprint == $document.to_fingerprint
     ' >/dev/null || fail "manual-drift fresh plan is not bound to the exact Plan result"
+assert_plan_result_stdout_is_sealed "$MANUAL_FRESH_PLAN_RESULT" "$MANUAL_FRESH_PLAN_DOCUMENT" \
+	"the manual-drift fresh"
+printf 'e2e faults: the manual-drift fresh Plan result is sealed, and its content digest covers the %s-chunk plan document\n' \
+	"$REBUILT_PLAN_CHUNK_COUNT"
 assert_approval_consumed "$PG_MANUAL_APPROVAL" "$MANUAL_OLD_PLAN_UID"
 MANUAL_FINGERPRINT_AFTER_PROOF=$(postgres_schema_fingerprint "$PG_MANUAL_DB" | tr -d '[:space:]')
 [ "$MANUAL_FINGERPRINT_AFTER_PROOF" = "$MANUAL_FINGERPRINT_BEFORE" ] ||

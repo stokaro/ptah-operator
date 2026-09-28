@@ -18,6 +18,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/schemaselector"
 )
 
@@ -436,6 +437,7 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 			}
 			return
 		}
+		redactMigrationHistoryError(&report)
 		result.MigrationHistory = &report
 		return
 	}
@@ -447,6 +449,8 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 		}
 		return
 	}
+	report.Error = ""
+	redactMigrationHistoryError(report.Status)
 	result.MigrationRun = &report
 	// The report is the only thing that may narrow what was claimed before the
 	// child ran: an outcome that moved nothing releases the mutation claim, and
@@ -456,6 +460,20 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 	// Partial and unknown are the two outcomes no retry may follow.
 	result.Uncertain = report.Outcome == dataplane.MigrationOutcomePartial ||
 		report.Outcome == dataplane.MigrationOutcomeUnknown
+}
+
+// redactMigrationHistoryError clears the free-text error a dirty revision
+// carries. Ptah's own account of why a revision is dirty may quote the row
+// value that violated a constraint, and nothing downstream of this frame ever
+// reads the field: the controller names the dirty version and asks a person to
+// read the database directly, never Ptah's sentence about why (see
+// migrationRunMessage and recordMigrationHistory in internal/controller). This
+// clears it at the source instead of sealing it, because sealing a value
+// nothing ever decrypts would add a key to manage for no reader it protects.
+func redactMigrationHistoryError(report *dataplane.MigrationStatusReport) {
+	if report != nil && report.DirtyRevision != nil {
+		report.DirtyRevision.Error = ""
+	}
 }
 
 // operationOCIReference is the reference an operation fetches, and whether it
@@ -507,6 +525,20 @@ func runPlan(
 		setResultError(&result, "invalid_input", errors.New("PTAH_EXPECTED_DATABASE_ENGINE is required"), redactor, config.Diagnostics)
 		return result
 	}
+	// A missing or malformed seal key refuses before the executor starts: a
+	// plan this runner could compute but could not seal is not worth the
+	// child dispatch it would take to find that out.
+	sealKey, err := planseal.DecodePublicKey(inputs.PlanSealPublicKey)
+	if err != nil {
+		setResultError(&result, "missing_plan_seal_key", fmt.Errorf("%s: %w", EnvPlanSealPublicKey, err), redactor, config.Diagnostics)
+		return result
+	}
+	if strings.TrimSpace(inputs.SealedPlanJobName) == "" {
+		setResultError(&result, "missing_plan_seal_key",
+			fmt.Errorf("%s is required", EnvSealedPlanJobName), redactor, config.Diagnostics)
+		return result
+	}
+	sealEnvelope := planseal.Envelope{OperationID: inputs.OperationID, JobName: inputs.SealedPlanJobName}
 
 	// Each read saves into a directory only this process writes, under a name
 	// no earlier read used, so a file found there after a read is that read's.
@@ -614,8 +646,20 @@ func runPlan(
 		return result
 	}
 
+	// The digest binds the approved plan to these exact plaintext bytes; the
+	// frame carries them sealed. A reader of the Pod log, or of anything that
+	// copies it, holds ciphertext -- only the manager that holds the matching
+	// private key, generated in memory and never persisted, can read the plan.
+	// The envelope binds the sealed bytes to this operation and this Job, so a
+	// validly sealed plan from a different operation or a different attempt
+	// of this one cannot be substituted for this result at harvest.
+	sealed, err := planseal.SealPlan(rawPlan, sealEnvelope, sealKey)
+	if err != nil {
+		setResultError(&result, "plan_seal_failed", err, redactor, config.Diagnostics)
+		return result
+	}
 	result.ChildExitCode = 0
-	result.Stdout = string(rawPlan)
+	result.Stdout = sealed
 	result.PlanContentDigest = contentDigest
 	result.PlanOutcome = PlanOutcomeChanges
 	return result

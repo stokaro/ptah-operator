@@ -377,6 +377,7 @@ spec:
 | `status.activeOperation.observationLockTimeout` | `string` | ObservationLockTimeout is the database lock timeout it was dispatched with. |
 | `status.activeOperation.observationProtectedTables` | `[]string` | ObservationProtectedTables is the fence the operation was dispatched under, so an edit to the policy cannot reach a Job already running. |
 | `status.activeOperation.observationSeverity` | `string` | ObservationSeverity is the drift severity it was asked to report. |
+| `status.activeOperation.planSealPublicKeyDigest` | `string` | PlanSealPublicKeyDigest is the digest of the manager public key a Plan Job's runner was given to seal its plan payload, persisted immediately before the Job is created. A manager whose own current key no longer matches this digest -- because it restarted and generated a new one -- cannot open that Job's result and retries instead of waiting: Plan is read-only, so a fresh attempt sealed to the current key costs nothing the first attempt did not already cost. Plan operations only. |
 | `status.activeOperation.source` | `object` | Source snapshots artifact access for mandatory post-Apply observation. It contains Kubernetes selectors only, never Secret contents. |
 | `status.activeOperation.source.digest` | `string`, required | Digest is that digest on its own. |
 | `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |

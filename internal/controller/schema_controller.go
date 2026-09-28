@@ -41,6 +41,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
+	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
@@ -133,8 +134,14 @@ type SchemaReconciler struct {
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
 	Jobs       JobBuilder
-	Plans      planstore.Store
-	Locks      *targetlock.Locker
+	// SealKey is this manager process's key pair. The Plan Job builder is
+	// given its public half; this reconciler opens the Plan payload sealed
+	// to it. The private half is never persisted, so a process that
+	// generated a different key pair before a restart cannot open a Plan
+	// result it dispatched before that restart, and re-plans instead.
+	SealKey planseal.KeyPair
+	Plans   planstore.Store
+	Locks   *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// PtahSchema, including schemas that live in different namespaces.
 	LockNamespace string
@@ -1265,10 +1272,36 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		if operationNeedsTargetLock(schema) && !operation.DispatchStarted {
 			before := schema.DeepCopy()
 			schema.Status.ActiveOperation.DispatchStarted = true
+			if operation.Type == operatorv1alpha1.OperationPlan {
+				// Recorded in the same patch as the boundary it describes: the
+				// Job just built above is sealed to this process's current
+				// public key, and this is that Job's one dispatch attempt.
+				// Harvest compares its own current key against this digest
+				// rather than trying to open a payload it may not hold the
+				// matching private key for.
+				schema.Status.ActiveOperation.PlanSealPublicKeyDigest = planSealPublicKeyDigest(r.SealKey.PublicKey())
+			}
 			if err := r.patchStatus(ctx, before, schema); err != nil {
 				return ctrl.Result{}, err
 			}
 			operation = schema.Status.ActiveOperation
+		} else if operation.Type == operatorv1alpha1.OperationPlan {
+			// DispatchStarted is already recorded, so a pass before this one
+			// crossed the boundary and died before its Create. The digest it
+			// recorded names that process's key, and the Job built above is
+			// sealed to this one's. Nothing else moves the digest while
+			// DispatchStarted stays set, so bring the claim up to date before
+			// the Create: admission checks the Job's key against the claim,
+			// and harvest checks the claim against this process's key.
+			currentDigest := planSealPublicKeyDigest(r.SealKey.PublicKey())
+			if operation.PlanSealPublicKeyDigest != currentDigest {
+				before := schema.DeepCopy()
+				schema.Status.ActiveOperation.PlanSealPublicKeyDigest = currentDigest
+				if err := r.patchStatus(ctx, before, schema); err != nil {
+					return ctrl.Result{}, err
+				}
+				operation = schema.Status.ActiveOperation
+			}
 		}
 		if operation.Type == operatorv1alpha1.OperationApply {
 			if planRequiresApproval(schema, plan) {
@@ -1361,7 +1394,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("rebuild immutable Job intent: %w", expectedErr))
 		}
-		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation.AdmissionSnapshot); intentErr != nil {
+		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation); intentErr != nil {
 			if operation.Type == operatorv1alpha1.OperationApply {
 				return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job intent changed: %w", intentErr))
 			}
@@ -2029,7 +2062,31 @@ func (r *SchemaReconciler) consumeResult(
 				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "A newer resource generation is pending")
 			}
 		} else {
-			planDocument := []byte(result.Stdout)
+			// The claim recorded, at dispatch, the digest of the key this Job
+			// was sealed to. A mismatch means this process cannot be the one
+			// that dispatched it -- most likely a restart generated a new key
+			// in between -- so the payload is unreadable by construction, not
+			// merely rejected. Plan is read-only: retrying costs a fresh Job
+			// sealed to the current key, which is exactly what harvesting the
+			// old one would have cost anyway.
+			if operation.PlanSealPublicKeyDigest == "" ||
+				operation.PlanSealPublicKeyDigest != planSealPublicKeyDigest(r.SealKey.PublicKey()) {
+				return r.retryOperation(ctx, schema, job,
+					fmt.Errorf("plan was sealed to a manager key this process does not hold"))
+			}
+			// The envelope inside the sealed payload names the exact operation
+			// and Job it was sealed for. A NaCl sealed box carries no
+			// associated data, so opening successfully proves only that this
+			// process's key sealed it, never that it was sealed for this
+			// harvest -- a validly sealed plan from another operation, or
+			// another attempt of this one, would otherwise open and validate
+			// just as well.
+			planDocument, err := r.SealKey.OpenPlan(result.Stdout, planseal.Envelope{
+				OperationID: operation.ID, JobName: operation.JobName,
+			})
+			if err != nil {
+				return r.retryOperation(ctx, schema, job, fmt.Errorf("open sealed plan payload: %w", err))
+			}
 			if result.PlanContentDigest == "" || result.PlanContentDigest != fingerprint.DigestBytes(planDocument) {
 				return r.retryOperation(ctx, schema, job, fmt.Errorf("plan result content digest is missing or mismatched"))
 			}
@@ -2228,6 +2285,13 @@ func (r *SchemaReconciler) refreshAdmissionSnapshot(
 // admission snapshot recorded before dispatch, which pins what was taken to
 // the claim rather than to the object being checked.
 //
+// A Plan Job's seal key is taken from the live Job the same way, and pinned
+// by the digest the claim recorded at dispatch rather than by the snapshot.
+// Every process generates its own key, so the rebuild carries this process's
+// key while the live Job carries the dispatching process's: after a
+// leadership change or a restart mid-Plan the two differ on every pass, and
+// a byte-for-byte comparison would refuse a Job the claim authorized.
+//
 // Adoption holds only when the two releases build the same Job apart from
 // that identity. A release that also changed the Job or its Pod template fails
 // here, and the caller treats the Job as one it cannot confirm: a dispatched
@@ -2236,15 +2300,22 @@ func (r *SchemaReconciler) refreshAdmissionSnapshot(
 func validateAdoptedJobIntent(
 	actual, expected *batchv1.Job,
 	schema *operatorv1alpha1.PtahSchema,
-	snapshot *operatorv1alpha1.PodAdmissionSnapshot,
+	operation *operatorv1alpha1.ActiveOperationStatus,
 ) error {
+	if operation == nil {
+		return fmt.Errorf("no active operation claims the Job")
+	}
 	carried := workload.CarryManagerIdentity(expected, actual)
+	if err := workload.CarrySealedPlanKey(expected, actual, *operation); err != nil {
+		return fmt.Errorf("adopted Job seal key is invalid: %w", err)
+	}
 	if err := validateJobIntent(actual, expected, schema); err != nil {
 		return err
 	}
 	if !carried {
 		return nil
 	}
+	snapshot := operation.AdmissionSnapshot
 	if snapshot == nil {
 		return fmt.Errorf("a Job built by another manager has no persisted admission snapshot to hold it to")
 	}
@@ -4150,6 +4221,13 @@ func (r *SchemaReconciler) acquireOperationLock(ctx context.Context, schema *ope
 	default:
 		return true, 0, nil
 	}
+}
+
+// planSealPublicKeyDigest is the digest recorded on a Plan claim and compared
+// against at harvest, over the exact bytes the Job's environment carries so
+// the two are computed the same way wherever either is read.
+func planSealPublicKeyDigest(key planseal.PublicKey) string {
+	return fingerprint.DigestBytes([]byte(key.Encode()))
 }
 
 func operationNeedsTargetLock(schema *operatorv1alpha1.PtahSchema) bool {

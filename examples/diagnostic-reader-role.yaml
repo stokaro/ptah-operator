@@ -19,16 +19,21 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch"]
-  # Pods, and not their logs. A Plan Pod hands the whole plan to the controller
-  # through its log, row values of declared reference data included, and RBAC
-  # cannot grant the log of one operation Pod without the others: Pod names are
-  # generated per attempt and a rule has no label selector. Reading operation
-  # logs is reading every plan in the namespace, so grant pods/log the way plan
-  # access is granted, to the people who may read plans. What the controller
-  # made of each result is in status, conditions and Events, which this role
-  # reads.
+  # Pods, and their logs. A Plan Job's runner seals its plan payload to the
+  # manager's own key before writing it, so a Plan Pod's log holds ciphertext,
+  # and the runner drops the free-text database error a migration run or a
+  # dirty revision carries before it ever reaches the frame. Reading an
+  # operation Pod's log is no longer reading a plan or a declared row value;
+  # what the controller made of each result is in status, conditions and
+  # Events, which this role also reads.
+  #
+  # Not pods/attach or pods/exec. A live process inside an Observe, Plan or
+  # Apply Pod still holds the target database credential in its environment,
+  # and attaching or executing into it reaches that credential directly. RBAC
+  # cannot grant either to one operation Pod without the others: Pod names are
+  # generated per attempt and a rule has no label selector.
   - apiGroups: [""]
-    resources: ["pods"]
+    resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["events"]
