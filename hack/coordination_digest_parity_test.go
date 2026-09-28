@@ -20,7 +20,9 @@ import (
 // every minor (run 36267860770).
 //
 // So each shell derivation is run here and compared with the operator's, and
-// a digest written as a literal in a phase script is refused outright.
+// a digest written as a literal in a phase script is refused outright. A phase
+// ported to Go derives it in Go, and test/e2e holds that derivation to the
+// operator's the same way.
 
 // shellDerivation is one phase script's realm digest: the helper that hashes
 // stdin, the function that builds the canonical document, and what it takes.
@@ -32,7 +34,6 @@ type shellDerivation struct {
 }
 
 var shellDerivations = []shellDerivation{
-	{script: "e2e-assert.sh", hash: "sha256_stdin", function: "derive_coordination_digest"},
 	{script: "e2e-dataplane.sh", hash: "sha256", function: "coordination_digest"},
 	{script: "e2e-reference-data.sh", hash: "sha256", function: "coordination_digest"},
 	{script: "e2e-migrations.sh", hash: "sha256", function: "realm_digest", realm: true},

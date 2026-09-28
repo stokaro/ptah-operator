@@ -54,7 +54,6 @@ const (
 	apiServerEndpointFilterPath    = "hack/api-server-endpoint-inventory.jq"
 	e2eStaticPath                  = "hack/e2e-static.sh"
 	e2eDataPlanePath               = "hack/e2e-dataplane.sh"
-	e2eAssertPath                  = "hack/e2e-assert.sh"
 	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
 	e2eFaultsPath                  = "hack/e2e-faults.sh"
 	e2eHAPath                      = "hack/e2e-ha.sh"
@@ -232,7 +231,6 @@ func main() {
 		apiServerEndpointFilter:    apiServerEndpointFilterPath,
 		staticChecks:               e2eStaticPath,
 		dataPlane:                  e2eDataPlanePath,
-		assertions:                 e2eAssertPath,
 		crdUpgrade:                 e2eCRDUpgradePath,
 		faults:                     e2eFaultsPath,
 		highAvailability:           e2eHAPath,
@@ -2268,7 +2266,6 @@ type e2eWiringFiles struct {
 	apiServerEndpointFilter    string
 	staticChecks               string
 	dataPlane                  string
-	assertions                 string
 	crdUpgrade                 string
 	faults                     string
 	highAvailability           string
@@ -2973,7 +2970,6 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 		{marker: `-f "$ROOT_DIR/hack/controller-object-schema-contract.jq" \`, count: 1},
 		{marker: `"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`, count: 2},
 		{marker: `"$ROOT_DIR/hack/e2e-ha.sh"`, count: 1},
-		{marker: `"$ROOT_DIR/hack/e2e-assert.sh"`, count: 1},
 		// The Go phases run from a binary built out of the snapshot, so the
 		// build has to read the snapshot too. The runner that starts it is
 		// pinned whole below, as goPhaseRunnerContract.
@@ -3375,7 +3371,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		}),
 		exactSourceLine("candidate upgrade lifecycle", `run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
 		exactSourceLine("high-availability lifecycle", `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`),
-		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`),
+		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert run_go_phase assert`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation run_go_phase cert-rotation`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`),
 		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`),
@@ -4049,33 +4045,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	}
 
 	childContracts := []lifecycleSourceContract{
-		{
-			path:     files.assertions,
-			exitTrap: "cleanup_files",
-			steps: []sourceContractStep{
-				exactSourceLine("fail-fast shell mode", "set -eu"),
-				exactSourceLine("cleanup implementation", `cleanup_files() {`),
-				exactSourceLine("cleanup status capture", `status=$?`),
-				exactSourceLine("cleanup status preservation", `exit "$status"`),
-				exactSourceLine("Pod admission outage proof", `printf '%s\n' 'e2e assertions: checking Pod webhook outage scope and foreign-label refusal'`),
-				exactSourceLineSequence("safe-default persistence proof", []string{
-					`printf '%s\n' "$schema_object" | jq -e '`,
-					`.spec.interval == "10m" and`,
-					`.spec.policy.apply == "OnApproval" and`,
-					`.spec.policy.allowDestructive == false and`,
-					`.spec.policy.driftSeverity == "all" and`,
-					`.spec.policy.lockTimeout == "30s" and`,
-					`.spec.policy.transactionMode == "file" and`,
-					`.spec.execution.activeDeadlineSeconds == 900 and`,
-					`.spec.execution.failureRetryInterval == "30s" and`,
-					`.spec.execution.connectTimeout == "10s"`,
-					`' >/dev/null || fail "PtahSchema API defaults were not persisted for omitted safe policy and execution fields"`,
-				}),
-				exactSourceLine("approval binding proof", `printf '%s\n' 'e2e assertions: checking approval stamping and exact binding'`),
-				exactSourceLine("cross-namespace refusal proof", `printf '%s\n' 'e2e assertions: checking cross-namespace approval refusal'`),
-				exactSourceLine("terminal control-plane lifecycle evidence", `printf '%s\n' 'e2e assertions: PASS control-plane contract'`),
-			},
-		},
 		{
 			path:     files.crdUpgrade,
 			exitTrap: "cleanup",
@@ -5708,23 +5677,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 			},
 		},
 		{
-			phase:  "assert",
-			script: "hack/e2e-assert.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
-				{name: "E2E_FOREIGN_NAMESPACE", value: `$FOREIGN_NAMESPACE`},
-				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
-				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
-				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
-				{name: "E2E_PTAH_VERSION", value: `$E2E_PTAH_VERSION`},
-				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
-				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
-				{name: "E2E_CONTROLLER_STATE_VERSION", value: `$CONTROLLER_STATE_VERSION`},
-			},
-		},
-		{
 			phase:  "dataplane",
 			script: "hack/e2e-dataplane.sh",
 			bindings: []phaseEnvironmentBinding{
@@ -5889,11 +5841,18 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 // line per variable rather than one block per phase, because an input means
 // the same thing in every phase that reads it.
 var goPhaseBindings = map[string]string{
-	"E2E_KUBECONFIG":         `$KUBECONFIG_FILE`,
-	"E2E_OPERATOR_NAMESPACE": `$OPERATOR_NAMESPACE`,
-	"E2E_TEST_NAMESPACE":     `$TEST_NAMESPACE`,
-	"E2E_HELM_RELEASE":       `$HELM_RELEASE`,
-	"E2E_CHART_PACKAGE":      `$CHART_PACKAGE`,
+	"E2E_KUBECONFIG":               `$KUBECONFIG_FILE`,
+	"E2E_OPERATOR_NAMESPACE":       `$OPERATOR_NAMESPACE`,
+	"E2E_TEST_NAMESPACE":           `$TEST_NAMESPACE`,
+	"E2E_FOREIGN_NAMESPACE":        `$FOREIGN_NAMESPACE`,
+	"E2E_HELM_RELEASE":             `$HELM_RELEASE`,
+	"E2E_CHART_PACKAGE":            `$CHART_PACKAGE`,
+	"E2E_EXECUTOR_IMAGE":           `$E2E_EXECUTOR_IMAGE`,
+	"E2E_RUNNER_IMAGE":             `$E2E_RUNNER_IMAGE`,
+	"E2E_PTAH_VERSION":             `$E2E_PTAH_VERSION`,
+	"E2E_CONTROLLER_IMAGE":         `$CANDIDATE_OPERATOR_IMAGE`,
+	"E2E_CONTROLLER_REVISION":      `$CONTROLLER_REVISION`,
+	"E2E_CONTROLLER_STATE_VERSION": `$CONTROLLER_STATE_VERSION`,
 }
 
 // phaseInvocationPattern matches one `run_recorded_phase <name> "$ROOT_DIR/<script>"`
@@ -6207,8 +6166,6 @@ func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
 		return files.crdUpgrade
 	case e2eHAPath:
 		return files.highAvailability
-	case e2eAssertPath:
-		return files.assertions
 	case e2eDataPlanePath:
 		return files.dataPlane
 	case e2eMigrationsPath:

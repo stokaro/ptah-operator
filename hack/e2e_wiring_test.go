@@ -2821,14 +2821,14 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "control plane lifecycle omitted",
-			old:         `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`,
+			old:         `run_recorded_phase assert run_go_phase assert`,
 			replacement: `true # control plane lifecycle omitted`,
 			wantError:   "control-plane lifecycle",
 		},
 		{
 			name:        "control plane lifecycle hidden in false branch",
-			old:         `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`,
-			replacement: "if false; then\n\trun_recorded_phase assert \"$ROOT_DIR/hack/e2e-assert.sh\"\nfi",
+			old:         `run_recorded_phase assert run_go_phase assert`,
+			replacement: "if false; then\n\trun_recorded_phase assert run_go_phase assert\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
@@ -4323,56 +4323,6 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		wantError   string
 	}{
 		{
-			name:        "assertions interpreter bypass",
-			child:       "assertions",
-			old:         "#!/bin/sh\n",
-			replacement: "#!/bin/true\n",
-			wantError:   "must execute with #!/bin/sh",
-		},
-		{
-			name:        "assertions fail-fast bypass",
-			child:       "assertions",
-			old:         "set -eu\n",
-			replacement: "set +e\n",
-			wantError:   "enable set -eu",
-		},
-		{
-			name:        "assertions trap discards failure",
-			child:       "assertions",
-			old:         "trap cleanup_files EXIT\n",
-			replacement: "trap 'exit 0' EXIT\n",
-			wantError:   "failure-preserving trap",
-		},
-		{
-			name:        "assertions proof call removed",
-			child:       "assertions",
-			old:         `printf '%s\n' 'e2e assertions: checking approval stamping and exact binding'`,
-			replacement: `true # approval binding proof removed`,
-			wantError:   "approval binding proof",
-		},
-		{
-			name:  "assertions proof call hidden in false branch",
-			child: "assertions",
-			old:   `printf '%s\n' 'e2e assertions: checking approval stamping and exact binding'`,
-			replacement: "if false; then\n\tprintf '%s\\n' " +
-				"'e2e assertions: checking approval stamping and exact binding'\nfi",
-			wantError: "always-false wrapper",
-		},
-		{
-			name:        "assertions terminal evidence removed",
-			child:       "assertions",
-			old:         `printf '%s\n' 'e2e assertions: PASS control-plane contract'`,
-			replacement: `printf '%s\n' 'e2e assertions finished'`,
-			wantError:   "terminal control-plane lifecycle evidence",
-		},
-		{
-			name:        "assertions early successful exit",
-			child:       "assertions",
-			old:         "set -eu\n",
-			replacement: "set -eu\nexit 0\n",
-			wantError:   "unconditional successful exit",
-		},
-		{
 			name:        "CRD interpreter bypass",
 			child:       "crd-upgrade",
 			old:         "#!/bin/sh\n",
@@ -5013,8 +4963,8 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "phase pointed at another script",
 			old:         "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
-			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-assert.sh\"\n",
-			wantError:   `lifecycle phase "migrations-mysql" must run hack/e2e-migrations.sh, not hack/e2e-assert.sh`,
+			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-ha.sh\"\n",
+			wantError:   `lifecycle phase "migrations-mysql" must run hack/e2e-migrations.sh, not hack/e2e-ha.sh`,
 		},
 		{
 			name:        "phase invoked twice",
@@ -5057,7 +5007,7 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "Go phase run as a script",
 			old:         certRotationCall,
-			replacement: "\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-assert.sh\"\n",
+			replacement: "\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-ha.sh\"\n",
 			wantError:   "cert-rotation is a Go phase and must run through run_go_phase cert-rotation",
 		},
 		{
@@ -5174,7 +5124,6 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		apiServerEndpointFilter:    filepath.Join("..", apiServerEndpointFilterPath),
 		staticChecks:               filepath.Join("..", e2eStaticPath),
 		dataPlane:                  filepath.Join("..", e2eDataPlanePath),
-		assertions:                 filepath.Join("..", e2eAssertPath),
 		crdUpgrade:                 filepath.Join("..", e2eCRDUpgradePath),
 		faults:                     filepath.Join("..", e2eFaultsPath),
 		highAvailability:           filepath.Join("..", e2eHAPath),
@@ -5192,8 +5141,6 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 
 func e2eChildPath(files e2eWiringFiles, child string) string {
 	switch child {
-	case "assertions":
-		return files.assertions
 	case "crd-upgrade":
 		return files.crdUpgrade
 	case "faults":
@@ -5207,8 +5154,6 @@ func e2eChildPath(files e2eWiringFiles, child string) string {
 
 func setE2EChildPath(files *e2eWiringFiles, child, path string) {
 	switch child {
-	case "assertions":
-		files.assertions = path
 	case "crd-upgrade":
 		files.crdUpgrade = path
 	case "faults":

@@ -55,6 +55,64 @@ type Of[T any] struct {
 	Phase
 }
 
+// ControlPlaneInputs is what the driver hands the control-plane contract
+// phase, which the driver knows as assert.
+type ControlPlaneInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// OperatorNamespace is the release namespace.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// TestNamespace is where the phase creates its schema, plan and approval
+	// fixtures, which the certificates and data-plane phases go on to use.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// ForeignNamespace holds the objects a reference from TestNamespace must
+	// not reach.
+	ForeignNamespace string `env:"E2E_FOREIGN_NAMESPACE"`
+	// HelmRelease is the installed release.
+	HelmRelease string `env:"E2E_HELM_RELEASE"`
+	// ExecutorImage is the digest-pinned Ptah executor the release runs.
+	ExecutorImage string `env:"E2E_EXECUTOR_IMAGE"`
+	// RunnerImage is the runner image built beside the manager.
+	RunnerImage string `env:"E2E_RUNNER_IMAGE"`
+	// PtahVersion is the Ptah version bound beside the executor.
+	PtahVersion string `env:"E2E_PTAH_VERSION"`
+	// ControllerImage is the candidate manager image, pinned by digest.
+	ControllerImage string `env:"E2E_CONTROLLER_IMAGE"`
+	// ControllerRevision is the commit the candidate was built from.
+	ControllerRevision string `env:"E2E_CONTROLLER_REVISION"`
+	// ControllerStateVersion is the controller-state version the chart was
+	// stamped with.
+	ControllerStateVersion string `env:"E2E_CONTROLLER_STATE_VERSION"`
+}
+
+// ControlPlane proves the control-plane contract: the release's readiness,
+// discovery, authorization and admission shape, the API server's refusals,
+// and the approval binding, against fixtures the later phases reuse.
+var ControlPlane = define[ControlPlaneInputs](Phase{
+	Name:    "assert",
+	Test:    "TestControlPlaneContract",
+	Timeout: 60 * time.Minute,
+	Scenarios: []string{
+		"manager-readiness",
+		"crd-discovery",
+		"finalizer-authorization",
+		"realm-authorization",
+		"plan-chunk-authorization",
+		"webhook-configuration",
+		"secret-isolation",
+		"namespace-local-references",
+		"verification-policy",
+		"pod-webhook-outage-scope",
+		"duration-bounds",
+		"reference-keys",
+		"managed-scope-selectors",
+		"unsupported-engine",
+		"suspended-schema-fixture",
+		"approval-binding",
+		"cross-namespace-approval",
+	},
+})
+
 // CertRotationInputs is what the driver hands the certificate rotation phase.
 type CertRotationInputs struct {
 	// Kubeconfig names the cluster the driver stood up.
@@ -89,6 +147,7 @@ var CertRotation = define[CertRotationInputs](Phase{
 
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
+	ControlPlane.Phase,
 	CertRotation.Phase,
 }
 

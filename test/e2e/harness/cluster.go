@@ -10,7 +10,9 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -39,14 +41,23 @@ type Cluster struct {
 	Client     client.Client
 	Clientset  kubernetes.Interface
 	Scheme     *runtime.Scheme
+	// Namespace is the kubeconfig context's namespace, "default" when it
+	// names none: what kubectl sends for a request that names no namespace.
+	Namespace string
 }
 
 // Connect reaches the cluster the kubeconfig names, with the built-in types
 // and the operator's own API registered.
 func Connect(kubeconfig string) (*Cluster, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}, &clientcmd.ConfigOverrides{})
+	config, err := loader.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("read the kubeconfig %s: %w", kubeconfig, err)
+	}
+	namespace, _, err := loader.Namespace()
+	if err != nil {
+		return nil, fmt.Errorf("read the namespace of the kubeconfig %s: %w", kubeconfig, err)
 	}
 	// The phases poll every second or two across a handful of objects; the
 	// client's default of five requests a second would make a wait measure
@@ -60,6 +71,9 @@ func Connect(kubeconfig string) (*Cluster, error) {
 	if err := ptahv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
 	direct, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("build a client for %s: %w", kubeconfig, err)
@@ -68,7 +82,27 @@ func Connect(kubeconfig string) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build a clientset for %s: %w", kubeconfig, err)
 	}
-	return &Cluster{Kubeconfig: kubeconfig, Config: config, Client: direct, Clientset: clientset, Scheme: scheme}, nil
+	return &Cluster{
+		Kubeconfig: kubeconfig, Config: config, Client: direct, Clientset: clientset, Scheme: scheme,
+		Namespace: namespace,
+	}, nil
+}
+
+// CanI asks the API server what `kubectl auth can-i --as=<user>` asks: a
+// SelfSubjectAccessReview sent as the user alone, whose groups the server
+// derives itself.
+func (c *Cluster) CanI(ctx context.Context, user string, attributes authorizationv1.ResourceAttributes) (bool, error) {
+	impersonated, err := c.As(rest.ImpersonationConfig{UserName: user})
+	if err != nil {
+		return false, err
+	}
+	review := &authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &attributes},
+	}
+	if err := impersonated.Create(ctx, review); err != nil {
+		return false, err
+	}
+	return review.Status.Allowed, nil
 }
 
 // As returns a client that sends every request as the given identity. The

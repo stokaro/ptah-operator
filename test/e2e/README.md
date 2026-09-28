@@ -377,7 +377,8 @@ Job.
 ## Phases in Go
 
 The phases are moving from shell scripts under `hack/` to Go tests in this
-directory, one suite at a time, and the certificates suite is the first. The
+directory, one suite at a time. The certificates suite and the data-plane
+suite's control-plane phase, `assert`, are ported. The
 driver keeps the bootstrap: the kind cluster, the images, the registry, the
 databases and the chart install. Before it creates the cluster it builds one
 test binary from the snapshot:
@@ -420,3 +421,15 @@ the Secret still holds the corrupt value, and switching no earlier than
 Secret's field management. A deleted Secret is recreated at once rather than
 after the switch delay, with the chart's exact labels, annotations and four
 fields, and every entry contracts to its CA.
+
+`TestControlPlaneContract` is the `assert` phase, the control-plane checks
+described above. It sends its requests as the documents the shell phase sent,
+built as JSON objects rather than typed structs: a typed PtahSchema would
+serialize its zero durations as `0s`, and the API server would refuse a
+request the phase never meant to make. It reads everything back typed, except
+where the claim is about the stored representation itself, such as a default
+the API server wrote as `10m` or an approval spec that carries exactly six
+keys. It creates with strict field validation, as `kubectl create` does, so a
+field the API dropped is refused instead of pruned. The plan fingerprint and
+the realm digest are derived here, independently of the operator, and a unit
+test holds both derivations to `internal/fingerprint`.

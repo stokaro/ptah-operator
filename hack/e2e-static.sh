@@ -1271,7 +1271,6 @@ for packaged_chart_marker in \
 	grep -F -- "$packaged_chart_marker" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 done
 for deployment_patch_script in \
-	e2e-assert.sh \
 	e2e-crd-upgrade.sh \
 	e2e-dataplane.sh; do
 	if grep -Eq '(^|[[:space:]])scale[[:space:]]+deployment(/|[[:space:]])' \
@@ -1642,15 +1641,6 @@ for branch_engine in postgresql mysql; do
 			"$branch_engine" >&2
 		exit 1
 	}
-done
-for approval_plan_marker in \
-	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
-	"verificationPolicyUID: \$verificationPolicyUID" \
-	"publishedChunks: [{name: \$chunkName, uid: \$chunkUID, index: 0}]" \
-	"\"operator.ptah.run/plan\": \$planName" \
-	'kind: "PtahSchemaPlanChunk"' \
-	'spec: {data: "eA=="}'; do
-	grep -F -- "$approval_plan_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 done
 grep -F 'unset REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" \
@@ -2174,63 +2164,6 @@ static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'E2E_PHASE=upgrade' \
 	'"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 
-control_plane_plan_fixture_section=$(sed -n '/^artifact_digest=/,/^approval_json()/p' \
-	"$ROOT_DIR/hack/e2e-assert.sh")
-control_plane_approval_section=$(sed -n \
-	"/checking approval stamping and exact binding/,/^for missing_binding/p" \
-	"$ROOT_DIR/hack/e2e-assert.sh")
-# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
-for control_plane_binding_marker in \
-	'E2E_CONTROLLER_IMAGE must be pinned by a lowercase SHA-256 digest' \
-	'E2E_CONTROLLER_STATE_VERSION must be a positive integer' \
-	'.status.executionBinding as $binding' \
-	'($binding | keys) == ["controllerStateVersion", "epoch", "executorImage", "ptahVersion", "runnerProtocolVersion"]' \
-	'$binding.controllerStateVersion == $controllerStateVersion' \
-	'manager must have exactly one --controller-image argument' \
-	'controller_image=$deployed_controller_image' \
-	'manager controller image argument does not match the externally expected image identity'; do
-	grep -F -- "$control_plane_binding_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
-done
-# shellcheck disable=SC2016 # Exact source markers intentionally retain jq and shell variables literally.
-for control_plane_plan_marker in \
-	'contract_version: 3' \
-	'execution_binding_id: $executionBindingID' \
-	'controller_state_version: $controllerStateVersion' \
-	'plan_fingerprint="sha256:$(printf' \
-	'contractVersion: 3' \
-	'executionBindingID: $executionBindingID' \
-	'controllerImage: $controllerImage' \
-	'controllerRevision: $controllerRevision' \
-	'controllerStateVersion: $controllerStateVersion'; do
-	printf '%s\n' "$control_plane_plan_fixture_section" |
-		grep -F -- "$control_plane_plan_marker" >/dev/null
-done
-static_reject_marker "$control_plane_plan_fixture_section" 'contractVersion: 1' \
-	'control-plane approval fixture current contract'
-# The plan fingerprint leaves the publishing manager out; the manifest records it.
-# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
-for control_plane_unbound_marker in \
-	'controller_image: $controllerImage' \
-	'controller_revision: $controllerRevision' \
-	'runner_image: $runnerImage'; do
-	static_reject_marker "$control_plane_plan_fixture_section" "$control_plane_unbound_marker" \
-		'control-plane plan fingerprint'
-done
-# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
-# The stored approval carries the decision and the stamp and nothing copied
-# from the plan: exactly these keys, held against the plan by UID and
-# fingerprint.
-for control_plane_approval_marker in \
-	'.spec.schemaRef == {name: $schemaName, uid: $schemaUID}' \
-	'.spec.planRef == {name: $planName, uid: $planUID}' \
-	'.spec.planFingerprint == $fingerprint' \
-	'(.spec | keys) == ["approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"]'; do
-	printf '%s\n' "$control_plane_approval_section" |
-		grep -F -- "$control_plane_approval_marker" >/dev/null
-done
-grep -F 'approval carrying a plan binding the API dropped' \
-	"$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
-
 dataplane_approval_identity_section=$(sed -n '/^create_exact_approval()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 dataplane_sync_identity_section=$(sed -n '/^wait_for_in_sync()/,/^}/p' \
@@ -2313,7 +2246,7 @@ for fault_runtime_identity_marker in \
 	printf '%s\n' "$fault_runtime_identity_section" |
 		grep -F -- "$fault_runtime_identity_marker" >/dev/null
 done
-for controller_identity_consumer in e2e-assert.sh e2e-dataplane.sh e2e-faults.sh; do
+for controller_identity_consumer in e2e-dataplane.sh e2e-faults.sh; do
 	for controller_identity_input in CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION; do
 		grep -F "${controller_identity_input}=\${E2E_${controller_identity_input}:-}" \
 			"$ROOT_DIR/hack/$controller_identity_consumer" >/dev/null
@@ -5051,45 +4984,12 @@ for protocol_script in e2e-dataplane.sh e2e-faults.sh; do
 done
 # The immutable verification policy is created by the bootstrap now, because
 # every suite's resources refer to it. Both halves are still required: the
-# bootstrap writes it immutable, and the control-plane phase refuses to run
-# without it and holds it to the committed file.
+# bootstrap writes it immutable, and the control-plane phase in Go refuses to
+# run without it and holds it to the committed file.
 grep -F "jq '.immutable = true'" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 	printf '%s\n' 'e2e static: the bootstrap does not create the verification policy as immutable' >&2
 	exit 1
 }
-for policy_contract_marker in \
-	'.immutable == true' \
-	'the bootstrap creates it' \
-	'does not carry the committed policy'; do
-	grep -F "$policy_contract_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null || {
-		printf 'e2e static: the control-plane phase no longer holds the verification policy contract: %s\n' \
-			"$policy_contract_marker" >&2
-		exit 1
-	}
-done
-for admission_marker in \
-	'empty target Secret key' \
-	'empty development target Secret key' \
-	'empty verification policy ConfigMap key' \
-	'empty OCI CA ConfigMap key' \
-	'a rejected empty reference key created an operation Job' \
-	'whitespace-only managed-scope selector' \
-	'leading whitespace in managed-scope selector' \
-	'trailing whitespace in managed-scope selector' \
-	'control character in managed-scope selector' \
-	'overlong managed-scope selector' \
-	'duplicate managed-scope selector' \
-	'a rejected managed-scope selector created an operation Job' \
-	'schema-name schema-uid plan-name plan-uid plan-fingerprint' \
-	'approval carrying a plan binding the API dropped' \
-	'approval naming a plan of another schema' \
-	'approval naming a replaced plan' \
-	'E2E_TEST_NAMESPACE and E2E_FOREIGN_NAMESPACE must differ' \
-	'del(.metadata.ownerReferences, .metadata.finalizers)' \
-	'foreign plan disappeared, changed, or entered deletion' \
-	'cross-namespace approval refusal created an approval'; do
-	grep -F "$admission_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
-done
 for fault_marker in \
 	'assert_no_overlapping_operation_jobs' \
 	'assert_no_overlapping_operation_pods' \

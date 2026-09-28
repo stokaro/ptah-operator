@@ -96,7 +96,7 @@ func TestLookupFindsOnlyDeclaredPhases(t *testing.T) {
 	if phase, ok := Lookup("cert-rotation"); !ok || phase.Test != "TestCertRotation" {
 		t.Fatalf("Lookup(cert-rotation) = %+v, %v", phase, ok)
 	}
-	for _, name := range []string{"", "assert", "cert", "cert-rotation ", "TestCertRotation"} {
+	for _, name := range []string{"", "Assert", "cert", "cert-rotation ", "TestCertRotation"} {
 		if _, ok := Lookup(name); ok {
 			t.Errorf("Lookup(%q) found a phase", name)
 		}
