@@ -23,10 +23,11 @@ func TestControllerObjectGuardNamesAreReleaseDistinctAndVersioned(t *testing.T) 
 	names := map[string]string{
 		ControllerJobWriteGuardPolicyName("ptah-system", "ptah"):           controllerJobWriteGuardNamePrefix,
 		ControllerChunkWriteGuardPolicyName("ptah-system", "ptah"):         controllerChunkWriteGuardPrefix,
+		ControllerProjectionWriteGuardPolicyName("ptah-system", "ptah"):    controllerProjectionWriteGuardPrefix,
 		ControllerPlanWriteGuardPolicyName("ptah-system", "ptah"):          controllerPlanWriteGuardNamePrefix,
 		ControllerMigrationPlanWriteGuardPolicyName("ptah-system", "ptah"): controllerMigrationPlanWriteGuardNamePrefix,
 	}
-	if len(names) != 4 {
+	if len(names) != 5 {
 		t.Fatal("typed controller object guards do not have distinct names")
 	}
 	for name, prefix := range names {
@@ -51,17 +52,18 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 
 	guard := testControllerObjectGuard()
 	entries := guard.entries()
-	if len(entries) != 4 {
-		t.Fatalf("controller object guard entries = %d, want four typed policies", len(entries))
+	if len(entries) != 5 {
+		t.Fatalf("controller object guard entries = %d, want five typed policies", len(entries))
 	}
 	wantGVK := map[string]struct {
 		apiGroup   string
 		apiVersion string
 	}{
-		"jobs":               {apiGroup: "batch", apiVersion: "v1"},
-		"configmaps":         {apiGroup: "", apiVersion: "v1"},
-		"ptahschemaplans":    {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
-		"ptahmigrationplans": {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
+		"jobs":                 {apiGroup: "batch", apiVersion: "v1"},
+		"ptahschemaplanchunks": {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
+		"configmaps":           {apiGroup: "", apiVersion: "v1"},
+		"ptahschemaplans":      {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
+		"ptahmigrationplans":   {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
 	}
 	seenResources := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
@@ -97,10 +99,12 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			if binding.Spec.ParamRef != nil {
 				t.Fatalf("controller object binding names a parameter: %#v", binding.Spec.ParamRef)
 			}
-			// A chunk is bound to its plan, which names the manager; the chunk
-			// guard carries no release value it would not read.
+			// A chunk and its projection are bound to their plan, which names
+			// the manager; their guards carry no release value they would not
+			// read.
 			var wantVariables []admissionregistrationv1.Variable
-			if entry.component != controllerChunkWriteGuardComponent {
+			if entry.component != controllerChunkWriteGuardComponent &&
+				entry.component != controllerProjectionWriteGuardComponent {
 				wantVariables = []admissionregistrationv1.Variable{
 					{Name: "releaseControllerStateString", Expression: strconv.Quote(strconv.Itoa(int(guard.ControllerStateVersion)))},
 					{Name: "releaseControllerState", Expression: strconv.Itoa(int(guard.ControllerStateVersion))},
@@ -228,21 +232,31 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 			t.Fatalf("current Job envelope is not bound to the release's controller identity: missing %q", required)
 		}
 	}
+	// The size ceilings are measured rather than named, in
+	// TestControllerChunkWriteGuardAdmitsTheChunksThePlanStoreWrites: a
+	// literal here reads correct whatever number it carries.
 	chunk := strings.Join(validationExpressions(entries[1].validations), "\n")
 	for _, marker := range []string{
 		`object.metadata.labels.size() == 2`,
 		`object.metadata.ownerReferences[0].kind == "PtahSchemaPlan"`,
-		`dyn(object).immutable`,
-		`dyn(object).binaryData.size() == 1`,
-		// The size ceiling is measured rather than named, in
-		// TestControllerChunkWriteGuardAdmitsTheChunksThePlanStoreWrites:
-		// a literal here reads correct whatever number it carries.
+		`has(dyn(object).spec.data)`,
 	} {
 		if !strings.Contains(chunk, marker) {
 			t.Fatalf("chunk structural contract lacks %q", marker)
 		}
 	}
-	plan := strings.Join(validationExpressions(entries[2].validations), "\n")
+	projection := strings.Join(validationExpressions(entries[2].validations), "\n")
+	for _, marker := range []string{
+		`object.metadata.labels.size() == 2`,
+		`object.metadata.ownerReferences[0].kind == "PtahSchemaPlan"`,
+		`dyn(object).immutable`,
+		`dyn(object).binaryData.size() == 1`,
+	} {
+		if !strings.Contains(projection, marker) {
+			t.Fatalf("projection structural contract lacks %q", marker)
+		}
+	}
+	plan := strings.Join(validationExpressions(entries[3].validations), "\n")
 	for _, marker := range []string{
 		`object.metadata.labels.size() == 1`,
 		`dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
@@ -258,7 +272,6 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`dyn(dyn(object).spec).controllerStateVersion == variables.releaseControllerState`,
 		`dyn(object).spec.statementCount >= 1`,
 		`dyn(object).spec.chunks.size() <= 16`,
-		`chunk.key == "chunk"`,
 		`!has(dyn(object).status)`,
 	} {
 		if !strings.Contains(plan, marker) {

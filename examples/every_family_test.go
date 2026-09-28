@@ -70,15 +70,16 @@ func clusterScopedResources(t *testing.T) map[string]bool {
 }
 
 // desiredStateResources are the kinds a person writes to ask for work. They are
-// the ones an author Role has to grant; plans and approvals are not authored,
-// and a realm is not work but the authorization for it.
+// the ones an author Role has to grant; plans, their chunks and approvals are
+// not authored, and a realm is not work but the authorization for it.
 func desiredStateResources(t *testing.T) []string {
 	t.Helper()
 
 	clusterScoped := clusterScopedResources(t)
 	var authored []string
 	for _, resource := range servedResources(t) {
-		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "approvals") || clusterScoped[resource] {
+		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "planchunks") ||
+			strings.HasSuffix(resource, "approvals") || clusterScoped[resource] {
 			continue
 		}
 		authored = append(authored, resource)
@@ -114,8 +115,10 @@ func TestTheDiagnosticReaderCoversEveryKindTheOperatorServes(t *testing.T) {
 	for _, resource := range servedResources(t) {
 		// A realm lists every namespace that may manage its database, and a
 		// namespace's on-call is not entitled to that list. A namespaced Role
-		// could not grant it anyway.
-		if clusterScoped[resource] {
+		// could not grant it anyway. A plan chunk is a plan's SQL, which is a
+		// reviewer's to read rather than on-call's; the plan manifest says what
+		// diagnosis needs about it.
+		if clusterScoped[resource] || strings.HasSuffix(resource, "planchunks") {
 			if granted[resource] {
 				t.Fatalf("the diagnostic reader names %s, which a namespace's reader must not see", resource)
 			}
@@ -185,10 +188,12 @@ func TestTheDesiredStateAuthorCoversEveryFamilyAPersonWrites(t *testing.T) {
 			t.Fatalf("the desired-state author cannot write %s, which is a family this operator serves", resource)
 		}
 	}
-	// And it grants nothing else: an author Role that reached a plan or an
-	// approval would be the separation this example exists to start.
+	// And it grants nothing else: an author Role that reached a plan, its
+	// chunks or an approval would be the separation this example exists to
+	// start.
 	for resource := range granted {
-		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "approvals") {
+		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "planchunks") ||
+			strings.HasSuffix(resource, "approvals") {
 			t.Fatalf("the desired-state author reaches %s, which belongs to the approver", resource)
 		}
 	}

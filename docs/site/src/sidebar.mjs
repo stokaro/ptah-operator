@@ -77,6 +77,7 @@ export const sidebar = [
         items: [
           { label: 'PtahSchema', link: '/reference/ptahschema/' },
           { label: 'PtahSchemaPlan', link: '/reference/ptahschemaplan/' },
+          { label: 'PtahSchemaPlanChunk', link: '/reference/ptahschemaplanchunk/' },
           { label: 'PtahSchemaApproval', link: '/reference/ptahschemaapproval/' },
           { label: 'PtahMigration', link: '/reference/ptahmigration/' },
           { label: 'PtahMigrationPlan', link: '/reference/ptahmigrationplan/' },

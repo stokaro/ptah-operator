@@ -278,7 +278,7 @@ func buildFixture(
 			Destructive:              false,
 			StatementCount:           int32(len(decoded.Statements)),
 			Chunks: []operatorv1alpha1.PlanChunkReference{{
-				Name: chunkName, Key: planstore.ChunkDataKey, Index: 0,
+				Name: chunkName, Index: 0,
 				Digest: contentDigest, Size: int32(len(planData)),
 			}},
 		},

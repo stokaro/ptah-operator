@@ -15,12 +15,11 @@ const planPluginSource = "cmd/kubectl-ptah/main.go"
 
 var declaredFlag = regexp.MustCompile(`flags\.(?:Bool|String|StringP|Duration)\("([a-z-]+)"`)
 
-// The export procedure selects a plan's chunks by label, and the label has to
-// be the one the plan store writes.
+// The pruning procedure confirms a plan's chunks and projections went by
+// label, and the label has to be the one the plan store writes.
 //
-// It is the only way to find the ConfigMaps of a plan that is neither current
-// nor applied, and a reader whose selector matches nothing has no way to tell
-// that from a plan whose chunks are already gone.
+// A reader whose selector matches nothing has no way to tell a plan whose
+// chunks were collected from a selector that never matched anything.
 func TestTheExportProcedureSelectsChunksByTheLabelTheStoreWrites(t *testing.T) {
 	t.Parallel()
 	guide := string(readOperationsGuide(t))

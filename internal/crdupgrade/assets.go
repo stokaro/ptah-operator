@@ -15,6 +15,9 @@ const (
 	PtahSchemaCRDName         = "ptahschemas.operator.ptah.run"
 	PtahSchemaApprovalCRDName = "ptahschemaapprovals.operator.ptah.run"
 	PtahSchemaPlanCRDName     = "ptahschemaplans.operator.ptah.run"
+	// The chunks a schema plan's bytes are stored in. A manager that publishes
+	// plans into a kind the cluster does not serve cannot publish one.
+	PtahSchemaPlanChunkCRDName = "ptahschemaplanchunks.operator.ptah.run"
 	// The versioned-migration kinds. They are owned by the same manager as the
 	// schema kinds because they share one release and one rollback fence: a
 	// cluster that has the newer schema CRDs and not these would be running a
@@ -40,7 +43,7 @@ const (
 	ControllerStateVersionAnnotation = "operator.ptah.run/controller-state-version"
 	// CurrentCRDSchemaVersion must match CRD_SCHEMA_VERSION in the Makefile and
 	// every generated CRD annotation.
-	CurrentCRDSchemaVersion uint64 = 29
+	CurrentCRDSchemaVersion uint64 = 30
 )
 
 var expectedNames = []string{
@@ -49,6 +52,7 @@ var expectedNames = []string{
 	PtahMigrationCRDName,
 	PtahRealmCRDName,
 	PtahSchemaApprovalCRDName,
+	PtahSchemaPlanChunkCRDName,
 	PtahSchemaPlanCRDName,
 	PtahSchemaCRDName,
 }

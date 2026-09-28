@@ -151,14 +151,16 @@ does not carry, or the schema is not waiting for exactly one approval. Updates
 cannot change `spec`; create a new approval for a new plan. See
 [Exact-plan approvals](../use/approvals/).
 
-### The reviewer can see the plan but not the SQL. Is that intended? {#reviewer-cannot-read-sql}
+### The reviewer can see the plan but not the SQL. What is missing? {#reviewer-cannot-read-sql}
 
-Yes. The plan resource carries immutable chunk names and digests, and the SQL
-lives in controller-owned ConfigMaps that the built-in approver ClusterRole
-deliberately cannot read. A namespace administrator grants `get` on the current
-chunk names through a least-privilege Role, replaced for the next plan. Once
-granted, `kubectl ptah plan <schema> --current` reads it; approving hashes
-without reading the SQL is not an independent review.
+Read access to the chunks. The plan resource carries immutable chunk names and
+digests, and the SQL lives in the `PtahSchemaPlanChunk` objects it names. One
+rule, `get` on `ptahschemaplanchunks` in the namespace, reads every plan there;
+the chart's approver ClusterRole carries it, and
+`examples/approver-plan-reader-role.yaml` grants it without the approval
+verbs. A role that reads plans and not chunks shows the hashes and none of the
+statements. Once granted, `kubectl ptah plan <schema> --current` reads it;
+approving hashes without reading the SQL is not an independent review.
 
 - [Exact-plan approvals](../use/approvals/)
 - [Read a plan](../use/read-a-plan/#install)
@@ -169,8 +171,8 @@ without reading the SQL is not an independent review.
 the last confirmed apply ran instead of what would run next. The plugin is a
 read-only client published with each release and installed once; it reads every
 chunk, checks each against the digest and size the plan records, joins them in
-order and checks the whole document before printing a line. Decoding the chunk
-ConfigMaps by hand is not the supported way to read a plan, and it is wrong for
+order and checks the whole document before printing a line. Decoding the chunks
+by hand is not the supported way to read a plan, and it is wrong for
 any plan larger than one chunk: the document is split by bytes, so a boundary can
 fall inside a SQL string, a JSON escape or a multi-byte character.
 
@@ -191,8 +193,8 @@ appear as `ApplyDisabled`, `DestructiveChangesDisabled`, `PrivilegeChanges`, or
 
 An executable plan is limited to 8 MiB including the trailing newline, and the
 runner refuses a larger native plan before publication. Accepted bytes are stored
-in immutable 512 KiB ConfigMap chunks that stay below the Kubernetes object-size
-limit after encoding. Split the change across artifacts.
+in immutable 512 KiB chunks that stay below the Kubernetes object-size limit
+after encoding. Split the change across artifacts.
 
 - [Operations](../use/operations/#plan-retention)
 

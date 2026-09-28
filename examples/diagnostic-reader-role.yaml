@@ -4,9 +4,14 @@ metadata:
   name: ptah-diagnostic-reader
   namespace: application
 rules:
-  # Every kind this operator serves. Diagnosis that stops at one family reads
-  # half a database's history: the two can share a coordination realm, and the
-  # one that refused is not always the one being looked at.
+  # Every kind this operator serves but one. Diagnosis that stops at one
+  # family reads half a database's history: the two can share a coordination
+  # realm, and the one that refused is not always the one being looked at.
+  #
+  # Not ptahschemaplanchunks. The chunks are a plan's SQL, declared row values
+  # included; the plan manifest this role does read carries its digests,
+  # statement count and privilege kinds, which is what diagnosis needs. Grant
+  # the SQL to reviewers, with examples/approver-plan-reader-role.yaml.
   - apiGroups: ["operator.ptah.run"]
     resources:
       - "ptahschemas"
@@ -50,8 +55,8 @@ roleRef:
   name: ptah-diagnostic-reader
 subjects:
   # Replace this placeholder with the on-call group. This role intentionally
-  # cannot read Secrets, plan-chunk ConfigMaps or operation Pod logs, and
-  # cannot mutate approvals.
+  # cannot read Secrets, plan chunks or ConfigMaps -- an Apply's plan is
+  # projected into ConfigMaps -- and cannot mutate approvals.
   - apiGroup: rbac.authorization.k8s.io
     kind: Group
     name: <diagnostic-reader-group>

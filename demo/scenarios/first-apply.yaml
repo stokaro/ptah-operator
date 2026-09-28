@@ -108,10 +108,10 @@ steps:
       stdout_contains: [storefront]
 
   - note: What it ran is stored, and one read-only command prints it.
-    # The plan lives in immutable ConfigMaps that a manifest binds by index,
-    # size and digest. This reads it the way the operator does: every chunk,
-    # checked against its binding, joined in order and checked as a whole
-    # before a line of it is printed.
+    # The plan lives in immutable PtahSchemaPlanChunk objects that a manifest
+    # binds by index, size and digest. This reads it the way the operator
+    # does: every chunk, checked against its binding, joined in order and
+    # checked as a whole before a line of it is printed.
     run: kubectl ptah plan storefront --applied -n "$NAMESPACE" -o sql
     expect:
       exit: 0

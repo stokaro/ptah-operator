@@ -34,8 +34,8 @@ written and read as `spec` alone.
 
 Some of what a recovery needs lives outside those objects:
 
-- A `PtahSchemaPlan` stores its SQL in ConfigMaps and records each one by name
-  **and UID** in `status.publishedChunks`. A `PtahMigrationPlan` stores no SQL:
+- A `PtahSchemaPlan` stores its SQL in `PtahSchemaPlanChunk` objects and records
+  each one by name **and UID** in `status.publishedChunks`. A `PtahMigrationPlan` stores no SQL:
   it names versions and checksums, and the statements stay in the artifact.
 - The database lock is a Lease in the coordination namespace, one per
   coordination digest -- the engine hashed together with either the namespace
@@ -87,12 +87,13 @@ database holds what it held before the loss.
 
 A backup that omits any of these turns a consistent restore into a rebuild.
 
-- The six namespaced kinds, **including status**. A backup that keeps only
-  `spec` keeps none of the record.
+- The six namespaced kinds that carry status, **including status**. A backup
+  that keeps only `spec` keeps none of the record.
+- Every `PtahSchemaPlanChunk`, with its UID. A chunk has no status, but it
+  holds the plan's bytes, and a `PtahSchemaPlan` names each of its chunks by
+  UID in `status.publishedChunks`.
 - Every `PtahRealm`. A realm has no status, but a restore without it refuses
   every resource that names it.
-- The plan ConfigMaps a `PtahSchemaPlan` names in `status.publishedChunks`,
-  with their UIDs.
 - The verification-policy ConfigMaps the plans and approvals bind by UID and
   digest.
 - The Secrets holding database URLs and registry credentials. These are usually
@@ -100,6 +101,10 @@ A backup that omits any of these turns a consistent restore into a rebuild.
   them with new content changes the target identity the plans were bound to.
 - The admission singleton and the webhook certificate Secret — or plan to
   reinstall the chart, which recreates them.
+
+The ConfigMaps an Apply mounts its plan through need no backup. The operator
+writes them from the chunks before it creates an Apply Job, and writes them
+again for the next one.
 - The OCI artifacts the resources name, by digest. They are outside the
   cluster; a registry that garbage-collected the digest a plan was built from
   makes that plan unreproducible.
@@ -116,8 +121,8 @@ holder that no longer exists and makes it wait out an interval for nothing.
 2. Restore or reinstall the release: CRDs, the chart, the admission singleton,
    the certificate Secret.
 3. Restore the Secrets and the verification-policy ConfigMaps.
-4. Restore the `PtahRealm` objects and the plan ConfigMaps, then the six
-   namespaced kinds with their status.
+4. Restore the `PtahRealm` objects, then the six namespaced kinds with their
+   status, then the plan chunks.
 5. Start the manager. It re-reads the database before it plans.
 
 Do not start the manager between steps. Its first reconciliation will act on
@@ -129,8 +134,8 @@ A restore that changes UIDs invalidates every binding that names one, and the
 operator refuses rather than guessing. This is the safety property, not a
 limitation to work around:
 
-- A plan whose chunk ConfigMaps came back with new UIDs cannot be loaded. The
-  operator observes the database and publishes a new plan.
+- A plan whose chunks came back with new UIDs cannot be loaded. The operator
+  observes the database and publishes a new plan.
 - An approval names `spec.planRef` by name **and** UID. A new plan UID leaves
   the approval bound to a plan that no longer exists, so it authorizes nothing.
 - An execution binding names the components that ran. A rebuilt resource gets a

@@ -41,15 +41,16 @@ kubectl -n application get ptahschema application \
 kubectl -n application get ptahschemaplan <plan-name> -o yaml
 ```
 
-The plan resource contains immutable chunk names and digests; exact SQL is in
-those controller-owned ConfigMaps. The built-in approver ClusterRole does not
-grant cluster-wide ConfigMap access. Before review, a namespace administrator
-must grant `get` on every current chunk name to the approver. Start from the
-least-privilege Role template in `examples/approver-plan-reader-role.yaml`,
-copy all `.spec.chunks[*].name` values into `resourceNames`, and bind that Role
-only to the reviewer. Replace the Role for the next plan. A broader Role that
-can read every ConfigMap in an application namespace is easier to operate but
-also exposes unrelated configuration.
+The plan resource contains immutable chunk names and digests; the exact SQL is
+in the `PtahSchemaPlanChunk` objects it names, which the controller writes with
+the plan and which are deleted with it. Reading them takes one RBAC rule, `get`
+on `ptahschemaplanchunks` in the namespace, and it covers every plan published
+there, the next one included. The chart's approver ClusterRole carries it. A
+reviewer who is not bound to that role can start from
+`examples/approver-plan-reader-role.yaml`, a namespace Role that reads the
+schema, its plans and their chunks and nothing else. Neither reaches a
+ConfigMap, so reading plans does not mean reading the namespace's application
+configuration.
 
 Once the access is granted, read the plan with
 [`kubectl ptah`](../read-a-plan/), which is a plugin the reviewer
@@ -65,15 +66,17 @@ joins them in index order and checks the whole document against
 reading the SQL they refer to is not an independent review, and neither is
 reading one chunk of a plan that has several.
 
-The chunk Role limits who reads a plan through its chunks. It used to be that
-the chunks were not the only copy: the Plan Pod hands the whole document to
-the controller through its log, and whoever could read Pod logs in the
-namespace, or the log store a node agent ships them to, read every plan
-published there without any chunk Role. The runner now seals that document to
-the manager's own key before writing it, so those copies hold ciphertext, and
-`pods/log` grants nothing a plan approval needs;
+The rule on the chunks is not the only way to a plan's bytes. The Plan Pod
+hands the whole document to the controller through its log, sealed to the
+manager's own key, so the log holds ciphertext and `pods/log` grants nothing a
+plan approval needs;
 [Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) has the
-detail.
+detail. An Apply Pod holds no Kubernetes credential and the kubelet mounts no
+custom resource, so just before it creates the Apply Job the operator copies
+the plan into immutable ConfigMaps of the chunks' names, owned by the plan, and
+the Pod mounts those. Whoever may read ConfigMaps in the namespace reads the
+plans that reached an Apply there; a plan waiting for a person has no
+ConfigMap at all.
 
 Fill those values in the approval and use server-side dry run to inspect the
 object after the authenticated identity is stamped:
@@ -93,11 +96,12 @@ the accepted approval is consumed only at the persisted Apply dispatch
 boundary. Updates cannot change `spec`; create a new approval for a new plan.
 
 The chart's optional approver ClusterRole grants read access to schemas,
-migrations, their plan metadata and approvals, plus create access to
-`PtahSchemaApproval` and `PtahMigrationApproval`. It has no binding, no
-ConfigMap permission and no Pod log permission. Bind approval permission only
-to authenticated identities that are independent from routine desired-state
-writers, and grant plan-chunk access separately in each application namespace.
+migrations, their plans, the chunks a schema plan's SQL is stored in, and
+approvals, plus create access to `PtahSchemaApproval` and
+`PtahMigrationApproval`. It has no binding, no ConfigMap permission and no Pod
+log permission. Bind it in each application namespace, and only to
+authenticated identities that are independent from routine desired-state
+writers.
 
 ## Refusing a self-approval
 

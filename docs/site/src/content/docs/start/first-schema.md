@@ -67,8 +67,9 @@ is where the plan came from, and that read is what the plan is the difference
 against. What has not happened is the plan: not one statement it names has run,
 and none will until the decision below is recorded.
 
-Read the plan before approving it. The SQL is in controller-owned ConfigMaps
-rather than in the status, and [`kubectl ptah`](../../use/read-a-plan/) reads it
+Read the plan before approving it. The SQL is in the controller-owned
+`PtahSchemaPlanChunk` objects the plan names rather than in the status, and
+[`kubectl ptah`](../../use/read-a-plan/) reads it
 back the way the operator does. It is a plugin you
 [install once](../../use/read-a-plan/#install):
 
@@ -106,10 +107,11 @@ jq -n --slurpfile schema schema.json --slurpfile plan plan.json '
   }' | kubectl -n application create -f -
 ```
 
-Creating it requires a binding that grants the approval verbs;
-`examples/approver-plan-reader-role.yaml` is the reader half and
-[exact-plan approvals](../../use/approvals/) is why the binding is separate from
-the one that writes the desired state.
+Creating it requires a binding that grants the approval verbs, which the
+chart's approver ClusterRole carries together with read access to the plan and
+its chunks; `examples/approver-plan-reader-role.yaml` is the reader half alone.
+[Exact-plan approvals](../../use/approvals/) is why the binding is separate
+from the one that writes the desired state.
 
 With the decision recorded the plan runs, and convergence is proved by a second
 observation rather than by the Job finishing:

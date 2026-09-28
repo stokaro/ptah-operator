@@ -1,13 +1,31 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: review-application-plan
+  name: review-application-plans
   namespace: application
 rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames:
-      # Copy every current .spec.chunks[*].name from the reviewed
-      # PtahSchemaPlan. Replace this Role when a new plan is published.
-      - <plan-chunk-name-000>
+  # One rule reads every schema plan in the namespace, now and later: the
+  # schema that names its current plan, the plan's manifest, and the
+  # PtahSchemaPlanChunk objects that hold its SQL. It is what
+  # `kubectl ptah plan` needs, and nothing else: no ConfigMap, no Secret and
+  # no Pod log. A migration plan stores no SQL, so reading one needs no chunk.
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaplanchunks"]
     verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: review-application-plans
+  namespace: application
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: review-application-plans
+subjects:
+  # Replace this placeholder with the group that reviews plans in this
+  # namespace. The chart's approver ClusterRole carries the same read on
+  # every namespace it is bound in, together with the approval verbs.
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: <plan-reviewer-group>

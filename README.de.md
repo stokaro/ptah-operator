@@ -69,8 +69,9 @@ Sicherheitseigenschaften:
 
 ## Das angewendete SQL lesen
 
-Das SQL liegt in unveränderlichen ConfigMaps, die ein Plan über Index, Größe
-und Digest bindet. Es steht weder im Status noch im Log des Managers.
+Das SQL liegt in unveränderlichen `PtahSchemaPlanChunk`-Objekten, die ein Plan
+über Index, Größe und Digest bindet. Es steht weder im Status noch im Log des
+Managers.
 `kubectl ptah` liest es auf dieselbe Weise wie der Operator:
 
 ```sh

@@ -599,8 +599,8 @@ sha256() {
 }
 
 # rebuild_plan_document reads a plan document back the way the controller
-# does: from the immutable chunk ConfigMaps the PtahSchemaPlan names, in
-# .spec.chunks order, each chunk's binaryData[key] decoded and the bytes
+# does: from the PtahSchemaPlanChunk objects the PtahSchemaPlan names, in
+# .spec.chunks order, each chunk's spec.data decoded and the bytes
 # concatenated. Since runner protocol 7 a Plan result's stdout carries the
 # plan sealed to the manager's per-process key, so the chunks are the only
 # place the plaintext a content digest covers can be read from.
@@ -619,29 +619,29 @@ rebuild_plan_document() {
 	jq -er '
       .spec.chunks |
       if type == "array" then . else error("plan spec.chunks must be a list") end |
-      .[] | [.index, .name, .key, .size] | @tsv
+      .[] | [.index, .name, .size] | @tsv
     ' "$rebuild_plan_file" >"$rebuild_chunks_file" ||
 		fail "$rebuild_plan_name has no plan chunks to rebuild its document from"
 	: >"$rebuild_document_file"
 	chmod 600 "$rebuild_document_file"
 	REBUILT_PLAN_CHUNK_COUNT=0
-	while IFS="$(printf '\t')" read -r rebuild_index rebuild_name rebuild_key rebuild_size; do
+	while IFS="$(printf '\t')" read -r rebuild_index rebuild_name rebuild_size; do
 		[ "$rebuild_index" = "$REBUILT_PLAN_CHUNK_COUNT" ] ||
 			fail "$rebuild_plan_name chunk at position $REBUILT_PLAN_CHUNK_COUNT carries index ${rebuild_index:-none}"
-		if [ -z "$rebuild_name" ] || [ -z "$rebuild_key" ] || [ -z "$rebuild_size" ]; then
+		if [ -z "$rebuild_name" ] || [ -z "$rebuild_size" ]; then
 			fail "$rebuild_plan_name chunk $rebuild_index is an incomplete reference"
 		fi
-		rebuild_chunk_object=$(k -n "$TEST_NAMESPACE" get configmap "$rebuild_name" -o json) ||
-			fail "$rebuild_plan_name chunk $rebuild_index ConfigMap $rebuild_name could not be read"
+		rebuild_chunk_object=$(k -n "$TEST_NAMESPACE" get ptahschemaplanchunk "$rebuild_name" -o json) ||
+			fail "$rebuild_plan_name chunk $rebuild_index PtahSchemaPlanChunk $rebuild_name could not be read"
 		rebuild_chunk_value=$(printf '%s\n' "$rebuild_chunk_object" |
-			jq -er --arg key "$rebuild_key" '
-              .binaryData[$key] |
-              if type == "string" then . else error("chunk key is absent") end
+			jq -er '
+              .spec.data |
+              if type == "string" then . else error("chunk data is absent") end
             ') ||
-			fail "$rebuild_name has no binaryData[$rebuild_key] to rebuild $rebuild_plan_name chunk $rebuild_index from"
+			fail "$rebuild_name has no spec.data to rebuild $rebuild_plan_name chunk $rebuild_index from"
 		rebuild_chunk_file="$WORK_DIR/${rebuild_plan_name}-rebuild-chunk-${rebuild_index}.bin"
 		printf '%s' "$rebuild_chunk_value" | base64 -d >"$rebuild_chunk_file" ||
-			fail "$rebuild_name binaryData[$rebuild_key] does not decode as base64"
+			fail "$rebuild_name spec.data does not decode as base64"
 		rebuild_chunk_bytes=$(wc -c <"$rebuild_chunk_file" | tr -d ' ')
 		[ "$rebuild_chunk_bytes" = "$rebuild_size" ] ||
 			fail "$rebuild_plan_name chunk $rebuild_index decoded to $rebuild_chunk_bytes bytes; its manifest says $rebuild_size"
@@ -4536,9 +4536,12 @@ run_credential_principal_refusal() {
 	[ "$(k -n "$TEST_NAMESPACE" get ptahschemaplans -o json | jq \
 		--arg uid "$principal_schema_uid" '[.items[] | select(.spec.schemaRef.uid == $uid)] | length')" -eq 0 ] ||
 		fail "credential-bearing principal refusal published a PtahSchemaPlan"
-	[ "$(k -n "$TEST_NAMESPACE" get configmaps \
+	[ "$(k -n "$TEST_NAMESPACE" get ptahschemaplanchunks \
 		-l "operator.ptah.run/schema=${principal_schema}" -o json | jq '.items | length')" -eq 0 ] ||
 		fail "credential-bearing principal refusal published a plan chunk"
+	[ "$(k -n "$TEST_NAMESPACE" get configmaps \
+		-l "operator.ptah.run/schema=${principal_schema}" -o json | jq '.items | length')" -eq 0 ] ||
+		fail "credential-bearing principal refusal projected a plan into a ConfigMap"
 	[ "$(watch_new_uid_count "$principal_schema" apply "$principal_apply_checkpoint")" -eq 0 ] ||
 		fail "credential-bearing principal refusal dispatched an Apply Job"
 	[ "$(watch_new_uid_count "$principal_schema" plan "$principal_plan_checkpoint")" -eq 1 ] ||

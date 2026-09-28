@@ -69,7 +69,18 @@ func TestTheApproverRoleCheckRefusesWhatItExistsToRefuse(t *testing.T) {
 			operatorRule([]string{"get", "watch"}, served...),
 			operatorRule([]string{"create"}, approvalResources(served)...),
 		},
-		"plan chunks": append(slices.Clone(complete),
+		// An approver who cannot read the chunks cannot read a schema plan's
+		// SQL, and approves hashes.
+		"no plan chunks": {
+			operatorRule(approverReadVerbs, slices.DeleteFunc(slices.Clone(served), func(resource string) bool {
+				return resource == "ptahschemaplanchunks"
+			})...),
+			operatorRule([]string{"create"}, approvalResources(served)...),
+		},
+		// The ConfigMaps an Apply mounts its plan through are no way to read
+		// one: they exist only for plans that ran, and the grant reaches every
+		// application ConfigMap in the namespace.
+		"ConfigMaps": append(slices.Clone(complete),
 			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}}),
 		"Pod logs": append(slices.Clone(complete),
 			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}}),
@@ -205,8 +216,9 @@ func servedOperatorResources(t *testing.T) []string {
 		}
 	}
 	sort.Strings(served)
-	if len(served) < 6 || len(approvalResources(served)) < 2 {
-		t.Fatalf("read %v from %s, and this operator serves two families of three kinds", served, generatedCRDsPath)
+	if len(served) < 7 || len(approvalResources(served)) < 2 || !slices.Contains(served, "ptahschemaplanchunks") {
+		t.Fatalf("read %v from %s, and this operator serves two families of three kinds and the chunks a schema plan is stored in",
+			served, generatedCRDsPath)
 	}
 	return served
 }

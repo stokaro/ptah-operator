@@ -85,7 +85,7 @@ numbers matter.
 | --- | --- |
 | Resources, and realms across them | Every resource refreshes on its own interval; resources sharing a database realm serialize against each other, and resources in separate realms do not |
 | `spec.interval` | The cadence above multiplies by resource count, and it is the first thing to move on a large installation |
-| Plan size | A plan travels as ConfigMap chunks up to the 8 MiB ceiling, so it costs API bytes, etcd, and a longer read on the way back |
+| Plan size | A plan is stored as chunks up to the 8 MiB ceiling, and an applied plan once more as the ConfigMaps its Apply mounts, so it costs API bytes, etcd, and a longer read on the way back |
 | Migration history length | History is read on every refresh of a `PtahMigration`, and the reading grows with the sequence already applied |
 | Approvals waiting | A resource waiting for a person keeps refreshing and keeps its plan and its chunks, so a backlog is retained storage as well as queue |
 | Changes at once | A rollout, or a restart, refreshes everything at once; the burst is what a steady-state figure does not describe |
@@ -122,7 +122,7 @@ Throughout, it reads the cluster rather than estimating it:
 | Queue depth and wait | `workqueue_depth` and `workqueue_queue_duration_seconds` |
 | Client throttling | `rest_client_rate_limiter_duration_seconds` and HTTP 429 responses |
 | Admission latency | The API server's `apiserver_admission_webhook_admission_duration_seconds` for this operator's webhooks |
-| Retained plans and SQL | The plan objects and the bytes in their chunk ConfigMaps |
+| Retained plans and SQL | The plan objects, the bytes in their chunks, and the ConfigMaps each applied plan was projected into |
 | Time to serve an approval during a restart | The approval's admission and its Apply Job's creation |
 
 The report carries the workload and the environment beside the figures: the
@@ -155,8 +155,9 @@ every kind node reports the machine it runs on.
 | recovery | 55 | 50.1 (44) | 14 / 24 | 17 | 313 | 2 | 75 | 0.13 | <= 1 | 0.0 | <= 0.5 | converged in 55s |
 
 Across the run the plan store grew from nothing to 31 plans and 15 chunk
-ConfigMaps holding 11,330 bytes of plan: small schemas make small plans, and a
-real schema's plans are larger by as much as its SQL is.
+ConfigMaps holding 11,330 bytes of plan; chunks were ConfigMaps when this was
+measured, and are `PtahSchemaPlanChunk` objects now. Small schemas make small
+plans, and a real schema's plans are larger by as much as its SQL is.
 
 What it shows is the shape of each figure and how the tool reads it. The
 steady state ran about 28 Jobs a minute for twenty resources at two minutes,

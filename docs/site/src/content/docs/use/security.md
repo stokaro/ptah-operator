@@ -131,7 +131,8 @@ is an ordinary failure, and these checks exist for it:
   [Install the operator](../operations/#install-before).
 - The controller-write guards. Typed admission policies and a webhook that
   rebuilds the expected object bound what the manager itself may write, so a
-  bug cannot create a Job, a plan or a chunk outside its shape. See
+  bug cannot create a Job, a plan, a chunk or a plan's projection outside its
+  shape. See
   [Admission](../../reference/credentials-and-admission/#admission).
 
 None of these is a defense against an administrator acting in bad faith, and
@@ -149,16 +150,18 @@ The operator separates five authorities:
    no privilege with no approval at all. RBAC cannot close that, because the
    bypass is not an approval. See
    [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off).
-2. An approver may read schemas, migrations and their plans, and create
-   immutable approvals for either family. The chart creates an optional
+2. An approver may read schemas, migrations, their plans and the chunks a
+   schema plan's SQL is stored in, and create immutable approvals for either
+   family. The chart creates an optional
    ClusterRole but never binds it automatically. RBAC decides who may
    approve; it does not by itself decide that the approver is a second
    person rather than the author. See
    [Refusing a self-approval](#refusing-a-self-approval).
-3. The controller may manage plans, Jobs, ConfigMaps, Leases, status, and
-   Events. Its shipped ClusterRole contains no Secret permission. Typed
-   admission policies that ship with the release constrain its main-resource
-   writes to structural Job, immutable plan, and immutable chunk shapes; a
+3. The controller may manage plans and their chunks, Jobs, Leases, status, and
+   Events, and create the ConfigMaps an Apply mounts its plan through. Its
+   shipped ClusterRole contains no Secret permission. Typed admission policies
+   that ship with the release constrain its main-resource writes to structural
+   Job, immutable plan, immutable chunk and immutable projection shapes; a
    fail-closed webhook then reconstructs and compares the complete write
    intent through direct API reads.
 4. A Job receives only the credentials needed for its fixed operation through
@@ -255,15 +258,21 @@ desired-state author (`examples/desired-state-author-role.yaml`) and
 diagnostic reader (`examples/diagnostic-reader-role.yaml`) examples. The
 chart's optional approver ClusterRole remains unbound, so these three human
 permission sets can be assigned to different identities. Diagnostic access
-deliberately excludes Secrets, plan-chunk ConfigMaps and operation Pod logs,
-because [Pod logs carry plans](#pod-logs-carry-plans); grant exact plan-chunk
-access separately for an approver reviewing one immutable plan.
+deliberately excludes Secrets, plan chunks and ConfigMaps: the chunks are a
+plan's SQL, and a ConfigMap may be the copy of it an Apply mounted. It reads
+the plan manifests, which carry the digests, the statement count and the
+privilege kinds, and operation Pod logs, since
+[Pod logs carry a sealed plan](#pod-logs-carry-plans). Grant the SQL to
+reviewers, with the approver role or `examples/approver-plan-reader-role.yaml`.
 
 These write boundaries reduce the effect of controller bugs and prevent its
-RBAC from becoming arbitrary workload or ConfigMap creation authority. The
-manager binary and its status-write authority remain trusted: the admission
-layers do not claim to contain a malicious replacement image that can forge
-the status records used to reconstruct intent.
+RBAC from becoming arbitrary workload or ConfigMap creation authority. The one
+ConfigMap the manager may create is an immutable copy of a chunk, owned by its
+plan, written while an Apply of that plan is being dispatched and holding
+exactly the bytes the plan records. The manager binary and its status-write
+authority remain trusted: the admission layers do not claim to contain a
+malicious replacement image that can forge the status records used to
+reconstruct intent.
 
 Database-operation Pods disable service-account token mounting and service-link
 environment injection. Every container runs as non-root with a read-only root
@@ -498,17 +507,24 @@ every handshake.
 
 ## Plan and approval visibility
 
-Plan ConfigMaps contain schema-changing SQL, not credentials. They are
+Plan chunks contain schema-changing SQL, not credentials. They are
 intentionally inspectable by independently authorized approvers, but arbitrary
 schema names, defaults, comments, and literals may still be sensitive. Restrict
-ConfigMap and `PtahSchemaPlan` read access in application namespaces
-accordingly. The built-in approver role can read plan metadata but deliberately
-cannot read every ConfigMap cluster-wide. Grant a separate namespace Role
-restricted to the current plan chunk names, as described in
-[Exact-plan approvals](../approvals/). What that access is used with is
-`kubectl ptah`, a read-only client that needs `get` on the schema, the plan and
-those ConfigMaps and nothing else; [Read a plan](../read-a-plan/) carries the
-Role and the [install](../read-a-plan/#install).
+`PtahSchemaPlanChunk` read access in application namespaces accordingly. One
+rule on that kind reads every plan in the namespace, and the built-in approver
+role carries it, as described in [Exact-plan approvals](../approvals/). What
+that access is used with is `kubectl ptah`, a read-only client that needs `get`
+on the schema, the plan and its chunks and nothing else;
+[Read a plan](../read-a-plan/) carries the Role and the
+[install](../read-a-plan/#install).
+
+A plan that reached an Apply has one more copy. The Apply Pod holds no
+Kubernetes credential and the kubelet mounts no custom resource, so the
+operator writes the plan into immutable ConfigMaps of its chunks' names, owned
+by the plan, just before it creates the Apply Job, and they are deleted with
+the plan. Whoever may read ConfigMaps in the namespace reads the plans that
+were applied there. A plan that is waiting for a person, or that was never
+applied, has no ConfigMap.
 
 ### Pod logs carry a sealed plan {#pod-logs-carry-plans}
 
@@ -523,7 +539,7 @@ sealed box: the frame carries ciphertext, and only the private half of that
 key -- held in the manager's memory, never written to a Secret, a ConfigMap,
 or disk -- can open it. The controller reads the same frame through the
 `pods/log` API it always has, opens the seal in memory, checks the plaintext,
-and only then commits it to the chunk ConfigMaps.
+and only then commits it to the plan's chunks.
 
 That closes what used to be true of every copy of the frame:
 
@@ -626,10 +642,9 @@ it: another Pod of the same Job may have run, so no one child's report proves
 that nothing was sent.
 
 A successful Plan frame is the one frame that carries the plan: it transports
-the exact plan bytes to the controller before they are committed to immutable
-chunks, so access to Plan Pod logs is plan access. See
-[Pod logs carry plans](#pod-logs-carry-plans). Apply frames never contain
-native SQL output.
+the exact plan bytes, sealed, to the controller before they are committed to
+immutable chunks. See [Pod logs carry a sealed plan](#pod-logs-carry-plans).
+Apply frames never contain native SQL output.
 
 The runner also writes a summary of each frame into its container's
 termination message, which the kubelet copies into Pod status, where anyone who

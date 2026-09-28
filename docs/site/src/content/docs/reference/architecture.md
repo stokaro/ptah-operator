@@ -125,18 +125,22 @@ every namespace -- ConfigMaps, because a changed verification policy has to
 wake the resources bound to it.
 
 That last watch is the one whose size nobody chooses. It would otherwise hold
-every application ConfigMap in the cluster and this operator's own plan chunks,
-which carry up to 8 MiB of SQL each; forty published plans is 320 MiB of cached
-payload against a manager whose default limit is 256 MiB. So the cache empties
-a ConfigMap as it stores it, keeping the metadata that names it and dropping
-its data, its binary data and the managed fields that describe them.
+every application ConfigMap in the cluster and the ConfigMaps each Apply
+mounts its plan through, up to 8 MiB of SQL per applied plan; forty applied
+plans is 320 MiB of cached payload against a manager whose default limit is
+256 MiB. So the cache empties a ConfigMap as it stores it, keeping the
+metadata that names it and dropping its data, its binary data and the managed
+fields that describe them.
 
 Nothing reads those emptied objects. Every ConfigMap this operator acts on --
-a verification policy, a plan chunk -- is read straight from the API server,
-because each is a decision a cache may not be current enough to make, and the
-manager's client routes ConfigMap reads there as well so that a read added
-later cannot quietly start seeing an emptied object or build a second cache
-holding what the first one dropped.
+a verification policy, an Apply's plan projection -- is read straight from the
+API server, because each is a decision a cache may not be current enough to
+make, and the manager's client routes ConfigMap reads there as well so that a
+read added later cannot quietly start seeing an emptied object or build a
+second cache holding what the first one dropped. The plan chunks themselves
+are not watched at all, and the client routes their reads to the API server
+for the same reason: a cached read of one would start a cache of every chunk
+in the cluster.
 
 ## The two resource families
 
@@ -156,7 +160,14 @@ authorize exactly that plan.
 | Declared schema | `PtahSchema` | `PtahSchemaPlan` | `PtahSchemaApproval` |
 | Versioned migrations | `PtahMigration` | `PtahMigrationPlan` | `PtahMigrationApproval` |
 
-A seventh kind belongs to neither family. `PtahRealm` is cluster-scoped and
+A schema plan's SQL lives in a seventh kind, `PtahSchemaPlanChunk`: up to
+sixteen immutable chunks the plan owns and binds by UID, size and digest, so
+reading a plan takes one RBAC rule on that kind. The migration family has no
+such kind, because a migration plan carries no SQL: it names the files and
+their checksums, and the Apply reads them from the verified artifact. See
+[Immutable bindings](../plans-and-approvals/#immutable-bindings).
+
+An eighth kind belongs to neither family. `PtahRealm` is cluster-scoped and
 written by an administrator: it names a database that resources in more than
 one namespace manage, and lists the namespaces allowed to claim it. The manager
 reads it and never writes it. See
@@ -167,8 +178,8 @@ kinds and the realms, and watches the verification-policy ConfigMaps resources
 point at, so an edited policy is noticed rather than waited out. A realm's
 grant is read before every claim: a withdrawn grant refuses the claimant on
 the pass the change starts, and a new one lifts a standing refusal at that
-refusal's re-check, within a minute. It does not watch the plan
-kinds: it writes them, and a plan it wrote tells it nothing it did not already
+refusal's re-check, within a minute. It does not watch the plan kinds or the
+chunks: it writes them, and a plan it wrote tells it nothing it did not already
 know.
 
 The two families are separate kinds rather than modes of one, because their
@@ -210,7 +221,7 @@ is the one to change when the contract changes.
 | Result framing, redaction, input validation | `internal/runner` |
 | Machine-readable data-plane contracts | `internal/dataplane` |
 | Canonical content identities | `internal/fingerprint` |
-| Plan publication into immutable chunks | `internal/planstore` |
+| Plan publication into immutable chunks, and an Apply's projection of them | `internal/planstore` |
 | Plan byte-size contract | `internal/plancontract` |
 | Migration plan derivation and naming | `internal/migrationplan` |
 | Approval admission | `internal/admission` |

@@ -3,6 +3,7 @@ package v1alpha1_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -76,6 +77,14 @@ func TestGeneratedCRDsContainSafetyCriticalFields(t *testing.T) {
 			},
 		},
 		{
+			name: "plan chunk",
+			file: "operator.ptah.run_ptahschemaplanchunks.yaml",
+			required: []string{
+				"required:\n        - spec",
+				"format: byte",
+			},
+		},
+		{
 			name: "approval",
 			file: "operator.ptah.run_ptahschemaapprovals.yaml",
 			required: []string{
@@ -131,6 +140,7 @@ func TestGeneratedCRDsPassAPIServerValidation(t *testing.T) {
 	for _, name := range []string{
 		"operator.ptah.run_ptahschemas.yaml",
 		"operator.ptah.run_ptahschemaplans.yaml",
+		"operator.ptah.run_ptahschemaplanchunks.yaml",
 		"operator.ptah.run_ptahschemaapprovals.yaml",
 	} {
 		name := name
@@ -483,6 +493,49 @@ func TestGeneratedPtahSchemaPlanSizeContract(t *testing.T) {
 	if published.MaxItems == nil || *published.MaxItems != int64(plancontract.MaxChunks) ||
 		published.XListType == nil || *published.XListType != "map" {
 		t.Fatalf("status.publishedChunks contract = max %v, list type %v", published.MaxItems, published.XListType)
+	}
+}
+
+// A chunk's data is bounded by what the plan contract lets one chunk hold, in
+// the form the API server measures it: the base64 string it carries. The
+// bound is derived here from plancontract rather than read back from the
+// marker, so a chunk size that moves without the marker is caught.
+func TestGeneratedPtahSchemaPlanChunkContract(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.run_ptahschemaplanchunks.yaml",
+	))
+	if crd.Spec.Scope != apiextensions.NamespaceScoped {
+		t.Fatalf("PtahSchemaPlanChunk scope = %q, want Namespaced: a chunk lives beside its plan", crd.Spec.Scope)
+	}
+	root := storageVersionSchema(t, crd)
+	if !slices.Contains(root.Required, "spec") {
+		t.Fatalf("PtahSchemaPlanChunk required = %v, want spec", root.Required)
+	}
+	if _, found := root.Properties["status"]; found {
+		t.Fatal("PtahSchemaPlanChunk has a status, and a chunk reports nothing")
+	}
+	spec := root.Properties["spec"]
+	if len(spec.Properties) != 1 || !slices.Contains(spec.Required, "data") {
+		t.Fatalf("PtahSchemaPlanChunk spec = %v required %v, want data alone and required", spec.Properties, spec.Required)
+	}
+	data := spec.Properties["data"]
+	wantMax := int64(base64.StdEncoding.EncodedLen(plancontract.ChunkBytes))
+	if data.Type != "string" || data.Format != "byte" || data.MinLength == nil || *data.MinLength != 1 ||
+		data.MaxLength == nil || *data.MaxLength != wantMax {
+		t.Fatalf("spec.data = type %q format %q length [%v,%v], want base64 bytes of length [1,%d]",
+			data.Type, data.Format, data.MinLength, data.MaxLength, wantMax)
+	}
+	immutable := false
+	for _, rule := range spec.XValidations {
+		if rule.Rule == "self == oldSelf" {
+			immutable = true
+		}
+	}
+	if !immutable {
+		t.Fatalf("PtahSchemaPlanChunk spec carries %v, want the self == oldSelf transition rule", spec.XValidations)
 	}
 }
 

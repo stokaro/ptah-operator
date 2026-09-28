@@ -140,7 +140,7 @@ is what you mean.
 Helm reporting success means its hook completed, which is not the same as the
 manager serving.
 [Confirm it installed](../../start/install/#confirm-it-installed) carries the
-two readings that settle it: seven CRDs at `Established=True`, and the manager
+two readings that settle it: eight CRDs at `Established=True`, and the manager
 and certificate-rotator Deployments available.
 
 #### Where to stop {#install-stop}
@@ -214,7 +214,7 @@ helm upgrade <release> <chart> --values <values>
 #### What proves it worked {#upgrade-evidence}
 
 The readings are the ones an install ends with, against the new digests:
-`Established=True` on seven CRDs, both Deployments available, and manager Pods
+`Established=True` on eight CRDs, both Deployments available, and manager Pods
 whose image is the candidate's.
 
 An upgrade that keeps the manager image, the shape a GitOps re-sync or a
@@ -294,7 +294,7 @@ left behind. Helm then applies the candidate over the stopped Deployments.
 
 #### What proves it worked {#retry-evidence}
 
-The same readings an upgrade ends with: `Established=True` on seven CRDs, both
+The same readings an upgrade ends with: `Established=True` on eight CRDs, both
 Deployments available, and manager Pods carrying the candidate image.
 
 #### Where to stop {#retry-stop}
@@ -430,7 +430,7 @@ helm uninstall <release> --wait --timeout 5m
 #### What proves it worked {#uninstall-evidence}
 
 Helm reports the release uninstalled. What remains afterwards is deliberate:
-the seven CRDs with their custom resources.
+the eight CRDs with their custom resources.
 
 #### Where to stop {#uninstall-stop}
 
@@ -474,7 +474,7 @@ In this order:
 3. Place the databases in a maintenance window.
 4. Scale the manager and certificate-rotation Deployments to zero.
 5. Back up all Ptah custom resources.
-6. Uninstall the release, and verify that the seven CRDs and their objects
+6. Uninstall the release, and verify that the eight CRDs and their objects
    remain.
 7. Install exactly one release of the first published version or newer, with
    the new invariant values where those are what is changing.
@@ -483,7 +483,7 @@ In this order:
 
 #### What proves it worked {#offline-evidence}
 
-The seven CRDs and their objects present after the uninstall, before anything is
+The eight CRDs and their objects present after the uninstall, before anything is
 installed over them. Then the new release's admission annotations carrying its
 own identity, manager readiness, and both kinds converging again.
 
@@ -491,7 +491,7 @@ own identity, manager readiness, and both kinds converging again.
 
 Do not start with a migration still running: a migration left running is a
 writer this procedure does not stop. Do not install over the uninstalled
-release if the seven CRDs or their objects did not survive it, and do not treat a
+release if the eight CRDs or their objects did not survive it, and do not treat a
 resource whose `status.unresolvedRun` went missing as one that has nothing
 outstanding.
 
@@ -500,7 +500,7 @@ outstanding.
 Nothing here is time-bounded, so a failed step is repeated rather than worked
 around: the databases are in maintenance and both kinds are suspended, which is
 the state the procedure is safe to sit in. Restore the backed-up custom
-resources into the seven retained CRDs before resuming either kind.
+resources into the eight retained CRDs before resuming either kind.
 
 `coordination.namespace` contains the fixed manager leader-election Lease and
 the database target Leases. It defaults to the release namespace and may name
@@ -1600,7 +1600,7 @@ while `ptah_operator_unresolved_view_synced` reads 0.
 | `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
 | `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
 | `ptah_operator_stored_plans{family}` | Plans retained in the cluster. The operator prunes none; [pruning stored plans](#prune-plans) is the procedure |
-| `ptah_operator_stored_plan_bytes{}` | Bytes the retained schema plans hold in their chunk ConfigMaps, from each plan's `spec.size`. A migration plan stores no chunk |
+| `ptah_operator_stored_plan_bytes{}` | Bytes the retained schema plans hold in their chunks, from each plan's `spec.size`. A migration plan stores no chunk |
 | `ptah_operator_webhook_certificate_expiry_timestamp_seconds{}` | When the admission certificate this replica presents expires; every replica publishes it |
 | `ptah_operator_webhook_certificate_read_failures_total{}` | Scrapes that could not read or parse that certificate, which publish no expiry |
 
@@ -1725,7 +1725,7 @@ are tracked in
 
 ## Plan retention
 
-Plans and chunks are owned by the schema. Old plan objects may remain useful as
+Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects may remain useful as
 audit evidence until Kubernetes garbage collection removes the owning schema;
 only the exact UID and fingerprint in `status.plan` are current. Completed Jobs
 receive a short cleanup TTL before the controller clears the active operation;
@@ -1738,8 +1738,11 @@ finalizer on a weaker write.
 
 An executable plan is limited to 8 MiB, including its trailing newline. The
 runner rejects a larger native plan before publication. Accepted bytes are
-stored in immutable 512 KiB binary ConfigMap chunks; that chunk size leaves
-headroom below the Kubernetes object-size limit after API JSON base64 encoding.
+stored in immutable 512 KiB `PtahSchemaPlanChunk` objects; that chunk size
+leaves headroom below the Kubernetes object-size limit after API JSON base64
+encoding. A plan that reaches an Apply is copied into immutable ConfigMaps of
+the same size and names, owned by the plan, which is what the Apply Pod
+mounts.
 
 The chunks are storage, not a reading interface. `kubectl ptah plan <schema>`
 reads a stored plan back the way the operator does -- every chunk against its
@@ -1789,8 +1792,8 @@ it destroys the only record of the work in question.
 #### Before you start {#prune-before}
 
 You need read access to both families and their approvals across the
-namespaces you are pruning, and delete access to plan objects and ConfigMaps
-in them. Nothing cluster-scoped is touched.
+namespaces you are pruning, and delete access to plan objects in them. Nothing
+cluster-scoped is touched.
 
 Read [Which plans are pinned](#which-plans-are-pinned) first. Every pin is a
 field on a live object, so the set is checkable rather than inferred, and the
@@ -1826,9 +1829,10 @@ kubectl get ptahschemaapprovals,ptahmigrationapprovals -A \
   sort -u >> pinned.txt
 ```
 
-Delete a plan only if its name is absent from `pinned.txt`, and delete its
-chunk ConfigMaps with it -- they are selected by
-`operator.ptah.run/plan=<plan-name>`.
+Delete a plan only if its name is absent from `pinned.txt`. Its chunks, and any
+ConfigMaps an Apply projected it into, are owned by the plan, so garbage
+collection removes them after it. Each carries the label
+`operator.ptah.run/plan=<plan-name>`, which is how to confirm they went.
 
 #### What proves it worked {#prune-evidence}
 
@@ -1872,10 +1876,10 @@ decided and when.
 NS=<namespace>
 PLAN=<plan-name>
 kubectl -n "$NS" get ptahschemaplan "$PLAN" -o json > "$PLAN.plan.json"
-jq -r '.spec.chunks | sort_by(.index)[] | "\(.name) \(.key)"' "$PLAN.plan.json" |
-  while read -r chunk key; do
-    kubectl -n "$NS" get configmap "$chunk" -o json |
-      jq -r --arg key "$key" '.binaryData[$key]' | base64 -d
+jq -r '.spec.chunks | sort_by(.index)[] | .name' "$PLAN.plan.json" |
+  while read -r chunk; do
+    kubectl -n "$NS" get ptahschemaplanchunk "$chunk" -o json |
+      jq -r '.spec.data' | base64 -d
   done > "$PLAN.sql"
 kubectl -n "$NS" get ptahschemaapprovals -o json |
   jq --arg plan "$PLAN" '[.items[] | select(.spec.planRef.name == $plan)]' \

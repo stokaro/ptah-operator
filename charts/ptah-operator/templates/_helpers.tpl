@@ -156,6 +156,10 @@ app.kubernetes.io/component: controller
 {{- printf "ptah-operator-chunk-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
+{{- define "ptah-operator.controllerProjectionWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-projection-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- end -}}
+
 {{- define "ptah-operator.controllerPlanWriteGuardPolicyName" -}}
 {{- printf "ptah-operator-plan-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}

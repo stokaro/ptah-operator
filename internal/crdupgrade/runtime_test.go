@@ -1067,7 +1067,7 @@ func readyControllerWriteWebhook(expected RuntimeInvariants) admissionregistrati
 			},
 			{
 				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans", "ptahmigrationplans"}, Scope: &scope},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"}, Scope: &scope},
 			},
 		},
 		MatchConditions: []admissionregistrationv1.MatchCondition{{

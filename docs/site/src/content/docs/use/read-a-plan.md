@@ -222,13 +222,14 @@ Three states are worth recognizing in the output:
   the recovery is yours to choose.
 
 Reading a migration needs `get` on `ptahmigrations` and `ptahmigrationplans` in
-the namespace, and nothing else -- no ConfigMap, because there is no chunk
-store behind it.
+the namespace, and nothing else -- no chunk, because a migration plan stores no
+SQL of its own.
 
 ## What it needs to be allowed to do
 
-Reading a plan is reading three kinds of object in one namespace. No Secret, no
-Pod log, no `pods/exec`, no Job, and nothing cluster-wide:
+Reading a plan is reading three kinds of object in one namespace, all of them
+this operator's, through one rule. No Secret, no ConfigMap, no Pod log, no
+`pods/exec`, no Job, and nothing cluster-wide:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -238,16 +239,17 @@ metadata:
   namespace: application
 rules:
   - apiGroups: [operator.ptah.run]
-    resources: [ptahschemas, ptahschemaplans]
-    verbs: [get]
-  - apiGroups: [""]
-    resources: [configmaps]
+    resources: [ptahschemas, ptahschemaplans, ptahschemaplanchunks]
     verbs: [get]
 ```
 
+The rule names no object, so it reads the next plan as well as this one.
+`examples/approver-plan-reader-role.yaml` is the same Role with a binding, and
+the chart's approver ClusterRole carries the same read.
+
 :::caution
 The command reads the plan chunks as you, so granting it means granting
-`get` on those ConfigMaps. ConfigMaps are not secret and base64 is not
+`get` on `ptahschemaplanchunks`. The chunks are not secret and base64 is not
 protection: anyone who can read them can read the SQL, with or without this
 plugin. That is why the database URL is in a Secret and the plan is not.
 :::
@@ -259,9 +261,17 @@ Worth knowing when you are diagnosing the store rather than reading a plan.
 A plan document is split into 512 KiB chunks by bytes, up to 8 MiB in total.
 The split is of the serialized document, so a boundary falls wherever 512 KiB
 falls -- possibly inside a SQL string, inside a JSON escape, or inside a
-multi-byte character. Each chunk is an immutable ConfigMap; the plan's
-`spec.chunks` binds every one by name, key, index, size and digest, and
-`spec.contentDigest` binds the whole document.
+multi-byte character. Each chunk is an immutable `PtahSchemaPlanChunk` the plan
+owns; the plan's `spec.chunks` binds every one by name, index, size and digest,
+`status.publishedChunks` by UID, and `spec.contentDigest` binds the whole
+document.
+
+A plan that was applied is also in the ConfigMaps its Apply Pod mounted: the
+operator copies the chunks into immutable ConfigMaps of the same names just
+before it creates the Apply Job, because the Pod holds no Kubernetes
+credential and the kubelet mounts no custom resource. Those copies are
+transport, not a second place to read a plan from, and a plan that was never
+applied has none.
 
 Reading one chunk on its own is therefore not reading a plan, and decoding
 chunks by hand is reproducing bindings that already exist. The command does

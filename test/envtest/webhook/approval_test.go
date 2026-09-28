@@ -71,7 +71,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 			Destructive:              true,
 			StatementCount:           1,
 			Chunks: []operatorv1alpha1.PlanChunkReference{{
-				Name: planName + "-000", Key: "chunk", Index: 0, Digest: digest("b"), Size: 64,
+				Name: planName + "-000", Index: 0, Digest: digest("b"), Size: 64,
 			}},
 		},
 	}

@@ -1627,7 +1627,8 @@ for approval_plan_marker in \
 	"verificationPolicyUID: \$verificationPolicyUID" \
 	"publishedChunks: [{name: \$chunkName, uid: \$chunkUID, index: 0}]" \
 	"\"operator.ptah.run/plan\": \$planName" \
-	'binaryData: {chunk: "eA=="}'; do
+	'kind: "PtahSchemaPlanChunk"' \
+	'spec: {data: "eA=="}'; do
 	grep -F -- "$approval_plan_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 done
 grep -F 'unset REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
@@ -2304,14 +2305,16 @@ done
 # shellcheck disable=SC2016 # Match the exact generated OpenAPI regular expression.
 controller_revision_pattern='pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$'
 # The realm kind is an administrator's grant and carries no controller state,
-# so it is the one CRD allowed no controllerRevision. It is not skipped: a
-# revision field added to it later is held to the exact pattern like the rest.
+# and a plan chunk carries bytes and nothing about who wrote them, which its
+# plan records; so neither has to carry a controllerRevision. Neither is
+# skipped: a revision field added to one later is held to the exact pattern
+# like the rest.
 for controller_revision_crd in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	controller_revision_fields=$(grep -c '^[[:space:]]*controllerRevision:' "$controller_revision_crd" || true)
 	controller_revision_patterns=$(grep -Fc "$controller_revision_pattern" "$controller_revision_crd" || true)
 	controller_revision_minimum=1
 	case "${controller_revision_crd##*/}" in
-	operator.ptah.run_ptahrealms.yaml)
+	operator.ptah.run_ptahrealms.yaml | operator.ptah.run_ptahschemaplanchunks.yaml)
 		controller_revision_minimum=0
 		;;
 	*approvals.yaml)
@@ -4756,8 +4759,14 @@ for ledger_selftest_marker in \
 	'plan_document_rebuild_successful_path' \
 	'plan_document_rebuild_with_no_chunks' \
 	'plan_document_rebuild_with_chunks_out_of_order' \
-	'plan_document_rebuild_with_missing_chunk_key' \
+	'plan_document_rebuild_with_missing_chunk_data' \
 	'plan_document_rebuild_with_short_chunk' \
+	'plan_projection_successful_path' \
+	'plan_projection_missing_a_chunk' \
+	'plan_projection_carrying_other_bytes' \
+	'plan_projection_that_is_mutable' \
+	'plan_projection_owned_by_another_plan' \
+	'plan_projected_before_any_apply' \
 	'sealed_plan_result_with_empty_stdout' \
 	'sealed_plan_result_with_plaintext_stdout' \
 	'sealed_plan_result_with_statement_text_in_stdout' \
@@ -6007,7 +6016,7 @@ grep -F "'system:serviceaccount:ptah-e2e:$controller_service_account_name'" \
 	"$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["jobs"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["configmaps"]' "$ADMISSION_RENDER" >/dev/null
-grep -F 'resources: ["ptahschemaplans", "ptahmigrationplans"]' "$ADMISSION_RENDER" >/dev/null
+grep -F 'resources: ["ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"]' "$ADMISSION_RENDER" >/dev/null
 if grep -Eq '^[[:space:]]*objectSelector:' "$ADMISSION_RENDER"; then
 	printf '%s\n' 'e2e static: admission webhooks must not trust user-controlled object selectors' >&2
 	exit 1
@@ -6267,8 +6276,8 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	[ "$(grep -Fc "operator.ptah.run/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]run/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
-[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 7 ]
-[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 7 ]
+[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 8 ]
+[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 8 ]
 for crd_directory in \
 	"$ROOT_DIR/config/crd/bases" \
 	"$ROOT_DIR/charts/ptah-operator/crds" \
@@ -6503,6 +6512,7 @@ crd_role_section=$(awk '
 ' "$CRD_UPGRADE_RENDER")
 for crd_name in \
 	ptahschemaapprovals.operator.ptah.run \
+	ptahschemaplanchunks.operator.ptah.run \
 	ptahschemaplans.operator.ptah.run \
 	ptahschemas.operator.ptah.run; do
 	[ "$(printf '%s\n' "$crd_role_section" | grep -Fc -- "- $crd_name")" -eq 1 ]
@@ -6587,7 +6597,7 @@ hook_service_account_name=$(awk '
 [ "$(grep -Fc -- \
 	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
-# The release keeps six admission policies -- five on the manager's own writes
+# The release keeps seven admission policies -- six on the manager's own writes
 # and the apply-policy guard on everyone else's -- and each is an ordinary
 # release object: no hook annotation, no keep policy and no parameter. Their
 # names carry the release's own digest and nothing that changes between its
@@ -6600,18 +6610,19 @@ controller_guard_policy_names() {
     ' "$1" | sort
 }
 controller_guard_names=$(controller_guard_policy_names "$CRD_FULL_RENDER")
-[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 6 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly six admission policies' >&2
+[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 7 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly seven admission policies' >&2
 	exit 1
 }
-[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 6 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly six admission policy bindings' >&2
+[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 7 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly seven admission policy bindings' >&2
 	exit 1
 }
 for controller_guard_family in \
 	controller-write-guard \
 	job-write-guard \
 	chunk-write-guard \
+	projection-write-guard \
 	plan-write-guard \
 	migration-plan-write-guard \
 	apply-policy-guard; do
@@ -6682,11 +6693,11 @@ grep -F -- 'expression: "[\"platform:apply-policy\", \"system:serviceaccounts:fl
 	printf '%s\n' 'e2e static: the exempt groups an installer names do not reach the apply-policy guard' >&2
 	exit 1
 }
-# Off, the release renders the five guards on the manager's writes and no
+# Off, the release renders the six guards on the manager's writes and no
 # trace of this one, so an upgrade that turns it off removes it.
-[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 5 ] &&
-	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 5 ] || {
-	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the five controller guards' >&2
+[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 6 ] &&
+	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 6 ] || {
+	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the six controller guards' >&2
 	exit 1
 }
 if grep -F 'apply-policy-guard' "$APPLY_POLICY_GUARD_OFF_RENDER" >/dev/null; then
@@ -6727,14 +6738,17 @@ for controller_object_marker in \
 	'== variables.releaseControllerState' \
 	'resources: ["jobs"]' \
 	'resources: ["configmaps"]' \
+	'resources: ["ptahschemaplanchunks"]' \
 	'resources: ["ptahschemaplans"]' \
 	'resources: ["ptahmigrationplans"]' \
 	'Ptah controller migration plan write guard rejected an unsafe manifest shape' \
 	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
 	'dyn(object).binaryData[\"chunk\"].size() <= 699052' \
+	'dyn(object).spec.data.size() <= 699052' \
 	'dyn(object).spec.contractVersion == 3' \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
-	'Ptah controller chunk write guard rejected an unsafe ConfigMap shape' \
+	'Ptah controller chunk write guard rejected an unsafe PtahSchemaPlanChunk shape' \
+	'Ptah controller projection write guard rejected an unsafe ConfigMap shape' \
 	'Ptah controller plan write guard rejected an unsafe manifest shape'; do
 	grep -F -- "$controller_object_marker" "$CONTROLLER_OBJECT_GUARD_RENDER" >/dev/null || {
 		printf 'e2e static: the controller object guards lack %s\n' "$controller_object_marker" >&2

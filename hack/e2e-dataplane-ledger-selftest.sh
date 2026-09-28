@@ -71,6 +71,7 @@ for function_name in \
 	materialize_archived_schema_jobs \
 	materialize_terminal_job_records materialize_owned_pod_records materialize_manager_pod_names \
 	all_new_jobs_complete capture_selected_job_result assert_plan_storage_immutable \
+	assert_plan_not_projected assert_plan_projected \
 	rebuild_plan_document assert_plan_result_stdout_is_sealed; do
 	function_section=$(sed -n "/^${function_name}()/,/^}/p" "$SOURCE_FILE")
 	[ -n "$function_section" ] || test_fail "could not extract $function_name"
@@ -1455,13 +1456,14 @@ emit_nondestructive_plan() {
       "metadata": {"name": "plan-1", "uid": "plan-uid-1", "resourceVersion": "101"},
       "spec": {
         "destructive": false,
-        "chunks": [{"name": "plan-1-000", "key": "chunk-0"}]
+        "chunks": [{"name": "plan-1-000"}]
       }
     }'
 }
 
 emit_immutable_plan_chunk() {
 	printf '%s\n' '{
+      "apiVersion": "operator.ptah.run/v1alpha1", "kind": "PtahSchemaPlanChunk",
       "metadata": {
         "name": "plan-1-000", "uid": "chunk-uid-1", "resourceVersion": "102",
         "ownerReferences": [{
@@ -1469,8 +1471,7 @@ emit_immutable_plan_chunk() {
           "name": "plan-1", "uid": "plan-uid-1", "controller": true
         }]
       },
-      "immutable": true,
-      "binaryData": {"chunk-0": "eA=="}
+      "spec": {"data": "eA=="}
     }'
 }
 
@@ -1488,16 +1489,20 @@ plan_storage_immutability_successful_path() (
 			get | patch)
 				[ -n "$plan_stub_verb" ] || plan_stub_verb=$plan_stub_argument
 				;;
-			ptahschemaplan | configmap)
+			ptahschemaplan | ptahschemaplanchunk)
 				[ -n "$plan_stub_kind" ] || plan_stub_kind=$plan_stub_argument
 				;;
 			esac
 		done
 		case "$plan_stub_verb:$plan_stub_kind" in
 		get:ptahschemaplan) emit_nondestructive_plan ;;
-		get:configmap) emit_immutable_plan_chunk ;;
-		patch:*)
+		get:ptahschemaplanchunk) emit_immutable_plan_chunk ;;
+		patch:ptahschemaplan)
 			printf '%s\n' 'The PtahSchemaPlan "plan-1" is invalid: spec: Invalid value: field is immutable' >&2
+			return 1
+			;;
+		patch:ptahschemaplanchunk)
+			printf '%s\n' 'The PtahSchemaPlanChunk "plan-1-000" is invalid: spec: Invalid value: "object": a plan chunk is immutable; generate a new plan instead' >&2
 			return 1
 			;;
 		*) return 45 ;;
@@ -1509,10 +1514,10 @@ plan_storage_immutability_successful_path() (
 )
 
 # Since runner protocol 7 a Plan result's stdout is the plan sealed to the
-# manager's key, so the phases read the document back from the plan's chunk
-# ConfigMaps and prove the stdout is not the document. The fixture is one
-# document split into two chunks inside a statement, so that a rebuild that
-# read one ConfigMap, or read both in the wrong order, cannot pass. The first
+# manager's key, so the phases read the document back from the plan's
+# PtahSchemaPlanChunk objects and prove the stdout is not the document. The
+# fixture is one document split into two chunks inside a statement, so that a
+# rebuild that read one chunk, or read both in the wrong order, cannot pass. The first
 # statement quotes an identifier, so the JSON form a plan document spells it
 # in differs from the SQL, and both forms are expected among the patterns the
 # sealed-payload proof searches for.
@@ -1540,7 +1545,7 @@ REBUILD_PLAN_CHUNK_1_BASE64=$(jq -Rrs '@base64' "$REBUILD_PLAN_CHUNK_1_FILE")
 # What a sealed payload looks like to this proof: base64 that is not the
 # document. The digest is used as the bytes only because it is handy.
 SEALED_PLAN_STDOUT=$(printf '%s%s' "$REBUILD_PLAN_DIGEST" "$REBUILD_PLAN_DIGEST" | jq -Rrs '@base64')
-REBUILD_STUB_CHUNK_1_KEY=chunk
+REBUILD_STUB_CHUNK_1_FIELD=data
 REBUILD_STUB_CHUNK_1_BASE64=$REBUILD_PLAN_CHUNK_1_BASE64
 
 write_rebuild_plan_object() {
@@ -1553,8 +1558,8 @@ write_rebuild_plan_object() {
 write_rebuild_plan_object_in_order() {
 	write_rebuild_plan_object "$(jq -n \
 		--argjson size0 "$REBUILD_PLAN_SPLIT_AT" --argjson size1 "$REBUILD_PLAN_CHUNK_1_BYTES" '[
-      {name: "plan-2-000", key: "chunk", index: 0, size: $size0},
-      {name: "plan-2-001", key: "chunk", index: 1, size: $size1}
+      {name: "plan-2-000", index: 0, size: $size0},
+      {name: "plan-2-001", index: 1, size: $size1}
     ]')"
 }
 
@@ -1565,12 +1570,12 @@ write_sealed_plan_result() {
 }
 
 emit_rebuild_chunk() {
-	jq -n --arg name "$1" --arg key "$2" --arg value "$3" '{
+	jq -n --arg name "$1" --arg field "$2" --arg value "$3" '{
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaPlanChunk",
       metadata: {name: $name, ownerReferences: [{
         apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaPlan",
         name: "plan-2", uid: "plan-uid-2", controller: true}]},
-      immutable: true,
-      binaryData: {($key): $value}
+      spec: {($field): $value}
     }'
 }
 
@@ -1582,13 +1587,13 @@ rebuild_plan_kubectl() {
 	for rebuild_stub_argument in "$@"; do
 		case "$rebuild_stub_argument" in
 		get) [ -n "$rebuild_stub_verb" ] || rebuild_stub_verb=$rebuild_stub_argument ;;
-		configmap) [ -n "$rebuild_stub_kind" ] || rebuild_stub_kind=$rebuild_stub_argument ;;
+		ptahschemaplanchunk) [ -n "$rebuild_stub_kind" ] || rebuild_stub_kind=$rebuild_stub_argument ;;
 		plan-2-*) [ -n "$rebuild_stub_name" ] || rebuild_stub_name=$rebuild_stub_argument ;;
 		esac
 	done
 	case "$rebuild_stub_verb:$rebuild_stub_kind:$rebuild_stub_name" in
-	get:configmap:plan-2-000) emit_rebuild_chunk plan-2-000 chunk "$REBUILD_PLAN_CHUNK_0_BASE64" ;;
-	get:configmap:plan-2-001) emit_rebuild_chunk plan-2-001 "$REBUILD_STUB_CHUNK_1_KEY" "$REBUILD_STUB_CHUNK_1_BASE64" ;;
+	get:ptahschemaplanchunk:plan-2-000) emit_rebuild_chunk plan-2-000 data "$REBUILD_PLAN_CHUNK_0_BASE64" ;;
+	get:ptahschemaplanchunk:plan-2-001) emit_rebuild_chunk plan-2-001 "$REBUILD_STUB_CHUNK_1_FIELD" "$REBUILD_STUB_CHUNK_1_BASE64" ;;
 	*) return 45 ;;
 	esac
 }
@@ -1631,17 +1636,17 @@ plan_document_rebuild_with_chunks_out_of_order() (
 	kubectl() { rebuild_plan_kubectl "$@"; }
 	write_rebuild_plan_object "$(jq -n \
 		--argjson size0 "$REBUILD_PLAN_SPLIT_AT" --argjson size1 "$REBUILD_PLAN_CHUNK_1_BYTES" '[
-      {name: "plan-2-001", key: "chunk", index: 1, size: $size1},
-      {name: "plan-2-000", key: "chunk", index: 0, size: $size0}
+      {name: "plan-2-001", index: 1, size: $size1},
+      {name: "plan-2-000", index: 0, size: $size0}
     ]')"
 	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
 )
 
 # shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
-plan_document_rebuild_with_missing_chunk_key() (
+plan_document_rebuild_with_missing_chunk_data() (
 	reset_fixture
 	kubectl() { rebuild_plan_kubectl "$@"; }
-	REBUILD_STUB_CHUNK_1_KEY=other
+	REBUILD_STUB_CHUNK_1_FIELD=other
 	write_rebuild_plan_object_in_order
 	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
 )
@@ -1653,6 +1658,104 @@ plan_document_rebuild_with_short_chunk() (
 	REBUILD_STUB_CHUNK_1_BASE64=$(dd if="$REBUILD_PLAN_CHUNK_1_FILE" bs=1 count=5 2>/dev/null | jq -Rrs '@base64')
 	write_rebuild_plan_object_in_order
 	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
+)
+
+# An Apply mounts its plan through ConfigMaps the store writes from the
+# chunks, and a published plan that never reached an Apply has none. The
+# fixture is the two-chunk plan above with a projection of each chunk; each
+# refusal below changes one thing a projection could get wrong.
+REBUILD_STUB_PROJECTION_COUNT=2
+REBUILD_STUB_PROJECTION_1_BASE64=$REBUILD_PLAN_CHUNK_1_BASE64
+REBUILD_STUB_PROJECTION_IMMUTABLE=true
+REBUILD_STUB_PROJECTION_OWNER=plan-uid-2
+
+emit_projection_list() {
+	jq -n \
+		--argjson count "$REBUILD_STUB_PROJECTION_COUNT" \
+		--arg data0 "$REBUILD_PLAN_CHUNK_0_BASE64" \
+		--arg data1 "$REBUILD_STUB_PROJECTION_1_BASE64" \
+		--argjson immutable "$REBUILD_STUB_PROJECTION_IMMUTABLE" \
+		--arg owner "$REBUILD_STUB_PROJECTION_OWNER" '
+      def projection($name; $data): {
+        metadata: {name: $name, labels: {"operator.ptah.run/plan": "plan-2"}, ownerReferences: [{
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaPlan",
+          name: "plan-2", uid: $owner, controller: true}]},
+        immutable: $immutable,
+        binaryData: {chunk: $data}
+      };
+      {items: ([projection("plan-2-000"; $data0), projection("plan-2-001"; $data1)] | .[0:$count])}
+    '
+}
+
+# shellcheck disable=SC2317 # Extracted helpers invoke this test-local kubectl stub dynamically.
+projection_kubectl() {
+	projection_stub_verb=
+	projection_stub_kind=
+	projection_stub_selector=
+	for projection_stub_argument in "$@"; do
+		case "$projection_stub_argument" in
+		get) [ -n "$projection_stub_verb" ] || projection_stub_verb=$projection_stub_argument ;;
+		configmap | ptahschemaplanchunk) [ -n "$projection_stub_kind" ] || projection_stub_kind=$projection_stub_argument ;;
+		operator.ptah.run/plan=plan-2) projection_stub_selector=$projection_stub_argument ;;
+		esac
+	done
+	case "$projection_stub_verb:$projection_stub_kind:$projection_stub_selector" in
+	get:configmap:operator.ptah.run/plan=plan-2) emit_projection_list ;;
+	get:ptahschemaplanchunk:) rebuild_plan_kubectl "$@" ;;
+	*) return 45 ;;
+	esac
+}
+
+# shellcheck disable=SC2317 # Extracted helpers invoke these test-local kubectl stubs dynamically.
+plan_projection_successful_path() (
+	reset_fixture
+	kubectl() { projection_kubectl "$@"; }
+	write_rebuild_plan_object_in_order
+	assert_plan_projected "$REBUILD_PLAN_OBJECT_FILE" >"$OUTPUT_FILE"
+	grep -F 'plan-2 was projected for its Apply into 2 ConfigMaps that hold its chunks exactly' "$OUTPUT_FILE" >/dev/null ||
+		test_fail "the projection proof did not report the two chunks it compared"
+	REBUILD_STUB_PROJECTION_COUNT=0
+	assert_plan_not_projected plan-2 >"$OUTPUT_FILE"
+	grep -F 'plan-2 is stored in its chunks alone until an Apply' "$OUTPUT_FILE" >/dev/null ||
+		test_fail "the unprojected-plan proof did not report the plan it checked"
+)
+
+run_plan_projection_check() (
+	reset_fixture
+	kubectl() { projection_kubectl "$@"; }
+	write_rebuild_plan_object_in_order
+	assert_plan_projected "$REBUILD_PLAN_OBJECT_FILE"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_projection_missing_a_chunk() (
+	REBUILD_STUB_PROJECTION_COUNT=1
+	run_plan_projection_check
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_projection_carrying_other_bytes() (
+	REBUILD_STUB_PROJECTION_1_BASE64=$REBUILD_PLAN_CHUNK_0_BASE64
+	run_plan_projection_check
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_projection_that_is_mutable() (
+	REBUILD_STUB_PROJECTION_IMMUTABLE=false
+	run_plan_projection_check
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_projection_owned_by_another_plan() (
+	REBUILD_STUB_PROJECTION_OWNER=plan-uid-other
+	run_plan_projection_check
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_projected_before_any_apply() (
+	reset_fixture
+	kubectl() { projection_kubectl "$@"; }
+	assert_plan_not_projected plan-2
 )
 
 # shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
@@ -1930,12 +2033,28 @@ expect_failure 'plan rebuild from a plan with no chunks' \
 expect_failure 'plan rebuild from chunks listed out of order' \
 	'plan-2 chunk at position 0 carries index 1' \
 	plan_document_rebuild_with_chunks_out_of_order
-expect_failure 'plan rebuild from a chunk missing its key' \
-	'plan-2-001 has no binaryData[chunk] to rebuild plan-2 chunk 1 from' \
-	plan_document_rebuild_with_missing_chunk_key
+expect_failure 'plan rebuild from a chunk missing its data' \
+	'plan-2-001 has no spec.data to rebuild plan-2 chunk 1 from' \
+	plan_document_rebuild_with_missing_chunk_data
 expect_failure 'plan rebuild from a chunk shorter than its manifest' \
 	"plan-2 chunk 1 decoded to 5 bytes; its manifest says $REBUILD_PLAN_CHUNK_1_BYTES" \
 	plan_document_rebuild_with_short_chunk
+plan_projection_successful_path
+expect_failure 'projection proof over a projection missing a chunk' \
+	'plan-2 was projected into 1 ConfigMaps for its 2 chunks' \
+	plan_projection_missing_a_chunk
+expect_failure 'projection proof over a projection carrying other bytes' \
+	'plan-2 projection plan-2-001 is not the immutable copy of its chunk the Apply was approved for' \
+	plan_projection_carrying_other_bytes
+expect_failure 'projection proof over a mutable projection' \
+	'plan-2 projection plan-2-000 is not the immutable copy of its chunk the Apply was approved for' \
+	plan_projection_that_is_mutable
+expect_failure 'projection proof over a projection another plan owns' \
+	'plan-2 projection plan-2-000 is not the immutable copy of its chunk the Apply was approved for' \
+	plan_projection_owned_by_another_plan
+expect_failure 'unprojected-plan proof over a plan projected before any Apply' \
+	'plan-2 was projected into 2 ConfigMaps before any Apply of it' \
+	plan_projected_before_any_apply
 expect_failure 'sealed-payload proof over an empty stdout' \
 	'schema-2 Plan result carries no sealed payload in stdout' \
 	sealed_plan_result_with_empty_stdout

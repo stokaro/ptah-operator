@@ -77,7 +77,7 @@ func schemaPlanSpec() map[string]any {
 		"size":           int64(1832),
 		"contentDigest":  contentDigest,
 		"chunks": []any{map[string]any{
-			"index": int64(0), "name": "ptah-plan-71c480df93d6ae2f14efe3c4-000", "key": "chunk",
+			"index": int64(0), "name": "ptah-plan-71c480df93d6ae2f14efe3c4-000",
 			"size": int64(1832), "digest": contentDigest,
 		}},
 		"contractVersion":          int64(3),
@@ -90,6 +90,12 @@ func schemaPlanSpec() map[string]any {
 		"targetIdentityDigest":     targetIdentityDigest,
 		"policyFingerprint":        policyFingerprint,
 	})
+}
+
+// planChunkSpec is a chunk whose data is a whole short document: base64 of a
+// plan document's opening, as the API server carries it.
+func planChunkSpec() map[string]any {
+	return map[string]any{"data": "eyJmb3JtYXRfdmVyc2lvbiI6MX0K"}
 }
 
 func migrationPlanSpec() map[string]any {
@@ -452,6 +458,45 @@ func TestPtahMigrationApprovalRefusals(t *testing.T) {
 		},
 	)
 	assertRefusals(t, basedOn("PtahMigrationApproval", namespace, "approve-orders-14", migrationApprovalSpec), rows)
+}
+
+// A chunk carries the bytes and nothing else, so its schema is the bound on
+// them: present, not empty, base64, and no longer than a full chunk encodes
+// to. 699,056 characters is the first length past that bound that is still
+// valid base64, so the row is refused for its length and not its encoding.
+func TestPtahSchemaPlanChunkRefusals(t *testing.T) {
+	plane.Require(t)
+	t.Parallel()
+
+	rows := []refusal{
+		{
+			name:   "spec is required",
+			mutate: removing("spec"),
+			want:   []cause{{"spec", "Required value"}},
+		},
+		{
+			name:   "data is required",
+			mutate: removing("spec", "data"),
+			want:   []cause{{"spec.data", "Required value"}},
+		},
+		{
+			name:   "empty data",
+			mutate: setting("", "spec", "data"),
+			want:   []cause{{"spec.data", "should be at least 1 chars long"}},
+		},
+		{
+			name:   "data that is not base64",
+			mutate: setting("not base64!", "spec", "data"),
+			want:   []cause{{"spec.data", "must be of type byte"}},
+		},
+		{
+			name:   "data past a full chunk",
+			mutate: setting(strings.Repeat("A", 699056), "spec", "data"),
+			want:   []cause{{"spec.data", "Too long"}},
+		},
+	}
+	namespace := newNamespace(t, "chunk-refusals")
+	assertRefusals(t, basedOn("PtahSchemaPlanChunk", namespace, "ptah-plan-71c480df93d6ae2f14efe3c4-000", planChunkSpec), rows)
 }
 
 func TestPtahRealmRefusals(t *testing.T) {

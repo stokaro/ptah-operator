@@ -7,6 +7,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
 // What the watch needs survives, and what it does not need is gone.
@@ -130,4 +132,20 @@ func TestConfigMapReadsDoNotUseTheCache(t *testing.T) {
 		}
 	}
 	t.Fatalf("ConfigMap reads are still served from the cache: %#v", options.Cache.DisableFor)
+}
+
+// Nor may a read of a plan chunk start a cache of every chunk in the cluster.
+func TestPlanChunkReadsDoNotUseTheCache(t *testing.T) {
+	t.Parallel()
+
+	options := ClientOptions()
+	if options.Cache == nil {
+		t.Fatal("the client caches every read, including plan chunks")
+	}
+	for _, object := range options.Cache.DisableFor {
+		if _, ok := object.(*operatorv1alpha1.PtahSchemaPlanChunk); ok {
+			return
+		}
+	}
+	t.Fatalf("plan chunk reads would be served from a cache: %#v", options.Cache.DisableFor)
 }

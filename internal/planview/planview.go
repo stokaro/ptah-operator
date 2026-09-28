@@ -1,7 +1,7 @@
 // Package planview reads a stored plan back the way the operator reads it.
 //
-// The SQL an operator applies lives in immutable ConfigMap chunks that a plan
-// manifest binds by index, key, size and digest. Reading them by hand means
+// The SQL an operator applies lives in immutable PtahSchemaPlanChunk objects
+// that a plan manifest binds by index, size and digest. Reading them by hand means
 // reproducing that binding, and the binding is not a format: a chunk boundary
 // falls wherever 512 KiB falls, which may be the middle of a SQL string, of a
 // JSON escape, or of a UTF-8 character. This package resolves which plan a

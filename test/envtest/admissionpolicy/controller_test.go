@@ -67,7 +67,7 @@ func dryRunCreate(build func() (client.Object, error)) func(context.Context, cli
 	}
 }
 
-// controllerRows holds the five guards on the manager's own writes. Each one
+// controllerRows holds the six guards on the manager's own writes. Each one
 // matches only the manager's ServiceAccount, lets through exactly what the
 // manager's code writes, and refuses the same write with one field changed.
 // An ordinary user's writes are outside them, which the widened-match
@@ -81,6 +81,7 @@ func controllerRows(t *testing.T, c *catalog) {
 	writeGuard := policy(t, "ptah-operator-controller-write-guard-")
 	jobGuard := policy(t, "ptah-operator-job-write-guard-")
 	chunkGuard := policy(t, "ptah-operator-chunk-write-guard-")
+	projectionGuard := policy(t, "ptah-operator-projection-write-guard-")
 	planGuard := policy(t, "ptah-operator-plan-write-guard-")
 	migrationPlanGuard := policy(t, "ptah-operator-migration-plan-write-guard-")
 	manager := env.Manager()
@@ -196,19 +197,36 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.row(policyenv.Row{Name: userJobRow, Do: as(policyenv.User(), dryRunCreate(privileged))})
 
-	// Plans: the plan store's own publication, a plan stamped by another
-	// manager image, and a ConfigMap that is not a plan chunk.
+	// Plans: the plan store's own publication and projection, a plan stamped
+	// by another manager image, a chunk that carries more than the store
+	// writes, and a ConfigMap that is not a plan projection.
 	const (
 		publishRow               = "manager publishes a two-chunk plan through the plan store"
+		projectRow               = "manager projects a two-chunk plan for an Apply through the plan store"
 		foreignPlanRow           = "manager creates a plan stamped with another manager's image"
 		foreignStatePlanRow      = "manager creates a plan stamped with another controller-state version"
-		notChunkRow              = "manager creates a ConfigMap that is not a plan chunk"
+		annotatedChunkRow        = "manager creates a plan chunk that carries an annotation"
+		notChunkRow              = "manager creates a ConfigMap that is not a plan projection"
 		migrationPlanRow         = "manager publishes a migration plan"
 		foreignMigrationRow      = "manager creates a migration plan stamped with another manager's image"
 		foreignStateMigrationRow = "manager creates a migration plan stamped with another controller-state version"
 	)
 	releaseState := managerBuilder().ControllerStateVersion
 	c.row(policyenv.Row{Name: publishRow, Do: as(manager, publishPlan)})
+	c.row(policyenv.Row{Name: projectRow, Do: as(manager, projectPlan)})
+	c.row(policyenv.Row{
+		Name: annotatedChunkRow, Deny: []string{chunkGuard}, Message: "rejected an unsafe PtahSchemaPlanChunk shape",
+		Do: as(manager, dryRunCreate(func() (client.Object, error) {
+			plan, chunks, err := schemaPlan(harness.ManagerImage, releaseState)
+			if err != nil {
+				return nil, err
+			}
+			plan.UID = "a1f5c0de-0000-4000-8000-000000000001"
+			chunk := planstore.DesiredChunk(plan, plan.Spec.Chunks[0], chunks[0])
+			chunk.Annotations = map[string]string{"example.com/note": "not what the store writes"}
+			return chunk, nil
+		})),
+	})
 	c.row(policyenv.Row{
 		Name: foreignPlanRow, Deny: []string{planGuard}, Message: "rejected an unsafe manifest shape",
 		Do: as(manager, dryRunCreate(func() (client.Object, error) {
@@ -224,7 +242,7 @@ func controllerRows(t *testing.T, c *catalog) {
 		})),
 	})
 	c.row(policyenv.Row{
-		Name: notChunkRow, Deny: []string{chunkGuard}, Message: "rejected an unsafe ConfigMap shape",
+		Name: notChunkRow, Deny: []string{projectionGuard}, Message: "rejected an unsafe ConfigMap shape",
 		Do: as(manager, dryRunCreate(func() (client.Object, error) {
 			return &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: "orders-settings"},
@@ -300,11 +318,19 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "chunk write guard binding dropped", Policies: []string{chunkGuard},
-		Apply: policyenv.DropBinding(chunkGuard), Breaks: []string{notChunkRow},
+		Apply: policyenv.DropBinding(chunkGuard), Breaks: []string{annotatedChunkRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "chunk write guard refuses what it matches", Policies: []string{chunkGuard},
 		Apply: policyenv.RefuseEverything(chunkGuard), Breaks: []string{publishRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "projection write guard binding dropped", Policies: []string{projectionGuard},
+		Apply: policyenv.DropBinding(projectionGuard), Breaks: []string{notChunkRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "projection write guard refuses what it matches", Policies: []string{projectionGuard},
+		Apply: policyenv.RefuseEverything(projectionGuard), Breaks: []string{projectRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard binding dropped", Policies: []string{planGuard},
@@ -363,8 +389,8 @@ func schemaPlan(controllerImage string, controllerStateVersion int32) (*operator
 		StatementCount:           1,
 	}
 	// One byte past a full chunk, so the first chunk is exactly the size the
-	// chunk guard has to admit: the guard reads the base64 the API server
-	// carries, not the bytes the store wrote.
+	// chunk and projection guards have to admit: each guard reads the base64
+	// the API server carries, not the bytes the store wrote.
 	content := bytes.Repeat([]byte("x"), planstore.ChunkBytes+1)
 	return planstore.Prepare(tenantSchema, spec, content)
 }
@@ -382,6 +408,24 @@ func publishPlan(ctx context.Context, api client.Client) error {
 	}
 	_, err = planstore.Store{Client: api, Reader: api}.Publish(ctx, plan, chunks)
 	return err
+}
+
+// projectPlan writes the ConfigMaps an Apply mounts a plan through, the way
+// the schema controller does before it creates the Apply Job. The writes are
+// dry runs of the projection alone, against a plan the API server never
+// stored: the projection guard reads nothing but the ConfigMap, so this row
+// depends on that guard and on no other.
+func projectPlan(ctx context.Context, api client.Client) error {
+	plan, chunks, err := schemaPlan(harness.ManagerImage, managerBuilder().ControllerStateVersion)
+	if err != nil {
+		return err
+	}
+	if len(chunks) != 2 {
+		return fmt.Errorf("the plan splits into %d chunks, want 2", len(chunks))
+	}
+	plan.UID = "a1f5c0de-0000-4000-8000-000000000002"
+	store := planstore.Store{Client: client.NewDryRunClient(api), Reader: api}
+	return store.Project(ctx, plan, bytes.Join(chunks, nil))
 }
 
 // migrationPlan is the plan the migration controller publishes, built by the

@@ -105,19 +105,19 @@ spec:
     namespaceSelector: {}
     objectSelector: {}
     resourceRules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
         operations: ["CREATE"]
-        resources: ["configmaps"]
+        resources: ["ptahschemaplanchunks"]
         scope: Namespaced
   matchConditions:
     - name: controller-service-account
       expression: {{ printf `request.userInfo.username == "system:serviceaccount:%s:%s"` .Release.Namespace $controllerServiceAccount | quote }}
   validations:
     - expression: {{ `has(object.metadata.labels) && object.metadata.labels.size() == 2 && ["operator.ptah.run/plan", "operator.ptah.run/schema"].all(key, key in object.metadata.labels && object.metadata.labels[key] != "") && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && object.metadata.name.startsWith(object.metadata.labels["operator.ptah.run/plan"] + "-") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchemaPlan" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/plan"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion` | quote }}
-      message: "Ptah controller chunk write guard rejected an unsafe ConfigMap shape"
-    - expression: {{ `has(dyn(object).immutable) && dyn(object).immutable && (!has(dyn(object).data) || dyn(object).data.size() == 0) && has(dyn(object).binaryData) && dyn(object).binaryData.size() == 1 && "chunk" in dyn(object).binaryData && dyn(object).binaryData["chunk"].size() >= 1 && dyn(object).binaryData["chunk"].size() <= 699052` | quote }}
-      message: "Ptah controller chunk write guard rejected an unsafe ConfigMap shape"
+      message: "Ptah controller chunk write guard rejected an unsafe PtahSchemaPlanChunk shape"
+    - expression: "has(dyn(object).spec) && has(dyn(object).spec.data) && dyn(object).spec.data.size() >= 1 && dyn(object).spec.data.size() <= 699052"
+      message: "Ptah controller chunk write guard rejected an unsafe PtahSchemaPlanChunk shape"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -128,6 +128,55 @@ metadata:
     app.kubernetes.io/component: controller-chunk-write-guard
 spec:
   policyName: {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE"]
+        resources: ["ptahschemaplanchunks"]
+        scope: Namespaced
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "ptah-operator.controllerProjectionWriteGuardPolicyName" . }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller-projection-write-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  matchConditions:
+    - name: controller-service-account
+      expression: {{ printf `request.userInfo.username == "system:serviceaccount:%s:%s"` .Release.Namespace $controllerServiceAccount | quote }}
+  validations:
+    - expression: {{ `has(object.metadata.labels) && object.metadata.labels.size() == 2 && ["operator.ptah.run/plan", "operator.ptah.run/schema"].all(key, key in object.metadata.labels && object.metadata.labels[key] != "") && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && object.metadata.name.startsWith(object.metadata.labels["operator.ptah.run/plan"] + "-") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchemaPlan" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/plan"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion` | quote }}
+      message: "Ptah controller projection write guard rejected an unsafe ConfigMap shape"
+    - expression: {{ `has(dyn(object).immutable) && dyn(object).immutable && (!has(dyn(object).data) || dyn(object).data.size() == 0) && has(dyn(object).binaryData) && dyn(object).binaryData.size() == 1 && "chunk" in dyn(object).binaryData && dyn(object).binaryData["chunk"].size() >= 1 && dyn(object).binaryData["chunk"].size() <= 699052` | quote }}
+      message: "Ptah controller projection write guard rejected an unsafe ConfigMap shape"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "ptah-operator.controllerProjectionWriteGuardPolicyName" . }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller-projection-write-guard
+spec:
+  policyName: {{ include "ptah-operator.controllerProjectionWriteGuardPolicyName" . }}
   matchResources:
     matchPolicy: Exact
     namespaceSelector: {}
@@ -174,7 +223,7 @@ spec:
       message: "Ptah controller plan write guard rejected an unsafe manifest shape"
     - expression: {{ `(dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1 && dyn(object).spec.dialect != "" && dyn(object).spec.statementCount >= 1 && dyn(object).spec.size >= 1 && dyn(object).spec.size <= 8388608) && (dyn(object).spec.contractVersion == 3 && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.releaseControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.releaseControllerState)` | quote }}
       message: "Ptah controller plan write guard rejected an unsafe manifest shape"
-    - expression: {{ `dyn(object).spec.chunks.size() >= 1 && dyn(object).spec.chunks.size() <= 16 && dyn(object).spec.chunks.all(chunk, chunk.key == "chunk" && chunk.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && chunk.name.startsWith(object.metadata.name + "-") && chunk.index >= 0 && chunk.index < dyn(object).spec.chunks.size() && chunk.digest.matches("^sha256:[0-9a-f]{64}$") && chunk.size >= 1 && chunk.size <= 524288)` | quote }}
+    - expression: {{ `dyn(object).spec.chunks.size() >= 1 && dyn(object).spec.chunks.size() <= 16 && dyn(object).spec.chunks.all(chunk, chunk.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && chunk.name.startsWith(object.metadata.name + "-") && chunk.index >= 0 && chunk.index < dyn(object).spec.chunks.size() && chunk.digest.matches("^sha256:[0-9a-f]{64}$") && chunk.size >= 1 && chunk.size <= 524288)` | quote }}
       message: "Ptah controller plan write guard rejected an unsafe manifest shape"
     - expression: "!has(dyn(object).status)"
       message: "Ptah controller plan write guard rejected an unsafe manifest shape"

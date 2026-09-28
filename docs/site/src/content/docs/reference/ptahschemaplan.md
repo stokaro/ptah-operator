@@ -16,7 +16,8 @@ and rehashes before it runs anything.
 
 The examples below are what `kubectl get -o yaml` returns, shortened to the
 fields worth looking at. Read the SQL with the plugin rather than out of the
-object -- the statements travel as chunks, and the plugin assembles them:
+object -- the statements are stored in `PtahSchemaPlanChunk` objects, and the
+plugin assembles and checks them:
 
 ```sh
 kubectl ptah plan application -n application
@@ -54,12 +55,11 @@ spec:
   statementCount: 4
   size: 1832
   contentDigest: sha256:3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea
-  # The SQL itself, in ConfigMaps this plan owns. A plan is bounded: at most
-  # 16 chunks of 512 KiB, and 8 MiB in total.
+  # The SQL itself, in PtahSchemaPlanChunk objects this plan owns. A plan is
+  # bounded: at most 16 chunks of 512 KiB, and 8 MiB in total.
   chunks:
     - index: 0
       name: ptah-plan-71c480df93d6ae2f14efe3c4-000
-      key: chunk
       size: 1832
       digest: sha256:3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea
   contractVersion: 3
@@ -105,14 +105,13 @@ spec:
   dialect: postgres
   destructive: true
   statementCount: 1
-  size: 96
-  contentDigest: sha256:6b51d431df5d7f141cbececcf79edf3dd861c3b4069f0b11661a3eefacbba918
+  size: 396
+  contentDigest: sha256:0c3a2a729409b8995b48a2faf12ab1482177cbf660ea2655729c3ab825be67de
   chunks:
     - index: 0
       name: ptah-plan-9c56cc51b374c3ba189210d5-000
-      key: chunk
-      size: 96
-      digest: sha256:6b51d431df5d7f141cbececcf79edf3dd861c3b4069f0b11661a3eefacbba918
+      size: 396
+      digest: sha256:0c3a2a729409b8995b48a2faf12ab1482177cbf660ea2655729c3ab825be67de
   contractVersion: 3
   artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
   verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
@@ -162,14 +161,13 @@ spec:
     - SecurityDefiner
     - FunctionReplacement
   statementCount: 2
-  size: 412
-  contentDigest: sha256:b96dbb7f7d0f19abc4926b0a52c0728ddc0da5967457f9e4dc584ae8ba1a8c2e
+  size: 653
+  contentDigest: sha256:e93552f381cd8ee8958d6c097b84b4fc868e8ccacb028fd1acfc54725692a12e
   chunks:
     - index: 0
       name: ptah-plan-3263a9026c3e3f7e368860bd-000
-      key: chunk
-      size: 412
-      digest: sha256:b96dbb7f7d0f19abc4926b0a52c0728ddc0da5967457f9e4dc584ae8ba1a8c2e
+      size: 653
+      digest: sha256:e93552f381cd8ee8958d6c097b84b4fc868e8ccacb028fd1acfc54725692a12e
   contractVersion: 3
   artifactDigest: sha256:ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d
   verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
@@ -193,11 +191,10 @@ spec:
 | --- | --- | --- |
 | `spec.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed database state the plan was computed from. Drift since then retires the plan rather than applying it. |
 | `spec.artifactDigest` | `string`, required | ArtifactDigest is the OCI artifact this plan was computed from, pinned to content rather than to the tag it was resolved through. |
-| `spec.chunks` | `[]object`, required | Chunks are the immutable ConfigMaps the plan bytes are stored in. The plan is the concatenation of their contents in index order, and nothing reads them without checking each digest and size. |
+| `spec.chunks` | `[]object`, required | Chunks are the PtahSchemaPlanChunk objects the plan bytes are stored in. The plan is the concatenation of their data in index order, and nothing reads them without checking each digest and size. |
 | `spec.chunks[].digest` | `string`, required | Digest of this chunk's bytes, checked when the plan is read back. |
 | `spec.chunks[].index` | `integer`, required | Index of this chunk in the plan, counting from zero. The chunks are concatenated in this order and in no other. |
-| `spec.chunks[].key` | `string`, required | Key inside that ConfigMap the chunk bytes are stored under. |
-| `spec.chunks[].name` | `string`, required | Name of the immutable ConfigMap holding this chunk. |
+| `spec.chunks[].name` | `string`, required | Name of the PtahSchemaPlanChunk holding this chunk. An Apply projects the chunk into its Pod through an immutable ConfigMap of the same name. |
 | `spec.chunks[].size` | `integer`, required | Size of this chunk in bytes, checked with the digest. |
 | `spec.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes the chunks reconstruct. |
 | `spec.contractVersion` | `integer`, required, one of `3` | ContractVersion versions plan publication and reconstruction separately from the Kubernetes API version. Version 3 is the only one. |
@@ -237,8 +234,8 @@ spec:
 | `status.conditions[].status` | `string`, required, one of `True`, `False`, `Unknown` | status of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | `string`, required | type of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.observedGeneration` | `integer` | ObservedGeneration is the plan generation this status was written for. |
-| `status.publishedChunks` | `[]object` | PublishedChunks are the ConfigMaps that were found to exist, by UID, before Ready became true. Chunk publication is not transactional, so this is the record that every chunk the manifest names was really written. |
+| `status.publishedChunks` | `[]object` | PublishedChunks are the PtahSchemaPlanChunk objects that were found to exist, by UID, before Ready became true. Chunk publication is not transactional, so this is the record that every chunk the manifest names was really written. |
 | `status.publishedChunks[].index` | `integer`, required | Index of the chunk this record is for. |
-| `status.publishedChunks[].name` | `string`, required | Name of the ConfigMap that was verified. |
+| `status.publishedChunks[].name` | `string`, required | Name of the PtahSchemaPlanChunk that was verified. |
 | `status.publishedChunks[].uid` | `string`, required | UID it had when it was verified, so a chunk deleted and recreated is not mistaken for the one the plan was published with. |
 
