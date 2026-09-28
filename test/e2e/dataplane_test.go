@@ -1,8 +1,6 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -242,15 +240,12 @@ func ledgerJob(uid, name, schema, operation string, created time.Time) batchv1.J
 	}}
 }
 
-// The ledger is shared with the fault phase, which greps it for
-// `"uid":"<uid>"`, so the records are jq -c's and each UID is recorded once.
+// A Job is recorded once, by UID, in the order the phase first saw it, and a
+// checkpoint taken after names it.
 func TestJobLedgerRecordsEachJobOnce(t *testing.T) {
 	t.Parallel()
 	created := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	ledger, err := newJobLedger(filepath.Join(t.TempDir(), "observed.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	ledger := newJobLedger()
 	records, err := observedJobRecords([]batchv1.Job{
 		ledgerJob("uid-1", "resolve-1", "schema", "resolve", created),
 		ledgerJob("uid-2", "verify-1", "schema", "verify", created.Add(time.Minute)),
@@ -259,35 +254,16 @@ func TestJobLedgerRecordsEachJobOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := ledger.add(records); err != nil {
-			t.Fatal(err)
-		}
+		ledger.add(records)
 	}
-	content, err := os.ReadFile(ledger.path)
-	if err != nil {
-		t.Fatal(err)
+	if len(ledger.records) != 2 || ledger.records[0].UID != "uid-1" || ledger.records[1].UID != "uid-2" {
+		t.Fatalf("ledger holds %v", ledger.records)
 	}
-	want := `{"uid":"uid-1","name":"resolve-1","created":"2026-09-01T00:00:00Z","schema":"schema","operation":"resolve"}` + "\n" +
-		`{"uid":"uid-2","name":"verify-1","created":"2026-09-01T00:01:00Z","schema":"schema","operation":"verify"}` + "\n"
-	if string(content) != want {
-		t.Fatalf("ledger =\n%s\nwant\n%s", content, want)
+	if want := (checkpoint{"uid-1", "uid-2"}); !slices.Equal(ledger.checkpoint("schema", ""), want) {
+		t.Fatalf("checkpoint = %v, want %v", ledger.checkpoint("schema", ""), want)
 	}
-	// Another phase appends, and the phase reads the ledger back with it.
-	appended := `{"uid":"uid-3","name":"plan-1","created":"2026-09-01T00:02:00Z","schema":"schema","operation":"plan"}` + "\n"
-	if err := os.WriteFile(ledger.path, append(content, []byte(appended+appended)...), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.reload(); err != nil {
-		t.Fatal(err)
-	}
-	if len(ledger.records) != 3 || !ledger.seen["uid-3"] {
-		t.Fatalf("reloaded ledger holds %v", ledger.records)
-	}
-	if err := os.WriteFile(ledger.path, []byte("{\"name\":\"no-uid\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.reload(); err == nil {
-		t.Fatal("a ledger record with no UID was accepted")
+	if got := ledger.checkpoint("schema", "verify"); !slices.Equal(got, checkpoint{"uid-2"}) {
+		t.Fatalf("verify checkpoint = %v", got)
 	}
 }
 
@@ -376,23 +352,11 @@ func TestJobBoundaryUnchangedRefusesALaterJob(t *testing.T) {
 
 func TestUIDLedgerAppendsOnce(t *testing.T) {
 	t.Parallel()
-	ledger, err := newUIDLedger(filepath.Join(t.TempDir(), "audited.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	ledger := newUIDLedger()
 	for _, uid := range []string{"a", "b", "a", ""} {
-		if err := ledger.add(uid); err != nil {
-			t.Fatal(err)
-		}
+		ledger.add(uid)
 	}
-	content, err := os.ReadFile(ledger.path)
-	if err != nil || string(content) != "a\nb\n" {
-		t.Fatalf("ledger = %q, %v", content, err)
-	}
-	if err := os.WriteFile(ledger.path, []byte("a\nb\nc\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.reload(); err != nil || !ledger.holds("c") {
-		t.Fatalf("reload = %v, holds c = %t", err, ledger.holds("c"))
+	if !slices.Equal(ledger.uids, []string{"a", "b"}) || !ledger.holds("a") || ledger.holds("") || ledger.holds("c") {
+		t.Fatalf("ledger = %v", ledger.uids)
 	}
 }

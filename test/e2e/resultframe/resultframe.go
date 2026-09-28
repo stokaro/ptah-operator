@@ -1,18 +1,13 @@
 // Package resultframe extracts one exact, integrity-bound runner result from
 // an acceptance Pod's log. It reuses the production parser, so an acceptance
-// row cannot accept a frame the controller would reject.
-//
-// The data-plane phase reads results through it directly. The shell phases
-// that still read results run the resultassert command, which is this package
-// behind three flags.
+// row cannot accept a frame the controller would reject. The data-plane phase
+// reads every result it asserts on through it.
 package resultframe
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"regexp"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -27,35 +22,18 @@ const (
 	MaxLogBytes = runner.DefaultMaxFrameBytes + 1<<20
 )
 
-// ArrivingPattern matches the refusals Parse gives a log that may still be
+// arrivingPattern matches the refusals Parse gives a log that may still be
 // arriving, and nothing else. A caller that can read the log again waits on
-// these and gives up at once on any other. hack/e2e-faults.sh greps for the
-// same alternation, and a test holds the two to each other.
-const ArrivingPattern = `never finished arriving|frame not found|no end of line within its bounds`
+// these and gives up at once on any other; a test holds every alternative to a
+// log shape that is genuinely still arriving.
+const arrivingPattern = `never finished arriving|frame not found|no end of line within its bounds`
 
-var arriving = regexp.MustCompile(ArrivingPattern)
+var arriving = regexp.MustCompile(arrivingPattern)
 
 // StillArriving reports whether err is a refusal a later read of the same log
 // can turn into a frame.
 func StillArriving(err error) bool {
 	return err != nil && arriving.MatchString(err.Error())
-}
-
-// ReadBounded reads a log file no longer than MaxLogBytes.
-func ReadBounded(path string) ([]byte, error) {
-	file, err := os.Open(path) //nolint:gosec // The caller names the log it wrote.
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = file.Close() }()
-	logs, err := io.ReadAll(io.LimitReader(file, MaxLogBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(logs)) > MaxLogBytes {
-		return nil, errors.New("runner log exceeds the E2E parser limit")
-	}
-	return logs, nil
 }
 
 // Parse reads the one frame the log must hold. It separates the two answers a

@@ -289,7 +289,6 @@ printf '%s\n' "$BUILT_IMAGE_VARIABLES" | while IFS= read -r built_image; do
 done || exit 1
 printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_IMAGE_COUNT"
 
-"$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 "$ROOT_DIR/hack/e2e-timing-selftest.sh"
 "$ROOT_DIR/hack/e2e-shared-images-selftest.sh"
 "$ROOT_DIR/hack/e2e-suites-selftest.sh"
@@ -319,7 +318,7 @@ grep -F 'timing_end fail' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 # The longest phases carry scenario marks. Without them the report names a
 # ninety-minute phase and nothing inside it, which is the measurement the
 # critical-path work needs most.
-for timing_phase_script in e2e-faults e2e-migrations e2e-reference-data; do
+for timing_phase_script in e2e-migrations e2e-reference-data; do
 	# Indented too: a phase that selects its scenarios by engine marks them
 	# inside the branch that runs them.
 	timing_scenarios=$(grep -cE '^[[:space:]]*timing_next scenario ' \
@@ -563,117 +562,6 @@ if render_release_values "$WORK_DIR/candidate-values-no-groups.json" candidate.i
 	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
 	candidate-registry-pull 'not-a-json-array' 2>/dev/null; then
 	printf '%s\n' 'e2e static: release values accepted exempt groups that are not a JSON array' >&2
-	exit 1
-fi
-
-database_url_rewrite_section=$(sed -n '/^replace_database_url_path()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-[ -n "$database_url_rewrite_section" ] || {
-	printf '%s\n' 'e2e static: database URL path rewrite helper is missing' >&2
-	exit 1
-}
-database_url_for_section=$(sed -n '/^database_url_for()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # The wiring check must match literal shell variables.
-printf '%s\n' "$database_url_for_section" |
-	grep -F 'new_url=$(replace_database_url_path "$base_url" "$url_database")' >/dev/null || {
-	printf '%s\n' 'e2e static: fault database URL creation bypasses the safe path rewrite' >&2
-	exit 1
-}
-assert_database_url_rewrite() (
-	rewrite_input=$1
-	rewrite_database=$2
-	rewrite_expected=$3
-	# shellcheck disable=SC2317,SC2329 # The extracted helper invokes this test-local failure path.
-	fail() {
-		printf 'e2e static: database URL rewrite failed: %s\n' "$*" >&2
-		exit 1
-	}
-	eval "$database_url_rewrite_section"
-	rewrite_actual=$(replace_database_url_path "$rewrite_input" "$rewrite_database")
-	[ "$rewrite_actual" = "$rewrite_expected" ] || {
-		printf 'e2e static: database URL rewrite produced %s, expected %s\n' \
-			"$rewrite_actual" "$rewrite_expected" >&2
-		exit 1
-	}
-)
-assert_database_url_rewrite \
-	'postgres://user:password@db.example/original' \
-	'isolated_database' \
-	'postgres://user:password@db.example/isolated_database'
-assert_database_url_rewrite \
-	'postgres://user:password@db.example/original?sslrootcert=/tmp/root&ampersand=a&path=one\\two' \
-	'isolated_database' \
-	'postgres://user:password@db.example/isolated_database?sslrootcert=/tmp/root&ampersand=a&path=one\\two'
-assert_database_url_rewrite \
-	'mysql://user:password@db.example/original#client-fragment' \
-	'isolated_database' \
-	'mysql://user:password@db.example/isolated_database#client-fragment'
-assert_database_url_rewrite_rejected() (
-	rewrite_input=$1
-	rewrite_database=$2
-	# shellcheck disable=SC2317,SC2329 # The extracted helper invokes this test-local failure path.
-	fail() {
-		exit 97
-	}
-	eval "$database_url_rewrite_section"
-	set +e
-	(
-		replace_database_url_path "$rewrite_input" "$rewrite_database"
-	) >/dev/null 2>&1
-	rewrite_status=$?
-	set -e
-	[ "$rewrite_status" -ne 0 ] || {
-		printf 'e2e static: database URL rewrite accepted a URL without a database path\n' >&2
-		exit 1
-	}
-)
-assert_database_url_rewrite_rejected \
-	'postgres://db.example?sslmode=disable' \
-	'isolated_database'
-
-ready_manager_pod_uids_section=$(sed -n '/^ready_manager_pod_uids()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-manager_pods_replaced_section=$(sed -n '/^manager_pods_replaced()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-if [ -z "$ready_manager_pod_uids_section" ] || [ -z "$manager_pods_replaced_section" ]; then
-	printf '%s\n' 'e2e static: manager rollout identity helpers are missing' >&2
-	exit 1
-fi
-eval "$ready_manager_pod_uids_section"
-eval "$manager_pods_replaced_section"
-ready_manager_fixture=$(jq -cn '
-  {items: [
-    {metadata: {uid: "manager-a"}, status: {conditions: [{type: "Ready", status: "True"}]}},
-    {metadata: {uid: "manager-b"}, status: {conditions: [{type: "Ready", status: "True"}]}}
-  ]}
-')
-ready_manager_uids=$(printf '%s\n' "$ready_manager_fixture" | ready_manager_pod_uids 2)
-[ "$ready_manager_uids" = '["manager-a","manager-b"]' ] || {
-	printf '%s\n' 'e2e static: manager UID selection rejected two ready HA replicas' >&2
-	exit 1
-}
-stale_manager_fixture=$(jq -cn '
-  {items: [
-    {metadata: {uid: "old-manager"}, status: {conditions: [{type: "Ready", status: "False"}]}},
-    {metadata: {uid: "new-manager-a"}, status: {conditions: [{type: "Ready", status: "True"}]}},
-    {metadata: {uid: "new-manager-b"}, status: {conditions: [{type: "Ready", status: "True"}]}}
-  ]}
-')
-if printf '%s\n' "$stale_manager_fixture" | ready_manager_pod_uids 2 >/dev/null 2>&1; then
-	printf '%s\n' 'e2e static: manager UID selection ignored a stale non-terminating replica' >&2
-	exit 1
-fi
-manager_pods_replaced '["old-a","old-b"]' '["new-a","new-b"]' >/dev/null || {
-	printf '%s\n' 'e2e static: manager replacement rejected disjoint equal-size UID sets' >&2
-	exit 1
-}
-if manager_pods_replaced '["old-a","old-b"]' '["old-b","new-a"]' >/dev/null 2>&1; then
-	printf '%s\n' 'e2e static: manager replacement accepted an overlapping UID set' >&2
-	exit 1
-fi
-if manager_pods_replaced '["old-a","old-b"]' '["new-a"]' >/dev/null 2>&1; then
-	printf '%s\n' 'e2e static: manager replacement accepted a lost replica' >&2
 	exit 1
 fi
 
@@ -1198,12 +1086,11 @@ for branch_engine in postgresql mysql; do
 	}
 done
 grep -F 'unset REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
-if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" \
-	"$ROOT_DIR/hack/e2e-faults.sh" >/dev/null; then
+if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null; then
 	printf '%s\n' 'e2e static: registry password is handed off through the host environment' >&2
 	exit 1
 fi
-for secret_script in e2e-faults.sh e2e-migrations.sh e2e-reference-data.sh; do
+for secret_script in e2e-migrations.sh e2e-reference-data.sh; do
 	grep -F 'grep -F -f' "$ROOT_DIR/hack/$secret_script" >/dev/null
 	grep -F -- '--rawfile' "$ROOT_DIR/hack/$secret_script" >/dev/null
 done
@@ -1321,7 +1208,7 @@ for engine in postgresql mysql; do
 	grep -F 'fault_token ' "$ROOT_DIR/testdata/e2e/${engine}-fault-v1.sql" >/dev/null
 	# The fault databases are seeded from the v3 fixture, so the fault schema has
 	# to be that fixture plus the fault_token column. Anything else plans a drop,
-	# the schema blocks on a destructive plan, and the fault phase waits for an
+	# the schema blocks on a destructive plan, and the fault injection waits for an
 	# approval boundary it can never reach. Trailing commas move with the column,
 	# so compare the fixtures without them.
 	fault_seed_lines=$(sed 's/,$//' "$ROOT_DIR/testdata/e2e/${engine}-v3.sql")
@@ -1559,56 +1446,6 @@ static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'E2E_PHASE=upgrade' \
 	'"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 
-for fault_identity_function in wait_for_plan create_approval capture_exact_job_result \
-	assert_successful_apply_result assert_post_apply_proof_history \
-	assert_uncertain_apply_proof_history; do
-	fault_identity_section=$(sed -n "/^${fault_identity_function}()/,/^}/p" \
-		"$ROOT_DIR/hack/e2e-faults.sh")
-	fault_controller_image_marker='.controllerImage'
-	fault_controller_revision_marker='.controllerRevision'
-	fault_controller_state_marker='.controllerStateVersion'
-	if [ "$fault_identity_function" = capture_exact_job_result ]; then
-		fault_controller_image_marker='operator.ptah.run/controller-image'
-		fault_controller_revision_marker='operator.ptah.run/controller-revision'
-		fault_controller_state_marker='operator.ptah.run/controller-state-version'
-	fi
-	printf '%s\n' "$fault_identity_section" |
-		grep -F "$fault_controller_image_marker" >/dev/null || {
-		printf 'e2e static: %s lacks controller-image evidence\n' \
-			"$fault_identity_function" >&2
-		exit 1
-	}
-	printf '%s\n' "$fault_identity_section" |
-		grep -F "$fault_controller_revision_marker" >/dev/null || {
-		printf 'e2e static: %s lacks controller-revision evidence\n' \
-			"$fault_identity_function" >&2
-		exit 1
-	}
-	printf '%s\n' "$fault_identity_section" |
-		grep -F "$fault_controller_state_marker" >/dev/null || {
-		printf 'e2e static: %s lacks controller-state-version evidence\n' \
-			"$fault_identity_function" >&2
-		exit 1
-	}
-done
-fault_runtime_identity_section=$(sed -n '/^audit_fault_runtime()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Exact source markers intentionally retain jq and shell variables literally.
-for fault_runtime_identity_marker in \
-	'managed fault-test Pod $audit_pod_name lacks its exact controller execution identity' \
-	'managed fault-test Job $audit_job_name lacks its exact controller execution identity' \
-	'.spec.template.metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage'; do
-	printf '%s\n' "$fault_runtime_identity_section" |
-		grep -F -- "$fault_runtime_identity_marker" >/dev/null
-done
-for controller_identity_input in CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION; do
-	grep -F "${controller_identity_input}=\${E2E_${controller_identity_input}:-}" \
-		"$ROOT_DIR/hack/e2e-faults.sh" >/dev/null
-done
-grep -F 'E2E_CONTROLLER_REVISION must not contain control characters' \
-	"$ROOT_DIR/hack/e2e-faults.sh" >/dev/null
-grep -F 'E2E_CONTROLLER_REVISION must not be empty or have edge whitespace' \
-	"$ROOT_DIR/hack/e2e-faults.sh" >/dev/null
 # shellcheck disable=SC2016 # Match the exact generated OpenAPI regular expression.
 controller_revision_pattern='pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$'
 # The realm kind is an administrator's grant and carries no controller state,
@@ -1790,79 +1627,6 @@ done
 static_require_count "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 1 'registry readiness port handoff'
 
-runtime_audit_function=audit_fault_runtime
-runtime_snapshot_variable=fault_audit_pods
-runtime_owner_uid_variable=audit_pod_job_uid
-runtime_job_ledger=SHARED_FULLY_AUDITED_JOBS_FILE
-runtime_broad_job_ledger=SHARED_AUDITED_JOBS_FILE
-runtime_generic_end='^[[:space:]]*terminal_jobs='
-runtime_audit_function_section=$(sed -n \
-	"/^${runtime_audit_function}()/,/^}/p" \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-runtime_audit_generic_section=$(printf '%s\n' "$runtime_audit_function_section" |
-	sed -n "/^[[:space:]]*${runtime_snapshot_variable}=/,/${runtime_generic_end}/p")
-runtime_snapshot_marker="${runtime_snapshot_variable}=\$(k -n \"\$TEST_NAMESPACE\" get pods -o json)"
-static_require_count "$runtime_audit_generic_section" "$runtime_snapshot_marker" 1 \
-	"$runtime_audit_function JSON Pod snapshot"
-static_require_count "$runtime_audit_generic_section" 'get pods -o json' 1 \
-	"$runtime_audit_function generic Pod list"
-static_reject_marker "$runtime_audit_generic_section" 'get pods -o name' \
-	"$runtime_audit_function generic Pod audit"
-static_reject_marker "$runtime_audit_generic_section" "for audit_pod in \$(" \
-	"$runtime_audit_function generic Pod audit"
-runtime_ledger_marker="grep -Fx \"\$${runtime_owner_uid_variable}\" \"\$${runtime_job_ledger}\""
-runtime_terminal_phase_marker="if [ \"\$audit_snapshot_phase\" = Succeeded ] || [ \"\$audit_snapshot_phase\" = Failed ]; then"
-runtime_owner_uid_marker="[ \"\$${runtime_owner_uid_variable}\" != \"-\" ]"
-runtime_live_get_marker="audit_pod_object=\$(k -n \"\$TEST_NAMESPACE\" get pod \"\$audit_pod_name\""
-runtime_post_get_marker="audit_pod_after=\$(k -n \"\$TEST_NAMESPACE\" get pod \"\$audit_pod_name\""
-runtime_uid_marker=".metadata.uid == \$uid"
-runtime_object_write_marker="printf '%s\\n' \"\$audit_pod_object\" >\"\$RESOURCE_FILE\""
-runtime_skip_section=$(printf '%s\n' "$runtime_audit_generic_section" |
-	sed -n "/^[[:space:]]*if \\[[[:space:]]*\"\\\$audit_snapshot_phase\" = Succeeded/,/audit_pod_object=/p")
-static_require_count "$runtime_skip_section" "$runtime_ledger_marker" 1 \
-	"$runtime_audit_function full-ledger Pod skip"
-runtime_skip_greps=$(printf '%s\n' "$runtime_skip_section" | grep -F 'grep -' || true)
-static_reject_marker "$runtime_skip_greps" "\$${runtime_broad_job_ledger}" \
-	"$runtime_audit_function broad Job-ledger authorization"
-static_reject_marker "$runtime_skip_greps" "\$AUDITED_FAULT_PODS_FILE" \
-	'fault generic broad Pod-ledger authorization'
-static_reject_marker "$runtime_skip_greps" "\$AUDITED_FAULT_JOBS_FILE" \
-	'fault generic broad Job-ledger authorization'
-runtime_resource_scan_marker="scan_fault_file \"\$RESOURCE_FILE\""
-runtime_log_scan_marker="scan_fault_file \"\$LOG_FILE\""
-static_require_order "$runtime_audit_generic_section" "$runtime_audit_function full-ledger Pod audit" \
-	"$runtime_snapshot_marker" '.metadata.ownerReferences' \
-	'.apiVersion == "batch/v1" and .kind == "Job" and .controller == true' \
-	'elif length == 1 then .[0]' \
-	"$runtime_terminal_phase_marker" "$runtime_owner_uid_marker" \
-	"$runtime_ledger_marker" \
-	"record_audited_uid \"\$AUDITED_FAULT_PODS_FILE\" \"\$audit_pod_uid\"" \
-	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\" \"\$audit_pod_uid\"" \
-	"record_audited_uid \"\$AUDITED_FAULT_JOBS_FILE\" \"\$${runtime_owner_uid_variable}\"" \
-	'continue' "$runtime_live_get_marker" \
-	"fail \"unaudited fault-test Pod \$audit_pod_name UID \$audit_pod_uid disappeared before its log audit\"" "$runtime_uid_marker" \
-	"fail \"unaudited fault-test Pod \$audit_pod_name was replaced before UID \$audit_pod_uid was audited\"" "$runtime_object_write_marker" \
-	"$runtime_resource_scan_marker" "$runtime_log_scan_marker" \
-	"$runtime_post_get_marker" "fail \"unaudited fault-test Pod \$audit_pod_name UID \$audit_pod_uid disappeared during its log audit\"" \
-	"$runtime_uid_marker" "fail \"unaudited fault-test Pod \$audit_pod_name changed identity during its log audit\""
-# A Pod the running-deadline proof destroys on purpose may vanish between
-# the snapshot and the live read. Only the Pod under the live protected
-# follower may be skipped for that, and only by asking the follower, so
-# the guard is pinned here and its own test is pinned below.
-# shellcheck disable=SC2016 # Exact source marker intentionally retains the Pod UID variable literally.
-static_require_count "$runtime_audit_generic_section" \
-	'if fault_pod_logs_are_followed "$audit_pod_uid"; then' 3 \
-	'fault vanished-Pod follower authorization'
-fault_follower_guard_section=$(sed -n \
-	'/^fault_pod_logs_are_followed()/,/^}/p' "$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Exact source markers intentionally retain the follower variables literally.
-static_require_order "$fault_follower_guard_section" 'fault follower-authorized Pod skip' \
-	'[ -n "$FOLLOW_LOG_PID" ] || return 1' \
-	'[ "$FOLLOW_LOG_RECORD_POD" -eq 1 ] || return 1' \
-	'[ -n "$FOLLOW_LOG_POD_UID" ] || return 1' \
-	'[ "$FOLLOW_LOG_POD_UID" = "$1" ] || return 1'
-static_reject_marker "$fault_follower_guard_section" 'audit_pod_name' \
-	'fault follower-authorized Pod skip by name'
 # A loop that is an if condition runs in this shell, so an exit inside it ends
 # the phase rather than the loop, and the phase dies with no message at all.
 # The shape reads as "run the loop and take its answer", which is why it was
@@ -1875,278 +1639,6 @@ for phase_script in "$ROOT_DIR"/hack/e2e-*.sh; do
 		exit 1
 	fi
 done
-ledger_selftest_script=$(sed -n '1,$p' \
-	"$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh")
-# The fault phase still carries the transport reader, the plan-document
-# rebuild and the sealed-payload proof, and the ledgers it hands back to the
-# data plane. Each case below is what holds one of them in the self-test.
-for ledger_selftest_marker in \
-	'transport_settles_after_an_incomplete_read' \
-	'transport_frame_that_never_arrives' \
-	'transport_frame_that_is_present_and_wrong emit_wrong_transport' \
-	'transport_frame_that_is_present_and_wrong emit_two_frame_transport' \
-	'transport_frame_that_is_present_and_wrong emit_twice_closed_transport' \
-	'fault_audit_with_invalid_uid' \
-	'fault_record_with_malformed_watch' \
-	'fault_initial_with_malformed_list' \
-	'fault_successful_paths' \
-	'plan_document_rebuild_successful_path' \
-	'plan_document_rebuild_with_no_chunks' \
-	'plan_document_rebuild_with_chunks_out_of_order' \
-	'plan_document_rebuild_with_missing_chunk_data' \
-	'plan_document_rebuild_with_short_chunk' \
-	'sealed_plan_result_with_empty_stdout' \
-	'sealed_plan_result_with_plaintext_stdout' \
-	'sealed_plan_result_with_statement_text_in_stdout' \
-	'sealed_plan_result_with_json_escaped_statement_in_stdout' \
-	'sealed_plan_result_with_format_version_in_stdout' \
-	'sealed_plan_result_for_a_document_without_statements'; do
-	printf '%s\n' "$ledger_selftest_script" | grep -F -- "$ledger_selftest_marker" >/dev/null || {
-		printf 'e2e static: fault helper self-test coverage is missing: %s\n' \
-			"$ledger_selftest_marker" >&2
-		exit 1
-	}
-done
-fault_runtime_audit_function_section=$(sed -n '/^audit_fault_runtime()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-fault_script=$(sed -n '1,$p' "$ROOT_DIR/hack/e2e-faults.sh")
-pg_apply_lock_assertion_section=$(sed -n '/^assert_pg_apply_lock_wait()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-for pg_same_session_marker in \
-	'JOIN pg_locks ddl ON ddl.pid=advisory.pid' \
-	"ddl.relation='public.e2e_widgets'::regclass" \
-	"ddl.mode='AccessExclusiveLock'" \
-	'NOT ddl.granted'; do
-	static_require_count "$pg_apply_lock_assertion_section" "$pg_same_session_marker" 1 \
-		'PostgreSQL same-session advisory lock and DDL proof'
-done
-mysql_apply_lock_assertion_section=$(sed -n '/^assert_mysql_apply_lock_wait()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-for mysql_same_session_marker in \
-	"ID=IS_USED_LOCK('ptah_schema_apply')" \
-	"STATE LIKE '%metadata lock%'"; do
-	static_require_count "$mysql_apply_lock_assertion_section" "$mysql_same_session_marker" 1 \
-		'MySQL same-session advisory lock and DDL proof'
-done
-uncertain_read_proof_section=$(sed -n '/^capture_uncertain_read_proof_pair()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Markers intentionally match literal jq variables.
-uncertain_zero_evidence_defaults_present() {
-	zero_evidence_section=$1
-	[ "$(printf '%s\n' "$zero_evidence_section" |
-		grep -Fc '(.status.pendingObservation.applyPodUIDs // []) as $recordedPodUIDs')" -eq 2 ] &&
-		[ "$(printf '%s\n' "$zero_evidence_section" |
-			grep -Fc '(.status.pendingObservation.applyPodCount // 0) == ($recordedPodUIDs | length)')" -eq 2 ]
-}
-uncertain_zero_evidence_defaults_present "$uncertain_read_proof_section" || {
-	printf '%s\n' 'e2e static: uncertain Apply proof does not normalize both omitted Pod evidence fields' >&2
-	exit 1
-}
-# shellcheck disable=SC2016 # The mutant intentionally replaces a literal jq variable.
-uncertain_zero_evidence_mutant=$(printf '%s\n' "$uncertain_read_proof_section" |
-	sed 's#(.status.pendingObservation.applyPodCount // 0) == (\$recordedPodUIDs | length)#.status.pendingObservation.applyPodCount == ($recordedPodUIDs | length)#')
-if uncertain_zero_evidence_defaults_present "$uncertain_zero_evidence_mutant"; then
-	printf '%s\n' 'e2e static: uncertain Apply zero-evidence wiring mutant was not rejected' >&2
-	exit 1
-fi
-static_require_order "$fault_script" 'fault full-audit ledger initialization' \
-	"SHARED_FULLY_AUDITED_JOBS_FILE=\${E2E_FULLY_AUDITED_JOBS_FILE:-}" \
-	"FULLY_AUDITED_FAULT_PODS_FILE=\$WORK_DIR/fully-audited-pod-uids.txt" \
-	": >\"\$FULLY_AUDITED_FAULT_PODS_FILE\""
-fault_generic_audit_section=$(printf '%s\n' "$fault_runtime_audit_function_section" |
-	sed -n '/^[[:space:]]*fault_audit_pods=/,/^[[:space:]]*terminal_jobs=/p')
-fault_full_pod_record_marker="record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\" \"\$audit_pod_uid\""
-static_require_count "$fault_generic_audit_section" "$fault_full_pod_record_marker" 2 \
-	'fault generic full-Pod write sites'
-fault_terminal_pod_arm=$(printf '%s\n' "$fault_generic_audit_section" |
-	sed -n '/^[[:space:]]*Succeeded | Failed)/,/^[[:space:]]*;;/p')
-static_require_count "$fault_terminal_pod_arm" "$fault_full_pod_record_marker" 1 \
-	'fault terminal Pod-arm full-audit writes'
-static_require_order "$fault_terminal_pod_arm" 'fault terminal Pod-arm promotion' \
-	"\$declared == \$terminated" "$fault_full_pod_record_marker" ';;'
-static_require_order "$fault_generic_audit_section" 'fault full-Pod commit' \
-	"scan_fault_file \"\$LOG_FILE\"" \
-	"audit_pod_after=\$(k -n \"\$TEST_NAMESPACE\" get pod \"\$audit_pod_name\"" \
-	"\$declared == \$terminated" "$fault_full_pod_record_marker"
-fault_capture_result_section=$(sed -n '/^capture_exact_job_result()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-static_reject_marker "$fault_capture_result_section" 'FULLY_AUDITED' \
-	'exact result capture full-audit claim'
-fault_terminal_job_section=$(printf '%s\n' "$fault_runtime_audit_function_section" |
-	sed -n '/^[[:space:]]*terminal_jobs=/,/^}/p')
-fault_terminal_ledger_marker="grep -Fx \"\$audit_job_uid\" \"\$SHARED_FULLY_AUDITED_JOBS_FILE\""
-fault_shared_full_write_marker="record_audited_uid \"\$SHARED_FULLY_AUDITED_JOBS_FILE\""
-fault_terminal_skip_section=$(printf '%s\n' "$fault_terminal_job_section" |
-	sed -n '/^[[:space:]]*if grep -Fx/,/audit_job_object=/p')
-static_require_count "$fault_terminal_skip_section" "$fault_terminal_ledger_marker" 1 \
-	'fault terminal full-ledger Job skip'
-fault_terminal_skip_greps=$(printf '%s\n' "$fault_terminal_skip_section" |
-	grep -F 'grep -' || true)
-static_reject_marker "$fault_terminal_skip_greps" "\$AUDITED_FAULT_JOBS_FILE" \
-	'fault terminal local broad-ledger authorization'
-static_reject_marker "$fault_terminal_skip_greps" "\$SHARED_AUDITED_JOBS_FILE" \
-	'fault terminal shared broad-ledger authorization'
-static_require_order "$fault_terminal_job_section" 'fault full Job promotion' \
-	"$fault_terminal_ledger_marker" \
-	"record_audited_uid \"\$AUDITED_FAULT_JOBS_FILE\" \"\$audit_job_uid\"" \
-	'continue' "audit_job_object=\$(k -n \"\$TEST_NAMESPACE\" get job \"\$audit_job_name\"" ".metadata.uid == \$uid" \
-	"audit_job_pods=\$(k -n \"\$TEST_NAMESPACE\" get pods -o json" \
-	".uid == \$uid and .controller == true))" \
-	"grep -Fx \"\$audit_job_pod_uid\" \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" \
-	"printf '%s\\n' \"\$audit_job_object\" >\"\$RESOURCE_FILE\"" \
-	"printf '%s\\n' \"\$audit_job_pods\" >>\"\$RESOURCE_FILE\"" \
-	"scan_fault_file \"\$RESOURCE_FILE\"" ".metadata.uid == \$uid" \
-	"fail \"terminal fault-test Job \$audit_job_name changed UID during its Pod audit\"" \
-	"${fault_shared_full_write_marker} \"\$audit_job_uid\""
-deadline_running_section=$(sed -n '/^record_running_deadline_pod_evidence()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
-static_require_order "$deadline_running_section" 'running-deadline live Pod evidence' \
-	'.spec.activeDeadlineSeconds == $deadline' \
-	'.spec.template.spec.activeDeadlineSeconds == $deadline' \
-	'.spec.backoffLimit == 0 and .spec.podReplacementPolicy == "Failed"' \
-	'.metadata.uid == $podUID and .metadata.deletionTimestamp == null' \
-	'.[0].uid == $jobUID and .[0].controller == true' \
-	'(.spec.nodeName | type == "string" and length > 0)' \
-	'.status.phase == "Running" and .status.startTime != null' \
-	'.name == "ptah" and .state.running != null' \
-	'DEADLINE_PTAH_STARTED_AT=' \
-	'scan_fault_file "$RESOURCE_FILE" "the exact running pre-deadline Apply Job and Pod"'
-static_reject_marker "$deadline_running_section" 'FULLY_AUDITED' \
-	'running pre-deadline evidence premature full-audit promotion'
-deadline_watch_section=$(sed -n '/^audit_running_deadline_pod_watch()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
-static_require_order "$deadline_watch_section" 'running-deadline full-Pod promotion' \
-	'[to_entries[] | select(.value.object.metadata.uid == $podUID)] as $events' \
-	'.value.object.status.phase == "Running"' \
-	'.name == "ptah" and .state.running.startedAt == $startedAt' \
-	'.value.type == "DELETED" and .value.object.metadata.name == $podName' \
-	'$running != null and $deleted != null and $running.key < $deleted.key' \
-	'all(.[]; (.restartCount // 0) == 0)' \
-	'scan_fault_file "$RESOURCE_FILE"' \
-	'record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$deadline_watch_pod_uid"'
-deadline_terminal_section=$(sed -n '/^wait_for_deadline_job_terminal_and_audit()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
-static_require_order "$deadline_terminal_section" 'DeadlineExceeded full Job promotion' \
-	'deadline_terminal_pod_uid=$4' 'deadline_terminal_pod_name=$5' \
-	'deadline_terminal_operation_id=$6' 'deadline_terminal_started_at=$7' \
-	'.reason == "DeadlineExceeded"' '.metadata.uid == $uid' \
-	'finish_follow_logs "the running Apply Pod logs through its Kubernetes deadline"' \
-	'wait_for_exact_pod_absence_after_evidence "$deadline_terminal_pod_name"' \
-	'audit_running_deadline_pod_watch "$deadline_terminal_pod_name"' \
-	"printf '%s\\n' \"\$deadline_terminal_object\" >\"\$RESOURCE_FILE\"" \
-	"scan_fault_file \"\$RESOURCE_FILE\" \"the exact DeadlineExceeded Apply Job\"" \
-	"grep -Fx \"\$deadline_terminal_pod_uid\" \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" \
-	"${fault_shared_full_write_marker} \"\$deadline_terminal_uid\""
-# A Job the scheduling barrier holds never becomes terminal, so the periodic
-# audit can never reach it and a proof that destroys it has to account for it
-# where it stands. That promotion is the one this contract pins: the barrier has
-# to be up, the Job has to be the named UID and unfinished, the Pods have to be
-# the ones this Job owns, and every one of them has to be unscheduled and
-# unstarted before a single UID is written.
-blocked_audit_section=$(sed -n '/^audit_blocked_read_job()/,/^}/p' \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
-static_require_order "$blocked_audit_section" 'held read-only Job full audit' \
-	'[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||' \
-	'.metadata.uid == $uid and' \
-	'all((.type != "Complete" and .type != "Failed") or .status != "True")' \
-	'.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and' \
-	'-l "batch.kubernetes.io/controller-uid=${blocked_audit_uid}" -o json' \
-	'(.spec.nodeName // "") == "" and' \
-	'all(.state.running == null and .state.terminated == null)' \
-	'scan_fault_file "$RESOURCE_FILE"' \
-	'materialize_fault_job_pod_uids "$blocked_audit_pods"' \
-	'record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$blocked_audit_pod_uid"' \
-	"${fault_shared_full_write_marker} \"\$blocked_audit_uid\""
-static_require_count "$fault_script" \
-	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" 4 \
-	'fault full-Pod write sites'
-static_require_count "$fault_script" "$fault_shared_full_write_marker" 3 \
-	'fault shared full-Job write sites'
-static_require_count "$blocked_audit_section" "$fault_shared_full_write_marker" 1 \
-	'held read-only Job full-Job writes'
-static_require_count "$fault_runtime_audit_function_section" \
-	"$fault_shared_full_write_marker" 1 'fault runtime full-Job writes'
-static_require_count "$deadline_terminal_section" "$fault_shared_full_write_marker" 1 \
-	'deadline full-Job writes'
-running_deadline_scenario_section=$(sed -n \
-	"/^printf '%s\\\\n' 'e2e faults: forcing one real Kubernetes Apply Job deadline'/,/^start_pg_barrier \"\\\$PG_RESTART_DB\"/p" \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-# shellcheck disable=SC2016 # Exact scenario markers retain runtime variables literally.
-static_require_order "$running_deadline_scenario_section" 'running Apply deadline scenario' \
-	'start_mysql_barrier "$MYSQL_TIMEOUT_DB" e2e_fault_my_timeout_barrier' \
-	'create_approval "$MYSQL_TIMEOUT_SCHEMA" "$MYSQL_TIMEOUT_APPROVAL"' \
-	'wait_for_apply_pod "$MYSQL_TIMEOUT_SCHEMA"' \
-	'start_read_workload_barrier' \
-	'record_running_deadline_pod_evidence "$MYSQL_TIMEOUT_SCHEMA"' \
-	'start_follow_logs "$TEST_NAMESPACE" "$MYSQL_TIMEOUT_POD_NAME"' \
-	'assert_mysql_apply_lock_wait "$MYSQL_TIMEOUT_DB"' \
-	'wait_for_lease_reacquisition "$MYSQL_TIMEOUT_IDLE_LEASE_NAME"' \
-	'wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME"' \
-	'"$MYSQL_TIMEOUT_OPERATION_ID" "$DEADLINE_PTAH_STARTED_AT"' \
-	'stop_mysql_barrier' \
-	'capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA"' \
-	'"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" deadline' \
-	'assert_approval_consumed "$MYSQL_TIMEOUT_APPROVAL" "$MYSQL_TIMEOUT_ORIGINAL_PLAN_UID"' \
-	'Kubernetes-timeout recovery did not retain exactly one fresh Observe Job' \
-	'Kubernetes-timeout recovery did not retain exactly one fresh Plan Job' \
-	'Kubernetes-timeout recovery changed the database before fresh approval'
-
-running_deadline_core_present() {
-	running_deadline_candidate=$1
-	shift
-	for running_deadline_marker do
-		[ "$(printf '%s\n' "$running_deadline_candidate" |
-			grep -Fc -- "$running_deadline_marker" || true)" -eq 1 ] || return 1
-	done
-}
-# shellcheck disable=SC2016 # Mutation markers intentionally retain shell variables literally.
-running_deadline_lock_mutant=$(printf '%s\n' "$running_deadline_scenario_section" |
-	sed '/^assert_mysql_apply_lock_wait "$MYSQL_TIMEOUT_DB"$/d')
-# shellcheck disable=SC2016 # Mutation markers intentionally retain shell variables literally.
-if running_deadline_core_present "$running_deadline_lock_mutant" \
-	'assert_mysql_apply_lock_wait "$MYSQL_TIMEOUT_DB"' \
-	'wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME"'; then
-	printf '%s\n' 'e2e static: running-deadline native-lock deletion mutant was not rejected' >&2
-	exit 1
-fi
-# shellcheck disable=SC2016 # The mutant removes the real Kubernetes deadline wait.
-running_deadline_wait_mutant=$(printf '%s\n' "$running_deadline_scenario_section" |
-	sed 's/^wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME"/true # bypassed deadline wait/')
-# shellcheck disable=SC2016 # Mutation markers intentionally retain shell variables literally.
-if running_deadline_core_present "$running_deadline_wait_mutant" \
-	'assert_mysql_apply_lock_wait "$MYSQL_TIMEOUT_DB"' \
-	'wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME"'; then
-	printf '%s\n' 'e2e static: running-deadline wait-bypass mutant was not rejected' >&2
-	exit 1
-fi
-static_reject_marker "$fault_script" 'wait_for_blocked_apply_pod' \
-	'unscheduled timeout Apply bypass'
-static_reject_marker "$fault_script" 'record_deadline_pending_pod_evidence' \
-	'never-started timeout Apply bypass'
-static_reject_marker "$fault_script" 'wait_for_exact_pod_absence_without_audit' \
-	'deadline evidence helper naming'
-alias_b_cascade_section=$(sed -n \
-	"/^# Keep a consumed, user-owned approval/,/delete ptahschema \"\\\$PG_ALIAS_SCHEMA_B\"/p" \
-	"$ROOT_DIR/hack/e2e-faults.sh")
-static_require_order "$alias_b_cascade_section" 'shared-alias cascade boundary' \
-	'audit_fault_runtime' \
-	"\"\$ALIAS_B_JOB_UID\" \"\$ALIAS_B_RECOVERY_OBSERVE_UID\" \"\$ALIAS_B_RECOVERY_PLAN_UID\"" \
-	"[ -n \"\$alias_b_fully_audited_job_uid\" ]" \
-	"grep -Fx \"\$alias_b_fully_audited_job_uid\" \"\$SHARED_FULLY_AUDITED_JOBS_FILE\"" \
-	"delete ptahschema \"\$PG_ALIAS_SCHEMA_B\""
-for converged_result_marker in \
-	"(\$observe.observedDrift // false) == false" \
-	"(\$observe.highestDriftSeverity // \"\") == \"\"" \
-	"(\$observe.driftFindingCount // 0) == 0"; do
-	[ "$(grep -Fc "$converged_result_marker" "$ROOT_DIR/hack/e2e-faults.sh")" -eq 2 ] || {
-		printf '%s\n' 'e2e static: expected 2 converged result markers in e2e-faults.sh' >&2
-		exit 1
-	}
-done
 # The immutable verification policy is created by the bootstrap now, because
 # every suite's resources refer to it. Both halves are still required: the
 # bootstrap writes it immutable, and the control-plane phase in Go refuses to
@@ -2155,53 +1647,6 @@ grep -F "jq '.immutable = true'" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 	printf '%s\n' 'e2e static: the bootstrap does not create the verification policy as immutable' >&2
 	exit 1
 }
-for fault_marker in \
-	'assert_no_overlapping_operation_jobs' \
-	'assert_no_overlapping_operation_pods' \
-	'assert_fault_audit_complete' \
-	'FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS' \
-	'record_running_deadline_pod_evidence' \
-	'audit_running_deadline_pod_watch' \
-	'wait_for_deadline_job_terminal_and_audit' \
-	'.reason == "DeadlineExceeded"' \
-	'Kubernetes-timeout recovery replayed or replaced its Apply Job' \
-	'start_read_workload_barrier' \
-	'assert_read_workload_blocked' \
-	'record_initial_job_list_for_parent' \
-	'assert_approval_consumed' \
-	'finish_follow_logs' \
-	'PlanNoLongerCurrent' \
-	'podReplacementPolicy == "Failed"' \
-	'timeoutSeconds=30' \
-	'watch_heartbeat_loop' \
-	'e2e-fault-watch-heartbeat' \
-	'capture_exact_job_result' \
-	'.truncation == null' \
-	'assert_successful_apply_result' \
-	'assert_fault_convergence_result_pair' \
-	'capture_uncertain_read_proof_pair' \
-	'matches_test_taint' \
-	'assert_lease_held_without_release' \
-	'establish_watch_barrier leases' \
-	'assert_initial_read_chain_watch_order' \
-	'assert_post_apply_proof_history' \
-	'assert_uncertain_apply_proof_history' \
-	'mysql_schema_fingerprint' \
-	'operator.ptah.run/lease-epoch' \
-	'ALIAS_B_OPERATION_ID' \
-	'ALIAS_B_LEASE_EPOCH' \
-	'shared-alias consumed approval was not marked stale after recovery' \
-	'assert_same_lease_reacquired_in_watch' \
-	'manual drift lost its conservative OutcomeUnknown history' \
-	'manual-drift read-only Observe or Plan changed the database schema' \
-	'error.code == "invalid_plan_output"' \
-	'error.code == "stale_plan"' \
-	'manual drift did not retain exactly one fresh Plan Job' \
-	'credential-bearing principal refusal to become durably suspended' \
-	'credential-bearing principal refusal did not remain one Plan and zero Apply Jobs' \
-	'credential-bearing principal refusal did not remain one Plan and zero Apply Pods'; do
-	grep -F "$fault_marker" "$ROOT_DIR/hack/e2e-faults.sh" >/dev/null
-done
 jq -n '
   def secretEnv($name; $key):
     {name: $name, valueFrom: {secretKeyRef: {name: "registry-auth", key: $key}}};

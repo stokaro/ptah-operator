@@ -247,14 +247,13 @@ the complete column-and-index fingerprint must remain unchanged.
 
 Fault-injection acceptance starts watches from exact Kubernetes
 `resourceVersion` values for Jobs, Pods, schemas, approvals, and target Leases.
-Each watch rotates through naturally expiring 30-second API segments and
-streams each validated newline-delimited frame into an atomic evidence file
-immediately, then resumes from the last completely framed resource version.
-Final shutdown waits
-for natural segment EOF, so a partially received event is never accepted or
-silently discarded as evidence. Inert annotations advance every watched kind
-at least once per segment; the suite never advances a watch position through
-an unobserved list response, and any heartbeat failure is fatal.
+Each watch rotates through naturally expiring 30-second API segments, keeps
+every event in the order the API server sent it, and resumes from the last
+resource version it read. Final shutdown waits for the open segment to end on
+its own, so no event in flight is lost from the evidence. Inert annotations
+advance every watched kind at least once per segment; the suite never advances
+a watch position through an unobserved list response, and any heartbeat
+failure is fatal.
 Database metadata barriers hold two real PostgreSQL Apply operations and one
 MySQL Apply operation after their database-local advisory locks are acquired.
 Each assertion binds the database advisory-lock owner to the exact backend
@@ -264,9 +263,10 @@ The two PostgreSQL targets use distinct coordination keys and databases, so
 the suite proves same-engine controller independence with concurrent Jobs,
 Pods, Leases, and native locks. It restarts the manager and requires a new
 manager Pod UID without changing any Apply operation, Job, Pod, Lease, or
-database-lock identity. It then gracefully deletes a blocked Apply Pod and
-requires a terminal single-Pod Job, a durably consumed approval,
-`OutcomeUnknown`, and read-only Observe with a fresh plan and no replay.
+database-lock identity. It then signals the runner of a blocked Apply Pod to
+terminate, without deleting the Pod, and requires a terminal single-Pod Job, a
+durably consumed approval, `OutcomeUnknown`, and read-only Observe with a
+fresh plan and no replay.
 The complete history must retain the original uncertain Apply holder and lease
 epoch through that exact Observe and Plan, preserve the immutable pending
 target/source/plan snapshot, and release the Lease only after Plan completion.
@@ -379,9 +379,8 @@ Job.
 The phases are moving from shell scripts under `hack/` to Go tests in this
 directory, one suite at a time. The certificates suite and the data-plane
 suite are ported: the control-plane phase, `assert`, and the data plane
-itself, `dataplane`, which still runs the restart and fault injection,
-`hack/e2e-faults.sh`, as a shell phase inside its `faults` scenario. The
-driver keeps the bootstrap: the kind cluster, the images, the registry, the
+itself, `dataplane`, restart and fault injection included. The driver keeps
+the bootstrap: the kind cluster, the images, the registry, the
 databases and the chart install. Before it creates the cluster it builds one
 test binary from the snapshot:
 
@@ -438,7 +437,15 @@ test holds both derivations to `internal/fingerprint`.
 
 `TestDataPlane` is the `dataplane` phase: the fixtures the scenarios share,
 both engine lifecycles, the external PostgreSQL rows, the refusals, the fault
-injection, and the four-eyes and Pod-metadata rows, as described above. It
+injection, and the four-eyes and Pod-metadata rows, as described above. The
+fault injection is five scenarios. `watches` starts the recorders, refuses
+the credential-bearing principal artifact and stands up the fault schemas.
+`job-deadline` lets Kubernetes end an Apply at its deadline, then holds three
+Applies at database barriers, and `manager-restart` replaces the manager under
+them. `runner-termination` ends one runner and follows its recovery, the two
+PostgreSQL convergences and the shared-alias realm. `job-deletion` removes a
+held read-only Job, deletes a schema awaiting approval, drifts a database by
+hand, and closes the watch history. It
 sends and reads on the same terms as `TestControlPlaneContract`. Its first
 scenario stands up the registry endpoint, the databases, the TLS proxy and the
 admission fixtures; the migration suites run the phase with
@@ -449,11 +456,11 @@ Every wait audits the Jobs that finished since the last reading, before the
 controller's TTL can delete them: their objects, their Pods and every container
 log are scanned for the fixture credentials, and a completed operation Job's
 Job, Pod, settled log and result are kept in memory for the proofs that read
-its history later. Results are read with `resultframe`, the production parser
-behind the `resultassert` command. The phase keeps the three ledgers the fault
-phase shares -- the Jobs it observed, and the Jobs it audited broadly and
-fully -- as files in the formats that phase greps, hands them to
-`hack/e2e-faults.sh` in the `faults` scenario, and reads them back afterwards.
+its history later. Results are read with `resultframe`, which wraps the
+production parser. The phase keeps three ledgers in memory -- the Jobs it
+observed, and the Jobs it audited broadly and fully -- and the fault scenarios
+add to the same ledgers, so the closing audit holds every Job the phase saw,
+the fault Jobs included.
 The filters that were files under `testdata/e2e` are Go predicates in
 `dataplane_filters.go`, each held by a unit test to the readings it accepts and
 the mistakes it refuses, and so is every other predicate the phase decides a

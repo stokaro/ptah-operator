@@ -50,10 +50,6 @@ type Phase struct {
 	// up, and none of its own acceptance. Zero means the phase has no such
 	// mode. A run that stopped at the boundary proved those scenarios alone.
 	Preparation int
-	// NestedScripts are the shell phases under hack/ that the phase still runs
-	// inside one of its scenarios. Their stopwatch marks are this phase's too,
-	// and they stay here only until those scripts are ported as well.
-	NestedScripts []string
 
 	inputs reflect.Type
 }
@@ -233,13 +229,16 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"external-postgresql-lifecycle",
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
-		"faults",
+		"watches",
+		"job-deadline",
+		"manager-restart",
+		"runner-termination",
+		"job-deletion",
 		"closing-audits",
 		"four-eyes-distinct-approver",
 		"pod-metadata-admission",
 	},
-	Preparation:   1,
-	NestedScripts: []string{"hack/e2e-faults.sh"},
+	Preparation: 1,
 })
 
 // all is every phase the harness carries, in the order the driver runs them.
@@ -324,10 +323,9 @@ func Load[T any](p Of[T], lookup func(string) (string, bool)) (T, error) {
 const environmentTag = "env"
 
 var (
-	labelPattern        = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
-	testPattern         = regexp.MustCompile(`^Test[A-Z][A-Za-z0-9]*$`)
-	environmentPattern  = regexp.MustCompile(`^E2E_[A-Z0-9_]+$`)
-	nestedScriptPattern = regexp.MustCompile(`^hack/e2e-[a-z-]+\.sh$`)
+	labelPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
+	testPattern        = regexp.MustCompile(`^Test[A-Z][A-Za-z0-9]*$`)
+	environmentPattern = regexp.MustCompile(`^E2E_[A-Z0-9_]+$`)
 )
 
 // define checks a declaration once, when the package loads, so a malformed
@@ -367,11 +365,6 @@ func (p Phase) validate() error {
 	if p.Preparation < 0 || p.Preparation >= len(p.Scenarios) {
 		return fmt.Errorf("phase %s: a preparation of %d scenarios leaves none of its own acceptance out of %d",
 			p.Name, p.Preparation, len(p.Scenarios))
-	}
-	for _, script := range p.NestedScripts {
-		if !nestedScriptPattern.MatchString(script) {
-			return fmt.Errorf("phase %s: %q is not a phase script under hack/", p.Name, script)
-		}
 	}
 	if p.inputs.Kind() != reflect.Struct || p.inputs.NumField() == 0 {
 		return fmt.Errorf("phase %s: its inputs must be a struct of environment variables", p.Name)

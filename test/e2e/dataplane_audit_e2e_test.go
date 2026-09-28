@@ -35,7 +35,7 @@ func (d *dataPlane) recordObservedJobs() {
 	d.check(d.list(jobs), "could not list Jobs while recording the observed Job ledger")
 	records, err := observedJobRecords(jobs.Items)
 	d.check(err, "could not validate the observed Job ledger snapshot")
-	d.check(d.observed.add(records), "could not append an observed Job to the ledger")
+	d.observed.add(records)
 }
 
 // checkpointJobs is the Jobs of one schema, and of one operation when it is
@@ -295,8 +295,8 @@ func (d *dataPlane) auditTerminalJob(name string, uid types.UID) {
 		}
 		d.keepEvidence(jobAfter, evidencePod, evidenceLog)
 	}
-	d.check(d.audited.add(string(uid)), "record the audit of Job UID %s", uid)
-	d.check(d.fullyAudited.add(string(uid)), "record the full audit of Job UID %s", uid)
+	d.audited.add(string(uid))
+	d.fullyAudited.add(string(uid))
 }
 
 // keepEvidence files a completed operation Job's evidence under its UID. The
@@ -429,7 +429,7 @@ func (d *dataPlane) captureOneNewJobResult(schema, operation string, before chec
 		result.OperationID != operationID || result.Truncation != nil {
 		d.fatalf("validated result lost its runner protocol binding or complete-output guarantee")
 	}
-	d.check(d.audited.add(jobUID), "record the audit of Job UID %s", jobUID)
+	d.audited.add(jobUID)
 	d.captured = capturedJob{
 		jobName: jobName, jobUID: jobUID, operationID: operationID,
 		podName: pod.Name, podUID: string(pod.UID), podGenerateName: pod.GenerateName,

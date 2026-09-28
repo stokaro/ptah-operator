@@ -2808,8 +2808,8 @@ E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 	run_recorded_phase cert-rotation run_go_phase cert-rotation
 
-# The data plane is a Go phase too, and it still runs the restart and fault
-# injection, hack/e2e-faults.sh, inside itself with the environment below.
+# The data plane is a Go phase too, restart and fault injection included, and
+# it reads the environment below.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \

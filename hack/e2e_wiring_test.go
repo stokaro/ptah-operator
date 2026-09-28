@@ -4091,48 +4091,6 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "terminal CRD lifecycle evidence",
 		},
 		{
-			name:        "fault interpreter bypass",
-			child:       "faults",
-			old:         "#!/bin/sh\n",
-			replacement: "#!/bin/true\n",
-			wantError:   "must execute with #!/bin/sh",
-		},
-		{
-			name:        "fault trap discards failure",
-			child:       "faults",
-			old:         "trap cleanup EXIT\n",
-			replacement: "trap 'exit 0' EXIT\n",
-			wantError:   "failure-preserving trap",
-		},
-		{
-			name:        "fault proof call removed",
-			child:       "faults",
-			old:         "start_watches\n",
-			replacement: "true # watch proof removed\n",
-			wantError:   "resourceVersion watch proof call",
-		},
-		{
-			name:        "fault principal proof returns immediately",
-			child:       "faults",
-			old:         "run_credential_principal_refusal() {\n",
-			replacement: "run_credential_principal_refusal() {\n\treturn 0\n",
-			wantError:   "unconditional successful return",
-		},
-		{
-			name:        "fault proof call hidden in false branch",
-			child:       "faults",
-			old:         "start_watches\n",
-			replacement: "if false; then\n\tstart_watches\nfi\n",
-			wantError:   "always-false wrapper",
-		},
-		{
-			name:        "fault terminal evidence removed",
-			child:       "faults",
-			old:         `printf '%s\n' 'e2e faults: PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'`,
-			replacement: `printf '%s\n' 'e2e faults finished'`,
-			wantError:   "terminal fault lifecycle evidence",
-		},
-		{
 			name:        "HA interpreter bypass",
 			child:       "high-availability",
 			old:         "#!/bin/sh\n",
@@ -4487,7 +4445,6 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		apiServerEndpointFilter:    filepath.Join("..", apiServerEndpointFilterPath),
 		staticChecks:               filepath.Join("..", e2eStaticPath),
 		crdUpgrade:                 filepath.Join("..", e2eCRDUpgradePath),
-		faults:                     filepath.Join("..", e2eFaultsPath),
 		highAvailability:           filepath.Join("..", e2eHAPath),
 		migrations:                 filepath.Join("..", e2eMigrationsPath),
 		referenceData:              filepath.Join("..", e2eReferenceDataPath),
@@ -4505,8 +4462,6 @@ func e2eChildPath(files e2eWiringFiles, child string) string {
 	switch child {
 	case "crd-upgrade":
 		return files.crdUpgrade
-	case "faults":
-		return files.faults
 	case "high-availability":
 		return files.highAvailability
 	default:
@@ -4518,8 +4473,6 @@ func setE2EChildPath(files *e2eWiringFiles, child, path string) {
 	switch child {
 	case "crd-upgrade":
 		files.crdUpgrade = path
-	case "faults":
-		files.faults = path
 	case "high-availability":
 		files.highAvailability = path
 	default:

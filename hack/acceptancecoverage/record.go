@@ -57,7 +57,7 @@ var requirements = []requirement{
 	{"PA-02", "Execute only authorized database work",
 		"every binding mutated between planning, approval and dispatch on both engines and families, with database evidence of zero unauthorized statements",
 		"the stale-approval and destructive-gate rows of `test/e2e/dataplane_lifecycle_e2e_test.go` and `test/e2e/dataplane_gates_e2e_test.go` on both engines, " +
-			"the drift-before-dispatch fault in `hack/e2e-faults.sh`, the approval bindings `test/e2e/controlplane_e2e_test.go` refuses, " +
+			"the drift-before-dispatch fault in `test/e2e/faults_scenarios_e2e_test.go`, the approval bindings `test/e2e/controlplane_e2e_test.go` refuses, " +
 			"`assert_approval_stamped`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations, " +
 			"a migration's target Secret repointed between approval and dispatch in `run_retarget_before_dispatch_proof`, " +
 			"and an author refused Always by the example guard in `run_apply_policy_guard_proof`",
@@ -65,7 +65,7 @@ var requirements = []requirement{
 			"drift before dispatch on MySQL; and a count of the statements the database received"},
 	{"PA-03", "Preserve safety through interrupted Apply",
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
-		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `hack/e2e-faults.sh`, " +
+		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `test/e2e/faults_scenarios_e2e_test.go`, " +
 			"`run_uncertain_apply_proof`, `run_late_dispatch_proof` and `run_deletion_during_apply_proof`, " +
 			"an Apply held across an upgrade by `assert_predecessor_apply_remains_exclusive_while_running`, " +
 			"one realm claimed from two listed namespaces in `assert_realm_admits_only_listed_claimants`, " +

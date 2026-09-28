@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -35,8 +34,6 @@ func (d *dataPlane) stateVersion() int32 {
 func (d *dataPlane) registryReference(repository string) string {
 	return "oci://" + d.registryHost + "/schemas/" + repository + ":stable"
 }
-
-var publishedDigest = regexp.MustCompile(`^Digest: (sha256:[0-9a-f]{64})$`)
 
 // publishSchema pushes one schema revision to the registry from a Job that
 // holds the registry credential and no database credential, and returns the

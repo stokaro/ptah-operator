@@ -1,12 +1,10 @@
 package e2e
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -334,9 +332,7 @@ func strictUnmarshal(content []byte, target any) error {
 
 // observedJob is one Job the phase has seen in the test namespace. The ledger
 // of them is how a proof counts the Jobs a schema started between two
-// moments, including Jobs the controller's TTL has since deleted. The fault
-// phase appends to the same ledger, so the field order is jq -c's and the
-// file is one record a line.
+// moments, including Jobs the controller's TTL has since deleted.
 type observedJob struct {
 	UID       string `json:"uid"`
 	Name      string `json:"name"`
@@ -366,78 +362,26 @@ func observedJobRecords(jobs []batchv1.Job) ([]observedJob, error) {
 	return records, nil
 }
 
-// jobLedger is the observed-Job ledger: a file other phases append to, and
-// the phase's own copy of it. Each record is appended once, by UID.
+// jobLedger is the observed-Job ledger: every Job the phase has seen, once
+// each, in the order it first saw them.
 type jobLedger struct {
-	path    string
 	records []observedJob
 	seen    map[string]bool
 }
 
-func newJobLedger(path string) (*jobLedger, error) {
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		return nil, err
-	}
-	return &jobLedger{path: path, seen: map[string]bool{}}, nil
+func newJobLedger() *jobLedger {
+	return &jobLedger{seen: map[string]bool{}}
 }
 
-// add appends every record the ledger does not hold yet.
-func (l *jobLedger) add(records []observedJob) error {
-	var appended bytes.Buffer
+// add records every Job the ledger does not hold yet.
+func (l *jobLedger) add(records []observedJob) {
 	for _, record := range records {
 		if l.seen[record.UID] {
 			continue
 		}
-		line, err := canonicalJSON(record)
-		if err != nil {
-			return err
-		}
-		appended.Write(line)
-		appended.WriteByte('\n')
 		l.seen[record.UID] = true
 		l.records = append(l.records, record)
 	}
-	if appended.Len() == 0 {
-		return nil
-	}
-	file, err := os.OpenFile(l.path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(appended.Bytes()); err != nil {
-		_ = file.Close()
-		return err
-	}
-	return file.Close()
-}
-
-// reload reads the ledger back from its file, after another phase has
-// appended to it.
-func (l *jobLedger) reload() error {
-	content, err := os.ReadFile(l.path)
-	if err != nil {
-		return err
-	}
-	records := []observedJob{}
-	seen := map[string]bool{}
-	scanner := bufio.NewScanner(bytes.NewReader(content))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for scanner.Scan() {
-		var record observedJob
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil || record.UID == "" {
-			return errors.New("observed Job ledger record has no UID")
-		}
-		if seen[record.UID] {
-			continue
-		}
-		seen[record.UID] = true
-		records = append(records, record)
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	l.records, l.seen = records, seen
-	return nil
 }
 
 // checkpoint is the set of Job UIDs the ledger held for one schema at one
@@ -515,58 +459,25 @@ func jobBoundaryUnchanged(records []observedJob, expected []string, count int) (
 	return actual, nil
 }
 
-// uidLedger is a UID-per-line ledger the fault phase shares.
+// uidLedger is a set of Job UIDs a credential audit has reached.
 type uidLedger struct {
-	path string
 	uids []string
 	seen map[string]bool
 }
 
-func newUIDLedger(path string) (*uidLedger, error) {
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		return nil, err
-	}
-	return &uidLedger{path: path, seen: map[string]bool{}}, nil
+func newUIDLedger() *uidLedger {
+	return &uidLedger{seen: map[string]bool{}}
 }
 
 func (l *uidLedger) holds(uid string) bool {
 	return l.seen[uid]
 }
 
-// add appends uid unless the ledger holds it, as grep -Fx and an append did.
-func (l *uidLedger) add(uid string) error {
+// add records uid unless the ledger holds it.
+func (l *uidLedger) add(uid string) {
 	if uid == "" || l.seen[uid] {
-		return nil
-	}
-	file, err := os.OpenFile(l.path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := file.WriteString(uid + "\n"); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
+		return
 	}
 	l.seen[uid] = true
 	l.uids = append(l.uids, uid)
-	return nil
-}
-
-func (l *uidLedger) reload() error {
-	content, err := os.ReadFile(l.path)
-	if err != nil {
-		return err
-	}
-	uids, seen := []string{}, map[string]bool{}
-	for line := range strings.SplitSeq(string(content), "\n") {
-		if line == "" || seen[line] {
-			continue
-		}
-		seen[line] = true
-		uids = append(uids, line)
-	}
-	l.uids, l.seen = uids, seen
-	return nil
 }

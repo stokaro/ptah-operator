@@ -54,7 +54,6 @@ const (
 	apiServerEndpointFilterPath    = "hack/api-server-endpoint-inventory.jq"
 	e2eStaticPath                  = "hack/e2e-static.sh"
 	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
-	e2eFaultsPath                  = "hack/e2e-faults.sh"
 	e2eHAPath                      = "hack/e2e-ha.sh"
 	e2eMigrationsPath              = "hack/e2e-migrations.sh"
 	e2eReferenceDataPath           = "hack/e2e-reference-data.sh"
@@ -230,7 +229,6 @@ func main() {
 		apiServerEndpointFilter:    apiServerEndpointFilterPath,
 		staticChecks:               e2eStaticPath,
 		crdUpgrade:                 e2eCRDUpgradePath,
-		faults:                     e2eFaultsPath,
 		highAvailability:           e2eHAPath,
 		migrations:                 e2eMigrationsPath,
 		referenceData:              e2eReferenceDataPath,
@@ -2264,7 +2262,6 @@ type e2eWiringFiles struct {
 	apiServerEndpointFilter    string
 	staticChecks               string
 	crdUpgrade                 string
-	faults                     string
 	highAvailability           string
 	failedHookEvidence         string
 	failedHookEvidenceSelftest string
@@ -3845,32 +3842,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				{
 					start:      sourceLinePattern(`run_uninstall_proof() {`),
 					completion: sourceLinePattern(`printf '%s\n' 'e2e crd: uninstall retained CRDs and live objects'`),
-				},
-			},
-		},
-		{
-			path:     files.faults,
-			exitTrap: "cleanup",
-			steps: []sourceContractStep{
-				exactSourceLine("fail-fast shell mode", "set -eu"),
-				exactSourceLine("cleanup implementation", `cleanup() {`),
-				exactSourceLine("cleanup status capture", `status=$?`),
-				exactSourceLine("cleanup status preservation", `exit "$status"`),
-				exactSourceLine("credential-bearing principal refusal proof implementation", `run_credential_principal_refusal() {`),
-				exactSourceLine("resourceVersion watch proof call", `start_watches`),
-				exactSourceLine("credential-bearing principal refusal proof call", `run_credential_principal_refusal`),
-				exactSourceLine("deadline fault proof", `printf '%s\n' 'e2e faults: forcing one real Kubernetes Apply Job deadline'`),
-				exactSourceLine("read-chain ordering proof call", `assert_initial_read_chain_watch_order "$PG_RESTART_SCHEMA"`),
-				exactSourceLine("operation Pod serialization proof call", `assert_no_overlapping_operation_pods`),
-				exactSourceLine("operation Job serialization proof call", `assert_no_overlapping_operation_jobs`),
-				exactSourceLine("fault audit proof call", `assert_fault_audit_complete`),
-				exactSourceLine("parent audit handoff", `record_fault_jobs_for_parent`),
-				exactSourceLine("terminal fault lifecycle evidence", `printf '%s\n' 'e2e faults: PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'`),
-			},
-			successfulReturns: []successfulReturnContract{
-				{
-					start:      sourceLinePattern(`run_credential_principal_refusal() {`),
-					completion: sourceLinePattern(`audit_fault_runtime`),
 				},
 			},
 		},
