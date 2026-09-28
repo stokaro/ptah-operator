@@ -349,6 +349,9 @@ CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 PG_PASSWORD_FILE=$WORK_DIR/postgresql.password
 PG_URL_FILE=$WORK_DIR/postgresql.url
 CUSTOM_CA_PG_URL_FILE=$WORK_DIR/custom-ca-postgresql.url
+FOUR_EYES_PG_URL_FILE=$WORK_DIR/four-eyes-postgresql.url
+POD_METADATA_PG_URL_FILE=$WORK_DIR/pod-metadata-postgresql.url
+SCHEMA_WAIT_REPORT_FILE=$WORK_DIR/schema-wait-report.json
 MYSQL_PASSWORD_FILE=$WORK_DIR/mysql.password
 MYSQL_ROOT_PASSWORD_FILE=$WORK_DIR/mysql-root.password
 MYSQL_URL_FILE=$WORK_DIR/mysql.url
@@ -1890,11 +1893,60 @@ assert_observed_jobs_audited() {
 	done <"$OBSERVED_JOB_UIDS_FILE"
 }
 
+# report_schema_wait_timeout says what the last PtahSchema document a wait read
+# held when the wait gave up: the phase, the operation and plan it carried, and
+# every condition with its message bounded. The timeout itself names only the
+# expression that never matched, and the cleanup projection that follows
+# carries no conditions, so the reason a schema stopped short of the expected
+# state -- DestructiveChangesDisabled, RealmConflict, PodAdmissionRefused --
+# had to be inferred from printer columns. The report is scanned against the
+# protected credential patterns like that projection, and withheld on a match
+# or on any doubt.
+report_schema_wait_timeout() {
+	report_schema=$1
+	report_document=$2
+	[ -n "$report_document" ] || return 0
+	[ -s "$CREDENTIAL_PATTERNS_FILE" ] || return 0
+	: >"$SCHEMA_WAIT_REPORT_FILE"
+	chmod 600 "$SCHEMA_WAIT_REPORT_FILE" || return 0
+	if ! printf '%s\n' "$report_document" | jq -c --arg name "$report_schema" '
+	  select(.metadata.name == $name) |
+	  {
+	    name: .metadata.name,
+	    generation: .metadata.generation,
+	    observedGeneration: .status.observedGeneration,
+	    phase: .status.phase,
+	    nextReconciliationTime: .status.nextReconciliationTime,
+	    activeOperation: (.status.activeOperation | if . == null then null else {type, jobName} end),
+	    plan: (.status.plan | if . == null then null else {name, destructive} end),
+	    conditions: [(.status.conditions // [])[] |
+	      {type, status, reason, message: ((.message // "") | .[:240])}]
+	  }' >"$SCHEMA_WAIT_REPORT_FILE" 2>/dev/null; then
+		: >"$SCHEMA_WAIT_REPORT_FILE"
+		return 0
+	fi
+	[ -s "$SCHEMA_WAIT_REPORT_FILE" ] || return 0
+	if grep -F -f "$CREDENTIAL_PATTERNS_FILE" "$SCHEMA_WAIT_REPORT_FILE" >/dev/null; then
+		report_scan_status=0
+	else
+		report_scan_status=$?
+	fi
+	if [ "$report_scan_status" -eq 1 ]; then
+		printf 'e2e data plane: the last %s document read before the wait gave up\n' "$report_schema" >&2
+		cat "$SCHEMA_WAIT_REPORT_FILE" >&2
+	else
+		printf 'e2e data plane: the last %s document read is withheld: it matched a protected credential\n' "$report_schema" >&2
+	fi
+	: >"$SCHEMA_WAIT_REPORT_FILE"
+	return 0
+}
+
 wait_for_schema() {
 	wait_schema=$1
 	wait_expression=$2
 	wait_description=$3
 	wait_deadline=$(deadline_from_now)
+	wait_object=
 	while [ "$(date +%s)" -lt "$wait_deadline" ]; do
 		audit_completed_jobs
 		if wait_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$wait_schema" -o json 2>/dev/null); then
@@ -1908,6 +1960,7 @@ wait_for_schema() {
 		fi
 		sleep 2
 	done
+	report_schema_wait_timeout "$wait_schema" "$wait_object"
 	fail "timed out waiting for $wait_schema: $wait_description"
 }
 
@@ -3238,6 +3291,18 @@ CUSTOM_CA_PG_DATABASE=ptah_e2e_custom_ca
 CUSTOM_CA_PG_SECRET=e2e-postgresql-custom-ca-db
 CUSTOM_CA_PG_URL="postgres://${PG_USER}:${PG_PASSWORD}@${PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5432/${CUSTOM_CA_PG_DATABASE}?sslmode=disable"
 CUSTOM_CA_COORDINATION_KEY=e2e/custom-ca/app
+# A PtahSchema declares the whole database, so the four-eyes and Pod-metadata
+# rows, which each converge a schema of their own, plan against a database of
+# their own on the same server: on the lifecycle's database each plan would
+# also drop e2e_widgets, and a destructive plan blocks the schema instead of
+# letting it await approval. create_isolated_postgresql_database creates each
+# when its row starts, so the plan is the one table the row declares.
+FOUR_EYES_PG_DATABASE=ptah_e2e_four_eyes
+FOUR_EYES_PG_SECRET=e2e-postgresql-four-eyes-db
+FOUR_EYES_PG_URL="postgres://${PG_USER}:${PG_PASSWORD}@${PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5432/${FOUR_EYES_PG_DATABASE}?sslmode=disable"
+POD_METADATA_PG_DATABASE=ptah_e2e_pod_metadata
+POD_METADATA_PG_SECRET=e2e-postgresql-pod-metadata-db
+POD_METADATA_PG_URL="postgres://${PG_USER}:${PG_PASSWORD}@${PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5432/${POD_METADATA_PG_DATABASE}?sslmode=disable"
 MYSQL_USER=ptah_e2e
 MYSQL_DATABASE=ptah_e2e
 MYSQL_PASSWORD="e2eMy${credential_suffix}Q7"
@@ -3276,6 +3341,8 @@ printf '%s\n' "$TLS_PROXY_CA_SHA256" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 printf '%s' "$PG_PASSWORD" >"$PG_PASSWORD_FILE"
 printf '%s' "$PG_URL" >"$PG_URL_FILE"
 printf '%s' "$CUSTOM_CA_PG_URL" >"$CUSTOM_CA_PG_URL_FILE"
+printf '%s' "$FOUR_EYES_PG_URL" >"$FOUR_EYES_PG_URL_FILE"
+printf '%s' "$POD_METADATA_PG_URL" >"$POD_METADATA_PG_URL_FILE"
 printf '%s' "$MYSQL_PASSWORD" >"$MYSQL_PASSWORD_FILE"
 printf '%s' "$MYSQL_ROOT_PASSWORD" >"$MYSQL_ROOT_PASSWORD_FILE"
 printf '%s' "$MYSQL_URL" >"$MYSQL_URL_FILE"
@@ -3283,11 +3350,13 @@ printf '%s' "$REGISTRY_PASSWORD" >"$REGISTRY_PASSWORD_FILE"
 printf '%s\n' \
 	"$REGISTRY_PASSWORD" \
 	"$PG_PASSWORD" "$PG_URL" "$CUSTOM_CA_PG_URL" \
+	"$FOUR_EYES_PG_URL" "$POD_METADATA_PG_URL" \
 	"$MYSQL_PASSWORD" "$MYSQL_ROOT_PASSWORD" "$MYSQL_URL" \
 	>"$CREDENTIAL_PATTERNS_FILE"
 jq -er '.password, .url' "$EXTERNAL_PG_CREDENTIALS_FILE" >>"$CREDENTIAL_PATTERNS_FILE"
 chmod 600 \
 	"$PG_PASSWORD_FILE" "$PG_URL_FILE" "$CUSTOM_CA_PG_URL_FILE" \
+	"$FOUR_EYES_PG_URL_FILE" "$POD_METADATA_PG_URL_FILE" \
 	"$MYSQL_PASSWORD_FILE" "$MYSQL_ROOT_PASSWORD_FILE" "$MYSQL_URL_FILE" \
 	"$REGISTRY_PASSWORD_FILE" "$CREDENTIAL_PATTERNS_FILE"
 
@@ -3505,6 +3574,68 @@ create_custom_ca_database() {
 	custom_ca_database_result=$(printf '%s' "$custom_ca_database_result" | tr -d '[:space:]')
 	[ "$custom_ca_database_result" = "$CUSTOM_CA_PG_DATABASE" ] ||
 		fail "custom-CA PostgreSQL database did not become independently queryable"
+}
+
+# create_isolated_postgresql_database gives one row an empty PostgreSQL
+# database of its own on the lifecycle's server, and an immutable Secret whose
+# url names it. A PtahSchema declares the whole database: a schema planned
+# against a database another schema already converged plans to drop that
+# schema's tables too, the plan is destructive, allowDestructive is false, and
+# the resource is Blocked with DestructiveChangesDisabled instead of awaiting
+# approval. The name is a literal of this script under the ptah_e2e_ prefix,
+# never the lifecycle's or the custom-CA fixture's, and a database that already
+# exists fails the row: the proof needs one that holds nothing.
+create_isolated_postgresql_database() {
+	isolated_database=$1
+	isolated_secret=$2
+	isolated_url_file=$3
+	case "$isolated_database" in
+	ptah_e2e_*) ;;
+	*) fail "isolated PostgreSQL database $isolated_database is not named under the ptah_e2e_ prefix" ;;
+	esac
+	if [ "$isolated_database" = "$PG_DATABASE" ] || [ "$isolated_database" = "$CUSTOM_CA_PG_DATABASE" ] ||
+		[ "$isolated_secret" = "$PG_SECRET" ] || [ "$isolated_secret" = "$CUSTOM_CA_PG_SECRET" ]; then
+		fail "isolated PostgreSQL database $isolated_database reuses the lifecycle's or the custom-CA database or Secret"
+	fi
+	[ -s "$isolated_url_file" ] ||
+		fail "isolated PostgreSQL database $isolated_database has no URL to hand its Secret"
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	isolated_database_count=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+		sh "SELECT count(*) FROM pg_database WHERE datname='${isolated_database}'")
+	isolated_database_count=$(printf '%s' "$isolated_database_count" | tr -d '[:space:]')
+	[ "$isolated_database_count" = 0 ] ||
+		fail "PostgreSQL database $isolated_database already exists, and the row needs one that holds nothing"
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+		sh "CREATE DATABASE ${isolated_database}" >/dev/null
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$isolated_secret" \
+		--arg database "$isolated_database" \
+		--rawfile url "$isolated_url_file" '
+	  {
+	    apiVersion: "v1", kind: "Secret",
+	    metadata: {namespace: $namespace, name: $name},
+	    immutable: true, type: "Opaque",
+	    stringData: {database: $database, url: $url}
+	  }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+	: >"$RESOURCE_FILE"
+}
+
+# isolated_postgresql_table_count counts one table in one database on the
+# lifecycle's server, so a row reads the database it converged rather than the
+# lifecycle's.
+isolated_postgresql_table_count() {
+	table_database=$1
+	table_name=$2
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	table_count=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"' \
+		sh "$table_database" "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='${table_name}'")
+	printf '%s' "$table_count" | tr -d '[:space:]'
 }
 
 custom_ca_database_schema_fingerprint() {
@@ -6916,10 +7047,14 @@ FOUR_EYES_SWITCH_ON=1
 
 # A real schema, not suspended and not status-patched: create_schema_resource
 # takes it through the actual mutating and validating webhooks, and the
-# controller plans it against the real PostgreSQL every other lifecycle in
-# this phase already proved reachable. The new table guarantees a plan with
-# something to approve, rather than a no-op against content already applied.
-create_schema_resource "$FOUR_EYES_SCHEMA" PostgreSQL "$PG_SECRET" "$four_eyes_reference" \
+# controller plans it against the PostgreSQL server every other lifecycle in
+# this phase already proved reachable -- in a database of this row's own. The
+# database is empty, so the plan is the one table the schema declares:
+# something to approve, and nothing destructive. On the lifecycle's database
+# the same plan also dropped e2e_widgets, and the schema was Blocked with
+# DestructiveChangesDisabled where this row waited for AwaitingApproval.
+create_isolated_postgresql_database "$FOUR_EYES_PG_DATABASE" "$FOUR_EYES_PG_SECRET" "$FOUR_EYES_PG_URL_FILE"
+create_schema_resource "$FOUR_EYES_SCHEMA" PostgreSQL "$FOUR_EYES_PG_SECRET" "$four_eyes_reference" \
 	"$FOUR_EYES_COORDINATION_KEY" e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 5s "$APPROVAL_INTERVAL"
 wait_for_schema "$FOUR_EYES_SCHEMA" \
 	".status.phase == \"AwaitingApproval\" and .status.plan.name != null and .status.source.digest == \"$four_eyes_digest\"" \
@@ -7006,13 +7141,9 @@ set_require_distinct_approver false ||
 	fail "could not turn approvals.requireDistinctApprover back off after the four-eyes row"
 FOUR_EYES_SWITCH_ON=0
 
-# shellcheck disable=SC2016 # Variables expand inside the database container.
-four_eyes_table_count=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
-	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
-	sh "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='${FOUR_EYES_TABLE}'")
-four_eyes_table_count=$(printf '%s' "$four_eyes_table_count" | tr -d '[:space:]')
+four_eyes_table_count=$(isolated_postgresql_table_count "$FOUR_EYES_PG_DATABASE" "$FOUR_EYES_TABLE")
 [ "$four_eyes_table_count" = 1 ] ||
-	fail "$FOUR_EYES_TABLE is not present in the database after the four-eyes-approved plan applied"
+	fail "$FOUR_EYES_TABLE is not present in $FOUR_EYES_PG_DATABASE after the four-eyes-approved plan applied"
 printf '%s\n' 'e2e data plane: PASS the installer-owned four-eyes control refuses a self-approval, admits a distinct one, and the approved plan converges'
 
 timing_next scenario pod-metadata-admission
@@ -7109,9 +7240,16 @@ until ! k create --dry-run=server -f "$pod_metadata_probe_file" >/dev/null 2>"$p
 	sleep 2
 done
 
+# Both schemas of this row name a database of the row's own: the second one
+# converges, and against the lifecycle's database its plan would also drop
+# e2e_widgets and be refused as destructive. The first never reaches the
+# database, and it names the same one so nothing in this row touches another
+# row's.
+#
 # A schema that declares nothing: its Resolve Job stands, its Pod is refused
 # at creation, and the resource reports the refusal the API server gave.
-create_schema_resource "$POD_METADATA_REFUSED_SCHEMA" PostgreSQL "$PG_SECRET" "$pod_metadata_reference" \
+create_isolated_postgresql_database "$POD_METADATA_PG_DATABASE" "$POD_METADATA_PG_SECRET" "$POD_METADATA_PG_URL_FILE"
+create_schema_resource "$POD_METADATA_REFUSED_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \
 	"$POD_METADATA_REFUSED_COORDINATION_KEY" e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 5s "$APPROVAL_INTERVAL" Always
 wait_for_schema "$POD_METADATA_REFUSED_SCHEMA" \
 	'.status.activeOperation != null and (.status.conditions | any(.type == "Ready" and .status == "False" and .reason == "PodAdmissionRefused" and (.message | contains("must opt out of sidecar injection")) and (.message | contains("ValidatingAdmissionPolicy"))))' \
@@ -7146,7 +7284,7 @@ k -n "$TEST_NAMESPACE" delete ptahschema "$POD_METADATA_REFUSED_SCHEMA" --wait=t
 # the proof after it, each Pod admitted because it carries what was declared.
 pod_metadata_declaration=$(jq -cn --arg label "$POD_METADATA_LABEL" --arg annotation "$POD_METADATA_ANNOTATION" '
   {labels: {($label): "platform"}, annotations: {($annotation): "false"}}')
-create_schema_resource "$POD_METADATA_SCHEMA" PostgreSQL "$PG_SECRET" "$pod_metadata_reference" \
+create_schema_resource "$POD_METADATA_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \
 	"$POD_METADATA_COORDINATION_KEY" e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 5s "$APPROVAL_INTERVAL" Always \
 	"$pod_metadata_declaration"
 k -n "$TEST_NAMESPACE" get ptahschema "$POD_METADATA_SCHEMA" -o json |
@@ -7155,13 +7293,9 @@ k -n "$TEST_NAMESPACE" get ptahschema "$POD_METADATA_SCHEMA" -o json |
 wait_for_schema "$POD_METADATA_SCHEMA" \
 	".status.phase == \"InSync\" and .status.source.digest == \"$pod_metadata_digest\" and .status.applied.artifactDigest == \"$pod_metadata_digest\" and .status.pendingObservation == null and .status.activeOperation == null and (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))" \
 	"the schema declaring its Pod metadata to apply under the policy and converge"
-# shellcheck disable=SC2016 # Variables expand inside the database container.
-pod_metadata_table_count=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
-	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
-	sh "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='${POD_METADATA_TABLE}'")
-pod_metadata_table_count=$(printf '%s' "$pod_metadata_table_count" | tr -d '[:space:]')
+pod_metadata_table_count=$(isolated_postgresql_table_count "$POD_METADATA_PG_DATABASE" "$POD_METADATA_TABLE")
 [ "$pod_metadata_table_count" = 1 ] ||
-	fail "$POD_METADATA_TABLE is not present in the database after the declared-metadata schema applied"
+	fail "$POD_METADATA_TABLE is not present in $POD_METADATA_PG_DATABASE after the declared-metadata schema applied"
 # Every Job of the schema carries the declaration on itself and on its
 # template, under the operator's five labels, and the Apply is among them.
 pod_metadata_jobs=$(k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/schema=$POD_METADATA_SCHEMA" -o json)

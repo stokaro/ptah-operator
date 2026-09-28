@@ -945,15 +945,22 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		dispatchedApplyUnknown := operation.Type == operatorv1alpha1.OperationApply &&
 			schemaMayHaveDispatched(operation) &&
 			(apierrors.IsNotFound(err) || err == nil && (operation.JobUID != "" && operation.JobUID != job.UID || !ownedByUID(job.OwnerReferences, schema.UID)))
-		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) {
-			if operationNeedsTargetLock(schema) {
-				acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
-				if lockErr != nil {
-					return ctrl.Result{}, lockErr
-				}
-				if !acquired {
-					return ctrl.Result{RequeueAfter: requeue}, nil
-				}
+		// A running Job is waited on only while the claim holds the database
+		// lock: an Apply, a Plan, or the Observe that proves an Apply. The lock
+		// goes back when the claim is dropped, and another claimant must not
+		// get it while this one's Pod can still reach the database. A Resolve,
+		// a Verify or an ordinary Observe holds nothing, so its claim is
+		// discarded and cascading deletion takes the Job, as a PtahMigration
+		// discards a read-only claim. Waiting on it would hold the resource
+		// for the Job's whole deadline when its Pod is refused at admission
+		// and never runs.
+		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) && operationNeedsTargetLock(schema) {
+			acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
+			if lockErr != nil {
+				return ctrl.Result{}, lockErr
+			}
+			if !acquired {
+				return ctrl.Result{RequeueAfter: requeue}, nil
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}

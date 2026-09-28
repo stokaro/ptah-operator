@@ -3848,6 +3848,21 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fail "the restart and fault-injection phase failed; its reason is above"`,
 		}),
 		exactSourceLine("audited operation evidence", `assert_observed_jobs_audited`),
+		// A PtahSchema declares the whole database. A row that planned a
+		// schema of its own against the PostgreSQL lifecycle's database
+		// planned to drop e2e_widgets as well, and the destructive plan
+		// blocked the schema where the row waited for it to await approval
+		// (run 36397582251). Each row after the lifecycle plans against a
+		// database of its own, created immediately before its schema.
+		exactSourceLineSequence("four-eyes isolated database", []string{
+			`create_isolated_postgresql_database "$FOUR_EYES_PG_DATABASE" "$FOUR_EYES_PG_SECRET" "$FOUR_EYES_PG_URL_FILE"`,
+			`create_schema_resource "$FOUR_EYES_SCHEMA" PostgreSQL "$FOUR_EYES_PG_SECRET" "$four_eyes_reference" \`,
+		}),
+		exactSourceLineSequence("Pod-metadata isolated database", []string{
+			`create_isolated_postgresql_database "$POD_METADATA_PG_DATABASE" "$POD_METADATA_PG_SECRET" "$POD_METADATA_PG_URL_FILE"`,
+			`create_schema_resource "$POD_METADATA_REFUSED_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \`,
+		}),
+		exactSourceLine("Pod-metadata declared schema on the isolated database", `create_schema_resource "$POD_METADATA_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \`),
 		exactSourceLine("declared Pod metadata evidence", `printf '%s\n' 'e2e data plane: PASS declared Pod metadata reaches every operation Pod under a namespace admission policy, and a Pod the policy refuses is reported as PodAdmissionRefused'`),
 		exactSourceLine("terminal data-plane lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'`),
 	}
