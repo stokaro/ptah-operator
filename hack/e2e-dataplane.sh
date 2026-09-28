@@ -6859,9 +6859,33 @@ printf '%s\n' 'e2e data plane: checking the installer-owned four-eyes control en
 # off immediately after, and cleanup turns it off on any exit in between.
 set_require_distinct_approver() {
 	distinct_approver_switch=$1
-	helm --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
+	if helm --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
 		--reuse-values --set approvals.requireDistinctApprover="$distinct_approver_switch" \
-		--wait --timeout 5m >/dev/null
+		--wait --timeout 5m >/dev/null; then
+		return 0
+	fi
+	# Helm's own error is on stderr above. What it cannot say is why a Pod did
+	# not become ready inside --wait: the runtime-verify init container refuses
+	# a webhook configuration whose shape disagrees with the flag, and Helm
+	# applies the configuration after the Deployment, so the init container's
+	# own report is the evidence. Container states and the init containers'
+	# last lines only; the manager's log is audited credential-free elsewhere
+	# in this phase, and nothing here reads the test namespace.
+	printf 'e2e data plane: release %s did not settle after approvals.requireDistinctApprover=%s\n' \
+		"$HELM_RELEASE" "$distinct_approver_switch" >&2
+	k -n "$OPERATOR_NAMESPACE" get pods -o wide >&2 || true
+	k -n "$OPERATOR_NAMESPACE" get pods -o json 2>/dev/null | jq -r '
+	  .items[] | .metadata.name as $pod |
+	  ((.status.initContainerStatuses // []) + (.status.containerStatuses // []))[] |
+	  select(.state.waiting != null or .lastState.terminated != null) |
+	  "\($pod)/\(.name): waiting=\(.state.waiting.reason // "-") lastExit=\(.lastState.terminated.exitCode // "-") message=\((.lastState.terminated.message // "-") | .[:400])"
+	' >&2 || true
+	for distinct_approver_pod in $(k -n "$OPERATOR_NAMESPACE" get pods \
+		-l "app.kubernetes.io/component=controller" -o name 2>/dev/null); do
+		k -n "$OPERATOR_NAMESPACE" logs "$distinct_approver_pod" -c verify-candidate-runtime \
+			--tail=20 2>&1 | cut -c1-400 >&2 || true
+	done
+	return 1
 }
 
 FOUR_EYES_SCHEMA=e2e-four-eyes-postgresql
