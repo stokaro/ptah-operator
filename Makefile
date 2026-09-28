@@ -19,7 +19,7 @@ REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
 # for the sake of a demonstration.
-.PHONY: demo demo-up demo-record demo-serve demo-test demo-reproduce demo-down verify-demo-recording
+.PHONY: demo demo-up demo-record demo-serve demo-test demo-reproduce demo-down verify-demo-recording verify-go-mod
 
 all: verify build
 
@@ -134,7 +134,7 @@ lint-workflows:
 
 verify: verify-source test-race
 
-verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release verify-demo-recording e2e-static vet build test test-envtest
+verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release verify-demo-recording verify-go-mod e2e-static vet build test test-envtest
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets \
 		charts/ptah-operator/templates/controller-object-guard.yaml \
 		charts/ptah-operator/templates/controller-write-guard.yaml \
@@ -291,6 +291,12 @@ demo-serve:
 # stops a pull request instead of reaching the site.
 verify-demo-recording:
 	$(GO) run ./demo/cmd/record -verify demo/recordings/runs.json
+
+# go.mod says which modules the code imports directly. Nothing else checks it,
+# and a direct import left marked indirect survives every build, so the drift
+# is found only by whoever runs go mod tidy next.
+verify-go-mod:
+	$(GO) mod tidy -diff
 
 # What runs without a cluster: the scenarios parse and state an expectation for
 # every step, the recording is still of them, the recorder's own units, and the
