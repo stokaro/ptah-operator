@@ -245,6 +245,34 @@ func TestGoPhasesReadTheirDeclaredScenarios(t *testing.T) {
 	}
 }
 
+// The data plane is a Go phase that still runs the fault injection, a shell
+// phase, inside one of its scenarios. The fault scenarios are the data
+// plane's, so they follow its own in the table, read from the script's
+// stopwatch marks; a scenario that exists only there would otherwise vanish
+// from the record when its parent moved to Go.
+func TestAGoPhaseListsTheScenariosOfTheShellPhaseItRuns(t *testing.T) {
+	t.Parallel()
+	if len(e2ephases.DataPlane.NestedScripts) == 0 {
+		t.Fatal("the data plane declares no nested shell phase, so this row measures nothing")
+	}
+	scenarios, err := phaseScenarios(repositoryRoot, driverPhase{name: "dataplane", goPhase: "dataplane"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := e2ephases.DataPlane.Scenarios
+	if len(scenarios) <= len(declared) || strings.Join(scenarios[:len(declared)], ",") != strings.Join(declared, ",") {
+		t.Fatalf("scenarios = %v, want the declared %v and then the nested phase's", scenarios, declared)
+	}
+	source, err := os.ReadFile(filepath.Join(repositoryRoot, e2ephases.DataPlane.NestedScripts[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := markedScenarios(string(source))
+	if len(nested) == 0 || strings.Join(scenarios[len(declared):], ",") != strings.Join(nested, ",") {
+		t.Fatalf("the nested scenarios read are %v, and the script marks %v", scenarios[len(declared):], nested)
+	}
+}
+
 // The rendered table is what a reader pastes into the acceptance record, so
 // the header and the statement about preparation have to survive.
 func TestTheRenderedTableSaysWhatPreparationIsWorth(t *testing.T) {

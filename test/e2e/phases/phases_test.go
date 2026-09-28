@@ -182,6 +182,21 @@ func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 		{name: "untagged input", phase: withInputs(base, reflect.TypeFor[untaggedInput]()), refuse: "not an E2E_ variable"},
 		{name: "foreign variable", phase: withInputs(base, reflect.TypeFor[foreignInput]()), refuse: "not an E2E_ variable"},
 		{name: "one variable twice", phase: withInputs(base, reflect.TypeFor[doubleInput]()), refuse: "two inputs"},
+		{name: "negative preparation", phase: func() Phase {
+			p := base
+			p.Preparation = -1
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "leaves none of its own acceptance"},
+		{name: "preparation is the whole phase", phase: func() Phase {
+			p := base
+			p.Preparation = len(p.Scenarios)
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "leaves none of its own acceptance"},
+		{name: "nested script outside hack", phase: func() Phase {
+			p := base
+			p.NestedScripts = []string{"test/e2e-faults.sh"}
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "not a phase script"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -190,6 +205,26 @@ func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 				t.Fatalf("validate() error = %v, want one naming %q", err, test.refuse)
 			}
 		})
+	}
+}
+
+// The migration suites run the data plane for the namespace it stands up. The
+// boundary has to fall after the fixtures and before everything the phase
+// accepts on its own, or preparation would run the engine lifecycles and the
+// fault injection in a suite that does not claim them.
+func TestDataPlanePreparesBeforeItsOwnAcceptance(t *testing.T) {
+	t.Parallel()
+	prepared := DataPlane.Scenarios[:DataPlane.Preparation]
+	if !slices.Equal(prepared, []string{"databases-and-fixtures"}) {
+		t.Fatalf("the data plane prepares with %v, want the databases and fixtures alone", prepared)
+	}
+	for _, acceptance := range []string{"postgresql-lifecycle", "mysql-lifecycle", "faults"} {
+		if !slices.Contains(DataPlane.Scenarios, acceptance) {
+			t.Errorf("the data plane no longer runs %s", acceptance)
+		}
+		if slices.Contains(prepared, acceptance) {
+			t.Errorf("%s runs before the preparation boundary, so preparation would execute it", acceptance)
+		}
 	}
 }
 

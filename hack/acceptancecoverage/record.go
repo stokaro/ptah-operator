@@ -56,7 +56,7 @@ var requirements = []requirement{
 		""},
 	{"PA-02", "Execute only authorized database work",
 		"every binding mutated between planning, approval and dispatch on both engines and families, with database evidence of zero unauthorized statements",
-		"the stale-approval and destructive-gate rows of `run_engine_lifecycle` and `assert_destructive_gate` on both engines, " +
+		"the stale-approval and destructive-gate rows of `test/e2e/dataplane_lifecycle_e2e_test.go` and `test/e2e/dataplane_gates_e2e_test.go` on both engines, " +
 			"the drift-before-dispatch fault in `hack/e2e-faults.sh`, the approval bindings `test/e2e/controlplane_e2e_test.go` refuses, " +
 			"`assert_approval_stamped`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations, " +
 			"a migration's target Secret repointed between approval and dispatch in `run_retarget_before_dispatch_proof`, " +
@@ -75,15 +75,15 @@ var requirements = []requirement{
 		""},
 	{"PA-04", "Make progress and refusal states actionable",
 		"a measured progress target, dependency recovery inside it, and no hot loop on a permanent refusal",
-		"`run_retry_interval_proof`, the bounded refresh count under a standing refusal in `assert_destructive_gate`, " +
-			"`assert_registry_outage_and_recovery`, `assert_partial_run_blocks_and_recovers`, " +
+		"`run_retry_interval_proof`, the bounded refresh count under a standing refusal and the registry outage " +
+			"in `test/e2e/dataplane_gates_e2e_test.go`, `assert_partial_run_blocks_and_recovers`, " +
 			"and the recovery scenarios of `hack/capacity` that the lab profile's progress target is read from",
 		"a result read that hangs"},
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
 		"the CRD schema history gates, the admission rows in `test/e2e/controlplane_e2e_test.go`, " +
 			"`prove_controller_write_guard`, `prove_controller_object_supported_window_guard`, `prove_controller_downgrade_guard`, " +
-			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans `audit_runtime_credentials`, " +
+			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans in `test/e2e/dataplane_audit_e2e_test.go`, " +
 			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`, " +
 			"author, approver and administrator identities against RBAC and the example guard in `run_apply_policy_guard_proof`, " +
 			"and a realm claim made from a namespace the PtahRealm does not list, by an author the API server will not let write the realm, " +

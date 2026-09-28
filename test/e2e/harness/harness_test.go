@@ -281,6 +281,53 @@ func TestScenariosRunInTheDeclaredOrder(t *testing.T) {
 	}
 }
 
+// Preparation stops a phase at its declared boundary and nowhere else, and a
+// scenario past the boundary is refused once the run stopped there.
+func TestPreparedStopsAtTheDeclaredBoundary(t *testing.T) {
+	t.Parallel()
+	declared := phases.Phase{Name: "example", Scenarios: []string{"fixtures", "acceptance"}, Preparation: 1}
+
+	early := &Run{phase: declared}
+	if err := early.prepare(); err == nil || !strings.Contains(err.Error(), "after 0 scenarios") {
+		t.Fatalf("prepare() before the boundary = %v", err)
+	}
+	if early.stoppedPrepared() {
+		t.Fatal("a run refused at the boundary counts as prepared")
+	}
+
+	late := &Run{phase: declared}
+	for _, name := range declared.Scenarios {
+		if err := late.advance(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := late.prepare(); err == nil || !strings.Contains(err.Error(), "after 2 scenarios") {
+		t.Fatalf("prepare() past the boundary = %v", err)
+	}
+
+	none := &Run{phase: phases.Phase{Name: "example", Scenarios: []string{"only"}}}
+	if err := none.advance("only"); err != nil {
+		t.Fatal(err)
+	}
+	if err := none.prepare(); err == nil || !strings.Contains(err.Error(), "no preparation mode") {
+		t.Fatalf("prepare() for a phase without one = %v", err)
+	}
+
+	run := &Run{phase: declared}
+	if err := run.advance("fixtures"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.prepare(); err != nil {
+		t.Fatalf("prepare() at the boundary = %v", err)
+	}
+	if !run.stoppedPrepared() {
+		t.Fatal("a run stopped at its boundary does not count as prepared")
+	}
+	if err := run.advance("acceptance"); err == nil || !strings.Contains(err.Error(), "preparation boundary") {
+		t.Fatalf("advance past a prepared stop = %v", err)
+	}
+}
+
 // A scenario that passes is a subtest that passes, and the ledger holds its
 // row with the outcome the subtest had.
 func TestScenarioRecordsItsRow(t *testing.T) {

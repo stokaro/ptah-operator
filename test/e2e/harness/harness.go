@@ -118,8 +118,9 @@ type Run struct {
 	ledger *Ledger
 	ctx    context.Context
 
-	mu   sync.Mutex
-	next int
+	mu       sync.Mutex
+	next     int
+	prepared bool
 }
 
 // Begin starts phase p in test t. It holds t to the phase the binary was
@@ -206,6 +207,9 @@ func (r *Run) Scenario(name string, body func(t *testing.T)) bool {
 func (r *Run) advance(name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.prepared {
+		return fmt.Errorf("phase %s ran scenario %s after it stopped at its preparation boundary", r.phase.Name, name)
+	}
 	if r.next >= len(r.phase.Scenarios) {
 		return fmt.Errorf("phase %s ran scenario %s after the last one it declares", r.phase.Name, name)
 	}
@@ -216,18 +220,56 @@ func (r *Run) advance(name string) error {
 	return nil
 }
 
+// Prepared ends the phase at its preparation boundary: the scenarios another
+// suite runs it for have passed, and the phase's own acceptance is not what
+// this run is for. It has to be called exactly there. A phase with no
+// preparation mode, or a run that has not reached the boundary or has gone
+// past it, fails, so preparation cannot pass for a phase that stopped early.
+func (r *Run) Prepared() {
+	r.t.Helper()
+	if err := r.prepare(); err != nil {
+		r.t.Fatalf("e2e: %v", err)
+	}
+}
+
+func (r *Run) prepare() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case r.phase.Preparation == 0:
+		return fmt.Errorf("phase %s has no preparation mode", r.phase.Name)
+	case r.next != r.phase.Preparation:
+		return fmt.Errorf("phase %s stopped for preparation after %d scenarios; its preparation is the first %d",
+			r.phase.Name, r.next, r.phase.Preparation)
+	}
+	r.prepared = true
+	return nil
+}
+
 // finish reports whether the phase reached its end: nothing failed, nothing
-// was skipped, and every declared scenario ran. A phase that returned early
-// with every scenario it ran passing has not proved the ones it left out.
+// was skipped, and every declared scenario ran, or the run stopped where
+// Prepared said. A phase that returned early with every scenario it ran
+// passing has not proved the ones it left out.
 func (r *Run) finish() bool {
 	if r.t.Failed() || r.t.Skipped() {
 		return false
+	}
+	if r.stoppedPrepared() {
+		return true
 	}
 	if missing := r.unrun(); len(missing) > 0 {
 		r.t.Errorf("e2e: phase %s ended without running %s", r.phase.Name, strings.Join(missing, ", "))
 		return false
 	}
 	return true
+}
+
+// stoppedPrepared reports a run that Prepared ended and that ran nothing past
+// the boundary afterwards.
+func (r *Run) stoppedPrepared() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.prepared && r.next == r.phase.Preparation
 }
 
 // unrun is the declared scenarios the phase has not reached.

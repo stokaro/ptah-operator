@@ -53,7 +53,6 @@ const (
 	e2eKindIsolationWorkerPath     = "testdata/e2e/kind-isolation-worker.yaml.tmpl"
 	apiServerEndpointFilterPath    = "hack/api-server-endpoint-inventory.jq"
 	e2eStaticPath                  = "hack/e2e-static.sh"
-	e2eDataPlanePath               = "hack/e2e-dataplane.sh"
 	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
 	e2eFaultsPath                  = "hack/e2e-faults.sh"
 	e2eHAPath                      = "hack/e2e-ha.sh"
@@ -230,7 +229,6 @@ func main() {
 		kindIsolationWorker:        e2eKindIsolationWorkerPath,
 		apiServerEndpointFilter:    apiServerEndpointFilterPath,
 		staticChecks:               e2eStaticPath,
-		dataPlane:                  e2eDataPlanePath,
 		crdUpgrade:                 e2eCRDUpgradePath,
 		faults:                     e2eFaultsPath,
 		highAvailability:           e2eHAPath,
@@ -2265,7 +2263,6 @@ type e2eWiringFiles struct {
 	kindIsolationWorker        string
 	apiServerEndpointFilter    string
 	staticChecks               string
-	dataPlane                  string
 	crdUpgrade                 string
 	faults                     string
 	highAvailability           string
@@ -2974,7 +2971,6 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 		// build has to read the snapshot too. The runner that starts it is
 		// pinned whole below, as goPhaseRunnerContract.
 		{marker: `go -C "$ROOT_DIR" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||`, count: 1},
-		{marker: `"$ROOT_DIR/hack/e2e-dataplane.sh"`, count: 1},
 	}
 	for _, pathContract := range snapshotPaths {
 		if count := bytes.Count(innerContents, []byte(pathContract.marker)); count != pathContract.count {
@@ -3373,7 +3369,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("high-availability lifecycle", `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`),
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert run_go_phase assert`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation run_go_phase cert-rotation`),
-		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`),
+		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane run_go_phase dataplane`),
 		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`),
 		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"`),
 		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"`),
@@ -3564,482 +3560,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		return err
 	}
 
-	dataPlane := files.dataPlane
-	dataPlaneContents, err := os.ReadFile(dataPlane)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", dataPlane, err)
-	}
-	if err := verifyShellScriptEntrypoint(dataPlane, dataPlaneContents); err != nil {
-		return err
-	}
-	if err := verifyFailurePreservingExitTrap(dataPlane, dataPlaneContents, "cleanup"); err != nil {
-		return err
-	}
-	dataPlaneContract := []sourceContractStep{
-		exactSourceLine("fail-fast shell mode", "set -eu"),
-		exactSourceLine("private durable Job evidence root", `JOB_EVIDENCE_DIR=$WORK_DIR/job-evidence`),
-		exactSourceLineSequence("private durable Job evidence root initialization", []string{
-			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
-			`mkdir "$JOB_EVIDENCE_DIR"`,
-			`chmod 700 "$JOB_EVIDENCE_DIR"`,
-		}),
-		exactSourceLineSequence("credential scanner fail-closed implementation", []string{
-			`[ -s "$CREDENTIAL_PATTERNS_FILE" ] ||`,
-			`fail "credential scanner has no non-empty protected patterns"`,
-			`if grep -F -f "$CREDENTIAL_PATTERNS_FILE" "$scan_file" >/dev/null; then`,
-			`fail "a task credential escaped into $scan_context"`,
-		}),
-		exactSourceLine("operation Pod admission proof implementation", `assert_active_pod_ephemeral_container_rejected() {`),
-		exactSourceLineSequence("label-less operation Pod clone", []string{
-			`.metadata.labels["app.kubernetes.io/managed-by"],`,
-			`.metadata.labels["app.kubernetes.io/component"],`,
-		}),
-		exactSourceLineSequence("operation Pod create-origin refusal", []string{
-			`if k -n "$TEST_NAMESPACE" create --dry-run=server -f "$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1; then`,
-			`fail "Pod intent admission allowed a namespace actor to clone active Job Pod $active_pod_name"`,
-			`fi`,
-		}),
-		exactSourceLine("operation Pod create-origin evidence", `printf '%s\n' 'e2e data plane: PASS operation Pod create-origin enforcement'`),
-		exactSourceLine("durable Job archive validation implementation", `validate_job_evidence_directory() {`),
-		exactSourceLine("durable Job archive private directory validation", `require_mode_0700_directory "$validated_archive" "Job evidence archive"`),
-		exactSourceLine("durable Job archive exact entry count", `[ "$archive_entry_count" -eq 5 ] ||`),
-		exactSourceLineSequence("durable Job archive exact five-file inventory", []string{
-			`"$validated_job_file:Job JSON" \`,
-			`"$validated_pod_file:Pod JSON" \`,
-			`"$validated_log_file:raw ptah log" \`,
-			`"$validated_result_file:normalized result" \`,
-			`"$validated_manifest_file:manifest"; do`,
-		}),
-		exactSourceLine("durable Job archive private file validation", `require_mode_0600_regular_file "$validated_file" \`),
-		exactSourceLine("durable Job archive SHA-256 path binding", `.archiveVersion == 1 and .pathKey == $key and`),
-		exactSourceLine("durable Job archive schema-operation binding", `.schema == $schema and .operation == $operation and`),
-		exactSourceLine("durable Job archive Job identity binding", `.job.uid == $uid and (.job.name | type) == "string" and (.job.name | length) > 0 and`),
-		exactSourceLineSequence("durable Job archive schema-owner manifest binding", []string{
-			`.job.owner.apiVersion == "operator.ptah.run/v1alpha1" and`,
-			`.job.owner.kind == "PtahSchema" and .job.owner.name == $schema and`,
-			`(.job.owner.uid | type) == "string" and (.job.owner.uid | length) > 0 and`,
-			`($expectedSchemaUID == "" or .job.owner.uid == $expectedSchemaUID) and`,
-			`.job.owner.controller == true and`,
-		}),
-		exactSourceLine("durable Job archive Pod owner binding", `.pod.owner.name == .job.name and .pod.owner.uid == .job.uid and`),
-		exactSourceLine("durable Job archive object digest binding", `.digests.jobSHA256 == $jobDigest and .digests.podSHA256 == $podDigest and`),
-		exactSourceLine("durable Job archive transport digest binding", `.digests.rawLogSHA256 == $logDigest and .digests.resultSHA256 == $resultDigest`),
-		exactSourceLine("durable Job archive Job label operation-ID binding", `.spec.template.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`),
-		exactSourceLine("durable Job archive Job annotation operation-ID binding", `.spec.template.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`),
-		exactSourceLineSequence("durable Job archive exact schema ownerReference", []string{
-			`([.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "operator.ptah.run/v1alpha1" and .kind == "PtahSchema" and`,
-			`.name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and`,
-		}),
-		exactSourceLine("durable Job archive Job completion contract", `.spec.podReplacementPolicy == "Failed" and .spec.backoffLimit == 0 and`),
-		exactSourceLineSequence("durable Job archive Pod identity binding", []string{
-			`.metadata.uid == $podUID and .metadata.name == $podName and`,
-			`.metadata.generateName == ($jobName + "-") and`,
-			`.metadata.labels["operator.ptah.run/schema"] == $schema and`,
-			`.metadata.labels["operator.ptah.run/operation"] == $operation and`,
-			`.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`,
-			`.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
-		}),
-		exactSourceLineSequence("durable Job archive normalized result binding", []string{
-			`.protocolVersion == $runnerProtocolVersion and .operation == $operation and`,
-			`.operationId == $operationID and .truncation == null`,
-			`' "$validated_result_file" >/dev/null ||`,
-		}),
-		exactSourceLineSequence("durable Job archive complete credential scan", []string{
-			`"$validated_job_file:exact archived Job JSON" \`,
-			`"$validated_pod_file:exact archived Pod JSON" \`,
-			`"$validated_log_file:archived raw ptah log" \`,
-			`"$validated_result_file:archived normalized result" \`,
-			`"$validated_manifest_file:archived evidence manifest"; do`,
-			`scan_file_for_credentials "${validated_material%%:*}" "${validated_material#*:}"`,
-		}),
-		exactSourceLine("supplied Job evidence identity validation implementation", `validate_supplied_job_evidence_identity() {`),
-		exactSourceLineSequence("supplied Job evidence exact Job identity binding", []string{
-			`$job.metadata.uid == $jobUID and $job.metadata.name == $jobName and`,
-			`$job.metadata.labels["operator.ptah.run/schema"] == $schema and`,
-			`$job.metadata.labels["operator.ptah.run/operation"] == $operation and`,
-			`$job.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`,
-			`$job.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
-		}),
-		exactSourceLineSequence("supplied Job evidence exact schema ownerReference", []string{
-			`([$job.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "operator.ptah.run/v1alpha1" and .kind == "PtahSchema" and`,
-			`.name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and`,
-		}),
-		exactSourceLineSequence("supplied Job evidence exact Pod identity binding", []string{
-			`$pod.metadata.uid == $podUID and $pod.metadata.name == $podName and`,
-			`$pod.metadata.generateName == ($jobName + "-") and`,
-			`$pod.metadata.labels["operator.ptah.run/schema"] == $schema and`,
-			`$pod.metadata.labels["operator.ptah.run/operation"] == $operation and`,
-			`$pod.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`,
-			`$pod.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
-		}),
-		exactSourceLineSequence("supplied Job evidence exact Pod owner binding", []string{
-			`([$pod.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "batch/v1" and .kind == "Job" and`,
-			`.uid == $jobUID and .name == $jobName and .controller == true)] | length) == 1`,
-		}),
-		exactSourceLine("existing Job evidence collision validation implementation", `assert_existing_job_evidence_matches_supplied() {`),
-		exactSourceLineSequence("existing Job evidence schema-operation-UID validation", []string{
-			`validate_job_evidence_directory "$existing_archive" \`,
-			`"$existing_schema" "$existing_operation" "$existing_job_uid" \`,
-			`"$existing_schema_uid"`,
-		}),
-		exactSourceLineSequence("existing Job evidence supplied identity comparison", []string{
-			`if [ "$VALIDATED_JOB_EVIDENCE_SCHEMA_UID" != "$existing_schema_uid" ] ||`,
-			`[ "$VALIDATED_JOB_EVIDENCE_OPERATION_ID" != "$existing_operation_id" ] ||`,
-			`[ "$VALIDATED_JOB_EVIDENCE_JOB_NAME" != "$existing_job_name" ] ||`,
-			`[ "$VALIDATED_JOB_EVIDENCE_POD_UID" != "$existing_pod_uid" ] ||`,
-			`[ "$VALIDATED_JOB_EVIDENCE_POD_NAME" != "$existing_pod_name" ]; then`,
-		}),
-		exactSourceLine("durable Job archive publication implementation", `publish_completed_job_evidence() {`),
-		exactSourceLine("durable Job archive supplied UID-bounded log", `publish_log_file=$3`),
-		exactSourceLine("durable Job archive supplied log private-file validation", `require_mode_0600_regular_file "$publish_log_file" "supplied UID-bounded ptah log"`),
-		exactSourceLineSequence("durable Job archive supplied schema-owner UID extraction", []string{
-			`if ! publish_schema_uid=$(jq -er \`,
-			`--arg schema "$publish_schema" '`,
-			`[.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "operator.ptah.run/v1alpha1" and .kind == "PtahSchema" and`,
-			`.name == $schema and .controller == true and`,
-			`(.uid | type) == "string" and (.uid | length) > 0)] |`,
-		}),
-		exactSourceLineSequence("durable Job archive supplied identity validation", []string{
-			`validate_supplied_job_evidence_identity \`,
-			`"$publish_job_file" "$publish_pod_file" \`,
-			`"$publish_schema" "$publish_schema_uid" \`,
-			`"$publish_operation" "$publish_operation_id" \`,
-			`"$publish_job_uid" "$publish_job_name" "$publish_pod_uid" "$publish_pod_name"`,
-		}),
-		exactSourceLineSequence("existing durable Job archive exact identity acceptance", []string{
-			`assert_existing_job_evidence_matches_supplied \`,
-			`"$publish_archive" "$publish_schema" "$publish_schema_uid" \`,
-			`"$publish_operation" \`,
-			`"$publish_operation_id" "$publish_job_uid" "$publish_job_name" \`,
-			`"$publish_pod_uid" "$publish_pod_name"`,
-			`return 0`,
-		}),
-		exactSourceLine("durable Job archive private staging", `publish_stage=$(mktemp -d "$JOB_EVIDENCE_DIR/.${publish_key}.XXXXXX") ||`),
-		exactSourceLine("durable Job archive private staging mode", `chmod 700 "$publish_stage"`),
-		exactSourceLine("durable Job archive UID-bounded log copy", `cp "$publish_log_file" "$publish_stage/ptah.log" ||`),
-		// The publisher holds bytes rather than a Pod, so it cannot wait for a
-		// frame. It can name the one it refused: without this the phase ends on
-		// a bare status under set -e, and a shell that suspends set -e archives
-		// an empty result until the manifest contract objects to something else.
-		exactSourceLineSequence("durable Job archive reported result refusal", []string{
-			`if ! "$RESULT_ASSERT_BINARY" \`,
-			`--logs "$publish_stage/ptah.log" \`,
-			`--operation "$publish_operation" \`,
-			`--operation-id "$publish_operation_id" \`,
-			`>"$publish_stage/result.json" 2>"$PUBLISH_RESULT_ERROR_FILE"; then`,
-			`sed 's/^/e2e data plane:   /' "$PUBLISH_RESULT_ERROR_FILE" >&2`,
-			`: >"$PUBLISH_RESULT_ERROR_FILE"`,
-			`fail "the $publish_operation result frame for Job UID $publish_job_uid cannot be archived"`,
-		}),
-		exactSourceLineSequence("durable Job archive private staged file modes", []string{
-			`chmod 600 "$publish_stage/job.json" "$publish_stage/pod.json" \`,
-			`"$publish_stage/ptah.log" "$publish_stage/result.json"`,
-		}),
-		exactSourceLineSequence("durable Job archive persisted schema-owner binding", []string{
-			`owner: {`,
-			`apiVersion: "operator.ptah.run/v1alpha1",`,
-			`kind: "PtahSchema",`,
-			`uid: $schemaUID,`,
-			`name: $schema,`,
-			`controller: true`,
-		}),
-		exactSourceLine("durable Job archive manifest-last staging", `' >"$publish_stage/manifest.json"`),
-		exactSourceLine("durable Job archive private manifest mode", `chmod 600 "$publish_stage/manifest.json"`),
-		exactSourceLine("durable Job archive staged validation", `validate_job_evidence_directory "$publish_stage" \`),
-		exactSourceLineSequence("atomic durable Job archive rename and validation", []string{
-			`mv "$publish_stage" "$publish_archive" ||`,
-			`fail "could not atomically publish Job evidence archive $publish_key"`,
-			`validate_job_evidence_directory "$publish_archive" \`,
-		}),
-		exactSourceLine("durable Job evidence live consistency implementation", `assert_live_job_evidence_consistent() {`),
-		exactSourceLineSequence("durable Job evidence exact live Job read", []string{
-			`if live_evidence_job=$(k -n "$TEST_NAMESPACE" get job "$live_evidence_job_name" \`,
-			`-o json --ignore-not-found 2>"$LIVE_JOB_EVIDENCE_ERROR_FILE"); then`,
-		}),
-		exactSourceLineSequence("durable Job evidence fail-closed live Job API error", []string{
-			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
-			`fail "live Job consistency read failed before exact GC absence could be established"`,
-			`fi`,
-			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
-			`if [ -n "$live_evidence_job" ]; then`,
-		}),
-		exactSourceLine("durable Job evidence exact live Job identity", `.metadata.name == $name and .metadata.uid == $uid and`),
-		exactSourceLineSequence("durable Job evidence exact live Pod read", []string{
-			`if live_evidence_pod=$(k -n "$TEST_NAMESPACE" get pod "$live_evidence_pod_name" \`,
-			`-o json --ignore-not-found 2>"$LIVE_JOB_EVIDENCE_ERROR_FILE"); then`,
-		}),
-		exactSourceLineSequence("durable Job evidence fail-closed live Pod API error", []string{
-			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
-			`fail "live Pod consistency read failed before exact GC absence could be established"`,
-			`fi`,
-			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
-			`if [ -n "$live_evidence_pod" ]; then`,
-		}),
-		exactSourceLine("durable Job evidence exact live Pod identity", `.metadata.name == $podName and .metadata.uid == $podUID and`),
-		exactSourceLineSequence("durable Job evidence exact live Pod owner", []string{
-			`([.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "batch/v1" and .kind == "Job" and`,
-			`.uid == $jobUID and .name == $jobName and .controller == true)] | length) == 1`,
-		}),
-		// The audit's own read is one read, and a runner's result frame is its
-		// last output: a read that lands before the container runtime finished
-		// copying it ends inside the frame. Retaining those bytes archives a
-		// frame that never closed, so the transport is settled before it is
-		// kept -- read again while the frame may still be arriving, refused at
-		// once when it is present and wrong.
-		exactSourceLineSequence("durable Job archive settled UID-bounded audited log capture", []string{
-			`if [ "$audit_managed_complete" -eq 1 ] && [ "$audit_container" = ptah ]; then`,
-			`read_result_transport "$audit_pod_name" "$audit_evidence_log_file" \`,
-			`"$audit_operation" "$audit_operation_id" "$audit_evidence_result_file"`,
-			`chmod 600 "$audit_evidence_log_file" "$audit_evidence_result_file"`,
-		}),
-		exactSourceLineSequence("durable Job archive post-log exact Pod UID check", []string{
-			`audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json 2>/dev/null) ||`,
-			`fail "exact Pod $audit_pod_name UID $audit_pod_uid disappeared during its log audit"`,
-			`printf '%s\n' "$audit_pod_after" | jq -e \`,
-			`--arg podUID "$audit_pod_uid" \`,
-			`--arg jobUID "$audit_uid" '`,
-			`.metadata.uid == $podUID and`,
-		}),
-		exactSourceLineSequence("durable Job evidence publication before full-audit ledger", []string{
-			`publish_completed_job_evidence \`,
-			`"$audit_job_evidence_file" "$audit_pod_evidence_file" \`,
-			`"$audit_evidence_log_file"`,
-		}),
-		exactSourceLine("full-audit ledger commit after durable Job evidence", `printf '%s\n' "$audit_uid" >>"$FULLY_AUDITED_JOBS_FILE"`),
-		exactSourceLine("automatic external PostgreSQL post-capture Job-boundary implementation", `assert_schema_job_boundary_unchanged() {`),
-		exactSourceLineSequence("automatic external PostgreSQL post-capture exact Job-boundary equality", []string{
-			`($expected[0] | length) == $expectedCount and`,
-			`($actual | length) == $expectedCount and`,
-			`$actual == $expected[0]`,
-		}),
-		exactSourceLine("operation Pod generated-name binding", `[ "$CAPTURED_POD_GENERATE_NAME" = "${CAPTURED_JOB_NAME}-" ] ||`),
-		exactSourceLineSequence("selected Job archived result consumption", []string{
-			`validate_completed_job_evidence \`,
-			`"$selected_schema" "$selected_operation" "$selected_uid"`,
-		}),
-		exactSourceLine("selected Job archived result copy", `cp "$VALIDATED_JOB_EVIDENCE_DIR/result.json" "$selected_output" ||`),
-		exactSourceLine("selected Job archive path retention", `CAPTURED_JOB_EVIDENCE_DIR=$VALIDATED_JOB_EVIDENCE_DIR`),
-		exactSourceLine("selected Job optional live consistency check", `assert_live_job_evidence_consistent \`),
-		exactSourceLine("operation Job generated-name boundary fixture", `EXTERNAL_PG_SCHEMA=e2e-postgresql-external-longpod`),
-		exactSourceLine("explicit optional apply-policy input", `resource_apply=${11:-}`),
-		exactSourceLine("explicit apply-policy serialization", `} + if $apply == "" then {} else {apply: $apply} end),`),
-		exactSourceLineSequence("safe-default persistence proof", []string{
-			`k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |`,
-			`jq -e '`,
-			`.spec.policy.apply == "OnApproval" and`,
-			`.spec.policy.allowDestructive == false`,
-			`' >/dev/null || fail "$resource_schema did not persist the safe apply-policy defaults"`,
-		}),
-		exactSourceLine("immutable plan-storage proof implementation", `assert_plan_storage_immutable() {`),
-		exactSourceLine("immutable plan-storage proof call", `assert_plan_storage_immutable "$plan_schema" "$CURRENT_PLAN" "$CURRENT_PLAN_UID"`),
-		exactSourceLine("external PostgreSQL lifecycle implementation", `run_external_postgresql_lifecycle() {`),
-		exactSourceLine("external OCI publication reference", `external_publish_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"`),
-		exactSourceLineSequence("external OCI publication", []string{
-			`external_digest=$(publish_schema postgresql-external v1 postgres "$external_publish_reference" \`,
-			`"$ROOT_DIR/testdata/e2e/postgresql-v1.sql")`,
-		}),
-		exactSourceLine("external digest-selected OCI source", `external_reference="${external_publish_reference%:stable}@${external_digest}"`),
-		exactSourceLineSequence("external lifecycle explicit Always source call", []string{
-			`create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET" \`,
-			`"$external_reference" "$EXTERNAL_PG_COORDINATION_KEY" \`,
-			`e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL" Always`,
-		}),
-		exactSourceLineSequence("external automatic lifecycle assertion call", []string{
-			`assert_automatic_external_postgresql_lifecycle \`,
-			`"$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_SECRET" "$external_reference" \`,
-			`"$external_digest" "$EXTERNAL_PG_COORDINATION_KEY" \`,
-			`"$external_coordination_digest" "$external_before"`,
-		}),
-		exactSourceLineSequence("operation generated-name boundary proof", []string{
-			`[ "${#CAPTURED_JOB_NAME}" -eq 58 ] ||`,
-			`fail "external PostgreSQL plan Job did not reach the generated-name truncation boundary"`,
-			`[ "${#CAPTURED_POD_GENERATE_NAME}" -eq 59 ] ||`,
-			`fail "external PostgreSQL plan Pod generateName did not cross the truncation boundary"`,
-			`[ "${#CAPTURED_POD_NAME}" -eq 63 ] ||`,
-			`fail "external PostgreSQL plan Pod did not preserve the bounded generated name"`,
-		}),
-		exactSourceLineSequence("external PostgreSQL post-suspension durable Job-boundary proof", []string{
-			`external_suspended_observed_uids_file="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-automatic-suspended-observed-uids.json"`,
-			`record_observed_jobs`,
-			`assert_schema_job_boundary_unchanged \`,
-			`"$EXTERNAL_PG_SCHEMA" "$external_before" \`,
-			`"$automatic_observed_uids_file" 7 \`,
-			`"$external_suspended_observed_uids_file"`,
-		}),
-		exactSourceLine("external per-lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'`),
-		exactSourceLine("OCI lifecycle implementation", `run_engine_lifecycle() {`),
-		exactSourceLine("OCI reference construction", `lifecycle_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/${lifecycle_slug}:stable"`),
-		exactSourceLine("OCI publication", `digest_v1=$(publish_schema "$lifecycle_slug" v1 "$lifecycle_dialect" "$lifecycle_reference")`),
-		exactSourceLine("per-engine lifecycle evidence", `printf 'e2e data plane: PASS %s lifecycle\n' "$lifecycle_engine"`),
-		exactSourceLine("data-plane lifecycle entry", `printf '%s\n' 'e2e data plane: creating registry endpoint and isolated databases'`),
-		exactSourceLine("registry fixture", `create_registry_service`),
-		exactSourceLine("authenticated OCI fixture", `create_authenticated_tls_proxy`),
-		exactSourceLine("PostgreSQL lifecycle", `run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"`),
-		exactSourceLine("external PostgreSQL lifecycle", `run_external_postgresql_lifecycle`),
-		exactSourceLine("MySQL lifecycle", `run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"`),
-		// The nested phase call is guarded: a phase script prints its own reason
-		// and exits non-zero, and an unguarded call would end this one at that
-		// command with only its EXIT handler left to speak for a phase that had
-		// already spoken.
-		exactSourceLineSequence("fault lifecycle", []string{
-			`"$ROOT_DIR/hack/e2e-faults.sh" ||`,
-			`fail "the restart and fault-injection phase failed; its reason is above"`,
-		}),
-		exactSourceLine("audited operation evidence", `assert_observed_jobs_audited`),
-		// A PtahSchema declares the whole database. A row that planned a
-		// schema of its own against the PostgreSQL lifecycle's database
-		// planned to drop e2e_widgets as well, and the destructive plan
-		// blocked the schema where the row waited for it to await approval
-		// (run 36397582251). Each row after the lifecycle plans against a
-		// database of its own, created immediately before its schema.
-		exactSourceLineSequence("four-eyes isolated database", []string{
-			`create_isolated_postgresql_database "$FOUR_EYES_PG_DATABASE" "$FOUR_EYES_PG_SECRET" "$FOUR_EYES_PG_URL_FILE"`,
-			`create_schema_resource "$FOUR_EYES_SCHEMA" PostgreSQL "$FOUR_EYES_PG_SECRET" "$four_eyes_reference" \`,
-		}),
-		exactSourceLineSequence("Pod-metadata isolated database", []string{
-			`create_isolated_postgresql_database "$POD_METADATA_PG_DATABASE" "$POD_METADATA_PG_SECRET" "$POD_METADATA_PG_URL_FILE"`,
-			`create_schema_resource "$POD_METADATA_REFUSED_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \`,
-		}),
-		exactSourceLine("Pod-metadata declared schema on the isolated database", `create_schema_resource "$POD_METADATA_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \`),
-		exactSourceLine("declared Pod metadata evidence", `printf '%s\n' 'e2e data plane: PASS declared Pod metadata reaches every operation Pod under a namespace admission policy, and a Pod the policy refuses is reported as PodAdmissionRefused'`),
-		exactSourceLine("terminal data-plane lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'`),
-	}
-	if err := verifyOrderedSourceContract(dataPlane, dataPlaneContents, dataPlaneContract); err != nil {
-		return err
-	}
-	automaticFunctionPattern := regexp.MustCompile(
-		`(?ms)^assert_automatic_external_postgresql_lifecycle\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`,
-	)
-	automaticFunctionMatches := automaticFunctionPattern.FindAll(dataPlaneContents, -1)
-	if len(automaticFunctionMatches) != 1 {
-		return fmt.Errorf(
-			"%s: automatic external PostgreSQL lifecycle must have exactly one auditable function body, found %d",
-			dataPlane,
-			len(automaticFunctionMatches),
-		)
-	}
-	automaticContract := []sourceContractStep{
-		exactSourceLine("automatic external PostgreSQL lifecycle implementation", `assert_automatic_external_postgresql_lifecycle() {`),
-		exactSourceLine("automatic external PostgreSQL convergence wait", `wait_for_schema "$automatic_schema" \`),
-		exactSourceLine("automatic external PostgreSQL explicit policy evidence", `.spec.policy.apply == "Always" and`),
-		exactSourceLine("automatic external PostgreSQL approval-free status evidence", `.type == "ApprovalRequired" and .status == "False" and .reason == "Satisfied")) and`),
-		exactSourceLine("automatic external PostgreSQL durable Job-ledger refresh", `record_observed_jobs`),
-		exactSourceLineSequence("automatic external PostgreSQL archived Job materialization", []string{
-			`materialize_archived_schema_jobs "$automatic_schema" "$automatic_before" 7 \`,
-			`"$automatic_observed_uids_file" "$automatic_jobs_file"`,
-		}),
-		exactSourceLine("automatic external PostgreSQL durable Job-ledger binding", `--slurpfile observed "$automatic_observed_uids_file" \`),
-		exactSourceLineSequence("automatic external PostgreSQL exact Job history", []string{
-			`($observed[0] | type) == "array" and`,
-			`($observed[0] | length) == 7 and`,
-			`($jobs | length) == 7 and`,
-			`([$jobs[].metadata.uid] | unique | length) == 7 and`,
-			`([$jobs[].metadata.uid] | unique | sort) == $observed[0] and`,
-			`($resolve | length) == 1 and ($verify | length) == 1 and`,
-			`($observe | length) == 2 and ($plan | length) == 2 and`,
-			`($apply | length) == 1 and`,
-		}),
-		exactSourceLineSequence("automatic external PostgreSQL serialized Job order", []string{
-			`$resolve[0].status.completionTime <= $verify[0].status.startTime and`,
-			`$verify[0].status.completionTime <= $observe[0].status.startTime and`,
-			`$observe[0].status.completionTime <= $plan[0].status.startTime and`,
-			`$plan[0].status.completionTime <= $apply[0].status.startTime and`,
-			`$apply[0].status.completionTime <= $observe[1].status.startTime and`,
-			`$observe[1].status.completionTime <= $plan[1].status.startTime`,
-		}),
-		exactSourceLine("automatic external PostgreSQL Resolve result capture", `capture_selected_job_result "$automatic_schema" resolve "$automatic_resolve_uid" \`),
-		exactSourceLine("automatic external PostgreSQL Verify result capture", `capture_selected_job_result "$automatic_schema" verify "$automatic_verify_uid" \`),
-		exactSourceLine("automatic external PostgreSQL initial Observe result capture", `capture_selected_job_result "$automatic_schema" observe "$automatic_initial_observe_uid" \`),
-		exactSourceLine("automatic external PostgreSQL initial Plan result capture", `capture_selected_job_result "$automatic_schema" plan "$automatic_initial_plan_uid" \`),
-		exactSourceLine("automatic external PostgreSQL changed Plan evidence", `.planOutcome == "Changes" and (.stdout | length) > 0 and`),
-		exactSourceLine("automatic external PostgreSQL additive DDL evidence", `any(.statements[]; .sql | test("\\bCREATE[[:space:]]+TABLE\\b"; "i")) and`),
-		exactSourceLine("automatic external PostgreSQL immutable Plan evidence", `assert_plan_storage_immutable "$automatic_schema" "$automatic_plan_name" "$automatic_plan_uid"`),
-		exactSourceLine("automatic external PostgreSQL Apply result capture", `capture_selected_job_result "$automatic_schema" apply "$automatic_apply_uid" \`),
-		exactSourceLine("automatic external PostgreSQL captured Apply Job UID binding", `[ "$CAPTURED_JOB_UID" = "$automatic_apply_uid" ] ||`),
-		exactSourceLine("automatic external PostgreSQL archived Apply workload evidence", `cp "$CAPTURED_JOB_EVIDENCE_DIR/job.json" "$automatic_apply_job_file" ||`),
-		exactSourceLine("automatic external PostgreSQL archived Apply Pod evidence", `cp "$CAPTURED_JOB_EVIDENCE_DIR/pod.json" "$automatic_apply_pod_file" ||`),
-		exactSourceLineSequence("automatic external PostgreSQL Apply annotation bindings", []string{
-			`.["operator.ptah.run/plan-fingerprint"] == $planFingerprint and`,
-			`.["operator.ptah.run/plan-content-digest"] == $contentDigest and`,
-			`.["operator.ptah.run/execution-binding-id"] == $executionBinding;`,
-		}),
-		exactSourceLine("automatic external PostgreSQL Apply runner image binding", `select(.name == "install-runner" and .image == $runnerImage)] | length) == 1 and`),
-		exactSourceLine("automatic external PostgreSQL Apply executor image binding", `select(.name == "ptah" and .image == $executorImage)] | length) == 1 and`),
-		exactSourceLineSequence("automatic external PostgreSQL Apply database-engine binding", []string{
-			`select(.name == "PTAH_EXPECTED_DATABASE_ENGINE" and`,
-			`.value == "PostgreSQL" and (.valueFrom // null) == null)] | length) == 1;`,
-		}),
-		exactSourceLine("automatic external PostgreSQL Apply Job object UID binding", `$job.metadata.name == $jobName and $job.metadata.uid == $jobUID and`),
-		exactSourceLineSequence("automatic external PostgreSQL Apply Job and Pod-template identity", []string{
-			`($job.metadata.annotations | exact_annotations) and`,
-			`($job.spec.template.metadata.annotations | exact_annotations) and`,
-			`($job.spec.template.spec | exact_runtime_spec) and`,
-		}),
-		exactSourceLine("automatic external PostgreSQL Apply Pod UID identity", `$pod.metadata.name == $podName and $pod.metadata.uid == $podUID and`),
-		exactSourceLine("automatic external PostgreSQL Apply Pod annotation identity", `($pod.metadata.annotations | exact_annotations) and`),
-		exactSourceLine("automatic external PostgreSQL Apply Pod runtime identity", `($pod.spec | exact_runtime_spec)`),
-		exactSourceLine("automatic external PostgreSQL mutation evidence", `(.mutationStarted // false) == true and`),
-		exactSourceLine("automatic external PostgreSQL final Observe result capture", `capture_selected_job_result "$automatic_schema" observe "$automatic_final_observe_uid" \`),
-		exactSourceLine("automatic external PostgreSQL convergence evidence", `.observedDialect == "postgres" and (.observedDrift // false) == false and`),
-		exactSourceLine("automatic external PostgreSQL final Plan result capture", `capture_selected_job_result "$automatic_schema" plan "$automatic_final_plan_uid" \`),
-		exactSourceLine("automatic external PostgreSQL no-change Plan evidence", `.planOutcome == "NoChanges" and (.planContentDigest // "") == "" and`),
-		exactSourceLine("automatic external PostgreSQL approval-object absence", `k -n "$TEST_NAMESPACE" get ptahschemaapprovals -o json |`),
-		exactSourceLine("automatic external PostgreSQL approval-event absence", `k -n "$TEST_NAMESPACE" get events -o json |`),
-		exactSourceLineSequence("automatic external PostgreSQL archived isolation", []string{
-			`assert_job_isolation "$automatic_schema" "$automatic_secret" true \`,
-			`"$automatic_jobs_file"`,
-		}),
-		exactSourceLine("automatic external PostgreSQL terminal evidence", `printf '%s\n' 'e2e data plane: PASS automatic safe-plan PostgreSQL lifecycle'`),
-	}
-	if err := verifyOrderedSourceContract(
-		dataPlane+" automatic external PostgreSQL lifecycle",
-		automaticFunctionMatches[0],
-		automaticContract,
-	); err != nil {
-		return err
-	}
-	if err := rejectStaticControlFlowBypass(dataPlane, dataPlaneContents, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
-		return err
-	}
-	if err := rejectEarlySuccessfulReturn(
-		dataPlane,
-		dataPlaneContents,
-		sourceLinePattern(`run_external_postgresql_lifecycle() {`),
-		sourceLinePattern(`printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'`),
-	); err != nil {
-		return err
-	}
-	if err := rejectEarlySuccessfulReturn(
-		dataPlane,
-		dataPlaneContents,
-		sourceLinePattern(`assert_automatic_external_postgresql_lifecycle() {`),
-		sourceLinePattern(`printf '%s\n' 'e2e data plane: PASS automatic safe-plan PostgreSQL lifecycle'`),
-	); err != nil {
-		return err
-	}
-	if err := rejectEarlySuccessfulReturn(
-		dataPlane,
-		dataPlaneContents,
-		sourceLinePattern(`run_engine_lifecycle() {`),
-		sourceLinePattern(`printf 'e2e data plane: PASS %s lifecycle\n' "$lifecycle_engine"`),
-	); err != nil {
-		return err
-	}
-	// The phase has one early successful exit: the preparation mode another
-	// suite runs it in. It is audited and then hidden, so every other early
-	// exit in the phase is still refused.
-	dataPlaneScan, err := auditDataPlanePrepareHandoff(dataPlane, dataPlaneContents)
-	if err != nil {
-		return err
-	}
-	if err := rejectEarlySuccessfulExit(dataPlane, dataPlaneScan, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
-		return err
-	}
 	if err := verifyFailedUpgradeEvidenceSource(files.crdUpgrade); err != nil {
 		return err
 	}
@@ -5235,7 +4755,6 @@ func verifyMakeRaceTargets(path string) error {
 	}
 	const skipped = "override RACE_MUTATION_TESTS := " +
 		"TestVerifyE2EHarnessRejectsCriticalMutations|" +
-		"TestVerifyE2EDataPlaneRejectsCriticalMutations|" +
 		"TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|" +
 		"TestVerifyE2EChildScriptsRejectCriticalMutations"
 	assignments := regexp.MustCompile(`(?m)^(?:override[ \t]+)?RACE_MUTATION_TESTS[ \t]*[:+?!]?=[^\r\n]*$`).FindAll(contents, -1)
@@ -5677,45 +5196,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 			},
 		},
 		{
-			phase:  "dataplane",
-			script: "hack/e2e-dataplane.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
-				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
-				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
-				{name: "E2E_PTAH_VERSION", value: `$E2E_PTAH_VERSION`},
-				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
-				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
-				{name: "E2E_FIXTURE_IMAGE", value: `$E2E_FIXTURE_IMAGE`},
-				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
-				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
-				{name: "E2E_CONTROLLER_STATE_VERSION", value: `$CONTROLLER_STATE_VERSION`},
-				{name: "E2E_POSTGRES_IMAGE", value: `$E2E_POSTGRES_IMAGE`},
-				{name: "E2E_MYSQL_IMAGE", value: `$E2E_MYSQL_IMAGE`},
-				{name: "E2E_REGISTRY_IP", value: `$REGISTRY_IP`},
-				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
-				{name: "E2E_REGISTRY_PORT", value: `$E2E_REGISTRY_PORT`},
-				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
-				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
-				{name: "E2E_REGISTRY_CONTAINER_ID", value: `$REGISTRY_CONTAINER_ID`},
-				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
-				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
-				{name: "E2E_EXTERNAL_POSTGRES_SERVICE", value: `$EXTERNAL_PG_SERVICE`},
-				{name: "E2E_EXTERNAL_POSTGRES_IMAGE", value: `$E2E_POSTGRES_SOURCE_IMAGE`},
-				{name: "E2E_EXTERNAL_POSTGRES_OWNER", value: `$CLUSTER_NAME`},
-				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
-				{name: "E2E_TLS_PROXY_SERVICE", value: `$TLS_PROXY_SERVICE`},
-				{name: "E2E_TLS_PROXY_CA_FILE", value: `$TLS_PROXY_CA_FILE`},
-				{name: "E2E_TLS_PROXY_CERT_FILE", value: `$TLS_PROXY_CERT_FILE`},
-				{name: "E2E_TLS_PROXY_KEY_FILE", value: `$TLS_PROXY_CERT_KEY_FILE`},
-				// full or prepare: the migrations suite runs this phase for the
-				// namespace it stands up and none of its own acceptance.
-				{name: "E2E_DATAPLANE_MODE", value: `$DATAPLANE_MODE`},
-			},
-		},
-		{
 			phase:  "migrations-postgresql",
 			script: "hack/e2e-migrations.sh",
 			bindings: []phaseEnvironmentBinding{
@@ -5841,18 +5321,43 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 // line per variable rather than one block per phase, because an input means
 // the same thing in every phase that reads it.
 var goPhaseBindings = map[string]string{
-	"E2E_KUBECONFIG":               `$KUBECONFIG_FILE`,
-	"E2E_OPERATOR_NAMESPACE":       `$OPERATOR_NAMESPACE`,
-	"E2E_TEST_NAMESPACE":           `$TEST_NAMESPACE`,
-	"E2E_FOREIGN_NAMESPACE":        `$FOREIGN_NAMESPACE`,
-	"E2E_HELM_RELEASE":             `$HELM_RELEASE`,
-	"E2E_CHART_PACKAGE":            `$CHART_PACKAGE`,
-	"E2E_EXECUTOR_IMAGE":           `$E2E_EXECUTOR_IMAGE`,
-	"E2E_RUNNER_IMAGE":             `$E2E_RUNNER_IMAGE`,
-	"E2E_PTAH_VERSION":             `$E2E_PTAH_VERSION`,
-	"E2E_CONTROLLER_IMAGE":         `$CANDIDATE_OPERATOR_IMAGE`,
-	"E2E_CONTROLLER_REVISION":      `$CONTROLLER_REVISION`,
-	"E2E_CONTROLLER_STATE_VERSION": `$CONTROLLER_STATE_VERSION`,
+	"E2E_KUBECONFIG":                `$KUBECONFIG_FILE`,
+	"E2E_OPERATOR_NAMESPACE":        `$OPERATOR_NAMESPACE`,
+	"E2E_TEST_NAMESPACE":            `$TEST_NAMESPACE`,
+	"E2E_FOREIGN_NAMESPACE":         `$FOREIGN_NAMESPACE`,
+	"E2E_HELM_RELEASE":              `$HELM_RELEASE`,
+	"E2E_CHART_PACKAGE":             `$CHART_PACKAGE`,
+	"E2E_EXECUTOR_IMAGE":            `$E2E_EXECUTOR_IMAGE`,
+	"E2E_RUNNER_IMAGE":              `$E2E_RUNNER_IMAGE`,
+	"E2E_PTAH_VERSION":              `$E2E_PTAH_VERSION`,
+	"E2E_CONTROLLER_IMAGE":          `$CANDIDATE_OPERATOR_IMAGE`,
+	"E2E_CONTROLLER_REVISION":       `$CONTROLLER_REVISION`,
+	"E2E_CONTROLLER_STATE_VERSION":  `$CONTROLLER_STATE_VERSION`,
+	"E2E_FIXTURE_IMAGE":             `$E2E_FIXTURE_IMAGE`,
+	"E2E_POSTGRES_IMAGE":            `$E2E_POSTGRES_IMAGE`,
+	"E2E_MYSQL_IMAGE":               `$E2E_MYSQL_IMAGE`,
+	"E2E_REGISTRY_IP":               `$REGISTRY_IP`,
+	"E2E_REGISTRY_SERVICE":          `$REGISTRY_SERVICE`,
+	"E2E_REGISTRY_PORT":             `$E2E_REGISTRY_PORT`,
+	"E2E_REGISTRY_CREDENTIALS_FILE": `$REGISTRY_CREDENTIALS_FILE`,
+	"E2E_DOCKER_CONTEXT":            `$DOCKER_CONTEXT`,
+	"E2E_REGISTRY_CONTAINER_ID":     `$REGISTRY_CONTAINER_ID`,
+	// The external PostgreSQL runs from the digest the source image resolved
+	// to, and the kind cluster's name is the owner its container is labeled
+	// with.
+	"E2E_EXTERNAL_POSTGRES_CONTAINER_ID":     `$EXTERNAL_PG_CONTAINER_ID`,
+	"E2E_EXTERNAL_POSTGRES_IP":               `$EXTERNAL_PG_IP`,
+	"E2E_EXTERNAL_POSTGRES_SERVICE":          `$EXTERNAL_PG_SERVICE`,
+	"E2E_EXTERNAL_POSTGRES_IMAGE":            `$E2E_POSTGRES_SOURCE_IMAGE`,
+	"E2E_EXTERNAL_POSTGRES_OWNER":            `$CLUSTER_NAME`,
+	"E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE": `$EXTERNAL_PG_CREDENTIALS_FILE`,
+	"E2E_TLS_PROXY_SERVICE":                  `$TLS_PROXY_SERVICE`,
+	"E2E_TLS_PROXY_CA_FILE":                  `$TLS_PROXY_CA_FILE`,
+	"E2E_TLS_PROXY_CERT_FILE":                `$TLS_PROXY_CERT_FILE`,
+	"E2E_TLS_PROXY_KEY_FILE":                 `$TLS_PROXY_CERT_KEY_FILE`,
+	// full or prepare: the migration suites run the data plane for the
+	// namespace it stands up and none of its own acceptance.
+	"E2E_DATAPLANE_MODE": `$DATAPLANE_MODE`,
 }
 
 // phaseInvocationPattern matches one `run_recorded_phase <name> "$ROOT_DIR/<script>"`
@@ -6166,8 +5671,6 @@ func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
 		return files.crdUpgrade
 	case e2eHAPath:
 		return files.highAvailability
-	case e2eDataPlanePath:
-		return files.dataPlane
 	case e2eMigrationsPath:
 		return files.migrations
 	case e2eReferenceDataPath:
@@ -6551,61 +6054,6 @@ func fatal(err error) {
 const bootstrapHandoffOpener = `if [ "$E2E_STOP_AFTER" = bootstrap ]; then`
 
 const imageHandoffOpener = `if [ "$E2E_STOP_AFTER" = images ]; then`
-
-const dataPlanePrepareOpener = `if [ "$E2E_DATAPLANE_MODE" = prepare ]; then`
-
-// auditDataPlanePrepareHandoff audits the data plane's one early exit: the mode
-// another suite runs it in to stand up the namespace its own phases need.
-//
-// The same terms as the harness hand-offs, and then hidden from the early-exit
-// scan so every other early exit in the phase is still refused. What it must be
-// is a stop rather than a shortcut: it says what it prepared, latches the phase
-// as complete so the exit trap reports a pass, and ends at its own exit. What it
-// must not do is claim the phase's acceptance, so the line it prints names the
-// prerequisites and nothing else.
-func auditDataPlanePrepareHandoff(path string, contents []byte) ([]byte, error) {
-	opener := []byte("\n" + dataPlanePrepareOpener + "\n")
-	start := bytes.Index(contents, opener)
-	if start < 0 {
-		return nil, fmt.Errorf("%s: the preparation hand-off is missing its audited opener", path)
-	}
-	if bytes.Count(contents, opener) != 1 {
-		return nil, fmt.Errorf("%s: the preparation hand-off opener appears more than once", path)
-	}
-	closer := []byte("\nfi\n")
-	end := bytes.Index(contents[start+len(opener):], closer)
-	if end < 0 {
-		return nil, fmt.Errorf("%s: the preparation hand-off is not closed at column zero", path)
-	}
-	block := contents[start+len(opener) : start+len(opener)+end]
-
-	for _, required := range []string{
-		"PASS prerequisites only",
-		"PHASE_COMPLETED=1",
-	} {
-		if !bytes.Contains(block, []byte(required)) {
-			return nil, fmt.Errorf(
-				"%s: the preparation hand-off does not %s, so stopping at the prerequisites is not what it does",
-				path, required)
-		}
-	}
-	lines := bytes.Split(bytes.TrimRight(block, "\n"), []byte("\n"))
-	if last := bytes.TrimSpace(lines[len(lines)-1]); !bytes.Equal(last, []byte("exit 0")) {
-		return nil, fmt.Errorf("%s: the preparation hand-off ends with %q rather than its exit", path, last)
-	}
-	if count := bytes.Count(block, []byte("exit")); count != 1 {
-		return nil, fmt.Errorf(
-			"%s: the preparation hand-off holds %d exits; it may hold the one it ends with", path, count)
-	}
-
-	masked := append([]byte(nil), contents...)
-	for index := start + len(opener); index < start+len(opener)+end; index++ {
-		if masked[index] != '\n' {
-			masked[index] = ' '
-		}
-	}
-	return masked, nil
-}
 
 // auditImageHandoff audits the harness's second early exit: the mode that builds
 // the four task images, writes them for the matrix to load, and stops before a

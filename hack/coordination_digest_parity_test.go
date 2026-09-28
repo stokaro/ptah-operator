@@ -34,7 +34,6 @@ type shellDerivation struct {
 }
 
 var shellDerivations = []shellDerivation{
-	{script: "e2e-dataplane.sh", hash: "sha256", function: "coordination_digest"},
 	{script: "e2e-reference-data.sh", hash: "sha256", function: "coordination_digest"},
 	{script: "e2e-migrations.sh", hash: "sha256", function: "realm_digest", realm: true},
 }

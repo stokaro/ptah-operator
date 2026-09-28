@@ -1,9 +1,7 @@
 package workload
 
 import (
-	"bytes"
 	"encoding/json"
-	"os/exec"
 	"reflect"
 	"slices"
 	"strings"
@@ -245,66 +243,6 @@ func TestBuilderNamesTheDefaultServiceAccountWhenTheSchemaOmitsOne(t *testing.T)
 	}
 	if got := namedJob.Spec.Template.Spec.ServiceAccountName; got != "schema-jobs" {
 		t.Fatalf("ServiceAccountName = %q, want the account the schema names", got)
-	}
-}
-
-func TestSourceIsolationFilterAcceptsJSONRoundTrippedBuilderJobs(t *testing.T) {
-	for _, mode := range []operatorv1alpha1.RegistryAuthMode{
-		operatorv1alpha1.RegistryAuthEnvironment,
-		operatorv1alpha1.RegistryAuthDockerConfigJSON,
-	} {
-		mode := mode
-		t.Run(string(mode), func(t *testing.T) {
-			schema := sourceContractSchemaFixture(mode)
-			builder := builderFixture()
-			jobs := &batchv1.JobList{}
-			for _, operation := range []operatorv1alpha1.OperationType{
-				operatorv1alpha1.OperationResolve,
-				operatorv1alpha1.OperationVerify,
-			} {
-				operationStatus := operationFixture(operation)
-				operationStatus.ID = digest('8')
-				job, err := builder.Build(schema.DeepCopy(), operationStatus, nil)
-				if err != nil {
-					t.Fatalf("Build(%s) error = %v", operation, err)
-				}
-				payload, err := json.Marshal(job)
-				if err != nil {
-					t.Fatalf("marshal %s Job: %v", operation, err)
-				}
-				var roundTripped batchv1.Job
-				if err := json.Unmarshal(payload, &roundTripped); err != nil {
-					t.Fatalf("round-trip %s Job: %v", operation, err)
-				}
-				jobs.Items = append(jobs.Items, roundTripped)
-			}
-
-			payload, err := json.Marshal(jobs)
-			if err != nil {
-				t.Fatal(err)
-			}
-			command := exec.Command(
-				"jq", "-e",
-				"--arg", "databaseSecret", "database-url",
-				"--arg", "registrySecret", schema.Spec.Desired.RegistryAuthFrom.Name,
-				"--arg", "registryAuthority", "registry.example:5000",
-				"--arg", "authMode", string(mode),
-				"--arg", "executorImage", builder.ExecutorImage,
-				"--arg", "runnerImage", builder.RunnerImage,
-				"--arg", "verificationPolicy", schema.Spec.Desired.VerificationPolicyFrom.Name,
-				// The fixture leaves spec.execution.serviceAccountName empty, and the
-				// builder writes the namespace default in its place.
-				"--arg", "serviceAccountName", "default",
-				"--argjson", "imagePullSecrets", "[]",
-				"--arg", "requestedReference", schema.Spec.Desired.OCIRef,
-				"--arg", "resolvedReference", schema.Status.Source.ResolvedReference,
-				"-f", "../../testdata/e2e/source-job-isolation.jq",
-			)
-			command.Stdin = bytes.NewReader(payload)
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("source isolation filter rejected Builder Jobs: %v\n%s", err, output)
-			}
-		})
 	}
 }
 

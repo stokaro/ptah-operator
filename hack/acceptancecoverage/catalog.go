@@ -200,7 +200,8 @@ func parseDriverPhases(source string) []driverPhase {
 
 // phaseScenarios reads the scenarios a phase records: a shell phase's
 // stopwatch marks, or the scenarios a Go phase declares in test/e2e/phases,
-// which the harness refuses to end the phase without running.
+// which the harness refuses to end the phase without running, followed by the
+// stopwatch marks of the shell phases it still runs inside itself.
 func phaseScenarios(root string, phase driverPhase) ([]string, error) {
 	if phase.goPhase == "" {
 		return readScenarios(root, phase.script)
@@ -209,12 +210,20 @@ func phaseScenarios(root string, phase driverPhase) ([]string, error) {
 	if !found {
 		return nil, fmt.Errorf("phase %q runs the Go phase %q, which test/e2e/phases does not declare", phase.name, phase.goPhase)
 	}
-	return slices.Clone(declared.Scenarios), nil
+	scenarios := slices.Clone(declared.Scenarios)
+	for _, nested := range declared.NestedScripts {
+		source, err := os.ReadFile(filepath.Join(root, nested)) //nolint:gosec // A path the phase catalog declares.
+		if err != nil {
+			return nil, fmt.Errorf("the Go phase %q runs %s: %w", phase.goPhase, nested, err)
+		}
+		scenarios = append(scenarios, markedScenarios(string(source))...)
+	}
+	return scenarios, nil
 }
 
 // readScenarios reads the stopwatch marks a phase script names, following the
-// one level of nesting the driver's longest phase uses: fault injection runs
-// inside the data plane and its scenarios belong to that phase.
+// one level of nesting a shell phase may use: a phase run inside another
+// records its scenarios as that phase's.
 func readScenarios(root, script string) ([]string, error) {
 	source, err := os.ReadFile(filepath.Join(root, "hack", script)) //nolint:gosec // A path built from the repository root.
 	if err != nil {

@@ -2808,6 +2808,8 @@ E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 	run_recorded_phase cert-rotation run_go_phase cert-rotation
 
+# The data plane is a Go phase too, and it still runs the restart and fault
+# injection, hack/e2e-faults.sh, inside itself with the environment below.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
@@ -2839,7 +2841,7 @@ E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
 E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
 E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
 E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
-	run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"
+	run_recorded_phase dataplane run_go_phase dataplane
 
 # The migration path runs after the data plane and inside its namespace, on a
 # database of its own. The PostgreSQL, the registry credentials, and the

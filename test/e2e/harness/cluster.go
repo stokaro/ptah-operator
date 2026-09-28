@@ -146,6 +146,26 @@ func (c *Cluster) Describe(ctx context.Context, w io.Writer, namespace, kind, na
 	}
 }
 
+// Kubectl runs the kubectl CLI against the cluster and returns what it wrote
+// on standard output and standard error, separately. A phase reaches for it
+// where the API has no typed call that says the same thing: running a command
+// inside a Pod, which kubectl streams over a protocol the client libraries the
+// harness links do not carry. Everything a phase reads or writes goes through
+// Client.
+func (c *Cluster) Kubectl(ctx context.Context, arguments ...string) (stdout, stderr []byte, err error) {
+	var out, errOut bytes.Buffer
+	command := exec.CommandContext(ctx, "kubectl", append([]string{"--kubeconfig", c.Kubeconfig}, arguments...)...) //nolint:gosec // Arguments, not a shell.
+	command.Stdout, command.Stderr = &out, &errOut
+	err = command.Run()
+	return out.Bytes(), errOut.Bytes(), err
+}
+
+// Raw reads one path from the API server, as `kubectl get --raw` does: a
+// Pod's proxy subresource, which answers with whatever the Pod serves.
+func (c *Cluster) Raw(ctx context.Context, path string) ([]byte, error) {
+	return c.Clientset.CoreV1().RESTClient().Get().AbsPath(path).DoRaw(ctx)
+}
+
 // Helm runs the helm CLI against the cluster and returns what it printed on
 // standard output. Its standard error goes to the phase's as it is written,
 // as it did when a shell phase ran it, so a refusal is in the log above the

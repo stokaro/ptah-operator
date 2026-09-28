@@ -64,7 +64,7 @@ case $RERUN_PHASE in
 	ha) RERUN_SCRIPT=hack/e2e-ha.sh ;;
 	assert) RERUN_GO_PHASE=assert ;;
 	cert-rotation) RERUN_GO_PHASE=cert-rotation ;;
-	dataplane) RERUN_SCRIPT=hack/e2e-dataplane.sh ;;
+	dataplane) RERUN_GO_PHASE=dataplane ;;
 	migrations-postgresql | migrations-mysql) RERUN_SCRIPT=hack/e2e-migrations.sh ;;
 	reference-data-postgresql | reference-data-mysql) RERUN_SCRIPT=hack/e2e-reference-data.sh ;;
 	*) fail "unsupported phase $RERUN_PHASE" ;;
