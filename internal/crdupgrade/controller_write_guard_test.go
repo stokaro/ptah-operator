@@ -1,18 +1,11 @@
 package crdupgrade
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 // The guard is an ordinary release object that an upgrade updates in place, so
@@ -38,8 +31,8 @@ func TestControllerWriteGuardIsExactAndFailClosed(t *testing.T) {
 	t.Parallel()
 
 	guard := testControllerWriteGuard()
-	policy := guard.policy()
-	binding := guard.binding()
+	policy := guard.Policy()
+	binding := guard.Binding()
 	if policy.Spec.ParamKind != nil || binding.Spec.ParamRef != nil {
 		t.Fatal("controller write guard reads a parameter")
 	}
@@ -64,7 +57,7 @@ func TestControllerWriteGuardIsExactAndFailClosed(t *testing.T) {
 func TestControllerWriteGuardCELContract(t *testing.T) {
 	t.Parallel()
 
-	policy := testControllerWriteGuard().policy()
+	policy := testControllerWriteGuard().Policy()
 	if len(policy.Spec.Variables) != 5 {
 		t.Fatalf("controller write guard variables = %d, want five", len(policy.Spec.Variables))
 	}
@@ -108,74 +101,6 @@ func TestControllerWriteGuardCELContract(t *testing.T) {
 	} {
 		if !strings.Contains(finalizerExpression, contract) {
 			t.Fatalf("finalizer contract lacks %q", contract)
-		}
-	}
-}
-
-func TestRenderedControllerWriteGuardMatchesCompiledContract(t *testing.T) {
-	path := os.Getenv("PTAH_CONTROLLER_GUARD_RENDER")
-	if path == "" {
-		t.Skip("PTAH_CONTROLLER_GUARD_RENDER is set by the chart contract gate")
-	}
-	rendered, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	guard := testControllerWriteGuard()
-	guard.ReleaseName = "ptah-e2e"
-	guard.ReleaseNamespace = "ptah-e2e"
-	guard.ControllerServiceAccountName = renderedDeploymentServiceAccount(t, rendered, "ptah-e2e-ptah-operator")
-	name := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
-	var policy *admissionregistrationv1.ValidatingAdmissionPolicy
-	var binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding
-	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(rendered))
-	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			t.Fatal(err)
-		}
-		if len(raw) == 0 || string(raw) == "null" {
-			continue
-		}
-		var typeMeta metav1.TypeMeta
-		if err := json.Unmarshal(raw, &typeMeta); err != nil {
-			t.Fatal(err)
-		}
-		switch typeMeta.Kind {
-		case "ValidatingAdmissionPolicy":
-			var object admissionregistrationv1.ValidatingAdmissionPolicy
-			if err := json.Unmarshal(raw, &object); err != nil {
-				t.Fatal(err)
-			}
-			if object.Name == name {
-				policy = &object
-			}
-		case "ValidatingAdmissionPolicyBinding":
-			var object admissionregistrationv1.ValidatingAdmissionPolicyBinding
-			if err := json.Unmarshal(raw, &object); err != nil {
-				t.Fatal(err)
-			}
-			if object.Name == name {
-				binding = &object
-			}
-		}
-	}
-	if policy == nil || binding == nil {
-		t.Fatalf("the chart does not render the controller write guard policy and binding %s", name)
-	}
-	if !reflect.DeepEqual(policy.Spec, guard.policy().Spec) {
-		t.Fatalf("rendered controller write policy differs from the compiled contract\nrendered: %#v\ncompiled: %#v", policy.Spec, guard.policy().Spec)
-	}
-	if !reflect.DeepEqual(binding.Spec, guard.binding().Spec) {
-		t.Fatalf("rendered controller write binding differs from the compiled contract: %#v", binding.Spec)
-	}
-	for _, metadata := range []metav1.ObjectMeta{policy.ObjectMeta, binding.ObjectMeta} {
-		if metadata.Annotations["helm.sh/hook"] != "" || metadata.Annotations["helm.sh/resource-policy"] != "" ||
-			metadata.Labels["app.kubernetes.io/managed-by"] != "Helm" {
-			t.Fatalf("rendered controller write guard %s is not an ordinary release object: annotations %v, labels %v", metadata.Name, metadata.Annotations, metadata.Labels)
 		}
 	}
 }

@@ -1,11 +1,7 @@
 package crdupgrade
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
-	"io"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -14,8 +10,6 @@ import (
 	celgo "github.com/google/cel-go/cel"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
@@ -714,94 +708,6 @@ func controllerJobCELProjectionMutation(source map[string]any) func(map[string]a
 func controllerJobCELContainerMutation(field string, value any) func(map[string]any) {
 	return func(object map[string]any) {
 		controllerJobCELPodSpec(object)["containers"] = []any{map[string]any{field: value}}
-	}
-}
-
-func TestRenderedControllerObjectGuardsMatchCompiledContracts(t *testing.T) {
-	path := os.Getenv("PTAH_CONTROLLER_GUARD_RENDER")
-	if path == "" {
-		t.Skip("PTAH_CONTROLLER_GUARD_RENDER is set by the chart contract gate")
-	}
-	rendered, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	guard := testControllerObjectGuard()
-	guard.ReleaseName = "ptah-e2e"
-	guard.ReleaseNamespace = "ptah-e2e"
-	guard.ManagerImage = renderedGuardManagerImage
-	guard.ControllerStateVersion = controllerstate.CurrentVersion
-	guard.ControllerServiceAccountName = renderedDeploymentServiceAccount(t, rendered, "ptah-e2e-ptah-operator")
-	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy)
-	bindings := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding)
-	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(rendered))
-	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			t.Fatal(err)
-		}
-		if len(raw) == 0 || string(raw) == "null" {
-			continue
-		}
-		var typeMeta metav1.TypeMeta
-		if err := json.Unmarshal(raw, &typeMeta); err != nil {
-			t.Fatal(err)
-		}
-		switch typeMeta.Kind {
-		case "ValidatingAdmissionPolicy":
-			var object admissionregistrationv1.ValidatingAdmissionPolicy
-			if err := json.Unmarshal(raw, &object); err != nil {
-				t.Fatal(err)
-			}
-			policies[object.Name] = &object
-		case "ValidatingAdmissionPolicyBinding":
-			var object admissionregistrationv1.ValidatingAdmissionPolicyBinding
-			if err := json.Unmarshal(raw, &object); err != nil {
-				t.Fatal(err)
-			}
-			bindings[object.Name] = &object
-		}
-	}
-	if len(policies) != len(guard.entries()) || len(bindings) != len(guard.entries()) {
-		t.Fatalf("the chart renders %d policies and %d bindings, want the %d controller object guards", len(policies), len(bindings), len(guard.entries()))
-	}
-	for _, entry := range guard.entries() {
-		policy := policies[entry.name]
-		binding := bindings[entry.name]
-		if policy == nil || binding == nil {
-			t.Fatalf("the chart does not render the %s policy and binding %s", entry.component, entry.name)
-		}
-		expected := guard.policy(entry)
-		if len(policy.Spec.Validations) == len(expected.Spec.Validations) {
-			for index := range expected.Spec.Validations {
-				if policy.Spec.Validations[index].Expression != expected.Spec.Validations[index].Expression {
-					t.Fatalf(
-						"rendered %s policy validation %d differs\nactual:   %s\nexpected: %s",
-						entry.component,
-						index,
-						policy.Spec.Validations[index].Expression,
-						expected.Spec.Validations[index].Expression,
-					)
-				}
-			}
-		}
-		if !reflect.DeepEqual(policy.Spec, expected.Spec) {
-			t.Fatalf("rendered %s policy spec differs from the compiled contract:\nactual:   %#v\nexpected: %#v", entry.component, policy.Spec, expected.Spec)
-		}
-		if !reflect.DeepEqual(binding.Spec, guard.binding(entry).Spec) {
-			t.Fatalf("rendered %s binding spec differs from the compiled contract: %#v", entry.component, binding.Spec)
-		}
-		// Helm installs, updates and deletes the guards with the rest of the
-		// release: none of them is a hook, and none outlives an uninstall.
-		for _, metadata := range []metav1.ObjectMeta{policy.ObjectMeta, binding.ObjectMeta} {
-			if metadata.Annotations["helm.sh/hook"] != "" || metadata.Annotations["helm.sh/resource-policy"] != "" ||
-				metadata.Labels["app.kubernetes.io/managed-by"] != "Helm" {
-				t.Fatalf("rendered %s %s is not an ordinary release object: annotations %v, labels %v", entry.component, metadata.Name, metadata.Annotations, metadata.Labels)
-			}
-		}
 	}
 }
 

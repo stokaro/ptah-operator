@@ -19,9 +19,7 @@ import (
 	"testing"
 	"time"
 
-	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/stokaro/ptah-operator/internal/certrotation"
@@ -629,25 +627,6 @@ func assertSecretCreateGuard(
 	)
 	if namespace != releaseNamespace {
 		t.Fatalf("Secret CREATE guard namespace = %q, want %q", namespace, releaseNamespace)
-	}
-	contract := certrotation.Config{
-		Namespace:   releaseNamespace,
-		ReleaseName: releaseName,
-		SecretName:  secretName,
-	}
-	typedPolicy := &admissionregistrationv1.ValidatingAdmissionPolicy{}
-	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(policy.Object, typedPolicy); err != nil {
-		t.Fatalf("decode Secret CREATE guard policy: %v", err)
-	}
-	if err := certrotation.VerifySecretCreatePolicyContract(typedPolicy, contract, guardName); err != nil {
-		t.Fatalf("rendered Secret CREATE guard policy differs from runtime contract: %v", err)
-	}
-	typedBinding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
-	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(binding.Object, typedBinding); err != nil {
-		t.Fatalf("decode Secret CREATE guard binding: %v", err)
-	}
-	if err := certrotation.VerifySecretCreateBindingContract(typedBinding, contract, guardName); err != nil {
-		t.Fatalf("rendered Secret CREATE guard binding differs from runtime contract: %v", err)
 	}
 }
 

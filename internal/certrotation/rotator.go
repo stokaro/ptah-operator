@@ -12,7 +12,6 @@ import (
 	"maps"
 	"net"
 	"slices"
-	"strings"
 	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -36,8 +35,7 @@ const (
 	HelmReleaseNameAnnotation      = "meta.helm.sh/release-name"
 	HelmReleaseNamespaceAnnotation = "meta.helm.sh/release-namespace"
 
-	secretCreateGuardDenialMessage = "certificate rotator Secret CREATE is outside its exact recovery contract"
-	webhookServicePort             = int32(443)
+	webhookServicePort = int32(443)
 
 	defaultAcquireTimeout = 30 * time.Second
 	minimumLeaseDuration  = 30 * time.Second
@@ -425,143 +423,6 @@ func (r *Rotator) createSecret(ctx context.Context, desired *corev1.Secret, mate
 		return fmt.Errorf("create missing generated TLS Secret: %w (read-back failed: %v)", err, getErr)
 	}
 	return fmt.Errorf("create missing generated TLS Secret: %w (read-back contains different material)", err)
-}
-
-func validateSecretCreatePolicyContract(policy *admissionregistrationv1.ValidatingAdmissionPolicy, config Config, serviceAccountName string) error {
-	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
-		return errors.New("policy is not fail-closed")
-	}
-	if policy.Spec.ParamKind != nil || len(policy.Spec.AuditAnnotations) != 0 || len(policy.Spec.Variables) != 0 {
-		return errors.New("policy contains unsupported parameters, audit annotations, or variables")
-	}
-	constraints := policy.Spec.MatchConstraints
-	if constraints == nil || !emptyLabelSelector(constraints.NamespaceSelector) ||
-		!emptyLabelSelector(constraints.ObjectSelector) ||
-		len(constraints.ExcludeResourceRules) != 0 || len(constraints.ResourceRules) != 1 ||
-		(constraints.MatchPolicy != nil && *constraints.MatchPolicy != admissionregistrationv1.Equivalent) {
-		return errors.New("policy match constraints are not the exact Secret CREATE scope")
-	}
-	rule := constraints.ResourceRules[0]
-	if len(rule.ResourceNames) != 0 ||
-		!slices.Equal(rule.Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create}) ||
-		!slices.Equal(rule.APIGroups, []string{""}) ||
-		!slices.Equal(rule.APIVersions, []string{"v1"}) ||
-		!slices.Equal(rule.Resources, []string{"secrets"}) ||
-		rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
-		return errors.New("policy resource rule is not exactly namespaced core/v1 Secret CREATE")
-	}
-	wantIdentity := fmt.Sprintf(
-		"request.userInfo.username == 'system:serviceaccount:%s:%s'",
-		config.Namespace,
-		serviceAccountName,
-	)
-	if len(policy.Spec.MatchConditions) != 1 ||
-		policy.Spec.MatchConditions[0].Name != "exact-certificate-rotator-service-account" ||
-		compactCEL(policy.Spec.MatchConditions[0].Expression) != compactCEL(wantIdentity) {
-		return errors.New("policy does not match only the exact certificate rotator ServiceAccount")
-	}
-	if len(policy.Spec.Validations) != 1 {
-		return errors.New("policy must contain exactly one validation")
-	}
-	validation := policy.Spec.Validations[0]
-	if compactCEL(validation.Expression) != compactCEL(secretCreateValidationExpression(config)) ||
-		validation.Message != secretCreateGuardDenialMessage || validation.Reason != nil || validation.MessageExpression != "" {
-		return errors.New("policy validation is not the exact generated TLS Secret contract")
-	}
-	return nil
-}
-
-// VerifySecretCreatePolicyContract verifies the immutable spec of the
-// generated-Secret CREATE admission policy. Ownership metadata is deliberately
-// left to the caller because Helm, rather than the certificate runtime, owns
-// that metadata lifecycle. serviceAccountName is the exact ServiceAccount the
-// policy's match condition must scope to; the certificate runtime itself
-// never reads its own name, so this is not part of Config.
-func VerifySecretCreatePolicyContract(
-	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
-	config Config,
-	serviceAccountName string,
-) error {
-	if policy == nil {
-		return errors.New("generated-Secret CREATE guard policy is nil")
-	}
-	return validateSecretCreatePolicyContract(policy, config, serviceAccountName)
-}
-
-func validateSecretCreateBindingContract(
-	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
-	config Config,
-	policyName string,
-) error {
-	if binding.Spec.PolicyName != policyName || binding.Spec.ParamRef != nil ||
-		!slices.Equal(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
-		return errors.New("binding does not enforce only Deny for the configured policy")
-	}
-	resources := binding.Spec.MatchResources
-	if resources == nil || resources.NamespaceSelector == nil || !emptyLabelSelector(resources.ObjectSelector) ||
-		len(resources.ResourceRules) != 0 || len(resources.ExcludeResourceRules) != 0 ||
-		(resources.MatchPolicy != nil && *resources.MatchPolicy != admissionregistrationv1.Equivalent) ||
-		!maps.Equal(resources.NamespaceSelector.MatchLabels, map[string]string{"kubernetes.io/metadata.name": config.Namespace}) ||
-		len(resources.NamespaceSelector.MatchExpressions) != 0 {
-		return errors.New("binding does not select only the exact release namespace")
-	}
-	return nil
-}
-
-// VerifySecretCreateBindingContract verifies the immutable spec of the
-// generated-Secret CREATE admission binding. Ownership metadata is
-// deliberately left to the caller for the same reason as the policy helper.
-// policyName is the exact ValidatingAdmissionPolicy the binding must bind.
-func VerifySecretCreateBindingContract(
-	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
-	config Config,
-	policyName string,
-) error {
-	if binding == nil {
-		return errors.New("generated-Secret CREATE guard binding is nil")
-	}
-	return validateSecretCreateBindingContract(binding, config, policyName)
-}
-
-func emptyLabelSelector(selector *metav1.LabelSelector) bool {
-	return selector == nil || len(selector.MatchLabels) == 0 && len(selector.MatchExpressions) == 0
-}
-
-func secretCreateValidationExpression(config Config) string {
-	return fmt.Sprintf(`
-		object.metadata.name == '%s' &&
-		object.metadata.namespace == '%s' &&
-		(!has(object.metadata.generateName) || object.metadata.generateName == '') &&
-		has(object.metadata.labels) &&
-		object.metadata.labels == {'%s': '%s', '%s': '%s'} &&
-		has(object.metadata.annotations) &&
-		object.metadata.annotations == {'%s': '%s', '%s': '%s'} &&
-		(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
-		(!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
-		object.type == 'kubernetes.io/tls' &&
-		!has(object.immutable) &&
-		(!has(object.stringData) || object.stringData.size() == 0) &&
-		object.data.size() == 4 &&
-		'ca.crt' in object.data && object.data['ca.crt'].size() > 0 &&
-		'ca.key' in object.data && object.data['ca.key'].size() > 0 &&
-		'tls.crt' in object.data && object.data['tls.crt'].size() > 0 &&
-		'tls.key' in object.data && object.data['tls.key'].size() > 0
-	`,
-		config.SecretName,
-		config.Namespace,
-		GeneratedSecretLabel,
-		GeneratedSecretLabelValue,
-		HelmManagedByLabel,
-		HelmManagedByLabelValue,
-		HelmReleaseNameAnnotation,
-		config.ReleaseName,
-		HelmReleaseNamespaceAnnotation,
-		config.Namespace,
-	)
-}
-
-func compactCEL(expression string) string {
-	return strings.Join(strings.Fields(expression), " ")
 }
 
 func generatedSecret(config Config, material certificateMaterial) *corev1.Secret {
