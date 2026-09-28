@@ -62,8 +62,12 @@ test-race:
 	@# runs them without it.
 	$(GO) test -race -count=1 -timeout=10m -skip '^($(RACE_MUTATION_TESTS))$$' ./...
 
+# The acceptance phases under test/e2e build only with the e2e tag, so a plain
+# go test ./... never reaches for a cluster. Vetting them with the tag is what
+# compiles them here rather than on a kind cluster an hour into a lifecycle.
 vet:
 	$(GO) vet ./...
+	$(GO) vet -tags e2e ./test/e2e/...
 
 fmt-check:
 	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))" || \

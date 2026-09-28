@@ -113,7 +113,7 @@ cleanup() {
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	# The marker is unset when this handler is extracted and run on its own
-	# by hack/e2e_cert_rotation_test.go; there is nothing to report then.
+	# by a test; there is nothing to report then.
 	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
 		if [ "$status" -ne 0 ] && [ ! -f "$PHASE_REASON_MARKER" ]; then
 			printf 'e2e crd: exited with status %s at a command that failed under set -e; no proof reported a reason\n' "$status" >&2
@@ -189,7 +189,7 @@ PHASE_REASON_MARKER=${TMPDIR:-/tmp}/ptah-e2e-reason-crd-upgrade.$$
 fail() {
 	printf 'e2e crd: %s\n' "$*" >&2
 	# Tolerant of an unset marker: this function is also extracted and run on
-	# its own by hack/e2e_cert_rotation_test.go, and a reporting helper that
+	# its own by a test, and a reporting helper that
 	# fails is worse than one that reports nothing.
 	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
 		: >"$PHASE_REASON_MARKER" 2>/dev/null || true

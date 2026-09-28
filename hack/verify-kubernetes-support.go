@@ -33,6 +33,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
+
+	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
 const (
@@ -56,7 +58,6 @@ const (
 	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
 	e2eFaultsPath                  = "hack/e2e-faults.sh"
 	e2eHAPath                      = "hack/e2e-ha.sh"
-	e2eCertRotationPath            = "hack/e2e-cert-rotation.sh"
 	e2eMigrationsPath              = "hack/e2e-migrations.sh"
 	e2eReferenceDataPath           = "hack/e2e-reference-data.sh"
 	e2eAlertingPath                = "hack/e2e-alerting.sh"
@@ -235,7 +236,6 @@ func main() {
 		crdUpgrade:                 e2eCRDUpgradePath,
 		faults:                     e2eFaultsPath,
 		highAvailability:           e2eHAPath,
-		certRotation:               e2eCertRotationPath,
 		migrations:                 e2eMigrationsPath,
 		referenceData:              e2eReferenceDataPath,
 		alerting:                   e2eAlertingPath,
@@ -2272,7 +2272,6 @@ type e2eWiringFiles struct {
 	crdUpgrade                 string
 	faults                     string
 	highAvailability           string
-	certRotation               string
 	failedHookEvidence         string
 	failedHookEvidenceSelftest string
 	admissionSchemaContract    string
@@ -2295,6 +2294,28 @@ type successfulReturnContract struct {
 	start      *regexp.Regexp
 	completion *regexp.Regexp
 }
+
+// goPhaseRunnerContract is how the driver runs a Go phase: the binary the
+// bootstrap built from the snapshot, in the package directory, asked for the
+// phase by name, and passed only when it wrote the phase's name to a record
+// the runner cleared first. The binary owns the rest -- which test is the
+// phase, its bound, and the refusal of a run that reached no phase.
+const goPhaseRunnerContract = `run_go_phase() {
+	go_phase_record=$WORK_DIR/go-phase-$1.completed
+	rm -f -- "$go_phase_record"
+	(cd "$ROOT_DIR/test/e2e" &&
+		"$GO_PHASE_BINARY" -test.v -e2e.phase="$1" -e2e.completed="$go_phase_record") || return 1
+	[ "$(cat -- "$go_phase_record" 2>/dev/null)" = "$1" ] || {
+		printf 'e2e: the Go phase %s exited 0 and recorded no completion, so nothing it ran counts\n' "$1" >&2
+		return 1
+	}
+}`
+
+// goPhaseBinaryAssignment is the one place the driver names the binary the Go
+// phases run from. The build writes it and the runner runs it; a second
+// assignment, or a command that writes something else there, would run
+// another program under every Go phase's name.
+const goPhaseBinaryAssignment = `GO_PHASE_BINARY=$WORK_DIR/ptah-e2e.test`
 
 const apiServerFeatureGatePatchContract = `append_api_server_feature_gate_patch() {
 	feature_gate_minor=$1
@@ -2953,7 +2974,10 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 		{marker: `"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`, count: 2},
 		{marker: `"$ROOT_DIR/hack/e2e-ha.sh"`, count: 1},
 		{marker: `"$ROOT_DIR/hack/e2e-assert.sh"`, count: 1},
-		{marker: `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`, count: 1},
+		// The Go phases run from a binary built out of the snapshot, so the
+		// build has to read the snapshot too. The runner that starts it is
+		// pinned whole below, as goPhaseRunnerContract.
+		{marker: `go -C "$ROOT_DIR" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||`, count: 1},
 		{marker: `"$ROOT_DIR/hack/e2e-dataplane.sh"`, count: 1},
 	}
 	for _, pathContract := range snapshotPaths {
@@ -3352,7 +3376,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("candidate upgrade lifecycle", `run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
 		exactSourceLine("high-availability lifecycle", `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`),
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`),
-		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`),
+		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation run_go_phase cert-rotation`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`),
 		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`),
 		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"`),
@@ -3465,6 +3489,28 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	); err != nil {
 		return err
 	}
+	// Every Go phase passes through this one line, and the binary refuses a
+	// run that reached no phase only if it is asked for one: a runner that
+	// returned without running it would pass every Go phase at once.
+	if err := verifyExactShellFunctionContract(
+		harness,
+		harnessContents,
+		"run_go_phase",
+		goPhaseRunnerContract,
+		"Go phase runner contract",
+	); err != nil {
+		return err
+	}
+	// The runner is pinned whole, and so is what it runs: one assignment of
+	// the binary's path, which the build writes and the runner reads, and no
+	// other mention of the name that could point it somewhere else.
+	if count := len(sourceLinePattern(goPhaseBinaryAssignment).FindAll(harnessContents, -1)); count != 1 {
+		return fmt.Errorf("%s: %s must be assigned exactly once, found %d", harness, goPhaseBinaryAssignment, count)
+	}
+	if count := len(regexp.MustCompile(`GO_PHASE_BINARY\b`).FindAll(harnessContents, -1)); count != 3 {
+		return fmt.Errorf("%s: GO_PHASE_BINARY must appear exactly three times -- assigned, built and run -- and appears %d times",
+			harness, count)
+	}
 	if bytes.Contains(harnessContents, []byte("featureGates:")) {
 		return fmt.Errorf("%s: global kind featureGates are forbidden; guarded fields must be enabled only on the API server", harness)
 	}
@@ -3489,6 +3535,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"image_audit_container_matches_task",
 		"create_image_audit_container",
 		"remove_image_audit_container",
+		"run_go_phase",
 	} {
 		if err := verifySingleShellFunctionDefinition(harness, harnessContents, functionName); err != nil {
 			return err
@@ -4373,21 +4420,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("post-failover failed Resolve lifecycle proof", `wait_for_failed_resolve_lifecycle "$ha_schema_uid"`),
 				exactSourceLine("post-failure custom metrics proof", `assert_custom_operator_metrics "$second_holder" "$resolve_failure_counter_before"`),
 				exactSourceLine("terminal high-availability lifecycle evidence", `printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'`),
-			},
-		},
-		{
-			path:     files.certRotation,
-			exitTrap: "cleanup_upgrade_files",
-			steps: []sourceContractStep{
-				exactSourceLine("fail-fast shell mode", "set -eu"),
-				exactSourceLine("cleanup implementation", `cleanup_upgrade_files() {`),
-				exactSourceLine("cleanup status capture", `status=$?`),
-				exactSourceLine("cleanup status preservation", `exit "$status"`),
-				exactSourceLine("pre-upgrade admission proof call", `assert_approval_admission_callable "before the Helm upgrade"`),
-				exactSourceLine("post-upgrade admission proof call", `assert_approval_admission_callable "after the Helm upgrade"`),
-				exactSourceLine("corrupt-CA recovery identity proof", `[ "$NEW_ROTATOR_UID" != "$OLD_ROTATOR_UID" ] || fail "certificate rotator Pod was not replaced"`),
-				exactSourceLine("missing-Secret recovery identity proof", `[ "$ROTATOR_UID_AFTER_RECREATE" != "$ROTATOR_UID_BEFORE_RECREATE" ] ||`),
-				exactSourceLine("terminal certificate lifecycle evidence", `printf '%s\n' 'e2e certificate rotation: PASS live Helm lookup, corrupt-CA recovery, and exact guarded recreation'`),
 			},
 		},
 	}
@@ -5693,17 +5725,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 			},
 		},
 		{
-			phase:  "cert-rotation",
-			script: "hack/e2e-cert-rotation.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
-				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
-				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
-			},
-		},
-		{
 			phase:  "dataplane",
 			script: "hack/e2e-dataplane.sh",
 			bindings: []phaseEnvironmentBinding{
@@ -5859,11 +5880,30 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 	}
 }
 
+// goPhaseBindings is what the driver binds each input a Go phase reads to.
+//
+// A Go phase declares its inputs in test/e2e/phases, as a struct the compiler
+// holds the phase to, so the half of this audit that reads a shell phase's
+// source for what it expands belongs to the compiler there. What a declaration
+// cannot say is which of the driver's variables feeds an input. That is one
+// line per variable rather than one block per phase, because an input means
+// the same thing in every phase that reads it.
+var goPhaseBindings = map[string]string{
+	"E2E_KUBECONFIG":         `$KUBECONFIG_FILE`,
+	"E2E_OPERATOR_NAMESPACE": `$OPERATOR_NAMESPACE`,
+	"E2E_TEST_NAMESPACE":     `$TEST_NAMESPACE`,
+	"E2E_HELM_RELEASE":       `$HELM_RELEASE`,
+	"E2E_CHART_PACKAGE":      `$CHART_PACKAGE`,
+}
+
 // phaseInvocationPattern matches one `run_recorded_phase <name> "$ROOT_DIR/<script>"`
-// call. The environment is read backwards from it rather than listed here, so
-// what the audit compares against is the command the shell actually builds.
+// call, or one `run_recorded_phase <name> run_go_phase <phase>` call for a
+// phase the Go harness carries. The environment is read backwards from it
+// rather than listed here, so what the audit compares against is the command
+// the shell actually builds.
 var phaseInvocationPattern = regexp.MustCompile(
-	`(?m)^[ \t]*run_recorded_phase ([a-z][a-z0-9-]*) "\$ROOT_DIR/(hack/[a-z0-9-]+\.sh)"[ \t]*\r?$`)
+	`(?m)^[ \t]*run_recorded_phase ([a-z][a-z0-9-]*) ` +
+		`(?:"\$ROOT_DIR/(hack/[a-z0-9-]+\.sh)"|run_go_phase ([a-z][a-z0-9-]*))[ \t]*\r?$`)
 
 var phaseEnvironmentAssignmentPattern = regexp.MustCompile(
 	`(?m)^[ \t]*([A-Za-z_][A-Za-z0-9_]*)=(\S*) \\[ \t]*\r?$`)
@@ -5880,8 +5920,10 @@ var e2eVariableAssignmentPattern = regexp.MustCompile(
 	`(?m)^[ \t]*(?:export[ \t]+)?(E2E_[A-Z0-9_]+)=`)
 
 type phaseInvocation struct {
-	phase    string
-	script   string
+	phase  string
+	script string
+	// goPhase is the phase run_go_phase is asked for, empty for a script.
+	goPhase  string
 	bindings []phaseEnvironmentBinding
 }
 
@@ -5897,7 +5939,7 @@ func findPhaseInvocations(contents []byte) []phaseInvocation {
 		if match == nil {
 			continue
 		}
-		invocation := phaseInvocation{phase: match[1], script: match[2]}
+		invocation := phaseInvocation{phase: match[1], script: match[2], goPhase: match[3]}
 		for previous := index - 1; previous >= 0; previous-- {
 			assignment := phaseEnvironmentAssignmentPattern.FindStringSubmatch(lines[previous] + "\n")
 			if assignment == nil {
@@ -5997,15 +6039,27 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 		}
 		seen[invocation.phase] = invocation
 	}
+	goPhases := map[string]phases.Phase{}
+	for _, phase := range phases.All() {
+		goPhases[phase.Name] = phase
+	}
 	for _, contract := range phaseEnvironmentContracts() {
+		if _, ported := goPhases[contract.phase]; ported {
+			return fmt.Errorf("lifecycle phase %q has both a shell environment contract and a Go declaration in test/e2e/phases; one of them is dead",
+				contract.phase)
+		}
 		invocation, present := seen[contract.phase]
 		if !present {
 			return fmt.Errorf("%s: lifecycle phase %q is never invoked", files.harness, contract.phase)
 		}
 		delete(seen, contract.phase)
 		if invocation.script != contract.script {
+			running := invocation.script
+			if invocation.goPhase != "" {
+				running = "the Go phase " + invocation.goPhase
+			}
 			return fmt.Errorf("%s: lifecycle phase %q must run %s, not %s",
-				files.harness, contract.phase, contract.script, invocation.script)
+				files.harness, contract.phase, contract.script, running)
 		}
 		if err := verifyPhaseBindings(files.harness, contract, invocation); err != nil {
 			return err
@@ -6014,9 +6068,65 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 			return err
 		}
 	}
+	for _, phase := range phases.All() {
+		invocation, present := seen[phase.Name]
+		if !present {
+			return fmt.Errorf("%s: Go phase %q is never invoked", files.harness, phase.Name)
+		}
+		delete(seen, phase.Name)
+		if err := verifyGoPhaseInvocation(files.harness, phase, invocation); err != nil {
+			return err
+		}
+	}
 	for phase := range seen {
 		return fmt.Errorf("%s: lifecycle phase %q is invoked but declares no environment contract",
 			files.harness, phase)
+	}
+	return nil
+}
+
+// verifyGoPhaseInvocation holds the driver's call of a Go phase to the inputs
+// test/e2e/phases declares for it: every one bound, to the driver variable
+// goPhaseBindings names, and nothing else. The phase cannot read an input it
+// did not declare, since it only ever sees its own struct, so a binding beyond
+// the declaration is one nothing reads.
+func verifyGoPhaseInvocation(path string, phase phases.Phase, invocation phaseInvocation) error {
+	if invocation.goPhase == "" {
+		return fmt.Errorf("%s: %s is a Go phase and must run through run_go_phase %s, not %s",
+			path, phase.Name, phase.Name, invocation.script)
+	}
+	if invocation.goPhase != phase.Name {
+		return fmt.Errorf("%s: run_recorded_phase %s runs the Go phase %s; the ledger would name one phase and the binary run another",
+			path, phase.Name, invocation.goPhase)
+	}
+	declared := map[string]bool{}
+	for _, name := range phase.Inputs() {
+		declared[name] = true
+	}
+	bound := map[string]string{}
+	for _, binding := range invocation.bindings {
+		if _, duplicate := bound[binding.name]; duplicate {
+			return fmt.Errorf("%s: %s phase binds %s twice", path, phase.Name, binding.name)
+		}
+		if !declared[binding.name] {
+			return fmt.Errorf("%s: %s phase binds %s, which test/e2e/phases does not declare it reads",
+				path, phase.Name, binding.name)
+		}
+		bound[binding.name] = binding.value
+	}
+	for _, name := range phase.Inputs() {
+		want, known := goPhaseBindings[name]
+		if !known {
+			return fmt.Errorf("%s: %s phase reads %s, and goPhaseBindings does not say which driver variable feeds it",
+				path, phase.Name, name)
+		}
+		value, present := bound[name]
+		if !present {
+			return fmt.Errorf("%s: %s phase must bind %s to %q, and binds nothing", path, phase.Name, name, want)
+		}
+		if value != want {
+			return fmt.Errorf("%s: %s phase must bind %s to %q, and binds %q", path, phase.Name, name, want, value)
+		}
 	}
 	return nil
 }
@@ -6099,8 +6209,6 @@ func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
 		return files.highAvailability
 	case e2eAssertPath:
 		return files.assertions
-	case e2eCertRotationPath:
-		return files.certRotation
 	case e2eDataPlanePath:
 		return files.dataPlane
 	case e2eMigrationsPath:
@@ -6848,13 +6956,19 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 // isolation worker, fails on a node that does not exist. A suite that declares
 // the worker and runs no such phase pays for a node nothing uses, on a cluster
 // that is no longer the one its phases were measured on. Which phases isolate a
-// node is the phase environment contracts' to say, and
-// verifyPhaseEnvironmentContracts holds each of them to its script.
+// node is for the shell phases' environment contracts and the Go phases'
+// declarations in test/e2e/phases to say, and verifyPhaseEnvironmentContracts
+// holds each shell phase to its script.
 func verifyE2ESuiteIsolationWorker(catalog e2eSuiteCatalog) error {
 	isolating := map[string]bool{}
 	for _, contract := range phaseEnvironmentContracts() {
 		if contract.isolatesNode {
 			isolating[contract.phase] = true
+		}
+	}
+	for _, phase := range phases.All() {
+		if phase.IsolatesNode {
+			isolating[phase.Name] = true
 		}
 	}
 	if len(isolating) == 0 {

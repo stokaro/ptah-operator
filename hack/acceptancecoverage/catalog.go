@@ -5,11 +5,12 @@
 // required cell, the scenarios it executed, and the evidence that it passed.
 // Every part of that except the evidence is already written down somewhere in
 // this repository: the supported Kubernetes minors in support/kubernetes.json,
-// the suites and their phases in support/e2e-suites.json, the script each
-// phase runs and the engine it is handed in hack/e2e-kind.sh, and the
-// scenarios inside the longest phases in their own stopwatch marks.
+// the suites and their phases in support/e2e-suites.json, the script or Go
+// phase each phase runs and the engine it is handed in hack/e2e-kind.sh, and
+// the scenarios inside a phase in its stopwatch marks or, for a Go phase, in
+// its declaration in test/e2e/phases.
 //
-// A table typed out by hand from those four sources is a fifth copy, and the
+// A table typed out by hand from those sources is one more copy, and the
 // first one to go stale. This reads them.
 package main
 
@@ -19,8 +20,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+
+	e2ephases "github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
 // suite is one acceptance suite as the catalog declares it.
@@ -76,18 +80,21 @@ type ptahCatalog struct {
 }
 
 // driverPhase is one phase the lifecycle driver runs: the script that carries
-// it and the engine the driver hands it, if any.
+// it, or the Go phase it asks the harness for, and the engine the driver hands
+// it, if any.
 type driverPhase struct {
-	name   string
-	script string
-	engine string
+	name    string
+	script  string
+	goPhase string
+	engine  string
 }
 
 var (
-	recordedPhase = regexp.MustCompile(`^\s*run_recorded_phase (\S+) "\$ROOT_DIR/hack/(e2e-[a-z-]+\.sh)"`)
-	phaseEngine   = regexp.MustCompile(`^E2E_ENGINE=([a-z]+) \\$`)
-	nestedPhase   = regexp.MustCompile(`"\$ROOT_DIR/hack/(e2e-[a-z-]+\.sh)"`)
-	scenarioMark  = regexp.MustCompile(`(?m)^\s*timing_next scenario (\S+)`)
+	recordedPhase   = regexp.MustCompile(`^\s*run_recorded_phase (\S+) "\$ROOT_DIR/hack/(e2e-[a-z-]+\.sh)"`)
+	recordedGoPhase = regexp.MustCompile(`^\s*run_recorded_phase (\S+) run_go_phase (\S+)\s*$`)
+	phaseEngine     = regexp.MustCompile(`^E2E_ENGINE=([a-z]+) \\$`)
+	nestedPhase     = regexp.MustCompile(`"\$ROOT_DIR/hack/(e2e-[a-z-]+\.sh)"`)
+	scenarioMark    = regexp.MustCompile(`(?m)^\s*timing_next scenario (\S+)`)
 )
 
 // readSuites reads the suite catalog.
@@ -171,6 +178,11 @@ func parseDriverPhases(source string) []driverPhase {
 			engine = match[1]
 			continue
 		}
+		if match := recordedGoPhase.FindStringSubmatch(line); match != nil {
+			phases = append(phases, driverPhase{name: match[1], goPhase: match[2], engine: engine})
+			engine = ""
+			continue
+		}
 		match := recordedPhase.FindStringSubmatch(line)
 		if match == nil {
 			// Any line that is not part of an environment block ends it, so an
@@ -184,6 +196,20 @@ func parseDriverPhases(source string) []driverPhase {
 		engine = ""
 	}
 	return phases
+}
+
+// phaseScenarios reads the scenarios a phase records: a shell phase's
+// stopwatch marks, or the scenarios a Go phase declares in test/e2e/phases,
+// which the harness refuses to end the phase without running.
+func phaseScenarios(root string, phase driverPhase) ([]string, error) {
+	if phase.goPhase == "" {
+		return readScenarios(root, phase.script)
+	}
+	declared, found := e2ephases.Lookup(phase.goPhase)
+	if !found {
+		return nil, fmt.Errorf("phase %q runs the Go phase %q, which test/e2e/phases does not declare", phase.name, phase.goPhase)
+	}
+	return slices.Clone(declared.Scenarios), nil
 }
 
 // readScenarios reads the stopwatch marks a phase script names, following the

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	e2ephases "github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
 const repositoryRoot = "../.."
@@ -186,6 +188,60 @@ func TestReadDriverPhasesBindsAnEngineToOnePhase(t *testing.T) {
 				t.Fatalf("the engine travelled to %q, which the driver hands none", phases[1].name)
 			}
 		})
+	}
+}
+
+// A Go phase carries no script. Its scenarios are the ones test/e2e/phases
+// declares, and a phase the harness does not carry is refused rather than
+// reported as a phase that is its own scenario.
+func TestGoPhasesReadTheirDeclaredScenarios(t *testing.T) {
+	t.Parallel()
+	phases := parseDriverPhases(strings.Join([]string{
+		`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
+		`E2E_ENGINE=postgresql \`,
+		"\trun_recorded_phase cert-rotation run_go_phase cert-rotation",
+		"\trun_recorded_phase absent run_go_phase absent",
+	}, "\n"))
+	if len(phases) != 2 {
+		t.Fatalf("read %d phases, want 2: %#v", len(phases), phases)
+	}
+	if phases[0].goPhase != "cert-rotation" || phases[0].script != "" || phases[0].engine != "postgresql" {
+		t.Fatalf("first phase = %#v", phases[0])
+	}
+	if phases[1].engine != "" {
+		t.Fatalf("the engine travelled to %q", phases[1].name)
+	}
+	scenarios, err := phaseScenarios(repositoryRoot, phases[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(scenarios, ",") != strings.Join(e2ephases.CertRotation.Scenarios, ",") {
+		t.Fatalf("scenarios = %v, want the declared %v", scenarios, e2ephases.CertRotation.Scenarios)
+	}
+	if _, err := phaseScenarios(repositoryRoot, phases[1]); err == nil {
+		t.Fatal("a Go phase the harness does not carry was read as having scenarios")
+	}
+
+	// And in the table built from the real driver, the certificate phase
+	// lists what it declares on every minor.
+	table, err := buildCoverage(repositoryRoot, "edge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := 0
+	for _, cell := range table.cells {
+		for _, phase := range cell.phases {
+			if phase.name != "cert-rotation" {
+				continue
+			}
+			listed++
+			if strings.Join(phase.scenarios, ",") != strings.Join(e2ephases.CertRotation.Scenarios, ",") {
+				t.Fatalf("%s lists %v for cert-rotation", cell.ciJobName, phase.scenarios)
+			}
+		}
+	}
+	if listed != len(table.minors) {
+		t.Fatalf("cert-rotation is listed in %d cells, want one per minor (%d)", listed, len(table.minors))
 	}
 }
 

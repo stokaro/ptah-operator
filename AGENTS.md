@@ -161,6 +161,21 @@ phases it claims, that it runs no other suite's phase, and that the preparation
 boundary sits before the data plane's own acceptance — and `make e2e-static`
 runs it.
 
+The phases are moving from shell to Go under `test/e2e`, one suite at a time.
+A Go phase is one test function in a file built only with the `e2e`
+tag, so `go test ./...` never reaches for a cluster; `make vet` compiles it
+with the tag. `test/e2e/phases` declares each one: the name the driver and the
+catalog know it by, the test that is the phase, the environment it reads as a
+struct, the scenarios it records, and its bound. The driver keeps the whole
+bootstrap, builds one test binary from the snapshot before the cluster exists,
+and runs a Go phase as `run_recorded_phase <phase> run_go_phase <phase>`.
+The binary runs that phase's test and nothing else, fails a run in which the
+test did not reach its end, and writes the completion record the driver passes
+the phase on. `hack/verify-kubernetes-support.go` holds the
+call's bindings to the declared inputs, and `test/e2e/harness` writes each
+scenario into the same timing ledger the shell phases do. The certificates
+suite is ported; every other phase is still a script under `hack/`.
+
 What that partition covers is a table rather than a paragraph, and
 `make acceptance-coverage` prints it: every supported minor against every
 suite, the phases each cell runs, the engine the driver hands them, the
@@ -199,8 +214,9 @@ every refusal.
 
 ## Where a run's time went
 
-A lifecycle records one row per stage: the bootstrap steps, each phase, and the
-scenarios inside the four longest phases. The rows land in the ledger
+A lifecycle records one row per stage: the bootstrap steps, each phase, the
+scenarios inside the four longest shell phases, and the scenarios every Go
+phase declares. The rows land in the ledger
 `E2E_TIMING_LEDGER` names, the run's identity in `E2E_TIMING_CONTEXT`, and
 `hack/e2etiming` joins them into a report and a Markdown summary:
 

@@ -162,7 +162,7 @@ PHASE_REASON_MARKER=${TMPDIR:-/tmp}/ptah-e2e-reason-kind.$$
 fail() {
 	printf 'e2e: %s\n' "$*" >&2
 	# Tolerant of an unset marker: this function is also extracted and run on
-	# its own by hack/e2e_cert_rotation_test.go, and a reporting helper that
+	# its own by a test, and a reporting helper that
 	# fails is worse than one that reports nothing.
 	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
 		: >"$PHASE_REASON_MARKER" 2>/dev/null || true
@@ -1619,6 +1619,25 @@ run_recorded_phase() {
 	timing_end pass
 }
 
+# run_go_phase runs one phase the Go harness carries, from the test binary the
+# bootstrap built out of this snapshot, in the package directory go test would
+# run it in. The binary looks the phase up in test/e2e/phases, runs the test
+# that is the phase and nothing else under that phase's own bound, and fails a
+# run in which that test did not reach its end. Only a phase that passed writes
+# its name to the completion record, and the record is what counts here: a
+# binary that exits 0 without running the phase, or a program that is not the
+# binary, leaves none.
+run_go_phase() {
+	go_phase_record=$WORK_DIR/go-phase-$1.completed
+	rm -f -- "$go_phase_record"
+	(cd "$ROOT_DIR/test/e2e" &&
+		"$GO_PHASE_BINARY" -test.v -e2e.phase="$1" -e2e.completed="$go_phase_record") || return 1
+	[ "$(cat -- "$go_phase_record" 2>/dev/null)" = "$1" ] || {
+		printf 'e2e: the Go phase %s exited 0 and recorded no completion, so nothing it ran counts\n' "$1" >&2
+		return 1
+	}
+}
+
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
@@ -1635,7 +1654,7 @@ cleanup() {
 	# Ahead of the retention branch, which exits on its own: a run cleaned up
 	# normally is exactly the one whose reason would otherwise go unsaid. The
 	# marker is unset when this handler is extracted and run on its own by
-	# hack/e2e_cert_rotation_test.go; there is nothing to report then.
+	# a test; there is nothing to report then.
 	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
 		if [ "$status" -ne 0 ] && [ ! -f "$PHASE_REASON_MARKER" ]; then
 			printf 'e2e: exited with status %s at a command that failed under set -e; no proof reported a reason\n' "$status" >&2
@@ -2283,6 +2302,17 @@ if [ "$E2E_STOP_AFTER" = images ]; then
 	exit 0
 fi
 
+# The phases the Go harness carries run from one test binary, built from the
+# snapshot before any cluster exists: a phase that does not compile costs a
+# build rather than a cluster. A bootstrap that stops before its phases runs
+# none of them and builds nothing.
+timing_next bootstrap go-phases
+GO_PHASE_BINARY=$WORK_DIR/ptah-e2e.test
+if [ "$E2E_STOP_AFTER" != bootstrap ]; then
+	go -C "$ROOT_DIR" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||
+		fail "the Go acceptance phases do not compile"
+fi
+
 timing_next bootstrap kind-cluster
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"
 CLUSTER_CREATED=1
@@ -2769,12 +2799,14 @@ E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 	run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"
 
+# The certificate rotation is a Go phase: test/e2e/phases declares what it
+# reads, and hack/verify-kubernetes-support.go holds this call to exactly that.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
-	run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"
+	run_recorded_phase cert-rotation run_go_phase cert-rotation
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \

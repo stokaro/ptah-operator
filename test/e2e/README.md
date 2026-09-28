@@ -96,15 +96,17 @@ through a fresh run. Nothing in CI sets it; the run names what it kept, and the
 caller removes those resources by name afterwards.
 
 Replaying one phase is what `hack/e2e-rerun-phase.sh <work-dir> <phase>` does.
-Each phase is a separate script driven entirely by the environment the harness
-hands it, and the harness records that environment beside the work directory,
-so the tool puts the phase back on the retained cluster from the working tree:
+Each phase is a separate script or Go test driven entirely by the environment
+the harness hands it, and the harness records that environment beside the work
+directory, so the tool puts the phase back on the retained cluster from the
+working tree:
 
 ```bash
 hack/e2e-rerun-phase.sh /tmp/ptah-operator-e2e.XXXXXX uninstall
 ```
 
-That turns an edit to a phase script or to the chart into a loop of minutes
+A Go phase is rerun through `go test`, so an edit to it is compiled into the
+rerun. That turns an edit to a phase or to the chart into a loop of minutes
 instead of the hour and three quarters a run spends rebuilding the state the
 last phase needs. It does not rebuild the manager image, which the cluster
 pulled from the commit the run snapshotted, so a change under `cmd/` or
@@ -371,3 +373,50 @@ resources, manager logs, and current Pod logs for the exact password and
 database URL values. Safety assertions compare
 checkpointed Job UIDs, so deletion cannot hide an unexpected Apply or Plan
 Job.
+
+## Phases in Go
+
+The phases are moving from shell scripts under `hack/` to Go tests in this
+directory, one suite at a time, and the certificates suite is the first. The
+driver keeps the bootstrap: the kind cluster, the images, the registry, the
+databases and the chart install. Before it creates the cluster it builds one
+test binary from the snapshot:
+
+```bash
+go test -tags e2e -c -o "$WORK_DIR/ptah-e2e.test" ./test/e2e
+```
+
+and runs a Go phase by name, from this directory:
+
+```bash
+ptah-e2e.test -test.v -e2e.phase=cert-rotation -e2e.completed="$WORK_DIR/go-phase-cert-rotation.completed"
+```
+
+The `e2e` tag keeps the phases out of a plain `go test ./...`, which runs only
+their unit tests. What each phase is lives in `phases/`: the test function, the
+environment variables it reads as a struct, the scenarios it records and the
+bound it runs under. The binary runs that phase's test and nothing else, sets
+its timeout from the declaration, and fails a run in which the test did not
+reach its end or a scenario did not run, since `go test` reports a filter that
+matched nothing as a pass. Only a phase that passed writes its name to the
+completion record, and the driver passes the phase on that record rather than
+on the exit status alone.
+`harness/` loads the inputs, reaches the cluster with a controller-runtime
+client that reads straight from the API server, waits with failures that name
+what was awaited and what was last seen, and writes each scenario into the
+timing ledger the shell phases write. A phase that fails prints its reason and
+the diagnostics the shell phase printed, such as `kubectl describe` of a
+Deployment that did not roll out.
+
+`TestCertRotation` runs its scenarios in order, each starting from the state
+the one before it left. The manager cannot read the webhook Secret, and the
+rotator's own identity, bound to its running Pod, cannot create a Secret
+outside its recovery contract. Helm's live lookup keeps each webhook entry's
+trust apart across an upgrade: every managed entry starts from the serving root
+plus a root of its own, and the upgrade keeps exactly that. A corrupt `ca.crt`
+is recovered by staging a new CA, publishing old and new in every entry while
+the Secret still holds the corrupt value, and switching no earlier than
+`--ca-switch-delay` after the expansion, dated by the staging record and the
+Secret's field management. A deleted Secret is recreated at once rather than
+after the switch delay, with the chart's exact labels, annotations and four
+fields, and every entry contracts to its CA.
