@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "31"
-    operator.ptah.run/crd-schema-digest: "sha256:d4953d96c208bf6494a3fab9415a3a31ea74580f43c9173e6a95b8642501597f"
+    operator.ptah.run/crd-schema-version: "32"
+    operator.ptah.run/crd-schema-digest: "sha256:b748c135a91ab9f47252aba72d8b556d301e2cec6d505c3caa4ed6f2eb8736fe"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -85,10 +85,6 @@ spec:
                     required:
                     - name
                     type: object
-                    x-kubernetes-validations:
-                    - message: dockerConfigJSONKey is required in DockerConfigJSON
-                        mode
-                      rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
                   transport:
                     properties:
                       caFrom:
@@ -1174,10 +1170,6 @@ spec:
                         required:
                         - name
                         type: object
-                        x-kubernetes-validations:
-                        - message: dockerConfigJSONKey is required in DockerConfigJSON
-                            mode
-                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
                       resolvedReference:
                         type: string
                       transport:
@@ -1954,10 +1946,6 @@ spec:
                         required:
                         - name
                         type: object
-                        x-kubernetes-validations:
-                        - message: dockerConfigJSONKey is required in DockerConfigJSON
-                            mode
-                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
                       resolvedReference:
                         type: string
                       transport:
@@ -2266,8 +2254,6 @@ spec:
                     x-kubernetes-list-map-keys:
                     - category
                     x-kubernetes-list-type: map
-                  driftFindingsTruncated:
-                    type: boolean
                   driftReportDigest:
                     type: string
                   engine:
@@ -2283,10 +2269,6 @@ spec:
                     format: date-time
                     type: string
                 type: object
-                x-kubernetes-validations:
-                - message: truncated drift findings require exactly 64 published summaries
-                  rule: '!has(self.driftFindingsTruncated) || !self.driftFindingsTruncated
-                    || (has(self.driftFindings) && size(self.driftFindings) == 64)'
             type: object
         required:
         - spec

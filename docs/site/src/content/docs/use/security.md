@@ -607,16 +607,16 @@ change to TLS verification, channel binding, authentication requirements, or
 plaintext fallback invalidates the plan before the mutating child dispatches.
 
 Raw drift details are parsed in memory and excluded from the framed result.
-Observe exposes at most 64 canonical category aggregates, each containing only
-a category from the closed v1 machine vocabulary, a positive count, and a
-severity. A syntactically valid but unknown category fails the operation rather
+Observe exposes one canonical category aggregate for each category the report
+found, each containing only a category from the closed v1 machine vocabulary, a
+positive count, and a severity. A syntactically valid but unknown category fails the operation rather
 than being published or dropped. The vocabulary is the list the pinned Ptah can
 emit, recorded in `support/ptah-drift-categories.json`, and a Ptah pin that grows
 that list cannot merge until the vocabulary, the status enum and the CRD schema
 version follow it. The frame never carries
-object names, SQL, schema literals, or the native diff. `driftFindingCount`
-remains the complete aggregate count; `driftFindingsTruncated=true` explicitly
-reports that additional categories were omitted. Drift the report has no
+object names, SQL, schema literals, or the native diff. The vocabulary fits
+under the frame's and the status's bound of 64 aggregates, so none is ever
+left out and `driftFindingCount` is their sum. Drift the report has no
 category for, such as a grant, crosses as drift with no aggregates at all: a
 zero count and a `safe` highest severity, and nothing that names the grant.
 Resolve and Verify follow the same boundary: native stdout is strictly decoded

@@ -78,6 +78,7 @@ type certificatePhase struct {
 	managerDeployment       string
 	managerServiceAccount   string
 	rotatorDeployment       *appsv1.Deployment
+	rotatorServiceAccount   string
 	rotatorIdentity         rest.ImpersonationConfig
 	stagingSecret           string
 	mutatingConfiguration   string
@@ -155,6 +156,7 @@ func (p *certificatePhase) resolve(t *testing.T) {
 	if serviceAccount.UID == "" || rotatorPod.Name == "" || rotatorPod.UID == "" {
 		p.fatalf(t, "certificate rotator workload-bound identity was not found")
 	}
+	p.rotatorServiceAccount = rotatorServiceAccount
 	// The identity the rotator actually has: its ServiceAccount, bound to its
 	// running Pod.
 	p.rotatorIdentity = rest.ImpersonationConfig{
@@ -179,6 +181,8 @@ func (p *certificatePhase) resolve(t *testing.T) {
 // the rotator's own identity cannot create a Secret outside its recovery
 // contract: the namespace-wide create grant the recreation opt-in adds is
 // narrowed by the exact-object policy, and that policy is what refuses it.
+// The API server applies the policy without the rotator reading it, so the
+// opt-in grants the rotator nothing on the policy or its binding.
 func (p *certificatePhase) recoveryGuard(t *testing.T) {
 	manager, err := p.cluster.As(rest.ImpersonationConfig{
 		UserName: serviceAccountUser(p.in.OperatorNamespace, p.managerServiceAccount),
@@ -213,6 +217,35 @@ func (p *certificatePhase) recoveryGuard(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), recoveryGuardRefusal) {
 		p.fatalf(t, "unrelated Secret CREATE was not rejected by the exact recovery guard: %v", err)
+	}
+
+	// The guard and its binding are named after the rotator's ServiceAccount.
+	// Reading them as the administrator first proves the name asked about
+	// below is the installed guard's, so a denial is about the grant and not
+	// about a name nothing carries.
+	for _, guard := range []struct {
+		resource string
+		object   client.Object
+	}{
+		{resource: "validatingadmissionpolicies", object: &admissionregistrationv1.ValidatingAdmissionPolicy{}},
+		{resource: "validatingadmissionpolicybindings", object: &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}},
+	} {
+		if err := p.cluster.Client.Get(p.ctx, types.NamespacedName{Name: p.rotatorServiceAccount}, guard.object); err != nil {
+			p.fatalf(t, "could not read the recovery guard's %s %s: %v", guard.resource, p.rotatorServiceAccount, err)
+		}
+		review := &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Group: admissionregistrationv1.GroupName, Verb: "get",
+				Resource: guard.resource, Name: p.rotatorServiceAccount,
+			},
+		}}
+		if err := rotator.Create(p.ctx, review); err != nil {
+			p.fatalf(t, "could not ask whether the certificate rotator can read its guard's %s: %v", guard.resource, err)
+		}
+		if review.Status.Allowed {
+			p.fatalf(t, "certificate rotator ServiceAccount can get %s %s, which nothing it runs reads",
+				guard.resource, p.rotatorServiceAccount)
+		}
 	}
 }
 

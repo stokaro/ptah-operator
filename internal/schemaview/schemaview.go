@@ -71,7 +71,6 @@ type ObservationView struct {
 	Drift           bool               `json:"drift"`
 	HighestSeverity string             `json:"highestSeverity,omitempty"`
 	FindingCount    int32              `json:"findingCount,omitempty"`
-	Truncated       bool               `json:"findingsTruncated,omitempty"`
 	Findings        []FindingView      `json:"findings,omitempty"`
 	ReferenceData   *ReferenceDataView `json:"referenceData,omitempty"`
 }
@@ -214,7 +213,6 @@ func observationOf(target operatorv1alpha1.TargetStatus) *ObservationView {
 		Drift:           target.HighestDriftSeverity != "",
 		HighestSeverity: target.HighestDriftSeverity,
 		FindingCount:    target.DriftFindingCount,
-		Truncated:       target.DriftFindingsTruncated,
 	}
 	for _, finding := range target.DriftFindings {
 		observation.Findings = append(observation.Findings, FindingView{

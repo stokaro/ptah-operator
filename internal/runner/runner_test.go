@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -746,8 +747,7 @@ func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 	}
 	if result.DriftReportDigest == "" || !result.ObservedDrift || result.ObservedDialect != "postgres" ||
 		result.HighestDriftSeverity != "warning" || result.DriftFindingCount != 1 ||
-		!reflect.DeepEqual(result.DriftFindings, []DriftFindingSummary{{Category: "columns_added", Count: 1, Severity: "warning"}}) ||
-		result.DriftFindingsTruncated {
+		!reflect.DeepEqual(result.DriftFindings, []DriftFindingSummary{{Category: "columns_added", Count: 1, Severity: "warning"}}) {
 		t.Fatal("drift-present observation lacks a report digest")
 	}
 	if result.Stdout != "" {
@@ -789,8 +789,7 @@ func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
 		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-bounded-findings")),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(report), exitCode: 1}}},
 	})
-	if result.Error != nil || result.DriftFindingCount != 6 || len(result.DriftFindings) != 3 ||
-		result.DriftFindingsTruncated {
+	if result.Error != nil || result.DriftFindingCount != 6 || len(result.DriftFindings) != 3 {
 		t.Fatalf("Run() findings = %#v", result)
 	}
 	if got := result.DriftFindings; !reflect.DeepEqual(got, []DriftFindingSummary{
@@ -802,6 +801,59 @@ func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
 	}
 	if _, err := MarshalFrame(result); err != nil {
 		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+}
+
+// A report holds each category at most once, so the largest one the runner can
+// be handed names every category in the vocabulary. The frame carries all of
+// them, and their counts are the report's count: the summaries are never a
+// prefix. If the vocabulary outgrows the bound a frame and the status share,
+// this fails at the frame, and the summaries would need a way to say that
+// some were left out.
+func TestObserveFramesEveryCategoryOfTheLargestReport(t *testing.T) {
+	t.Parallel()
+
+	categories := dataplane.DriftFindingCategories()
+	if len(categories) == 0 {
+		t.Fatal("the drift vocabulary is empty, so this test would frame nothing")
+	}
+	findings := make([]dataplane.DriftFinding, len(categories))
+	want := make([]DriftFindingSummary, len(categories))
+	for index, category := range categories {
+		findings[index] = dataplane.DriftFinding{Category: category, Count: int32(index + 1), Severity: "safe"}
+		want[index] = DriftFindingSummary{Category: category, Count: int32(index + 1), Severity: "safe"}
+	}
+	slices.SortFunc(want, func(left, right DriftFindingSummary) int {
+		return strings.Compare(left.Category, right.Category)
+	})
+	report, err := json.Marshal(dataplane.DriftReport{
+		Drift: true, Failed: true, FailureThreshold: "all", HighestSeverity: "safe",
+		Dialect: "postgres", Findings: findings, Diff: json.RawMessage(`{"changed":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: withRunnerProtocol(databaseEnvironment("observe-every-category")),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(report), exitCode: 1}}},
+	})
+	wantCount := int32(len(categories) * (len(categories) + 1) / 2)
+	if result.Error != nil || result.DriftFindingCount != wantCount || !reflect.DeepEqual(result.DriftFindings, want) {
+		t.Fatalf("Run() = error %#v, count %d, %d findings; want every one of %d categories and a count of %d",
+			result.Error, result.DriftFindingCount, len(result.DriftFindings), len(categories), wantCount)
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() of all %d categories: %v; a frame carries at most %d summaries",
+			len(categories), err, maxDriftFindings)
+	}
+	parsed, err := ParseResultFor(frame, OperationObserve, "observe-every-category")
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+	if parsed.DriftFindingCount != wantCount || !reflect.DeepEqual(parsed.DriftFindings, want) {
+		t.Fatalf("parsed findings = count %d, %#v; want count %d, %#v",
+			parsed.DriftFindingCount, parsed.DriftFindings, wantCount, want)
 	}
 }
 
@@ -996,10 +1048,9 @@ func TestObserveFramesDriftTheReportHasNoCategoryFor(t *testing.T) {
 				t.Fatalf("Run() = %#v, want a framed observation of drift", result)
 			}
 			if !result.ObservedDrift || result.HighestDriftSeverity != "safe" || result.DriftFindingCount != 0 ||
-				len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
-				t.Fatalf("drift summary = drift %t, highest %q, count %d, findings %#v, truncated %t; want drift in no category",
-					result.ObservedDrift, result.HighestDriftSeverity, result.DriftFindingCount,
-					result.DriftFindings, result.DriftFindingsTruncated)
+				len(result.DriftFindings) != 0 {
+				t.Fatalf("drift summary = drift %t, highest %q, count %d, findings %#v; want drift in no category",
+					result.ObservedDrift, result.HighestDriftSeverity, result.DriftFindingCount, result.DriftFindings)
 			}
 			frame, err := MarshalFrame(result)
 			if err != nil {

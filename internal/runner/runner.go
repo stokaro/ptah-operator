@@ -1076,7 +1076,7 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		setResultError(&result, "invalid_observed_state", errors.New("drift output dialect does not match the expected database engine"), redactor, config.Diagnostics)
 		return result
 	}
-	severity, count, findings, findingsTruncated, err := normalizeDriftSummary(report)
+	severity, count, findings, err := normalizeDriftSummary(report)
 	if err != nil {
 		setResultError(&result, "invalid_observed_state", err, redactor, config.Diagnostics)
 		return result
@@ -1092,7 +1092,6 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 	result.HighestDriftSeverity = severity
 	result.DriftFindingCount = count
 	result.DriftFindings = findings
-	result.DriftFindingsTruncated = findingsTruncated
 	// The native drift command uses exit 1 as a domain outcome. Once its exact
 	// report has been validated, the framed operation itself is successful and
 	// must use the protocol-wide success exit code.
@@ -1100,21 +1099,21 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 	return result
 }
 
-func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []DriftFindingSummary, bool, error) {
+func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []DriftFindingSummary, error) {
 	severity := strings.ToLower(strings.TrimSpace(report.HighestSeverity))
 	if !report.Drift {
 		if len(report.Findings) != 0 {
-			return "", 0, nil, false, errors.New("converged drift report contains findings")
+			return "", 0, nil, errors.New("converged drift report contains findings")
 		}
 		switch severity {
 		case "", "safe":
-			return "", 0, nil, false, nil
+			return "", 0, nil, nil
 		default:
-			return "", 0, nil, false, errors.New("converged drift report contains a drift severity")
+			return "", 0, nil, errors.New("converged drift report contains a drift severity")
 		}
 	}
 	if !validDriftSeverity(severity) {
-		return "", 0, nil, false, errors.New("drift report contains an invalid highest severity")
+		return "", 0, nil, errors.New("drift report contains an invalid highest severity")
 	}
 	// Ptah finds drift in objects its report has no category for: grants,
 	// default privileges, views and triggers among them. Such a report says
@@ -1123,13 +1122,13 @@ func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []Drift
 	// frame carries it as drift with a zero count.
 	if len(report.Findings) == 0 {
 		if severity != "safe" {
-			return "", 0, nil, false, errors.New("drift report highest severity does not match its findings")
+			return "", 0, nil, errors.New("drift report highest severity does not match its findings")
 		}
-		return severity, 0, nil, false, nil
+		return severity, 0, nil, nil
 	}
 	count, err := driftFindingCount(report)
 	if err != nil {
-		return "", 0, nil, false, err
+		return "", 0, nil, err
 	}
 	findings := make([]DriftFindingSummary, len(report.Findings))
 	for index, finding := range report.Findings {
@@ -1146,14 +1145,9 @@ func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []Drift
 		return strings.Compare(left.Category, right.Category)
 	})
 	if findings[0].Severity != severity {
-		return "", 0, nil, false, errors.New("drift report highest severity does not match its findings")
+		return "", 0, nil, errors.New("drift report highest severity does not match its findings")
 	}
-	const maxFindings = 64
-	truncated := len(findings) > maxFindings
-	if truncated {
-		findings = append([]DriftFindingSummary(nil), findings[:maxFindings]...)
-	}
-	return severity, count, findings, truncated, nil
+	return severity, count, findings, nil
 }
 
 func driftFindingCount(report dataplane.DriftReport) (int32, error) {

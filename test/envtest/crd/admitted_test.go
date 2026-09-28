@@ -84,12 +84,11 @@ func TestRangeRulesAdmitTheirBounds(t *testing.T) {
 }
 
 // Defaults are applied before the rules run. The plainHTTP rules read
-// self.plainHTTP, which exists only because it defaults to false. The
-// DockerConfigJSON rule asks for dockerConfigJSONKey, which defaults to
-// .dockerconfigjson, so the API server fills it in before the rule can see it
-// missing -- even when it is sent as null. That rule has nothing left to
-// refuse; these rows record that the object it looks for is stored, with the
-// default in place.
+// self.plainHTTP, which exists only because it defaults to false. A
+// DockerConfigJSON source needs a key to mount, and dockerConfigJSONKey
+// defaults to .dockerconfigjson, so the API server fills it in even when it is
+// sent as null. No rule asks for the key, since none could refuse anything:
+// these rows are what shows a stored DockerConfigJSON source always names one.
 func TestDefaultsFillWhatTheRulesRead(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()

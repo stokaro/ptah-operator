@@ -778,10 +778,10 @@ untouched. This does not make a predecessor restartable once the upgrade has
 stopped the runtime; retry the same candidate to finish the interrupted
 transition. By default,
 `certificateRotation.recreateMissingSecret=false`: the chart grants no
-Secret `create`, renders no Secret-creation admission policy or binding, and
-grants no read access to those policy types. A deleted Secret therefore makes
-the rotator fail clearly and remain unready until an administrator restores it
-through a controlled Helm or GitOps operation.
+Secret `create` and renders no Secret-creation admission policy or binding. A
+deleted Secret therefore makes the rotator fail clearly and remain unready
+until an administrator restores it through a controlled Helm or GitOps
+operation.
 
 Set `certificateRotation.recreateMissingSecret=true` only when automatic
 deletion recovery is required. Secret `create` cannot be restricted by
@@ -790,6 +790,8 @@ fail-closed `ValidatingAdmissionPolicy` and binding that limit the rotator
 ServiceAccount to one exact TLS Secret name, namespace, two labels, two release
 annotations, and four nonempty data fields. A recovered Secret therefore stays
 owned by the same Helm release instead of becoming an unmanaged replacement.
+The API server applies the policy to the rotator's request, so the opt-in
+grants the rotator no access to the policy or the binding themselves.
 The policy is written once, in Go, and the chart template that ships it is
 generated from that definition; the certificates acceptance suite proves the
 refusal against a live API server by creating an unrelated Secret as the
@@ -798,8 +800,9 @@ rotator's ServiceAccount and reading the denial back.
 The single-release opt-in has a bootstrap tradeoff: Helm cannot atomically
 establish the admission policy and grant RBAC. A namespace-wide `create` grant
 can therefore exist briefly before policy enforcement is established. The
-rotator will not use the grant during that interval, but that runtime check
-cannot constrain a compromised ServiceAccount acting outside the rotator.
+rotator creates the Secret only after finding it missing, and an install
+renders the Secret, but nothing constrains a compromised ServiceAccount acting
+outside the rotator during that interval.
 Leaving the default disabled removes both the broad verb and this ordering
 window. Webhook endpoint discovery uses a read-only EndpointSlice `list` grant
 in the release namespace. Kubernetes assigns slice names dynamically and RBAC
@@ -981,12 +984,12 @@ The complete stable condition-reason vocabulary is cataloged in
 `type`, `status`, and `reason` tuple and require `observedGeneration` to match
 the resource generation; condition messages are diagnostic text, not an API.
 
-`status.target.driftFindings` is a bounded, canonical summary of the most
-recent raw Observe result. Entries are ordered by descending severity and then
-category, contain no object names or SQL, and are limited to 64 categories.
-`driftFindingCount` covers the complete report rather than the displayed list;
-when `driftFindingsTruncated` is true, undisplayed categories contributed to
-that total. A subsequent scoped Plan deliberately does not replace this raw
+`status.target.driftFindings` is a canonical summary of the most recent raw
+Observe result, one entry for each category the report found. Entries are
+ordered by descending severity and then category and contain no object names
+or SQL. The list is never cut short: the category vocabulary fits under its
+bound of 64 entries, so `driftFindingCount` is always the sum of the entries'
+counts. A subsequent scoped Plan deliberately does not replace this raw
 observation summary: the `DriftDetected` condition describes the authoritative
 managed scope, while `status.target` remains evidence for the observation
 identified by `driftReportDigest` and `lastObservedAt`.

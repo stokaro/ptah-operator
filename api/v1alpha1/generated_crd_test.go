@@ -155,67 +155,6 @@ func TestGeneratedCRDsPassAPIServerValidation(t *testing.T) {
 	}
 }
 
-func TestGeneratedPtahSchemaCRDAcceptsUntruncatedTargetStatus(t *testing.T) {
-	t.Parallel()
-
-	crd := loadGeneratedCRD(t, filepath.Join(
-		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
-	))
-	structural, err := structuralschema.NewStructural(storageVersionSchema(t, crd))
-	if err != nil {
-		t.Fatalf("build structural PtahSchema schema: %v", err)
-	}
-	validator := structuralcel.NewValidator(structural, true, celconfig.PerCallLimit)
-	if validator == nil {
-		t.Fatal("generated PtahSchema schema did not compile a CEL validator")
-	}
-
-	for _, test := range []struct {
-		name   string
-		target map[string]interface{}
-	}{
-		{name: "omitted false fields", target: map[string]interface{}{"engine": "PostgreSQL"}},
-		{name: "explicit false truncation", target: map[string]interface{}{
-			"engine": "PostgreSQL", "driftFindingsTruncated": false,
-		}},
-	} {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			object := map[string]interface{}{
-				"apiVersion": "operator.ptah.run/v1alpha1",
-				"kind":       "PtahSchema",
-				"metadata":   map[string]interface{}{"name": "orders", "namespace": "tenant-a"},
-				"spec": map[string]interface{}{
-					"target": map[string]interface{}{
-						"engine": "PostgreSQL", "coordinationKey": "tenant-a/orders",
-						"urlFrom": map[string]interface{}{"name": "database", "key": "url"},
-					},
-					"desired": map[string]interface{}{
-						"ociRef":                 "oci://registry.example/schema:current",
-						"verificationPolicyFrom": map[string]interface{}{"name": "verification", "key": "policy.yaml"},
-					},
-				},
-				"status": map[string]interface{}{"target": test.target},
-			}
-			structuraldefaulting.Default(object, structural)
-			errs, _ := validator.Validate(
-				context.Background(),
-				field.NewPath("ptahschema"),
-				structural,
-				object,
-				nil,
-				celconfig.RuntimeCELCostBudget,
-			)
-			if len(errs) != 0 {
-				t.Fatalf("API server CEL rejected untruncated target status: %v", errs.ToAggregate())
-			}
-		})
-	}
-}
-
 // The plan decoder names privilege changes and the API server stores them, so
 // the two lists are one list. A kind the decoder raises and the CRD refuses
 // would fail every plan that carries it at publication; a kind the CRD accepts
@@ -269,6 +208,10 @@ func TestGeneratedCRDsUseThePrivilegeChangeVocabulary(t *testing.T) {
 	}
 }
 
+// status.target.driftFindings is the complete report, never a prefix of it:
+// the summaries are keyed by category, and the bound holds one summary for
+// every category the vocabulary has. A vocabulary that outgrew the bound would
+// make a complete report unpublishable.
 func TestGeneratedPtahSchemaCRDUsesTheClosedDriftCategoryVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -281,6 +224,14 @@ func TestGeneratedPtahSchemaCRDUsesTheClosedDriftCategoryVocabulary(t *testing.T
 	findings := target.Properties["driftFindings"]
 	if findings.Items == nil || findings.Items.Schema == nil {
 		t.Fatal("status.target.driftFindings has no item schema")
+	}
+	if findings.XListType == nil || *findings.XListType != "map" || !slices.Equal(findings.XListMapKeys, []string{"category"}) {
+		t.Errorf("status.target.driftFindings is not a list keyed by category: list type %v, keys %q",
+			findings.XListType, findings.XListMapKeys)
+	}
+	if vocabulary := len(dataplane.DriftFindingCategories()); findings.MaxItems == nil || *findings.MaxItems < int64(vocabulary) {
+		t.Errorf("status.target.driftFindings holds at most %v summaries, fewer than the %d categories a report can name",
+			findings.MaxItems, vocabulary)
 	}
 	categories := findings.Items.Schema.Properties["category"].Enum
 	seen := make(map[string]struct{}, len(categories))

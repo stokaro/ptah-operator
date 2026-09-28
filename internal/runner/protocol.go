@@ -166,6 +166,13 @@ type DriftFindingSummary struct {
 	Severity string `json:"severity"`
 }
 
+// maxDriftFindings bounds the summaries one frame carries, as
+// status.target.driftFindings bounds them. A report holds each category at
+// most once, and the whole vocabulary fits under the bound, so the summaries
+// are always the complete report and their counts always sum to
+// DriftFindingCount.
+const maxDriftFindings = 64
+
 // Result is the complete credential-free result emitted by ptah-runner.
 type Result struct {
 	ProtocolVersion int       `json:"protocolVersion"`
@@ -183,7 +190,6 @@ type Result struct {
 	HighestDriftSeverity     string                `json:"highestDriftSeverity,omitempty"`
 	DriftFindingCount        int32                 `json:"driftFindingCount,omitempty"`
 	DriftFindings            []DriftFindingSummary `json:"driftFindings,omitempty"`
-	DriftFindingsTruncated   bool                  `json:"driftFindingsTruncated,omitempty"`
 	ObservedArtifactType     string                `json:"observedArtifactType,omitempty"`
 	ResolvedDigest           string                `json:"resolvedDigest,omitempty"`
 	ResolvedReference        string                `json:"resolvedReference,omitempty"`
@@ -867,11 +873,11 @@ func validateResult(result Result, options ParseOptions) error {
 				return err
 			}
 		} else if result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 ||
-			len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
+			len(result.DriftFindings) != 0 {
 			return fmt.Errorf("%w: converged observation carries drift findings", ErrMalformedFrame)
 		}
 	} else if result.ObservedDialect != "" || result.ObservedDrift || result.HighestDriftSeverity != "" ||
-		result.DriftFindingCount != 0 || len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
+		result.DriftFindingCount != 0 || len(result.DriftFindings) != 0 {
 		return fmt.Errorf("%w: observation summary is set on a non-successful observation", ErrMalformedFrame)
 	}
 	if options.ExpectedOperation != "" && result.Operation != options.ExpectedOperation {
@@ -887,15 +893,12 @@ func validateResult(result Result, options ParseOptions) error {
 // count and its highest severity.
 //
 // Drift with no findings is a report that found differences in no category it
-// counts, such as a grant. It carries a zero count, no truncation, and the
-// severity an empty list rates, which is safe; a count or a severity above
-// that would describe findings the frame does not hold.
+// counts, such as a grant. It carries a zero count and the severity an empty
+// list rates, which is safe; a count or a severity above that would describe
+// findings the frame does not hold.
 func validateDriftFindingSummaries(result Result) error {
-	const maxFindings = 64
 	if len(result.DriftFindings) == 0 {
 		switch {
-		case result.DriftFindingsTruncated:
-			return fmt.Errorf("%w: truncated drift observation has no finding summaries", ErrMalformedFrame)
 		case result.DriftFindingCount != 0:
 			return fmt.Errorf("%w: drift finding summaries do not match the total count", ErrMalformedFrame)
 		case result.HighestDriftSeverity != "safe":
@@ -903,7 +906,7 @@ func validateDriftFindingSummaries(result Result) error {
 		}
 		return nil
 	}
-	if len(result.DriftFindings) > maxFindings {
+	if len(result.DriftFindings) > maxDriftFindings {
 		return fmt.Errorf("%w: drift observation has an invalid finding summary count", ErrMalformedFrame)
 	}
 	var carried int64
@@ -933,11 +936,7 @@ func validateDriftFindingSummaries(result Result) error {
 		previousRank = rank
 		previousCategory = finding.Category
 	}
-	if result.DriftFindingsTruncated {
-		if len(result.DriftFindings) != maxFindings || carried >= int64(result.DriftFindingCount) {
-			return fmt.Errorf("%w: truncated drift finding summaries lack omitted findings", ErrMalformedFrame)
-		}
-	} else if carried != int64(result.DriftFindingCount) {
+	if carried != int64(result.DriftFindingCount) {
 		return fmt.Errorf("%w: drift finding summaries do not match the total count", ErrMalformedFrame)
 	}
 	return nil

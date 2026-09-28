@@ -252,7 +252,6 @@ type OCIArtifactAccessBinding struct {
 // to the runner. That grant is the Secret's `registry` key, holding the
 // authority-only host[:port] the credential is for. The key is fixed so the
 // Secret owner, rather than a resource author, controls the grant.
-// +kubebuilder:validation:XValidation:rule="self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)",message="dockerConfigJSONKey is required in DockerConfigJSON mode"
 type RegistryAuthSource struct {
 	// Name of the Secret the registry credential is read from. The manager
 	// never reads it; the operation Pod does.
@@ -873,7 +872,6 @@ type DriftFindingStatus struct {
 
 // TargetStatus identifies the Secret value and observed schema without
 // disclosing either the connection string or its credentials.
-// +kubebuilder:validation:XValidation:rule="!has(self.driftFindingsTruncated) || !self.driftFindingsTruncated || (has(self.driftFindings) && size(self.driftFindings) == 64)",message="truncated drift findings require exactly 64 published summaries"
 type TargetStatus struct {
 	// Engine is the database engine this target speaks.
 	Engine DatabaseEngine `json:"engine,omitempty"`
@@ -893,17 +891,16 @@ type TargetStatus struct {
 	// default privilege, a view or a trigger -- is drift that reads safe here,
 	// with no findings and a zero count; the plan says what it changes.
 	HighestDriftSeverity string `json:"highestDriftSeverity,omitempty"`
-	// DriftFindingCount is how many findings the complete report held, whether
-	// or not the list below was truncated. Drift in no category counts none.
+	// DriftFindingCount is how many findings the report held: the sum of the
+	// counts below. Drift in no category counts none.
 	DriftFindingCount int32 `json:"driftFindingCount,omitempty"`
-	// DriftFindings contains only category-level aggregates. The total count
-	// above covers the complete report even when this list is truncated.
+	// DriftFindings contains only category-level aggregates, one per category
+	// the report found. The list is never truncated: it is keyed by category,
+	// and the bound holds every category in the vocabulary.
 	// +kubebuilder:validation:MaxItems=64
 	// +listType=map
 	// +listMapKey=category
 	DriftFindings []DriftFindingStatus `json:"driftFindings,omitempty"`
-	// DriftFindingsTruncated says the list above is a prefix of the report.
-	DriftFindingsTruncated bool `json:"driftFindingsTruncated,omitempty"`
 }
 
 // CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan.

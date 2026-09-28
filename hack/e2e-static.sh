@@ -6096,6 +6096,13 @@ for recreation_marker in \
 		'--recreate-missing-secret=true'; do
 	grep -F -- "$recreation_marker" "$ROTATOR_RECREATE_RENDER" >/dev/null
 done
+# Recreation grants Secret CREATE and nothing on the guard itself: the API
+# server enforces the policy on the rotator's request, and the rotator never
+# reads it back.
+if grep -F -- 'validatingadmissionpolicies' "$ROTATOR_RECREATE_RENDER" >/dev/null; then
+	printf '%s\n' 'e2e static: certificate Secret recreation grants the rotator access to admission policies' >&2
+	exit 1
+fi
 # Off by default: with recreation not opted into there is no create grant to
 # narrow, and the guard's template renders nothing, which Helm reports as a
 # template it cannot find.

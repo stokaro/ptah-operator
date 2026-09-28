@@ -112,9 +112,6 @@ func renderObservation(text *strings.Builder, observation *ObservationView) {
 			fmt.Sprintf("%d to insert, %d to update, %d to delete",
 				rows.Inserts, rows.Updates, rows.Deletes))
 	}
-	if observation.Truncated {
-		fmt.Fprintf(text, "%-18s%s\n", "Findings:", "truncated; the count above covers the whole report")
-	}
 	for _, finding := range observation.Findings {
 		fmt.Fprintf(text, "  %-34s %6d  %s\n", finding.Category, finding.Count, finding.Severity)
 	}
