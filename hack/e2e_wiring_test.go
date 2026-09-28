@@ -1456,252 +1456,6 @@ func runHACustomMetricValidator(t *testing.T, metrics string) ([]byte, error) {
 	return command.CombinedOutput()
 }
 
-func TestSyntheticNextReleaseLineReplacementIsCountCheckedAndPortable(t *testing.T) {
-	t.Parallel()
-
-	source := readE2ESource(t, repositoryE2EWiringFiles().harness)
-	script := "set -eu\n" +
-		extractE2EShellFunction(t, source, "fail") + "\n" +
-		extractE2EShellFunction(t, source, "replace_exact_line_once") + "\n" +
-		`replace_exact_line_once "$1" 'release-sequence=1' 'release-sequence=2' 'portable sequence replacement'` + "\n"
-
-	for _, shellName := range []string{"sh", "dash"} {
-		shellName := shellName
-		t.Run(shellName, func(t *testing.T) {
-			shellPath, err := exec.LookPath(shellName)
-			if err != nil {
-				t.Skipf("%s is required to exercise the portable replacement helper", shellName)
-			}
-			directory := t.TempDir()
-			scriptPath := filepath.Join(directory, "replace-line.sh")
-			if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			tests := []struct {
-				name      string
-				contents  string
-				want      string
-				wantError string
-				symlink   bool
-			}{
-				{
-					name:     "one exact source line",
-					contents: "before\nrelease-sequence=1\nafter\n",
-					want:     "before\nrelease-sequence=2\nafter\n",
-				},
-				{
-					name:      "source line absent",
-					contents:  "release-sequence=0\n",
-					wantError: "source line count is 0, expected exactly one",
-				},
-				{
-					name:      "source line repeated",
-					contents:  "release-sequence=1\nrelease-sequence=1\n",
-					wantError: "source line count is 2, expected exactly one",
-				},
-				{
-					name:      "symlink target",
-					contents:  "release-sequence=1\n",
-					wantError: "target must be a regular non-symlink file",
-					symlink:   true,
-				},
-			}
-			for _, test := range tests {
-				test := test
-				t.Run(test.name, func(t *testing.T) {
-					caseDirectory := t.TempDir()
-					targetPath := filepath.Join(caseDirectory, "sequence.txt")
-					writePath := targetPath
-					if test.symlink {
-						writePath = filepath.Join(caseDirectory, "sequence-target.txt")
-					}
-					if err := os.WriteFile(writePath, []byte(test.contents), 0o600); err != nil {
-						t.Fatal(err)
-					}
-					if test.symlink {
-						if err := os.Symlink(writePath, targetPath); err != nil {
-							t.Fatal(err)
-						}
-					}
-					output, runErr := exec.Command(shellPath, scriptPath, targetPath).CombinedOutput()
-					if test.wantError != "" {
-						if runErr == nil {
-							t.Fatalf("replacement unexpectedly succeeded with output %q", output)
-						}
-						if !strings.Contains(string(output), test.wantError) {
-							t.Fatalf("replacement error = %q, want substring %q", output, test.wantError)
-						}
-						return
-					}
-					if runErr != nil {
-						t.Fatalf("replacement failed: %v: %s", runErr, output)
-					}
-					got, err := os.ReadFile(targetPath)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if string(got) != test.want {
-						t.Fatalf("replacement result = %q, want %q", got, test.want)
-					}
-					if _, err := os.Stat(targetPath + ".e2e-next"); !os.IsNotExist(err) {
-						t.Fatalf("replacement temporary file remains: %v", err)
-					}
-				})
-			}
-		})
-	}
-}
-
-func TestCurrentReleaseSequenceDerivationAndTransitionArePortable(t *testing.T) {
-	t.Parallel()
-
-	harnessSource := readE2ESource(t, repositoryE2EWiringFiles().harness)
-	crdSource := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
-	deriveScript := "set -eu\n" +
-		extractE2EShellFunction(t, harnessSource, "go_release_sequence_from_source") + "\n" +
-		extractE2EShellFunction(t, harnessSource, "helm_release_sequence_from_source") + "\n" +
-		"go_sequence=$(go_release_sequence_from_source \"$1\")\n" +
-		"helm_sequence=$(helm_release_sequence_from_source \"$2\")\n" +
-		"[ \"$go_sequence\" = \"$helm_sequence\" ]\n" +
-		"printf '%s\\n' \"$go_sequence\"\n"
-	transitionScript := "set -eu\n" +
-		"E2E_CURRENT_RELEASE_SEQUENCE=$1\n" +
-		"E2E_NEXT_RELEASE_SEQUENCE=$2\n" +
-		extractE2EShellFunction(t, crdSource, "fail") + "\n" +
-		extractE2EShellFunction(t, crdSource, "validate_release_sequence_transition") + "\n" +
-		"validate_release_sequence_transition\n"
-
-	for _, shellName := range []string{"sh", "dash"} {
-		shellName := shellName
-		t.Run(shellName, func(t *testing.T) {
-			shellPath, err := exec.LookPath(shellName)
-			if err != nil {
-				t.Skipf("%s is required to exercise release sequence derivation", shellName)
-			}
-			directory := t.TempDir()
-			derivePath := filepath.Join(directory, "derive-sequence.sh")
-			transitionPath := filepath.Join(directory, "validate-transition.sh")
-			if err := os.WriteFile(derivePath, []byte(deriveScript), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(transitionPath, []byte(transitionScript), 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			writeSources := func(t *testing.T, goSource, helmSource string) (string, string) {
-				t.Helper()
-				caseDirectory := t.TempDir()
-				goPath := filepath.Join(caseDirectory, "release_sequence.go")
-				helmPath := filepath.Join(caseDirectory, "_helpers.tpl")
-				if err := os.WriteFile(goPath, []byte(goSource), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(helmPath, []byte(helmSource), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				return goPath, helmPath
-			}
-			validGo := "package crdupgrade\n\nconst (\n\tCurrentReleaseSequence int32 = 37\n)\n"
-			validHelm := "{{- define \"ptah-operator.releaseSequence\" -}}37{{- end -}}\n"
-
-			t.Run("repository Go and Helm sources", func(t *testing.T) {
-				output, runErr := exec.Command(
-					shellPath,
-					derivePath,
-					filepath.Join("..", "internal", "crdupgrade", "release_sequence.go"),
-					filepath.Join("..", "charts", "ptah-operator", "templates", "_helpers.tpl"),
-				).CombinedOutput()
-				if runErr != nil {
-					t.Fatalf("repository release sequence derivation failed: %v: %s", runErr, output)
-				}
-				if !regexp.MustCompile(`^[1-9][0-9]*\n$`).Match(output) {
-					t.Fatalf("repository release sequence = %q, want one positive integer", output)
-				}
-			})
-
-			t.Run("matching independently derived sequence", func(t *testing.T) {
-				goPath, helmPath := writeSources(t, validGo, validHelm)
-				output, runErr := exec.Command(shellPath, derivePath, goPath, helmPath).CombinedOutput()
-				if runErr != nil {
-					t.Fatalf("release sequence derivation failed: %v: %s", runErr, output)
-				}
-				if got, want := string(output), "37\n"; got != want {
-					t.Fatalf("derived sequence = %q, want %q", got, want)
-				}
-			})
-
-			for _, test := range []struct {
-				name       string
-				goSource   string
-				helmSource string
-			}{
-				{
-					name:       "Go and Helm differ",
-					goSource:   validGo,
-					helmSource: "{{- define \"ptah-operator.releaseSequence\" -}}38{{- end -}}\n",
-				},
-				{
-					name:       "duplicate Go declaration",
-					goSource:   validGo + "\tCurrentReleaseSequence int32 = 37\n",
-					helmSource: validHelm,
-				},
-				{
-					name:       "duplicate Helm helper",
-					goSource:   validGo,
-					helmSource: validHelm + "{{- define \"ptah-operator.releaseSequence\" -}}37{{- end -}}\n",
-				},
-				{
-					name:       "zero Go sequence",
-					goSource:   "package crdupgrade\nconst (\n\tCurrentReleaseSequence int32 = 0\n)\n",
-					helmSource: validHelm,
-				},
-				{
-					name:       "zero Helm sequence",
-					goSource:   validGo,
-					helmSource: "{{- define \"ptah-operator.releaseSequence\" -}}0{{- end -}}\n",
-				},
-			} {
-				test := test
-				t.Run(test.name, func(t *testing.T) {
-					goPath, helmPath := writeSources(t, test.goSource, test.helmSource)
-					if output, runErr := exec.Command(shellPath, derivePath, goPath, helmPath).CombinedOutput(); runErr == nil {
-						t.Fatalf("invalid release sequence sources were accepted with %q", output)
-					}
-				})
-			}
-
-			for _, test := range []struct {
-				name    string
-				current string
-				next    string
-				wantOK  bool
-			}{
-				{name: "ordinary successor", current: "37", next: "38", wantOK: true},
-				{name: "maximum valid successor", current: "2147483646", next: "2147483647", wantOK: true},
-				{name: "skipped sequence", current: "37", next: "39"},
-				{name: "same sequence", current: "37", next: "37"},
-				{name: "current overflow", current: "2147483647", next: "2147483648"},
-				{name: "leading zero", current: "01", next: "2"},
-				{name: "non-numeric", current: "current", next: "next"},
-			} {
-				test := test
-				t.Run(test.name, func(t *testing.T) {
-					output, runErr := exec.Command(
-						shellPath, transitionPath, test.current, test.next,
-					).CombinedOutput()
-					if test.wantOK && runErr != nil {
-						t.Fatalf("valid release transition failed: %v: %s", runErr, output)
-					}
-					if !test.wantOK && runErr == nil {
-						t.Fatalf("invalid release transition was accepted with %q", output)
-					}
-				})
-			}
-		})
-	}
-}
-
 func TestProductionControllerImageUsesOnlyProductionDigest(t *testing.T) {
 	t.Parallel()
 
@@ -1839,7 +1593,7 @@ func TestReleaseChartExportIsExactAtomicAndSafe(t *testing.T) {
 		"WORK_DIR=$1\n" +
 		"CHART_PACKAGE=$2\n" +
 		"E2E_RELEASE_CHART_OUTPUT=$3\n" +
-		"CURRENT_RELEASE_SEQUENCE=7\n" +
+		"chart_version=0.1.0-test\n" +
 		"CHART_PACKAGE_DIGEST=sha256-test-digest\n" +
 		"RELEASE_CHART_OUTPUT_PARENT=\n" +
 		"RELEASE_CHART_OUTPUT_TEMP=\n" +
@@ -1864,8 +1618,8 @@ func TestReleaseChartExportIsExactAtomicAndSafe(t *testing.T) {
 			if err := os.Mkdir(outputDirectory, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			chartPath := filepath.Join(workDirectory, "sequence-1.tgz")
-			chartBytes := []byte("exact sequence-1 chart bytes\x00\x01\xff")
+			chartPath := filepath.Join(workDirectory, "release.tgz")
+			chartBytes := []byte("exact release chart bytes\x00\x01\xff")
 			if err := os.WriteFile(chartPath, chartBytes, 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -3137,12 +2891,6 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			old:         "E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
 			replacement: "E2E_NEXT_CHART_PACKAGE= \\\n",
 			wantError:   `uninstall phase must bind E2E_NEXT_CHART_PACKAGE to "$NEXT_CHART_PACKAGE", and binds ""`,
-		},
-		{
-			name:        "current release sequence handoff omitted",
-			old:         "E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE \\\n",
-			replacement: "E2E_CURRENT_RELEASE_SEQUENCE= \\\n",
-			wantError:   `uninstall phase must bind E2E_CURRENT_RELEASE_SEQUENCE to "$CURRENT_RELEASE_SEQUENCE", and binds ""`,
 		},
 		{
 			name: "current release values handoff omitted",
@@ -4669,8 +4417,8 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD recovery accepts a replaced controller ServiceAccount",
 			child:       "crd-upgrade",
-			old:         `[ "$next_sequence_service_account_uid" = "$current_sequence_service_account_uid" ] ||`,
-			replacement: `[ -n "$next_sequence_service_account_uid" ] ||`,
+			old:         `[ "$next_service_account_uid" = "$current_service_account_uid" ] ||`,
+			replacement: `[ -n "$next_service_account_uid" ] ||`,
 			wantError:   "same-candidate recovery kept the controller identity",
 		},
 		{
@@ -4777,13 +4525,6 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			old:         "\tdispatch_read_only_job_fixture\n\tstop_runtime_deployments\n\tset_pod_webhook_failure_policy Fail Ignore\n\tstage_read_only_job_completion\n\tset_pod_webhook_failure_policy Ignore Fail\n\tstart_runtime_deployments\n",
 			replacement: "\tdispatch_read_only_job_fixture\n\tset_pod_webhook_failure_policy Fail Ignore\n\tstage_read_only_job_completion\n\tset_pod_webhook_failure_policy Ignore Fail\n\tstart_runtime_deployments\n",
 			wantError:   "current-release read-only Job cleanup staging",
-		},
-		{
-			name:        "CRD mismatched chart and image upgrade removed",
-			child:       "crd-upgrade",
-			old:         "\texpect_mismatched_pairing_refused \"current chart with the next release manager image\"\n",
-			replacement: "\t: # mismatched pairing accepted\n",
-			wantError:   "chart and image of different releases refused before any change",
 		},
 		{
 			name:        "CRD next-release upgrade skips late-failure recovery",

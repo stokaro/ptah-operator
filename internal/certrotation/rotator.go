@@ -64,9 +64,6 @@ type Config struct {
 	ServiceNamespace               string
 	EndpointPortName               string
 	HolderIdentity                 string
-	SecretCreatePolicyName         string
-	SecretCreatePolicyBindingName  string
-	SecretCreateServiceAccountName string
 	RecreateMissingSecret          bool
 	// Logger, when set, receives one line per reconciliation step so a
 	// reconciliation that blocks inside a wait says where. It never receives
@@ -430,7 +427,7 @@ func (r *Rotator) createSecret(ctx context.Context, desired *corev1.Secret, mate
 	return fmt.Errorf("create missing generated TLS Secret: %w (read-back contains different material)", err)
 }
 
-func validateSecretCreatePolicyContract(policy *admissionregistrationv1.ValidatingAdmissionPolicy, config Config) error {
+func validateSecretCreatePolicyContract(policy *admissionregistrationv1.ValidatingAdmissionPolicy, config Config, serviceAccountName string) error {
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		return errors.New("policy is not fail-closed")
 	}
@@ -456,7 +453,7 @@ func validateSecretCreatePolicyContract(policy *admissionregistrationv1.Validati
 	wantIdentity := fmt.Sprintf(
 		"request.userInfo.username == 'system:serviceaccount:%s:%s'",
 		config.Namespace,
-		config.SecretCreateServiceAccountName,
+		serviceAccountName,
 	)
 	if len(policy.Spec.MatchConditions) != 1 ||
 		policy.Spec.MatchConditions[0].Name != "exact-certificate-rotator-service-account" ||
@@ -477,19 +474,26 @@ func validateSecretCreatePolicyContract(policy *admissionregistrationv1.Validati
 // VerifySecretCreatePolicyContract verifies the immutable spec of the
 // generated-Secret CREATE admission policy. Ownership metadata is deliberately
 // left to the caller because Helm, rather than the certificate runtime, owns
-// that metadata lifecycle.
-func VerifySecretCreatePolicyContract(policy *admissionregistrationv1.ValidatingAdmissionPolicy, config Config) error {
+// that metadata lifecycle. serviceAccountName is the exact ServiceAccount the
+// policy's match condition must scope to; the certificate runtime itself
+// never reads its own name, so this is not part of Config.
+func VerifySecretCreatePolicyContract(
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+	config Config,
+	serviceAccountName string,
+) error {
 	if policy == nil {
 		return errors.New("generated-Secret CREATE guard policy is nil")
 	}
-	return validateSecretCreatePolicyContract(policy, config)
+	return validateSecretCreatePolicyContract(policy, config, serviceAccountName)
 }
 
 func validateSecretCreateBindingContract(
 	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
 	config Config,
+	policyName string,
 ) error {
-	if binding.Spec.PolicyName != config.SecretCreatePolicyName || binding.Spec.ParamRef != nil ||
+	if binding.Spec.PolicyName != policyName || binding.Spec.ParamRef != nil ||
 		!slices.Equal(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
 		return errors.New("binding does not enforce only Deny for the configured policy")
 	}
@@ -507,14 +511,16 @@ func validateSecretCreateBindingContract(
 // VerifySecretCreateBindingContract verifies the immutable spec of the
 // generated-Secret CREATE admission binding. Ownership metadata is
 // deliberately left to the caller for the same reason as the policy helper.
+// policyName is the exact ValidatingAdmissionPolicy the binding must bind.
 func VerifySecretCreateBindingContract(
 	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
 	config Config,
+	policyName string,
 ) error {
 	if binding == nil {
 		return errors.New("generated-Secret CREATE guard binding is nil")
 	}
-	return validateSecretCreateBindingContract(binding, config)
+	return validateSecretCreateBindingContract(binding, config, policyName)
 }
 
 func emptyLabelSelector(selector *metav1.LabelSelector) bool {
@@ -911,22 +917,6 @@ func validateConfig(config Config) error {
 	}
 	if config.Namespace != config.ServiceNamespace {
 		return errors.New("certificate and webhook Service namespaces must be identical")
-	}
-	if config.RecreateMissingSecret {
-		for label, value := range map[string]string{
-			"Secret CREATE policy name":         config.SecretCreatePolicyName,
-			"Secret CREATE policy binding name": config.SecretCreatePolicyBindingName,
-		} {
-			if problems := validation.IsDNS1123Subdomain(value); len(problems) != 0 {
-				return fmt.Errorf("%s is invalid: %s", label, problems[0])
-			}
-		}
-		if problems := validation.IsDNS1123Label(config.SecretCreateServiceAccountName); len(problems) != 0 {
-			return fmt.Errorf("Secret CREATE ServiceAccount name is invalid: %s", problems[0])
-		}
-	} else if config.SecretCreatePolicyName != "" || config.SecretCreatePolicyBindingName != "" ||
-		config.SecretCreateServiceAccountName != "" {
-		return errors.New("Secret recreation guard names must be empty when missing-Secret recreation is disabled")
 	}
 	if err := validateWebhookNames("mutating", config.MutatingWebhookNames); err != nil {
 		return err

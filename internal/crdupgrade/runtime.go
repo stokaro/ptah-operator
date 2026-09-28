@@ -187,7 +187,6 @@ type RuntimeInvariants struct {
 	CertificateDeploymentName    string
 	ControllerStateVersion       int32
 	AdmissionContractVersion     int32
-	ReleaseSequence              int32
 	// RequireDistinctApprover mirrors the chart's approvals.requireDistinctApprover
 	// value: whether the fixed MutatingWebhookConfiguration is expected to carry
 	// the two spec-writer entries. It decides shape, not ownership, so it is not
@@ -236,9 +235,6 @@ func (i RuntimeInvariants) validate() error {
 	if i.AdmissionContractVersion > CurrentAdmissionContractVersion {
 		return fmt.Errorf("admission-contract version %d is newer than supported version %d", i.AdmissionContractVersion, CurrentAdmissionContractVersion)
 	}
-	if i.ReleaseSequence < 1 {
-		return fmt.Errorf("release sequence must be positive")
-	}
 	return nil
 }
 
@@ -256,7 +252,6 @@ func (i RuntimeInvariants) annotations() map[string]string {
 		CertificateDeploymentAnnotation:    i.CertificateDeploymentName,
 		ControllerStateVersionAnnotation:   strconv.FormatInt(int64(i.ControllerStateVersion), 10),
 		AdmissionContractVersionAnnotation: strconv.FormatInt(int64(i.AdmissionContractVersion), 10),
-		ReleaseSequenceAnnotation:          strconv.FormatInt(int64(i.ReleaseSequence), 10),
 	}
 }
 

@@ -67,7 +67,7 @@ reader of a converged schema can see exactly what produced it.
 | `serviceAccount.create` | `true` | The controller runs as one ServiceAccount in every release. With create=false, pre-create the ServiceAccount named below; the chart binds its roles to it and never deletes it. |
 | `serviceAccount.name` | `""` | The controller ServiceAccount's name. Empty means the generated release name. |
 | `serviceAccount.annotations` | `{}` | Annotations added to the ServiceAccount the chart creates, which is where a cloud identity binding goes. |
-| `podAnnotations` | `{}` | Annotations added to the manager and rotator Pods. |
+| `podAnnotations` | `{}` | Annotations added to the manager Pods. |
 | `podLabels` | `{}` | Labels added to the manager and rotator Pods, beside the chart's own. |
 | `resources` |  | Manager container resources. The manager reconciles and dispatches; the database work happens in task Pods with resources of their own. |
 | `resources.requests` |  | What the manager container is guaranteed. |

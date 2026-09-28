@@ -34,7 +34,6 @@ import (
 	"github.com/stokaro/ptah-operator/hack/releasecontract"
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -73,7 +72,7 @@ const (
 
 	reviewedKubernetesAPIMinor       = 37
 	reviewedKubernetesSupportMaximum = 37
-	reviewedJobAPISurfaceSHA256      = "7e2ff8ed47e3cdcbddb712d8e0a179f2a81292816ef965dbc08d528dd4d26b44"
+	reviewedJobAPISurfaceSHA256      = "8d6f538effe84aeb02de351456b9f387bb8b66b2f20df11d391c252ffd49189c"
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
@@ -81,7 +80,7 @@ const (
 	updateWorkflowSHA256            = "47826d02621bf8478226b33a37ee845704ba6e6e5944a544f53743d9ab19039a"
 	releaseSupportEvidenceRunSHA256 = "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
-	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
+	releaseChartExportRunSHA256     = "f5cc0f34d42cf0da0d53365ddba041e910c08bdf3898fbc92d200d1e059210c2"
 	controllerSchemaSHA256          = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
 	raceRuleSHA256                  = "6048d2e7677bc691e71b255a96abff0f91bead4d957ce80d4160c82a483b77cc"
 
@@ -550,13 +549,14 @@ func controllerJobAPISurfaceDigest() string {
 		})
 	}
 
-	// JobSpec reaches PodSpec through the template. Status is a separate API
-	// graph, but the admission boundary relies on both JobStatus and PodStatus
-	// when authenticating terminal progress and scheduler/node updates.
+	// JobSpec reaches PodSpec through the template. JobStatus is a separate API
+	// graph the admission boundary relies on to authenticate terminal progress.
+	// PodStatus is not: nothing in the operator reads it, so it carried no
+	// admission-relevant surface and only widened what a dependency bump forced
+	// a re-review of.
 	for _, root := range []reflect.Type{
 		reflect.TypeOf(batchv1.JobSpec{}),
 		reflect.TypeOf(batchv1.JobStatus{}),
-		reflect.TypeOf(corev1.PodStatus{}),
 	} {
 		visit(root)
 	}
@@ -4242,14 +4242,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
 				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
 				exactSourceLine("next-release upgrade proof implementation", `run_next_release_upgrade_proof() {`),
-				// The hook runs the image the values name with the chart's arguments,
-				// so a chart and an image of different releases have to be refused by
-				// the hook itself, before anything changes.
-				exactSourceLineSequence("chart and image of different releases refused before any change", []string{
-					`UPGRADE_VALUES_FILE=$mismatched_values_file`,
-					`expect_mismatched_pairing_refused "current chart with the next release manager image"`,
-					`for crd_name in \`,
-				}),
 				exactSourceLineSequence("successor read-only Job dispatch before the late failure", []string{
 					`dispatch_read_only_job_fixture`,
 					`start_running_apply_barrier`,
@@ -4289,9 +4281,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "same-candidate recovery did not create exactly one retry Helm revision"`,
 				}),
 				exactSourceLineSequence("same-candidate recovery kept the controller identity", []string{
-					`[ "$next_sequence_service_account" = "$current_sequence_service_account" ] ||`,
-					`fail "synthetic sequence-$next_release_sequence upgrade moved the controller from ServiceAccount $current_sequence_service_account to $next_sequence_service_account"`,
-					`[ "$next_sequence_service_account_uid" = "$current_sequence_service_account_uid" ] ||`,
+					`[ "$next_service_account" = "$current_service_account" ] ||`,
+					`fail "synthetic next-release upgrade moved the controller from ServiceAccount $current_service_account to $next_service_account"`,
+					`[ "$next_service_account_uid" = "$current_service_account_uid" ] ||`,
 				}),
 				// The synthetic next release changes the manager image and nothing
 				// the execution binding holds, so the schema keeps its epoch and
@@ -4326,8 +4318,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				}),
 				exactSourceLineSequence("exact released chart controller identity", []string{
 					`capture_controller_service_account_identity \`,
-					`"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \`,
-					`"$WORK_DIR/fresh-current-sequence-${E2E_CURRENT_RELEASE_SEQUENCE}-controller-identity.json"`,
+					`"$E2E_CANDIDATE_IMAGE" \`,
+					`"$WORK_DIR/fresh-current-release-controller-identity.json"`,
 				}),
 				exactSourceLine("exported release uninstall", `fail "the uninstall of the exported current-release chart failed; Helm's own error is above"`),
 				exactSourceLine("exact released chart installability evidence", `printf '%s\n' 'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall'`),
@@ -5895,8 +5887,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_NEXT_CHART_PACKAGE", value: `$NEXT_CHART_PACKAGE`},
 				{name: "E2E_NEXT_VALUES_FILE", value: `$NEXT_VALUES_FILE`},
 				{name: "E2E_NEXT_CONTROLLER_IMAGE", value: `$NEXT_CONTROLLER_IMAGE`},
-				{name: "E2E_CURRENT_RELEASE_SEQUENCE", value: `$CURRENT_RELEASE_SEQUENCE`},
-				{name: "E2E_NEXT_RELEASE_SEQUENCE", value: `$NEXT_RELEASE_SEQUENCE`},
 				{name: "E2E_KUBERNETES_VERSION", value: `$K8S_VERSION`},
 				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
 				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},

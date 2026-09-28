@@ -366,9 +366,7 @@ for timing_image_label in \
 	'--label "ptah.run/e2e-role=fixture"' \
 	'--label "ptah.run/e2e-role=executor"' \
 	'--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION"' \
-	'--label "ptah.run/e2e-ptah-commit=${PTAH_COMMIT}"' \
-	'--label "ptah.run/e2e-release-sequence=$CURRENT_RELEASE_SEQUENCE"' \
-	'--label "ptah.run/e2e-release-sequence=$NEXT_RELEASE_SEQUENCE"'; do
+	'--label "ptah.run/e2e-ptah-commit=${PTAH_COMMIT}"'; do
 	grep -F -- "$timing_image_label" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 		printf 'e2e static: a task image is built without its provenance: %s\n' \
 			"$timing_image_label" >&2
@@ -1911,17 +1909,13 @@ next_release_crd_source=$(cat "$ROOT_DIR/hack/e2e-crd-upgrade.sh")
 # shellcheck disable=SC2016 # Exact synthetic-release markers retain runtime variables literally.
 for next_release_harness_marker in \
 	'--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"' \
-	'synthetic next-release Go sequence' \
-	'synthetic next-release Helm sequence' \
 	'add_created_image "$NEXT_OPERATOR_IMAGE"' \
 	'--file "$NEXT_BUILD_CONTEXT/test/e2e/Dockerfile.operator"' \
 	'push_task_image "$NEXT_OPERATOR_IMAGE" ptah-operator-next' \
 	'"$NEXT_VALUES_FILE" "$NEXT_CONTROLLER_REPOSITORY" "$IMAGE_TAG"' \
 	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
 	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE' \
-	'E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE' \
-	'E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE' \
-	'E2E_NEXT_RELEASE_SEQUENCE=$NEXT_RELEASE_SEQUENCE'; do
+	'E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE'; do
 	static_require_count "$next_release_harness_source" "$next_release_harness_marker" 1 \
 		'synthetic next-release harness'
 done
@@ -1939,29 +1933,6 @@ static_require_count "$next_release_harness_source" \
 static_require_count "$next_release_harness_source" \
 	'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' 2 \
 	'exact snapshot verification and next-release source archives'
-# shellcheck disable=SC2016 # Exact sequence-derivation markers retain runtime variables literally.
-for release_sequence_derivation_marker in \
-	'go_release_sequence_from_source() {' \
-	'helm_release_sequence_from_source() {' \
-	'for next_sequence_source in "$NEXT_GO_SEQUENCE_FILE" "$NEXT_HELM_SEQUENCE_FILE"; do' \
-	'sequence_prefix=$(printf '\''\tCurrentReleaseSequence int32 = '\'')' \
-	'helpers_prefix='\''{{- define "ptah-operator.releaseSequence" -}}'\''' \
-	'CURRENT_GO_RELEASE_SEQUENCE=$(go_release_sequence_from_source "$NEXT_GO_SEQUENCE_FILE")' \
-	'CURRENT_HELM_RELEASE_SEQUENCE=$(helm_release_sequence_from_source "$NEXT_HELM_SEQUENCE_FILE")' \
-	'[ "$CURRENT_GO_RELEASE_SEQUENCE" = "$CURRENT_HELM_RELEASE_SEQUENCE" ]' \
-	'[ "$CURRENT_RELEASE_SEQUENCE" -le 2147483646 ]' \
-	'NEXT_RELEASE_SEQUENCE=$((CURRENT_RELEASE_SEQUENCE + 1))' \
-	'"$current_go_sequence_line"' \
-	'"$next_go_sequence_line"' \
-	'"$current_helm_sequence_line"' \
-	'"$next_helm_sequence_line"'; do
-	static_require_count "$next_release_harness_source" \
-		"$release_sequence_derivation_marker" 1 \
-		'current and synthetic release sequence derivation'
-done
-static_require_count "$next_release_harness_source" \
-	"replace_exact_line_once \\" 2 \
-	'count-checked synthetic release sequence transformations'
 # shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
 static_require_order "$next_release_harness_source" \
 	'synthetic next-release archive, image, registry, values, and uninstall handoff' \
@@ -1969,12 +1940,6 @@ static_require_order "$next_release_harness_source" \
 	'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' \
 	'--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"' \
 	'tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"' \
-	'CURRENT_GO_RELEASE_SEQUENCE=$(go_release_sequence_from_source "$NEXT_GO_SEQUENCE_FILE")' \
-	'CURRENT_HELM_RELEASE_SEQUENCE=$(helm_release_sequence_from_source "$NEXT_HELM_SEQUENCE_FILE")' \
-	'[ "$CURRENT_GO_RELEASE_SEQUENCE" = "$CURRENT_HELM_RELEASE_SEQUENCE" ]' \
-	'NEXT_RELEASE_SEQUENCE=$((CURRENT_RELEASE_SEQUENCE + 1))' \
-	'synthetic next-release Go sequence' \
-	'synthetic next-release Helm sequence' \
 	'go -C "$NEXT_BUILD_CONTEXT" run -mod=readonly ./hack/chartpackage' \
 	'add_created_image "$NEXT_OPERATOR_IMAGE"' \
 	'--file "$NEXT_BUILD_CONTEXT/test/e2e/Dockerfile.operator"' \
@@ -1983,8 +1948,6 @@ static_require_order "$next_release_harness_source" \
 	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
 	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE' \
 	'E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE' \
-	'E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE' \
-	'E2E_NEXT_RELEASE_SEQUENCE=$NEXT_RELEASE_SEQUENCE' \
 	'E2E_PHASE=uninstall'
 
 # The release comparison artifact must be the exact current-release package that the
@@ -2035,8 +1998,6 @@ static_require_order "$next_release_harness_source" \
 for next_release_crd_marker in \
 	'production_controller_image_from_values() {' \
 	'.repository + "@" + .digest' \
-	'validate_release_sequence_transition() {' \
-	'[ "$E2E_NEXT_RELEASE_SEQUENCE" -eq $((E2E_CURRENT_RELEASE_SEQUENCE + 1)) ]' \
 	'create_late_failure_blocker() {' \
 	'prove_late_failure_recovery() {' \
 	'retry_same_candidate() {' \
@@ -2060,25 +2021,19 @@ static_require_count "$next_release_crd_source" \
 static_require_count "$next_release_crd_source" \
 	'assert_release_runtime_removed' 4 \
 	'uninstall residue checks'
-# shellcheck disable=SC2016 # Count the variable-driven next-sequence image handoff.
+# shellcheck disable=SC2016 # Exact identity-capture destination retains a runtime variable literally.
 static_require_count "$next_release_crd_source" \
-	'"$E2E_NEXT_RELEASE_SEQUENCE" "$E2E_NEXT_CONTROLLER_IMAGE"' 1 \
-	'next-sequence identity after the reinstall'
+	'"$WORK_DIR/reinstalled-next-release-controller-identity.json"' 1 \
+	'next-release identity after the reinstall'
 static_reject_marker "$next_release_crd_source" \
 	'.repository + "@" + .testIdentityDigest' \
 	'production controller image identity extraction'
-static_reject_marker "$next_release_crd_source" \
-	'sequence-2 activation' \
-	'variable-driven successor release assertions'
 # shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
 static_require_order "$next_release_crd_source" \
 	'current to next release upgrade, late failure, retry and rollback' \
 	'run_next_release_upgrade_proof() {' \
-	'validate_release_sequence_transition' \
-	'current_release_sequence=$E2E_CURRENT_RELEASE_SEQUENCE' \
-	'next_release_sequence=$E2E_NEXT_RELEASE_SEQUENCE' \
 	'capture_controller_service_account_identity' \
-	'"$current_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
+	'"$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
 	'prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"' \
 	'start_running_apply_fixture' \
 	'stage_predecessor_apply_job_uid_gap_while_running' \
@@ -2091,10 +2046,10 @@ static_require_order "$next_release_crd_source" \
 	'wait_for_read_only_job_cleanup' \
 	'assert_predecessor_apply_remains_exclusive_while_running' \
 	'release_running_apply_barrier' \
-	'"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE"' \
+	'"$E2E_NEXT_CONTROLLER_IMAGE"' \
 	'prove_rollback_refused_over_future_state "$current_release_revision"' \
 	'prove_rollback "$current_release_revision" "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
-	'e2e crd: synthetic sequence-%s upgrade kept the controller identity, and the rollback to sequence %s went through its hook'
+	'e2e crd: synthetic next-release upgrade kept the controller identity, and the rollback to the current release went through its hook'
 # The blocker has to be in place before the candidate is applied, and the
 # evidence read is the revision the blocker failed.
 # shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
@@ -2114,12 +2069,12 @@ static_require_order "$next_release_crd_source" \
 	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
 	'assert_release_runtime_removed' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
-	'"$E2E_NEXT_RELEASE_SEQUENCE" "$E2E_NEXT_CONTROLLER_IMAGE"' \
+	'"$WORK_DIR/reinstalled-next-release-controller-identity.json"' \
 	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
 	'assert_release_runtime_removed' \
 	'e2e crd: fresh-installing the exact exported current-release chart bytes' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE"' \
-	'"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE"' \
+	'"$WORK_DIR/fresh-current-release-controller-identity.json"' \
 	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
 	'assert_release_runtime_removed' \
 	'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall' \
@@ -6109,10 +6064,7 @@ for default_forbidden_marker in \
 		'resources: ["serviceaccounts"]' \
 		'resources: ["configmaps"]' \
 		'verbs: ["create"]' \
-		'--recreate-missing-secret' \
-		'--secret-create-policy-name=' \
-		'--secret-create-policy-binding-name=' \
-		'--secret-create-service-account-name='; do
+		'--recreate-missing-secret'; do
 	if grep -F -- "$default_forbidden_marker" "$ROTATOR_RENDER" >/dev/null; then
 		printf 'e2e static: default certificate lifecycle contains opt-in marker %s\n' \
 			"$default_forbidden_marker" >&2
@@ -6137,10 +6089,7 @@ for recreation_marker in \
 		'verbs: ["create"]' \
 		'operator.ptah.run/generated-webhook-certificate' \
 		'certificate rotator Secret CREATE is outside its exact recovery contract' \
-		'--recreate-missing-secret=true' \
-		'--secret-create-policy-name=' \
-		'--secret-create-policy-binding-name=' \
-		'--secret-create-service-account-name='; do
+		'--recreate-missing-secret=true'; do
 	grep -F -- "$recreation_marker" "$ROTATOR_RECREATE_RENDER" >/dev/null
 done
 grep -F 'StartedChecker()' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
@@ -6351,9 +6300,10 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/deployment.yaml \
 	$crd_render_args >"$CONTROLLER_OBJECT_GUARD_RENDER"
 
-# The hook's objects are named after the first 24 characters of the release
-# fullname, so a fullname chosen to be the hook's own name makes the controller
-# and the hook one ServiceAccount. The chart refuses it rather than render it.
+# The hook's objects are named after the release fullname, stable across
+# upgrades like the controller's own ServiceAccount, so a fullname chosen to
+# collide with the hook's own suffix makes the controller and the hook one
+# ServiceAccount. The chart refuses it rather than render it.
 crd_hook_name=$(awk '
   /^kind:/ {kind = $2}
   kind == "ServiceAccount" && /^  name:/ {
@@ -6361,12 +6311,14 @@ crd_hook_name=$(awk '
     exit
   }
 ' "$CRD_UPGRADE_RENDER")
-printf '%s\n' "$crd_hook_name" | grep -Eq -- '^ptah-e2e-ptah-operator-crd-v1-[0-9a-f]{12}$' || {
-	printf 'e2e static: the CRD hook ServiceAccount is named %s, not after the release sequence and image\n' \
+printf '%s\n' "$crd_hook_name" | grep -Eq -- '^ptah-e2e-ptah-operator-crd-manager$' || {
+	printf 'e2e static: the CRD hook ServiceAccount is named %s, not stably after the release\n' \
 		"$crd_hook_name" >&2
 	exit 1
 }
-fixed_point_fullname="abcdefghijklmnopqrstuvwx-crd-v1-${crd_hook_name##*-}"
+# 51 characters, so the hook's own trunc-51 base reproduces this fullname
+# exactly and its "-crd-manager" suffix then collides with the fullname itself.
+fixed_point_fullname="abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxy-crd-manager"
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/crd-upgrade.yaml \
@@ -6394,22 +6346,15 @@ grep -F -- '- "reconcile"' "$CRD_INSTALL_RENDER" >/dev/null
 [ "$(grep -Fxc 'kind: Job' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- '- "--timeout=360s"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- 'activeDeadlineSeconds: 390' "$CRD_UPGRADE_RENDER")" -eq 1 ]
-# The hook refuses a chart whose release sequence or controller-state version
-# its image does not compile, so the chart has to hand it the ones the binary
-# is built with, read from where the binary reads them.
-compiled_release_sequence=$(sed -n 's/^[[:space:]]*CurrentReleaseSequence int32 = \([1-9][0-9]*\)$/\1/p' \
-	"$ROOT_DIR/internal/crdupgrade/release_sequence.go")
-[ -n "$compiled_release_sequence" ] || {
-	printf '%s\n' 'e2e static: CurrentReleaseSequence could not be read' >&2
-	exit 1
-}
+# The hook refuses a chart whose controller-state version its image does not
+# compile, so the chart has to hand it the one the binary is built with, read
+# from where the binary reads it.
 for crd_reconcile_argument in \
 	'- "--release-name=ptah-e2e"' \
 	'- "--release-namespace=ptah-e2e"' \
 	'- "--controller-deployment-name=ptah-e2e-ptah-operator"' \
 	'- "--certificate-deployment-name=ptah-e2e-ptah-operator-cert-rotator"' \
 	'- "--manager-image=ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"' \
-	"- \"--release-sequence=$compiled_release_sequence\"" \
 	"- \"--controller-state-version=$EXPECTED_CONTROLLER_STATE_VERSION\""; do
 	[ "$(grep -Fc -- "$crd_reconcile_argument" "$CRD_UPGRADE_RENDER")" -eq 1 ] || {
 		printf 'e2e static: the CRD reconcile hook lacks %s\n' "$crd_reconcile_argument" >&2
@@ -6516,8 +6461,7 @@ for singleton_annotation in \
 	'operator.ptah.run/controller-deployment-name: "ptah-e2e-ptah-operator"' \
 	'operator.ptah.run/certificate-deployment-name: "ptah-e2e-ptah-operator-cert-rotator"' \
 	"operator.ptah.run/controller-state-version: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" \
-	'operator.ptah.run/admission-contract-version: "2"' \
-	'operator.ptah.run/release-sequence: "1"'; do
+	'operator.ptah.run/admission-contract-version: "2"'; do
 	[ "$(grep -Fc -- "$singleton_annotation" "$ADMISSION_RENDER")" -eq 2 ]
 done
 hook_service_account_name=$(awk '
@@ -6527,8 +6471,7 @@ hook_service_account_name=$(awk '
     exit
   }
 ' "$ADMISSION_RENDER")
-printf '%s\n' "$hook_service_account_name" |
-	grep -Eq '^ptah-e2e-ptah-operator-crd-v1-[0-9a-f]{12}$'
+[ "$hook_service_account_name" = "ptah-e2e-ptah-operator-crd-manager" ]
 [ "$(grep -Fc -- \
 	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
@@ -6744,8 +6687,6 @@ for crd_live_marker in \
 	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
 	'uninstall retained CRDs and live objects' \
 	'the late failure left the runtime stopped on the predecessor template' \
-	'proving the hook refuses the current chart with the next release manager image' \
-	'current chart with the next release manager image' \
 	'the late failure did not come after a reconcile hook that succeeded' \
 	'the same-candidate retry did not complete the upgrade' \
 	'the refused rollback did not reach its pre-rollback hook' \

@@ -6,8 +6,6 @@ package crdupgrade
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -267,11 +265,6 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-const (
-	renderedRBACReleaseName  = "ptah-e2e"
-	renderedRBACManagerImage = "ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"
-)
-
 type renderedRBACSettings struct {
 	releaseNamespace               string
 	coordinationNamespace          string
@@ -287,13 +280,12 @@ func renderedReleaseRBACInventory(t *testing.T) releaseRBACInventory {
 		t.Fatal(err)
 	}
 	const controllerName = "ptah-e2e-ptah-operator"
-	// The chart names the hook after the release, the sequence and the manager
-	// image; see ptah-operator.crdManagerServiceAccountName.
-	identity := sha256.Sum256([]byte(settings.releaseNamespace + "\n" + renderedRBACReleaseName + "\n1\n" + renderedRBACManagerImage))
+	// The chart names the hook after the release alone; see
+	// ptah-operator.crdManagerServiceAccountName.
 	return releaseRBACInventory{
 		releaseNamespace:             settings.releaseNamespace,
 		coordinationNamespace:        settings.coordinationNamespace,
-		hookServiceAccountName:       controllerName + "-crd-v1-" + hex.EncodeToString(identity[:])[:12],
+		hookServiceAccountName:       controllerName + "-crd-manager",
 		controllerName:               controllerName,
 		controllerServiceAccountName: settings.controllerServiceAccountName,
 		certificateName:              controllerName + "-cert-rotator",

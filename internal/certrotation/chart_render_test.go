@@ -205,9 +205,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	for _, forbiddenPrefix := range []string{
 		"--candidate-",
 		"--recreate-missing-secret",
-		"--secret-create-policy-name=",
-		"--secret-create-policy-binding-name=",
-		"--secret-create-service-account-name=",
 	} {
 		if slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, forbiddenPrefix) }) {
 			t.Errorf("rotator args unexpectedly contain %q: %v", forbiddenPrefix, args)
@@ -378,15 +375,8 @@ func TestMissingSecretRecreationOptInRender(t *testing.T) {
 		t.Fatalf("rotator Deployment containers = %d, want 1", len(containers))
 	}
 	args := stringSlice(containers[0].(map[string]any)["args"])
-	for _, want := range []string{
-		"--recreate-missing-secret=true",
-		"--secret-create-policy-name=" + rotatorName,
-		"--secret-create-policy-binding-name=" + rotatorName,
-		"--secret-create-service-account-name=" + rotatorName,
-	} {
-		if !slices.Contains(args, want) {
-			t.Errorf("rotator args do not contain %q: %v", want, args)
-		}
+	if !slices.Contains(args, "--recreate-missing-secret=true") {
+		t.Errorf("rotator args do not contain %q: %v", "--recreate-missing-secret=true", args)
 	}
 }
 
@@ -641,25 +631,22 @@ func assertSecretCreateGuard(
 		t.Fatalf("Secret CREATE guard namespace = %q, want %q", namespace, releaseNamespace)
 	}
 	contract := certrotation.Config{
-		Namespace:                      releaseNamespace,
-		ReleaseName:                    releaseName,
-		SecretName:                     secretName,
-		SecretCreatePolicyName:         guardName,
-		SecretCreatePolicyBindingName:  guardName,
-		SecretCreateServiceAccountName: guardName,
+		Namespace:   releaseNamespace,
+		ReleaseName: releaseName,
+		SecretName:  secretName,
 	}
 	typedPolicy := &admissionregistrationv1.ValidatingAdmissionPolicy{}
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(policy.Object, typedPolicy); err != nil {
 		t.Fatalf("decode Secret CREATE guard policy: %v", err)
 	}
-	if err := certrotation.VerifySecretCreatePolicyContract(typedPolicy, contract); err != nil {
+	if err := certrotation.VerifySecretCreatePolicyContract(typedPolicy, contract, guardName); err != nil {
 		t.Fatalf("rendered Secret CREATE guard policy differs from runtime contract: %v", err)
 	}
 	typedBinding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(binding.Object, typedBinding); err != nil {
 		t.Fatalf("decode Secret CREATE guard binding: %v", err)
 	}
-	if err := certrotation.VerifySecretCreateBindingContract(typedBinding, contract); err != nil {
+	if err := certrotation.VerifySecretCreateBindingContract(typedBinding, contract, guardName); err != nil {
 		t.Fatalf("rendered Secret CREATE guard binding differs from runtime contract: %v", err)
 	}
 }

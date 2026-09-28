@@ -257,9 +257,9 @@ is_pinned_image() {
 
 # The four images this task builds, each with the role it is loaded back as. The
 # role is what keeps the synthetic next release from being taken for the
-# candidate: they are built from the same commit and differ only in the release
-# sequence compiled into them, so a transfer that mixed them up would install
-# one as the other and prove the upgrade path against nothing.
+# candidate: they are built from the same commit and differ only in the manager
+# image, so a transfer that mixed them up would install one as the other and
+# prove the upgrade path against nothing.
 TASK_IMAGE_ROLES='operator next-operator fixture executor'
 
 task_image_for_role() {
@@ -695,8 +695,6 @@ EXTERNAL_PG_IP=
 KIND_NODE_IMAGE_CREATED=0
 KIND_NETWORK_CREATED=0
 CREATED_IMAGE_REFS=
-CURRENT_RELEASE_SEQUENCE=
-NEXT_RELEASE_SEQUENCE=
 RELEASE_CHART_OUTPUT_PARENT=
 RELEASE_CHART_OUTPUT_TEMP=
 TUNNEL_PID=
@@ -782,9 +780,6 @@ load_prebuilt_images() {
 	prebuilt_ptah_commit=$(jq -r '.ptahCommit // empty' "$prebuilt_manifest")
 	[ "$prebuilt_ptah_commit" = "$E2E_PTAH_REVISION" ] ||
 		fail "the prepared executor carries Ptah $prebuilt_ptah_commit and the catalog pins $E2E_PTAH_REVISION"
-	prebuilt_sequence=$(jq -r '.nextReleaseSequence // empty' "$prebuilt_manifest")
-	[ "$prebuilt_sequence" = "$NEXT_RELEASE_SEQUENCE" ] ||
-		fail "the prepared next release is sequence $prebuilt_sequence and this run expects $NEXT_RELEASE_SEQUENCE"
 	if [ -z "$E2E_PTAH_VERSION" ]; then
 		E2E_PTAH_VERSION=$(jq -r '.ptahVersion // empty' "$prebuilt_manifest")
 	fi
@@ -821,16 +816,6 @@ load_prebuilt_images() {
 			*)
 				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-operator-revision)" = "$CONTROLLER_REVISION" ] ||
 					fail "the loaded $prebuilt_role image does not declare revision $CONTROLLER_REVISION"
-				;;
-		esac
-		case $prebuilt_role in
-			operator)
-				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-release-sequence)" = "$CURRENT_RELEASE_SEQUENCE" ] ||
-					fail "the loaded candidate image is not sequence $CURRENT_RELEASE_SEQUENCE"
-				;;
-			next-operator)
-				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-release-sequence)" = "$NEXT_RELEASE_SEQUENCE" ] ||
-					fail "the loaded next-release image is not sequence $NEXT_RELEASE_SEQUENCE"
 				;;
 		esac
 		add_created_image "$prebuilt_target"
@@ -874,11 +859,8 @@ export_task_images() {
 		--arg operatorRevision "$CONTROLLER_REVISION" \
 		--arg ptahCommit "$PTAH_COMMIT" \
 		--arg ptahVersion "$E2E_PTAH_VERSION" \
-		--arg currentReleaseSequence "$CURRENT_RELEASE_SEQUENCE" \
-		--arg nextReleaseSequence "$NEXT_RELEASE_SEQUENCE" \
 		--slurpfile images "$export_entries" \
 		'{operatorRevision: $operatorRevision, ptahCommit: $ptahCommit, ptahVersion: $ptahVersion,
-		  currentReleaseSequence: $currentReleaseSequence, nextReleaseSequence: $nextReleaseSequence,
 		  images: $images[0]}' >"$E2E_IMAGE_EXPORT_DIR/images.json" ||
 		fail "the image manifest could not be written"
 	printf 'e2e: wrote the four task images and their provenance to %s\n' "$E2E_IMAGE_EXPORT_DIR"
@@ -891,85 +873,6 @@ add_created_image() {
 		CREATED_IMAGE_REFS="$1
 $CREATED_IMAGE_REFS"
 	fi
-}
-
-replace_exact_line_once() {
-	transformation_file=$1
-	expected_line=$2
-	replacement_line=$3
-	transformation_description=$4
-	temporary_file=${transformation_file}.e2e-next
-	if [ ! -f "$transformation_file" ] || [ -L "$transformation_file" ]; then
-		fail "$transformation_description target must be a regular non-symlink file"
-	fi
-	match_count=$(awk -v expected="$expected_line" '
-      $0 == expected { count++ }
-      END { print count + 0 }
-    ' "$transformation_file")
-	[ "$match_count" -eq 1 ] ||
-		fail "$transformation_description source line count is $match_count, expected exactly one"
-	awk -v expected="$expected_line" -v replacement="$replacement_line" '
-      $0 == expected { print replacement; next }
-      { print }
-    ' "$transformation_file" >"$temporary_file"
-	old_count=$(awk -v expected="$expected_line" '
-      $0 == expected { count++ }
-      END { print count + 0 }
-    ' "$temporary_file")
-	new_count=$(awk -v replacement="$replacement_line" '
-      $0 == replacement { count++ }
-      END { print count + 0 }
-    ' "$temporary_file")
-	if [ "$old_count" -ne 0 ] || [ "$new_count" -ne 1 ]; then
-		fail "$transformation_description did not produce exactly one replacement"
-	fi
-	mv "$temporary_file" "$transformation_file"
-}
-
-go_release_sequence_from_source() {
-	sequence_file=$1
-	sequence_prefix=$(printf '\tCurrentReleaseSequence int32 = ')
-	awk -v prefix="$sequence_prefix" '
-      index($0, prefix) == 1 {
-        candidate_lines++
-        value = substr($0, length(prefix) + 1)
-        if (value ~ /^[1-9][0-9]*$/ && $0 == prefix value) {
-          declarations++
-          sequence = value
-        }
-      }
-      END {
-        if (candidate_lines != 1 || declarations != 1) {
-          exit 1
-        }
-        print sequence
-      }
-    ' "$sequence_file"
-}
-
-helm_release_sequence_from_source() {
-	sequence_file=$1
-	helpers_prefix='{{- define "ptah-operator.releaseSequence" -}}'
-	helpers_suffix='{{- end -}}'
-	awk -v prefix="$helpers_prefix" -v suffix="$helpers_suffix" '
-      index($0, prefix) == 1 {
-        candidate_lines++
-        if (substr($0, length($0) - length(suffix) + 1) == suffix) {
-          value = substr($0, length(prefix) + 1,
-            length($0) - length(prefix) - length(suffix))
-          if (value ~ /^[1-9][0-9]*$/) {
-            declarations++
-            sequence = value
-          }
-        }
-      }
-      END {
-        if (candidate_lines != 1 || declarations != 1) {
-          exit 1
-        }
-        print sequence
-      }
-    ' "$sequence_file"
 }
 
 export_release_chart() {
@@ -1004,7 +907,7 @@ export_release_chart() {
 		fail "refusing to replace existing E2E_RELEASE_CHART_OUTPUT target"
 	fi
 	if [ ! -f "$CHART_PACKAGE" ] || [ -L "$CHART_PACKAGE" ]; then
-		fail "release-form sequence-$CURRENT_RELEASE_SEQUENCE chart package is not a regular non-symlink file"
+		fail "release-form $chart_version chart package is not a regular non-symlink file"
 	fi
 	RELEASE_CHART_OUTPUT_TEMP=$(mktemp \
 		"$RELEASE_CHART_OUTPUT_PARENT/.ptah-operator-release-chart.XXXXXX") ||
@@ -1012,13 +915,13 @@ export_release_chart() {
 	if ! cp "$CHART_PACKAGE" "$RELEASE_CHART_OUTPUT_TEMP"; then
 		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
 		RELEASE_CHART_OUTPUT_TEMP=
-		fail "could not copy the release-form sequence-$CURRENT_RELEASE_SEQUENCE chart package"
+		fail "could not copy the release-form $chart_version chart package"
 	fi
 	chmod 600 "$RELEASE_CHART_OUTPUT_TEMP"
 	if ! cmp -s "$CHART_PACKAGE" "$RELEASE_CHART_OUTPUT_TEMP"; then
 		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
 		RELEASE_CHART_OUTPUT_TEMP=
-		fail "atomic release chart output differs from the sequence-$CURRENT_RELEASE_SEQUENCE chart package"
+		fail "atomic release chart output differs from the $chart_version chart package"
 	fi
 	if [ -e "$RELEASE_CHART_OUTPUT_TARGET" ] || [ -L "$RELEASE_CHART_OUTPUT_TARGET" ]; then
 		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
@@ -1036,8 +939,8 @@ export_release_chart() {
 		fail "could not remove the temporary release chart link after publication"
 	fi
 	RELEASE_CHART_OUTPUT_TEMP=
-	printf 'e2e: exported sequence-%s release chart %s (%s)\n' \
-		"$CURRENT_RELEASE_SEQUENCE" "$RELEASE_CHART_OUTPUT_TARGET" "$CHART_PACKAGE_DIGEST"
+	printf 'e2e: exported %s release chart %s (%s)\n' \
+		"$chart_version" "$RELEASE_CHART_OUTPUT_TARGET" "$CHART_PACKAGE_DIGEST"
 }
 
 # Docker preserves a named volume's original labels when a later create uses
@@ -2056,45 +1959,6 @@ mkdir -p "$NEXT_BUILD_CONTEXT"
 git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
 	--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"
 tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"
-NEXT_GO_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/internal/crdupgrade/release_sequence.go
-NEXT_HELM_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/charts/ptah-operator/templates/_helpers.tpl
-for next_sequence_source in "$NEXT_GO_SEQUENCE_FILE" "$NEXT_HELM_SEQUENCE_FILE"; do
-	if [ ! -f "$next_sequence_source" ] || [ -L "$next_sequence_source" ]; then
-		fail "synthetic next-release sequence source must be a regular non-symlink file: $next_sequence_source"
-	fi
-done
-CURRENT_GO_RELEASE_SEQUENCE=$(go_release_sequence_from_source "$NEXT_GO_SEQUENCE_FILE") ||
-	fail "archived Go source must contain exactly one positive CurrentReleaseSequence declaration"
-CURRENT_HELM_RELEASE_SEQUENCE=$(helm_release_sequence_from_source "$NEXT_HELM_SEQUENCE_FILE") ||
-	fail "archived Helm source must contain exactly one positive releaseSequence helper"
-[ "$CURRENT_GO_RELEASE_SEQUENCE" = "$CURRENT_HELM_RELEASE_SEQUENCE" ] ||
-	fail "archived Go release sequence $CURRENT_GO_RELEASE_SEQUENCE differs from Helm sequence $CURRENT_HELM_RELEASE_SEQUENCE"
-CURRENT_RELEASE_SEQUENCE=$CURRENT_GO_RELEASE_SEQUENCE
-printf '%s\n' "$CURRENT_RELEASE_SEQUENCE" | grep -Eq '^[1-9][0-9]{0,9}$' ||
-	fail "current release sequence must be a positive base-10 int32"
-[ "$CURRENT_RELEASE_SEQUENCE" -le 2147483646 ] ||
-	fail "current release sequence cannot be advanced within positive int32 bounds"
-NEXT_RELEASE_SEQUENCE=$((CURRENT_RELEASE_SEQUENCE + 1))
-current_go_sequence_line=$(printf '\tCurrentReleaseSequence int32 = %s' \
-	"$CURRENT_RELEASE_SEQUENCE")
-next_go_sequence_line=$(printf '\tCurrentReleaseSequence int32 = %s' \
-	"$NEXT_RELEASE_SEQUENCE")
-current_helm_sequence_line=$(printf \
-	'{{- define "ptah-operator.releaseSequence" -}}%s{{- end -}}' \
-	"$CURRENT_RELEASE_SEQUENCE")
-next_helm_sequence_line=$(printf \
-	'{{- define "ptah-operator.releaseSequence" -}}%s{{- end -}}' \
-	"$NEXT_RELEASE_SEQUENCE")
-replace_exact_line_once \
-	"$NEXT_GO_SEQUENCE_FILE" \
-	"$current_go_sequence_line" \
-	"$next_go_sequence_line" \
-	"synthetic next-release Go sequence $CURRENT_RELEASE_SEQUENCE to $NEXT_RELEASE_SEQUENCE"
-replace_exact_line_once \
-	"$NEXT_HELM_SEQUENCE_FILE" \
-	"$current_helm_sequence_line" \
-	"$next_helm_sequence_line" \
-	"synthetic next-release Helm sequence $CURRENT_RELEASE_SEQUENCE to $NEXT_RELEASE_SEQUENCE"
 
 chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")
 [ -n "$chart_version" ] || fail "Helm chart version is missing"
@@ -2122,8 +1986,8 @@ printf 'e2e: installing release-form chart %s (%s)\n' \
 	"$chart_asset" "$CHART_PACKAGE_DIGEST"
 
 timing_next bootstrap next-chart-package
-printf 'e2e: reproducibly packaging synthetic sequence-%s Helm chart from commit %s\n' \
-	"$NEXT_RELEASE_SEQUENCE" "$CONTROLLER_REVISION"
+printf 'e2e: reproducibly packaging the synthetic next-release Helm chart from commit %s\n' \
+	"$CONTROLLER_REVISION"
 go -C "$NEXT_BUILD_CONTEXT" run -mod=readonly ./hack/chartpackage \
 	-chart charts/ptah-operator \
 	-epoch "$chart_source_epoch" \
@@ -2141,8 +2005,8 @@ next_packaged_chart_version=$(printf '%s\n' "$next_packaged_chart_metadata" |
 [ "$next_packaged_chart_version" = "$chart_version" ] ||
 	fail "synthetic packaged chart version is $next_packaged_chart_version, want $chart_version"
 NEXT_CHART_PACKAGE_DIGEST=$(sha256 <"$NEXT_CHART_PACKAGE")
-printf 'e2e: synthetic sequence-%s chart %s has digest %s\n' \
-	"$NEXT_RELEASE_SEQUENCE" "${NEXT_CHART_PACKAGE##*/}" "$NEXT_CHART_PACKAGE_DIGEST"
+printf 'e2e: synthetic next-release chart %s has digest %s\n' \
+	"${NEXT_CHART_PACKAGE##*/}" "$NEXT_CHART_PACKAGE_DIGEST"
 
 timing_next bootstrap buildx-setup
 mkdir -p "$DOCKER_CLI_CONFIG/cli-plugins"
@@ -2352,12 +2216,11 @@ if [ -z "$E2E_PREBUILT_IMAGE_DIR" ]; then
 		--build-arg "REVISION=$CONTROLLER_REVISION" \
 		--label "ptah.run/e2e-role=operator" \
 		--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION" \
-		--label "ptah.run/e2e-release-sequence=$CURRENT_RELEASE_SEQUENCE" \
 		--target operator \
 		--tag "$OPERATOR_IMAGE" "$ROOT_DIR"
 	timing_next bootstrap next-operator-image
-	printf 'e2e: building synthetic sequence-%s image %s from exact commit archive %s\n' \
-		"$NEXT_RELEASE_SEQUENCE" "$NEXT_OPERATOR_IMAGE" "$CONTROLLER_REVISION"
+	printf 'e2e: building the synthetic next-release image %s from exact commit archive %s\n' \
+		"$NEXT_OPERATOR_IMAGE" "$CONTROLLER_REVISION"
 	add_created_image "$NEXT_OPERATOR_IMAGE"
 	docker --context "$DOCKER_CONTEXT" buildx build \
 		--builder "$DOCKER_CONTEXT" \
@@ -2366,7 +2229,6 @@ if [ -z "$E2E_PREBUILT_IMAGE_DIR" ]; then
 		--build-arg "REVISION=$CONTROLLER_REVISION" \
 		--label "ptah.run/e2e-role=next-operator" \
 		--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION" \
-		--label "ptah.run/e2e-release-sequence=$NEXT_RELEASE_SEQUENCE" \
 		--target operator \
 		--tag "$NEXT_OPERATOR_IMAGE" "$NEXT_BUILD_CONTEXT"
 	timing_next bootstrap fixture-image
@@ -3016,8 +2878,6 @@ E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
 E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
 E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE \
-E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE \
-E2E_NEXT_RELEASE_SEQUENCE=$NEXT_RELEASE_SEQUENCE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
 E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \

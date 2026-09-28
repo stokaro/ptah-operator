@@ -82,7 +82,6 @@ metadata:
     operator.ptah.run/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
     operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
     operator.ptah.run/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
-    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 webhooks:
@@ -186,7 +185,6 @@ metadata:
     operator.ptah.run/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
     operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
     operator.ptah.run/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
-    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 webhooks:

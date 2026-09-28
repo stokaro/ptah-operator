@@ -59,8 +59,8 @@ rollback, the image of the revision being restored.
 In order, it:
 
 1. refuses a chart of another release than its image, before it reads the
-   cluster: the chart hands it its release sequence and its controller-state
-   version, and the image compiles both;
+   cluster: the chart hands it its controller-state version, and the image
+   compiles the same one;
 2. scans every durable controller-state version, as described below;
 3. checks the schema identity of every CRD against the one it embeds, and
    dry-runs every required schema change;
@@ -187,9 +187,7 @@ Helm rendering uses `lookup` and fails when either singleton is missing its
 peer, lacks an annotation, or disagrees with the requested values. This blocks
 a second release and blocks changes to `coordination.namespace` or
 `leaderElection` before either the CRD hook or manager Deployment can mutate
-cluster state. There is no value that bypasses this check. The same annotations
-record the release sequence, and a chart whose sequence is below the recorded
-one is refused when Helm renders it.
+cluster state. There is no value that bypasses this check.
 
 The runtime verifier closes the remaining concurrent-install race in which two
 clients could both render while the singleton was absent. New manager and

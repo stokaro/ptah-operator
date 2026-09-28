@@ -116,7 +116,7 @@ serviceAccount:
   # a cloud identity binding goes.
   annotations: {}
 
-# Annotations added to the manager and rotator Pods.
+# Annotations added to the manager Pods.
 podAnnotations: {}
 # Labels added to the manager and rotator Pods, beside the chart's own.
 podLabels: {}

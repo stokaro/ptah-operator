@@ -151,39 +151,40 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 func TestExportedSecretCreateGuardContractVerifiers(t *testing.T) {
 	t.Parallel()
 
+	const guardName = "ptah-cert-rotator"
 	config := testConfig()
 	client := fake.NewSimpleClientset()
-	installUnestablishedSecretCreateGuard(t, client, config)
+	installUnestablishedSecretCreateGuard(t, client, config, guardName)
 	policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-		context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+		context.Background(), guardName, metav1.GetOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
-		context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
+		context.Background(), guardName, metav1.GetOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifySecretCreatePolicyContract(policy, config); err != nil {
+	if err := VerifySecretCreatePolicyContract(policy, config, guardName); err != nil {
 		t.Fatalf("verify exact policy: %v", err)
 	}
-	if err := VerifySecretCreateBindingContract(binding, config); err != nil {
+	if err := VerifySecretCreateBindingContract(binding, config, guardName); err != nil {
 		t.Fatalf("verify exact binding: %v", err)
 	}
-	if err := VerifySecretCreatePolicyContract(nil, config); err == nil {
+	if err := VerifySecretCreatePolicyContract(nil, config, guardName); err == nil {
 		t.Fatal("nil policy was accepted")
 	}
-	if err := VerifySecretCreateBindingContract(nil, config); err == nil {
+	if err := VerifySecretCreateBindingContract(nil, config, guardName); err == nil {
 		t.Fatal("nil binding was accepted")
 	}
 	policy.Spec.Validations[0].Message = "foreign"
-	if err := VerifySecretCreatePolicyContract(policy, config); err == nil {
+	if err := VerifySecretCreatePolicyContract(policy, config, guardName); err == nil {
 		t.Fatal("foreign policy was accepted")
 	}
 	binding.Spec.PolicyName = "foreign"
-	if err := VerifySecretCreateBindingContract(binding, config); err == nil {
+	if err := VerifySecretCreateBindingContract(binding, config, guardName); err == nil {
 		t.Fatal("foreign binding was accepted")
 	}
 }
@@ -437,9 +438,6 @@ func TestMissingSecretRecreationIsDisabledByDefault(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
 	config.RecreateMissingSecret = false
-	config.SecretCreatePolicyName = ""
-	config.SecretCreatePolicyBindingName = ""
-	config.SecretCreateServiceAccountName = ""
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
 	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
@@ -465,17 +463,6 @@ func TestSecretCreateValidationExpressionHandlesOptionalGenerateName(t *testing.
 	}
 }
 
-func TestConfigRejectsInvalidSecretCreateServiceAccountName(t *testing.T) {
-	t.Parallel()
-	config := testConfig()
-	config.SecretCreateServiceAccountName = "Bad_Name"
-	client := fake.NewClientset()
-	if _, err := New(client, config); err == nil ||
-		!bytes.Contains([]byte(err.Error()), []byte("Secret CREATE ServiceAccount name")) {
-		t.Fatalf("New() error = %v, want invalid Secret CREATE ServiceAccount name", err)
-	}
-}
-
 func TestNewRotatorRejectsTypedNilClient(t *testing.T) {
 	t.Parallel()
 
@@ -487,17 +474,6 @@ func TestNewRotatorRejectsTypedNilClient(t *testing.T) {
 				t.Fatalf("New() error = %v, want the client required", err)
 			}
 		})
-	}
-}
-
-func TestConfigRejectsSecretCreateGuardNamesWhenRecreationIsDisabled(t *testing.T) {
-	t.Parallel()
-	config := testConfig()
-	config.RecreateMissingSecret = false
-	client := fake.NewClientset()
-	if _, err := New(client, config); err == nil ||
-		!strings.Contains(err.Error(), "must be empty") {
-		t.Fatalf("New() error = %v, want disabled guard-name rejection", err)
 	}
 }
 
@@ -1285,12 +1261,12 @@ func assertCANotCopiedToValidatingUpdates(t *testing.T, client *fake.Clientset, 
 	})
 }
 
-func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset, config Config) {
+func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset, config Config, guardName string) {
 	t.Helper()
 	failurePolicy := admissionregistrationv1.Fail
 	scope := admissionregistrationv1.NamespacedScope
 	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: config.SecretCreatePolicyName, Generation: 1},
+		ObjectMeta: metav1.ObjectMeta{Name: guardName, Generation: 1},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
 			FailurePolicy: &failurePolicy,
 			MatchConstraints: &admissionregistrationv1.MatchResources{
@@ -1309,7 +1285,7 @@ func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset,
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "exact-certificate-rotator-service-account",
 				Expression: "request.userInfo.username == 'system:serviceaccount:" +
-					config.Namespace + ":" + config.SecretCreateServiceAccountName + "'",
+					config.Namespace + ":" + guardName + "'",
 			}},
 			Validations: []admissionregistrationv1.Validation{{
 				Expression: secretCreateValidationExpression(config),
@@ -1318,9 +1294,9 @@ func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset,
 		},
 	}
 	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: config.SecretCreatePolicyBindingName},
+		ObjectMeta: metav1.ObjectMeta{Name: guardName},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
-			PolicyName:        config.SecretCreatePolicyName,
+			PolicyName:        guardName,
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 			MatchResources: &admissionregistrationv1.MatchResources{
 				NamespaceSelector: &metav1.LabelSelector{
@@ -1370,9 +1346,6 @@ func testConfig() Config {
 		ServiceNamespace:               "ptah-system",
 		EndpointPortName:               "https",
 		HolderIdentity:                 "job-a/uid-a",
-		SecretCreatePolicyName:         "ptah-cert-rotator",
-		SecretCreatePolicyBindingName:  "ptah-cert-rotator",
-		SecretCreateServiceAccountName: "ptah-cert-rotator",
 		RecreateMissingSecret:          true,
 		RenewalThreshold:               7 * 24 * time.Hour,
 		ServingCertificateValidity:     30 * 24 * time.Hour,

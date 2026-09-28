@@ -52,14 +52,6 @@ app.kubernetes.io/component: controller
 {{- end -}}
 {{- end -}}
 
-{{/*
-Releases advance one sequence at a time, so an upgrade finds the admission
-singleton written by this sequence or by the one before it.
-*/}}
-{{- define "ptah-operator.predecessorReleaseSequence" -}}
-{{- sub (atoi (include "ptah-operator.releaseSequence" .)) 1 -}}
-{{- end -}}
-
 {{- define "ptah-operator.certRotatorServiceAccountName" -}}
 {{- $base := include "ptah-operator.fullname" . | trunc 39 | trimSuffix "-" -}}
 {{- printf "%s-cert-rotator" $base -}}
@@ -102,10 +94,11 @@ singleton written by this sequence or by the one before it.
 {{- "ptah-operator.operator.ptah.run" -}}
 {{- end -}}
 
+{{- /* The hook runs as one ServiceAccount in every release, so its name is
+      stable across upgrades, like the controller's. */ -}}
 {{- define "ptah-operator.crdManagerServiceAccountName" -}}
-{{- /* Keep every generated Pod prefix intact through the largest positive int32 release sequence. */ -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
-{{- printf "%s-crd-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 51 | trimSuffix "-" -}}
+{{- printf "%s-crd-manager" $base -}}
 {{- end -}}
 
 {{- define "ptah-operator.validateLifecycleResourceIdentities" -}}
@@ -163,13 +156,6 @@ singleton written by this sequence or by the one before it.
 
 {{- define "ptah-operator.admissionContractVersion" -}}2{{- end -}}
 
-{{- /* Increase for every published operator release. */ -}}
-{{- define "ptah-operator.releaseSequence" -}}1{{- end -}}
-
-{{- define "ptah-operator.hookIdentityDigest" -}}
-{{- printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name (include "ptah-operator.releaseSequence" .) (include "ptah-operator.managerImage" .) | sha256sum -}}
-{{- end -}}
-
 {{- /* The release's own identity: what names its cluster-scoped objects apart
       from another release's, and stays the same across its upgrades. */ -}}
 {{- define "ptah-operator.releaseDigest" -}}
@@ -219,7 +205,6 @@ singleton written by this sequence or by the one before it.
 {{- end -}}
 
 {{- define "ptah-operator.certificateRuntimeArgsJSON" -}}
-{{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- /* The spec-writer entries exist only when the four-eyes control is on;
       webhook.yaml renders them under the same condition, and the rotator
       must probe exactly the entries that exist to serve a canary at each. */ -}}
@@ -235,9 +220,6 @@ singleton written by this sequence or by the one before it.
       (printf "--staging-secret-name=%s" (include "ptah-operator.certRotationStagingSecretName" .)) -}}
 {{- if .Values.certificateRotation.recreateMissingSecret -}}
 {{- $args = append $args "--recreate-missing-secret=true" -}}
-{{- $args = append $args (printf "--secret-create-policy-name=%s" $rotatorName) -}}
-{{- $args = append $args (printf "--secret-create-policy-binding-name=%s" $rotatorName) -}}
-{{- $args = append $args (printf "--secret-create-service-account-name=%s" $rotatorName) -}}
 {{- end -}}
 {{- $args = concat $args (list
       (printf "--lease-name=%s" (include "ptah-operator.certRotationLeaseName" .))
@@ -271,11 +253,10 @@ manager image changes and then brings the CRDs to this release's schemas, so
 it needs the two Deployments it may stop and the image that tells whether it
 has to.
 
-The release sequence and the controller-state version are the chart's, and the
-hook refuses them unless its image compiles the same ones. That is what
-refuses a chart paired with another release's image, as a --reuse-values
-upgrade that keeps the old image.digest makes, before the hook changes
-anything.
+The controller-state version is the chart's, and the hook refuses it unless its
+image compiles the same one. That is what refuses a chart paired with another
+release's image, as a --reuse-values upgrade that keeps the old image.digest
+makes, before the hook changes anything.
 */}}
 {{- define "ptah-operator.crdReconcileArgsJSON" -}}
 {{- list
@@ -286,7 +267,6 @@ anything.
       (printf "--controller-deployment-name=%s" (include "ptah-operator.fullname" .))
       (printf "--certificate-deployment-name=%s" (include "ptah-operator.certRotatorServiceAccountName" .))
       (printf "--manager-image=%s" (include "ptah-operator.managerImage" .))
-      (printf "--release-sequence=%s" (include "ptah-operator.releaseSequence" .))
       (printf "--controller-state-version=%s" (include "ptah-operator.controllerStateVersion" .))
     | toJson -}}
 {{- end -}}
@@ -312,7 +292,6 @@ manager also refuses stored state it cannot read.
       (printf "--controller-service-account-name=%s" (include "ptah-operator.serviceAccountName" $root))
       (printf "--controller-deployment-name=%s" (include "ptah-operator.fullname" $root))
       (printf "--certificate-deployment-name=%s" (include "ptah-operator.certRotatorServiceAccountName" $root))
-      (printf "--release-sequence=%s" (include "ptah-operator.releaseSequence" $root))
       (printf "--require-distinct-approver=%t" $root.Values.approvals.requireDistinctApprover) -}}
 {{- if .verifyControllerState -}}
 {{- $args = append $args "--verify-controller-state=true" -}}
@@ -332,7 +311,7 @@ manager also refuses stored state it cannot read.
 {{- fail (printf "fixed admission singleton %s/%s is not owned by Helm release %s/%s" .kind .object.metadata.name .releaseNamespace .releaseName) -}}
 {{- end -}}
 {{- $present := 0 -}}
-{{- $expected := merge (dict) .expectedImmutable .expectedVersions (dict "operator.ptah.run/hook-service-account-name" .expectedHook "operator.ptah.run/controller-service-account-name" .expectedController) -}}
+{{- $expected := merge (dict) .expectedImmutable .expectedVersions -}}
 {{- range $key := keys $expected -}}
 {{- if hasKey $annotations $key -}}
 {{- $present = add1 $present -}}
@@ -354,30 +333,6 @@ manager also refuses stored state it cannot read.
 {{- end -}}
 {{- if gt (atoi $actual) (atoi $expectedValue) -}}
 {{- fail (printf "fixed admission singleton %s/%s annotation %s is newer than candidate %s" $.kind $.object.metadata.name $key $expectedValue) -}}
-{{- end -}}
-{{- end -}}
-{{- $actualRelease := index $annotations "operator.ptah.run/release-sequence" -}}
-{{- $actualController := index $annotations "operator.ptah.run/controller-service-account-name" -}}
-{{- $actualHook := index $annotations "operator.ptah.run/hook-service-account-name" -}}
-{{- if eq $actualRelease (index .expectedVersions "operator.ptah.run/release-sequence") -}}
-{{- if ne $actualController .expectedController -}}
-{{- fail (printf "fixed admission singleton %s/%s annotation operator.ptah.run/controller-service-account-name is %q, expected %q" .kind .object.metadata.name $actualController .expectedController) -}}
-{{- end -}}
-{{- if ne $actualHook .expectedHook -}}
-{{- fail (printf "fixed admission singleton %s/%s annotation operator.ptah.run/hook-service-account-name is %q, expected %q" .kind .object.metadata.name $actualHook .expectedHook) -}}
-{{- end -}}
-{{- else -}}
-{{- if or (eq .expectedPreviousRelease "0") (ne $actualRelease .expectedPreviousRelease) -}}
-{{- fail (printf "fixed admission singleton %s/%s has unexpected predecessor release sequence %s" .kind .object.metadata.name $actualRelease) -}}
-{{- end -}}
-{{- if ne $actualController .expectedController -}}
-{{- fail (printf "fixed admission singleton %s/%s annotation operator.ptah.run/controller-service-account-name is %q, expected %q" .kind .object.metadata.name $actualController .expectedController) -}}
-{{- end -}}
-{{- $currentSuffix := printf `-crd-v%s-[0-9a-f]{12}$` (index .expectedVersions "operator.ptah.run/release-sequence") -}}
-{{- $prefix := regexReplaceAll $currentSuffix .expectedHook "-crd-v" -}}
-{{- $historicalPattern := printf `^%s%s-[0-9a-f]{12}$` $prefix $actualRelease -}}
-{{- if not (regexMatch $historicalPattern $actualHook) -}}
-{{- fail (printf "fixed admission singleton %s/%s has invalid historical hook ServiceAccount identity %q" .kind .object.metadata.name $actualHook) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -411,13 +366,14 @@ caller does the lookups, so a render can hand it objects it has to refuse.
       "operator.ptah.run/leader-election" (printf "%t" $root.Values.leaderElection)
       "operator.ptah.run/leader-election-id" (include "ptah-operator.leaderElectionID" $root)
       "operator.ptah.run/webhook-service-name" (include "ptah-operator.webhookServiceName" $root)
+      "operator.ptah.run/hook-service-account-name" (include "ptah-operator.crdManagerServiceAccountName" $root)
+      "operator.ptah.run/controller-service-account-name" (include "ptah-operator.serviceAccountName" $root)
       "operator.ptah.run/controller-deployment-name" (include "ptah-operator.fullname" $root)
       "operator.ptah.run/certificate-deployment-name" (include "ptah-operator.certRotatorServiceAccountName" $root) -}}
 {{- $expectedVersions := dict
       "operator.ptah.run/controller-state-version" (include "ptah-operator.controllerStateVersion" $root)
-      "operator.ptah.run/admission-contract-version" (include "ptah-operator.admissionContractVersion" $root)
-      "operator.ptah.run/release-sequence" (include "ptah-operator.releaseSequence" $root) -}}
-{{- $context := dict "expectedImmutable" $expectedImmutable "expectedVersions" $expectedVersions "expectedHook" (include "ptah-operator.crdManagerServiceAccountName" $root) "expectedController" (include "ptah-operator.serviceAccountName" $root) "expectedPreviousRelease" (include "ptah-operator.predecessorReleaseSequence" $root) "releaseName" $root.Release.Name "releaseNamespace" $root.Release.Namespace -}}
+      "operator.ptah.run/admission-contract-version" (include "ptah-operator.admissionContractVersion" $root) -}}
+{{- $context := dict "expectedImmutable" $expectedImmutable "expectedVersions" $expectedVersions "releaseName" $root.Release.Name "releaseNamespace" $root.Release.Namespace -}}
 {{- include "ptah-operator.validateAdmissionSingletonObject" (merge (dict "kind" "MutatingWebhookConfiguration" "object" $mutating) $context) -}}
 {{- include "ptah-operator.validateAdmissionSingletonObject" (merge (dict "kind" "ValidatingWebhookConfiguration" "object" $validating) $context) -}}
 {{- end -}}

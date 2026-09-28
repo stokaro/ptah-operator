@@ -107,7 +107,6 @@ mkdir -p "$PREPARED_DIR"
 write_prepared() {
 	prepared_revision=${1:-$EXPECTED_REVISION}
 	prepared_ptah=${2:-$PTAH_PIN}
-	prepared_next_sequence=${3:-2}
 	rm -rf "$PREPARED_DIR" "$WORK_DIR/state"
 	mkdir -p "$PREPARED_DIR" "$WORK_DIR/state"
 	for prepared_role in operator next-operator fixture executor; do
@@ -116,18 +115,16 @@ write_prepared() {
 	jq -n \
 		--arg revision "$prepared_revision" \
 		--arg ptah "$prepared_ptah" \
-		--arg sequence "$prepared_next_sequence" \
 		'{operatorRevision: $revision, ptahCommit: $ptah, ptahVersion: "v0.7.0",
-		  currentReleaseSequence: "1", nextReleaseSequence: $sequence,
 		  images: [
 		    {role: "operator", file: "operator.tar", reference: "prepared/operator:1", identity: "sha256:aa"},
 		    {role: "next-operator", file: "next-operator.tar", reference: "prepared/next:1", identity: "sha256:bb"},
 		    {role: "fixture", file: "fixture.tar", reference: "prepared/fixture:1", identity: "sha256:cc"},
 		    {role: "executor", file: "executor.tar", reference: "prepared/executor:1", identity: "sha256:dd"}
 		  ]}' >"$PREPARED_DIR/images.json"
-	state_write prepared/operator:1 sha256:aa operator "$prepared_revision" 1
-	state_write prepared/next:1 sha256:bb next-operator "$prepared_revision" "$prepared_next_sequence"
-	state_write prepared/fixture:1 sha256:cc fixture "$prepared_revision" ''
+	state_write prepared/operator:1 sha256:aa operator "$prepared_revision"
+	state_write prepared/next:1 sha256:bb next-operator "$prepared_revision"
+	state_write prepared/fixture:1 sha256:cc fixture "$prepared_revision"
 	state_executor prepared/executor:1 sha256:dd "$prepared_ptah"
 }
 
@@ -140,16 +137,11 @@ state_write() {
 	state_identity=$2
 	state_role=$3
 	state_revision=$4
-	state_sequence=$5
 	state_name=$(state_key "$state_reference")
 	printf '%s' "$state_identity" >"$WORK_DIR/state/$state_name.id"
 	printf '%s' "$state_role" >"$WORK_DIR/state/$state_name.$(state_key ptah.run/e2e-role)"
 	printf '%s' "$state_revision" \
 		>"$WORK_DIR/state/$state_name.$(state_key ptah.run/e2e-operator-revision)"
-	if [ -n "$state_sequence" ]; then
-		printf '%s' "$state_sequence" \
-			>"$WORK_DIR/state/$state_name.$(state_key ptah.run/e2e-release-sequence)"
-	fi
 }
 
 state_executor() {
@@ -174,8 +166,6 @@ run_load() {
 		E2E_PTAH_REVISION=$PTAH_PIN
 		E2E_PTAH_VERSION=
 		E2E_PREBUILT_IMAGE_DIR=$PREPARED_DIR
-		CURRENT_RELEASE_SEQUENCE=1
-		NEXT_RELEASE_SEQUENCE=2
 		OPERATOR_IMAGE=local/operator:run
 		NEXT_OPERATOR_IMAGE=local/next:run
 		FIXTURE_BUILD_IMAGE=local/fixture:run
@@ -235,10 +225,6 @@ expect_refusal "were built from 3333333333333333333333333333333333333333"
 # An executor built from a Ptah the catalog does not pin.
 write_prepared "$EXPECTED_REVISION" 4444444444444444444444444444444444444444
 expect_refusal "carries Ptah 4444444444444444444444444444444444444444"
-
-# A next release that is not the sequence this run upgrades to.
-write_prepared "$EXPECTED_REVISION" "$PTAH_PIN" 7
-expect_refusal "sequence 7 and this run expects 2"
 
 # A tarball whose loaded image is not the one the manifest declared.
 write_prepared

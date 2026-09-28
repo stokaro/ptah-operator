@@ -268,10 +268,9 @@ const chartIdentities = 3
 // before Helm has created its ServiceAccount. So no case here has a
 // ServiceAccount object at all. The names come from the chart's own offline
 // render, so this checks what the chart runs as rather than a second copy of
-// its naming rules, including where a long name forces the helpers to truncate
-// and at a later release sequence. The manager keeps one name in every
-// release, so the name a sequence-qualified scheme would give it is a
-// stranger's.
+// its naming rules, including where a long name forces the helpers to
+// truncate. The manager and the hook both keep one name in every release, so
+// there is no upgrade-to-upgrade variation to compare against.
 func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 	t.Parallel()
 	helm := helmOrSkip(t)
@@ -284,28 +283,25 @@ func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 		t.Fatalf("the long release name is %d bytes; Helm's limit is 53 and the case needs all of them", len(longRelease))
 	}
 	cases := []struct {
-		name     string
-		release  string
-		sequence int
-		values   []string
+		name    string
+		release string
+		values  []string
 		// fullname is what the chart would call the release if nothing were
 		// truncated; truncated says the identities must be shorter.
 		fullname  string
 		truncated bool
 	}{
-		{name: "sequence 1", release: releaseName, sequence: 1, fullname: releaseName + "-ptah-operator"},
+		{name: "the release's own name", release: releaseName, fullname: releaseName + "-ptah-operator"},
 		{
-			name: "a release name that truncates every identity", release: longRelease, sequence: 1,
+			name: "a release name that truncates every identity", release: longRelease,
 			fullname: longRelease + "-ptah-operator", truncated: true,
 		},
 		{
-			// The acceptance lifecycle's shape: a 60-byte fullname override,
-			// upgraded to the synthetic next release.
-			name: "sequence 2 under a truncated fullname override", release: releaseName, sequence: 2,
+			name: "a truncated fullname override", release: releaseName,
 			values: []string{"fullnameOverride=" + longFullname}, fullname: longFullname, truncated: true,
 		},
 		{
-			name: "external identities at sequence 2", release: releaseName, sequence: 2,
+			name: "external controller identity", release: releaseName,
 			values:   []string{"serviceAccount.create=false", "serviceAccount.name=external-controller"},
 			fullname: releaseName + "-ptah-operator",
 		},
@@ -313,14 +309,10 @@ func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			chart := chartAtSequence(t, test.sequence)
+			chart := chartPath(t)
 			identities := renderIdentities(t, helm, chart, test.release, namespace, test.values)
 			if len(identities.names) != chartIdentities {
 				t.Fatalf("the chart runs as %d identities, want %d: %q", len(identities.names), chartIdentities, identities.names)
-			}
-			next := renderIdentities(t, helm, chartAtSequence(t, test.sequence+1), test.release, namespace, test.values)
-			if next.manager != identities.manager {
-				t.Fatalf("sequences %d and %d run the manager as %s and %s", test.sequence, test.sequence+1, identities.manager, next.manager)
 			}
 			for _, name := range identities.names {
 				if len(name) > 63 {
@@ -343,12 +335,12 @@ func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 				objects = append(objects,
 					roleBinding(namespace, fmt.Sprintf("own-%d", index), "Role", "pod-creator", subject("ServiceAccount", namespace, name)))
 			}
-			// Near misses: the manager under a release-sequence suffix, the
+			// Near misses: the manager under a versioned-looking suffix, the
 			// manager with one more character, and the manager in another
 			// namespace.
-			otherSequence := fmt.Sprintf("%s-v%d", identities.manager, test.sequence)
+			versionedNearMiss := identities.manager + "-v1"
 			objects = append(objects,
-				roleBinding(namespace, "other-sequence", "Role", "pod-creator", subject("ServiceAccount", namespace, otherSequence)),
+				roleBinding(namespace, "versioned-near-miss", "Role", "pod-creator", subject("ServiceAccount", namespace, versionedNearMiss)),
 				roleBinding(namespace, "longer-name", "Role", "pod-creator", subject("ServiceAccount", namespace, identities.manager+"x")),
 				roleBinding(namespace, "other-namespace", "Role", "pod-creator", subject("ServiceAccount", "applications", identities.manager)),
 			)
@@ -358,7 +350,7 @@ func TestTheNotesKnowEveryIdentityTheChartRunsAs(t *testing.T) {
 				t.Fatalf("the install was refused: %v\n%s", err, tail(output))
 			}
 			assertSameLines(t, warnings(t, string(output)), []string{
-				"RoleBinding ptah-system/other-sequence grants create on pods through Role pod-creator to ServiceAccount ptah-system/" + otherSequence,
+				"RoleBinding ptah-system/versioned-near-miss grants create on pods through Role pod-creator to ServiceAccount ptah-system/" + versionedNearMiss,
 				"RoleBinding ptah-system/longer-name grants create on pods through Role pod-creator to ServiceAccount ptah-system/" + identities.manager + "x",
 				"RoleBinding ptah-system/other-namespace grants create on pods through Role pod-creator to ServiceAccount applications/" + identities.manager,
 			})
@@ -438,47 +430,6 @@ func collectServiceAccountNames(value any, names map[string]bool) {
 			collectServiceAccountNames(child, names)
 		}
 	}
-}
-
-// chartAtSequence copies the chart and compiles it at another release
-// sequence, the way the acceptance harness builds its synthetic next release.
-func chartAtSequence(t *testing.T, sequence int) string {
-	t.Helper()
-	source := chartPath(t)
-	if sequence == 1 {
-		return source
-	}
-	const compiled = `{{- define "ptah-operator.releaseSequence" -}}1{{- end -}}`
-	destination := filepath.Join(t.TempDir(), "ptah-operator")
-	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(destination, relative)
-		if entry.IsDir() {
-			return os.MkdirAll(target, 0o700)
-		}
-		content, err := os.ReadFile(path) //nolint:gosec // A path this test walked under the repository.
-		if err != nil {
-			return err
-		}
-		if relative == filepath.Join("templates", "_helpers.tpl") {
-			if strings.Count(string(content), compiled) != 1 {
-				return fmt.Errorf("the chart no longer compiles its release sequence as %s", compiled)
-			}
-			content = []byte(strings.Replace(string(content), compiled,
-				fmt.Sprintf(`{{- define "ptah-operator.releaseSequence" -}}%d{{- end -}}`, sequence), 1))
-		}
-		return os.WriteFile(target, content, 0o600)
-	})
-	if err != nil {
-		t.Fatalf("compile the chart at release sequence %d: %v", sequence, err)
-	}
-	return destination
 }
 
 // warnings reads the list NOTES.txt prints under its WARNING paragraph. A
