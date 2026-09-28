@@ -62,7 +62,7 @@ RERUN_GO_PHASE=
 case $RERUN_PHASE in
 	upgrade | uninstall) RERUN_SCRIPT=hack/e2e-crd-upgrade.sh ;;
 	ha) RERUN_SCRIPT=hack/e2e-ha.sh ;;
-	assert) RERUN_SCRIPT=hack/e2e-assert.sh ;;
+	assert) RERUN_GO_PHASE=assert ;;
 	cert-rotation) RERUN_GO_PHASE=cert-rotation ;;
 	dataplane) RERUN_SCRIPT=hack/e2e-dataplane.sh ;;
 	migrations-postgresql | migrations-mysql) RERUN_SCRIPT=hack/e2e-migrations.sh ;;

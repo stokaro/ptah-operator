@@ -174,7 +174,8 @@ test did not reach its end, and writes the completion record the driver passes
 the phase on. `hack/verify-kubernetes-support.go` holds the
 call's bindings to the declared inputs, and `test/e2e/harness` writes each
 scenario into the same timing ledger the shell phases do. The certificates
-suite is ported; every other phase is still a script under `hack/`.
+suite and the control-plane phase (`assert`) are ported; every other phase is
+still a script under `hack/`.
 
 What that partition covers is a table rather than a paragraph, and
 `make acceptance-coverage` prints it: every supported minor against every

@@ -2797,7 +2797,7 @@ E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
-	run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"
+	run_recorded_phase assert run_go_phase assert
 
 # The certificate rotation is a Go phase: test/e2e/phases declares what it
 # reads, and hack/verify-kubernetes-support.go holds this call to exactly that.

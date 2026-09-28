@@ -57,7 +57,7 @@ var requirements = []requirement{
 	{"PA-02", "Execute only authorized database work",
 		"every binding mutated between planning, approval and dispatch on both engines and families, with database evidence of zero unauthorized statements",
 		"the stale-approval and destructive-gate rows of `run_engine_lifecycle` and `assert_destructive_gate` on both engines, " +
-			"the drift-before-dispatch fault in `hack/e2e-faults.sh`, the approval bindings `hack/e2e-assert.sh` refuses, " +
+			"the drift-before-dispatch fault in `hack/e2e-faults.sh`, the approval bindings `test/e2e/controlplane_e2e_test.go` refuses, " +
 			"`assert_approval_stamped`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations, " +
 			"a migration's target Secret repointed between approval and dispatch in `run_retarget_before_dispatch_proof`, " +
 			"and an author refused Always by the example guard in `run_apply_policy_guard_proof`",
@@ -81,7 +81,7 @@ var requirements = []requirement{
 		"a result read that hangs"},
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
-		"the CRD schema history gates, the admission rows in `hack/e2e-assert.sh`, " +
+		"the CRD schema history gates, the admission rows in `test/e2e/controlplane_e2e_test.go`, " +
 			"`prove_controller_write_guard`, `prove_controller_object_supported_window_guard`, `prove_controller_downgrade_guard`, " +
 			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans `audit_runtime_credentials`, " +
 			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`, " +
