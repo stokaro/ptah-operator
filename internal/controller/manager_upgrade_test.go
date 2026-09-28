@@ -293,10 +293,12 @@ func TestAdoptedJobIntentTakesOnlyTheRecordedManager(t *testing.T) {
 	if validateJobIntent(live, rebuild(), schema) == nil {
 		t.Fatal("the two managers build the same Job, so nothing below proves anything")
 	}
-	if err := validateAdoptedJobIntent(live, rebuild(), schema, operation.AdmissionSnapshot); err != nil {
+	if err := validateAdoptedJobIntent(live, rebuild(), schema, operation); err != nil {
 		t.Fatalf("a Job the previous manager of the same execution dispatched was refused: %v", err)
 	}
-	if err := validateAdoptedJobIntent(live, rebuild(), schema, nil); err == nil {
+	unsnapshotted := operation.DeepCopy()
+	unsnapshotted.AdmissionSnapshot = nil
+	if err := validateAdoptedJobIntent(live, rebuild(), schema, unsnapshotted); err == nil {
 		t.Fatal("a Job built by another manager was adopted with no snapshot to hold it to")
 	}
 
@@ -304,14 +306,14 @@ func TestAdoptedJobIntentTakesOnlyTheRecordedManager(t *testing.T) {
 	for _, annotations := range []map[string]string{rewritten.Annotations, rewritten.Spec.Template.Annotations} {
 		annotations[workload.AnnotationControllerImage] = "example.invalid/manager@sha256:" + strings.Repeat("7", 64)
 	}
-	if err := validateAdoptedJobIntent(rewritten, rebuild(), schema, operation.AdmissionSnapshot); err == nil ||
+	if err := validateAdoptedJobIntent(rewritten, rebuild(), schema, operation); err == nil ||
 		!strings.Contains(err.Error(), "admission snapshot") {
 		t.Fatalf("a Job whose recorded manager changed after the snapshot = %v, want a snapshot refusal", err)
 	}
 
 	moved := live.DeepCopy()
 	moved.Spec.Template.Spec.Containers[0].Image = "example.invalid/ptah@sha256:" + strings.Repeat("7", 64)
-	if err := validateAdoptedJobIntent(moved, rebuild(), schema, operation.AdmissionSnapshot); err == nil {
+	if err := validateAdoptedJobIntent(moved, rebuild(), schema, operation); err == nil {
 		t.Fatal("a Job running another executor was adopted as the claim's Job")
 	}
 
@@ -325,7 +327,7 @@ func TestAdoptedJobIntentTakesOnlyTheRecordedManager(t *testing.T) {
 			workload.AnnotationControllerImage:    "example.invalid/manager@sha256:" + strings.Repeat("7", 64),
 			workload.AnnotationControllerRevision: "edited-after-dispatch",
 		}[key]
-		if err := validateAdoptedJobIntent(edited, rebuild(), schema, operation.AdmissionSnapshot); err == nil {
+		if err := validateAdoptedJobIntent(edited, rebuild(), schema, operation); err == nil {
 			t.Fatalf("a Job whose own %s was edited outside the pinned template was adopted", key)
 		}
 	}

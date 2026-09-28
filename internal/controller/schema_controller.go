@@ -1285,6 +1285,23 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return ctrl.Result{}, err
 			}
 			operation = schema.Status.ActiveOperation
+		} else if operation.Type == operatorv1alpha1.OperationPlan {
+			// DispatchStarted is already recorded, so a pass before this one
+			// crossed the boundary and died before its Create. The digest it
+			// recorded names that process's key, and the Job built above is
+			// sealed to this one's. Nothing else moves the digest while
+			// DispatchStarted stays set, so bring the claim up to date before
+			// the Create: admission checks the Job's key against the claim,
+			// and harvest checks the claim against this process's key.
+			currentDigest := planSealPublicKeyDigest(r.SealKey.PublicKey())
+			if operation.PlanSealPublicKeyDigest != currentDigest {
+				before := schema.DeepCopy()
+				schema.Status.ActiveOperation.PlanSealPublicKeyDigest = currentDigest
+				if err := r.patchStatus(ctx, before, schema); err != nil {
+					return ctrl.Result{}, err
+				}
+				operation = schema.Status.ActiveOperation
+			}
 		}
 		if operation.Type == operatorv1alpha1.OperationApply {
 			if planRequiresApproval(schema, plan) {
@@ -1377,7 +1394,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("rebuild immutable Job intent: %w", expectedErr))
 		}
-		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation.AdmissionSnapshot); intentErr != nil {
+		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation); intentErr != nil {
 			if operation.Type == operatorv1alpha1.OperationApply {
 				return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job intent changed: %w", intentErr))
 			}
@@ -2268,6 +2285,13 @@ func (r *SchemaReconciler) refreshAdmissionSnapshot(
 // admission snapshot recorded before dispatch, which pins what was taken to
 // the claim rather than to the object being checked.
 //
+// A Plan Job's seal key is taken from the live Job the same way, and pinned
+// by the digest the claim recorded at dispatch rather than by the snapshot.
+// Every process generates its own key, so the rebuild carries this process's
+// key while the live Job carries the dispatching process's: after a
+// leadership change or a restart mid-Plan the two differ on every pass, and
+// a byte-for-byte comparison would refuse a Job the claim authorized.
+//
 // Adoption holds only when the two releases build the same Job apart from
 // that identity. A release that also changed the Job or its Pod template fails
 // here, and the caller treats the Job as one it cannot confirm: a dispatched
@@ -2276,15 +2300,22 @@ func (r *SchemaReconciler) refreshAdmissionSnapshot(
 func validateAdoptedJobIntent(
 	actual, expected *batchv1.Job,
 	schema *operatorv1alpha1.PtahSchema,
-	snapshot *operatorv1alpha1.PodAdmissionSnapshot,
+	operation *operatorv1alpha1.ActiveOperationStatus,
 ) error {
+	if operation == nil {
+		return fmt.Errorf("no active operation claims the Job")
+	}
 	carried := workload.CarryManagerIdentity(expected, actual)
+	if err := workload.CarrySealedPlanKey(expected, actual, *operation); err != nil {
+		return fmt.Errorf("adopted Job seal key is invalid: %w", err)
+	}
 	if err := validateJobIntent(actual, expected, schema); err != nil {
 		return err
 	}
 	if !carried {
 		return nil
 	}
+	snapshot := operation.AdmissionSnapshot
 	if snapshot == nil {
 		return fmt.Errorf("a Job built by another manager has no persisted admission snapshot to hold it to")
 	}

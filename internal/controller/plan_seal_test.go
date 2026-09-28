@@ -17,7 +17,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // planSealMismatchFixture stands a schema up with a completed Plan Job whose
@@ -81,7 +83,19 @@ func planSealMismatchFixture(
 		PlanContentDigest:    fingerprint.DigestBytes(planDocument),
 		PlanOutcome:          runner.PlanOutcomeChanges,
 	})
+	// A real dispatch's persisted snapshot is resolved from the Job template
+	// it actually built, sealed to the key that Job was dispatched under --
+	// sealedTo here, before the restart -- not to testSchemaSealKey,
+	// terminalWorkload's default. Pre-set it so the snapshot terminalWorkload
+	// finds already there, and the Job it builds around it, agree on sealedTo
+	// before either is ever read.
+	schema.Status.ActiveOperation.AdmissionSnapshot = testAdmissionSnapshotFor(schema.Status.ActiveOperation, sealedTo)
 	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	// terminalWorkload still builds its container from testSchemaSealKey; the
+	// snapshot above already reflects sealedTo, so only the Job's (and,
+	// through the same slice, the Pod's) own container needs the same
+	// rewrite for the two to agree exactly as a real dispatch's always do.
+	setJobPlanSealKeyEnv(t, job, sealedTo)
 	immutable := true
 	policyConfigMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -95,6 +109,24 @@ func planSealMismatchFixture(
 	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
 	reconciler.Plans = planstore.Store{Client: api, Reader: api}
 	return reconciler, api, schema
+}
+
+// setJobPlanSealKeyEnv overwrites the Plan seal key environment variable on
+// job's main container, failing the test if the fixture carries none to
+// overwrite.
+func setJobPlanSealKeyEnv(t *testing.T, job *batchv1.Job, key planseal.PublicKey) {
+	t.Helper()
+	for _, containers := range [][]corev1.Container{job.Spec.Template.Spec.InitContainers, job.Spec.Template.Spec.Containers} {
+		for index := range containers {
+			for envIndex := range containers[index].Env {
+				if containers[index].Env[envIndex].Name == runner.EnvPlanSealPublicKey {
+					containers[index].Env[envIndex].Value = key.Encode()
+					return
+				}
+			}
+		}
+	}
+	t.Fatal("test fixture Job carries no seal key to overwrite")
 }
 
 // TestRestartedManagerRePlansRatherThanWaitingOnAnUnopenablePlan proves the
@@ -309,5 +341,356 @@ func TestClaimDoesNotRecordAKeyDigestBeforeTheOneDispatchAttempt(t *testing.T) {
 	if afterDispatchAttempt.Status.ActiveOperation.PlanSealPublicKeyDigest != want {
 		t.Fatalf("PlanSealPublicKeyDigest after the dispatch attempt = %q, want %q (this reconciler's own key)",
 			afterDispatchAttempt.Status.ActiveOperation.PlanSealPublicKeyDigest, want)
+	}
+}
+
+// planClaimFixture stands a schema up with claim as its active Plan
+// operation, complete enough for a real workload.Builder to build the Job the
+// claim authorizes, and returns it with the verification policy ConfigMap the
+// schema names. The claim's Job name is filled in from the claim.
+func planClaimFixture(
+	t *testing.T, claim *operatorv1alpha1.ActiveOperationStatus,
+) (*operatorv1alpha1.PtahSchema, *corev1.ConfigMap) {
+	t.Helper()
+
+	policyBytes := "policy"
+	schema := schemaFixture()
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhasePlanning
+	schema.Spec.Target.URLFrom = corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
+	}
+	schema.Spec.Target.CoordinationKey = testCoordinationKey
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+		ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
+		Digest:                   testDigest,
+		ArtifactType:             dataplane.SchemaArtifactType,
+		Verified:                 true,
+		VerificationPolicyUID:    testPolicyUID,
+		VerificationPolicyDigest: fingerprint.DigestBytes([]byte(policyBytes)),
+	}
+	schema.Status.Target = operatorv1alpha1.TargetStatus{
+		CoordinationDigest: testCoordinationDigest,
+		IdentityDigest:     testDigest,
+		DriftReportDigest:  safetyOtherDigest,
+	}
+	schema.Status.ActiveOperation = claim
+	bindActiveInput(t, schema)
+	jobName, err := workload.NameFor(schema, *claim)
+	if err != nil {
+		t.Fatalf("NameFor() error = %v", err)
+	}
+	claim.JobName = jobName
+
+	immutable := true
+	policyConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace,
+			Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
+			UID:       testPolicyUID,
+		},
+		Immutable: &immutable,
+		Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: policyBytes},
+	}
+	return schema, policyConfigMap
+}
+
+// TestANewLeaderResyncsTheSealKeyDigestBeforeCreatingTheJob reproduces the
+// review's other finding: a crash between the status write that records
+// DispatchStarted and PlanSealPublicKeyDigest and the Job Create that follows
+// it leaves a claim naming the crashed process's key with no Job under it.
+// DispatchStarted is already set, so nothing retires the claim, and the next
+// leader creates the Job sealed to its own key. The digest the claim records
+// has to move with it before that Create: admission checks the Job's key
+// against the claim, and harvest checks the claim against the process
+// harvesting, and neither would ever hold against the crashed process's
+// digest.
+//
+// The crashed leader's snapshot was resolved from its own template, which
+// forces the snapshot refresh a manager change forces, so the row runs the
+// whole path a new leader takes: refresh, resolve, resync, create, commit.
+func TestANewLeaderResyncsTheSealKeyDigestBeforeCreatingTheJob(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	crashedLeader, crashedLeaderKey := leaderBuilder(t)
+	newLeader, newLeaderKey := leaderBuilder(t)
+
+	claim := &operatorv1alpha1.ActiveOperationStatus{
+		Type:                    operatorv1alpha1.OperationPlan,
+		ID:                      "crash-before-create-operation",
+		Attempt:                 1,
+		StartedAt:               metav1.Now(),
+		DispatchStarted:         true,
+		PlanSealPublicKeyDigest: planSealPublicKeyDigest(crashedLeaderKey.PublicKey()),
+	}
+	schema, policyConfigMap := planClaimFixture(t, claim)
+	// No Job: the crash landed between recording the boundary and creating it.
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfigMap)
+	reconciler.Client = assignCreatedJobUIDClient{Client: api, uid: "new-leader-job-uid"}
+	reconciler.Plans = planstore.Store{Client: api, Reader: api}
+
+	// The crashed leader resolved the snapshot from the template it built,
+	// sealed to its own key, before it recorded the boundary and died.
+	crashedJob, err := crashedLeader.Build(schema.DeepCopy(), *claim, nil)
+	if err != nil {
+		t.Fatalf("Build(crashed leader) error = %v", err)
+	}
+	snapshot, err := podintent.Resolve(ctx, api, schema.Namespace, &crashedJob.Spec.Template, reconciler.AdmissionOptions)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	stored := safetyGetSchema(t, api, schema)
+	stored.Status.ActiveOperation.AdmissionSnapshot = snapshot
+	if err := api.Status().Update(ctx, stored); err != nil {
+		t.Fatalf("persist the crashed leader's snapshot: %v", err)
+	}
+
+	reconciler.Jobs = newLeader
+	reconciler.SealKey = newLeaderKey
+	job := reconcileUntilASchemaJobExists(t, reconciler, api, schema)
+
+	after := safetyGetSchema(t, api, schema)
+	operation := after.Status.ActiveOperation
+	if operation == nil || operation.ID != claim.ID || operation.Attempt != claim.Attempt || operation.JobUID != job.UID {
+		t.Fatalf("the claim did not commit to the Job the new leader created: %#v", operation)
+	}
+	if condition := findCondition(after.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed); condition != nil {
+		t.Fatalf("the new leader's dispatch was refused: %#v", condition)
+	}
+	liveKey, ok := jobPlanSealKeyEnv(job)
+	if !ok {
+		t.Fatal("the dispatched Job carries no seal key")
+	}
+	if liveKey == crashedLeaderKey.PublicKey().Encode() {
+		t.Fatal("the Job was sealed to the crashed process's key, which no process holds")
+	}
+	if liveKey != newLeaderKey.PublicKey().Encode() {
+		t.Fatalf("dispatched Job seal key = %q, want the new leader's own", liveKey)
+	}
+	if want := planSealPublicKeyDigest(newLeaderKey.PublicKey()); operation.PlanSealPublicKeyDigest != want {
+		t.Fatalf("PlanSealPublicKeyDigest after dispatch = %q, want the new leader's %q", operation.PlanSealPublicKeyDigest, want)
+	}
+	// The check admission and adoption both run, against the claim as it
+	// now stands and the Job as it was created.
+	rebuilt, err := newLeader.Build(after.DeepCopy(), *operation, nil)
+	if err != nil {
+		t.Fatalf("Build(new leader) error = %v", err)
+	}
+	if err := workload.CarrySealedPlanKey(rebuilt, job, *operation); err != nil {
+		t.Fatalf("the created Job does not hold against its own claim: %v", err)
+	}
+}
+
+// jobPlanSealKeyEnv is the value of job's Plan seal key environment variable,
+// wherever it carries one.
+func jobPlanSealKeyEnv(job *batchv1.Job) (string, bool) {
+	for _, containers := range [][]corev1.Container{job.Spec.Template.Spec.InitContainers, job.Spec.Template.Spec.Containers} {
+		for _, container := range containers {
+			for _, env := range container.Env {
+				if env.Name == runner.EnvPlanSealPublicKey {
+					return env.Value, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// leaderBuilder is a real workload.Builder for one manager process: the
+// identity every fixture in this package runs as, and a seal key generated
+// for this process alone, the way every replica generates its own at
+// startup (internal/planseal).
+func leaderBuilder(t *testing.T) (workload.Builder, planseal.KeyPair) {
+	t.Helper()
+	key, err := planseal.Generate()
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	return workload.Builder{
+		ExecutorImage:          "example.invalid/ptah@" + testDigest,
+		RunnerImage:            testRunnerImage,
+		PtahVersion:            "v0.3.0",
+		ControllerImage:        testControllerImage,
+		ControllerRevision:     testControllerRevision,
+		ControllerStateVersion: testControllerStateVersion,
+		PlanSealPublicKey:      key.PublicKey(),
+	}, key
+}
+
+// TestANewLeaderAdoptsAPlanJobTheOldLeaderDispatched reproduces the review's
+// blocker through Reconcile: a leadership change mid-Plan -- a rolling
+// upgrade of the default two-replica Deployment is enough -- hands the claim
+// to a process whose seal key differs from the one that dispatched the Job.
+// The old leader dispatches through the real path with a real builder, so
+// the claim's snapshot, its key digest and the Job's own annotations are
+// what a dispatch leaves behind. The new leader must keep that running Job
+// rather than retire it as one whose intent changed.
+//
+// Its result is another matter: the payload is sealed to a key the new
+// leader never held, so harvest retires the attempt under the claim's own
+// key-mismatch reason, the way
+// TestRestartedManagerRePlansRatherThanWaitingOnAnUnopenablePlan proves for
+// a restart.
+func TestANewLeaderAdoptsAPlanJobTheOldLeaderDispatched(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	oldLeader, oldLeaderKey := leaderBuilder(t)
+	newLeader, newLeaderKey := leaderBuilder(t)
+
+	claim := &operatorv1alpha1.ActiveOperationStatus{
+		Type:      operatorv1alpha1.OperationPlan,
+		ID:        "leadership-change-plan-operation",
+		Attempt:   1,
+		StartedAt: metav1.Now(),
+	}
+	schema, policyConfigMap := planClaimFixture(t, claim)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfigMap)
+	// The fake API server stamps no UID, and the controller refuses a created
+	// Job without one.
+	reconciler.Client = assignCreatedJobUIDClient{Client: api, uid: "old-leader-job-uid"}
+	reconciler.Plans = planstore.Store{Client: api, Reader: api}
+	reconciler.Jobs = oldLeader
+	reconciler.SealKey = oldLeaderKey
+
+	// The old leader dispatches through the real path: the snapshot, the
+	// dispatch boundary and the key digest land on the claim the way a
+	// dispatch records them, and the Job carries what its builder wrote.
+	liveJob := reconcileUntilASchemaJobExists(t, reconciler, api, schema)
+	dispatched := safetyGetSchema(t, api, schema)
+	operation := dispatched.Status.ActiveOperation
+	if operation == nil || operation.ID != claim.ID || operation.JobUID == "" ||
+		operation.JobUID != liveJob.UID || operation.Attempt != claim.Attempt {
+		t.Fatalf("the old leader's dispatch did not commit Job %q to its claim: %#v", liveJob.UID, operation)
+	}
+	if operation.PlanSealPublicKeyDigest != planSealPublicKeyDigest(oldLeaderKey.PublicKey()) {
+		t.Fatalf("PlanSealPublicKeyDigest = %q, want the old leader's key", operation.PlanSealPublicKeyDigest)
+	}
+	if key, ok := jobPlanSealKeyEnv(liveJob); !ok || key != oldLeaderKey.PublicKey().Encode() {
+		t.Fatalf("the dispatched Job carries seal key %q, want the old leader's", key)
+	}
+	// Adoption is checked only while the claim's inputs hold, and only a
+	// rebuild that differs from the live Job can refuse it: both have to be
+	// true here, or the passes below prove nothing.
+	current, err := reconciler.operationInputFingerprint(dispatched, operatorv1alpha1.OperationPlan)
+	if err != nil || current != operation.InputFingerprint {
+		t.Fatalf("the claim's inputs moved after dispatch (%q, want %q, err %v), so adoption is never checked",
+			current, operation.InputFingerprint, err)
+	}
+	rebuilt, err := newLeader.Build(dispatched.DeepCopy(), *operation, nil)
+	if err != nil {
+		t.Fatalf("Build(new leader) error = %v", err)
+	}
+	if validateJobIntent(liveJob, rebuilt, dispatched) == nil {
+		t.Fatal("the two leaders build the same Job, so nothing below proves anything")
+	}
+
+	// Leadership moves. The new leader holds its own builder and its own
+	// key, and nothing else about it differs.
+	reconciler.Jobs = newLeader
+	reconciler.SealKey = newLeaderKey
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatalf("Reconcile() (adoption pass) error = %v", err)
+	}
+	adopted := safetyGetSchema(t, api, schema)
+	if adopted.Status.ActiveOperation == nil ||
+		adopted.Status.ActiveOperation.JobUID != liveJob.UID ||
+		adopted.Status.ActiveOperation.Attempt != operation.Attempt {
+		t.Fatalf("the new leader did not keep the old leader's running Job: %#v", adopted.Status.ActiveOperation)
+	}
+	if condition := findCondition(adopted.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed); condition != nil {
+		t.Fatalf("the new leader refused the old leader's running Plan Job: %#v", condition)
+	}
+	jobs := &batchv1.JobList{}
+	if err := api.List(ctx, jobs, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 1 || jobs.Items[0].UID != liveJob.UID {
+		t.Fatalf("Jobs after the adoption pass = %d, want the old leader's one Job left running", len(jobs.Items))
+	}
+
+	// The Job completes. Its payload is sealed to the key it was dispatched
+	// under, fixed when the Job was built and unaffected by who leads when
+	// the runner inside it finishes.
+	planDocument := safetyPlanDocument(t, "observed-state")
+	sealed, err := planseal.SealPlan(planDocument,
+		planseal.Envelope{OperationID: operation.ID, JobName: operation.JobName}, oldLeaderKey.PublicKey())
+	if err != nil {
+		t.Fatalf("SealPlan() error = %v", err)
+	}
+	frame := safetyRunnerFrame(t, runner.Result{
+		ProtocolVersion:      runner.ProtocolVersion,
+		Operation:            runner.OperationPlan,
+		OperationID:          operation.ID,
+		ChildExitCode:        0,
+		Stdout:               sealed,
+		CoordinationDigest:   schema.Status.Target.CoordinationDigest,
+		TargetIdentityDigest: schema.Status.Target.IdentityDigest,
+		PlanContentDigest:    fingerprint.DigestBytes(planDocument),
+		PlanOutcome:          runner.PlanOutcomeChanges,
+	})
+	terminal := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(liveJob), terminal); err != nil {
+		t.Fatal(err)
+	}
+	terminal.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	if err := api.Status().Update(ctx, terminal); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Create(ctx, terminalPodForJob(terminal)); err != nil {
+		t.Fatal(err)
+	}
+	reconciler.Logs = staticLogs{content: frame}
+
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatalf("Reconcile() (harvest pass) error = %v", err)
+	}
+	final := safetyGetSchema(t, api, schema)
+	if final.Status.Plan != nil {
+		t.Fatalf("status.plan = %#v, want nothing published from a payload this process cannot open", final.Status.Plan)
+	}
+	condition := findCondition(final.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if condition == nil || !strings.Contains(condition.Message, "plan was sealed to a manager key this process does not hold") {
+		t.Fatalf("harvest = %#v, want the claim's own key-mismatch retry", condition)
+	}
+	if final.Status.ActiveOperation == nil || final.Status.ActiveOperation.JobUID != "" ||
+		final.Status.ActiveOperation.Attempt != operation.Attempt+1 {
+		t.Fatalf("harvest did not retire the unopenable Job under a fresh attempt: %#v", final.Status.ActiveOperation)
+	}
+}
+
+// terminalPodForJob is the Pod the Job controller would have run from job's
+// own template: the template's metadata and spec, the defaults admission
+// adds to every Pod, and an executor that terminated.
+func terminalPodForJob(job *batchv1.Job) *corev1.Pod {
+	priority := int32(0)
+	preemption := corev1.PreemptLowerPriority
+	seconds := int64(300)
+	spec := job.Spec.Template.Spec.DeepCopy()
+	spec.Priority = &priority
+	spec.PreemptionPolicy = &preemption
+	spec.Tolerations = append(spec.Tolerations,
+		corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
+		corev1.Toleration{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
+	)
+	labels := map[string]string{"job-name": job.Name}
+	for key, value := range job.Spec.Template.Labels {
+		labels[key] = value
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: job.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"),
+			GenerateName: job.Name + "-", UID: "pod-" + job.UID,
+			Labels:          labels,
+			Annotations:     job.Spec.Template.Annotations,
+			OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+		},
+		Spec: *spec,
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: executorContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+		}}},
 	}
 }

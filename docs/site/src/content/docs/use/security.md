@@ -520,13 +520,15 @@ no longer plan access, and the diagnostic reader
 (`examples/diagnostic-reader-role.yaml`) example grants it for that reason.
 
 The key is scoped to the process, not to any one Plan. A manager restart
-generates a new key pair, and a Plan Job dispatched before the restart is
-sealed to a key the new process does not hold: rather than wait on a payload
-it cannot open, the manager retries the Plan under its current key. Plan is
-read-only, so that retry costs nothing the original attempt did not already
-cost. The claim a schema or a migration persists while a Plan Job runs records
-the digest of the key it was sealed to, so this is detected before the
-manager even attempts to open the payload.
+generates a new key pair, and each replica of the default two-replica install
+holds a key pair of its own, so a Plan Job dispatched before a restart or a
+leadership change is sealed to a key the process harvesting it does not hold.
+That process keeps the running Job rather than retire it, and once the Job
+finishes it retries the Plan under its current key rather than wait on a
+payload it cannot open. Plan is read-only, so that retry costs nothing the
+original attempt did not already cost. The claim a schema persists while a
+Plan Job runs records the digest of the key it was sealed to, so the mismatch
+is detected before the manager even attempts to open the payload.
 
 Sealing covers the plan payload specifically, because that is the one frame
 field that must round-trip byte for byte into an approval. Two more places
