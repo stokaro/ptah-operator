@@ -362,9 +362,17 @@ func TestMissingSecretRecreationOptInRender(t *testing.T) {
 
 	role := mustObject(t, objects, "Role", rotatorName)
 	assertExactRule(t, role, "", "secrets", nil, []string{"create"})
+	// The API server enforces the guard on the rotator's CREATE without the
+	// rotator reading it, and nothing in the rotator reads it back, so the
+	// opt-in grants nothing cluster-wide: the ClusterRole is the default one,
+	// which the release RBAC contract holds rule for rule.
 	clusterRole := mustObject(t, objects, "ClusterRole", rotatorName)
-	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", []string{rotatorName}, []string{"get"})
-	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", []string{rotatorName}, []string{"get"})
+	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", "get")
+	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", "get")
+	defaultClusterRole := mustObject(t, renderChart(t), "ClusterRole", rotatorName)
+	if got, want := objectRules(t, clusterRole), objectRules(t, defaultClusterRole); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rotator ClusterRole with recreation = %v, want the default %v", got, want)
+	}
 	assertSecretCreateGuard(t, objects, rotatorName, secretName)
 
 	deployment := mustObject(t, objects, "Deployment", rotatorName)
