@@ -5,14 +5,19 @@
 // watches ConfigMaps cluster-wide so a changed verification policy wakes the
 // resources bound to it, and the only thing that wakes them is the ConfigMap's
 // namespace and name. Everything else the watch would hold is cost: unrelated
-// application configuration, and this operator's own plan chunks, which carry
-// up to eight mebibytes of SQL each.
+// application configuration, and the ConfigMaps an Apply mounts its plan
+// through, which carry up to eight mebibytes of SQL per plan.
+//
+// The plan chunks themselves are their own kind, and the manager does not
+// watch them at all.
 package managercache
 
 import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
 // Options is the cache the manager runs with.
@@ -24,19 +29,24 @@ func Options() cache.Options {
 	}
 }
 
-// ClientOptions keeps ConfigMap reads off that cache.
+// ClientOptions keeps ConfigMap and plan chunk reads off the cache.
 //
 // The transform is what bounds the memory; this is what keeps the bound
 // honest. Every ConfigMap this operator reads -- a verification policy, a plan
-// chunk -- is read through the API reader today, because each one is a
+// projection -- is read through the API reader today, because each one is a
 // decision that a cache may not be current enough to make. Routing the cached
 // client's reads to the API server as well means a read added later cannot
 // quietly start seeing objects the transform emptied, and cannot quietly build
 // a second informer that holds what the transform dropped.
+//
+// A plan chunk is the same case without a watch: a cached read of one would
+// start an informer over every chunk in the cluster, eight mebibytes of SQL
+// per plan, the first time anything asked. The plan store reads chunks through
+// the API reader, and so does anything that reads them through this client.
 func ClientOptions() client.Options {
 	return client.Options{
 		Cache: &client.CacheOptions{
-			DisableFor: []client.Object{&corev1.ConfigMap{}},
+			DisableFor: []client.Object{&corev1.ConfigMap{}, &operatorv1alpha1.PtahSchemaPlanChunk{}},
 		},
 	}
 }

@@ -14,6 +14,7 @@ rules:
       - ptahmigrations.operator.ptah.run
       - ptahrealms.operator.ptah.run
       - ptahschemaapprovals.operator.ptah.run
+      - ptahschemaplanchunks.operator.ptah.run
       - ptahschemaplans.operator.ptah.run
       - ptahschemas.operator.ptah.run
     verbs: ["get"]
@@ -33,6 +34,12 @@ rules:
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemaplans"]
     verbs: ["get", "list", "watch", "create"]
+  # A plan's bytes. The manager writes a plan's chunks when it publishes the
+  # plan and reads them back by name, uncached, before an Apply; it never
+  # lists or watches them, because each one holds up to 512 KiB of SQL.
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahschemaplanchunks"]
+    verbs: ["get", "create"]
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemaapprovals"]
     verbs: ["get", "list", "watch"]
@@ -84,6 +91,11 @@ rules:
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list"]
+  # get, list and watch read the verification policies resources name, and
+  # wake them when one changes. create is for one thing: an Apply Pod holds no
+  # Kubernetes credential and the kubelet projects no custom resource, so the
+  # manager writes the plan an Apply runs into immutable ConfigMaps the Pod
+  # mounts, just before it creates the Job. They are deleted with the plan.
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create"]
@@ -147,10 +159,10 @@ metadata:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 rules:
   # Both families. An approval names a resource and its plan, so an approver
-  # reads both, and the approvals already made. No ConfigMap and no Pod log:
-  # either one is the plan itself, granted per namespace to whoever reviews it.
+  # reads both, the chunks that hold a schema plan's SQL, and the approvals
+  # already made. No ConfigMap and no Pod log: neither is how a plan is read.
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaplanchunks", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemaapprovals", "ptahmigrationapprovals"]

@@ -20,7 +20,7 @@ contract that keeps it true. The operational view is
 | Observe main | no | target only | local read-only schema file |
 | Plan fetch init | yes | no | digest-pinned schema artifact plus optional read-only CA snapshot |
 | Plan main | no | target and optional dev target | local schema file |
-| Apply | no | target only | immutable plan chunks |
+| Apply | no | target only | the plan, projected from its chunks into immutable ConfigMaps |
 | Migration Resolve | yes | no | requested OCI reference |
 | Migration Verify | yes | no | requested reference plus resolved digest evidence |
 | Migration History/Apply authority guard | authority and transport grants only | no | digest-pinned reference plus optional CA source bytes |
@@ -49,16 +49,17 @@ migration operation — and the runner redacts it alongside the target.
 The manager's own writes pass through two independent fail-closed layers.
 
 **Typed policies**, one per kind, reject objects outside their narrow
-structural form: Jobs, plan chunks, schema plans and migration plans, plus a
-fifth policy over `PtahSchema` and `PtahMigration` updates.
+structural form: Jobs, plan chunks, the ConfigMaps an Apply mounts a plan
+through, schema plans and migration plans, plus a sixth policy over
+`PtahSchema` and `PtahMigration` updates.
 One policy per kind avoids cross-type CEL assumptions. The Job policy admits a
 Job that satisfies the schema shape or the migration shape and nothing else.
 The policies are ordinary release objects, and an upgrade updates them in
 place. The Job, schema plan and migration plan policies carry the release's
 manager image and controller-state version as literals, so a Job or a plan
-stamped by another manager release is refused. The chunk policy carries
-neither: a chunk is bound to its plan by name and owner, and the plan names
-the manager. Nor does the policy over `PtahSchema` and `PtahMigration`
+stamped by another manager release is refused. The chunk and projection
+policies carry neither: each is bound to its plan by name and owner, and the
+plan names the manager. Nor does the policy over `PtahSchema` and `PtahMigration`
 updates, which judges resources a person owns and no manager stamps.
 
 **Webhooks** perform the stronger semantic check by reading the owning resource

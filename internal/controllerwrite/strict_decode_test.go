@@ -184,6 +184,12 @@ func TestDecodeObjectRejectsUnknownFieldsForEveryControllerWriteKind(t *testing.
 			object: &operatorv1alpha1.PtahSchemaPlan{},
 			kind:   planKind,
 		},
+		{
+			name:   "plan chunk spec field",
+			raw:    `{"apiVersion":"operator.ptah.run/v1alpha1","kind":"PtahSchemaPlanChunk","metadata":{"name":"unknown"},"spec":{"data":"eA==","future":true}}`,
+			object: &operatorv1alpha1.PtahSchemaPlanChunk{},
+			kind:   planChunkKind,
+		},
 	}
 
 	for _, test := range tests {

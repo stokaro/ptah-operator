@@ -138,9 +138,10 @@ who may read plans.
 That access no longer includes the Plan Pod's log. The runner seals the plan
 to the manager's own key before writing it there, so the log, the node's copy
 of it, and any store the cluster ships container logs to all hold ciphertext.
-[Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) says how,
-and what to do about the chunk store and the approval Role, which still carry
-the plan in the clear to whoever they are granted to.
+[Pod logs carry a sealed plan](../security/#pod-logs-carry-plans) says how.
+The plan's chunks still carry it in the clear to whoever may read them, and so
+do the ConfigMaps an Apply mounts an applied plan through, to whoever may read
+ConfigMaps in the namespace.
 
 ## Order between tables
 

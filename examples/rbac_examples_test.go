@@ -71,7 +71,8 @@ func TestTheDiagnosticReaderCheckRefusesPlanAndCredentialAccess(t *testing.T) {
 		"Pod attach":          {APIGroups: []string{""}, Resources: []string{"pods/attach"}, Verbs: []string{"get"}},
 		"Pod exec":            {APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"get"}},
 		"every Pod resource":  {APIGroups: []string{""}, Resources: []string{"pods/*"}, Verbs: read},
-		"plan chunks":         {APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: read},
+		"plan chunks":         {APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaplanchunks"}, Verbs: read},
+		"plan projections":    {APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: read},
 		"credentials":         {APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}},
 		"every resource":      {APIGroups: []string{""}, Resources: []string{"*"}, Verbs: read},
 		"an approval write":   {APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaapprovals"}, Verbs: []string{"create"}},
@@ -94,12 +95,13 @@ func TestTheDiagnosticReaderCheckRefusesPlanAndCredentialAccess(t *testing.T) {
 // exec remain refused because either reaches a live Pod's database credential,
 // which sealing the plan payload does not change.
 var diagnosticReaderRefuses = map[string]string{
-	"secrets":     "database and registry credentials",
-	"configmaps":  "plan chunks",
-	"pods/attach": "a live Pod's database credential",
-	"pods/exec":   "a live Pod's database credential",
-	"pods/*":      "every Pod stream",
-	"*":           "every resource",
+	"secrets":              "database and registry credentials",
+	"ptahschemaplanchunks": "a plan's SQL",
+	"configmaps":           "the plan an Apply projects into its Pod",
+	"pods/attach":          "a live Pod's database credential",
+	"pods/exec":            "a live Pod's database credential",
+	"pods/*":               "every Pod stream",
+	"*":                    "every resource",
 }
 
 func diagnosticReaderViolations(rules []rbacv1.PolicyRule) []string {
@@ -118,6 +120,32 @@ func diagnosticReaderViolations(rules []rbacv1.PolicyRule) []string {
 		}
 	}
 	return violations
+}
+
+// Reading a plan takes one rule, on the operator's own kinds, in the namespace
+// the plans are in. It used to take a Role naming every chunk ConfigMap of the
+// one plan under review, rewritten for the next plan; a rule that names a
+// ConfigMap now reaches no plan chunk, only application configuration and the
+// plans an Apply ran.
+func TestThePlanReaderRoleReadsEveryPlanThroughOneRule(t *testing.T) {
+	role, binding := readRoleExample(t, "approver-plan-reader-role.yaml")
+	if role.Namespace != "application" || binding.Namespace != role.Namespace {
+		t.Fatalf("plan reader namespace = %q/%q, want application", role.Namespace, binding.Namespace)
+	}
+	wantRules := []rbacv1.PolicyRule{{
+		APIGroups: []string{"operator.ptah.run"},
+		Resources: []string{"ptahschemas", "ptahschemaplans", "ptahschemaplanchunks"},
+		Verbs:     []string{"get"},
+	}}
+	if !reflect.DeepEqual(role.Rules, wantRules) {
+		t.Fatalf("plan reader rules = %#v, want %#v", role.Rules, wantRules)
+	}
+	for _, rule := range role.Rules {
+		if len(rule.ResourceNames) != 0 {
+			t.Fatalf("plan reader rule %#v names objects, so it goes stale with the next plan", rule)
+		}
+	}
+	assertGroupBinding(t, role, binding, "<plan-reviewer-group>")
 }
 
 func readRoleExample(t *testing.T, path string) (*rbacv1.Role, *rbacv1.RoleBinding) {

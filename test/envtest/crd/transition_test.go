@@ -8,9 +8,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// A plan and an approval are records: Apply rebuilds the plan and rehashes it,
-// and an approval authorizes one plan once, so neither may change after it is
-// stored. A realm names one physical database, so its engine may not change
+// A plan, its chunks and an approval are records: Apply rebuilds the plan from
+// its chunks and rehashes it, and an approval authorizes one plan once, so none
+// of them may change after it is stored. A realm names one physical database, so its engine may not change
 // either. Each rule is a transition rule, which the API server evaluates only on
 // update, so each row stores an object first.
 //
@@ -39,6 +39,12 @@ func TestImmutableRecordsRefuseEveryChangeToWhatTheyRecord(t *testing.T) {
 			object: resource("PtahSchemaPlan", namespace, "ptah-plan-9c56cc51b374c3ba189210d5", schemaPlanSpec()),
 			change: setting(artifactDigest, "spec", "contentDigest"),
 			want:   cause{"spec", "a plan is immutable; generate a new plan instead"},
+		},
+		{
+			name:   "PtahSchemaPlanChunk data",
+			object: resource("PtahSchemaPlanChunk", namespace, "ptah-plan-71c480df93d6ae2f14efe3c4-000", planChunkSpec()),
+			change: setting("eyJmb3JtYXRfdmVyc2lvbiI6Mn0K", "spec", "data"),
+			want:   cause{"spec", "a plan chunk is immutable; generate a new plan instead"},
 		},
 		{
 			name:   "PtahMigrationPlan migration list",

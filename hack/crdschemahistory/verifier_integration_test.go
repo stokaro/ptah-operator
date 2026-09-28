@@ -44,6 +44,7 @@ var fixtureNames = []string{
 	"ptahmigrations.operator.ptah.run",
 	"ptahrealms.operator.ptah.run",
 	"ptahschemaapprovals.operator.ptah.run",
+	"ptahschemaplanchunks.operator.ptah.run",
 	"ptahschemaplans.operator.ptah.run",
 	"ptahschemas.operator.ptah.run",
 }
@@ -251,6 +252,7 @@ func writeFixtureSetInGroup(
 			"ptahschemas":            "PtahSchema",
 			"ptahschemaapprovals":    "PtahSchemaApproval",
 			"ptahschemaplans":        "PtahSchemaPlan",
+			"ptahschemaplanchunks":   "PtahSchemaPlanChunk",
 			"ptahmigrations":         "PtahMigration",
 			"ptahmigrationapprovals": "PtahMigrationApproval",
 			"ptahmigrationplans":     "PtahMigrationPlan",

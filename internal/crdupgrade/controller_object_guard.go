@@ -13,14 +13,19 @@ const (
 	controllerJobWriteGuardNamePrefix  = "ptah-operator-job-write-guard-"
 	controllerChunkWriteGuardPrefix    = "ptah-operator-chunk-write-guard-"
 	controllerPlanWriteGuardNamePrefix = "ptah-operator-plan-write-guard-"
+	// The ConfigMaps an Apply mounts its plan through carry a chunk's bytes in
+	// the one shape a Pod can project, so they get a boundary of their own
+	// beside the chunk kind's rather than a shared one that admits either.
+	controllerProjectionWriteGuardPrefix = "ptah-operator-projection-write-guard-"
 	// The migration plan is a separate kind with a separate shape, so it gets
 	// its own boundary rather than a widened one: the schema plan contract
 	// stays exactly as strict as it was.
 	controllerMigrationPlanWriteGuardNamePrefix = "ptah-operator-migration-plan-write-guard-"
 
-	controllerJobWriteGuardComponent   = "controller-job-write-guard"
-	controllerChunkWriteGuardComponent = "controller-chunk-write-guard"
-	controllerPlanWriteGuardComponent  = "controller-plan-write-guard"
+	controllerJobWriteGuardComponent        = "controller-job-write-guard"
+	controllerChunkWriteGuardComponent      = "controller-chunk-write-guard"
+	controllerProjectionWriteGuardComponent = "controller-projection-write-guard"
+	controllerPlanWriteGuardComponent       = "controller-plan-write-guard"
 
 	controllerMigrationPlanWriteGuardComponent = "controller-migration-plan-write-guard"
 )
@@ -32,9 +37,15 @@ func ControllerJobWriteGuardPolicyName(releaseNamespace, releaseName string) str
 }
 
 // ControllerChunkWriteGuardPolicyName returns the stable release-owned name
-// of the manager's structural plan-chunk ConfigMap write boundary.
+// of the manager's structural PtahSchemaPlanChunk write boundary.
 func ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName string) string {
 	return controllerObjectGuardPolicyName(controllerChunkWriteGuardPrefix, releaseNamespace, releaseName)
+}
+
+// ControllerProjectionWriteGuardPolicyName returns the stable release-owned
+// name of the manager's structural plan projection ConfigMap write boundary.
+func ControllerProjectionWriteGuardPolicyName(releaseNamespace, releaseName string) string {
+	return controllerObjectGuardPolicyName(controllerProjectionWriteGuardPrefix, releaseNamespace, releaseName)
 }
 
 // ControllerPlanWriteGuardPolicyName returns the stable release-owned name of
@@ -63,8 +74,9 @@ type controllerObjectGuardEntry struct {
 	denialMessage string
 	validations   []admissionregistrationv1.Validation
 	// releaseValues is whether the kind names the manager that built it. A Job
-	// and both plans do; a chunk does not, because it is bound to its plan by
-	// name and owner, and the plan carries the manager's identity.
+	// and both plans do; a chunk and its projection do not, because each is
+	// bound to its plan by name and owner, and the plan carries the manager's
+	// identity.
 	releaseValues bool
 }
 
@@ -102,11 +114,20 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 		{
 			name:          ControllerChunkWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
 			component:     controllerChunkWriteGuardComponent,
+			apiGroups:     []string{"operator.ptah.run"},
+			apiVersions:   []string{"v1alpha1"},
+			resource:      "ptahschemaplanchunks",
+			operations:    []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+			denialMessage: "Ptah controller chunk write guard rejected an unsafe PtahSchemaPlanChunk shape",
+		},
+		{
+			name:          ControllerProjectionWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
+			component:     controllerProjectionWriteGuardComponent,
 			apiGroups:     []string{""},
 			apiVersions:   []string{"v1"},
 			resource:      "configmaps",
 			operations:    []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-			denialMessage: "Ptah controller chunk write guard rejected an unsafe ConfigMap shape",
+			denialMessage: "Ptah controller projection write guard rejected an unsafe ConfigMap shape",
 		},
 		{
 			name:          ControllerPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
@@ -131,8 +152,9 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 	}
 	entries[0].validations = controllerJobWriteValidations(entries[0].denialMessage)
 	entries[1].validations = controllerChunkWriteValidations(entries[1].denialMessage)
-	entries[2].validations = controllerPlanWriteValidations(entries[2].denialMessage)
-	entries[3].validations = controllerMigrationPlanWriteValidations(entries[3].denialMessage)
+	entries[2].validations = controllerProjectionWriteValidations(entries[2].denialMessage)
+	entries[3].validations = controllerPlanWriteValidations(entries[3].denialMessage)
+	entries[4].validations = controllerMigrationPlanWriteValidations(entries[4].denialMessage)
 	return entries
 }
 
@@ -143,7 +165,7 @@ type AdmissionPolicy struct {
 	Binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding
 }
 
-// Policies returns the four object guards, each with its binding, in the
+// Policies returns the five object guards, each with its binding, in the
 // order the chart renders them.
 func (g *ControllerObjectGuard) Policies() []AdmissionPolicy {
 	entries := g.entries()
@@ -349,19 +371,38 @@ func controllerJobPreviousObjectExpression(expression string) string {
 	return `request.operation != "UPDATE" || (oldObject != null && ` + expression + `)`
 }
 
-// controllerChunkWriteValidations bounds the ConfigMap the controller may
-// write for one plan chunk.
+// controllerChunkMetadataExpression is the metadata a plan chunk and its
+// projection share: the chunk's name under its plan's, the plan and schema
+// labels, and the plan as the one blocking controller owner.
+const controllerChunkMetadataExpression = `has(object.metadata.labels) && object.metadata.labels.size() == 2 && ["operator.ptah.run/plan", "operator.ptah.run/schema"].all(key, key in object.metadata.labels && object.metadata.labels[key] != "") && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && object.metadata.name.startsWith(object.metadata.labels["operator.ptah.run/plan"] + "-") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchemaPlan" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/plan"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion`
+
+// controllerChunkWriteValidations bounds the PtahSchemaPlanChunk the
+// controller may write for one plan chunk.
+//
+// The size ceiling is the base64 length of plancontract.ChunkBytes: a policy
+// reads a custom resource as the JSON the API server received, where spec.data
+// is the encoded string, and there is no decoder to compare raw bytes with,
+// because the API server's CEL environment does not enable the encoder
+// extension. The raw-byte contract is enforced where the value is already an
+// integer, on spec.chunks[].size of the plan and in the controller write
+// webhook, which holds the bytes to the plan's digest.
+func controllerChunkWriteValidations(message string) []admissionregistrationv1.Validation {
+	return controllerObjectValidations(message,
+		controllerChunkMetadataExpression,
+		`has(dyn(object).spec) && has(dyn(object).spec.data) && dyn(object).spec.data.size() >= 1 && dyn(object).spec.data.size() <= 699052`,
+	)
+}
+
+// controllerProjectionWriteValidations bounds the ConfigMap the controller may
+// write to project one plan chunk into an Apply Pod.
 //
 // The size ceiling is the base64 length of plancontract.ChunkBytes, because a
 // policy sees binaryData as the encoded string the API server transports, and
 // that is also the length counted against the 1 MiB object limit this bound
-// exists to keep. There is no decoder to compare raw bytes with: the API
-// server's CEL environment does not enable the encoder extension. The raw-byte
-// contract is enforced where the value is already an integer, on
-// spec.chunks[].size below and in the controller write webhook.
-func controllerChunkWriteValidations(message string) []admissionregistrationv1.Validation {
+// exists to keep.
+func controllerProjectionWriteValidations(message string) []admissionregistrationv1.Validation {
 	return controllerObjectValidations(message,
-		`has(object.metadata.labels) && object.metadata.labels.size() == 2 && ["operator.ptah.run/plan", "operator.ptah.run/schema"].all(key, key in object.metadata.labels && object.metadata.labels[key] != "") && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && object.metadata.name.startsWith(object.metadata.labels["operator.ptah.run/plan"] + "-") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchemaPlan" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/plan"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion`,
+		controllerChunkMetadataExpression,
 		`has(dyn(object).immutable) && dyn(object).immutable && (!has(dyn(object).data) || dyn(object).data.size() == 0) && has(dyn(object).binaryData) && dyn(object).binaryData.size() == 1 && "chunk" in dyn(object).binaryData && dyn(object).binaryData["chunk"].size() >= 1 && dyn(object).binaryData["chunk"].size() <= 699052`,
 	)
 }
@@ -372,7 +413,7 @@ func controllerPlanWriteValidations(message string) []admissionregistrationv1.Va
 	validations := controllerObjectValidations(message,
 		`has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.run/schema" in object.metadata.labels && object.metadata.labels["operator.ptah.run/schema"] != "" && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && dyn(object).spec.schemaRef.name == object.metadata.labels["operator.ptah.run/schema"] && dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
 		controllerPlanContractExpression(),
-		`dyn(object).spec.chunks.size() >= 1 && dyn(object).spec.chunks.size() <= 16 && dyn(object).spec.chunks.all(chunk, chunk.key == "chunk" && chunk.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && chunk.name.startsWith(object.metadata.name + "-") && chunk.index >= 0 && chunk.index < dyn(object).spec.chunks.size() && chunk.digest.matches("^sha256:[0-9a-f]{64}$") && chunk.size >= 1 && chunk.size <= 524288)`,
+		`dyn(object).spec.chunks.size() >= 1 && dyn(object).spec.chunks.size() <= 16 && dyn(object).spec.chunks.all(chunk, chunk.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && chunk.name.startsWith(object.metadata.name + "-") && chunk.index >= 0 && chunk.index < dyn(object).spec.chunks.size() && chunk.digest.matches("^sha256:[0-9a-f]{64}$") && chunk.size >= 1 && chunk.size <= 524288)`,
 		`!has(dyn(object).status)`,
 	)
 	return validations

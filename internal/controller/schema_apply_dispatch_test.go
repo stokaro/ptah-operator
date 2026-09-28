@@ -194,6 +194,7 @@ func TestAnApplyClaimDispatchesOnlyWhatIsStillProvable(t *testing.T) {
 					t.Fatalf("Reconcile() pass %d error = %v", pass, err)
 				}
 				if applyDispatched(t, api, schema.Namespace, jobName) {
+					assertProjected(t, api, schema)
 					return
 				}
 			}
@@ -228,7 +229,7 @@ func TestAnApplyClaimDispatchesOnlyWhatIsStillProvable(t *testing.T) {
 			// here would hand the executor a plan the operator cannot read.
 			name: "the published plan bytes are gone",
 			break_: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) {
-				chunks := &corev1.ConfigMapList{}
+				chunks := &operatorv1alpha1.PtahSchemaPlanChunkList{}
 				if err := api.List(context.Background(), chunks, client.InNamespace(schema.Namespace)); err != nil {
 					t.Fatal(err)
 				}
@@ -245,6 +246,25 @@ func TestAnApplyClaimDispatchesOnlyWhatIsStillProvable(t *testing.T) {
 				}
 				if removed == 0 {
 					t.Fatal("no published chunk was removed, so this proves nothing")
+				}
+			},
+		},
+		{
+			// The Pod mounts the plan through ConfigMaps named after its
+			// chunks. One under that name that is not this plan's projection
+			// -- someone else's, or the same name with other bytes -- is not
+			// something the Pod may be pointed at.
+			name: "a ConfigMap that is not the plan's projection holds its name",
+			break_: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) {
+				stored := safetyGetSchema(t, api, schema)
+				plan := &operatorv1alpha1.PtahSchemaPlan{}
+				key := client.ObjectKey{Namespace: schema.Namespace, Name: stored.Status.Plan.Name}
+				if err := api.Get(context.Background(), key, plan); err != nil {
+					t.Fatal(err)
+				}
+				squatter := planstore.DesiredProjection(plan, plan.Spec.Chunks[0], []byte("SELECT 'not the plan';\n"))
+				if err := api.Create(context.Background(), squatter); err != nil {
+					t.Fatal(err)
 				}
 			},
 		},
@@ -315,6 +335,89 @@ func TestAnApplyClaimDispatchesOnlyWhatIsStillProvable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// assertProjected holds the dispatched Apply to the ConfigMaps its Pod mounts:
+// every one the plan names exists, is the projection the store writes, and
+// together they carry exactly the plan's content.
+func assertProjected(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) {
+	t.Helper()
+
+	stored := safetyGetSchema(t, api, schema)
+	plan := &operatorv1alpha1.PtahSchemaPlan{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: schema.Namespace, Name: stored.Status.Plan.Name}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Spec.Chunks) == 0 {
+		t.Fatal("the plan names no chunk, so there is no projection to check")
+	}
+	var content []byte
+	for index, ref := range plan.Spec.Chunks {
+		configMap := &corev1.ConfigMap{}
+		if err := api.Get(context.Background(), client.ObjectKey{Namespace: schema.Namespace, Name: ref.Name}, configMap); err != nil {
+			t.Fatalf("the Apply dispatched without projection %d: %v", index, err)
+		}
+		if err := planstore.VerifyProjection(plan, ref, configMap); err != nil {
+			t.Fatalf("projection %d: %v", index, err)
+		}
+		content = append(content, configMap.BinaryData[planstore.ProjectionDataKey]...)
+	}
+	if fingerprint.DigestBytes(content) != plan.Spec.ContentDigest {
+		t.Fatal("the projection does not carry the plan the Apply was approved for")
+	}
+}
+
+// failingProjectionClient refuses the first ConfigMap creates the way an API
+// server that timed out does, and passes everything else through.
+type failingProjectionClient struct {
+	client.Client
+	failures atomic.Int32
+}
+
+func (c *failingProjectionClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if _, projection := object.(*corev1.ConfigMap); projection && c.failures.Add(-1) >= 0 {
+		return apierrors.NewServerTimeout(corev1.Resource("configmaps"), "create", 1)
+	}
+	return c.Client.Create(ctx, object, options...)
+}
+
+// TestAProjectionThatFailsLeavesTheApplyDispatchable holds the order the
+// projection is written in. Once DispatchStarted is durable, a missing Job
+// reads as an Apply that may have run, and nothing re-creates it; so the
+// projection has to be finished before that boundary, and a pass whose
+// projection failed has to leave the claim where the next pass can try again.
+func TestAProjectionThatFailsLeavesTheApplyDispatchable(t *testing.T) {
+	t.Parallel()
+
+	reconciler, api, schema, jobName := dispatchableApply(t, false)
+	failing := &failingProjectionClient{Client: reconciler.Plans.Client}
+	failing.failures.Store(1)
+	reconciler.Plans.Client = failing
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	failed := false
+	for pass := range 6 {
+		_, err := reconciler.Reconcile(context.Background(), request)
+		operation := safetyGetSchema(t, api, schema).Status.ActiveOperation
+		if err != nil {
+			failed = true
+			if operation == nil || operation.Type != operatorv1alpha1.OperationApply {
+				t.Fatalf("pass %d gave up the Apply claim over a projection error: %#v", pass, operation)
+			}
+			if operation.DispatchStarted || applyDispatched(t, api, schema.Namespace, jobName) {
+				t.Fatalf("pass %d crossed the dispatch boundary without a projection: %#v", pass, operation)
+			}
+			continue
+		}
+		if applyDispatched(t, api, schema.Namespace, jobName) {
+			if !failed {
+				t.Fatal("no pass failed to project, so this proves nothing about the order")
+			}
+			assertProjected(t, api, schema)
+			return
+		}
+	}
+	t.Fatalf("the Apply never dispatched after its projection recovered: %#v", safetyGetSchema(t, api, schema).Status)
 }
 
 // TestAStaleApplyHandsBackTheDatabaseItHolds covers the other side of the same

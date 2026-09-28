@@ -110,6 +110,7 @@ func releaseCRDNames() []string {
 		"ptahmigrations.operator.ptah.run",
 		"ptahrealms.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplanchunks.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
 		"ptahschemas.operator.ptah.run",
 	}
@@ -129,6 +130,7 @@ func controllerClusterRoleRules() []rbacv1.PolicyRule {
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaplans"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaplanchunks"}, nil, []string{"get", "create"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaapprovals"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrations"}, nil, []string{"get", "list", "watch", "patch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrations/finalizers"}, nil, []string{"update"}),

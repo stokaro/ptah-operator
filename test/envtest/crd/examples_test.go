@@ -20,12 +20,13 @@ import (
 // one has to be an object the API server stores.
 //
 // Three kinds are written by a person in full, and their examples go in
-// verbatim. The other four are written by the operator or finished by the
-// admission webhook, which envtest does not run, so their pages show only the
-// fields worth reading. For those the suite adds the required fields an example
-// leaves out -- the webhook's stamp and the build binding the operator copies
-// from the plan -- and nothing else; what it added is logged, and an example it
-// did not need to complete is created as written.
+// verbatim, as do the plan chunk's, whose one field every example shows. The
+// other four are written by the operator or finished by the admission webhook,
+// which envtest does not run, so their pages show only the fields worth
+// reading. For those the suite adds the required fields an example leaves out
+// -- the webhook's stamp and the build binding the operator copies from the
+// plan -- and nothing else; what it added is logged, and an example it did not
+// need to complete is created as written.
 var referenceKinds = []struct {
 	kind       string
 	namespaced bool
@@ -38,6 +39,7 @@ var referenceKinds = []struct {
 	{kind: "PtahMigration", namespaced: true},
 	{kind: "PtahRealm"},
 	{kind: "PtahSchemaPlan", namespaced: true, completion: schemaPlanSpec},
+	{kind: "PtahSchemaPlanChunk", namespaced: true},
 	{kind: "PtahMigrationPlan", namespaced: true, completion: migrationPlanSpec},
 	{kind: "PtahSchemaApproval", namespaced: true, completion: schemaApprovalSpec},
 	{kind: "PtahMigrationApproval", namespaced: true, completion: migrationApprovalSpec},

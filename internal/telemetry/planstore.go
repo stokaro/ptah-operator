@@ -16,8 +16,10 @@ import (
 // deployment that owns the budget needs to see it grow.
 //
 // A schema plan's bytes -- its SQL and the document around it -- live in
-// immutable chunk ConfigMaps, and spec.size is the exact byte count the chunks
-// hold, so the bytes are read from the plans rather than by listing ConfigMaps.
+// immutable PtahSchemaPlanChunk objects, and spec.size is the exact byte count
+// the chunks hold, so the bytes are read from the plans rather than by listing
+// the chunks. An applied plan holds the same bytes once more in the ConfigMaps
+// its Apply mounted, which this does not count.
 // A migration plan names migrations the artifact carries and stores no chunk of
 // its own, so it is counted and adds no bytes.
 //
@@ -51,7 +53,7 @@ func NewPlanStoreCollector(registerer prometheus.Registerer, view PlanStoreView)
 			[]string{"family"}, nil),
 		chunkBytes: prometheus.NewDesc(
 			"ptah_operator_stored_plan_bytes",
-			"Bytes the retained schema plans hold in their chunk ConfigMaps, from each plan's spec.size. Absent while the view is not synchronized.",
+			"Bytes the retained schema plans hold in their chunks, from each plan's spec.size. Absent while the view is not synchronized.",
 			nil, nil),
 	}
 	if registerer != nil {

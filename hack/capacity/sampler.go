@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -21,6 +22,7 @@ var (
 	migrationResource     = schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrations"}
 	schemaPlanResource    = schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahschemaplans"}
 	migrationPlanResource = schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrationplans"}
+	planChunkResource     = schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahschemaplanchunks"}
 	approvalGVR           = schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrationapprovals"}
 )
 
@@ -34,7 +36,7 @@ type sample struct {
 	ObservationAgeMax time.Duration             `json:"observationAgeMax"`
 	OverdueMax        time.Duration             `json:"overdueMax"`
 	Plans             int                       `json:"plans"`
-	ChunkConfigMaps   int                       `json:"chunkConfigMaps"`
+	Chunks            int                       `json:"chunks"`
 	ChunkBytes        int64                     `json:"chunkBytes"`
 	Managers          map[string]managerReading `json:"managers"`
 	APIServer         *apiReading               `json:"apiServer,omitempty"`
@@ -193,18 +195,23 @@ func (s *sampler) readRetained(ctx context.Context, into *sample) error {
 		}
 		into.Plans += len(plans.Items)
 	}
-	chunks, err := s.clientset.CoreV1().ConfigMaps(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: "operator.ptah.run/plan"})
+	chunks, err := s.dynamic.Resource(planChunkResource).Namespace(s.namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
-	into.ChunkConfigMaps = len(chunks.Items)
+	into.Chunks = len(chunks.Items)
 	for _, chunk := range chunks.Items {
-		for _, content := range chunk.BinaryData {
-			into.ChunkBytes += int64(len(content))
+		// The API carries the bytes base64-encoded, which is what the store
+		// costs in etcd; the plan bytes are three quarters of it.
+		encoded, _, err := unstructured.NestedString(chunk.Object, "spec", "data")
+		if err != nil {
+			return fmt.Errorf("read plan chunk %s: %w", chunk.GetName(), err)
 		}
-		for _, content := range chunk.Data {
-			into.ChunkBytes += int64(len(content))
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return fmt.Errorf("decode plan chunk %s: %w", chunk.GetName(), err)
 		}
+		into.ChunkBytes += int64(len(decoded))
 	}
 	return nil
 }

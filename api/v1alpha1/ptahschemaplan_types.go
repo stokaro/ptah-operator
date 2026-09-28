@@ -15,12 +15,11 @@ type ImmutableObjectReference struct {
 	UID types.UID `json:"uid"`
 }
 
-// PlanChunkReference identifies one ordered immutable ConfigMap chunk.
+// PlanChunkReference identifies one ordered immutable PtahSchemaPlanChunk.
 type PlanChunkReference struct {
-	// Name of the immutable ConfigMap holding this chunk.
+	// Name of the PtahSchemaPlanChunk holding this chunk. An Apply projects
+	// the chunk into its Pod through an immutable ConfigMap of the same name.
 	Name string `json:"name"`
-	// Key inside that ConfigMap the chunk bytes are stored under.
-	Key string `json:"key"`
 	// Index of this chunk in the plan, counting from zero. The chunks are
 	// concatenated in this order and in no other.
 	// +kubebuilder:validation:Minimum=0
@@ -177,8 +176,8 @@ type PtahSchemaPlanSpec struct {
 	// kubectl ptah plan rather than by fetching the chunks.
 	StatementCount int32 `json:"statementCount"`
 
-	// Chunks are the immutable ConfigMaps the plan bytes are stored in. The
-	// plan is the concatenation of their contents in index order, and nothing
+	// Chunks are the PtahSchemaPlanChunk objects the plan bytes are stored in.
+	// The plan is the concatenation of their data in index order, and nothing
 	// reads them without checking each digest and size.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=16
@@ -192,9 +191,10 @@ type PtahSchemaPlanSpec struct {
 type PtahSchemaPlanStatus struct {
 	// ObservedGeneration is the plan generation this status was written for.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// PublishedChunks are the ConfigMaps that were found to exist, by UID,
-	// before Ready became true. Chunk publication is not transactional, so this
-	// is the record that every chunk the manifest names was really written.
+	// PublishedChunks are the PtahSchemaPlanChunk objects that were found to
+	// exist, by UID, before Ready became true. Chunk publication is not
+	// transactional, so this is the record that every chunk the manifest names
+	// was really written.
 	// +kubebuilder:validation:MaxItems=16
 	// +listType=map
 	// +listMapKey=index
@@ -204,9 +204,9 @@ type PtahSchemaPlanStatus struct {
 }
 
 // PublishedPlanChunkStatus binds the immutable manifest to the concrete
-// ConfigMap instances verified before Ready became true.
+// PtahSchemaPlanChunk instances verified before Ready became true.
 type PublishedPlanChunkStatus struct {
-	// Name of the ConfigMap that was verified.
+	// Name of the PtahSchemaPlanChunk that was verified.
 	Name string `json:"name"`
 	// UID it had when it was verified, so a chunk deleted and recreated is not
 	// mistaken for the one the plan was published with.

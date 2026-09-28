@@ -3,7 +3,6 @@
 package controllerwrite
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -149,9 +147,17 @@ func (v *Validator) Validate(ctx context.Context, req admissionv1.AdmissionReque
 			return err
 		}
 		if req.Operation != admissionv1.Create {
-			return denyf("operator manager may only create immutable plan chunk ConfigMaps")
+			return denyf("operator manager may only create immutable plan projection ConfigMaps")
 		}
-		return v.validateConfigMapCreate(ctx, req)
+		return v.validateProjectionCreate(ctx, req)
+	case planChunkResource:
+		if err := validateRequestType(req, planChunkResource, planChunkKind); err != nil {
+			return err
+		}
+		if req.Operation != admissionv1.Create {
+			return denyf("operator manager may only create immutable PtahSchemaPlanChunk objects")
+		}
+		return v.validatePlanChunkCreate(ctx, req)
 	case planResource:
 		if err := validateRequestType(req, planResource, planKind); err != nil {
 			return err
@@ -706,7 +712,7 @@ func (v *Validator) planForJob(
 	if err := validatePlanShape(plan, schema); err != nil {
 		return nil, denyf("Apply plan manifest is invalid: %v", err)
 	}
-	if err := v.validatePersistedChunks(ctx, plan); err != nil {
+	if err := v.validateApplyProjection(ctx, plan); err != nil {
 		return nil, err
 	}
 	return plan, nil
@@ -908,65 +914,6 @@ func (v *Validator) validatePlanCreate(ctx context.Context, req admissionv1.Admi
 	return nil
 }
 
-func (v *Validator) validateConfigMapCreate(ctx context.Context, req admissionv1.AdmissionRequest) error {
-	if len(req.OldObject.Raw) != 0 {
-		return badRequestf("ConfigMap create unexpectedly contains an old object")
-	}
-	configMap := &corev1.ConfigMap{}
-	if err := decodeObject(req.Object.Raw, configMap, configMapKind); err != nil {
-		return err
-	}
-	if err := validateRequestIdentity(req, &configMap.ObjectMeta); err != nil {
-		return err
-	}
-	owner, err := exactControllerOwner(
-		configMap.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchemaPlan",
-	)
-	if err != nil {
-		return denyf("ConfigMap does not have one exact PtahSchemaPlan controller owner: %v", err)
-	}
-	plan := &operatorv1alpha1.PtahSchemaPlan{}
-	key := client.ObjectKey{Namespace: configMap.Namespace, Name: owner.Name}
-	if err := v.Reader.Get(ctx, key, plan); err != nil {
-		return internalf("directly read plan manifest %s/%s: %v", key.Namespace, key.Name, err)
-	}
-	if plan.UID == "" || plan.UID != owner.UID {
-		return denyf("ConfigMap owner does not match the current PtahSchemaPlan UID")
-	}
-	planOwner, err := exactControllerOwner(
-		plan.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-	)
-	if err != nil {
-		return denyf("owning PtahSchemaPlan has no exact PtahSchema controller owner: %v", err)
-	}
-	schema, err := v.readSchema(ctx, plan.Namespace, planOwner)
-	if err != nil {
-		return err
-	}
-	if err := validatePlanMetadata(plan, schema); err != nil {
-		return denyf("owning PtahSchemaPlan metadata is invalid: %v", err)
-	}
-	if err := validatePlanShape(plan, schema); err != nil {
-		return denyf("owning PtahSchemaPlan manifest is invalid: %v", err)
-	}
-	if err := validatePlanPublicationContext(plan, schema); err != nil {
-		return denyf("plan chunk does not belong to the active Plan operation: %v", err)
-	}
-
-	ref, ok := findChunkReference(plan.Spec.Chunks, configMap.Name)
-	if !ok {
-		return denyf("ConfigMap name is not present in the immutable plan chunk manifest")
-	}
-	if err := validateChunk(configMap, plan, ref, ""); err != nil {
-		return denyf("ConfigMap does not match its immutable plan chunk reference: %v", err)
-	}
-	return nil
-}
-
 func validatePlanMetadata(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1alpha1.PtahSchema) error {
 	if plan == nil || schema == nil {
 		return errors.New("plan metadata inputs are incomplete")
@@ -1026,8 +973,8 @@ func validatePlanShape(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1
 	for index, ref := range plan.Spec.Chunks {
 		expectedSize := min(remaining, int64(planstore.ChunkBytes))
 		if ref.Index != int32(index) || ref.Name != fmt.Sprintf("%s-%03d", plan.Name, index) ||
-			ref.Key != planstore.ChunkDataKey || int64(ref.Size) != expectedSize || !isSHA256Digest(ref.Digest) {
-			return fmt.Errorf("plan chunk %d is not the deterministic size, name, key, index, and digest tuple", index)
+			int64(ref.Size) != expectedSize || !isSHA256Digest(ref.Digest) {
+			return fmt.Errorf("plan chunk %d is not the deterministic size, name, index, and digest tuple", index)
 		}
 		remaining -= expectedSize
 	}
@@ -1119,124 +1066,6 @@ func (v *Validator) validatePlanSourceJob(ctx context.Context, schema *operatorv
 	}
 	if err := validateJobIntent(harvested, expected, schemaSubject(schema), true); err != nil {
 		return denyf("terminal Plan Job is outside its immutable operation intent: %v", err)
-	}
-	return nil
-}
-
-func (v *Validator) validatePersistedChunks(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan) error {
-	if len(plan.Status.PublishedChunks) != len(plan.Spec.Chunks) {
-		return denyf("Apply plan does not bind every published chunk")
-	}
-	type loadedChunk struct {
-		configMap *corev1.ConfigMap
-		err       error
-	}
-	loaded := make([]loadedChunk, len(plan.Spec.Chunks))
-
-	for index, ref := range plan.Spec.Chunks {
-		published := plan.Status.PublishedChunks[index]
-		if published.Index != int32(index) || published.Name != ref.Name || published.UID == "" {
-			return denyf("Apply plan published chunk %d has an invalid identity binding", index)
-		}
-	}
-
-	var reads sync.WaitGroup
-	reads.Add(len(plan.Spec.Chunks))
-	for index, ref := range plan.Spec.Chunks {
-		published := plan.Status.PublishedChunks[index]
-		go func() {
-			defer reads.Done()
-
-			configMap := &corev1.ConfigMap{}
-			key := client.ObjectKey{Namespace: plan.Namespace, Name: ref.Name}
-			if err := v.Reader.Get(ctx, key, configMap); err != nil {
-				loaded[index].err = internalf("directly read Apply plan chunk %s/%s: %v", key.Namespace, key.Name, err)
-				return
-			}
-			if configMap.UID != published.UID {
-				loaded[index].err = denyf("Apply plan chunk %d was replaced", index)
-				return
-			}
-			if err := validateChunk(configMap, plan, ref, published.UID); err != nil {
-				loaded[index].err = denyf("Apply plan chunk %d is invalid: %v", index, err)
-				return
-			}
-			loaded[index].configMap = configMap
-		}()
-	}
-	reads.Wait()
-
-	var content bytes.Buffer
-	for index, ref := range plan.Spec.Chunks {
-		if loaded[index].err != nil {
-			return loaded[index].err
-		}
-		configMap := loaded[index].configMap
-		if configMap == nil {
-			return internalf("Apply plan chunk %d completed without a result", index)
-		}
-		if content.Len()+len(configMap.BinaryData[ref.Key]) > int(plancontract.MaxExecutableBytes) {
-			return denyf("Apply plan chunks exceed the executable plan size limit")
-		}
-		_, _ = content.Write(configMap.BinaryData[ref.Key])
-	}
-	if int64(content.Len()) != plan.Spec.Size || fingerprint.DigestBytes(content.Bytes()) != plan.Spec.ContentDigest {
-		return denyf("Apply plan chunks do not reconstruct the immutable content binding")
-	}
-	return nil
-}
-
-func validateChunk(
-	configMap *corev1.ConfigMap,
-	plan *operatorv1alpha1.PtahSchemaPlan,
-	ref operatorv1alpha1.PlanChunkReference,
-	expectedUID types.UID,
-) error {
-	if configMap == nil || plan == nil {
-		return errors.New("chunk validation inputs are incomplete")
-	}
-	if expectedUID != "" && configMap.UID != expectedUID {
-		return errors.New("chunk UID does not match its committed identity")
-	}
-	if configMap.Immutable == nil || !*configMap.Immutable {
-		return errors.New("chunk is not immutable")
-	}
-	if len(configMap.Data) != 0 || len(configMap.BinaryData) != 1 {
-		return errors.New("chunk must contain exactly one BinaryData value and no string data")
-	}
-	content, ok := configMap.BinaryData[ref.Key]
-	if !ok || len(content) != int(ref.Size) || fingerprint.DigestBytes(content) != ref.Digest {
-		return errors.New("chunk payload does not match its declared key, size, and digest")
-	}
-	if _, err := exactNamedControllerOwner(
-		configMap.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchemaPlan",
-		plan.Name,
-		plan.UID,
-	); err != nil {
-		return err
-	}
-	expected := metav1.ObjectMeta{
-		Namespace: configMap.Namespace,
-		Name:      ref.Name,
-		Labels: map[string]string{
-			planstore.LabelPlan:   plan.Name,
-			planstore.LabelSchema: plan.Spec.SchemaRef.Name,
-		},
-		OwnerReferences: []metav1.OwnerReference{{
-			APIVersion:         operatorv1alpha1.GroupVersion.String(),
-			Kind:               "PtahSchemaPlan",
-			Name:               plan.Name,
-			UID:                plan.UID,
-			Controller:         boolPointer(true),
-			BlockOwnerDeletion: boolPointer(true),
-		}},
-	}
-	actual := configMap.ObjectMeta.DeepCopy()
-	scrubCreateServerMetadata(actual)
-	if !reflect.DeepEqual(actual, &expected) {
-		return errors.New("chunk metadata contains fields outside the immutable storage contract")
 	}
 	return nil
 }

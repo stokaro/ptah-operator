@@ -409,6 +409,16 @@ func TestValidationHandlerRejectsCreatesForDeletingOwner(t *testing.T) {
 				return handler, chunk
 			},
 		},
+		"plan projection": {
+			fixture: func(t *testing.T) (*controllerwrite.ValidationHandler, client.Object) {
+				schema, plan, chunks := applyProjectionFixture(t)
+				schema.DeletionTimestamp = &deletedAt
+				schema.Finalizers = []string{"operator.ptah.run/active-operation"}
+				projection := planProjection(plan, plan.Spec.Chunks[0], chunks[0])
+				handler := handlerFixture(t, staticJobBuilder{job: expectedJob(schema, schema.Status.ActiveOperation)}, schema, plan)
+				return handler, projection
+			},
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -1038,10 +1048,10 @@ func TestValidationHandlerAllowsExactImmutablePlanChunk(t *testing.T) {
 	schema := schemaFixture(operatorv1alpha1.OperationPlan)
 	plan, chunks := preparedPlanFixture(t, schema)
 	plan.UID = "plan-uid"
-	configMap := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "")
+	chunk := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "")
 	handler := handlerFixture(t, staticJobBuilder{job: expectedJob(schema, schema.Status.ActiveOperation)}, schema, plan)
 
-	response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, configMap))
+	response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, chunk))
 	if !response.Allowed {
 		t.Fatalf("Handle() denied exact immutable plan chunk: %#v", response.Result)
 	}
@@ -1052,12 +1062,109 @@ func TestValidationHandlerRejectsInvalidPlanChunk(t *testing.T) {
 
 	tests := []struct {
 		name   string
+		mutate func(*operatorv1alpha1.PtahSchemaPlanChunk)
+	}{
+		{
+			name: "payload mismatch",
+			mutate: func(chunk *operatorv1alpha1.PtahSchemaPlanChunk) {
+				chunk.Spec.Data[0] ^= 0xff
+			},
+		},
+		{
+			name: "short payload",
+			mutate: func(chunk *operatorv1alpha1.PtahSchemaPlanChunk) {
+				chunk.Spec.Data = chunk.Spec.Data[:len(chunk.Spec.Data)-1]
+			},
+		},
+		{
+			name: "wrong label",
+			mutate: func(chunk *operatorv1alpha1.PtahSchemaPlanChunk) {
+				chunk.Labels[planstore.LabelPlan] = "another-plan"
+			},
+		},
+		{
+			name: "extra annotation",
+			mutate: func(chunk *operatorv1alpha1.PtahSchemaPlanChunk) {
+				chunk.Annotations = map[string]string{"example.test/extra": "unexpected"}
+			},
+		},
+		{
+			name: "wrong owner",
+			mutate: func(chunk *operatorv1alpha1.PtahSchemaPlanChunk) {
+				chunk.OwnerReferences[0].UID = "another-plan"
+			},
+		},
+		{
+			name: "name outside the manifest",
+			mutate: func(chunk *operatorv1alpha1.PtahSchemaPlanChunk) {
+				chunk.Name += "-extra"
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := schemaFixture(operatorv1alpha1.OperationPlan)
+			plan, chunks := preparedPlanFixture(t, schema)
+			plan.UID = "plan-uid"
+			chunk := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "")
+			test.mutate(chunk)
+			handler := handlerFixture(t, staticJobBuilder{job: expectedJob(schema, schema.Status.ActiveOperation)}, schema, plan)
+
+			response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, chunk))
+			if response.Allowed {
+				t.Fatal("Handle() allowed an invalid plan chunk")
+			}
+		})
+	}
+}
+
+// TestValidationHandlerRefusesAChunkOutsidePublication holds the chunk kind to
+// the Plan operation that publishes it. An exact chunk of a real plan is
+// still refused while the schema is dispatching an Apply: nothing publishes
+// chunks then, and a chunk created then would be SQL nobody computed.
+func TestValidationHandlerRefusesAChunkOutsidePublication(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, chunks := applyProjectionFixture(t)
+	chunk := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "")
+	handler := handlerFixture(t, staticJobBuilder{job: expectedJob(schema, schema.Status.ActiveOperation)}, schema, plan)
+
+	response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, chunk))
+	if response.Allowed || response.Result == nil || !strings.Contains(response.Result.Message, "active Plan operation") {
+		t.Fatalf("Handle() = %#v, want a refusal naming the Plan operation", response.Result)
+	}
+}
+
+func TestValidationHandlerAllowsExactApplyProjection(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, chunks := applyProjectionFixture(t)
+	projection := planProjection(plan, plan.Spec.Chunks[0], chunks[0])
+	handler := handlerFixture(t, staticJobBuilder{job: expectedJob(schema, schema.Status.ActiveOperation)}, schema, plan)
+
+	response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, projection))
+	if !response.Allowed {
+		t.Fatalf("Handle() denied an exact Apply projection: %#v", response.Result)
+	}
+}
+
+func TestValidationHandlerRejectsInvalidApplyProjection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
 		mutate func(*corev1.ConfigMap)
+		// state changes what the schema and the plan say instead of the
+		// ConfigMap, so the refusal is about when it was written.
+		state func(*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan)
 	}{
 		{
 			name: "payload mismatch",
 			mutate: func(configMap *corev1.ConfigMap) {
-				configMap.BinaryData[planstore.ChunkDataKey][0] ^= 0xff
+				configMap.BinaryData[planstore.ProjectionDataKey][0] ^= 0xff
 			},
 		},
 		{
@@ -1091,93 +1198,105 @@ func TestValidationHandlerRejectsInvalidPlanChunk(t *testing.T) {
 				configMap.OwnerReferences[0].UID = "another-plan"
 			},
 		},
+		{
+			name: "during publication",
+			state: func(schema *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan) {
+				schema.Status.ActiveOperation.Type = operatorv1alpha1.OperationPlan
+			},
+		},
+		{
+			name: "after dispatch started",
+			state: func(schema *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan) {
+				schema.Status.ActiveOperation.DispatchStarted = true
+			},
+		},
+		{
+			name: "after the Job exists",
+			state: func(schema *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan) {
+				schema.Status.ActiveOperation.JobUID = "apply-job-uid"
+			},
+		},
+		{
+			name: "of a plan that is not current",
+			state: func(schema *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan) {
+				schema.Status.Plan.UID = "another-plan-uid"
+			},
+		},
+		{
+			name: "of uncommitted storage",
+			state: func(_ *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) {
+				plan.Status.Conditions = nil
+			},
+		},
 	}
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			schema := schemaFixture(operatorv1alpha1.OperationPlan)
-			plan, chunks := preparedPlanFixture(t, schema)
-			plan.UID = "plan-uid"
-			configMap := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "")
-			test.mutate(configMap)
+			schema, plan, chunks := applyProjectionFixture(t)
+			projection := planProjection(plan, plan.Spec.Chunks[0], chunks[0])
+			if test.mutate != nil {
+				test.mutate(projection)
+			}
+			if test.state != nil {
+				test.state(schema, plan)
+			}
 			handler := handlerFixture(t, staticJobBuilder{job: expectedJob(schema, schema.Status.ActiveOperation)}, schema, plan)
 
-			response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, configMap))
+			response := handler.Handle(context.Background(), requestFor(t, admissionv1.Create, projection))
 			if response.Allowed {
-				t.Fatal("Handle() allowed an invalid plan chunk")
+				t.Fatal("Handle() allowed an invalid Apply projection")
 			}
 		})
 	}
 }
 
-func TestValidationHandlerReadsAndValidatesApplyPlanChunks(t *testing.T) {
+func TestValidationHandlerReadsAndValidatesApplyProjection(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name          string
-		corruptStored bool
-		// replaceStored gives the chunk a different identity under the same
-		// name, which is what deleting and recreating the ConfigMap does.
-		replaceStored bool
-		// dropStored removes it entirely.
-		dropStored  bool
+		name              string
+		corruptProjection bool
+		// dropProjection leaves the Pod nothing to mount.
+		dropProjection bool
+		// dropCommit leaves the plan without the record that its chunks were
+		// written.
+		dropCommit  bool
 		wantAllowed bool
 		wantMessage string
 	}{
-		{name: "exact stored plan", wantAllowed: true},
-		{name: "corrupt stored chunk", corruptStored: true},
+		{name: "exact projection", wantAllowed: true},
+		{name: "corrupt projection", corruptProjection: true, wantMessage: "projection 0 is invalid"},
 		{
-			// The bytes under this name are not the bytes that were published,
-			// and nothing about their content says so: a chunk recreated under
-			// the same name carries whatever SQL its author put in it. The
-			// published UID is the only thing that can tell the difference.
-			name:          "replaced stored chunk",
-			replaceStored: true,
-			wantMessage:   "was replaced",
+			// Admitting an Apply whose plan cannot be mounted would leave an
+			// executor waiting on a volume nobody writes.
+			name:           "projection is missing",
+			dropProjection: true,
+			wantMessage:    "directly read Apply plan projection",
 		},
 		{
-			// Admitting an Apply whose plan cannot be read would dispatch an
-			// executor against SQL nobody can produce.
-			name:        "stored chunk is missing",
-			dropStored:  true,
-			wantMessage: "directly read Apply plan chunk",
+			name:        "storage was never committed",
+			dropCommit:  true,
+			wantMessage: "does not bind every published chunk",
 		},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			schema := schemaFixture(operatorv1alpha1.OperationPlan)
-			plan, chunks := preparedPlanFixture(t, schema)
-			plan.UID = "plan-uid"
-			plan.Generation = 1
-			chunkUID := types.UID("chunk-uid")
-			storedChunk := planChunk(plan, plan.Spec.Chunks[0], chunks[0], chunkUID)
-			plan.Status.ObservedGeneration = plan.Generation
-			plan.Status.PublishedChunks = []operatorv1alpha1.PublishedPlanChunkStatus{{
-				Name: plan.Spec.Chunks[0].Name, UID: chunkUID, Index: 0,
-			}}
-			plan.Status.Conditions = []metav1.Condition{{
-				Type: operatorv1alpha1.ConditionPlanStorageReady, Status: metav1.ConditionTrue,
-				ObservedGeneration: plan.Generation,
-			}}
-			schema.Status.Plan = currentPlan(plan)
-			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-				Type: operatorv1alpha1.OperationApply, JobName: "ptah-apply-orders",
-				ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
-			}
+			schema, plan, chunks := applyProjectionFixture(t)
+			projection := planProjection(plan, plan.Spec.Chunks[0], chunks[0])
 			expected := expectedJob(schema, schema.Status.ActiveOperation)
 			candidate := withGeneratedJobIdentity(expected)
-			if test.corruptStored {
-				storedChunk.BinaryData[planstore.ChunkDataKey][0] ^= 0xff
+			if test.corruptProjection {
+				projection.BinaryData[planstore.ProjectionDataKey][0] ^= 0xff
 			}
-			if test.replaceStored {
-				storedChunk.UID = "a-chunk-that-was-put-here-later"
+			if test.dropCommit {
+				plan.Status.PublishedChunks = nil
 			}
-			objects := []client.Object{schema, plan, storedChunk}
-			if test.dropStored {
+			objects := []client.Object{schema, plan, projection}
+			if test.dropProjection {
 				objects = objects[:2]
 			}
 			handler := handlerFixture(t, staticJobBuilder{job: expected}, objects...)
@@ -1210,11 +1329,10 @@ func TestValidationHandlerReadsMaximumApplyPlanChunksConcurrently(t *testing.T) 
 	}}
 	objects := []client.Object{schema, plan}
 	for index, ref := range plan.Spec.Chunks {
-		uid := types.UID(ref.Name + "-uid")
 		plan.Status.PublishedChunks = append(plan.Status.PublishedChunks, operatorv1alpha1.PublishedPlanChunkStatus{
-			Name: ref.Name, UID: uid, Index: int32(index),
+			Name: ref.Name, UID: types.UID(ref.Name + "-uid"), Index: int32(index),
 		})
-		objects = append(objects, planChunk(plan, ref, chunks[index], uid))
+		objects = append(objects, planProjection(plan, ref, chunks[index]))
 	}
 	if len(plan.Spec.Chunks) != plancontract.MaxChunks {
 		t.Fatalf("plan chunks = %d, want contract maximum %d", len(plan.Spec.Chunks), plancontract.MaxChunks)
@@ -1342,7 +1460,8 @@ func TestValidationHandlerRejectsPlanAndChunkMutation(t *testing.T) {
 	schema := schemaFixture(operatorv1alpha1.OperationPlan)
 	plan, chunks := preparedPlanFixture(t, schema)
 	plan.UID = "plan-uid"
-	configMap := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "chunk-uid")
+	chunk := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "chunk-uid")
+	projection := planProjection(plan, plan.Spec.Chunks[0], chunks[0])
 	handler := handlerFixture(t, staticJobBuilder{job: expectedJob(schema, schema.Status.ActiveOperation)}, schema, plan)
 
 	for _, test := range []struct {
@@ -1350,7 +1469,8 @@ func TestValidationHandlerRejectsPlanAndChunkMutation(t *testing.T) {
 		object client.Object
 	}{
 		{name: "plan update", object: plan},
-		{name: "chunk update", object: configMap},
+		{name: "chunk update", object: chunk},
+		{name: "projection update", object: projection},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -1457,6 +1577,9 @@ func requestFor(t *testing.T, operation admissionv1.Operation, object client.Obj
 	case *corev1.ConfigMap:
 		request.Resource = metav1.GroupVersionResource{Version: "v1", Resource: "configmaps"}
 		request.Kind = metav1.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}
+	case *operatorv1alpha1.PtahSchemaPlanChunk:
+		request.Resource = metav1.GroupVersionResource{Group: operatorv1alpha1.GroupVersion.Group, Version: "v1alpha1", Resource: "ptahschemaplanchunks"}
+		request.Kind = metav1.GroupVersionKind{Group: operatorv1alpha1.GroupVersion.Group, Version: "v1alpha1", Kind: "PtahSchemaPlanChunk"}
 	case *operatorv1alpha1.PtahSchemaPlan:
 		request.Resource = metav1.GroupVersionResource{Group: operatorv1alpha1.GroupVersion.Group, Version: "v1alpha1", Resource: "ptahschemaplans"}
 		request.Kind = metav1.GroupVersionKind{Group: operatorv1alpha1.GroupVersion.Group, Version: "v1alpha1", Kind: "PtahSchemaPlan"}
@@ -1897,28 +2020,48 @@ func planChunk(
 	ref operatorv1alpha1.PlanChunkReference,
 	content []byte,
 	uid types.UID,
+) *operatorv1alpha1.PtahSchemaPlanChunk {
+	chunk := planstore.DesiredChunk(plan, ref, content)
+	chunk.UID = uid
+	return chunk
+}
+
+func planProjection(
+	plan *operatorv1alpha1.PtahSchemaPlan,
+	ref operatorv1alpha1.PlanChunkReference,
+	content []byte,
 ) *corev1.ConfigMap {
-	immutable := true
-	controller := true
-	blockDeletion := true
-	return &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: plan.Namespace, Name: ref.Name, UID: uid,
-			Labels: map[string]string{
-				planstore.LabelPlan: plan.Name, planstore.LabelSchema: plan.Spec.SchemaRef.Name,
-			},
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahSchemaPlan",
-				Name: plan.Name, UID: plan.UID,
-				Controller: &controller, BlockOwnerDeletion: &blockDeletion,
-			}},
-		},
-		Immutable: &immutable,
-		BinaryData: map[string][]byte{
-			ref.Key: append([]byte(nil), content...),
-		},
+	projection := planstore.DesiredProjection(plan, ref, content)
+	projection.TypeMeta = metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "ConfigMap"}
+	return projection
+}
+
+// applyProjectionFixture is the state Project writes a projection in: an Apply
+// claim of the schema's committed current plan, before its Job exists and
+// before DispatchStarted.
+func applyProjectionFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan, [][]byte) {
+	t.Helper()
+
+	schema := schemaFixture(operatorv1alpha1.OperationPlan)
+	plan, chunks := preparedPlanFixture(t, schema)
+	plan.UID = "plan-uid"
+	plan.Generation = 1
+	plan.Status.ObservedGeneration = plan.Generation
+	for index, ref := range plan.Spec.Chunks {
+		plan.Status.PublishedChunks = append(plan.Status.PublishedChunks, operatorv1alpha1.PublishedPlanChunkStatus{
+			Name: ref.Name, UID: types.UID(ref.Name + "-uid"), Index: int32(index),
+		})
 	}
+	plan.Status.Conditions = []metav1.Condition{{
+		Type: operatorv1alpha1.ConditionPlanStorageReady, Status: metav1.ConditionTrue,
+		ObservedGeneration: plan.Generation,
+	}}
+	schema.Status.Plan = currentPlan(plan)
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, JobName: "ptah-apply-orders",
+		ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
+	}
+	return schema, plan, chunks
 }
 
 func currentPlan(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.CurrentPlanStatus {

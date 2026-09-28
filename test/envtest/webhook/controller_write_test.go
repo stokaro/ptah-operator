@@ -132,3 +132,51 @@ func TestControllerWriteWebhook(t *testing.T) {
 		}
 	})
 }
+
+// The manager writes a plan's bytes twice: as the chunks it publishes, and as
+// the ConfigMaps an Apply mounts them through. The chart sends both to the
+// controller-write webhook, which reads the owning plan straight from the API
+// server before anything else. A chunk and a projection naming a plan that
+// does not exist are both refused there, which is what shows the webhook
+// configuration routes each resource to the handler.
+func TestControllerWriteWebhookJudgesPlanChunksAndProjections(t *testing.T) {
+	plane.Require(t)
+	ctx := context.Background()
+	namespace := newNamespace(t, "chunks")
+	grant(t, namespace, "manager-chunks", managerSubject(t),
+		rbacv1.PolicyRule{APIGroups: []string{operatorv1alpha1.GroupVersion.Group}, Resources: []string{"ptahschemaplanchunks"}, Verbs: []string{"create"}},
+		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"create"}},
+	)
+	managerAPI := clientAs(t, manager.username)
+
+	const planName = "ptah-plan-111111111111111111111111"
+	controller := true
+	metadata := metav1.ObjectMeta{
+		Namespace: namespace,
+		Name:      planName + "-000",
+		Labels:    map[string]string{"operator.ptah.run/plan": planName, "operator.ptah.run/schema": "orders"},
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahSchemaPlan",
+			Name: planName, UID: "11111111-1111-1111-1111-111111111111",
+			Controller: &controller, BlockOwnerDeletion: &controller,
+		}},
+	}
+
+	t.Run("a chunk of a plan that does not exist", func(t *testing.T) {
+		chunk := &operatorv1alpha1.PtahSchemaPlanChunk{
+			ObjectMeta: *metadata.DeepCopy(),
+			Spec:       operatorv1alpha1.PtahSchemaPlanChunkSpec{Data: []byte("probe")},
+		}
+		requireDenied(t, managerAPI.Create(ctx, chunk, client.DryRunAll), controllerWriteWebhook, "directly read plan manifest")
+	})
+
+	t.Run("a projection of a plan that does not exist", func(t *testing.T) {
+		immutable := true
+		projection := &corev1.ConfigMap{
+			ObjectMeta: *metadata.DeepCopy(),
+			Immutable:  &immutable,
+			BinaryData: map[string][]byte{"chunk": []byte("probe")},
+		}
+		requireDenied(t, managerAPI.Create(ctx, projection, client.DryRunAll), controllerWriteWebhook, "directly read plan manifest")
+	})
+}

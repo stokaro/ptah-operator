@@ -61,6 +61,7 @@ var referenceExampleKinds = []struct {
 	{Kind: "PtahSchema", CRD: "operator.ptah.run_ptahschemas.yaml", AuthoredInFull: true},
 	{Kind: "PtahSchemaPlan", CRD: "operator.ptah.run_ptahschemaplans.yaml"},
 	{Kind: "PtahSchemaApproval", CRD: "operator.ptah.run_ptahschemaapprovals.yaml"},
+	{Kind: "PtahSchemaPlanChunk", CRD: "operator.ptah.run_ptahschemaplanchunks.yaml"},
 	{Kind: "PtahMigration", CRD: "operator.ptah.run_ptahmigrations.yaml", AuthoredInFull: true},
 	{Kind: "PtahMigrationPlan", CRD: "operator.ptah.run_ptahmigrationplans.yaml"},
 	{Kind: "PtahMigrationApproval", CRD: "operator.ptah.run_ptahmigrationapprovals.yaml"},

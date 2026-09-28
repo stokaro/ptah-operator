@@ -217,6 +217,7 @@ printf '%s\n' 'e2e assertions: checking CRD discovery'
 for crd in \
 	ptahschemas.operator.ptah.run \
 	ptahschemaplans.operator.ptah.run \
+	ptahschemaplanchunks.operator.ptah.run \
 	ptahschemaapprovals.operator.ptah.run; do
 	k wait --for=condition=Established crd/"$crd" --timeout=60s
 done
@@ -224,6 +225,7 @@ api_resources=$(k api-resources --api-group=operator.ptah.run -o name)
 for resource in \
 	ptahschemas.operator.ptah.run \
 	ptahschemaplans.operator.ptah.run \
+	ptahschemaplanchunks.operator.ptah.run \
 	ptahschemaapprovals.operator.ptah.run; do
 	printf '%s\n' "$api_resources" | grep -Fx "$resource" >/dev/null ||
 		fail "API discovery is missing $resource"
@@ -251,6 +253,31 @@ for realm_verb in create update patch delete deletecollection; do
 	answer=$(k auth can-i "$realm_verb" ptahrealms.operator.ptah.run --as="$SERVICE_ACCOUNT" || true)
 	[ "$answer" = no ] ||
 		fail "controller service account can $realm_verb ptahrealms, which only an administrator may"
+done
+
+# A plan's bytes are PtahSchemaPlanChunk objects the manager writes when it
+# publishes the plan and reads back by name, uncached; it never lists or
+# watches them, and never changes one. The ConfigMaps an Apply mounts the plan
+# through are the one ConfigMap write it keeps, and it creates them and changes
+# none.
+printf '%s\n' 'e2e assertions: checking what the manager may do with plan chunks and ConfigMaps'
+for chunk_verb in get create; do
+	answer=$(k auth can-i "$chunk_verb" ptahschemaplanchunks.operator.ptah.run --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = yes ] ||
+		fail "controller service account cannot $chunk_verb ptahschemaplanchunks, so it cannot publish or read a plan"
+done
+for chunk_verb in list watch update patch delete deletecollection; do
+	answer=$(k auth can-i "$chunk_verb" ptahschemaplanchunks.operator.ptah.run --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = no ] ||
+		fail "controller service account can $chunk_verb ptahschemaplanchunks, which it never needs"
+done
+answer=$(k auth can-i create configmaps --as="$SERVICE_ACCOUNT" || true)
+[ "$answer" = yes ] ||
+	fail "controller service account cannot create ConfigMaps, so no Apply Pod can mount its plan"
+for configmap_verb in update patch delete deletecollection; do
+	answer=$(k auth can-i "$configmap_verb" configmaps --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = no ] ||
+		fail "controller service account can $configmap_verb ConfigMaps, and it only ever creates them"
 done
 
 printf '%s\n' 'e2e assertions: checking webhook failure policy and scope'
@@ -391,7 +418,7 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
           {apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE"],
             resources: ["configmaps"], scope: "Namespaced"},
           {apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"], operations: ["CREATE"],
-            resources: ["ptahschemaplans", "ptahmigrationplans"], scope: "Namespaced"}
+            resources: ["ptahschemaplans", "ptahschemaplanchunks", "ptahmigrationplans"], scope: "Namespaced"}
         ]))
     ' >/dev/null || fail "validating webhooks are not exact and fail-closed"
 
@@ -1082,7 +1109,6 @@ jq -n \
       statementCount: 1,
       chunks: [{
         name: $chunkName,
-        key: "chunk",
         index: 0,
         digest: $contentDigest,
         size: 1
@@ -1100,8 +1126,8 @@ jq -n \
 	--arg schemaName "$SCHEMA_NAME" \
 	--arg planUID "$plan_uid" '
   {
-    apiVersion: "v1",
-    kind: "ConfigMap",
+    apiVersion: "operator.ptah.run/v1alpha1",
+    kind: "PtahSchemaPlanChunk",
     metadata: {
       namespace: $namespace,
       name: $name,
@@ -1118,10 +1144,9 @@ jq -n \
         blockOwnerDeletion: true
       }]
     },
-    immutable: true,
-    binaryData: {chunk: "eA=="}
+    spec: {data: "eA=="}
   }' | k create -f - >/dev/null
-plan_chunk_uid=$(k -n "$TEST_NAMESPACE" get configmap "$PLAN_CHUNK_NAME" \
+plan_chunk_uid=$(k -n "$TEST_NAMESPACE" get ptahschemaplanchunk "$PLAN_CHUNK_NAME" \
 	-o jsonpath='{.metadata.uid}')
 
 plan_status=$(jq -n \

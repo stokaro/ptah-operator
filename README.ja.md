@@ -65,8 +65,8 @@ resolve tag to digest -> verify artifact -> observe database -> publish plan
 
 ## 何が適用されたかを読む
 
-SQL は不変の ConfigMap にあり、計画がそれをインデックス、サイズ、ダイジェストで束縛
-します。status フィールドやマネージャーのログには入りません。`kubectl ptah` は、
+SQL は不変の `PtahSchemaPlanChunk` オブジェクトにあり、計画がそれをインデックス、
+サイズ、ダイジェストで束縛します。status フィールドやマネージャーのログには入りません。`kubectl ptah` は、
 オペレーターと同じ方法でそれを読み戻します。
 
 ```sh

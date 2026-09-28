@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -209,14 +208,14 @@ func TestLoadRefusesACorruptedChunkAndReturnsNothing(t *testing.T) {
 	plan, _ := lab.store(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
 	lab.current(t, plan)
 
-	chunk := &corev1.ConfigMap{}
+	chunk := &operatorv1alpha1.PtahSchemaPlanChunk{}
 	key := types.NamespacedName{Namespace: "application", Name: plan.Spec.Chunks[0].Name}
 	if err := lab.client.Get(context.Background(), key, chunk); err != nil {
 		t.Fatalf("read the chunk: %v", err)
 	}
 	// Immutable in a cluster; the point here is what a reader is told when the
 	// bytes no longer match what the plan says they are.
-	chunk.BinaryData[plan.Spec.Chunks[0].Key][0] ^= 0xff
+	chunk.Spec.Data[0] ^= 0xff
 	if err := lab.client.Update(context.Background(), chunk); err != nil {
 		t.Fatalf("rewrite the chunk: %v", err)
 	}
@@ -230,8 +229,9 @@ func TestLoadRefusesACorruptedChunkAndReturnsNothing(t *testing.T) {
 	}
 }
 
-// The command reads three kinds of object and no others. A Secret, a Pod log or
-// an exec would be access a reader has to be granted, and this needs none.
+// The command reads three kinds of object and no others. A Secret, a
+// ConfigMap, a Pod log or an exec would be access a reader has to be granted
+// beyond the operator's own kinds, and this needs none.
 func TestLoadReadsOnlyThePlansOwnObjects(t *testing.T) {
 	t.Parallel()
 	lab := newLab(t, "storefront")
@@ -246,7 +246,7 @@ func TestLoadReadsOnlyThePlansOwnObjects(t *testing.T) {
 	want := []string{
 		"get *v1alpha1.PtahSchema",
 		"get *v1alpha1.PtahSchemaPlan",
-		"get *v1.ConfigMap",
+		"get *v1alpha1.PtahSchemaPlanChunk",
 	}
 	got := reader.touched()
 	if strings.Join(got, ", ") != strings.Join(want, ", ") {

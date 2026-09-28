@@ -1520,8 +1520,11 @@ prove_controller_object_supported_window_guard() {
 }
 
 prove_controller_direct_write_webhook() {
+	# A plan's bytes are a PtahSchemaPlanChunk, and an Apply mounts them
+	# through a ConfigMap of the same shape. The manager creates both, so both
+	# go through the uncached webhook, and each is probed on its own: a
+	# webhook configuration that lost either resource would admit it here.
 	manifest=$WORK_DIR/controller-direct-write-probe.yaml
-	error_file=$WORK_DIR/controller-direct-write-probe.err
 	cat >"$manifest" <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -1542,6 +1545,35 @@ immutable: true
 binaryData:
   chunk: cHJvYmU=
 EOF
+	expect_controller_direct_write_refusal 'plan projection ConfigMap' "$manifest"
+
+	manifest=$WORK_DIR/controller-direct-write-chunk-probe.yaml
+	cat >"$manifest" <<EOF
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchemaPlanChunk
+metadata:
+  name: ptah-plan-111111111111111111111111-000
+  namespace: $PROOF_NAMESPACE
+  labels:
+    operator.ptah.run/plan: ptah-plan-111111111111111111111111
+    operator.ptah.run/schema: $PROOF_SCHEMA
+  ownerReferences:
+    - apiVersion: operator.ptah.run/v1alpha1
+      kind: PtahSchemaPlan
+      name: ptah-plan-111111111111111111111111
+      uid: 11111111-1111-1111-1111-111111111111
+      controller: true
+      blockOwnerDeletion: true
+spec:
+  data: cHJvYmU=
+EOF
+	expect_controller_direct_write_refusal PtahSchemaPlanChunk "$manifest"
+}
+
+expect_controller_direct_write_refusal() {
+	probe_kind=$1
+	probe_manifest=$2
+	error_file=$WORK_DIR/controller-direct-write-probe.err
 	# This runs immediately after the manager rollout, so the webhook may not be
 	# serving yet. Every webhook here is failurePolicy: Fail, so an unready one
 	# still rejects the create -- the refusal below is satisfied by the API
@@ -1554,8 +1586,8 @@ EOF
 	# probe exists to catch.
 	deadline=$(($(date +%s) + 60))
 	while :; do
-		if controller_kube create --dry-run=server -f "$manifest" >/dev/null 2>"$error_file"; then
-			fail "controller direct-write webhook accepted a structurally valid chunk without a persisted plan"
+		if controller_kube create --dry-run=server -f "$probe_manifest" >/dev/null 2>"$error_file"; then
+			fail "controller direct-write webhook accepted a structurally valid $probe_kind without a persisted plan"
 		fi
 		if grep -F 'directly read plan manifest' "$error_file" >/dev/null; then
 			return
@@ -1566,7 +1598,7 @@ EOF
 	# The sibling Job probe prints what it got before giving up; this one used to
 	# swallow it, which cost a whole run to work out what had rejected the write.
 	cat "$error_file" >&2
-	fail "controller direct-write probe did not reach the uncached semantic webhook boundary"
+	fail "controller direct-write probe for a $probe_kind did not reach the uncached semantic webhook boundary"
 }
 
 prove_controller_write_guard() {
@@ -2102,7 +2134,7 @@ EOF
 		--arg schema "$RUNNING_APPLY_SCHEMA" \
 		--rawfile content "$WORK_DIR/running-apply-plan.json" '
       {
-        apiVersion: "v1", kind: "ConfigMap", immutable: true,
+        apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaPlanChunk",
         metadata: {
           namespace: $namespace, name: $name,
           labels: {"operator.ptah.run/plan": $plan, "operator.ptah.run/schema": $schema},
@@ -2111,10 +2143,10 @@ EOF
             name: $plan, uid: $planUID, controller: true, blockOwnerDeletion: true
           }]
         },
-        binaryData: {chunk: ($content | @base64)}
+        spec: {data: ($content | @base64)}
       }
     ' | kube create -f - >/dev/null
-	running_apply_chunk_uid=$(kube -n "$PROOF_NAMESPACE" get configmap "$running_apply_chunk_name" \
+	running_apply_chunk_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplanchunk "$running_apply_chunk_name" \
 		-o jsonpath='{.metadata.uid}')
 	running_apply_plan_ready_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 	kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$RUNNING_APPLY_PLAN_NAME" \
@@ -2594,7 +2626,7 @@ spec:
   destructive: false
   statementCount: 1
   chunks:
-    - {name: proof-chunk, key: plan.sql, index: 0, digest: sha256:chunk, size: 1}
+    - {name: proof-chunk, index: 0, digest: sha256:chunk, size: 1}
 EOF
 	plan_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan "$PROOF_PLAN" -o jsonpath='{.metadata.uid}')
 	kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$PROOF_PLAN" --subresource=status \

@@ -110,6 +110,27 @@ digest disagrees with the snapshot.
 A crash after the snapshot write cannot leave a Job behind, because the write
 returned before the create.
 
+## Project the plan
+
+A schema Apply Pod reads its plan through ConfigMaps: it holds no Kubernetes
+credential, and the kubelet mounts no custom resource, so it cannot read the
+plan's chunks. The controller copies the chunks it has just verified into
+immutable ConfigMaps of the same names, owned by the plan, on every pass that
+can still create the Job, and before `dispatchStarted`. Once that marker is
+durable a missing Job is an unknown outcome, so nothing that can fail may sit
+between the marker and the create.
+
+A projection an earlier pass wrote is read back and has to match, so the step
+repeats safely, and a write the API refused leaves the claim for the next pass
+to try again. A ConfigMap under a projection name that is not this plan's
+projection retires the plan instead: its name is derived from the plan, so no
+retry can clear it.
+
+| | Enforcement |
+| --- | --- |
+| `PtahSchema` | `planstore.Project` in `reconcileActive`; the controller-write webhook admits a projection only for an Apply that has not crossed the boundary |
+| `PtahMigration` | Nothing to project: a migration plan carries no SQL, and the Apply reads the files from its verified artifact |
+
 ## Cross the dispatch boundary
 
 `dispatchStarted` is the field that converts "the Job is missing" from "create
@@ -352,6 +373,7 @@ next pass cannot tell" would be a defect; none of them is.
 | `activeOperation`, with the Job's deterministic name | Nothing external; the pass ends | A claim with no dispatch marker and no Job under the reserved name, which proceeds: a claim is not evidence that anything ran |
 | `leaseEpoch`, after the Lease was taken | Nothing external | The Lease held under an epoch the status does not name. The next pass acquires with the stale expectation, which is adopted before dispatch and is continuity loss after |
 | `admissionSnapshot` | Nothing; the pass returns deliberately | No Job can exist yet. The next pass rebuilds the Job and refuses a template whose digest disagrees |
+| A schema plan's projection ConfigMaps | The `dispatchStarted` write | Projections with no Job to mount them. The next pass reads them back, finds them matching and goes on; they are owned by the plan and go with it |
 | A migration's approval: its `Consumed` condition | The `dispatchStarted` write, then the one create | An approval spent with nothing dispatched. Consumption is evidence, not permission, so it authorizes no second attempt |
 | `dispatchStarted` | For a migration, the one permitted create. For a schema, its approval's `Consumed` condition, then the create | A claim that says a Job may exist. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again. A schema's approval may still be unspent here, and the unknown outcome spends it before the pending observation is written |
 | A schema's approval: its `Consumed` condition | The one permitted create | A marker and a spent approval with no Job behind them. The next pass declares the outcome unknown, as in the row above |

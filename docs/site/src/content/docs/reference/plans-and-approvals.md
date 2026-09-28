@@ -69,12 +69,23 @@ policy is what `spec.policy.transactionMode` asks Ptah to do, and unset is its
 own value there. Editing the second retires the plan and its approval, because
 a sequence approved under one wrapping is a different execution under another.
 
-Plan bytes are split into immutable ConfigMaps: at most sixteen chunks of at
-most 512 KiB, for a plan of at most 8 MiB, with the chunk count derived from
-those two limits so storage cannot advertise more capacity than the runner can
-execute. The plan status commits the concrete ConfigMap UIDs only after every
-chunk has been read back and verified, and Apply checks names, UIDs, ordering,
-sizes, per-chunk hashes and the complete hash before dispatching.
+Plan bytes are split into immutable `PtahSchemaPlanChunk` objects the plan
+owns: at most sixteen chunks of at most 512 KiB, for a plan of at most 8 MiB,
+with the chunk count derived from those two limits so storage cannot advertise
+more capacity than the runner can execute. The plan status commits the
+concrete chunk UIDs only after every chunk has been read back and verified,
+and Apply checks names, UIDs, ordering, sizes, per-chunk hashes and the
+complete hash before dispatching. Reading a plan takes one RBAC rule, `get` on
+`ptahschemaplanchunks`, in the plan's namespace.
+
+An Apply Pod holds no Kubernetes credential, and the kubelet mounts no custom
+resource, so the Pod reads the plan through ConfigMaps instead. Just before it
+creates the Apply Job, the operator writes one immutable ConfigMap per chunk,
+under the chunk's name and owned by the plan, holding the bytes it has just
+verified; the controller-write webhook admits one only while that Apply can
+still be dispatched, and only with exactly the bytes the plan records. The
+runner checks the whole document against `spec.contentDigest` before it runs
+anything. A plan that never reaches an Apply is never written to a ConfigMap.
 
 An approval names the plan by UID and by this fingerprint and repeats none of
 the bindings: the fingerprint already names every one of them, and a plan is
@@ -94,11 +105,13 @@ learning any of the data.
 
 The statements in the same plan are a different matter. A plan carries the SQL
 it would execute, and the SQL for a data change carries literal values, so the
-plan bytes are data. They are stored in immutable ConfigMaps and reconstructed
-by `kubectl ptah plan`: whoever may read a plan may read the rows in it, and
-that is the access decision to make. Nothing else carries a value: status,
-Events and the controller's log never do, and neither does the Plan Pod's log
-any more. The runner seals the plan to the manager's own key before writing
+plan bytes are data. They are stored in immutable `PtahSchemaPlanChunk` objects
+and reconstructed by `kubectl ptah plan`: whoever may read a plan's chunks may
+read the rows in it, and that is the access decision to make. A plan that was
+applied is also in the ConfigMaps its Apply mounted, so read access to
+ConfigMaps in the namespace is read access to the rows its applied plans
+wrote. Nothing else carries a value: status, Events and the controller's log
+never do, and neither does the Plan Pod's log any more. The runner seals the plan to the manager's own key before writing
 that log, so what it carries on its way to the controller is ciphertext, not
 the plan
 ([Pod logs carry a sealed plan](../../use/security/#pod-logs-carry-plans)).

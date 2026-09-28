@@ -4440,55 +4440,51 @@ assert_plan_storage_immutable() {
 	[ "sha256:$(printf '%s\n' "$immutable_plan_after" | jq -cS '.spec' | sha256)" = "$immutable_plan_spec_digest" ] ||
 		fail "$immutable_plan spec changed after a refused mutation"
 
-	immutable_chunks_file="$WORK_DIR/${immutable_plan}-immutable-chunks.tsv"
+	immutable_chunks_file="$WORK_DIR/${immutable_plan}-immutable-chunks.txt"
 	printf '%s\n' "$immutable_plan_object" |
-		jq -er '.spec.chunks | select(length > 0)[] | [.name, .key] | @tsv' \
+		jq -er '.spec.chunks | select(length > 0)[] | .name' \
 		>"$immutable_chunks_file" || fail "$immutable_plan has no plan chunks to protect"
 	immutable_chunk_count=0
-	while IFS="$(printf '\t')" read -r immutable_chunk_name immutable_chunk_key; do
-		if [ -z "$immutable_chunk_name" ] || [ -z "$immutable_chunk_key" ]; then
+	while IFS= read -r immutable_chunk_name; do
+		[ -n "$immutable_chunk_name" ] ||
 			fail "$immutable_plan contains an incomplete chunk reference"
-		fi
 		immutable_chunk_count=$((immutable_chunk_count + 1))
-		immutable_chunk_object=$(k -n "$TEST_NAMESPACE" get configmap "$immutable_chunk_name" -o json)
+		immutable_chunk_object=$(k -n "$TEST_NAMESPACE" get ptahschemaplanchunk "$immutable_chunk_name" -o json)
 		printf '%s\n' "$immutable_chunk_object" | jq -e \
 			--arg plan "$immutable_plan" \
-			--arg planUID "$immutable_plan_uid" \
-			--arg key "$immutable_chunk_key" '
-          .immutable == true and
+			--arg planUID "$immutable_plan_uid" '
+          (.metadata.ownerReferences | length) == 1 and
           (.metadata.ownerReferences | any(
             .apiVersion == "operator.ptah.run/v1alpha1" and
             .kind == "PtahSchemaPlan" and
             .name == $plan and .uid == $planUID and .controller == true)) and
-          (.binaryData | has($key))
-        ' >/dev/null || fail "$immutable_chunk_name is not an immutable chunk owned by $immutable_plan"
+          (.spec.data | type == "string" and length > 0)
+        ' >/dev/null || fail "$immutable_chunk_name is not a plan chunk owned by $immutable_plan"
 		immutable_chunk_uid=$(printf '%s\n' "$immutable_chunk_object" | jq -er '.metadata.uid')
 		immutable_chunk_resource_version=$(printf '%s\n' "$immutable_chunk_object" |
 			jq -er '.metadata.resourceVersion')
 		immutable_chunk_data_digest="sha256:$(printf '%s\n' "$immutable_chunk_object" |
-			jq -cS '.binaryData' | sha256)"
-		immutable_chunk_value=$(printf '%s\n' "$immutable_chunk_object" |
-			jq -er --arg key "$immutable_chunk_key" '.binaryData[$key]')
+			jq -cS '.spec' | sha256)"
+		immutable_chunk_value=$(printf '%s\n' "$immutable_chunk_object" | jq -er '.spec.data')
 		if [ "$immutable_chunk_value" = eA== ]; then
 			immutable_chunk_replacement=eQ==
 		else
 			immutable_chunk_replacement=eA==
 		fi
 		immutable_chunk_error="$WORK_DIR/${immutable_chunk_name}-immutable-data.err"
-		if k -n "$TEST_NAMESPACE" patch configmap "$immutable_chunk_name" --type=merge \
-			-p "$(jq -nc --arg key "$immutable_chunk_key" --arg value "$immutable_chunk_replacement" \
-				'{binaryData: {($key): $value}}')" \
+		if k -n "$TEST_NAMESPACE" patch ptahschemaplanchunk "$immutable_chunk_name" --type=merge \
+			-p "$(jq -nc --arg value "$immutable_chunk_replacement" '{spec: {data: $value}}')" \
 			>"$immutable_chunk_error.stdout" 2>"$immutable_chunk_error"; then
 			fail "$immutable_chunk_name accepted a mutation to committed plan bytes"
 		fi
 		grep -Eiq 'immutable' "$immutable_chunk_error" ||
 			fail "$immutable_chunk_name data mutation was refused for an unexpected reason"
-		immutable_chunk_after=$(k -n "$TEST_NAMESPACE" get configmap "$immutable_chunk_name" -o json)
+		immutable_chunk_after=$(k -n "$TEST_NAMESPACE" get ptahschemaplanchunk "$immutable_chunk_name" -o json)
 		[ "$(printf '%s\n' "$immutable_chunk_after" | jq -er '.metadata.uid')" = "$immutable_chunk_uid" ] ||
 			fail "$immutable_chunk_name identity changed after a refused data mutation"
 		[ "$(printf '%s\n' "$immutable_chunk_after" | jq -er '.metadata.resourceVersion')" = "$immutable_chunk_resource_version" ] ||
 			fail "$immutable_chunk_name resourceVersion changed after a refused data mutation"
-		[ "sha256:$(printf '%s\n' "$immutable_chunk_after" | jq -cS '.binaryData' | sha256)" = "$immutable_chunk_data_digest" ] ||
+		[ "sha256:$(printf '%s\n' "$immutable_chunk_after" | jq -cS '.spec' | sha256)" = "$immutable_chunk_data_digest" ] ||
 			fail "$immutable_chunk_name bytes changed after a refused mutation"
 	done <"$immutable_chunks_file"
 	[ "$immutable_chunk_count" -gt 0 ] || fail "$immutable_plan did not expose an immutable plan chunk"
@@ -4496,9 +4492,85 @@ assert_plan_storage_immutable() {
 		"$immutable_schema" "$immutable_chunk_count"
 }
 
+# assert_plan_not_projected proves a published plan reached no ConfigMap. Its
+# chunks are its only store until an Apply of it is dispatched, which is what
+# keeps the SQL of a plan waiting for a person from whoever may read the
+# namespace's ConfigMaps. The label is the one the store writes on a
+# projection, and assert_plan_projected is where the same selector is shown
+# to find one.
+assert_plan_not_projected() {
+	unprojected_plan=$1
+	unprojected_list=$(k -n "$TEST_NAMESPACE" get configmap -l "operator.ptah.run/plan=$unprojected_plan" -o json) ||
+		fail "the ConfigMaps labeled for $unprojected_plan could not be listed"
+	unprojected_count=$(printf '%s\n' "$unprojected_list" | jq -er '.items | length') ||
+		fail "the ConfigMaps labeled for $unprojected_plan did not come back as a list"
+	[ "$unprojected_count" -eq 0 ] ||
+		fail "$unprojected_plan was projected into $unprojected_count ConfigMaps before any Apply of it"
+	printf 'e2e data plane: %s is stored in its chunks alone until an Apply\n' "$unprojected_plan"
+}
+
+# assert_plan_projected proves the ConfigMaps an Apply mounted its plan through
+# carry the plan's chunks and nothing else: one per chunk, named for it,
+# immutable, owned by the plan alone, and holding exactly that chunk's bytes.
+# The first argument is a file holding the PtahSchemaPlan object. Each chunk is
+# read from the API rather than from the projection, so a projection carrying
+# other bytes is compared with the plan and not with itself.
+assert_plan_projected() {
+	projected_plan_file=$1
+	projected_plan=$(jq -er '.metadata.name' "$projected_plan_file") ||
+		fail "the projected plan object has no name"
+	projected_plan_uid=$(jq -er '.metadata.uid' "$projected_plan_file") ||
+		fail "the projected plan object $projected_plan has no UID"
+	projected_expected=$(jq -er '.spec.chunks | length' "$projected_plan_file") ||
+		fail "$projected_plan names no chunks"
+	[ "$projected_expected" -gt 0 ] || fail "$projected_plan names no chunks"
+	projected_list_file="$WORK_DIR/${projected_plan}-projection.json"
+	k -n "$TEST_NAMESPACE" get configmap -l "operator.ptah.run/plan=$projected_plan" -o json \
+		>"$projected_list_file" ||
+		fail "the ConfigMaps $projected_plan was projected into could not be listed"
+	chmod 600 "$projected_list_file"
+	projected_count=$(jq -er '.items | length' "$projected_list_file") ||
+		fail "the ConfigMaps $projected_plan was projected into did not come back as a list"
+	[ "$projected_count" = "$projected_expected" ] ||
+		fail "$projected_plan was projected into $projected_count ConfigMaps for its $projected_expected chunks"
+	projected_names_file="$WORK_DIR/${projected_plan}-projection-names.txt"
+	jq -er '.spec.chunks[] | .name' "$projected_plan_file" >"$projected_names_file" ||
+		fail "$projected_plan names a chunk without a name"
+	projected_checked=0
+	while IFS= read -r projected_name; do
+		projected_chunk_data=$(k -n "$TEST_NAMESPACE" get ptahschemaplanchunk "$projected_name" -o json |
+			jq -er '.spec.data | if type == "string" then . else error("chunk data is absent") end') ||
+			fail "$projected_plan chunk $projected_name could not be read to compare with its projection"
+		jq -e \
+			--arg name "$projected_name" \
+			--arg plan "$projected_plan" \
+			--arg planUID "$projected_plan_uid" \
+			--arg data "$projected_chunk_data" '
+          [.items[] | select(.metadata.name == $name)] |
+          length == 1 and
+          (.[0] |
+            .immutable == true and
+            (.metadata.ownerReferences | length) == 1 and
+            (.metadata.ownerReferences | any(
+              .apiVersion == "operator.ptah.run/v1alpha1" and
+              .kind == "PtahSchemaPlan" and
+              .name == $plan and .uid == $planUID and .controller == true)) and
+            ((.data // {}) | length) == 0 and
+            (.binaryData | keys) == ["chunk"] and
+            .binaryData.chunk == $data)
+        ' "$projected_list_file" >/dev/null ||
+			fail "$projected_plan projection $projected_name is not the immutable copy of its chunk the Apply was approved for"
+		projected_checked=$((projected_checked + 1))
+	done <"$projected_names_file"
+	[ "$projected_checked" -eq "$projected_expected" ] ||
+		fail "$projected_plan projection check read $projected_checked of its $projected_expected chunks"
+	printf 'e2e data plane: %s was projected for its Apply into %s ConfigMaps that hold its chunks exactly\n' \
+		"$projected_plan" "$projected_checked"
+}
+
 # rebuild_plan_document reads a plan document back the way the controller
-# does: from the immutable chunk ConfigMaps the PtahSchemaPlan names, in
-# .spec.chunks order, each chunk's binaryData[key] decoded and the bytes
+# does: from the PtahSchemaPlanChunk objects the PtahSchemaPlan names, in
+# .spec.chunks order, each chunk's spec.data decoded and the bytes
 # concatenated. Since runner protocol 7 a Plan result's stdout carries the
 # plan sealed to the manager's per-process key, so the chunks are the only
 # place the plaintext a content digest covers can be read from.
@@ -4517,29 +4589,29 @@ rebuild_plan_document() {
 	jq -er '
       .spec.chunks |
       if type == "array" then . else error("plan spec.chunks must be a list") end |
-      .[] | [.index, .name, .key, .size] | @tsv
+      .[] | [.index, .name, .size] | @tsv
     ' "$rebuild_plan_file" >"$rebuild_chunks_file" ||
 		fail "$rebuild_plan_name has no plan chunks to rebuild its document from"
 	: >"$rebuild_document_file"
 	chmod 600 "$rebuild_document_file"
 	REBUILT_PLAN_CHUNK_COUNT=0
-	while IFS="$(printf '\t')" read -r rebuild_index rebuild_name rebuild_key rebuild_size; do
+	while IFS="$(printf '\t')" read -r rebuild_index rebuild_name rebuild_size; do
 		[ "$rebuild_index" = "$REBUILT_PLAN_CHUNK_COUNT" ] ||
 			fail "$rebuild_plan_name chunk at position $REBUILT_PLAN_CHUNK_COUNT carries index ${rebuild_index:-none}"
-		if [ -z "$rebuild_name" ] || [ -z "$rebuild_key" ] || [ -z "$rebuild_size" ]; then
+		if [ -z "$rebuild_name" ] || [ -z "$rebuild_size" ]; then
 			fail "$rebuild_plan_name chunk $rebuild_index is an incomplete reference"
 		fi
-		rebuild_chunk_object=$(k -n "$TEST_NAMESPACE" get configmap "$rebuild_name" -o json) ||
-			fail "$rebuild_plan_name chunk $rebuild_index ConfigMap $rebuild_name could not be read"
+		rebuild_chunk_object=$(k -n "$TEST_NAMESPACE" get ptahschemaplanchunk "$rebuild_name" -o json) ||
+			fail "$rebuild_plan_name chunk $rebuild_index PtahSchemaPlanChunk $rebuild_name could not be read"
 		rebuild_chunk_value=$(printf '%s\n' "$rebuild_chunk_object" |
-			jq -er --arg key "$rebuild_key" '
-              .binaryData[$key] |
-              if type == "string" then . else error("chunk key is absent") end
+			jq -er '
+              .spec.data |
+              if type == "string" then . else error("chunk data is absent") end
             ') ||
-			fail "$rebuild_name has no binaryData[$rebuild_key] to rebuild $rebuild_plan_name chunk $rebuild_index from"
+			fail "$rebuild_name has no spec.data to rebuild $rebuild_plan_name chunk $rebuild_index from"
 		rebuild_chunk_file="$WORK_DIR/${rebuild_plan_name}-rebuild-chunk-${rebuild_index}.bin"
 		printf '%s' "$rebuild_chunk_value" | base64 -d >"$rebuild_chunk_file" ||
-			fail "$rebuild_name binaryData[$rebuild_key] does not decode as base64"
+			fail "$rebuild_name spec.data does not decode as base64"
 		rebuild_chunk_bytes=$(wc -c <"$rebuild_chunk_file" | tr -d ' ')
 		[ "$rebuild_chunk_bytes" = "$rebuild_size" ] ||
 			fail "$rebuild_plan_name chunk $rebuild_index decoded to $rebuild_chunk_bytes bytes; its manifest says $rebuild_size"
@@ -4675,6 +4747,7 @@ assert_plan() {
     ' >/dev/null ||
 		fail "$CURRENT_PLAN is not a committed content-addressed native plan"
 	assert_plan_storage_immutable "$plan_schema" "$CURRENT_PLAN" "$CURRENT_PLAN_UID"
+	assert_plan_not_projected "$CURRENT_PLAN"
 
 	observe_result_file="$WORK_DIR/${plan_schema}-changed-observe-result.json"
 	plan_result_file="$WORK_DIR/${plan_schema}-changed-plan-result.json"
@@ -6125,6 +6198,7 @@ assert_automatic_external_postgresql_lifecycle() {
     ' "$automatic_plan_file" >/dev/null ||
 		fail "$automatic_schema automatically applied plan lost its exact immutable bindings"
 	assert_plan_storage_immutable "$automatic_schema" "$automatic_plan_name" "$automatic_plan_uid"
+	assert_plan_projected "$automatic_plan_file"
 	assert_plan_result_stdout_is_sealed "$automatic_initial_plan_result" "$automatic_plan_document" \
 		"$automatic_schema automatic"
 	printf 'e2e data plane: %s automatic Plan result is sealed, and its content digest covers the %s-chunk plan document\n' \

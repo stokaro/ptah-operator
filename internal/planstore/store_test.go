@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -80,29 +81,38 @@ func TestChunkLeavesKubernetesBase64TransportHeadroom(t *testing.T) {
 	ref.Size = int32(ChunkBytes)
 	chunk := bytes.Repeat([]byte{0xff}, ChunkBytes)
 	ref.Digest = fingerprint.DigestBytes(chunk)
-	encoded, err := json.Marshal(desiredChunk(plan, ref, chunk))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(encoded) >= 1<<20 {
-		t.Fatalf("JSON/base64 encoded maximum chunk = %d bytes, want metadata headroom below 1 MiB", len(encoded))
+	for name, object := range map[string]any{
+		"chunk":      DesiredChunk(plan, ref, chunk),
+		"projection": DesiredProjection(plan, ref, chunk),
+	} {
+		encoded, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(encoded) >= 1<<20 {
+			t.Fatalf("JSON/base64 encoded maximum %s = %d bytes, want metadata headroom below 1 MiB", name, len(encoded))
+		}
 	}
 }
 
-func TestDesiredChunkUsesBlockingPlanOwner(t *testing.T) {
+func TestChunkAndProjectionUseBlockingPlanOwner(t *testing.T) {
 	t.Parallel()
 
 	_, plan, chunks := fixture(t, []byte("small exact plan"))
 	plan.UID = "plan-uid"
-	chunk := desiredChunk(plan, plan.Spec.Chunks[0], chunks[0])
-	if len(chunk.OwnerReferences) != 1 {
-		t.Fatalf("chunk owner references = %#v, want one PtahSchemaPlan owner", chunk.OwnerReferences)
-	}
-	owner := chunk.OwnerReferences[0]
-	if owner.APIVersion != operatorv1alpha1.GroupVersion.String() || owner.Kind != "PtahSchemaPlan" ||
-		owner.Name != plan.Name || owner.UID != plan.UID || owner.Controller == nil || !*owner.Controller ||
-		owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
-		t.Fatalf("chunk owner reference = %#v, want exact blocking PtahSchemaPlan owner", owner)
+	for name, owners := range map[string][]metav1.OwnerReference{
+		"chunk":      DesiredChunk(plan, plan.Spec.Chunks[0], chunks[0]).OwnerReferences,
+		"projection": DesiredProjection(plan, plan.Spec.Chunks[0], chunks[0]).OwnerReferences,
+	} {
+		if len(owners) != 1 {
+			t.Fatalf("%s owner references = %#v, want one PtahSchemaPlan owner", name, owners)
+		}
+		owner := owners[0]
+		if owner.APIVersion != operatorv1alpha1.GroupVersion.String() || owner.Kind != "PtahSchemaPlan" ||
+			owner.Name != plan.Name || owner.UID != plan.UID || owner.Controller == nil || !*owner.Controller ||
+			owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
+			t.Fatalf("%s owner reference = %#v, want exact blocking PtahSchemaPlan owner", name, owner)
+		}
 	}
 }
 
@@ -169,7 +179,7 @@ func TestLoadRejectsReplacedChunk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunk := &corev1.ConfigMap{}
+	chunk := &operatorv1alpha1.PtahSchemaPlanChunk{}
 	key := client.ObjectKey{Namespace: published.Namespace, Name: published.Spec.Chunks[0].Name}
 	if err := store.Client.Get(context.Background(), key, chunk); err != nil {
 		t.Fatal(err)
@@ -177,7 +187,7 @@ func TestLoadRejectsReplacedChunk(t *testing.T) {
 	if err := store.Client.Delete(context.Background(), chunk); err != nil {
 		t.Fatal(err)
 	}
-	replacement := desiredChunk(published, published.Spec.Chunks[0], chunks[0])
+	replacement := DesiredChunk(published, published.Spec.Chunks[0], chunks[0])
 	if err := store.Client.Create(context.Background(), replacement); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +251,7 @@ func TestLoadRejectsInexactChunkOwnerReference(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			chunk := &corev1.ConfigMap{}
+			chunk := &operatorv1alpha1.PtahSchemaPlanChunk{}
 			key := client.ObjectKey{Namespace: published.Namespace, Name: published.Spec.Chunks[0].Name}
 			if err := store.Client.Get(context.Background(), key, chunk); err != nil {
 				t.Fatal(err)
@@ -256,6 +266,160 @@ func TestLoadRejectsInexactChunkOwnerReference(t *testing.T) {
 				t.Fatalf("Load() error = %v, want exact owner-reference refusal", err)
 			}
 		})
+	}
+}
+
+// TestPublishStoresChunksAndNoConfigMap holds publication to the chunk kind: a
+// plan that is published and never applied leaves no ConfigMap behind, so
+// whoever reads the namespace's ConfigMaps does not read it.
+func TestPublishStoresChunksAndNoConfigMap(t *testing.T) {
+	t.Parallel()
+	content := bytes.Repeat([]byte("plan-line\n"), ChunkBytes/10+1)
+	schema, desired, chunks := fixture(t, content)
+	store := fakeStore(t, schema)
+
+	published, err := store.Publish(context.Background(), desired, chunks)
+	if err != nil {
+		t.Fatalf("Publish() error = %v", err)
+	}
+	stored := &operatorv1alpha1.PtahSchemaPlanChunkList{}
+	if err := store.Client.List(context.Background(), stored, client.InNamespace(published.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Items) != len(published.Spec.Chunks) || len(stored.Items) < 2 {
+		t.Fatalf("Publish() stored %d chunk objects, want the %d the plan names", len(stored.Items), len(published.Spec.Chunks))
+	}
+	for index, committed := range published.Status.PublishedChunks {
+		chunk := &operatorv1alpha1.PtahSchemaPlanChunk{}
+		if err := store.Client.Get(context.Background(), client.ObjectKey{Namespace: published.Namespace, Name: committed.Name}, chunk); err != nil {
+			t.Fatalf("committed chunk %d: %v", index, err)
+		}
+		if chunk.UID != committed.UID || !bytes.Equal(chunk.Spec.Data, chunks[index]) {
+			t.Fatalf("committed chunk %d is not the stored object and bytes", index)
+		}
+	}
+	configMaps := &corev1.ConfigMapList{}
+	if err := store.Client.List(context.Background(), configMaps, client.InNamespace(published.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(configMaps.Items) != 0 {
+		t.Fatalf("Publish() wrote %d ConfigMaps, want none", len(configMaps.Items))
+	}
+}
+
+// TestProjectWritesWhatTheApplyPodMounts projects a published plan and reads
+// the ConfigMaps back in the order the Apply Job's volume names them: the
+// bytes the Pod would concatenate are the plan.
+func TestProjectWritesWhatTheApplyPodMounts(t *testing.T) {
+	t.Parallel()
+	content := bytes.Repeat([]byte("plan-line\n"), ChunkBytes/10+1)
+	schema, desired, chunks := fixture(t, content)
+	store := fakeStore(t, schema)
+	published, err := store.Publish(context.Background(), desired, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Project(context.Background(), published, loaded); err != nil {
+		t.Fatalf("Project() error = %v", err)
+	}
+
+	sources, err := VolumeSources(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != len(published.Spec.Chunks) || len(sources) < 2 {
+		t.Fatalf("VolumeSources() = %d sources, want the %d chunks", len(sources), len(published.Spec.Chunks))
+	}
+	var mounted bytes.Buffer
+	for index, source := range sources {
+		configMap := &corev1.ConfigMap{}
+		key := client.ObjectKey{Namespace: published.Namespace, Name: source.ConfigMap.Name}
+		if err := store.Client.Get(context.Background(), key, configMap); err != nil {
+			t.Fatalf("projection %d: %v", index, err)
+		}
+		if err := VerifyProjection(published, published.Spec.Chunks[index], configMap); err != nil {
+			t.Fatalf("projection %d: %v", index, err)
+		}
+		if len(source.ConfigMap.Items) != 1 || source.ConfigMap.Items[0].Key != ProjectionDataKey {
+			t.Fatalf("projection %d mounts %#v, want the one key the store writes", index, source.ConfigMap.Items)
+		}
+		mounted.Write(configMap.BinaryData[ProjectionDataKey])
+	}
+	if !bytes.Equal(mounted.Bytes(), content) {
+		t.Fatal("the projected ConfigMaps do not carry the plan")
+	}
+
+	// A second pass, as after a restart before the Job was created, finds
+	// the projection and accepts it.
+	if err := store.Project(context.Background(), published, loaded); err != nil {
+		t.Fatalf("resumed Project() error = %v", err)
+	}
+}
+
+func TestProjectRefusesWhatIsNotThisPlansProjection(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(*corev1.ConfigMap){
+		"other bytes": func(configMap *corev1.ConfigMap) {
+			configMap.BinaryData[ProjectionDataKey] = []byte("select 'other';\n")
+		},
+		"mutable": func(configMap *corev1.ConfigMap) {
+			mutable := false
+			configMap.Immutable = &mutable
+		},
+		"another owner": func(configMap *corev1.ConfigMap) {
+			configMap.OwnerReferences[0].UID = "another-plan-uid"
+		},
+		"a second key": func(configMap *corev1.ConfigMap) {
+			configMap.BinaryData["other"] = []byte("x")
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			content := []byte("small exact plan")
+			schema, desired, chunks := fixture(t, content)
+			store := fakeStore(t, schema)
+			published, err := store.Publish(context.Background(), desired, chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			squatter := DesiredProjection(published, published.Spec.Chunks[0], chunks[0])
+			mutate(squatter)
+			if err := store.Client.Create(context.Background(), squatter); err != nil {
+				t.Fatal(err)
+			}
+			err = store.Project(context.Background(), published, content)
+			if !errors.Is(err, ErrProjectionConflict) {
+				t.Fatalf("Project() error = %v, want %v", err, ErrProjectionConflict)
+			}
+		})
+	}
+}
+
+func TestProjectRefusesContentThatIsNotThePlan(t *testing.T) {
+	t.Parallel()
+	content := []byte("small exact plan")
+	schema, desired, chunks := fixture(t, content)
+	store := fakeStore(t, schema)
+	published, err := store.Publish(context.Background(), desired, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Project(context.Background(), published, []byte("small other plan"))
+	if err == nil || errors.Is(err, ErrProjectionConflict) {
+		t.Fatalf("Project(other content) error = %v, want a content-binding refusal", err)
+	}
+	configMaps := &corev1.ConfigMapList{}
+	if err := store.Client.List(context.Background(), configMaps, client.InNamespace(published.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(configMaps.Items) != 0 {
+		t.Fatalf("Project(other content) wrote %d ConfigMaps", len(configMaps.Items))
 	}
 }
 

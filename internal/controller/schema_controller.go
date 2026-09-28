@@ -977,6 +977,17 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 					return r.approvalBecameInvalid(ctx, schema)
 				}
 			}
+			// The Pod holds no Kubernetes credential and cannot read the chunk
+			// kind, so it mounts the verified bytes through ConfigMaps. They are
+			// written on every pass that can still create the Job, before
+			// DispatchStarted: once that is durable, a missing Job is an
+			// uncertain Apply, so nothing that can fail may sit between the two.
+			if err := r.Plans.Project(ctx, plan, content); err != nil {
+				if errors.Is(err, planstore.ErrProjectionConflict) {
+					return r.applyBecameStale(ctx, schema, fmt.Errorf("project plan for Apply: %w", err))
+				}
+				return ctrl.Result{}, fmt.Errorf("project plan for Apply: %w", err)
+			}
 		}
 		if r.Jobs == nil {
 			return ctrl.Result{}, fmt.Errorf("Job builder is not configured")

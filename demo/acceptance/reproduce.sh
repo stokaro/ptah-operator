@@ -117,13 +117,13 @@ rules:
     resources: [ptahschemas]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [operator.ptah.run]
-    resources: [ptahschemaplans, ptahschemaapprovals]
+    resources: [ptahschemaplans, ptahschemaplanchunks, ptahschemaapprovals]
     verbs: [get, list, watch]
   - apiGroups: [operator.ptah.run]
     resources: [ptahschemas/status, ptahschemaplans/status, ptahschemaapprovals/status]
     verbs: [get]
   - apiGroups: [""]
-    resources: [configmaps, pods]
+    resources: [pods]
     verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [pods/exec]
@@ -135,8 +135,8 @@ rules:
     resources: [jobs]
     verbs: [get, list, watch]
   # Reading a plan needs the plan's own objects and nothing more: no Secret,
-  # no Pod log, no exec, and nothing cluster-wide. The get verbs above cover
-  # it; the configmaps rule is what holds the plan's chunks.
+  # no ConfigMap, no Pod log, no exec, and nothing cluster-wide. The rule on
+  # the plans above covers it, ptahschemaplanchunks being the plan's SQL.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

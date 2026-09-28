@@ -1,10 +1,18 @@
 // Package planstore publishes immutable executable plans without placing SQL
 // in a custom-resource status or controller log.
+//
+// A plan's bytes live in PtahSchemaPlanChunk objects the plan owns, so reading
+// a plan takes one RBAC rule on that kind. An Apply Pod holds no Kubernetes
+// credential and the kubelet projects no custom resource into a volume, so the
+// Apply reads the same bytes through immutable ConfigMaps of the same names,
+// which Project writes from verified chunks just before the Apply Job is
+// created. The ConfigMaps exist only for plans that reached an Apply.
 package planstore
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -30,13 +38,20 @@ const (
 	MaxChunks    = plancontract.MaxChunks
 	MaxPlanBytes = int(plancontract.MaxExecutableBytes)
 
-	ChunkDataKey = "chunk"
-	LabelPlan    = "operator.ptah.run/plan"
-	LabelSchema  = "operator.ptah.run/schema"
+	// ProjectionDataKey is the one key an Apply's projection ConfigMap holds
+	// its chunk under.
+	ProjectionDataKey = "chunk"
+	LabelPlan         = "operator.ptah.run/plan"
+	LabelSchema       = "operator.ptah.run/schema"
 
 	// namePrefix opens the name every schema plan is published under.
 	namePrefix = "ptah-plan-"
 )
+
+// ErrProjectionConflict reports a ConfigMap under a projection name that is
+// not the projection this plan needs. A retry cannot fix it: the name is
+// derived from the plan, so only another plan, with another name, can.
+var ErrProjectionConflict = errors.New("plan projection conflicts with an existing ConfigMap")
 
 var (
 	sha256Pattern             = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -137,7 +152,6 @@ func Prepare(
 	for index, chunk := range chunks {
 		spec.Chunks[index] = operatorv1alpha1.PlanChunkReference{
 			Name:   fmt.Sprintf("%s-%03d", name, index),
-			Key:    ChunkDataKey,
 			Index:  int32(index),
 			Digest: fingerprint.DigestBytes(chunk),
 			Size:   int32(len(chunk)),
@@ -167,8 +181,8 @@ func Prepare(
 	return plan, chunks, nil
 }
 
-// Publish resumes or completes the non-transactional Plan -> ConfigMaps ->
-// Ready commit sequence. Existing objects must match byte-for-byte.
+// Publish resumes or completes the non-transactional Plan -> chunks -> Ready
+// commit sequence. Existing objects must match byte-for-byte.
 func (s Store) Publish(
 	ctx context.Context,
 	desired *operatorv1alpha1.PtahSchemaPlan,
@@ -202,25 +216,25 @@ func (s Store) Publish(
 	}
 
 	published := make([]operatorv1alpha1.PublishedPlanChunkStatus, len(chunks))
-	for index, chunk := range chunks {
+	for index, content := range chunks {
 		ref := plan.Spec.Chunks[index]
-		if int(ref.Size) != len(chunk) || ref.Digest != fingerprint.DigestBytes(chunk) {
+		if int(ref.Size) != len(content) || ref.Digest != fingerprint.DigestBytes(content) {
 			return nil, fmt.Errorf("chunk %d does not match its manifest", index)
 		}
-		configMap := desiredChunk(plan, ref, chunk)
-		if err := s.Client.Create(ctx, configMap); err != nil {
+		chunk := DesiredChunk(plan, ref, content)
+		if err := s.Client.Create(ctx, chunk); err != nil {
 			if !apierrors.IsAlreadyExists(err) {
 				return nil, fmt.Errorf("create plan chunk %d: %w", index, err)
 			}
-			configMap = &corev1.ConfigMap{}
-			if err := s.Reader.Get(ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, configMap); err != nil {
+			chunk = &operatorv1alpha1.PtahSchemaPlanChunk{}
+			if err := s.Reader.Get(ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, chunk); err != nil {
 				return nil, fmt.Errorf("read plan chunk %d: %w", index, err)
 			}
 		}
-		if err := verifyChunk(plan, ref, chunk, configMap); err != nil {
+		if err := verifyChunk(plan, ref, content, chunk); err != nil {
 			return nil, err
 		}
-		published[index] = operatorv1alpha1.PublishedPlanChunkStatus{Name: configMap.Name, UID: configMap.UID, Index: int32(index)}
+		published[index] = operatorv1alpha1.PublishedPlanChunkStatus{Name: chunk.Name, UID: chunk.UID, Index: int32(index)}
 	}
 
 	latest := &operatorv1alpha1.PtahSchemaPlan{}
@@ -274,21 +288,21 @@ func (s Store) Load(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan) 
 		if ref.Index != int32(index) || committed.Index != int32(index) || committed.Name != ref.Name || committed.UID == "" {
 			return nil, fmt.Errorf("plan chunk %d has an invalid ordering or commit binding", index)
 		}
-		configMap := &corev1.ConfigMap{}
-		if err := s.Reader.Get(ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, configMap); err != nil {
+		chunk := &operatorv1alpha1.PtahSchemaPlanChunk{}
+		if err := s.Reader.Get(ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, chunk); err != nil {
 			return nil, fmt.Errorf("read committed plan chunk %d: %w", index, err)
 		}
-		chunk := configMap.BinaryData[ref.Key]
-		if configMap.UID != committed.UID {
+		if chunk.UID != committed.UID {
 			return nil, fmt.Errorf("plan chunk %d was replaced", index)
 		}
-		if err := verifyChunk(plan, ref, chunk, configMap); err != nil {
+		data := chunk.Spec.Data
+		if err := verifyChunk(plan, ref, data, chunk); err != nil {
 			return nil, err
 		}
-		if content.Len()+len(chunk) > MaxPlanBytes {
+		if content.Len()+len(data) > MaxPlanBytes {
 			return nil, fmt.Errorf("reconstructed plan exceeds %d bytes", MaxPlanBytes)
 		}
-		_, _ = content.Write(chunk)
+		_, _ = content.Write(data)
 	}
 	if int64(content.Len()) != plan.Spec.Size || fingerprint.DigestBytes(content.Bytes()) != plan.Spec.ContentDigest {
 		return nil, fmt.Errorf("reconstructed plan does not match its content binding")
@@ -296,7 +310,63 @@ func (s Store) Load(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan) 
 	return content.Bytes(), nil
 }
 
+// Project writes the immutable ConfigMaps an Apply Pod mounts the plan
+// through, one per chunk and under the chunk's own name, from content that Load
+// returned for the same plan. It resumes: a projection an earlier attempt
+// wrote is read back and must match byte for byte.
+//
+// The ConfigMaps are owned by the plan and deleted with it. The Pod's runner
+// checks the whole document against the plan's content digest before it runs
+// anything, so a projection is a transport rather than a second store: what it
+// carries is decided by the chunks and the digest, not by the ConfigMap.
+//
+// An error wrapping ErrProjectionConflict means a ConfigMap under one of the
+// names is not this plan's projection. Any other error is the API's and may
+// clear on a retry.
+func (s Store) Project(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan, content []byte) error {
+	if s.Client == nil {
+		return fmt.Errorf("plan store client is required")
+	}
+	if s.Reader == nil {
+		s.Reader = s.Client
+	}
+	if plan == nil || plan.UID == "" {
+		return fmt.Errorf("persisted plan is required")
+	}
+	if err := validatePlanContract(plan.Spec); err != nil {
+		return err
+	}
+	if int64(len(content)) != plan.Spec.Size || fingerprint.DigestBytes(content) != plan.Spec.ContentDigest {
+		return fmt.Errorf("plan content does not match its content binding")
+	}
+	chunks := split(content, ChunkBytes)
+	if len(chunks) != len(plan.Spec.Chunks) {
+		return fmt.Errorf("plan content does not split into its %d chunks", len(plan.Spec.Chunks))
+	}
+	for index, data := range chunks {
+		ref := plan.Spec.Chunks[index]
+		if ref.Index != int32(index) || int(ref.Size) != len(data) || ref.Digest != fingerprint.DigestBytes(data) {
+			return fmt.Errorf("plan chunk %d does not match its manifest", index)
+		}
+		configMap := DesiredProjection(plan, ref, data)
+		if err := s.Client.Create(ctx, configMap); err != nil {
+			if !apierrors.IsAlreadyExists(err) {
+				return fmt.Errorf("create plan projection %d: %w", index, err)
+			}
+			configMap = &corev1.ConfigMap{}
+			if err := s.Reader.Get(ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, configMap); err != nil {
+				return fmt.Errorf("read plan projection %d: %w", index, err)
+			}
+		}
+		if err := VerifyProjection(plan, ref, configMap); err != nil {
+			return fmt.Errorf("%w: %w", ErrProjectionConflict, err)
+		}
+	}
+	return nil
+}
+
 // VolumeSources returns a deterministic read-only projection for an apply Job.
+// It names the ConfigMaps Project writes.
 func VolumeSources(plan *operatorv1alpha1.PtahSchemaPlan) ([]corev1.VolumeProjection, error) {
 	if plan == nil || len(plan.Spec.Chunks) == 0 || len(plan.Spec.Chunks) > MaxChunks {
 		return nil, fmt.Errorf("plan has an invalid chunk manifest")
@@ -306,12 +376,12 @@ func VolumeSources(plan *operatorv1alpha1.PtahSchemaPlan) ([]corev1.VolumeProjec
 	}
 	sources := make([]corev1.VolumeProjection, len(plan.Spec.Chunks))
 	for index, ref := range plan.Spec.Chunks {
-		if ref.Index != int32(index) || ref.Key == "" || ref.Name == "" {
+		if ref.Index != int32(index) || ref.Name == "" {
 			return nil, fmt.Errorf("plan chunk %d has an invalid projection", index)
 		}
 		sources[index] = corev1.VolumeProjection{ConfigMap: &corev1.ConfigMapProjection{
 			LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
-			Items:                []corev1.KeyToPath{{Key: ref.Key, Path: fmt.Sprintf("%03d.plan", index), Mode: mode(0o440)}},
+			Items:                []corev1.KeyToPath{{Key: ProjectionDataKey, Path: fmt.Sprintf("%03d.plan", index), Mode: mode(0o440)}},
 		}}
 	}
 	return sources, nil
@@ -336,20 +406,47 @@ func validatePlanContract(spec operatorv1alpha1.PtahSchemaPlanSpec) error {
 	return nil
 }
 
-func desiredChunk(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.PlanChunkReference, content []byte) *corev1.ConfigMap {
+// DesiredChunk is the exact PtahSchemaPlanChunk the store writes for one chunk
+// of a persisted plan.
+func DesiredChunk(
+	plan *operatorv1alpha1.PtahSchemaPlan,
+	ref operatorv1alpha1.PlanChunkReference,
+	content []byte,
+) *operatorv1alpha1.PtahSchemaPlanChunk {
+	return &operatorv1alpha1.PtahSchemaPlanChunk{
+		TypeMeta:   metav1.TypeMeta{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahSchemaPlanChunk"},
+		ObjectMeta: chunkMetadata(plan, ref),
+		Spec:       operatorv1alpha1.PtahSchemaPlanChunkSpec{Data: append([]byte(nil), content...)},
+	}
+}
+
+// DesiredProjection is the exact ConfigMap Project writes for one chunk of a
+// persisted plan.
+func DesiredProjection(
+	plan *operatorv1alpha1.PtahSchemaPlan,
+	ref operatorv1alpha1.PlanChunkReference,
+	content []byte,
+) *corev1.ConfigMap {
 	immutable := true
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: plan.Namespace,
-			Name:      ref.Name,
-			Labels: map[string]string{
-				LabelPlan:   plan.Name,
-				LabelSchema: plan.Spec.SchemaRef.Name,
-			},
-			OwnerReferences: []metav1.OwnerReference{blockingPlanOwnerReference(plan)},
-		},
+		ObjectMeta: chunkMetadata(plan, ref),
 		Immutable:  &immutable,
-		BinaryData: map[string][]byte{ref.Key: append([]byte(nil), content...)},
+		BinaryData: map[string][]byte{ProjectionDataKey: append([]byte(nil), content...)},
+	}
+}
+
+// chunkMetadata is what a chunk and its projection both carry: the chunk's
+// name, the plan and schema labels, and the plan as the one blocking
+// controller owner, so both are deleted with the plan.
+func chunkMetadata(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.PlanChunkReference) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Namespace: plan.Namespace,
+		Name:      ref.Name,
+		Labels: map[string]string{
+			LabelPlan:   plan.Name,
+			LabelSchema: plan.Spec.SchemaRef.Name,
+		},
+		OwnerReferences: []metav1.OwnerReference{blockingPlanOwnerReference(plan)},
 	}
 }
 
@@ -372,20 +469,58 @@ func sameManifest(desired, actual *operatorv1alpha1.PtahSchemaPlan) error {
 	return nil
 }
 
-func verifyChunk(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.PlanChunkReference, expected []byte, configMap *corev1.ConfigMap) error {
-	if configMap.Immutable == nil || !*configMap.Immutable {
-		return fmt.Errorf("plan chunk %d is not immutable", ref.Index)
+func verifyChunk(
+	plan *operatorv1alpha1.PtahSchemaPlan,
+	ref operatorv1alpha1.PlanChunkReference,
+	expected []byte,
+	chunk *operatorv1alpha1.PtahSchemaPlanChunk,
+) error {
+	if err := verifyChunkMetadata(plan, ref, chunk.ObjectMeta); err != nil {
+		return err
 	}
-	if configMap.Labels[LabelPlan] != plan.Name || configMap.Labels[LabelSchema] != plan.Spec.SchemaRef.Name {
+	actual := chunk.Spec.Data
+	if int32(len(actual)) != ref.Size || ref.Digest != fingerprint.DigestBytes(actual) || !bytes.Equal(actual, expected) {
+		return fmt.Errorf("plan chunk %d does not match the manifest", ref.Index)
+	}
+	return nil
+}
+
+// VerifyProjection holds an Apply's projection ConfigMap to the chunk it
+// carries: immutable, named, labeled and owned the way Project writes it, and
+// holding exactly the bytes the plan's manifest records for that chunk.
+func VerifyProjection(
+	plan *operatorv1alpha1.PtahSchemaPlan,
+	ref operatorv1alpha1.PlanChunkReference,
+	configMap *corev1.ConfigMap,
+) error {
+	if configMap.Immutable == nil || !*configMap.Immutable {
+		return fmt.Errorf("plan projection %d is not immutable", ref.Index)
+	}
+	if err := verifyChunkMetadata(plan, ref, configMap.ObjectMeta); err != nil {
+		return err
+	}
+	actual, ok := configMap.BinaryData[ProjectionDataKey]
+	if !ok || len(configMap.BinaryData) != 1 || len(configMap.Data) != 0 ||
+		int32(len(actual)) != ref.Size || ref.Digest != fingerprint.DigestBytes(actual) {
+		return fmt.Errorf("plan projection %d does not match the manifest", ref.Index)
+	}
+	return nil
+}
+
+func verifyChunkMetadata(
+	plan *operatorv1alpha1.PtahSchemaPlan,
+	ref operatorv1alpha1.PlanChunkReference,
+	object metav1.ObjectMeta,
+) error {
+	if object.Name != ref.Name {
+		return fmt.Errorf("plan chunk %d is not named %s", ref.Index, ref.Name)
+	}
+	if object.Labels[LabelPlan] != plan.Name || object.Labels[LabelSchema] != plan.Spec.SchemaRef.Name {
 		return fmt.Errorf("plan chunk %d labels do not match the manifest", ref.Index)
 	}
 	expectedOwnerReferences := []metav1.OwnerReference{blockingPlanOwnerReference(plan)}
-	if !reflect.DeepEqual(configMap.OwnerReferences, expectedOwnerReferences) {
+	if !reflect.DeepEqual(object.OwnerReferences, expectedOwnerReferences) {
 		return fmt.Errorf("plan chunk %d does not have the exact blocking plan owner reference", ref.Index)
-	}
-	actual, ok := configMap.BinaryData[ref.Key]
-	if !ok || int32(len(actual)) != ref.Size || ref.Digest != fingerprint.DigestBytes(actual) || !bytes.Equal(actual, expected) {
-		return fmt.Errorf("plan chunk %d does not match the manifest", ref.Index)
 	}
 	return nil
 }

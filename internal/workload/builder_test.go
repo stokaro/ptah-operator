@@ -1721,8 +1721,8 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 			Dialect:                  "postgresql",
 			StatementCount:           1,
 			Chunks: []operatorv1alpha1.PlanChunkReference{
-				{Name: "ptah-plan-0123456789abcdef-000", Key: planstore.ChunkDataKey, Index: 0, Digest: digest('6'), Size: 4},
-				{Name: "ptah-plan-0123456789abcdef-001", Key: planstore.ChunkDataKey, Index: 1, Digest: digest('7'), Size: 5},
+				{Name: "ptah-plan-0123456789abcdef-000", Index: 0, Digest: digest('6'), Size: 4},
+				{Name: "ptah-plan-0123456789abcdef-001", Index: 1, Digest: digest('7'), Size: 5},
 			},
 		},
 		Status: operatorv1alpha1.PtahSchemaPlanStatus{

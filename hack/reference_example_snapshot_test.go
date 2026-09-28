@@ -15,6 +15,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -211,16 +213,73 @@ func TestEveryPlanExampleIsNamedAndChunkedLikeThePublisher(t *testing.T) {
 					t.Fatalf("%s example %d chunk %d is named %q, and the publisher writes %q",
 						kind.Kind, index+1, chunkIndex, got, wantName)
 				}
-				if got, _ := chunk["key"].(string); got != planstore.ChunkDataKey {
-					t.Fatalf("%s example %d chunk %d uses key %q, and the publisher writes %q",
-						kind.Kind, index+1, chunkIndex, got, planstore.ChunkDataKey)
-				}
 				checked++
 			}
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no plan example was named or chunked, so this check measures nothing")
+	}
+}
+
+// A chunk example is one piece of a plan example: named and owned the way the
+// publisher writes the plan's chunks, and holding bytes of exactly the size and
+// digest that plan records for it. A chunk page whose data no longer hashes to
+// its plan's digest shows a reader something every reader would refuse.
+func TestEveryChunkExampleIsAChunkOfAPlanExample(t *testing.T) {
+	t.Parallel()
+
+	plans := planExamplesByName(t)
+	documents, err := referenceExampleDocuments(repositoryFile(t, filepath.Join(referenceExamplesDir, "ptahschemaplanchunk.md")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for index, document := range documents {
+		metadata, _ := document["metadata"].(map[string]any)
+		name, _ := metadata["name"].(string)
+		labels, _ := metadata["labels"].(map[string]any)
+		planName, _ := labels[planstore.LabelPlan].(string)
+		plan, found := plans[planName]
+		if !found {
+			t.Fatalf("chunk example %d names plan %q, which no plan example shows", index+1, planName)
+		}
+		owners, _ := metadata["ownerReferences"].([]any)
+		if len(owners) != 1 {
+			t.Fatalf("chunk example %d carries %d owner references, and the publisher writes one", index+1, len(owners))
+		}
+		owner, _ := owners[0].(map[string]any)
+		if owner["kind"] != "PtahSchemaPlan" || owner["name"] != planName ||
+			owner["controller"] != true || owner["blockOwnerDeletion"] != true {
+			t.Fatalf("chunk example %d is not owned by its plan the way the publisher writes it: %v", index+1, owner)
+		}
+		spec, _ := document["spec"].(map[string]any)
+		encoded, _ := spec["data"].(string)
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatalf("chunk example %d data is not base64: %v", index+1, err)
+		}
+		var reference map[string]any
+		chunks, _ := plan["chunks"].([]any)
+		for _, entry := range chunks {
+			chunk, _ := entry.(map[string]any)
+			if chunk["name"] == name {
+				reference = chunk
+			}
+		}
+		if reference == nil {
+			t.Fatalf("chunk example %d is named %q, which plan %s does not list", index+1, name, planName)
+		}
+		// The size is compared as it prints: the decoder may hand back an
+		// integer or a float, and either one spells the byte count the same.
+		if fmt.Sprint(reference["size"]) != fmt.Sprint(len(data)) || reference["digest"] != fingerprint.DigestBytes(data) {
+			t.Fatalf("chunk example %d holds %d bytes hashing to %s; plan %s records %v bytes hashing to %v",
+				index+1, len(data), fingerprint.DigestBytes(data), planName, reference["size"], reference["digest"])
+		}
+		checked++
+	}
+	if checked != len(documents) || checked < 2 {
+		t.Fatalf("checked %d of %d chunk examples", checked, len(documents))
 	}
 }
 
