@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "24"
-    operator.ptah.run/crd-schema-digest: "sha256:7574060cb8be2ded92a362036daee6c10cef74ad4d6f6008336eb45cc4978033"
+    operator.ptah.run/crd-schema-version: "25"
+    operator.ptah.run/crd-schema-digest: "sha256:0e91177b96caeb88fcddf9aca05971f2823eaa2cbb51dc703910befce4c44926"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -731,9 +731,6 @@ spec:
                     maxItems: 128
                     type: array
                     x-kubernetes-list-type: set
-                  requireDistinctApprover:
-                    default: false
-                    type: boolean
                   transactionMode:
                     default: file
                     enum:

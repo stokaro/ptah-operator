@@ -171,7 +171,7 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	for _, want := range []string{
 		"--release-name=" + releaseName,
 		"--staging-secret-name=" + stagingSecretName,
-		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run",
+		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run",
 		"--validating-webhook-names=vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
 		"--run-interval=6h",
 		"--ca-switch-delay=6h",
@@ -193,7 +193,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	}
 	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{
 		"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run",
-		"mschemawriter.operator.ptah.run", "mmigrationwriter.operator.ptah.run",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("rotator mutating production webhook inventory = %v, want %v", got, want)
 	}
@@ -711,6 +710,137 @@ func TestChartPreservesExplicitPtahVersionAsOneExactArgument(t *testing.T) {
 	managerArgs := stringSlice(containers[0].(map[string]any)["args"])
 	if !slices.Contains(managerArgs, "--ptah-version="+version) {
 		t.Fatalf("manager args did not preserve the exact Ptah version: %v", managerArgs)
+	}
+}
+
+// TestChartRequireDistinctApproverReachesManagerArgs proves the four-eyes
+// switch travels from the chart value to the manager's own flag: it is the
+// installer's control precisely because nothing on a PtahSchema or
+// PtahMigration can set it, so the only path from a value to the running
+// handlers is this one.
+func TestChartRequireDistinctApproverReachesManagerArgs(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default off", want: "--require-distinct-approver=false"},
+		{
+			name: "explicit on",
+			args: []string{"--set", "approvals.requireDistinctApprover=true"},
+			want: "--require-distinct-approver=true",
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			objects := renderChart(t, test.args...)
+			deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
+			containers, _, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+			if err != nil || len(containers) != 1 {
+				t.Fatalf("manager Deployment containers = %d, want 1", len(containers))
+			}
+			managerArgs := stringSlice(containers[0].(map[string]any)["args"])
+			if !slices.Contains(managerArgs, test.want) {
+				t.Fatalf("manager args = %v, want %s", managerArgs, test.want)
+			}
+		})
+	}
+}
+
+// TestChartRequireDistinctApproverGatesSpecWriterWebhooks proves the two
+// spec-writer mutating webhook entries -- mschemawriter and mmigrationwriter --
+// exist only when approvals.requireDistinctApprover is on, and that the
+// rotator's probed inventory and the CRD hook's runtime-verify flag move with
+// them. Off is the default a plain PtahSchema or PtahMigration write must not
+// pay the mutating webhook's failurePolicy: Fail coupling for.
+func TestChartRequireDistinctApproverGatesSpecWriterWebhooks(t *testing.T) {
+	t.Parallel()
+
+	writerNames := []string{"mschemawriter.operator.ptah.run", "mmigrationwriter.operator.ptah.run"}
+
+	for _, test := range []struct {
+		name            string
+		args            []string
+		wantMutatingArg string
+		wantWriterCount int
+	}{
+		{
+			name:            "default off",
+			wantMutatingArg: "--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run",
+			wantWriterCount: 0,
+		},
+		{
+			name:            "explicit on",
+			args:            []string{"--set", "approvals.requireDistinctApprover=true"},
+			wantMutatingArg: "--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run",
+			wantWriterCount: 2,
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			objects := renderChart(t, test.args...)
+
+			mutatingConfiguration := mustObject(t, objects, "MutatingWebhookConfiguration", "ptah-operator-admission")
+			webhooks, _, err := unstructured.NestedSlice(mutatingConfiguration.Object, "webhooks")
+			if err != nil {
+				t.Fatal(err)
+			}
+			present := 0
+			for _, webhook := range webhooks {
+				name, _ := webhook.(map[string]any)["name"].(string)
+				if slices.Contains(writerNames, name) {
+					present++
+					clientConfig := webhook.(map[string]any)["clientConfig"].(map[string]any)
+					service := clientConfig["service"].(map[string]any)
+					wantPath := "/mutate-operator-ptah-run-v1alpha1-ptahschema"
+					if name == "mmigrationwriter.operator.ptah.run" {
+						wantPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigration"
+					}
+					if service["path"] != wantPath {
+						t.Errorf("%s clientConfig.service.path = %v, want %s", name, service["path"], wantPath)
+					}
+					if webhook.(map[string]any)["failurePolicy"] != "Fail" {
+						t.Errorf("%s failurePolicy = %v, want Fail", name, webhook.(map[string]any)["failurePolicy"])
+					}
+				}
+			}
+			if present != test.wantWriterCount {
+				t.Fatalf("MutatingWebhookConfiguration carries %d of the spec-writer entries, want %d (webhooks: %v)",
+					present, test.wantWriterCount, webhooks)
+			}
+
+			rotatorDeployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator-cert-rotator")
+			rotatorContainers, _, err := unstructured.NestedSlice(rotatorDeployment.Object, "spec", "template", "spec", "containers")
+			if err != nil || len(rotatorContainers) != 1 {
+				t.Fatalf("rotator Deployment containers = %d, want 1", len(rotatorContainers))
+			}
+			rotatorArgs := stringSlice(rotatorContainers[0].(map[string]any)["args"])
+			if !slices.Contains(rotatorArgs, test.wantMutatingArg) {
+				t.Fatalf("rotator args = %v, want %s", rotatorArgs, test.wantMutatingArg)
+			}
+
+			for _, deploymentName := range []string{releaseName + "-ptah-operator", releaseName + "-ptah-operator-cert-rotator"} {
+				deployment := mustObject(t, objects, "Deployment", deploymentName)
+				initContainers, _, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "initContainers")
+				if err != nil || len(initContainers) != 1 {
+					t.Fatalf("%s init containers = %d, want 1", deploymentName, len(initContainers))
+				}
+				initArgs := stringSlice(initContainers[0].(map[string]any)["args"])
+				wantVerifyArg := "--require-distinct-approver=false"
+				if len(test.args) > 0 {
+					wantVerifyArg = "--require-distinct-approver=true"
+				}
+				if !slices.Contains(initArgs, wantVerifyArg) {
+					t.Fatalf("%s runtime-verify init container args = %v, want %s", deploymentName, initArgs, wantVerifyArg)
+				}
+			}
+		})
 	}
 }
 

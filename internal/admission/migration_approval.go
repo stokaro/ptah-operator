@@ -35,6 +35,10 @@ type MigrationApprovalHandler struct {
 	Clock     Clock
 	Mutate    bool
 	Execution Execution
+
+	// RequireDistinctApprover is ApprovalHandler's field of the same name,
+	// applied to PtahMigration instead of PtahSchema.
+	RequireDistinctApprover bool
 }
 
 // Handle implements controller-runtime admission.Handler.
@@ -288,7 +292,7 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
 		return fmt.Errorf("the verification policy changed after the plan was generated")
 	}
-	if migration.Spec.Policy.RequireDistinctApprover {
+	if h.RequireDistinctApprover {
 		if err := refuseSelfApproval("migration", migration.Annotations, approval.Spec.Approver); err != nil {
 			return err
 		}

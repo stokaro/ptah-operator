@@ -170,6 +170,16 @@
         }
       }
     },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requireDistinctApprover"],
+      "properties": {
+        "requireDistinctApprover": {
+          "type": "boolean"
+        }
+      }
+    },
     "leaderElection": {
       "type": "boolean"
     },

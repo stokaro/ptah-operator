@@ -128,7 +128,7 @@ func specWriterResponse(req cradmission.Request) cradmission.Response {
 
 // SchemaSpecWriterHandler stamps the identity that created a PtahSchema, or
 // last changed its spec, so the approval webhook can refuse a self-approval
-// where spec.policy.requireDistinctApprover asks for one.
+// where the installation turns that control on.
 type SchemaSpecWriterHandler struct {
 	Decoder cradmission.Decoder
 }
@@ -155,12 +155,12 @@ func (h *MigrationSpecWriterHandler) Handle(_ context.Context, req cradmission.R
 	return specWriterResponse(req)
 }
 
-// refuseSelfApproval enforces the four-eyes control once a resource opts into
-// it: an approver who is exactly the identity writerAnnotations recorded as
-// the resource's last spec writer is refused, by kind and by a clear reason.
-// A resource that opted in but carries no recorded writer -- only possible if
-// the mutating webhook that stamps one was not yet installed when its spec
-// was last written -- is refused rather than guessed at.
+// refuseSelfApproval enforces the four-eyes control once the installation
+// turns it on: an approver who is exactly the identity writerAnnotations
+// recorded as the resource's last spec writer is refused, by kind and by a
+// clear reason. A resource with the control on but no recorded writer -- only
+// possible if the mutating webhook that stamps one was not yet installed when
+// its spec was last written -- is refused rather than guessed at.
 func refuseSelfApproval(
 	kind string,
 	writerAnnotations map[string]string,

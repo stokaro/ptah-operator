@@ -96,30 +96,57 @@ writers, and grant plan-chunk access separately in each application namespace.
 ## Refusing a self-approval
 
 RBAC decides who *may* approve; on its own, an accepted approval proves an
-authenticated approver, not a second person. `spec.policy.requireDistinctApprover`
-closes that gap for a resource that asks for it. It defaults to false, so an
-existing schema or migration that never sets it keeps admitting the approvals
-it always did.
+authenticated approver, not a second person. `approvals.requireDistinctApprover`
+closes that gap. It is a chart value, set by whoever installs the operator, not
+a field on the schema or migration it protects: a switch a desired-state author
+could reach from their own resource's spec would not bind that author. They
+could turn it off, let their own edit retire the current plan and its binding,
+have the operator replan on the new spec, and approve that identical plan
+themselves, with nothing in the resource recording that the control was ever
+off. Moving the switch to the chart is what #450 asked of the operator's other
+approval control, the apply-mode guard; this one now matches it. It defaults to
+false, so an existing installation that never sets it keeps admitting the
+approvals it always did.
 
-A mutating webhook always keeps a record of who created the resource, or who
-last changed its spec, in two annotations
+A mutating webhook always keeps a record of who created a schema or migration,
+or who last changed its spec, in two annotations
 (`operator.ptah.run/last-spec-writer-username` and `-uid`) that only that
 webhook ever writes: it overwrites whatever a request carried for them, so an
 author cannot name someone else, and it leaves them untouched on an update
 that does not change spec, so the manager's own finalizer and status writes
-never move the recorded name. When `requireDistinctApprover` is true, the
+never move the recorded name. When the installation's flag is true, the
 approval webhook refuses an approval whose approver is exactly that identity,
-with a reason that says so.
+or whose resource carries no recorded identity at all, with a reason that says
+so.
 
 Editing spec after a plan is awaiting approval already retires that plan and
 its binding, so a fresh plan is always judged against whoever most recently
 touched the spec it was computed from.
 
+The mutating webhook that stamps the two annotations is itself installed only
+while the switch is on, so a schema or migration written before an
+installation turned it on carries no recorded writer. Turning the switch on
+does not retroactively identify who wrote an existing resource's spec: its
+approvals are refused, by the same "no spec writer is recorded" reason a
+missing annotation always gets, until its spec is next changed and the
+webhook has a create or update to stamp. Plan for that gap when turning the
+switch on: an existing schema or migration stops taking approvals until an
+edit, however small, records its first writer.
+
 Identity here is exactly what the cluster's authentication reports for a
-request. A ServiceAccount counts like any other identity: the same
-ServiceAccount writing the spec and later approving it is refused exactly like
-a person doing both. Group membership plays no part in the comparison. This is
-a limit worth stating plainly: impersonation, or a credential more than one
-person uses, defeats the control, because the cluster's own audit trail cannot
-tell those requests apart. Where that matters, pair it with the RBAC
+request: a username, and a UID where the authenticator supplies one. A
+ServiceAccount counts like any other identity: the same ServiceAccount writing
+the spec and later approving it is refused exactly like a person doing both.
+Group membership plays no part in the comparison. A GitOps controller that
+writes every schema and migration spec makes every human approver distinct by
+construction, because no human ever appears as the recorded writer; the control
+is aimed at direct human edits, and adds nothing where one already runs.
+
+This is a limit worth stating plainly: impersonation, or a credential more
+than one person uses, defeats the control, because the cluster's own audit
+trail cannot tell those requests apart. And because the switch lives in the
+chart, it does not stop an author who can also edit or upgrade this release:
+that authority is a different, larger one than editing one namespace's
+schemas, and RBAC over Helm releases and the operator's own namespace has to
+close it. Where any of that matters, pair this control with the RBAC
 separation above rather than relying on either alone.

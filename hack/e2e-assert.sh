@@ -122,6 +122,19 @@ h() {
 	helm --kubeconfig "$KUBECONFIG_FILE" "$@"
 }
 
+# The spec-writer mutating entries exist only when the release has
+# approvals.requireDistinctApprover on; charts/ptah-operator/templates/webhook.yaml
+# renders them under the same condition. This phase never changes that value,
+# but it reads the live release rather than assuming its default, so the
+# admission-shape check below follows what is actually installed.
+REQUIRE_DISTINCT_APPROVER=$(h -n "$OPERATOR_NAMESPACE" get values "$HELM_RELEASE" --all -o json |
+	jq -r '.approvals.requireDistinctApprover // false') ||
+	fail "could not read approvals.requireDistinctApprover from the live release"
+case "$REQUIRE_DISTINCT_APPROVER" in
+true | false) ;;
+*) fail "approvals.requireDistinctApprover on the live release is not a boolean: $REQUIRE_DISTINCT_APPROVER" ;;
+esac
+
 expect_denied() {
 	description=$1
 	pattern=$2
@@ -242,14 +255,15 @@ done
 
 printf '%s\n' 'e2e assertions: checking webhook failure policy and scope'
 k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
-	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" '
+	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" \
+		--argjson requireDistinctApprover "$REQUIRE_DISTINCT_APPROVER" '
       .webhooks |
-      (map(.name) | sort) == [
-        "mapproval.operator.ptah.run",
-        "mmigrationapproval.operator.ptah.run",
-        "mmigrationwriter.operator.ptah.run",
-        "mschemawriter.operator.ptah.run"
-      ] and
+      (map(.name) | sort) == (
+        ["mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run"] +
+        (if $requireDistinctApprover then
+          ["mmigrationwriter.operator.ptah.run", "mschemawriter.operator.ptah.run"]
+        else [] end) | sort
+      ) and
       (map(select(.name == "mapproval.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
@@ -268,7 +282,8 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
           apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"
         }])) and
-      (map(select(.name == "mschemawriter.operator.ptah.run")) | all(.[];
+      (($requireDistinctApprover | not) or
+        (map(select(.name == "mschemawriter.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
 	        .reinvocationPolicy == "Never" and .timeoutSeconds == 5 and
@@ -285,8 +300,9 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
         .rules == [{
           apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE", "UPDATE"], resources: ["ptahschemas"], scope: "Namespaced"
-        }])) and
-      (map(select(.name == "mmigrationwriter.operator.ptah.run")) | all(.[];
+        }]))) and
+      (($requireDistinctApprover | not) or
+        (map(select(.name == "mmigrationwriter.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
 	        .reinvocationPolicy == "Never" and .timeoutSeconds == 5 and
@@ -303,7 +319,7 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
         .rules == [{
           apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE", "UPDATE"], resources: ["ptahmigrations"], scope: "Namespaced"
-        }]))
+        }])))
     ' >/dev/null || fail "approval mutating webhook is not exact and fail-closed"
 k get validatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" \
@@ -491,11 +507,6 @@ invalid_approval_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-invalid-approval.XXXXXX
 missing_fingerprint_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-missing-fingerprint.XXXXXX")
 foreign_plan_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-foreign-plan.XXXXXX")
 foreign_approval_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-foreign-approval.XXXXXX")
-four_eyes_schema_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-four-eyes-schema.XXXXXX")
-four_eyes_plan_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-four-eyes-plan.XXXXXX")
-four_eyes_approval_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-four-eyes-approval.XXXXXX")
-four_eyes_admitted_approval_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-four-eyes-admitted-approval.XXXXXX")
-four_eyes_role_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-four-eyes-role.XXXXXX")
 error_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-error.XXXXXX")
 webhook_scope_job_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-webhook-job.XXXXXX")
 webhook_scope_event_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-webhook-events.XXXXXX")
@@ -566,8 +577,6 @@ cleanup_files() {
 	rm -f "$schema_file" "$invalid_schema_file" "$plan_file" "$approval_file" \
 		"$invalid_approval_file" \
 		"$missing_fingerprint_file" "$foreign_plan_file" "$foreign_approval_file" \
-		"$four_eyes_schema_file" "$four_eyes_plan_file" "$four_eyes_approval_file" \
-		"$four_eyes_admitted_approval_file" "$four_eyes_role_file" \
 		"$error_file" "$error_file.stdout" "$webhook_scope_job_file" \
 		"$webhook_scope_event_file" "$webhook_deployment_file"
 	exit "$status"
@@ -1361,367 +1370,13 @@ if k -n "$TEST_NAMESPACE" get ptahschemaapproval e2e-cross-namespace-approval \
 	fail "cross-namespace approval refusal created an approval"
 fi
 
-printf '%s\n' 'e2e assertions: checking the four-eyes approval option refuses a self-approval'
-FOUR_EYES_SCHEMA_NAME=e2e-four-eyes-schema
-FOUR_EYES_COORDINATION_KEY=e2e/admission/four-eyes-postgresql
-FOUR_EYES_PLAN_NAME=e2e-four-eyes-plan
-FOUR_EYES_PLAN_CHUNK_NAME=e2e-four-eyes-plan-chunk-0
-FOUR_EYES_APPROVER=e2e-four-eyes-approver
-
-# A schema of its own: spec.policy.requireDistinctApprover is on from the
-# start, which is itself a spec write and so is what the create stamps.
-jq -n \
-	--arg namespace "$TEST_NAMESPACE" \
-	--arg name "$FOUR_EYES_SCHEMA_NAME" \
-	--arg coordinationKey "$FOUR_EYES_COORDINATION_KEY" \
-	--arg policy "$POLICY_NAME" \
-	--arg policyKey "$POLICY_KEY" '
-  {
-    apiVersion: "operator.ptah.run/v1alpha1",
-    kind: "PtahSchema",
-    metadata: {namespace: $namespace, name: $name},
-    spec: {
-      target: {
-        engine: "PostgreSQL",
-        coordinationKey: $coordinationKey,
-        urlFrom: {name: "four-eyes-database", key: "url"}
-      },
-      desired: {
-        ociRef: "oci://registry.invalid/e2e/four-eyes-schema:unused",
-        verificationPolicyFrom: {name: $policy, key: $policyKey}
-      },
-      policy: {requireDistinctApprover: true},
-      suspend: true
-    }
-  }' >"$four_eyes_schema_file"
-k create -f "$four_eyes_schema_file" >/dev/null
-k -n "$TEST_NAMESPACE" wait --for=jsonpath='{.status.phase}'=Suspended \
-	ptahschema/"$FOUR_EYES_SCHEMA_NAME" --timeout=90s
-four_eyes_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$FOUR_EYES_SCHEMA_NAME" -o json)
-four_eyes_schema_uid=$(printf '%s\n' "$four_eyes_schema_object" | jq -er '.metadata.uid')
-four_eyes_schema_generation=$(printf '%s\n' "$four_eyes_schema_object" | jq -er '.metadata.generation')
-four_eyes_author=$(printf '%s\n' "$four_eyes_schema_object" |
-	jq -er '.metadata.annotations["operator.ptah.run/last-spec-writer-username"] // ""')
-[ -n "$four_eyes_author" ] ||
-	fail "$FOUR_EYES_SCHEMA_NAME was not stamped with a last spec writer on create"
-[ "$four_eyes_author" != "$FOUR_EYES_APPROVER" ] ||
-	fail "the four-eyes fixture's distinct-approver name collides with its own author $four_eyes_author"
-
-# The realm this schema alone claims, so it shares no coordination digest with
-# any other fixture's.
-four_eyes_coordination_digest=$(derive_coordination_digest postgresql "$TEST_NAMESPACE" "$FOUR_EYES_COORDINATION_KEY")
-
-# The fingerprint and every other binding below reuse the suspended schema's
-# placeholder digests: nothing about this admission check depends on their
-# being different from another fixture's, only on being internally
-# consistent across this schema, this plan and its approval.
-four_eyes_plan_binding_json=$(jq -cn \
-	--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
-	--arg schemaUID "$four_eyes_schema_uid" \
-	--arg contentDigest "$content_digest" \
-	--arg artifactDigest "$artifact_digest" \
-	--arg coordinationDigest "$four_eyes_coordination_digest" \
-	--arg targetDigest "$target_digest" \
-	--arg actualFingerprint "$actual_fingerprint" \
-	--arg desiredFingerprint "$desired_fingerprint" \
-	--arg policyFingerprint "$policy_fingerprint" \
-	--arg verificationPolicyUID "$policy_uid" \
-	--arg verificationPolicyDigest "$policy_digest" \
-	--arg executionBindingID "$execution_binding_id" \
-	--argjson controllerStateVersion "$controller_state_version" \
-	--arg ptahVersion "$PTAH_VERSION" \
-	--arg executorImage "$EXECUTOR_IMAGE" '
-  {
-    contract_version: 3,
-    schema_uid: $schemaUID,
-    plan_content_digest: $contentDigest,
-    artifact_digest: $artifactDigest,
-    coordination_digest: $coordinationDigest,
-    target_identity_digest: $targetDigest,
-    actual_state_fingerprint: $actualFingerprint,
-    desired_state_fingerprint: $desiredFingerprint,
-    policy_fingerprint: $policyFingerprint,
-    verification_policy_uid: $verificationPolicyUID,
-    verification_policy_digest: $verificationPolicyDigest,
-    execution_binding_id: $executionBindingID,
-    controller_state_version: $controllerStateVersion,
-    ptah_version: $ptahVersion,
-    executor_image: $executorImage,
-    runner_protocol_version: $runnerProtocolVersion,
-    destructive: false,
-    privilege_changes: [],
-    statement_count: 1
-  }
-')
-four_eyes_plan_fingerprint="sha256:$(printf '%s' "$four_eyes_plan_binding_json" | sha256_stdin)"
-
-jq -n \
-	--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
-	--arg namespace "$TEST_NAMESPACE" \
-	--arg name "$FOUR_EYES_PLAN_NAME" \
-	--arg chunkName "$FOUR_EYES_PLAN_CHUNK_NAME" \
-	--arg schemaName "$FOUR_EYES_SCHEMA_NAME" \
-	--arg schemaUID "$four_eyes_schema_uid" \
-	--arg fingerprint "$four_eyes_plan_fingerprint" \
-	--arg contentDigest "$content_digest" \
-	--arg artifactDigest "$artifact_digest" \
-	--arg coordinationDigest "$four_eyes_coordination_digest" \
-	--arg targetDigest "$target_digest" \
-	--arg actualFingerprint "$actual_fingerprint" \
-	--arg desiredFingerprint "$desired_fingerprint" \
-	--arg policyFingerprint "$policy_fingerprint" \
-	--arg verificationPolicyUID "$policy_uid" \
-	--arg verificationPolicyDigest "$policy_digest" \
-	--arg executionBindingID "$execution_binding_id" \
-	--arg controllerImage "$controller_image" \
-	--arg controllerRevision "$controller_revision" \
-	--argjson controllerStateVersion "$controller_state_version" \
-	--arg ptahVersion "$PTAH_VERSION" \
-	--arg executorImage "$EXECUTOR_IMAGE" \
-	--arg runnerImage "$RUNNER_IMAGE" '
-  {
-    apiVersion: "operator.ptah.run/v1alpha1",
-    kind: "PtahSchemaPlan",
-    metadata: {
-      namespace: $namespace,
-      name: $name,
-      labels: {"operator.ptah.run/schema": $schemaName},
-      ownerReferences: [{
-        apiVersion: "operator.ptah.run/v1alpha1",
-        kind: "PtahSchema",
-        name: $schemaName,
-        uid: $schemaUID,
-        controller: true,
-        blockOwnerDeletion: true
-      }]
-    },
-    spec: {
-      contractVersion: 3,
-      schemaRef: {name: $schemaName, uid: $schemaUID},
-      fingerprint: $fingerprint,
-      contentDigest: $contentDigest,
-      size: 1,
-      artifactDigest: $artifactDigest,
-      coordinationDigest: $coordinationDigest,
-      targetIdentityDigest: $targetDigest,
-      actualStateFingerprint: $actualFingerprint,
-      desiredStateFingerprint: $desiredFingerprint,
-      policyFingerprint: $policyFingerprint,
-      verificationPolicyUID: $verificationPolicyUID,
-      verificationPolicyDigest: $verificationPolicyDigest,
-      executionBindingID: $executionBindingID,
-      controllerImage: $controllerImage,
-      controllerRevision: $controllerRevision,
-      controllerStateVersion: $controllerStateVersion,
-      ptahVersion: $ptahVersion,
-      executorImage: $executorImage,
-      runnerImage: $runnerImage,
-      runnerProtocolVersion: $runnerProtocolVersion,
-      dialect: "postgres",
-      destructive: false,
-      statementCount: 1,
-      chunks: [{
-        name: $chunkName,
-        key: "chunk",
-        index: 0,
-        digest: $contentDigest,
-        size: 1
-      }]
-    }
-  }' >"$four_eyes_plan_file"
-k create -f "$four_eyes_plan_file" >/dev/null
-four_eyes_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$FOUR_EYES_PLAN_NAME" -o jsonpath='{.metadata.uid}')
-four_eyes_plan_generation=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$FOUR_EYES_PLAN_NAME" -o jsonpath='{.metadata.generation}')
-
-jq -n \
-	--arg namespace "$TEST_NAMESPACE" \
-	--arg name "$FOUR_EYES_PLAN_CHUNK_NAME" \
-	--arg planName "$FOUR_EYES_PLAN_NAME" \
-	--arg schemaName "$FOUR_EYES_SCHEMA_NAME" \
-	--arg planUID "$four_eyes_plan_uid" '
-  {
-    apiVersion: "v1",
-    kind: "ConfigMap",
-    metadata: {
-      namespace: $namespace,
-      name: $name,
-      labels: {
-        "operator.ptah.run/plan": $planName,
-        "operator.ptah.run/schema": $schemaName
-      },
-      ownerReferences: [{
-        apiVersion: "operator.ptah.run/v1alpha1",
-        kind: "PtahSchemaPlan",
-        name: $planName,
-        uid: $planUID,
-        controller: true,
-        blockOwnerDeletion: true
-      }]
-    },
-    immutable: true,
-    binaryData: {chunk: "eA=="}
-  }' | k create -f - >/dev/null
-four_eyes_plan_chunk_uid=$(k -n "$TEST_NAMESPACE" get configmap "$FOUR_EYES_PLAN_CHUNK_NAME" \
-	-o jsonpath='{.metadata.uid}')
-
-four_eyes_plan_status=$(jq -n \
-	--argjson observedGeneration "$four_eyes_plan_generation" \
-	--arg chunkName "$FOUR_EYES_PLAN_CHUNK_NAME" \
-	--arg chunkUID "$four_eyes_plan_chunk_uid" \
-	--arg now "$created_at" '
-  {status: {
-    observedGeneration: $observedGeneration,
-    publishedChunks: [{name: $chunkName, uid: $chunkUID, index: 0}],
-    conditions: [{
-      type: "Ready",
-      status: "True",
-      reason: "E2EFixture",
-      message: "Four-eyes plan fixture is committed for admission testing",
-      lastTransitionTime: $now
-    }]
-  }}')
-k -n "$TEST_NAMESPACE" patch ptahschemaplan "$FOUR_EYES_PLAN_NAME" \
-	--subresource=status --type=merge -p "$four_eyes_plan_status" >/dev/null
-
-four_eyes_schema_status=$(jq -n \
-	--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
-	--argjson observedGeneration "$four_eyes_schema_generation" \
-	--arg planName "$FOUR_EYES_PLAN_NAME" \
-	--arg planUID "$four_eyes_plan_uid" \
-	--arg fingerprint "$four_eyes_plan_fingerprint" \
-	--arg contentDigest "$content_digest" \
-	--arg artifactDigest "$artifact_digest" \
-	--arg coordinationDigest "$four_eyes_coordination_digest" \
-	--arg targetDigest "$target_digest" \
-	--arg actualFingerprint "$actual_fingerprint" \
-	--arg driftReportDigest "$drift_report_digest" \
-	--arg desiredFingerprint "$desired_fingerprint" \
-	--arg policyFingerprint "$policy_fingerprint" \
-	--arg verificationPolicyUID "$policy_uid" \
-	--arg verificationPolicyDigest "$policy_digest" \
-	--arg executionBindingID "$execution_binding_id" \
-	--arg controllerImage "$controller_image" \
-	--arg controllerRevision "$controller_revision" \
-	--argjson controllerStateVersion "$controller_state_version" \
-	--arg ptahVersion "$PTAH_VERSION" \
-	--arg executorImage "$EXECUTOR_IMAGE" \
-	--arg runnerImage "$RUNNER_IMAGE" \
-	--arg now "$created_at" '
-  {status: {
-    observedGeneration: $observedGeneration,
-    phase: "AwaitingApproval",
-    conditions: [
-      {
-        type: "Ready",
-        status: "False",
-        reason: "ApprovalRequired",
-        message: "Four-eyes plan fixture is awaiting approval",
-        lastTransitionTime: $now
-      },
-      {
-        type: "ApprovalRequired",
-        status: "True",
-        reason: "Policy",
-        message: "Four-eyes plan fixture requires explicit approval",
-        lastTransitionTime: $now
-      }
-    ],
-    source: {
-      digest: $artifactDigest,
-      verificationPolicyUID: $verificationPolicyUID,
-      verificationPolicyDigest: $verificationPolicyDigest
-    },
-    target: {
-      engine: "PostgreSQL",
-      coordinationDigest: $coordinationDigest,
-      identityDigest: $targetDigest,
-      driftReportDigest: $driftReportDigest
-    },
-    plan: {
-      name: $planName,
-      uid: $planUID,
-      fingerprint: $fingerprint,
-      contentDigest: $contentDigest,
-      artifactDigest: $artifactDigest,
-      coordinationDigest: $coordinationDigest,
-      targetIdentityDigest: $targetDigest,
-      actualStateFingerprint: $actualFingerprint,
-      desiredStateFingerprint: $desiredFingerprint,
-      policyFingerprint: $policyFingerprint,
-      verificationPolicyUID: $verificationPolicyUID,
-      verificationPolicyDigest: $verificationPolicyDigest,
-      executionBindingID: $executionBindingID,
-      controllerImage: $controllerImage,
-      controllerRevision: $controllerRevision,
-      controllerStateVersion: $controllerStateVersion,
-      ptahVersion: $ptahVersion,
-      executorImage: $executorImage,
-      runnerImage: $runnerImage,
-      runnerProtocolVersion: $runnerProtocolVersion,
-      destructive: false,
-      statementCount: 1,
-      createdAt: $now
-    }
-  }}')
-k -n "$TEST_NAMESPACE" patch ptahschema "$FOUR_EYES_SCHEMA_NAME" \
-	--subresource=status --type=merge -p "$four_eyes_schema_status" >/dev/null
-
-four_eyes_approval_json() {
-	four_eyes_approval_name=$1
-	jq -n \
-		--arg namespace "$TEST_NAMESPACE" \
-		--arg name "$four_eyes_approval_name" \
-		--arg schemaName "$FOUR_EYES_SCHEMA_NAME" \
-		--arg schemaUID "$four_eyes_schema_uid" \
-		--arg planName "$FOUR_EYES_PLAN_NAME" \
-		--arg planUID "$four_eyes_plan_uid" \
-		--arg fingerprint "$four_eyes_plan_fingerprint" '
-      {
-        apiVersion: "operator.ptah.run/v1alpha1",
-        kind: "PtahSchemaApproval",
-        metadata: {namespace: $namespace, name: $name},
-        spec: {
-          schemaRef: {name: $schemaName, uid: $schemaUID},
-          planRef: {name: $planName, uid: $planUID},
-          planFingerprint: $fingerprint
-        }
-      }'
-}
-
-# The author is the schema's own last spec writer, and the schema now
-# requires a distinct one: their own approval is refused, not because they
-# lack the RBAC to create it -- they hold exactly the same rights that made
-# the earlier approvals in this phase succeed -- but because admission reads
-# who they are.
-four_eyes_approval_json "e2e-four-eyes-approve-by-author" >"$four_eyes_approval_file"
-expect_denied "the author approving their own four-eyes-protected schema" \
-	'requires a distinct approver' "$four_eyes_approval_file" "$error_file"
-if k -n "$TEST_NAMESPACE" get ptahschemaapproval e2e-four-eyes-approve-by-author \
-	>/dev/null 2>&1; then
-	fail "the refused self-approval was created anyway"
-fi
-
-jq -n --arg namespace "$TEST_NAMESPACE" --arg name "$FOUR_EYES_APPROVER" '
-  {apiVersion: "v1", kind: "List", items: [
-    {apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role",
-     metadata: {namespace: $namespace, name: $name},
-     rules: [{apiGroups: ["operator.ptah.run"], resources: ["ptahschemaapprovals"], verbs: ["create", "get"]}]},
-    {apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding",
-     metadata: {namespace: $namespace, name: $name},
-     roleRef: {apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: $name},
-     subjects: [{apiGroup: "rbac.authorization.k8s.io", kind: "User", name: $name}]}
-  ]}' >"$four_eyes_role_file"
-k apply -f "$four_eyes_role_file" >/dev/null
-
-# A second, distinct identity approves the same plan and succeeds.
-four_eyes_approval_json "e2e-four-eyes-approve-by-distinct-approver" >"$four_eyes_admitted_approval_file"
-k --as "$FOUR_EYES_APPROVER" --as-group system:authenticated \
-	create -f "$four_eyes_admitted_approval_file" >/dev/null ||
-	fail "a distinct approver's approval of $FOUR_EYES_SCHEMA_NAME was refused"
-k -n "$TEST_NAMESPACE" get ptahschemaapproval e2e-four-eyes-approve-by-distinct-approver -o json |
-	jq -e --arg approver "$FOUR_EYES_APPROVER" '.spec.approver.username == $approver' >/dev/null ||
-	fail "the admitted four-eyes approval does not name the distinct approver who made it"
-printf '%s\n' 'e2e assertions: PASS the four-eyes option refuses a self-approval and admits a distinct one'
+# The four-eyes control moved out of spec.policy: #450's follow-up made it
+# approvals.requireDistinctApprover, a chart value the installer sets, because
+# a field on the resource's own spec could not bind that resource's author.
+# The real proof -- a schema an installation with the control on refuses a
+# self-approval for, admits a distinct approver for, and then applies -- needs
+# a live database and lives in hack/e2e-dataplane.sh, which this phase runs
+# before the data plane stands one up.
 
 PHASE_COMPLETED=1
 printf '%s\n' 'e2e assertions: PASS control-plane contract'

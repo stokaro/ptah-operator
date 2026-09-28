@@ -72,6 +72,7 @@ func main() {
 	var defaultUnreachableTolerationSeconds int64
 	var extendedResourceTolerationEnabled bool
 	var alwaysPullImagesEnabled bool
+	var requireDistinctApprover bool
 
 	flag.StringVar(&metricsAddress, "metrics-bind-address", ":8080", "address for Prometheus metrics")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "address for health probes")
@@ -89,6 +90,7 @@ func main() {
 	flag.Int64Var(&defaultUnreachableTolerationSeconds, "default-unreachable-toleration-seconds", 300, "expected kube-apiserver unreachable NoExecute toleration seconds")
 	flag.BoolVar(&extendedResourceTolerationEnabled, "extended-resource-toleration-enabled", false, "whether kube-apiserver enables ExtendedResourceToleration admission")
 	flag.BoolVar(&alwaysPullImagesEnabled, "always-pull-images-enabled", false, "whether kube-apiserver enables AlwaysPullImages admission")
+	flag.BoolVar(&requireDistinctApprover, "require-distinct-approver", false, "refuse an approval whose approver is the identity that last wrote the resource's spec")
 	zapOptions := zap.Options{Development: false}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -235,15 +237,19 @@ func main() {
 		execution.RunnerProtocolVersion = builder.ExecutionBinding()
 	manager.GetWebhookServer().Register(mutateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true, Execution: execution,
+		RequireDistinctApprover: requireDistinctApprover,
 	}})
 	manager.GetWebhookServer().Register(validateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false, Execution: execution,
+		RequireDistinctApprover: requireDistinctApprover,
 	}})
 	manager.GetWebhookServer().Register(mutateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true, Execution: execution,
+		RequireDistinctApprover: requireDistinctApprover,
 	}})
 	manager.GetWebhookServer().Register(validateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false, Execution: execution,
+		RequireDistinctApprover: requireDistinctApprover,
 	}})
 	manager.GetWebhookServer().Register(mutateSchemaSpecWriterPath, &cradmission.Webhook{Handler: &approvaladmission.SchemaSpecWriterHandler{
 		Decoder: decoder,

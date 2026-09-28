@@ -288,11 +288,23 @@ and client scratch data in addition to the process heap.
 An approval proves an authenticated approver. On its own it proves nothing
 about that approver being a second person, so an author with a Role broad
 enough to also approve -- or a deployment that never separated the two Roles
-at all -- could approve their own plan. `spec.policy.requireDistinctApprover`
-closes that gap where a resource asks for it; it defaults to false, so an
-existing schema or migration that never sets it keeps admitting the approvals
-it always did, and turning it on is itself a spec edit, which is what first
-records a writer for the check to compare against.
+at all -- could approve their own plan. `approvals.requireDistinctApprover`
+closes that gap. It is a chart value, owned by whoever installs the operator,
+and read once into the manager's own flag; no field on `PtahSchema` or
+`PtahMigration` can reach it. It defaults to false, so an existing installation
+that never sets it keeps admitting the approvals it always did.
+
+The switch was a per-resource field until this control's first release exposed
+what that placement could not bind: `spec.policy.requireDistinctApprover` lived
+in the same spec the check judged, so an author who could also approve could
+turn it off, let that edit retire the current plan and its binding, wait for
+the operator to replan against the new spec, and approve the identical plan as
+themselves, with the resource carrying no record that the control was ever
+off. A guard that the party it constrains can also switch off is not a guard.
+Moving it into the chart is the same move #450 already made for the other
+approval control, [the apply-mode
+guard](#who-may-turn-the-approval-requirement-off): put the switch where the
+author's own RBAC over their namespace cannot reach it.
 
 A mutating webhook on `PtahSchema` and `PtahMigration` records the
 authenticated identity behind every `CREATE` and every `UPDATE` that changes
@@ -303,8 +315,23 @@ the resource's writer any more than they can name someone else as the
 approver. An update that leaves `spec` alone -- a label, the finalizer the
 controller itself adds and removes, a status write, which is a separate
 subresource the annotations cannot reach at all -- leaves the recorded
-identity untouched. The approval webhook then refuses an approval whose
-approver is exactly that identity.
+identity untouched. When the installation's flag is true, the approval webhook
+refuses an approval whose approver is exactly that identity, or whose resource
+carries no recorded identity at all.
+
+The chart installs that mutating webhook's two entries under the same flag,
+rather than leaving them bound whatever the flag says. An entry with
+`failurePolicy: Fail` refuses every `PtahSchema` and `PtahMigration` write
+while the manager is unreachable, including across an upgrade under a
+`Recreate` strategy; with the switch off, which is the default, nothing reads
+the recorded identity, so paying that coupling on every write buys nothing.
+One consequence follows directly: a resource written while the switch was off
+carries no recorded writer, and turning the switch on does not retroactively
+supply one. Its approvals are refused, by the same "no spec writer is
+recorded" reason a missing annotation always produces, until its spec is next
+changed and the now-installed webhook has a write to stamp. An installer
+turning this on should expect that gap, not read it as the control
+misbehaving.
 
 The record is metadata rather than `spec` or `status` on purpose. `status` is
 a subresource on both kinds, and the API server resets it to its previous
@@ -312,17 +339,29 @@ value on every write through the main resource and drops it outright on
 create, so a mutating webhook on the main resource can never persist anything
 there. `spec` is the author's own field to write; recording the mutation
 there would tie the two together in the one place meant to hold only their
-own intent.
+own intent, which is exactly the placement this control moved away from.
 
 Group membership plays no part in the comparison, and a ServiceAccount is one
 identity like any other: the same ServiceAccount that wrote the spec and later
-submits the approval is refused exactly as a person doing both would be. What
-the check compares is exactly what the cluster's authenticator put on the
-request -- a username, and a UID where the authenticator supplies one -- and
-that is also its limit. Impersonation, or a credential more than one person
-holds, is indistinguishable at that layer from two different people, and this
-control cannot see past it: identity here is only as good as the cluster's own
-authentication. Where that gap matters, pair it with the RBAC separation in
+submits the approval is refused exactly as a person doing both would be. A
+GitOps controller that writes every schema and migration spec makes every
+human approver distinct by construction, because no human ever appears as the
+recorded writer; this control is aimed at a human editing spec directly, and
+adds nothing where one already runs. What the check compares is exactly what
+the cluster's authenticator put on the request -- a username, and a UID where
+the authenticator supplies one -- and that is also its limit. Impersonation,
+or a credential more than one person holds, is indistinguishable at that layer
+from two different people, and this control cannot see past it: identity here
+is only as good as the cluster's own authentication.
+
+And because the switch lives in the chart rather than in any namespace's
+resources, it does not stop an author who can also edit or upgrade this Helm
+release: that is authority over the installation itself, wider than authority
+over one namespace's schemas, and no admission control this operator ships
+reaches it. Closing that gap is RBAC over Helm releases and over the
+operator's own namespace, not anything the operator can enforce from inside a
+cluster it does not administer. Where any of this matters, pair the control
+with the RBAC separation in
 [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off)
 rather than relying on either alone.
 

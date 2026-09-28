@@ -86,6 +86,39 @@ func TestRuntimeVerifierRejectsALeftoverCertificateCanaryEntry(t *testing.T) {
 	}
 }
 
+// The spec-writer entries exist only when the installation turns the
+// four-eyes control on; charts/ptah-operator/templates/webhook.yaml renders
+// them under the same condition. These three prove the verifier follows the
+// flag in both directions and refuses every other shape.
+func TestRuntimeVerifierAcceptsMutatingSingletonWithoutSpecWriterEntriesWhenControlIsOff(t *testing.T) {
+	verifier := readyRuntimeVerifier(t)
+	verifier.Expected.RequireDistinctApprover = false
+	configuration := verifier.Mutating.(*mutatingAdmissionClient).object
+	configuration.Webhooks = configuration.Webhooks[:2]
+	if err := verifier.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify a mutating singleton with the four-eyes control off and no spec-writer entries: %v", err)
+	}
+}
+
+func TestRuntimeVerifierRejectsSpecWriterEntriesWhenControlIsOff(t *testing.T) {
+	verifier := readyRuntimeVerifier(t)
+	verifier.Expected.RequireDistinctApprover = false
+	err := verifier.Verify(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "expected exactly 2") {
+		t.Fatalf("Verify error = %v, want the exact webhook count refusal", err)
+	}
+}
+
+func TestRuntimeVerifierRejectsMissingSpecWriterEntriesWhenControlIsOn(t *testing.T) {
+	verifier := readyRuntimeVerifier(t)
+	configuration := verifier.Mutating.(*mutatingAdmissionClient).object
+	configuration.Webhooks = configuration.Webhooks[:2]
+	err := verifier.Verify(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "expected exactly 4") {
+		t.Fatalf("Verify error = %v, want the exact webhook count refusal", err)
+	}
+}
+
 func TestRuntimeVerifierRejectsMismatchedOwner(t *testing.T) {
 	verifier := readyRuntimeVerifier(t)
 	verifier.Mutating.(*mutatingAdmissionClient).object.Annotations[ReleaseNameAnnotation] = "other-release"
@@ -967,6 +1000,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		ControllerStateVersion:       ourStateVersion,
 		AdmissionContractVersion:     CurrentAdmissionContractVersion,
 		ReleaseSequence:              1,
+		RequireDistinctApprover:      true,
 	}
 	annotations := expected.annotations()
 	mutatingClient := &mutatingAdmissionClient{object: &admissionregistrationv1.MutatingWebhookConfiguration{

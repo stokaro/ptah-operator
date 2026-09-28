@@ -67,6 +67,13 @@ var (
 	// admin reads and writes as the envtest administrator. The handlers read
 	// through it too: the manager hands them its uncached API reader.
 	admin client.Client
+	// approvalHandlers and migrationApprovalHandlers are the exact handler
+	// values serveManagerHandlers registered, kept so a test that needs the
+	// installation's four-eyes control on for its own requests can flip
+	// RequireDistinctApprover on the shared server and restore it afterward,
+	// rather than standing up a second control plane and webhook server.
+	approvalHandlers          []*approvaladmission.ApprovalHandler
+	migrationApprovalHandlers []*approvaladmission.MigrationApprovalHandler
 	// validatingConfigurationName names the chart's ValidatingWebhookConfiguration.
 	validatingConfigurationName string
 	// chartMutating and chartValidating are the configurations as rendered,
@@ -77,12 +84,13 @@ var (
 
 // managerConfig is what the chart passes the manager on its command line.
 type managerConfig struct {
-	controllerImage string
-	executorImage   string
-	runnerImage     string
-	ptahVersion     string
-	username        string
-	admission       podintent.Options
+	controllerImage         string
+	executorImage           string
+	runnerImage             string
+	ptahVersion             string
+	username                string
+	admission               podintent.Options
+	requireDistinctApprover bool
 }
 
 func (config managerConfig) builder() workload.Builder {
@@ -262,6 +270,8 @@ func managerConfigFrom(deployments []*appsv1.Deployment) (managerConfig, error) 
 	errs = append(errs, err)
 	config.admission.AlwaysPullImagesEnabled, err = boolean("always-pull-images-enabled")
 	errs = append(errs, err)
+	config.requireDistinctApprover, err = boolean("require-distinct-approver")
+	errs = append(errs, err)
 	if err := errors.Join(errs...); err != nil {
 		return managerConfig{}, err
 	}
@@ -274,14 +284,23 @@ func managerConfigFrom(deployments []*appsv1.Deployment) (managerConfig, error) 
 	return config, nil
 }
 
-// servedPaths is every path the manager registers.
+// servedPaths is every path the manager registers that the chart routes to
+// unconditionally, plus the two spec-writer paths exactly when the rendered
+// release turns the four-eyes control on: charts/ptah-operator/templates/webhook.yaml
+// renders those two entries under the same condition, and the manager
+// registers their handlers regardless, so a disagreement about them is only
+// real when the flag says the chart should have routed to them.
 func servedPaths() map[string]bool {
-	return map[string]bool{
+	served := map[string]bool{
 		mutateApprovalPath: true, validateApprovalPath: true,
 		mutateMigrationApprovalPath: true, validateMigrationApprovalPath: true,
-		mutateSchemaSpecWriterPath: true, mutateMigrationSpecWriterPath: true,
 		validatePodIntentPath: true, validateControllerWritePath: true,
 	}
+	if manager.requireDistinctApprover {
+		served[mutateSchemaSpecWriterPath] = true
+		served[mutateMigrationSpecWriterPath] = true
+	}
+	return served
 }
 
 // unservedManagerPaths names every disagreement between the chart's routing
@@ -341,10 +360,20 @@ func serveManagerHandlers() (func(), error) {
 	execution.ControllerStateVersion, execution.PtahVersion, execution.ExecutorImage,
 		execution.RunnerProtocolVersion = manager.builder().ExecutionBinding()
 	approval := func(mutate bool) *approvaladmission.ApprovalHandler {
-		return &approvaladmission.ApprovalHandler{Reader: admin, Decoder: decoder, Mutate: mutate, Execution: execution}
+		handler := &approvaladmission.ApprovalHandler{
+			Reader: admin, Decoder: decoder, Mutate: mutate, Execution: execution,
+			RequireDistinctApprover: manager.requireDistinctApprover,
+		}
+		approvalHandlers = append(approvalHandlers, handler)
+		return handler
 	}
 	migrationApproval := func(mutate bool) *approvaladmission.MigrationApprovalHandler {
-		return &approvaladmission.MigrationApprovalHandler{Reader: admin, Decoder: decoder, Mutate: mutate, Execution: execution}
+		handler := &approvaladmission.MigrationApprovalHandler{
+			Reader: admin, Decoder: decoder, Mutate: mutate, Execution: execution,
+			RequireDistinctApprover: manager.requireDistinctApprover,
+		}
+		migrationApprovalHandlers = append(migrationApprovalHandlers, handler)
+		return handler
 	}
 	server.Register(mutateApprovalPath, &cradmission.Webhook{Handler: approval(true)})
 	server.Register(validateApprovalPath, &cradmission.Webhook{Handler: approval(false)})

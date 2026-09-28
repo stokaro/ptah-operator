@@ -387,6 +387,11 @@ RBAC_ORIGINAL_VERBS=
 RBAC_STATUS_API_GROUPS=
 RBAC_STATUS_RESOURCES=
 EPHEMERAL_SUBRESOURCE_TESTED=0
+# Set while approvals.requireDistinctApprover is turned on for the four-eyes
+# row's own helm upgrade window, so cleanup turns it back off on any exit --
+# the switch is global, and every earlier lifecycle in this phase approves its
+# own plans with the same identity that wrote them.
+FOUR_EYES_SWITCH_ON=0
 TLS_PROXY_POD_NAME=
 TLS_PROXY_POD_UID=
 TLS_PROXY_POD_IP=
@@ -655,6 +660,12 @@ cleanup() {
 	if [ "$RBAC_PAUSED" -eq 1 ]; then
 		if ! resume_controller_status_writes; then
 			printf '%s\n' 'e2e data plane: could not restore controller status-write RBAC' >&2
+			status=1
+		fi
+	fi
+	if [ "$FOUR_EYES_SWITCH_ON" -eq 1 ]; then
+		if ! set_require_distinct_approver false; then
+			printf '%s\n' 'e2e data plane: could not turn approvals.requireDistinctApprover back off' >&2
 			status=1
 		fi
 	fi
@@ -6714,6 +6725,135 @@ assert_mysql_destructive_refusal_durable
 assert_external_postgresql_catalog
 audit_runtime_credentials
 assert_observed_jobs_audited
+
+timing_next scenario four-eyes-distinct-approver
+printf '%s\n' 'e2e data plane: checking the installer-owned four-eyes control end to end'
+
+# approvals.requireDistinctApprover is global for the whole installation, and
+# every approval the lifecycles above created was made by this script's own
+# kubeconfig identity through the plain k() wrapper -- the same identity that
+# wrote each schema's spec. Turning the control on for the whole suite would
+# refuse every one of those approvals, so it is scoped to this row alone: a
+# helm upgrade turns it on immediately before, a second upgrade turns it back
+# off immediately after, and cleanup turns it off on any exit in between.
+set_require_distinct_approver() {
+	distinct_approver_switch=$1
+	helm --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
+		--reuse-values --set approvals.requireDistinctApprover="$distinct_approver_switch" \
+		--wait --timeout 5m >/dev/null
+}
+
+FOUR_EYES_SCHEMA=e2e-four-eyes-postgresql
+FOUR_EYES_COORDINATION_KEY=e2e/admission/four-eyes-postgresql
+FOUR_EYES_APPROVER=e2e-four-eyes-approver
+FOUR_EYES_TABLE=e2e_four_eyes_widgets
+four_eyes_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/four-eyes-postgresql:stable"
+four_eyes_digest=$(publish_schema four-eyes-postgresql v1 postgres "$four_eyes_reference")
+
+set_require_distinct_approver true ||
+	fail "could not turn approvals.requireDistinctApprover on for the four-eyes row"
+FOUR_EYES_SWITCH_ON=1
+
+# A real schema, not suspended and not status-patched: create_schema_resource
+# takes it through the actual mutating and validating webhooks, and the
+# controller plans it against the real PostgreSQL every other lifecycle in
+# this phase already proved reachable. The new table guarantees a plan with
+# something to approve, rather than a no-op against content already applied.
+create_schema_resource "$FOUR_EYES_SCHEMA" PostgreSQL "$PG_SECRET" "$four_eyes_reference" \
+	"$FOUR_EYES_COORDINATION_KEY" e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 5s "$APPROVAL_INTERVAL"
+wait_for_schema "$FOUR_EYES_SCHEMA" \
+	".status.phase == \"AwaitingApproval\" and .status.plan.name != null and .status.source.digest == \"$four_eyes_digest\"" \
+	"the four-eyes schema to publish a plan awaiting approval"
+# wait_object is the exact document that satisfied the wait above: read the
+# schema UID, the plan binding, and the recorded writer from it rather than
+# from a later re-read, which would reopen the window the wait already closed.
+four_eyes_schema_uid=$(printf '%s\n' "$wait_object" | jq -er '.metadata.uid')
+four_eyes_plan_name=$(printf '%s\n' "$wait_object" | jq -er '.status.plan.name')
+four_eyes_plan_uid=$(printf '%s\n' "$wait_object" | jq -er '.status.plan.uid')
+four_eyes_plan_fingerprint=$(printf '%s\n' "$wait_object" | jq -er '.status.plan.fingerprint')
+four_eyes_author=$(printf '%s\n' "$wait_object" |
+	jq -er '.metadata.annotations["operator.ptah.run/last-spec-writer-username"] // ""')
+[ -n "$four_eyes_author" ] ||
+	fail "$FOUR_EYES_SCHEMA was not stamped with a last spec writer on create"
+[ "$four_eyes_author" != "$FOUR_EYES_APPROVER" ] ||
+	fail "the four-eyes fixture's distinct-approver name collides with its own author $four_eyes_author"
+
+four_eyes_approval_json() {
+	four_eyes_approval_name=$1
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$four_eyes_approval_name" \
+		--arg schemaName "$FOUR_EYES_SCHEMA" \
+		--arg schemaUID "$four_eyes_schema_uid" \
+		--arg planName "$four_eyes_plan_name" \
+		--arg planUID "$four_eyes_plan_uid" \
+		--arg fingerprint "$four_eyes_plan_fingerprint" '
+      {
+        apiVersion: "operator.ptah.run/v1alpha1",
+        kind: "PtahSchemaApproval",
+        metadata: {namespace: $namespace, name: $name},
+        spec: {
+          schemaRef: {name: $schemaName, uid: $schemaUID},
+          planRef: {name: $planName, uid: $planUID},
+          planFingerprint: $fingerprint
+        }
+      }'
+}
+
+# The author is the schema's own last spec writer, and the installation now
+# requires a distinct one: their own approval is refused, not for lack of
+# RBAC -- this script's identity holds exactly the rights every earlier
+# approval in this phase used -- but because admission reads who they are.
+four_eyes_denied_file="$WORK_DIR/${FOUR_EYES_SCHEMA}-denied-approval.json"
+four_eyes_error_file="$WORK_DIR/${FOUR_EYES_SCHEMA}-denied-approval-error.json"
+four_eyes_approval_json "e2e-four-eyes-approve-by-author" >"$four_eyes_denied_file"
+if k create -f "$four_eyes_denied_file" >"$four_eyes_error_file.stdout" 2>"$four_eyes_error_file"; then
+	fail "the author's self-approval of $FOUR_EYES_SCHEMA unexpectedly succeeded"
+fi
+grep -Eiq 'requires a distinct approver' "$four_eyes_error_file" ||
+	fail "the self-approval of $FOUR_EYES_SCHEMA did not fail for the four-eyes reason: $(cat "$four_eyes_error_file")"
+if k -n "$TEST_NAMESPACE" get ptahschemaapproval e2e-four-eyes-approve-by-author \
+	>/dev/null 2>&1; then
+	fail "the refused self-approval was created anyway"
+fi
+
+jq -n --arg namespace "$TEST_NAMESPACE" --arg name "$FOUR_EYES_APPROVER" '
+  {apiVersion: "v1", kind: "List", items: [
+    {apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role",
+     metadata: {namespace: $namespace, name: $name},
+     rules: [{apiGroups: ["operator.ptah.run"], resources: ["ptahschemaapprovals"], verbs: ["create", "get"]}]},
+    {apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding",
+     metadata: {namespace: $namespace, name: $name},
+     roleRef: {apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: $name},
+     subjects: [{apiGroup: "rbac.authorization.k8s.io", kind: "User", name: $name}]}
+  ]}' | k apply -f - >/dev/null
+
+# A second, distinct identity approves the same plan and succeeds.
+four_eyes_admitted_file="$WORK_DIR/${FOUR_EYES_SCHEMA}-admitted-approval.json"
+four_eyes_approval_json "e2e-four-eyes-approve-by-distinct-approver" >"$four_eyes_admitted_file"
+k --as "$FOUR_EYES_APPROVER" --as-group system:authenticated \
+	create -f "$four_eyes_admitted_file" >/dev/null ||
+	fail "a distinct approver's approval of $FOUR_EYES_SCHEMA was refused"
+k -n "$TEST_NAMESPACE" get ptahschemaapproval e2e-four-eyes-approve-by-distinct-approver -o json |
+	jq -e --arg approver "$FOUR_EYES_APPROVER" '.spec.approver.username == $approver' >/dev/null ||
+	fail "the admitted four-eyes approval does not name the distinct approver who made it"
+
+wait_for_schema "$FOUR_EYES_SCHEMA" \
+	".status.phase == \"InSync\" and .status.source.digest == \"$four_eyes_digest\" and .status.applied.artifactDigest == \"$four_eyes_digest\" and .status.pendingObservation == null and .status.activeOperation == null and (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))" \
+	"the distinct approver's approval to apply and reach the converged state"
+
+set_require_distinct_approver false ||
+	fail "could not turn approvals.requireDistinctApprover back off after the four-eyes row"
+FOUR_EYES_SWITCH_ON=0
+
+# shellcheck disable=SC2016 # Variables expand inside the database container.
+four_eyes_table_count=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+	sh "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='${FOUR_EYES_TABLE}'")
+four_eyes_table_count=$(printf '%s' "$four_eyes_table_count" | tr -d '[:space:]')
+[ "$four_eyes_table_count" = 1 ] ||
+	fail "$FOUR_EYES_TABLE is not present in the database after the four-eyes-approved plan applied"
+printf '%s\n' 'e2e data plane: PASS the installer-owned four-eyes control refuses a self-approval, admits a distinct one, and the approved plan converges'
 
 timing_end pass
 PHASE_COMPLETED=1
