@@ -133,14 +133,17 @@ not move behind state that has already been written.
 
 | Version | What state at this version carries that an earlier manager cannot read |
 | --- | --- |
-| 1 | The original durable contract: execution bindings, plan and applied records, approvals, and the operation claim. |
-| 2 | `status.unresolvedRun` on a `PtahMigration`, the record of an Apply whose outcome nobody established, and `status.activeOperation.retryNotBefore`, the delay a retried operation waits out. |
+| 1 | The durable contract of the first release: execution bindings, plan and applied records, approvals, the operation claim, `status.unresolvedRun` on a `PtahMigration` (the record of an Apply whose outcome nobody established), and `status.activeOperation.retryNotBefore` (the delay a retried operation waits out). |
 
 A resource records its version where the run is bound to the components that
-executed it, and never clears it. That is why version 2 covers both fields
-without a new location: a migration can only hold either record after it has
-dispatched, and dispatching is what writes
-`status.executionBinding.controllerStateVersion`.
+executed it, and never clears it. A record a resource can only hold after it
+has dispatched, as both of the last two are, needs no location of its own:
+dispatching is what writes `status.executionBinding.controllerStateVersion`.
+
+The version counted commits until v0.1.0 and was reset to 1 just before that
+tag, with the other [contract counters](../api-compatibility/#contract-counters).
+From the first release on, it moves only when a manager writes state that a
+manager of an earlier release could not read.
 
 The number is declared in two places that this repository holds equal:
 `CONTROLLER_STATE_VERSION` in the `Makefile`, which stamps
@@ -480,7 +483,7 @@ Job before the executor starts.
 `status.executionBinding` exposes the controller-state contract, Ptah version,
 executor image, runner protocol, and its opaque `epoch` for audit. Every
 transition of those components creates a new epoch, including rollback to an
-identical set. Current plan contract v3 binds exactly those, and records the
+identical set. Plan contract 1 binds exactly those, and records the
 publishing manager on the plan without binding it. A plan references the epoch
 as `spec.executionBindingID` and binds it into the fingerprint an approval
 names; therefore an approval is valid for only one transition and cannot be

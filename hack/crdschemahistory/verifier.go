@@ -13,7 +13,9 @@
 // limitations under the License.
 
 // Package crdschemahistory verifies that the generated CRD schema identity
-// advances monotonically relative to an exact Git commit.
+// advances monotonically relative to an exact Git commit. The one exception
+// is a restart the package records, which leaves an exact baseline for
+// version 1.
 package crdschemahistory
 
 import (
@@ -64,6 +66,9 @@ type Result struct {
 	CandidateVersion uint64
 	SchemaChanged    bool
 	InitialAdoption  bool
+	// Restarted reports a transition a recorded restart admitted: the
+	// candidate is version 1 of a history that begins at this baseline.
+	Restarted bool
 }
 
 // errCRDGroupRenamed reports a CRD set holding exactly the resources this
@@ -491,6 +496,16 @@ func requiredCRDNames() []string {
 }
 
 func evaluateTransition(baseline, candidate documentSet) (Result, error) {
+	return evaluateTransitionWith(baseline, candidate, declaredBreaks, historyRestarts)
+}
+
+// evaluateTransitionWith is evaluateTransition with the declared breaks and
+// the recorded restarts it reads passed in, so a test can hand it both.
+func evaluateTransitionWith(
+	baseline, candidate documentSet,
+	declared []declaredBreak,
+	restarts []historyRestart,
+) (Result, error) {
 	candidateIdentity, err := validateIdentity("candidate", candidate, false)
 	if err != nil {
 		return Result{}, err
@@ -534,6 +549,17 @@ func evaluateTransition(baseline, candidate documentSet) (Result, error) {
 		}
 		return result, nil
 	}
+	// A version below the baseline's is a rollback, and refused below as one,
+	// unless it is a restart recorded for exactly this baseline.
+	if candidateIdentity.version < baselineIdentity.version {
+		if restart, recorded := restartFrom(restarts, baselineIdentity.version); recorded {
+			if err := restart.admit(baseline, candidate, candidateIdentity.version); err != nil {
+				return Result{}, err
+			}
+			result.Restarted = true
+			return result, nil
+		}
+	}
 	if changed {
 		if candidateIdentity.version <= baselineIdentity.version {
 			return Result{}, fmt.Errorf(
@@ -548,7 +574,7 @@ func evaluateTransition(baseline, candidate documentSet) (Result, error) {
 		// not survive however the version moves, unless a break declared for
 		// exactly this version names them.
 		if err := verifyStoredObjectCompatibility(
-			baseline, candidate, candidateIdentity.version, declaredBreaks,
+			baseline, candidate, candidateIdentity.version, declared,
 		); err != nil {
 			return Result{}, err
 		}

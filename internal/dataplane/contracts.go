@@ -29,7 +29,7 @@ const (
 	// vocabulary itself, at both ends: a controller decoding a report and a
 	// controller parsing a result frame each ask IsKnownDriftFindingCategory,
 	// and an unknown category is refused there rather than compared here.
-	DriftFindingVocabularyVersion = 3
+	DriftFindingVocabularyVersion = 1
 )
 
 var (

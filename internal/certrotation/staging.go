@@ -22,7 +22,12 @@ const (
 	StagingSecretLabel      = "operator.ptah.run/certificate-rotation-staging"
 	StagingSecretLabelValue = "true"
 
-	stagingFormat = "v3"
+	// StagingFormat is the version of the record a staging Secret holds. A
+	// rotator refuses a record in any other format rather than resume a
+	// transition it would read differently. v1 is the format the first
+	// tagged release writes; the versions before it counted commits nobody
+	// installed.
+	StagingFormat = "v1"
 
 	stagingFormatKey             = "format"
 	stagingOperationKey          = "operation"
@@ -210,8 +215,8 @@ func decodePendingCandidate(data map[string][]byte, config Config) (*pendingCand
 			return nil, fmt.Errorf("required data field %q is missing", key)
 		}
 	}
-	if string(data[stagingFormatKey]) != stagingFormat {
-		return nil, fmt.Errorf("format is %q, want %q", data[stagingFormatKey], stagingFormat)
+	if string(data[stagingFormatKey]) != StagingFormat {
+		return nil, fmt.Errorf("format is %q, want %q", data[stagingFormatKey], StagingFormat)
 	}
 
 	pending := &pendingCandidate{
@@ -428,7 +433,7 @@ func (r *Rotator) recordExpansion(
 
 func encodePendingCandidate(pending *pendingCandidate) map[string][]byte {
 	return map[string][]byte{
-		stagingFormatKey:           []byte(stagingFormat),
+		stagingFormatKey:           []byte(StagingFormat),
 		stagingOperationKey:        []byte(pending.operation),
 		stagingPhaseKey:            []byte(pending.phase),
 		stagingTransitionDigestKey: []byte(pending.transitionDigest),
@@ -452,7 +457,7 @@ func pendingCandidateDigest(pending *pendingCandidate) string {
 		key   string
 		value []byte
 	}{
-		{key: stagingFormatKey, value: []byte(stagingFormat)},
+		{key: stagingFormatKey, value: []byte(StagingFormat)},
 		{key: stagingOperationKey, value: []byte(pending.operation)},
 		{key: stagingSourceStateKey, value: []byte(pending.sourceState)},
 		{key: stagingSourceUIDKey, value: []byte(pending.sourceUID)},

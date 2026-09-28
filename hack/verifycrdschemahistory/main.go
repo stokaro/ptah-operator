@@ -70,8 +70,11 @@ func run(
 		return err
 	}
 	mode := "versioned"
-	if result.InitialAdoption {
+	switch {
+	case result.InitialAdoption:
 		mode = "initial-adoption"
+	case result.Restarted:
+		mode = "restart"
 	}
 	_, err = fmt.Fprintf(
 		stdout,

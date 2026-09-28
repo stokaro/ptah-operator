@@ -41,7 +41,7 @@ func TestTheRunnerRefusesAJobBuiltForAnotherProtocol(t *testing.T) {
 		refused bool
 	}{
 		{name: "the Job names this runner's protocol", value: ptrTo(strconv.Itoa(ProtocolVersion))},
-		{name: "the Job names an earlier protocol", value: ptrTo(strconv.Itoa(ProtocolVersion - 1)), refused: true},
+		{name: "the Job names the protocol before this one", value: ptrTo(strconv.Itoa(ProtocolVersion - 1)), refused: true},
 		{name: "the Job names a later protocol", value: ptrTo(strconv.Itoa(ProtocolVersion + 1)), refused: true},
 		{name: "the Job names no protocol", refused: true},
 		{name: "the Job names an empty protocol", value: ptrTo(""), refused: true},
@@ -92,9 +92,10 @@ func TestTheRunnerRefusesAJobBuiltForAnotherProtocol(t *testing.T) {
 func TestProtocolRefusalDocumentIsPinned(t *testing.T) {
 	t.Parallel()
 
+	expected := strconv.Itoa(ProtocolVersion + 1)
 	result := Run(context.Background(), Config{
 		Operation:   OperationApply,
-		Environment: []string{EnvOperationID + "=pinned", EnvRunnerProtocolVersion + "=1"},
+		Environment: []string{EnvOperationID + "=pinned", EnvRunnerProtocolVersion + "=" + expected},
 	})
 	payload, err := json.Marshal(result)
 	if err != nil {
@@ -102,7 +103,7 @@ func TestProtocolRefusalDocumentIsPinned(t *testing.T) {
 	}
 	want := `{"protocolVersion":` + strconv.Itoa(ProtocolVersion) + `,"operation":"apply","operationId":"pinned",` +
 		`"childExitCode":-1,"stdout":"","error":{"code":"runner_protocol_mismatch",` +
-		`"message":"the Job expects runner protocol 1; this runner speaks protocol ` + strconv.Itoa(ProtocolVersion) + `"}}`
+		`"message":"the Job expects runner protocol ` + expected + `; this runner speaks protocol ` + strconv.Itoa(ProtocolVersion) + `"}}`
 	if string(payload) != want {
 		t.Fatalf("refusal document =\n%s\nwant\n%s", payload, want)
 	}

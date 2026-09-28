@@ -420,26 +420,31 @@ func TestStoredObjectCompatibilityExcusesOnlyWhatABreakDeclares(t *testing.T) {
 
 // Every shipped declaration names the version it was written for and at least
 // one transition, and no two share a version: a second declaration for one
-// version is a second reason for one change, which belongs in the first.
+// version is a second reason for one change, which belongs in the first. The
+// list is empty since the history restarted, so the check is first shown the
+// lists it has to refuse; otherwise it would pass over nothing.
 func TestDeclaredBreaksAreEachScopedToOneVersion(t *testing.T) {
 	t.Parallel()
-	if len(declaredBreaks) == 0 {
-		t.Fatal("no declared break was read")
+	transition := []string{"ptahschemas.operator.ptah.run: engine: was optional and the candidate requires it, with no default to fill it in"}
+	for name, declared := range map[string][]declaredBreak{
+		"no version":          {{reason: "why", transitions: transition}},
+		"no reason":           {{version: 2, reason: " ", transitions: transition}},
+		"no transition":       {{version: 2, reason: "why"}},
+		"two for one version": {{version: 2, reason: "why", transitions: transition}, {version: 2, reason: "again", transitions: transition}},
+		"newest first":        {{version: 3, reason: "why", transitions: transition}, {version: 2, reason: "why", transitions: transition}},
+	} {
+		if err := validateDeclaredBreaks(declared); err == nil {
+			t.Errorf("%s: the declarations were accepted", name)
+		}
 	}
-	seen := make(map[uint64]bool, len(declaredBreaks))
-	var previous uint64
-	for _, declaration := range declaredBreaks {
-		if declaration.version == 0 || len(declaration.transitions) == 0 || strings.TrimSpace(declaration.reason) == "" {
-			t.Fatalf("declared break %+v needs a version, a reason and at least one transition", declaration)
-		}
-		if seen[declaration.version] {
-			t.Fatalf("schema version %d carries more than one declared break", declaration.version)
-		}
-		if declaration.version < previous {
-			t.Fatalf("declared breaks are not oldest first: %d follows %d", declaration.version, previous)
-		}
-		seen[declaration.version] = true
-		previous = declaration.version
+	if err := validateDeclaredBreaks([]declaredBreak{
+		{version: 2, reason: "why", transitions: transition},
+		{version: 3, reason: "why", transitions: transition},
+	}); err != nil {
+		t.Fatalf("well-formed declarations were refused: %v", err)
+	}
+	if err := validateDeclaredBreaks(declaredBreaks); err != nil {
+		t.Fatal(err)
 	}
 }
 

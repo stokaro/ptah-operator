@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -277,7 +278,7 @@ func automaticPlanBound(plan *ptahv1alpha1.PtahSchemaPlan, schema *ptahv1alpha1.
 	switch {
 	case status.Applied == nil || binding == nil:
 		return errors.New("the schema carries no applied evidence or no execution binding")
-	case spec.ContractVersion != 3 || spec.ArtifactDigest != want.digest ||
+	case spec.ContractVersion != fingerprint.CurrentPlanContractVersion || spec.ArtifactDigest != want.digest ||
 		spec.Fingerprint != status.Applied.PlanFingerprint || spec.ContentDigest != contentDigest:
 		return errors.New("the plan is not the one the schema applied")
 	case spec.CoordinationDigest != want.coordinationDigest || spec.TargetIdentityDigest != status.Target.IdentityDigest:

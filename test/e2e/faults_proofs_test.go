@@ -16,6 +16,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -1249,7 +1250,7 @@ func buildUncertainHistory(mode uncertainMode) func() *historyFixture {
 		fixture.fresh = &ptahv1alpha1.PtahSchemaPlan{
 			ObjectMeta: metav1.ObjectMeta{Name: current.Name, UID: current.UID, CreationTimestamp: proofTime(300)},
 			Spec: ptahv1alpha1.PtahSchemaPlanSpec{
-				ContractVersion: 3,
+				ContractVersion: fingerprint.CurrentPlanContractVersion,
 				SchemaRef:       ptahv1alpha1.ImmutableObjectReference{Name: proofSchemaName, UID: "schema-uid"},
 				Fingerprint:     current.Fingerprint, ContentDigest: current.ContentDigest,
 				ArtifactDigest: current.ArtifactDigest, CoordinationDigest: current.CoordinationDigest,
@@ -1410,7 +1411,7 @@ func TestUncertainApplyProofHistoryHoldsTheProofToItsEnd(t *testing.T) {
 		{"a current plan of another policy", func(f *historyFixture) {
 			f.final.Status.Plan.VerificationPolicyUID = "other"
 		}},
-		{"a fresh plan of another contract", func(f *historyFixture) { f.fresh.Spec.ContractVersion = 2 }},
+		{"a fresh plan of another contract", func(f *historyFixture) { f.fresh.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1 }},
 		{"a final schema under another binding", func(f *historyFixture) {
 			f.final.Status.ExecutionBinding.Epoch = proofOtherEpoch
 		}},

@@ -7,6 +7,8 @@ import (
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 )
 
 const (
@@ -437,7 +439,9 @@ func controllerMigrationPlanWriteValidations(message string) []admissionregistra
 
 func controllerPlanContractExpression() string {
 	common := `dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1 && dyn(object).spec.dialect != "" && dyn(object).spec.statementCount >= 1 && dyn(object).spec.size >= 1 && dyn(object).spec.size <= 8388608`
-	current := `dyn(object).spec.contractVersion == 3 && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.releaseControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.releaseControllerState`
+	// The one plan contract this manager writes, read from the constant that
+	// fingerprints it, so the guard and the manager cannot name two contracts.
+	current := `dyn(object).spec.contractVersion == ` + strconv.Itoa(int(fingerprint.CurrentPlanContractVersion)) + ` && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.releaseControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.releaseControllerState`
 	return fmt.Sprintf(`(%s) && (%s)`, common, current)
 }
 

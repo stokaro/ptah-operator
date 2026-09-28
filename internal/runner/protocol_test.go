@@ -202,9 +202,12 @@ func TestFrameRejectsAnUnclosedPayloadAndAPartialInterleavedLine(t *testing.T) {
 	}
 }
 
-// A frame speaks exactly ProtocolVersion. An earlier or a later version is
-// refused on both sides: this runner does not write one, and this manager does
-// not read one, whatever the rest of the frame says.
+// A frame speaks exactly ProtocolVersion. A frame naming the version on
+// either side of it is refused on both sides: this runner does not write one,
+// and this manager does not read one, whatever the rest of the frame says.
+// At version 1 the neighbor below is zero, which MarshalFrame reads as unset
+// and fills with its own version, so the writing side is held to a neighbor
+// only where it is a version.
 func TestFrameOfAnotherProtocolVersionIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -217,7 +220,7 @@ func TestFrameOfAnotherProtocolVersionIsRefused(t *testing.T) {
 			ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
 			DriftFindings: []DriftFindingSummary{{Category: "columns_added", Count: 1, Severity: "warning"}},
 		}
-		if _, err := MarshalFrame(other); !errors.Is(err, ErrMalformedFrame) {
+		if _, err := MarshalFrame(other); version > 0 && !errors.Is(err, ErrMalformedFrame) {
 			t.Fatalf("MarshalFrame(protocol %d) error = %v, want ErrMalformedFrame", version, err)
 		}
 		frame := handcraftedIntegrityValidFrame(t, other)
@@ -448,14 +451,17 @@ func TestFrameRejectsMissingMalformedOversizedAndMismatchedBindings(t *testing.T
 	}
 }
 
-func TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol(t *testing.T) {
+// A successful verify frame is the one a manager would act on, so it is where
+// a frame of another protocol must not get through: a runner of another
+// version may not have enforced what this one does.
+func TestParserRejectsSuccessfulVerifyFrameFromAnotherProtocol(t *testing.T) {
 	t.Parallel()
 
 	digest := "sha256:" + strings.Repeat("9", 64)
 	current := Result{
 		ProtocolVersion:          ProtocolVersion,
 		Operation:                OperationVerify,
-		OperationID:              "verify-previous-protocol",
+		OperationID:              "verify-another-protocol",
 		ChildExitCode:            0,
 		ResolvedDigest:           digest,
 		VerificationPolicyDigest: digest,
@@ -469,11 +475,13 @@ func TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol(t *testing.T) {
 		t.Fatalf("ParseResultFor(current protocol) error = %v", err)
 	}
 
-	previous := current
-	previous.ProtocolVersion = ProtocolVersion - 1
-	frame := handcraftedIntegrityValidFrame(t, previous)
-	if _, err := ParseResultFor(frame, previous.Operation, previous.OperationID); !errors.Is(err, ErrMalformedFrame) {
-		t.Fatalf("ParseResultFor(previous protocol) error = %v, want ErrMalformedFrame", err)
+	for _, version := range []int{ProtocolVersion - 1, ProtocolVersion + 1} {
+		other := current
+		other.ProtocolVersion = version
+		frame := handcraftedIntegrityValidFrame(t, other)
+		if _, err := ParseResultFor(frame, other.Operation, other.OperationID); !errors.Is(err, ErrMalformedFrame) {
+			t.Fatalf("ParseResultFor(protocol %d) error = %v, want ErrMalformedFrame", version, err)
+		}
 	}
 }
 

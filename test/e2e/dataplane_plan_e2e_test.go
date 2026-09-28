@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 )
 
 // stateVersion is the controller-state version as the API stores it.
@@ -476,7 +477,7 @@ func (d *dataPlane) createExactApproval(schemaName, planName, approval, coordina
 	// fingerprint, so what the plan says about its realm, its execution and
 	// the manager that published it is checked here, on the plan.
 	spec := plan.Spec
-	if spec.ContractVersion != 3 || spec.ControllerImage != d.controller.image ||
+	if spec.ContractVersion != fingerprint.CurrentPlanContractVersion || spec.ControllerImage != d.controller.image ||
 		spec.ControllerRevision != d.controller.revision || spec.ControllerStateVersion != stateVersion ||
 		int64(spec.RunnerProtocolVersion) != d.runnerProtocol || spec.CoordinationDigest != coordinationDigestValue ||
 		!sha256Pattern.MatchString(spec.ArtifactDigest) || !digestSuffix.MatchString(spec.ExecutorImage) {

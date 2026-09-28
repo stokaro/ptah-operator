@@ -101,37 +101,33 @@ type declaredBreak struct {
 
 // declaredBreaks lists every break made on purpose, oldest first.
 //
-// The version-22 entry below excuses a category of transition the checker no
-// longer produces at all: a required field the candidate removed. Removing a
-// field -- required or not -- is pruned on the next read regardless, so it
-// reaches no stored object; see the package comment above. The entry stays as
-// the historical record of what that change actually did and why, and it
-// cannot fire again either way, because a candidate version is required to
-// strictly increase and no later commit can present version 22 again.
-var declaredBreaks = []declaredBreak{
-	{
-		version: 22,
-		reason: "Plans and approvals bind what a plan means when it runs rather than " +
-			"the manager build that computed it (stokaro/ptah-operator#448). The manager " +
-			"image, its revision and the runner image built from the same source leave the " +
-			"execution binding and the approval; the plan still records them. No release " +
-			"carried the old fields. A stored object read through the new schema loses " +
-			"them to pruning, and nothing requires them any more.",
-		transitions: []string{
-			"ptahmigrationapprovals.operator.ptah.run: spec.controllerImage: was required and the candidate does not have it",
-			"ptahmigrationapprovals.operator.ptah.run: spec.controllerRevision: was required and the candidate does not have it",
-			"ptahmigrationapprovals.operator.ptah.run: spec.runnerImage: was required and the candidate does not have it",
-			"ptahmigrations.operator.ptah.run: status.executionBinding.controllerImage: was required and the candidate does not have it",
-			"ptahmigrations.operator.ptah.run: status.executionBinding.controllerRevision: was required and the candidate does not have it",
-			"ptahmigrations.operator.ptah.run: status.executionBinding.runnerImage: was required and the candidate does not have it",
-			"ptahschemaapprovals.operator.ptah.run: spec.controllerImage: was required and the candidate does not have it",
-			"ptahschemaapprovals.operator.ptah.run: spec.controllerRevision: was required and the candidate does not have it",
-			"ptahschemaapprovals.operator.ptah.run: spec.runnerImage: was required and the candidate does not have it",
-			"ptahschemas.operator.ptah.run: status.executionBinding.controllerImage: was required and the candidate does not have it",
-			"ptahschemas.operator.ptah.run: status.executionBinding.controllerRevision: was required and the candidate does not have it",
-			"ptahschemas.operator.ptah.run: status.executionBinding.runnerImage: was required and the candidate does not have it",
-		},
-	},
+// It is empty. A declaration names a schema version, and the versions the
+// earlier declarations named belong to the history that restarted at 1 (see
+// historyRestarts): kept, they would excuse their transitions again when the
+// new history reached their numbers. A break made after the restart is
+// declared here for the version that makes it.
+var declaredBreaks []declaredBreak
+
+// validateDeclaredBreaks refuses a declaration list that could excuse more
+// than it says: a declaration without a version, a reason or a transition,
+// two for one version, or an order that is not oldest first.
+func validateDeclaredBreaks(declared []declaredBreak) error {
+	seen := make(map[uint64]bool, len(declared))
+	var previous uint64
+	for _, declaration := range declared {
+		if declaration.version == 0 || len(declaration.transitions) == 0 || strings.TrimSpace(declaration.reason) == "" {
+			return fmt.Errorf("declared break %+v needs a version, a reason and at least one transition", declaration)
+		}
+		if seen[declaration.version] {
+			return fmt.Errorf("schema version %d carries more than one declared break", declaration.version)
+		}
+		if declaration.version < previous {
+			return fmt.Errorf("declared breaks are not oldest first: %d follows %d", declaration.version, previous)
+		}
+		seen[declaration.version] = true
+		previous = declaration.version
+	}
+	return nil
 }
 
 // verifyStoredObjectCompatibility reports every transition between the

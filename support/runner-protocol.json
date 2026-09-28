@@ -1,12 +1,5 @@
 {
   "schemaVersion": 1,
-  "protocolVersion": 7,
-  "sourceDigest": "sha256:3ca0e6cbebebad4277a69ff0884b6aacaa6ac50ef9a9ea558a81dbe8cb0a4115",
-  "declared": [
-    {
-      "protocolVersion": 7,
-      "sourceDigest": "sha256:521f2ff5dc4622a2e7462283016968ef3b55c4e6e9f4b64dffc1cc3f9b72fd29",
-      "reason": "Removes Result.DriftFindingsTruncated and the truncation that set it. The runner could never set it: DecodeDrift admits each category of the closed drift vocabulary at most once, the vocabulary is smaller than the 64 summaries truncation needed, and omitempty never wrote a false flag. Every frame a runner writes is byte for byte the frame it wrote before, so a manager on either side of the change reads the other's frames as it did."
-    }
-  ]
+  "protocolVersion": 1,
+  "sourceDigest": "sha256:86b3fcf9c9bcf868de82fb7e9d3c8f6ad8ec72128351ecdd16ce3e67d43041f4"
 }

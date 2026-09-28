@@ -31,6 +31,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 
+	"github.com/stokaro/ptah-operator/internal/certrotation"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
@@ -287,7 +288,7 @@ var transitionInstant = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}
 // other staging state. It reads the record's public fields only.
 func expandedTransitionTime(secret *corev1.Secret, name, namespace string) (time.Time, bool) {
 	if secret.Name != name || secret.Namespace != namespace ||
-		string(secret.Data["format"]) != "v3" || string(secret.Data["phase"]) != "expanded" {
+		string(secret.Data["format"]) != certrotation.StagingFormat || string(secret.Data["phase"]) != "expanded" {
 		return time.Time{}, false
 	}
 	value := string(secret.Data["expanded-at"])

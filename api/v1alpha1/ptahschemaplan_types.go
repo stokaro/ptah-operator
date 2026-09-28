@@ -72,8 +72,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="a plan is immutable; generate a new plan instead"
 type PtahSchemaPlanSpec struct {
 	// ContractVersion versions plan publication and reconstruction separately
-	// from the Kubernetes API version. Version 3 is the only one.
-	// +kubebuilder:validation:Enum=3
+	// from the Kubernetes API version. Version 1 is the only one.
+	// +kubebuilder:validation:Enum=1
 	ContractVersion int32 `json:"contractVersion"`
 
 	// SchemaRef is the PtahSchema this plan was computed for.

@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
@@ -1056,7 +1057,7 @@ func (p *controlPlanePhase) suspendedSchemaFixture(t *testing.T) {
 	}
 	createdAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	p.planFingerprint, err = planBinding{
-		ContractVersion: 3, SchemaUID: string(p.schemaUID), PlanContentDigest: contentDigestFixture,
+		ContractVersion: int(fingerprint.CurrentPlanContractVersion), SchemaUID: string(p.schemaUID), PlanContentDigest: contentDigestFixture,
 		ArtifactDigest: artifactDigestFixture, CoordinationDigest: coordination, TargetIdentityDigest: targetDigestFixture,
 		ActualStateFingerprint: actualFingerprintFixture, DesiredStateFingerprint: desiredFingerprintFixture,
 		PolicyFingerprint: policyFingerprintFixture, VerificationPolicyUID: string(p.policyUID),
@@ -1083,7 +1084,7 @@ func (p *controlPlanePhase) suspendedSchemaFixture(t *testing.T) {
 			}},
 		},
 		"spec": map[string]any{
-			"contractVersion":          int64(3),
+			"contractVersion":          int64(fingerprint.CurrentPlanContractVersion),
 			"schemaRef":                map[string]any{"name": suspendedSchemaName, "uid": string(p.schemaUID)},
 			"fingerprint":              p.planFingerprint,
 			"contentDigest":            contentDigestFixture,

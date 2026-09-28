@@ -277,6 +277,12 @@ was given. `hack/e2e-timing-selftest.sh` is what keeps that true, and
   with whoever knows their database. A default is a silent edit to every
   resource already in a cluster, and it pins this API to a value the thing it
   configures is free to move.
+- Move a contract counter only when something a tagged release could have
+  stored or spoken changes. The counters -- the CRD schema version, the
+  controller-state version, the plan contracts, the runner protocol and the
+  rest -- all read 1 at v0.1.0, and
+  [the API compatibility page](docs/site/src/content/docs/support/api-compatibility.md#contract-counters)
+  lists where each is declared and what holds it.
 
 ## What a change to a controller owes
 

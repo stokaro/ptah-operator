@@ -87,6 +87,16 @@ func TestTheCompatibilityPagePromisesOnlyWhatIsEnforced(t *testing.T) {
 			refusal: "controller downgrade refused: ",
 		},
 		{
+			stated:  "it leaves only the schemas it names, by version and by the digest of every CRD",
+			source:  filepath.Join("hack", "crdschemahistory", "restart.go"),
+			refusal: "only from the tree it records",
+		},
+		{
+			stated:  "it arrives at version 1 and at nothing else",
+			source:  filepath.Join("hack", "crdschemahistory", "restart.go"),
+			refusal: "only at version 1, and the candidate is version",
+		},
+		{
 			stated:  "refuses a set that added or removed a kind",
 			source:  filepath.Join("hack", "crdschemahistory", "verifier.go"),
 			refusal: "added or removed CRDs require a separately reviewed migration",

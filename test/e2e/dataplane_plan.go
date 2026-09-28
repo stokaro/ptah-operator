@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -43,13 +44,13 @@ func parsePlanDocument(content []byte) (planDocument, error) {
 }
 
 // sealedPayloadLeak reports plan text a Plan result carries in the clear.
-// Since runner protocol 7 the frame's stdout is the plan encrypted to the
-// manager's per-process key, so the document whose digest the result names
-// must not be readable from the result itself: stdout is not empty, it is not
-// the document, and it holds neither the document's own "format_version" key
-// nor the opening of any statement in it. Each opening is searched for both as
-// SQL and as the JSON string a plan document spells it in, since a document
-// escapes a quote or a newline.
+// The frame's stdout is the plan encrypted to the manager's per-process key,
+// so the document whose digest the result names must not be readable from
+// the result itself: stdout is not empty, it is not the document, and it
+// holds neither the document's own "format_version" key nor the opening of
+// any statement in it. Each opening is searched for both as SQL and as the
+// JSON string a plan document spells it in, since a document escapes a quote
+// or a newline.
 //
 // An opening shorter than eight characters is not searched for: a fragment
 // that short can sit inside a base64 payload by chance, and the document's own
@@ -107,11 +108,10 @@ func jsonStringBody(value string) string {
 
 // rebuiltPlanDocument reads a plan document back the way the controller does:
 // from the PtahSchemaPlanChunk objects the plan names, in spec.chunks order,
-// each chunk's bytes concatenated. Since runner protocol 7 a Plan result's
-// stdout carries the plan sealed to the manager's per-process key, so the
-// chunks are the only place the plaintext a content digest covers can be read
-// from. A plan that names no chunk is refused rather than rebuilt as an empty
-// document.
+// each chunk's bytes concatenated. A Plan result's stdout carries the plan
+// sealed to the manager's per-process key, so the chunks are the only place
+// the plaintext a content digest covers can be read from. A plan that names
+// no chunk is refused rather than rebuilt as an empty document.
 func rebuiltPlanDocument(plan *ptahv1alpha1.PtahSchemaPlan,
 	chunk func(string) (*ptahv1alpha1.PtahSchemaPlanChunk, error),
 ) ([]byte, error) {
@@ -273,7 +273,7 @@ func committedPlan(plan *ptahv1alpha1.PtahSchemaPlan, schema, digest, dialect st
 ) error {
 	spec := plan.Spec
 	switch {
-	case spec.ContractVersion != 3 || spec.SchemaRef.Name != schema || spec.ArtifactDigest != digest || spec.Dialect != dialect:
+	case spec.ContractVersion != fingerprint.CurrentPlanContractVersion || spec.SchemaRef.Name != schema || spec.ArtifactDigest != digest || spec.Dialect != dialect:
 		return errors.New("the plan is not this schema's plan of this artifact")
 	case !executionEpoch.MatchString(spec.ExecutionBindingID) || spec.ControllerImage != controller.image ||
 		spec.ControllerRevision != controller.revision || spec.ControllerStateVersion != stateVersion:

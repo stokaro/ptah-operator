@@ -208,6 +208,13 @@ printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "the Makefile must declare CONTROLLER_STATE_VERSION as a positive integer"
 NEWER_CONTROLLER_STATE_VERSION=$((CONTROLLER_STATE_VERSION + 1))
 
+# The plan contract the candidate manager writes, read from the constant that
+# fingerprints it for the same reason.
+PLAN_CONTRACT_VERSION=$(sed -n 's/^[[:space:]]*CurrentPlanContractVersion int32 = \([1-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/fingerprint/fingerprint.go")
+printf '%s\n' "$PLAN_CONTRACT_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "internal/fingerprint must declare CurrentPlanContractVersion as a positive integer"
+
 printf '%s\n' "$PROOF_NAMESPACE" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
 	fail "E2E_PROOF_NAMESPACE must be a DNS-1123 label"
 [ "${#PROOF_NAMESPACE}" -le 63 ] ||
@@ -2139,8 +2146,8 @@ EOF
 		-policy "$running_apply_policy_file" \
 		-database-url "$running_apply_database_url" \
 		>"$WORK_DIR/running-apply-bundle.json"
-	jq -e '
-      .plan.spec.contractVersion == 3 and
+	jq -e --argjson contract "$PLAN_CONTRACT_VERSION" '
+      .plan.spec.contractVersion == $contract and
       (.plan.spec.controllerImage | test("^[^[:space:]@]+@sha256:[0-9a-f]{64}$")) and
       (.plan.spec.controllerRevision | length) > 0 and
       .plan.spec.controllerStateVersion >= 1 and
@@ -2629,7 +2636,7 @@ kind: PtahSchemaPlan
 metadata:
   name: $PROOF_PLAN
 spec:
-  contractVersion: 3
+  contractVersion: $PLAN_CONTRACT_VERSION
   schemaRef: {name: $PROOF_SCHEMA, uid: $schema_uid}
   fingerprint: plan-fingerprint
   contentDigest: sha256:content

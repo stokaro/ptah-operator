@@ -26,7 +26,15 @@ func TestCRDBootstrapRendersOnlyWhatTheClusterDoesNotHold(t *testing.T) {
 	if err != nil {
 		t.Skip("Helm is required for live lookup render tests")
 	}
-	chart := chartPath(t)
+	// The template matters to the release after this one: an added kind is
+	// one the cluster does not hold yet. So the chart is rendered as that
+	// release would ship it, its CRDs stamped one schema version past this
+	// one's, over a cluster this release installed. The gap between the two is
+	// what says an absent CRD is an addition, and deriving both from the
+	// current version keeps every installed version a real one.
+	installedVersion := strconv.FormatUint(CurrentCRDSchemaVersion, 10)
+	nextVersion := strconv.FormatUint(CurrentCRDSchemaVersion+1, 10)
+	chart := chartStampedAt(t, installedVersion, nextVersion)
 
 	installed := func(names ...string) map[string]bool {
 		present := make(map[string]bool, len(names))
@@ -39,27 +47,23 @@ func TestCRDBootstrapRendersOnlyWhatTheClusterDoesNotHold(t *testing.T) {
 	// Derived from the generated set rather than named, so adding a kind does
 	// not quietly turn a case into a different one.
 	added := expectedNames[0]
-	// What a cluster from before this release carries, and what this release
-	// stamps: the gap between them is what says an absent CRD is an addition.
-	older := strconv.FormatUint(CurrentCRDSchemaVersion-1, 10)
-	current := strconv.FormatUint(CurrentCRDSchemaVersion, 10)
 	tests := []struct {
 		name      string
 		present   map[string]bool
 		installed string
 		want      []string
 	}{
-		{name: "nothing installed", present: installed(), installed: older, want: expectedNames},
+		{name: "nothing installed", present: installed(), installed: installedVersion, want: expectedNames},
 		{
 			name: "one kind added", present: installed(expectedNames[1:]...),
-			installed: older, want: []string{added},
+			installed: installedVersion, want: []string{added},
 		},
-		{name: "every kind installed", present: installed(expectedNames...), installed: older, want: nil},
+		{name: "every kind installed", present: installed(expectedNames...), installed: installedVersion, want: nil},
 		{
 			// A CRD absent while the cluster already carries what this release
 			// stamps was deleted, and the manager's refusal owns that case.
 			name: "one kind deleted", present: installed(expectedNames[1:]...),
-			installed: current, want: nil,
+			installed: nextVersion, want: nil,
 		},
 	}
 
@@ -98,6 +102,39 @@ func TestCRDBootstrapRendersOnlyWhatTheClusterDoesNotHold(t *testing.T) {
 			}
 		})
 	}
+}
+
+// chartStampedAt copies the chart and moves the schema version its CRDs carry
+// from one value to another, the way the next release's make manifests would.
+// Every CRD has to carry the version it is moved from, or the copy is not the
+// chart this release ships.
+func chartStampedAt(t *testing.T, from, to string) string {
+	t.Helper()
+	copied := filepath.Join(t.TempDir(), "ptah-operator")
+	if err := os.CopyFS(copied, os.DirFS(chartPath(t))); err != nil {
+		t.Fatalf("copy the chart: %v", err)
+	}
+	paths, err := filepath.Glob(filepath.Join(copied, "crds", "*.yaml"))
+	if err != nil || len(paths) != len(expectedNames) {
+		t.Fatalf("the chart copy holds %d CRDs (%v), want %d", len(paths), err, len(expectedNames))
+	}
+	stamp := func(version string) string {
+		return "\n    " + SchemaVersionAnnotation + ": \"" + version + "\"\n"
+	}
+	for _, path := range paths {
+		contents, readErr := os.ReadFile(path) //nolint:gosec // A path this test globbed inside its own copy.
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.Count(string(contents), stamp(from)) != 1 {
+			t.Fatalf("%s does not carry %s=%s once", filepath.Base(path), SchemaVersionAnnotation, from)
+		}
+		restamped := strings.Replace(string(contents), stamp(from), stamp(to), 1)
+		if writeErr := os.WriteFile(path, []byte(restamped), 0o600); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	return copied
 }
 
 func crdBootstrapKubeconfig(t *testing.T, serverURL string) string {

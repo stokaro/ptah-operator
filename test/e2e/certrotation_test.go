@@ -18,6 +18,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/stokaro/ptah-operator/internal/certrotation"
 )
 
 // Every check below is held to the reading it must accept and to the readings
@@ -327,7 +329,7 @@ func TestExpandedTransitionTime(t *testing.T) {
 		return &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "cert-stage", Namespace: "operator"},
 			Data: map[string][]byte{
-				"format":           []byte("v3"),
+				"format":           []byte(certrotation.StagingFormat),
 				"phase":            []byte("expanded"),
 				"expanded-at":      []byte("2026-09-26T12:00:00Z"),
 				"candidate.ca.key": []byte("CA-PRIVATE-KEY-FIXTURE"),
@@ -340,7 +342,7 @@ func TestExpandedTransitionTime(t *testing.T) {
 	}{
 		{name: "expanded record"},
 		{name: "prepared record", mutate: func(s *corev1.Secret) { s.Data["phase"] = []byte("prepared") }},
-		{name: "one-pass record", mutate: func(s *corev1.Secret) { s.Data["format"] = []byte("v2") }},
+		{name: "record of another format", mutate: func(s *corev1.Secret) { s.Data["format"] = []byte("v2") }},
 		{name: "fractional time", mutate: func(s *corev1.Secret) { s.Data["expanded-at"] = []byte("2026-09-26T12:00:00.5Z") }},
 		{name: "offset time", mutate: func(s *corev1.Secret) { s.Data["expanded-at"] = []byte("2026-09-26T14:00:00+02:00") }},
 		{name: "not a date", mutate: func(s *corev1.Secret) { s.Data["expanded-at"] = []byte("2026-13-45T12:00:00Z") }},

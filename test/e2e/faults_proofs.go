@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -958,7 +959,7 @@ func finalAwaitsFresh(final *ptahv1alpha1.PtahSchema, fresh *ptahv1alpha1.PtahSc
 		current.VerificationPolicyUID != spec.VerificationPolicyUID ||
 		current.VerificationPolicyDigest != spec.VerificationPolicyDigest:
 		return errors.New("the final schema's plan disagrees with the fresh plan's digests")
-	case spec.ContractVersion != 3:
+	case spec.ContractVersion != fingerprint.CurrentPlanContractVersion:
 		return fmt.Errorf("the fresh plan is contract version %d", spec.ContractVersion)
 	case !exactControllerPlan(current, status.ExecutionBinding, controller, stateVersion):
 		return errors.New("the final schema's plan is not bound to this manager's execution binding")

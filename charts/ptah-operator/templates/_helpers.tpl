@@ -134,9 +134,9 @@ app.kubernetes.io/component: controller
 {{- include "ptah-operator.crdManagerServiceAccountName" . -}}
 {{- end -}}
 
-{{- define "ptah-operator.controllerStateVersion" -}}2{{- end -}}
+{{- define "ptah-operator.controllerStateVersion" -}}1{{- end -}}
 
-{{- define "ptah-operator.admissionContractVersion" -}}2{{- end -}}
+{{- define "ptah-operator.admissionContractVersion" -}}1{{- end -}}
 
 {{- /* The release's own identity: what names its cluster-scoped objects apart
       from another release's, and stays the same across its upgrades. */ -}}
