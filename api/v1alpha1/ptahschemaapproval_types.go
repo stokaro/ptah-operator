@@ -2,7 +2,6 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 // ApprovalIdentity is stamped from the authenticated admission request. The
@@ -18,6 +17,15 @@ type ApprovalIdentity struct {
 }
 
 // PtahSchemaApprovalSpec binds one authenticated decision to one exact plan.
+//
+// The decision is three identifiers: the schema, the plan, and the plan's
+// fingerprint. The fingerprint is the plan's complete identity -- the
+// artifact, the observed and desired state, the policy, the verification
+// policy, the target, the execution binding and what the manager read out of
+// the plan bytes -- and a plan is immutable, so an approval that names a plan
+// by UID and fingerprint names every one of those without carrying a copy.
+// Admission checks the three against the live plan; the controller checks
+// them again before Apply.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="an approval is immutable; create a new approval instead"
 type PtahSchemaApprovalSpec struct {
 	// SchemaRef is the resource the approved change belongs to.
@@ -25,52 +33,10 @@ type PtahSchemaApprovalSpec struct {
 	// PlanRef is the exact plan being approved. A plan is immutable, so this
 	// names bytes rather than an intention.
 	PlanRef ImmutableObjectReference `json:"planRef"`
-
-	// PlanFingerprint is the plan's complete approval identity. Everything
-	// below is the same identity written out, so a reader can see what was
-	// approved without fetching the plan, and the admission that accepts this
-	// approval checks each part against the live plan.
+	// PlanFingerprint is the plan's spec.fingerprint: its complete approval
+	// identity. A plan under a different binding has a different fingerprint,
+	// so an approval that names this one cannot carry over to it.
 	PlanFingerprint string `json:"planFingerprint"`
-	// ArtifactDigest is the OCI artifact the approved plan was computed from.
-	ArtifactDigest string `json:"artifactDigest"`
-	// CoordinationDigest is the database realm the approved apply takes its
-	// turn in.
-	CoordinationDigest string `json:"coordinationDigest"`
-	// TargetIdentityDigest is the database the approved plan was computed
-	// against.
-	TargetIdentityDigest string `json:"targetIdentityDigest"`
-	// ActualStateFingerprint is the observed database state that was planned
-	// from. A database that has moved since makes this approval stale.
-	ActualStateFingerprint string `json:"actualStateFingerprint"`
-	// DesiredStateFingerprint is the state the artifact declared.
-	DesiredStateFingerprint string `json:"desiredStateFingerprint"`
-	// PolicyFingerprint is the spec.policy the plan was computed under, so an
-	// edited policy retires this decision instead of inheriting it.
-	PolicyFingerprint string `json:"policyFingerprint"`
-	// VerificationPolicyUID is the verification policy object that accepted the
-	// artifact.
-	VerificationPolicyUID types.UID `json:"verificationPolicyUID"`
-	// VerificationPolicyDigest is that policy's content at the time.
-	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
-	// ExecutionBindingID is the execution epoch the approved plan belongs to. It
-	// changes whenever a component that decides what the plan means when it
-	// runs changes, including a change back to byte-identical versions, so an
-	// approval cannot survive such a rollout unseen. A manager upgrade that
-	// changes none of them keeps the epoch and this approval.
-	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID"`
-	// ControllerStateVersion is the controller-state semantics the approved
-	// apply must be dispatched under.
-	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32 `json:"controllerStateVersion"`
-	// PtahVersion is the Ptah build the approved apply must run.
-	PtahVersion string `json:"ptahVersion"`
-	// ExecutorImage is the digest-pinned image it must run in.
-	ExecutorImage string `json:"executorImage"`
-	// RunnerProtocolVersion is the protocol the runner that supervises it must
-	// speak: what the runner enforces inside the Pod and the result frame it
-	// returns.
-	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 
 	// Approver is stamped by the mutating webhook from the authenticated
 	// request. Whatever an API client writes here is replaced.

@@ -10,11 +10,15 @@ schema. The approver must explicitly select all three stable identifiers:
 - plan name and UID;
 - plan fingerprint.
 
-The admission webhook reads the current plan directly from the API server and
-fills the remaining derived bindings when they are omitted. It never silently
-corrects a conflicting value. The validating webhook then checks the complete
-post-mutation object against the current schema, plan storage commit, observed
-database state, artifact digest, policy bytes, and execution images.
+Those three are the whole of what an approval says about the plan. The plan's
+fingerprint is its complete identity -- the artifact, the observed and desired
+state, the policy, the verification policy, the target and the execution
+binding -- and a plan is immutable, so naming it by UID and fingerprint names
+every one of them; the approval carries no copy. The mutating webhook reads the
+plan directly from the API server, holds the three identifiers to it, and
+stamps who approved and when. The validating webhook then checks the object
+against the current schema, the plan's storage commit, the observed database
+state, the artifact digest, the policy bytes and the execution binding.
 
 Approvals are required where `spec.policy.apply` asks for them, and for any
 schema plan that
@@ -72,7 +76,7 @@ the manager's own key before writing it, so those copies hold ciphertext, and
 detail.
 
 Fill those values in the approval and use server-side dry run to inspect the
-object after authenticated identity and derived bindings are stamped:
+object after the authenticated identity is stamped:
 
 ```sh
 kubectl apply --server-side --dry-run=server -f examples/approval.yaml -o yaml
@@ -80,8 +84,9 @@ kubectl apply -f examples/approval.yaml
 ```
 
 Creation is rejected if the plan is already stale, its immutable storage is
-not committed, the verification-policy ConfigMap changed, or a supplied
-derived field conflicts. Creation is also rejected unless the schema is
+not committed, the verification-policy ConfigMap changed, or the approval
+names a plan of another schema, a plan UID the plan no longer has, or a
+fingerprint the plan does not carry. Creation is also rejected unless the schema is
 currently waiting for exactly one approval and no operation or recorded
 approval already owns that decision. Concurrent duplicates are retired, and
 the accepted approval is consumed only at the persisted Apply dispatch

@@ -90,29 +90,28 @@ steps:
       exit: 0
       stdout_contains: ['"planFingerprint":"sha256:']
 
-  - note: Create it. The webhook stamps who you are and binds the history the plan was computed against.
+  - note: Create it. The webhook stamps who you are and holds the three to the live plan.
     run: kubectl -n "$NAMESPACE" create -f demo/.lab/migration-approval.json
     sync: approved
     expect:
       exit: 0
       stdout_contains: [created]
 
-  - note: The binding covers the history too, so an approval cannot outlive another run.
+  - note: The plan's fingerprint covers the history, so an approval cannot outlive another run.
     run: |
+      jq -r '.spec | {fingerprint, historyFingerprint, artifactDigest}' demo/.lab/migration-plan.json
       kubectl -n "$NAMESPACE" get ptahmigrationapproval shipments-v1 -o json \
-        | jq -r '.spec | {approver: .approver.username, historyFingerprint, artifactDigest, ptahVersion}'
+        | jq -r '.spec | {approver: .approver.username, planFingerprint}'
     expect:
       exit: 0
-      stdout_contains: [approver, historyFingerprint, artifactDigest]
+      stdout_contains: [historyFingerprint, approver, planFingerprint]
       resource:
         kind: ptahmigrationapproval
         name: shipments-v1
         fields:
           - path: spec.approver.username
             notEmpty: true
-          - path: spec.historyFingerprint
-            notEmpty: true
-          - path: spec.artifactDigest
+          - path: spec.planFingerprint
             notEmpty: true
           - path: spec.mutationRequestUID
             notEmpty: true

@@ -1252,39 +1252,25 @@ approval_json() {
 printf '%s\n' 'e2e assertions: checking approval stamping and exact binding'
 approval_json "$APPROVAL_NAME" "$plan_fingerprint" >"$approval_file"
 k create -f "$approval_file" >/dev/null
+# The stored approval is the decision as written -- schema, plan and the
+# plan's fingerprint -- plus who made it and when. The plan's own bindings
+# stay on the plan: the fingerprint names every one of them, so the spec
+# carries exactly these six keys and nothing copied from the plan.
 k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
 	jq -e \
-		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
-		--arg artifactDigest "$artifact_digest" \
-		--arg coordinationDigest "$coordination_digest" \
-		--arg targetDigest "$target_digest" \
-		--arg actualFingerprint "$actual_fingerprint" \
-		--arg desiredFingerprint "$desired_fingerprint" \
-		--arg policyFingerprint "$policy_fingerprint" \
-		--arg verificationPolicyUID "$policy_uid" \
-		--arg verificationPolicyDigest "$policy_digest" \
-		--arg executionBindingID "$execution_binding_id" \
-		--argjson controllerStateVersion "$controller_state_version" \
-		--arg ptahVersion "$PTAH_VERSION" \
-		--arg executorImage "$EXECUTOR_IMAGE" '
+		--arg schemaName "$SCHEMA_NAME" \
+		--arg schemaUID "$schema_uid" \
+		--arg planName "$PLAN_NAME" \
+		--arg planUID "$plan_uid" \
+		--arg fingerprint "$plan_fingerprint" '
       .spec.approver.username != "" and
       .spec.approvedAt != null and
       .spec.mutationRequestUID != "" and
-      .spec.artifactDigest == $artifactDigest and
-      .spec.coordinationDigest == $coordinationDigest and
-      .spec.targetIdentityDigest == $targetDigest and
-      .spec.actualStateFingerprint == $actualFingerprint and
-      .spec.desiredStateFingerprint == $desiredFingerprint and
-      .spec.policyFingerprint == $policyFingerprint and
-      .spec.verificationPolicyUID == $verificationPolicyUID and
-      .spec.verificationPolicyDigest == $verificationPolicyDigest and
-      .spec.executionBindingID == $executionBindingID and
-      .spec.controllerStateVersion == $controllerStateVersion and
-      .spec.ptahVersion == $ptahVersion and
-      .spec.executorImage == $executorImage and
-      .spec.runnerProtocolVersion == $runnerProtocolVersion and
-      (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not)
-    ' >/dev/null || fail "mutating webhook did not stamp identity and hydrate the plan binding"
+      .spec.schemaRef == {name: $schemaName, uid: $schemaUID} and
+      .spec.planRef == {name: $planName, uid: $planUID} and
+      .spec.planFingerprint == $fingerprint and
+      (.spec | keys) == ["approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"]
+    ' >/dev/null || fail "mutating webhook did not stamp identity onto the exact decision"
 
 for missing_binding in schema-name schema-uid plan-name plan-uid plan-fingerprint; do
 	case "$missing_binding" in
@@ -1316,27 +1302,29 @@ for missing_binding in schema-name schema-uid plan-name plan-uid plan-fingerprin
 		"$missing_fingerprint_file" "$error_file"
 done
 
-jq --arg name e2e-conflicting-artifact \
-	--arg digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa '
-    .metadata.name = $name | .spec.artifactDigest = $digest
-  ' "$approval_file" >"$invalid_approval_file"
-expect_denied "approval with a conflicting derived artifact binding" \
-	'artifact digest conflicts with the immutable plan' \
-	"$invalid_approval_file" "$error_file"
-jq --arg name e2e-conflicting-executor-image \
+# A binding of the plan written onto the approval is neither corrected nor
+# compared: the API has no such field, so the server refuses the document
+# before any webhook reads it.
+jq --arg name e2e-copied-executor-image \
 	--arg image 'e2e.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' '
     .metadata.name = $name | .spec.executorImage = $image
   ' "$approval_file" >"$invalid_approval_file"
-expect_denied "approval with a conflicting executor image binding" \
-	'executor image conflicts with the immutable plan' \
+expect_denied "approval carrying a plan binding the API dropped" \
+	'unknown field "spec\.executorImage"' \
 	"$invalid_approval_file" "$error_file"
-# Any runner protocol other than the plan's own version 5 conflicts with it;
-# 4 is just a value that differs.
-jq --arg name e2e-conflicting-protocol '
-    .metadata.name = $name | .spec.runnerProtocolVersion = 4
+# The plan named exists and carries the fingerprint the approval names; the
+# schema the approval names is not the one the plan was published for.
+jq --arg name e2e-another-schema '
+    .metadata.name = $name | .spec.schemaRef.uid = "00000000-0000-4000-8000-000000000000"
   ' "$approval_file" >"$invalid_approval_file"
-expect_denied "approval with a conflicting derived protocol binding" \
-	'runner protocol version conflicts with the immutable plan' \
+expect_denied "approval naming a plan of another schema" \
+	'schema reference does not match the plan' \
+	"$invalid_approval_file" "$error_file"
+jq --arg name e2e-replaced-plan '
+    .metadata.name = $name | .spec.planRef.uid = "00000000-0000-4000-8000-000000000000"
+  ' "$approval_file" >"$invalid_approval_file"
+expect_denied "approval naming a replaced plan" \
+	'plan UID does not match; the plan was replaced' \
 	"$invalid_approval_file" "$error_file"
 
 bad_fingerprint=sha256:8888888888888888888888888888888888888888888888888888888888888888

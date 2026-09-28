@@ -154,12 +154,13 @@ partial baseline remains a set-integrity failure rather than a bootstrap.
 
 The hook, and the manager's init verifier before a manager starts, scan every
 kind that stores a controller-state version across the cluster: `PtahSchema`,
-`PtahSchemaPlan`, `PtahSchemaApproval`, `PtahMigration`, `PtahMigrationPlan`,
-and `PtahMigrationApproval`. They check controller-state versions in
-`PtahSchema.status.executionBinding`, `status.plan`, `status.applied`, and
-`status.pendingObservation.plan`, in `PtahMigration.status.executionBinding`,
-and in the immutable `spec.controllerStateVersion` carried by every plan and
-approval.
+`PtahSchemaPlan`, `PtahMigration` and `PtahMigrationPlan`. They check
+controller-state versions in `PtahSchema.status.executionBinding`,
+`status.plan`, `status.applied`, and `status.pendingObservation.plan`, in
+`PtahMigration.status.executionBinding`, and in the immutable
+`spec.controllerStateVersion` carried by every plan. An approval stores none:
+it names a plan by UID and fingerprint, and the plan carries the version the
+approved decision was made under.
 Every kind is read through exhaustive pagination anchored to its own single
 collection `resourceVersion`. A nonzero version newer than the binary's
 supported controller-state version blocks the release, even if another stored

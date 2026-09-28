@@ -146,8 +146,9 @@ An approval names one plan, and the reviewer reads the SQL rather than a hash.
 An approval is an independent immutable resource that must select the schema name
 and UID, the plan name and UID, and the plan fingerprint. Creation is rejected if
 the plan is already stale, its storage is not committed, the policy ConfigMap
-changed, a derived field conflicts, or the schema is not waiting for exactly one
-approval. Updates cannot change `spec`; create a new approval for a new plan. See
+changed, the approval names a plan of another schema or a fingerprint the plan
+does not carry, or the schema is not waiting for exactly one approval. Updates
+cannot change `spec`; create a new approval for a new plan. See
 [Exact-plan approvals](../use/approvals/).
 
 ### The reviewer can see the plan but not the SQL. Is that intended? {#reviewer-cannot-read-sql}

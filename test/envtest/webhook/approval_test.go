@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"testing"
 
@@ -194,27 +195,26 @@ func TestApprovalWebhooks(t *testing.T) {
 			t.Fatalf("stored approval has approvedAt %v and mutationRequestUID %q; the mutating webhook stamps both",
 				spec.ApprovedAt, spec.MutationRequestUID)
 		}
-		plan := fixture.plan.Spec
-		for field, pair := range map[string][2]string{
-			"artifactDigest":           {spec.ArtifactDigest, plan.ArtifactDigest},
-			"coordinationDigest":       {spec.CoordinationDigest, plan.CoordinationDigest},
-			"targetIdentityDigest":     {spec.TargetIdentityDigest, plan.TargetIdentityDigest},
-			"actualStateFingerprint":   {spec.ActualStateFingerprint, plan.ActualStateFingerprint},
-			"desiredStateFingerprint":  {spec.DesiredStateFingerprint, plan.DesiredStateFingerprint},
-			"policyFingerprint":        {spec.PolicyFingerprint, plan.PolicyFingerprint},
-			"verificationPolicyUID":    {string(spec.VerificationPolicyUID), string(plan.VerificationPolicyUID)},
-			"verificationPolicyDigest": {spec.VerificationPolicyDigest, plan.VerificationPolicyDigest},
-			"executionBindingID":       {spec.ExecutionBindingID, plan.ExecutionBindingID},
-			"ptahVersion":              {spec.PtahVersion, plan.PtahVersion},
-			"executorImage":            {spec.ExecutorImage, plan.ExecutorImage},
-		} {
-			if pair[0] != pair[1] {
-				t.Errorf("stored approval %s = %q, want the plan's %q", field, pair[0], pair[1])
-			}
+		// The decision is stored as written: the schema, the plan and the
+		// plan's fingerprint, and nothing of the plan's own bindings beside
+		// them. What the API server holds is read back unstructured, so a
+		// field the webhook or the schema let through shows up by name.
+		wantSchema := operatorv1alpha1.ImmutableObjectReference{Name: fixture.schema.Name, UID: fixture.schema.UID}
+		wantPlan := operatorv1alpha1.ImmutableObjectReference{Name: fixture.plan.Name, UID: fixture.plan.UID}
+		if spec.SchemaRef != wantSchema || spec.PlanRef != wantPlan || spec.PlanFingerprint != fixture.plan.Spec.Fingerprint {
+			t.Fatalf("stored decision = %+v/%+v/%s, want %+v/%+v/%s",
+				spec.SchemaRef, spec.PlanRef, spec.PlanFingerprint, wantSchema, wantPlan, fixture.plan.Spec.Fingerprint)
 		}
-		if spec.RunnerProtocolVersion != plan.RunnerProtocolVersion || spec.ControllerStateVersion != plan.ControllerStateVersion {
-			t.Errorf("stored approval runner protocol %d and state version %d, want the plan's %d and %d",
-				spec.RunnerProtocolVersion, spec.ControllerStateVersion, plan.RunnerProtocolVersion, plan.ControllerStateVersion)
+		raw := &unstructured.Unstructured{}
+		raw.SetGroupVersionKind(operatorv1alpha1.GroupVersion.WithKind("PtahSchemaApproval"))
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(approval), raw); err != nil {
+			t.Fatalf("read PtahSchemaApproval %s back unstructured: %v", client.ObjectKeyFromObject(approval), err)
+		}
+		storedSpec, _, _ := unstructured.NestedMap(raw.Object, "spec")
+		fields := slices.Sorted(maps.Keys(storedSpec))
+		wantFields := []string{"approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"}
+		if !slices.Equal(fields, wantFields) {
+			t.Fatalf("stored approval spec carries %v, want exactly %v", fields, wantFields)
 		}
 	})
 
@@ -223,6 +223,26 @@ func TestApprovalWebhooks(t *testing.T) {
 		approval := fixture.approval("approve-another-plan", digest("9"))
 		err := approverClient(t).Create(ctx, approval)
 		requireDenied(t, err, "mapproval.operator.ptah.run", "approval plan fingerprint does not match the immutable plan")
+	})
+
+	t.Run("an approval for a plan of another schema is refused", func(t *testing.T) {
+		t.Parallel()
+		// A plan that exists in the namespace and carries the fingerprint the
+		// approval names, published for a schema this approval does not name.
+		other := fixture.plan.DeepCopy()
+		other.ObjectMeta = metav1.ObjectMeta{Namespace: fixture.namespace, Name: "ptah-plan-fedcba9876543210fedcba98"}
+		other.Spec.SchemaRef = operatorv1alpha1.ImmutableObjectReference{Name: "other", UID: "9d1c2b3a-4e5f-4a6b-8c7d-0e1f2a3b4c5d"}
+		if err := admin.Create(ctx, other); err != nil {
+			t.Fatalf("create PtahSchemaPlan %s/%s: %v", fixture.namespace, other.Name, err)
+		}
+		approval := fixture.approval("approve-another-schemas-plan", fixture.plan.Spec.Fingerprint)
+		if err := unstructured.SetNestedField(approval.Object, map[string]any{
+			"name": other.Name, "uid": string(other.UID),
+		}, "spec", "planRef"); err != nil {
+			t.Fatal(err)
+		}
+		err := approverClient(t).Create(ctx, approval)
+		requireDenied(t, err, "mapproval.operator.ptah.run", "approval schema reference does not match the plan")
 	})
 
 	t.Run("an approval for a replaced plan is refused", func(t *testing.T) {
@@ -250,7 +270,7 @@ func TestApprovalWebhooks(t *testing.T) {
 			},
 		}}
 		err := approverClient(t).Create(ctx, approval)
-		requireDenied(t, err, "mmigrationapproval.operator.ptah.run", "read referenced migration plan for approval defaults")
+		requireDenied(t, err, "mmigrationapproval.operator.ptah.run", "read referenced migration plan")
 	})
 
 	t.Run("a stored approval takes a metadata update and keeps its decision", func(t *testing.T) {

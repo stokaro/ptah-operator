@@ -642,9 +642,10 @@ create_reference_resource() {
 	k create -f "$RESOURCE_FILE" >/dev/null
 }
 
-# approve_reference_plan writes the approval the current plan needs, with every
-# binding taken from the plan itself. The webhook hydrates and re-derives them,
-# so an approval that named its own values would be refused.
+# approve_reference_plan writes the approval the current plan needs: the
+# schema, the plan by name and UID, and the plan's own fingerprint, read off
+# the plan itself. The webhook holds all three to the live plan, so an
+# approval that named another value would be refused.
 approve_reference_plan() {
 	approval_name=$1
 	approval_plan=$2

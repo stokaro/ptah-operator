@@ -945,15 +945,22 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		dispatchedApplyUnknown := operation.Type == operatorv1alpha1.OperationApply &&
 			schemaMayHaveDispatched(operation) &&
 			(apierrors.IsNotFound(err) || err == nil && (operation.JobUID != "" && operation.JobUID != job.UID || !ownedByUID(job.OwnerReferences, schema.UID)))
-		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) {
-			if operationNeedsTargetLock(schema) {
-				acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
-				if lockErr != nil {
-					return ctrl.Result{}, lockErr
-				}
-				if !acquired {
-					return ctrl.Result{RequeueAfter: requeue}, nil
-				}
+		// A running Job is waited on only while the claim holds the database
+		// lock: an Apply, a Plan, or the Observe that proves an Apply. The lock
+		// goes back when the claim is dropped, and another claimant must not
+		// get it while this one's Pod can still reach the database. A Resolve,
+		// a Verify or an ordinary Observe holds nothing, so its claim is
+		// discarded and cascading deletion takes the Job, as a PtahMigration
+		// discards a read-only claim. Waiting on it would hold the resource
+		// for the Job's whole deadline when its Pod is refused at admission
+		// and never runs.
+		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) && operationNeedsTargetLock(schema) {
+			acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
+			if lockErr != nil {
+				return ctrl.Result{}, lockErr
+			}
+			if !acquired {
+				return ctrl.Result{RequeueAfter: requeue}, nil
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
@@ -4992,6 +4999,13 @@ func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *oper
 	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan))
 }
 
+// approvalMatchesPlanStatus reports whether an approval names exactly this
+// schema's current plan: the schema by name and UID, the plan by name and UID,
+// and the plan by its fingerprint. The fingerprint binds every input the plan
+// was decided from and a plan is immutable, so nothing else about the plan is
+// compared here: a plan computed under another artifact, state, policy or
+// execution binding is another plan, with another fingerprint and another
+// UID, and an approval that named this one does not name it.
 func approvalMatchesPlanStatus(
 	approval *operatorv1alpha1.PtahSchemaApproval,
 	schema *operatorv1alpha1.PtahSchema,
@@ -5000,18 +5014,7 @@ func approvalMatchesPlanStatus(
 	return approval != nil && schema != nil && plan != nil &&
 		approval.Spec.SchemaRef.Name == schema.Name && approval.Spec.SchemaRef.UID == schema.UID &&
 		approval.Spec.PlanRef.Name == plan.Name && approval.Spec.PlanRef.UID == plan.UID &&
-		approval.Spec.PlanFingerprint == plan.Fingerprint && approval.Spec.ArtifactDigest == plan.ArtifactDigest &&
-		approval.Spec.CoordinationDigest == plan.CoordinationDigest &&
-		approval.Spec.TargetIdentityDigest == plan.TargetIdentityDigest &&
-		approval.Spec.ActualStateFingerprint == plan.ActualStateFingerprint &&
-		approval.Spec.DesiredStateFingerprint == plan.DesiredStateFingerprint &&
-		approval.Spec.PolicyFingerprint == plan.PolicyFingerprint &&
-		approval.Spec.VerificationPolicyUID == plan.VerificationPolicyUID &&
-		approval.Spec.VerificationPolicyDigest == plan.VerificationPolicyDigest &&
-		approval.Spec.ExecutionBindingID != "" && approval.Spec.ExecutionBindingID == plan.ExecutionBindingID &&
-		approval.Spec.ControllerStateVersion >= 1 && approval.Spec.ControllerStateVersion == plan.ControllerStateVersion &&
-		approval.Spec.PtahVersion == plan.PtahVersion && approval.Spec.ExecutorImage == plan.ExecutorImage &&
-		approval.Spec.RunnerProtocolVersion == plan.RunnerProtocolVersion &&
+		approval.Spec.PlanFingerprint != "" && approval.Spec.PlanFingerprint == plan.Fingerprint &&
 		!approval.Spec.ApprovedAt.IsZero() && approval.Spec.Approver.Username != "" && approval.Spec.MutationRequestUID != ""
 }
 

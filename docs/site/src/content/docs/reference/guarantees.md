@@ -129,9 +129,9 @@ compiled for an older contract refuses rather than interpreting it.
 | | `PtahSchema` | `PtahMigration` |
 | --- | --- | --- |
 | Enforced in | `VerifyStoredControllerState`, at startup and before every CRD update | the same function, over the same scan |
-| Stored at | `status.executionBinding`, `status.plan`, `status.applied`, `status.pendingObservation.plan`, and the plan and approval specs | `status.executionBinding`, and the plan and approval specs |
+| Stored at | `status.executionBinding`, `status.plan`, `status.applied`, `status.pendingObservation.plan`, and the plan spec | `status.executionBinding`, and the plan spec |
 | Failure behavior | the upgrade fails and the active release keeps running | the same |
-| Proved by | `TestRuntimeVerifierRejectsStoredFutureControllerState` | the same test, over the same scan of all six kinds |
+| Proved by | `TestRuntimeVerifierRejectsStoredFutureControllerState` | the same test, over the same scan of the four kinds that store one |
 
 Which manager reads which state, and what an operator sees when the fence
 refuses, is on [Releases and provenance](../../support/releases/).

@@ -71,9 +71,6 @@ func (h *MigrationApprovalHandler) Handle(ctx context.Context, req cradmission.R
 
 	if h.Mutate {
 		h.stampMigrationIdentity(approval, req.UserInfo, req.UID)
-		if err := h.hydrateMigrationBindings(ctx, approval); err != nil {
-			return denialFor(err)
-		}
 		if err := h.validateMigrationBinding(ctx, approval); err != nil {
 			return denialFor(err)
 		}
@@ -91,82 +88,6 @@ func (h *MigrationApprovalHandler) Handle(ctx context.Context, req cradmission.R
 		return denialFor(err)
 	}
 	return cradmission.Allowed("approval is bound to the current immutable migration plan")
-}
-
-// hydrateMigrationBindings copies the plan's own bindings onto an approval that
-// omitted them, and refuses one that names them differently. The approver still
-// has to identify the migration, the plan and its fingerprint explicitly: those
-// three are the decision, and the rest is transcription.
-func (h *MigrationApprovalHandler) hydrateMigrationBindings(
-	ctx context.Context,
-	approval *operatorv1alpha1.PtahMigrationApproval,
-) error {
-	if strings.TrimSpace(approval.Spec.MigrationRef.Name) == "" || approval.Spec.MigrationRef.UID == "" {
-		return fmt.Errorf("approval must explicitly identify the migration name and UID")
-	}
-	if strings.TrimSpace(approval.Spec.PlanRef.Name) == "" || approval.Spec.PlanRef.UID == "" {
-		return fmt.Errorf("approval must explicitly identify the plan name and UID")
-	}
-	if strings.TrimSpace(approval.Spec.PlanFingerprint) == "" {
-		return fmt.Errorf("approval must explicitly identify the plan fingerprint")
-	}
-
-	plan := &operatorv1alpha1.PtahMigrationPlan{}
-	key := client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}
-	if err := h.Reader.Get(ctx, key, plan); err != nil {
-		return fmt.Errorf("read referenced migration plan for approval defaults: %w", err)
-	}
-	if plan.UID != approval.Spec.PlanRef.UID {
-		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
-	}
-	if plan.Spec.ContractVersion != migrationplan.ContractVersion {
-		return fmt.Errorf("referenced plan contract version %d is not the one this manager publishes", plan.Spec.ContractVersion)
-	}
-	if err := h.Execution.binds(
-		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
-	); err != nil {
-		return err
-	}
-	if plan.Spec.MigrationRef != approval.Spec.MigrationRef {
-		return fmt.Errorf("approval migration reference does not match the plan")
-	}
-	if approval.Spec.PlanFingerprint != plan.Spec.Fingerprint {
-		return fmt.Errorf("approval plan fingerprint does not match the immutable plan")
-	}
-
-	for _, binding := range []struct {
-		name  string
-		value *string
-		want  string
-	}{
-		{"history fingerprint", &approval.Spec.HistoryFingerprint, plan.Spec.HistoryFingerprint},
-		{"artifact digest", &approval.Spec.ArtifactDigest, plan.Spec.ArtifactDigest},
-		{"coordination digest", &approval.Spec.CoordinationDigest, plan.Spec.CoordinationDigest},
-		{"target identity digest", &approval.Spec.TargetIdentityDigest, plan.Spec.TargetIdentityDigest},
-		{"policy fingerprint", &approval.Spec.PolicyFingerprint, plan.Spec.PolicyFingerprint},
-		{"verification policy digest", &approval.Spec.VerificationPolicyDigest, plan.Spec.VerificationPolicyDigest},
-		{"execution binding ID", &approval.Spec.ExecutionBindingID, plan.Spec.ExecutionBindingID},
-		{"Ptah version", &approval.Spec.PtahVersion, plan.Spec.PtahVersion},
-		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
-	} {
-		if *binding.value != "" && *binding.value != binding.want {
-			return fmt.Errorf("approval %s conflicts with the immutable plan", binding.name)
-		}
-		*binding.value = binding.want
-	}
-	if approval.Spec.VerificationPolicyUID != "" && approval.Spec.VerificationPolicyUID != plan.Spec.VerificationPolicyUID {
-		return fmt.Errorf("approval verification policy UID conflicts with the immutable plan")
-	}
-	approval.Spec.VerificationPolicyUID = plan.Spec.VerificationPolicyUID
-	if approval.Spec.RunnerProtocolVersion != 0 && approval.Spec.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
-		return fmt.Errorf("approval runner protocol version conflicts with the immutable plan")
-	}
-	approval.Spec.RunnerProtocolVersion = plan.Spec.RunnerProtocolVersion
-	if approval.Spec.ControllerStateVersion != 0 && approval.Spec.ControllerStateVersion != plan.Spec.ControllerStateVersion {
-		return fmt.Errorf("approval controller state version conflicts with the immutable plan")
-	}
-	approval.Spec.ControllerStateVersion = plan.Spec.ControllerStateVersion
-	return nil
 }
 
 func (h *MigrationApprovalHandler) stampMigrationIdentity(
@@ -209,12 +130,20 @@ func migrationIdentityMatchesRequest(
 }
 
 // validateMigrationBinding refuses every approval the current evidence cannot
-// still support: a replaced plan, a history that moved, a changed artifact,
-// policy or execution binding, or a migration that is not waiting for one.
+// still support: a plan named by a UID or a fingerprint the live plan does not
+// have, a plan of another migration, a history that moved, a changed artifact,
+// policy or execution binding, or a migration that is not waiting for one. It
+// reads the plan and the migration directly from the API server, in both
+// admission passes.
 func (h *MigrationApprovalHandler) validateMigrationBinding(
 	ctx context.Context,
 	approval *operatorv1alpha1.PtahMigrationApproval,
 ) error {
+	if err := requireExplicitDecision(
+		"migration", approval.Spec.MigrationRef, approval.Spec.PlanRef, approval.Spec.PlanFingerprint,
+	); err != nil {
+		return err
+	}
 	namespace := approval.Namespace
 	plan := &operatorv1alpha1.PtahMigrationPlan{}
 	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: approval.Spec.PlanRef.Name}, plan); err != nil {
@@ -223,11 +152,17 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if plan.DeletionTimestamp != nil {
 		return fmt.Errorf("referenced plan is being deleted")
 	}
-	if plan.Spec.ContractVersion != migrationplan.ContractVersion {
-		return fmt.Errorf("referenced plan contract version %d is not the one this manager publishes", plan.Spec.ContractVersion)
-	}
 	if plan.UID != approval.Spec.PlanRef.UID {
 		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
+	}
+	if plan.Spec.MigrationRef != approval.Spec.MigrationRef {
+		return fmt.Errorf("approval migration reference does not match the plan")
+	}
+	if approval.Spec.PlanFingerprint != plan.Spec.Fingerprint {
+		return fmt.Errorf("approval plan fingerprint does not match the immutable plan")
+	}
+	if plan.Spec.ContractVersion != migrationplan.ContractVersion {
+		return fmt.Errorf("referenced plan contract version %d is not the one this manager publishes", plan.Spec.ContractVersion)
 	}
 	if err := h.Execution.binds(
 		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
@@ -296,38 +231,6 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 		if err := refuseSelfApproval("migration", migration.Annotations, approval.Spec.Approver); err != nil {
 			return err
 		}
-	}
-	return migrationApprovalMatchesPlan(approval.Spec, plan.Spec)
-}
-
-func migrationApprovalMatchesPlan(
-	approval operatorv1alpha1.PtahMigrationApprovalSpec,
-	plan operatorv1alpha1.PtahMigrationPlanSpec,
-) error {
-	for name, pair := range map[string][2]string{
-		"plan fingerprint":           {approval.PlanFingerprint, plan.Fingerprint},
-		"history fingerprint":        {approval.HistoryFingerprint, plan.HistoryFingerprint},
-		"artifact digest":            {approval.ArtifactDigest, plan.ArtifactDigest},
-		"coordination digest":        {approval.CoordinationDigest, plan.CoordinationDigest},
-		"target identity digest":     {approval.TargetIdentityDigest, plan.TargetIdentityDigest},
-		"policy fingerprint":         {approval.PolicyFingerprint, plan.PolicyFingerprint},
-		"verification policy digest": {approval.VerificationPolicyDigest, plan.VerificationPolicyDigest},
-		"execution binding ID":       {approval.ExecutionBindingID, plan.ExecutionBindingID},
-		"Ptah version":               {approval.PtahVersion, plan.PtahVersion},
-		"executor image":             {approval.ExecutorImage, plan.ExecutorImage},
-	} {
-		if pair[0] != pair[1] {
-			return fmt.Errorf("approval %s does not match the immutable plan", name)
-		}
-	}
-	if approval.VerificationPolicyUID != plan.VerificationPolicyUID {
-		return fmt.Errorf("approval verification policy UID does not match the immutable plan")
-	}
-	if approval.ControllerStateVersion != plan.ControllerStateVersion {
-		return fmt.Errorf("approval controller state version does not match the immutable plan")
-	}
-	if approval.RunnerProtocolVersion != plan.RunnerProtocolVersion {
-		return fmt.Errorf("approval runner protocol version does not match the immutable plan")
 	}
 	return nil
 }

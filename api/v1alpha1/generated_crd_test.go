@@ -79,10 +79,18 @@ func TestGeneratedCRDsContainSafetyCriticalFields(t *testing.T) {
 			required: []string{
 				"required:\n        - spec",
 				"mutationRequestUID:",
-				"verificationPolicyUID:",
+				"planFingerprint:",
 			},
+			// The plan's bindings live on the plan; the fingerprint the approval
+			// names covers every one of them (stokaro/ptah-operator#460).
 			obsolete: []string{
 				"admissionRequestUID:",
+				"artifactDigest:",
+				"executionBindingID:",
+				"verificationPolicyUID:",
+				"controllerStateVersion:",
+				"runnerProtocolVersion:",
+				"executorImage:",
 			},
 		},
 	}

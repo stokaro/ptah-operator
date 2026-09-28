@@ -170,8 +170,12 @@ func (r *MigrationReconciler) claimedApplyPolicyStillBinds(
 }
 
 // findMigrationApproval returns the one approval that authorizes this exact
-// plan, and nil when none does. An approval that names another plan, another
-// history, or another execution binding is not one of them.
+// plan, and nil when none does. An approval that names another migration,
+// another plan, or this plan by a fingerprint it does not have is not one of
+// them. The fingerprint binds the history, the sequence, the artifact, the
+// policy and the execution binding the plan was computed under, so a plan
+// computed under any other premise is another plan with another fingerprint,
+// and the approval carries no copy of those to compare.
 func (r *MigrationReconciler) findMigrationApproval(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -187,12 +191,8 @@ func (r *MigrationReconciler) findMigrationApproval(
 		if approval.DeletionTimestamp != nil ||
 			approval.Spec.MigrationRef.UID != migration.UID ||
 			approval.Spec.PlanRef.UID != plan.UID ||
+			strings.TrimSpace(approval.Spec.PlanFingerprint) == "" ||
 			approval.Spec.PlanFingerprint != plan.Spec.Fingerprint ||
-			approval.Spec.HistoryFingerprint != plan.Spec.HistoryFingerprint ||
-			approval.Spec.ExecutionBindingID != plan.Spec.ExecutionBindingID ||
-			approval.Spec.TargetIdentityDigest != plan.Spec.TargetIdentityDigest ||
-			approval.Spec.ArtifactDigest != plan.Spec.ArtifactDigest ||
-			approval.Spec.PolicyFingerprint != plan.Spec.PolicyFingerprint ||
 			strings.TrimSpace(approval.Spec.Approver.Username) == "" ||
 			strings.TrimSpace(approval.Spec.MutationRequestUID) == "" ||
 			meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) ||

@@ -131,8 +131,9 @@ behind a single preferred Kubernetes minor.
 The control-plane checks cover manager readiness, CRD discovery, fail-closed
 webhook configuration, authenticated approval stamping, approval
 immutability, exact plan binding, refusal of every missing required schema,
-plan, UID, or fingerprint field before hydration, refusal of conflicting
-derived artifact or protocol bindings, absence of controller Secret-read
+plan, UID, or fingerprint field, refusal of a plan of another schema, a
+replaced plan UID and a plan binding the API no longer carries, absence of
+controller Secret-read
 permissions, namespace-local references, and real API-server rejection of
 nanosecond, negative, and over-deadline duration values. Verification-policy
 ConfigMaps must be immutable. The API server must also reject whitespace-only,

@@ -1335,7 +1335,7 @@ for migration_marker in \
 	'[$spec.migrations[].version] == [1, 2, 3]' \
 	'carries SQL text' \
 	'approve_migration "$MIGRATION_APPROVAL"' \
-	'was not hydrated and bound to the exact plan' \
+	'was not stamped and bound to the exact plan' \
 	'wait_for_migration_phase InSync' \
 	'did not settle on a history that matches the artifact' \
 	'assert_database_migrated' \
@@ -1854,6 +1854,18 @@ for pod_metadata_marker in \
 		exit 1
 	}
 done
+# A PtahSchema declares the whole database. The four-eyes and Pod-metadata rows
+# planned a schema of their own against the PostgreSQL lifecycle's database, so
+# each plan dropped e2e_widgets as well, was destructive, and blocked the schema
+# with DestructiveChangesDisabled where the row waited for it to await approval
+# (run 36397582251). hack/verify-kubernetes-support.go pins the database each
+# of those rows creates for itself; this is the rule for the next row: nothing
+# outside the lifecycle hands the lifecycle's Secret to a PostgreSQL schema.
+# shellcheck disable=SC2016 # The exact source marker intentionally retains the shell variable literally.
+if grep -F -- 'PostgreSQL "$PG_SECRET"' "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null; then
+	printf '%s\n' 'e2e static: a data-plane row outside the PostgreSQL lifecycle hands a schema the lifecycle database' >&2
+	exit 1
+fi
 for reconciliation_cadence_marker in \
 	"RECONCILE_INTERVAL=\${E2E_RECONCILE_INTERVAL:-1m}" \
 	"TAG_MOVE_INTERVAL=\${E2E_TAG_MOVE_INTERVAL:-2m}" \
@@ -2183,14 +2195,18 @@ for control_plane_unbound_marker in \
 		'control-plane plan fingerprint'
 done
 # shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
+# The stored approval carries the decision and the stamp and nothing copied
+# from the plan: exactly these keys, held against the plan by UID and
+# fingerprint.
 for control_plane_approval_marker in \
-	'.spec.executionBindingID == $executionBindingID' \
-	'(.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not)' \
-	'.spec.controllerStateVersion == $controllerStateVersion'; do
+	'.spec.schemaRef == {name: $schemaName, uid: $schemaUID}' \
+	'.spec.planRef == {name: $planName, uid: $planUID}' \
+	'.spec.planFingerprint == $fingerprint' \
+	'(.spec | keys) == ["approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"]'; do
 	printf '%s\n' "$control_plane_approval_section" |
 		grep -F -- "$control_plane_approval_marker" >/dev/null
 done
-grep -F 'approval with a conflicting executor image binding' \
+grep -F 'approval carrying a plan binding the API dropped' \
 	"$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 
 dataplane_approval_identity_section=$(sed -n '/^create_exact_approval()/,/^}/p' \
@@ -5035,8 +5051,9 @@ for admission_marker in \
 	'duplicate managed-scope selector' \
 	'a rejected managed-scope selector created an operation Job' \
 	'schema-name schema-uid plan-name plan-uid plan-fingerprint' \
-	'approval with a conflicting derived artifact binding' \
-	'approval with a conflicting derived protocol binding' \
+	'approval carrying a plan binding the API dropped' \
+	'approval naming a plan of another schema' \
+	'approval naming a replaced plan' \
 	'E2E_TEST_NAMESPACE and E2E_FOREIGN_NAMESPACE must differ' \
 	'del(.metadata.ownerReferences, .metadata.finalizers)' \
 	'foreign plan disappeared, changed, or entered deletion' \

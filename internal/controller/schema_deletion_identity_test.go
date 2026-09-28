@@ -152,3 +152,63 @@ func TestDeletingASchemaSettlesAnApplyItCannotAccountFor(t *testing.T) {
 		})
 	}
 }
+
+// A deleting schema waits on a running Job only while its claim holds the
+// database lock. A Resolve, a Verify or an ordinary Observe holds none, so the
+// claim is dropped and the finalizer comes off in the same pass, with the Job
+// left to cascading deletion. The Job here has no Pod and no verdict, which is
+// what a Pod refused at admission leaves: waiting on it would hold the
+// resource for the Job's whole deadline.
+//
+// A Plan holds the lock, and the last row keeps it: the resource stays, and
+// so does the claim that names the lock's epoch.
+func TestDeletingASchemaWaitsOnlyForAJobThatHoldsTheLock(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		operation operatorv1alpha1.OperationType
+		kept      bool
+	}{
+		{operation: operatorv1alpha1.OperationResolve},
+		{operation: operatorv1alpha1.OperationVerify},
+		{operation: operatorv1alpha1.OperationObserve},
+		{operation: operatorv1alpha1.OperationPlan, kept: true},
+	} {
+		t.Run(string(row.operation), func(t *testing.T) {
+			t.Parallel()
+
+			schema := safetyLockedOperationSchema(row.operation)
+			operation := schema.Status.ActiveOperation
+			operation.JobName = "ptah-refused-read-only-job"
+			operation.JobUID = "refused-read-only-job-uid"
+			operation.DispatchStarted = true
+			deletedAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+			schema.DeletionTimestamp = &deletedAt
+			job := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:       schema.Namespace,
+					Name:            operation.JobName,
+					UID:             operation.JobUID,
+					OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
+				},
+			}
+
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, job)
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("Reconcile() deleting a schema with a %s Job standing = %v", row.operation, err)
+			}
+
+			persisted := &operatorv1alpha1.PtahSchema{}
+			err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted)
+			switch {
+			case row.kept && err != nil:
+				t.Fatalf("a running %s Job that holds the lock did not keep the resource: %v", row.operation, err)
+			case row.kept && persisted.Status.ActiveOperation == nil:
+				t.Fatalf("the %s claim was dropped while its Job still runs under the lock", row.operation)
+			case !row.kept && !apierrors.IsNotFound(err):
+				t.Fatalf("a %s Job that holds no lock kept the resource: error %v, status %#v", row.operation, err, persisted.Status)
+			}
+		})
+	}
+}

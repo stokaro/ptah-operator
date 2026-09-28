@@ -479,9 +479,10 @@ Job before the executor starts.
 executor image, runner protocol, and its opaque `epoch` for audit. Every
 transition of those components creates a new epoch, including rollback to an
 identical set. Current plan contract v3 binds exactly those, and records the
-publishing manager on the plan without binding it. Plans and approvals
-reference the epoch as `spec.executionBindingID`; therefore an approval is
-valid for only one transition and cannot be reused after rollout or rollback.
+publishing manager on the plan without binding it. A plan references the epoch
+as `spec.executionBindingID` and binds it into the fingerprint an approval
+names; therefore an approval is valid for only one transition and cannot be
+reused after rollout or rollback.
 
 The invalidation boundary starts when the replacement manager owns
 reconciliation, not when `helm upgrade` is invoked. The `Recreate` strategy

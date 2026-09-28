@@ -1,9 +1,9 @@
 ## Examples
 
-An approval authorizes one plan, once. The table below lists every field, and
-most of them are not yours to write: the admission webhook copies the binding
-from the plan you named and refuses any value that disagrees with it, then
-stamps who you are and when from the authenticated request.
+An approval authorizes one plan, once. It carries the decision -- which
+schema, which plan, and that plan's fingerprint -- and who made it. The
+admission webhook holds the three to the plan it names and refuses any that
+disagrees, then stamps who you are and when from the authenticated request.
 
 ### What a person writes
 
@@ -37,18 +37,22 @@ spec:
 ```
 
 An approval that names a plan the schema has moved past is refused. So is one
-whose fingerprint does not match the plan it names: the fingerprint binds the
-artifact, the observed and desired state, the policy, the target identity and
-the execution binding -- the executor image, the Ptah version, the runner
-protocol and the controller-state version -- so a change to any of them retires
-the approval rather than letting it carry over. The manager's own image and
-revision are not in it: a manager release that changes only those, a patch or
-a security fix, keeps the approval and applies the plan it names.
+whose fingerprint does not match the plan it names, one whose plan belongs to
+another schema, and one that names a plan by a UID the plan no longer has.
+The fingerprint is the plan's complete identity: it binds the artifact, the
+observed and desired state, the policy, the verification policy, the target
+identity and the execution binding -- the executor image, the Ptah version,
+the runner protocol and the controller-state version -- and a plan is
+immutable, so naming it by UID and fingerprint names every one of those. A
+change to any of them produces another plan with another fingerprint, and the
+approval stays with the one it named. The manager's own image and revision are
+not in it: a manager release that changes only those, a patch or a security
+fix, keeps the approval and applies the plan it names.
 
 ### What the cluster stores
 
 The same object, read back after admission. The three fields above are
-unchanged; everything else was filled in.
+unchanged; the stamp was added, and nothing was copied from the plan.
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
@@ -72,18 +76,13 @@ spec:
       - schema-approvers
   approvedAt: "2026-09-20T09:14:02Z"
   mutationRequestUID: 6f4b2a18-8c3e-4d5a-b1f7-2e0c9d8a7b64
-  # Copied from the plan. Apply reconstructs these and rehashes them; a
-  # mismatch retires the approval rather than running under it.
-  artifactDigest: sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
-  desiredStateFingerprint: sha256:19581e27de7ced00ff1ce50b2047e7a567c76b1cbaebabe5ef03f7c3017bb5b7
-  actualStateFingerprint: sha256:4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5
-  coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
-  targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
-  policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
-  executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
-  ptahVersion: v0.9.0-73-gf6e562c5b
-  executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
-  # What the runner enforces and returns, versioned; not the runner's image.
-  runnerProtocolVersion: 7
-  controllerStateVersion: 2
+```
+
+What the decision was made under -- the artifact digest, the state
+fingerprints, the execution binding -- is read off the plan the approval
+names:
+
+```sh
+kubectl -n application get ptahschemaplan ptah-plan-71c480df93d6ae2f14efe3c4 \
+  -o jsonpath='{.spec.artifactDigest}{"\n"}{.spec.executionBindingID}{"\n"}{.spec.executorImage}{"\n"}'
 ```

@@ -1081,10 +1081,11 @@ and approvals made under the old one.
 
 The audit-visible `status.executionBinding` records those four components plus
 an opaque `epoch`. The epoch changes whenever one of them changes, including a
-rollback to a byte-identical set. A plan and approval carry the epoch as
-`spec.executionBindingID`, so approval is one-shot for that exact transition: it
-cannot become valid again after a later rollout or rollback, even if all four
-components return to their previous values.
+rollback to a byte-identical set. A plan carries the epoch as
+`spec.executionBindingID` and binds it into its fingerprint, and an approval
+names the plan by that fingerprint, so approval is one-shot for that exact
+transition: it cannot become valid again after a later rollout or rollback,
+even if all four components return to their previous values.
 
 A normal chart upgrade has a hard revision boundary: the `Recreate` strategy
 terminates every old manager Pod before any replacement manager Pod starts.
@@ -1199,9 +1200,13 @@ Lease while retaining unresolved proof would let an intervening Apply
 contaminate the audit result.
 
 Deleting a `PtahSchema` never runs SQL. The transient finalizer exists only to
-observe an already active operation and release coordination safely. Once no
-operation is active, deletion removes Kubernetes-owned plans and Jobs through
-normal garbage collection; database objects remain untouched.
+observe an already active operation and release coordination safely. It waits
+on a running Job only while the operation holds the database lock: an Apply, a
+Plan, or the Observe that proves an Apply. A Resolve, a Verify or any other
+Observe holds nothing, so deletion drops its claim without waiting, including
+one whose Pod a policy refuses. Once no operation is active, deletion removes
+Kubernetes-owned plans and Jobs through normal garbage collection; database
+objects remain untouched.
 
 Deleting a `PtahMigration` follows the same rule, and an Apply is where it is
 visible. The Job is owned by the resource, so releasing the finalizer under a

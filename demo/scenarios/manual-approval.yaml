@@ -99,29 +99,27 @@ steps:
       exit: 0
       stdout_contains: ['"planFingerprint":"sha256:']
 
-  - note: Create it. The webhook stamps who you are and binds the rest of the plan's identity.
+  - note: Create it. The webhook stamps who you are and holds the three to the live plan.
     run: kubectl -n "$NAMESPACE" create -f demo/.lab/approval.json
     sync: approved
     expect:
       exit: 0
       stdout_contains: [created]
 
-  - note: None of this was typed. The webhook read it off the plan being approved.
+  - note: Who approved, and when, was stamped from the request. The rest stays on the plan.
     run: |
       kubectl -n "$NAMESPACE" get ptahschemaapproval storefront-v1 -o json \
-        | jq -r '.spec | {approver: .approver.username, ptahVersion, executorImage, artifactDigest, executionBindingID}'
+        | jq -r '.spec | {approver: .approver.username, approvedAt, planFingerprint}'
     expect:
       exit: 0
-      stdout_contains: [approver, ptahVersion, executorImage]
+      stdout_contains: [approver, approvedAt, planFingerprint]
       resource:
         kind: ptahschemaapproval
         name: storefront-v1
         fields:
           - path: spec.approver.username
             notEmpty: true
-          - path: spec.artifactDigest
-            notEmpty: true
-          - path: spec.executorImage
+          - path: spec.approvedAt
             notEmpty: true
           - path: spec.mutationRequestUID
             notEmpty: true

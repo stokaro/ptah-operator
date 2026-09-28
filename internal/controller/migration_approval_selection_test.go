@@ -11,9 +11,9 @@ import (
 )
 
 // The controller does not refuse an approval that disagrees with the plan; it
-// declines to count it, and the migration goes on waiting. Eleven conditions
-// decide that, written as one disjunction, so any approval skipped for any
-// reason marks the whole branch measured.
+// declines to count it, and the migration goes on waiting. The conditions
+// that decide it are written as one disjunction, so any approval skipped for
+// any reason marks the whole branch measured.
 //
 // A part that stops working does not produce an error anybody sees. It
 // produces a dispatch: an Apply carried out under an approval that authorized
@@ -68,40 +68,12 @@ func TestAnApprovalThatDisagreesWithThePlanDoesNotCount(t *testing.T) {
 		},
 		{
 			// The plan object is the one named and its content is not the one
-			// approved.
+			// approved: the fingerprint is where another history, artifact,
+			// policy, target or execution binding shows, so this one row is
+			// every one of those.
 			name: "the plan it names has been recomputed",
 			change: func(approval *operatorv1alpha1.PtahMigrationApproval) {
 				approval.Spec.PlanFingerprint = "sha256:" + strings.Repeat("e", 64)
-			},
-		},
-		{
-			name: "it was given under another database history",
-			change: func(approval *operatorv1alpha1.PtahMigrationApproval) {
-				approval.Spec.HistoryFingerprint = "sha256:" + strings.Repeat("e", 64)
-			},
-		},
-		{
-			name: "it was given under another execution binding",
-			change: func(approval *operatorv1alpha1.PtahMigrationApproval) {
-				approval.Spec.ExecutionBindingID = "v1-" + strings.Repeat("e", 32)
-			},
-		},
-		{
-			name: "it was given against another database",
-			change: func(approval *operatorv1alpha1.PtahMigrationApproval) {
-				approval.Spec.TargetIdentityDigest = "sha256:" + strings.Repeat("e", 64)
-			},
-		},
-		{
-			name: "it was given against another artifact",
-			change: func(approval *operatorv1alpha1.PtahMigrationApproval) {
-				approval.Spec.ArtifactDigest = "sha256:" + strings.Repeat("e", 64)
-			},
-		},
-		{
-			name: "it was given under another apply policy",
-			change: func(approval *operatorv1alpha1.PtahMigrationApproval) {
-				approval.Spec.PolicyFingerprint = "sha256:" + strings.Repeat("e", 64)
 			},
 		},
 		{

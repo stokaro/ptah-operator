@@ -24,12 +24,12 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-func TestMigrationApprovalCreateStampsIdentityAndHydratesBindings(t *testing.T) {
+func TestMigrationApprovalCreateStampsIdentityAndNothingFromThePlan(t *testing.T) {
 	t.Parallel()
 
 	handler, approval := migrationApprovalFixture(t, true, nil)
 	// The approver names only the decision: which migration, which plan, and
-	// the fingerprint that plan carries.
+	// the fingerprint that plan carries. The webhook adds who and when.
 	request := migrationApprovalRequest(t, approval, admissionv1.Create)
 	request.UserInfo = authenticationv1.UserInfo{
 		Username: "operator@example.test", UID: "user-uid", Groups: []string{"platform", "platform"},
@@ -38,25 +38,98 @@ func TestMigrationApprovalCreateStampsIdentityAndHydratesBindings(t *testing.T) 
 	if !response.Allowed {
 		t.Fatalf("an exact migration approval was denied: %#v", response.Result)
 	}
+	if len(response.Patches) == 0 {
+		t.Fatal("no identity was stamped")
+	}
+	for _, patch := range response.Patches {
+		if !strings.HasPrefix(patch.Path, "/spec/approver") &&
+			patch.Path != "/spec/approvedAt" && patch.Path != "/spec/mutationRequestUID" {
+			t.Fatalf("the mutating pass wrote %s, which is not the approver's identity: %#v", patch.Path, response.Patches)
+		}
+	}
 	patchJSON, err := json.Marshal(response.Patches)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"operator@example.test", "user-uid", "platform", "mutationRequestUID", "approvedAt",
-		"historyFingerprint", "targetIdentityDigest", "executionBindingID", "example.invalid/ptah@sha256:executor",
-	} {
+	for _, want := range []string{"operator@example.test", "user-uid", "platform", "admission-uid"} {
 		if !containsJSON(patchJSON, want) {
 			t.Fatalf("the stamped approval %s does not carry %q", patchJSON, want)
 		}
 	}
-	// The plan records the manager that published it; the approval binds
-	// nothing about that manager, so none of it is copied.
-	if containsJSON(patchJSON, testControllerImage) {
-		t.Fatalf("the stamped approval %s copies the publishing manager's image", patchJSON)
-	}
 	if strings.Count(string(patchJSON), `"platform"`) != 1 {
 		t.Fatalf("duplicate groups were not normalized away: %s", patchJSON)
+	}
+}
+
+// TestMigrationApprovalRefusesADecisionThatNamesAnotherPlan holds the three
+// identifiers to the live plan, in both admission passes. Each row moves one
+// of them off the plan the migration is waiting on and names the refusal.
+func TestMigrationApprovalRefusesADecisionThatNamesAnotherPlan(t *testing.T) {
+	t.Parallel()
+
+	rows := []struct {
+		name    string
+		want    string
+		arrange func(*testing.T, client.Client, *operatorv1alpha1.PtahMigrationApproval)
+	}{
+		{
+			name: "a fingerprint the plan does not have",
+			want: "approval plan fingerprint does not match the immutable plan",
+			arrange: func(_ *testing.T, _ client.Client, approval *operatorv1alpha1.PtahMigrationApproval) {
+				approval.Spec.PlanFingerprint = "sha256:" + strings.Repeat("8", 64)
+			},
+		},
+		{
+			name: "a plan UID the plan does not have",
+			want: "referenced plan UID does not match; the plan was replaced",
+			arrange: func(_ *testing.T, _ client.Client, approval *operatorv1alpha1.PtahMigrationApproval) {
+				approval.Spec.PlanRef.UID = "replaced-plan-uid"
+			},
+		},
+		{
+			// A plan that exists and carries the fingerprint the approval
+			// names, published for another migration.
+			name: "a plan of another migration",
+			want: "approval migration reference does not match the plan",
+			arrange: func(t *testing.T, api client.Client, approval *operatorv1alpha1.PtahMigrationApproval) {
+				t.Helper()
+				other := &operatorv1alpha1.PtahMigrationPlan{}
+				key := client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}
+				if err := api.Get(context.Background(), key, other); err != nil {
+					t.Fatal(err)
+				}
+				other.ResourceVersion = ""
+				other.Name = "ptah-mplan-000000000000000000000000"
+				other.UID = "other-migration-plan-uid"
+				other.Spec.MigrationRef = operatorv1alpha1.ImmutableObjectReference{Name: "other", UID: "other-migration-uid"}
+				if err := api.Create(context.Background(), other); err != nil {
+					t.Fatal(err)
+				}
+				approval.Spec.PlanRef = operatorv1alpha1.ImmutableObjectReference{Name: other.Name, UID: other.UID}
+			},
+		},
+	}
+	for _, row := range rows {
+		for _, mutate := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/mutate=%t", row.name, mutate), func(t *testing.T) {
+				t.Parallel()
+				handler, approval := migrationApprovalFixture(t, mutate, nil)
+				api, ok := handler.Reader.(client.Client)
+				if !ok {
+					t.Fatal("migration approval fixture reader is not mutable")
+				}
+				row.arrange(t, api, approval)
+				request := migrationApprovalRequest(t, approval, admissionv1.Create)
+				request.UserInfo = authenticationv1.UserInfo{Username: "operator@example.test", UID: "user-uid"}
+				response := handler.Handle(context.Background(), request)
+				if response.Allowed {
+					t.Fatalf("an approval naming %s was admitted", row.name)
+				}
+				if response.Result == nil || !strings.Contains(response.Result.Message, row.want) {
+					t.Fatalf("denial = %#v, want one mentioning %q", response.Result, row.want)
+				}
+			})
+		}
 	}
 }
 
@@ -395,18 +468,6 @@ func migrationApprovalFixture(
 	}
 	if !mutate {
 		// The validating path sees what the mutating path already stamped.
-		approval.Spec.HistoryFingerprint = historyFingerprint
-		approval.Spec.ArtifactDigest = artifactDigest
-		approval.Spec.CoordinationDigest = coordinationDigest
-		approval.Spec.TargetIdentityDigest = targetIdentityDigest
-		approval.Spec.PolicyFingerprint = policyFingerprint
-		approval.Spec.VerificationPolicyUID = policyUID
-		approval.Spec.VerificationPolicyDigest = policyDigest
-		approval.Spec.ExecutionBindingID = binding.Epoch
-		approval.Spec.ControllerStateVersion = binding.ControllerStateVersion
-		approval.Spec.PtahVersion = binding.PtahVersion
-		approval.Spec.ExecutorImage = binding.ExecutorImage
-		approval.Spec.RunnerProtocolVersion = binding.RunnerProtocolVersion
 		approval.Spec.Approver = operatorv1alpha1.ApprovalIdentity{Username: "operator@example.test", UID: "user-uid"}
 		approval.Spec.ApprovedAt = metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
 		approval.Spec.MutationRequestUID = "admission-uid"

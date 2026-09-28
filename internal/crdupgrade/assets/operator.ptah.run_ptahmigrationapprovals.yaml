@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "27"
-    operator.ptah.run/crd-schema-digest: "sha256:a2d192311aac8e21599902da458f8b101a573dc1f7c27bcf4532d1263183410c"
+    operator.ptah.run/crd-schema-version: "28"
+    operator.ptah.run/crd-schema-digest: "sha256:9391303b4f722d892389f53e9f8f4f7853e77547d9bdf4c02202c2801382c897"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrationapprovals.operator.ptah.run
 spec:
@@ -67,21 +67,6 @@ spec:
                 required:
                 - username
                 type: object
-              artifactDigest:
-                type: string
-              controllerStateVersion:
-                format: int32
-                minimum: 1
-                type: integer
-              coordinationDigest:
-                type: string
-              executionBindingID:
-                pattern: ^v1-[0-9a-f]{32}$
-                type: string
-              executorImage:
-                type: string
-              historyFingerprint:
-                type: string
               migrationRef:
                 properties:
                   name:
@@ -106,39 +91,13 @@ spec:
                 - name
                 - uid
                 type: object
-              policyFingerprint:
-                type: string
-              ptahVersion:
-                type: string
-              runnerProtocolVersion:
-                format: int32
-                minimum: 1
-                type: integer
-              targetIdentityDigest:
-                type: string
-              verificationPolicyDigest:
-                type: string
-              verificationPolicyUID:
-                type: string
             required:
             - approvedAt
             - approver
-            - artifactDigest
-            - controllerStateVersion
-            - coordinationDigest
-            - executionBindingID
-            - executorImage
-            - historyFingerprint
             - migrationRef
             - mutationRequestUID
             - planFingerprint
             - planRef
-            - policyFingerprint
-            - ptahVersion
-            - runnerProtocolVersion
-            - targetIdentityDigest
-            - verificationPolicyDigest
-            - verificationPolicyUID
             type: object
             x-kubernetes-validations:
             - message: an approval is immutable; create a new approval instead

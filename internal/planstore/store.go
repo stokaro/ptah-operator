@@ -94,7 +94,7 @@ type Store struct {
 }
 
 // Prepare creates the deterministic manifest and chunks for exact plan bytes.
-// The caller supplies every approval binding except content-derived fields.
+// The caller supplies every plan binding except the content-derived fields.
 func Prepare(
 	schema *operatorv1alpha1.PtahSchema,
 	spec operatorv1alpha1.PtahSchemaPlanSpec,

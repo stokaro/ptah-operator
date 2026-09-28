@@ -38,11 +38,6 @@ func TestStoredControllerStateClientsUseEveryDurableResource(t *testing.T) {
 			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahschemaplans"},
 		},
 		{
-			name:   "approvals",
-			client: clients.Approvals,
-			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahschemaapprovals"},
-		},
-		{
 			name:   "migrations",
 			client: clients.Migrations,
 			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrations"},
@@ -51,11 +46,6 @@ func TestStoredControllerStateClientsUseEveryDurableResource(t *testing.T) {
 			name:   "migration plans",
 			client: clients.MigrationPlans,
 			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrationplans"},
-		},
-		{
-			name:   "migration approvals",
-			client: clients.MigrationApprovals,
-			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrationapprovals"},
 		},
 	}
 	for _, test := range tests {

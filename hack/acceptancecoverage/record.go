@@ -58,7 +58,7 @@ var requirements = []requirement{
 		"every binding mutated between planning, approval and dispatch on both engines and families, with database evidence of zero unauthorized statements",
 		"the stale-approval and destructive-gate rows of `run_engine_lifecycle` and `assert_destructive_gate` on both engines, " +
 			"the drift-before-dispatch fault in `hack/e2e-faults.sh`, the approval bindings `hack/e2e-assert.sh` refuses, " +
-			"`assert_approval_hydrated`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations, " +
+			"`assert_approval_stamped`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations, " +
 			"a migration's target Secret repointed between approval and dispatch in `run_retarget_before_dispatch_proof`, " +
 			"and an author refused Always by the example guard in `run_apply_policy_guard_proof`",
 		"a PtahSchema's target Secret, or either family's policy or transaction mode, changed between approval and dispatch; " +

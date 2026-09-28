@@ -2918,14 +2918,9 @@ assert_approval_consumed() {
 	consumed_plan_uid=$2
 	k -n "$TEST_NAMESPACE" get ptahschemaapproval "$consumed_approval" -o json |
 		jq -e \
-			--arg planUID "$consumed_plan_uid" \
-			--arg controllerImage "$CONTROLLER_IMAGE" \
-			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+			--arg planUID "$consumed_plan_uid" '
         .spec.planRef.uid == $planUID and
-        (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-        (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
-        .spec.controllerStateVersion == $controllerStateVersion and
+        (.spec | keys) == ["approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"] and
         (.status.conditions | any(
           .type == "Consumed" and .status == "True" and .reason == "DispatchCommitted")) and
         (.status.conditions | any(
@@ -3231,7 +3226,10 @@ create_approval() {
       $current.controllerRevision == $controllerRevision and
       $current.controllerStateVersion == $controllerStateVersion
     ' >/dev/null || fail "$approval_schema current plan is not bound to the exact controller identity"
+	# The plan is where the bindings live; the approval names it by UID and
+	# fingerprint, so the plan's execution and realm bindings are checked here.
 	printf '%s\n' "$approval_plan_object" | jq -e \
+		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 		--arg executionBindingID "$approval_execution_binding_id" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
@@ -3240,7 +3238,10 @@ create_approval() {
       .spec.executionBindingID == $executionBindingID and
       .spec.controllerImage == $controllerImage and
       .spec.controllerRevision == $controllerRevision and
-      .spec.controllerStateVersion == $controllerStateVersion
+      .spec.controllerStateVersion == $controllerStateVersion and
+      .spec.runnerProtocolVersion == $runnerProtocolVersion and
+      (.spec.artifactDigest | test("^sha256:[0-9a-f]{64}$")) and
+      (.spec.coordinationDigest | test("^sha256:[0-9a-f]{64}$"))
     ' >/dev/null || fail "$approval_plan is not a current-contract plan with the exact controller identity"
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
@@ -3263,23 +3264,18 @@ create_approval() {
 	k create -f "$RESOURCE_FILE" >/dev/null
 	k -n "$TEST_NAMESPACE" get ptahschemaapproval "$approval_name" -o json |
 		jq -e \
-			--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 			--arg schema "$approval_schema" \
+			--arg schemaUID "$approval_schema_uid" \
 			--arg plan "$approval_plan" \
-			--arg fingerprint "$approval_fingerprint" \
-			--arg executionBindingID "$approval_execution_binding_id" \
-			--arg controllerImage "$CONTROLLER_IMAGE" \
-			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
-      .spec.schemaRef.name == $schema and .spec.planRef.name == $plan and
+			--arg planUID "$approval_plan_uid" \
+			--arg fingerprint "$approval_fingerprint" '
+      .spec.schemaRef == {name: $schema, uid: $schemaUID} and
+      .spec.planRef == {name: $plan, uid: $planUID} and
       .spec.planFingerprint == $fingerprint and
-      (.spec.artifactDigest | test("^sha256:[0-9a-f]{64}$")) and
-      (.spec.coordinationDigest | test("^sha256:[0-9a-f]{64}$")) and
-      .spec.executionBindingID == $executionBindingID and
-      (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
-      .spec.controllerStateVersion == $controllerStateVersion and
-      .spec.runnerProtocolVersion == $runnerProtocolVersion
-    ' >/dev/null || fail "$approval_name was not hydrated against the exact current plan"
+      (.spec | keys) == ["approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"] and
+      .spec.approver.username != "" and
+      .spec.approvedAt != null and .spec.mutationRequestUID != ""
+    ' >/dev/null || fail "$approval_name was not stamped against the exact current plan"
 }
 
 wait_for_apply_pod() {
