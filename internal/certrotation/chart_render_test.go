@@ -169,8 +169,8 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	for _, want := range []string{
 		"--release-name=" + releaseName,
 		"--staging-secret-name=" + stagingSecretName,
-		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run",
-		"--validating-webhook-names=vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
+		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run",
+		"--validating-webhook-names=vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vmigrationrunacknowledgment.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
 		"--run-interval=6h",
 		"--ca-switch-delay=6h",
 		"--operation-timeout=15m",
@@ -190,12 +190,12 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		}
 	}
 	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{
-		"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run",
+		"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run", "mmigrationrunacknowledgment.operator.ptah.run",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("rotator mutating production webhook inventory = %v, want %v", got, want)
 	}
 	if got, want := strings.Split(requiredArgumentValue(t, args, "--validating-webhook-names="), ","), []string{
-		"vapproval.operator.ptah.run", "vmigrationapproval.operator.ptah.run",
+		"vapproval.operator.ptah.run", "vmigrationapproval.operator.ptah.run", "vmigrationrunacknowledgment.operator.ptah.run",
 		"vpodintent.operator.ptah.run", "vcontrollerwrite.operator.ptah.run",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("rotator validating production webhook inventory = %v, want %v", got, want)
@@ -736,13 +736,13 @@ func TestChartRequireDistinctApproverGatesSpecWriterWebhooks(t *testing.T) {
 	}{
 		{
 			name:            "default off",
-			wantMutatingArg: "--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run",
+			wantMutatingArg: "--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run",
 			wantWriterCount: 0,
 		},
 		{
 			name:            "explicit on",
 			args:            []string{"--set", "approvals.requireDistinctApprover=true"},
-			wantMutatingArg: "--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run",
+			wantMutatingArg: "--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run",
 			wantWriterCount: 2,
 		},
 	} {

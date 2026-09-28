@@ -748,7 +748,8 @@ func fakeMigrationReconciler(
 		}).
 		WithStatusSubresource(
 			&operatorv1alpha1.PtahMigration{}, &operatorv1alpha1.PtahMigrationPlan{},
-			&operatorv1alpha1.PtahMigrationApproval{}, &batchv1.Job{},
+			&operatorv1alpha1.PtahMigrationApproval{}, &operatorv1alpha1.PtahMigrationRunAcknowledgment{},
+			&batchv1.Job{},
 		).
 		WithObjects(objects...).Build()
 	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)

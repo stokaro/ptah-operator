@@ -21,7 +21,7 @@ import (
 //
 // Three kinds are written by a person in full, and their examples go in
 // verbatim, as do the plan chunk's, whose one field every example shows. The
-// other four are written by the operator or finished by the admission webhook,
+// other five are written by the operator or finished by the admission webhook,
 // which envtest does not run, so their pages show only the fields worth
 // reading. For those the suite adds the required fields an example leaves out
 // -- the webhook's stamp and the build binding the operator copies from the
@@ -43,6 +43,7 @@ var referenceKinds = []struct {
 	{kind: "PtahMigrationPlan", namespaced: true, completion: migrationPlanSpec},
 	{kind: "PtahSchemaApproval", namespaced: true, completion: schemaApprovalSpec},
 	{kind: "PtahMigrationApproval", namespaced: true, completion: migrationApprovalSpec},
+	{kind: "PtahMigrationRunAcknowledgment", namespaced: true, completion: runAcknowledgmentSpec},
 }
 
 // minimumExamples is what hack/reference_examples_test.go demands of every
@@ -118,7 +119,7 @@ func complete(object *unstructured.Unstructured, completion map[string]any) []st
 }
 
 func filler(kind string) string {
-	if strings.HasSuffix(kind, "Approval") {
+	if strings.HasSuffix(kind, "Approval") || strings.HasSuffix(kind, "Acknowledgment") {
 		return "admission webhook"
 	}
 	return "operator"

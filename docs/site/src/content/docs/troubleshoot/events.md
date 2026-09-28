@@ -42,7 +42,9 @@ full on the resource's own status and in the operation's Job.
 | `RunnerProtocolMismatch` | Warning | `PtahSchema`, `PtahMigration` | The runner from `execution.runnerImage` speaks another protocol than this manager and refused the Job before starting the executor. A read-only operation is tried again after the failure interval; an Apply still owes its read-only proof. |
 | `TargetLockReleaseOwed` | Warning | `PtahMigration` | The database lock was not released, and the release the claim owes will be retried. |
 | `TerminationSummaryRefused` | Warning | `PtahMigration` | An Apply's log held no readable result, and the summary in its Pod's termination message was not read in its place. The message says why: another attempt, a summary cut short, or a log that holds a different frame. The run is recorded as unknown. |
+| `UnresolvedRunAcknowledged` | Normal | `PtahMigration` | A person's `PtahMigrationRunAcknowledgment` settled the run this resource recorded as unresolved. The message names who, the outcome and the operation, and the resource reads its database again before it plans. |
 | `UnresolvedRunDiscarded` | Warning | `PtahMigration` | Deleting this resource discarded the record of a run nobody accounted for. The message names the outcome, the version, and the database. |
+| `UnresolvedRunRestored` | Warning | `PtahMigration` | The resource came back without the record of a run nobody accounted for in its status -- a restore that dropped status -- and the manager put it back from the copy in its `operator.ptah.run/unresolved-run` annotation. Nothing is planned until a reading or an acknowledgment settles it. |
 | `VerificationPolicyInvalidated` | Warning | `PtahSchema` | The verification policy stopped matching the plan, so artifact and plan verification were invalidated. |
 
 ## A Warning is not always a fault

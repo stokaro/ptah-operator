@@ -1,0 +1,149 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    operator.ptah.run/controller-state-version: "2"
+    operator.ptah.run/crd-schema-version: "31"
+    operator.ptah.run/crd-schema-digest: "sha256:158a67e8ea4e64b1cbe7678abb49bafd0eb807f4672a0ec4e540c99332e6c49f"
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: ptahmigrationrunacknowledgments.operator.ptah.run
+spec:
+  group: operator.ptah.run
+  names:
+    kind: PtahMigrationRunAcknowledgment
+    listKind: PtahMigrationRunAcknowledgmentList
+    plural: ptahmigrationrunacknowledgments
+    shortNames:
+    - ptahmack
+    singular: ptahmigrationrunacknowledgment
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.migrationRef.name
+      name: Migration
+      type: string
+    - jsonPath: .spec.acknowledgedBy.username
+      name: Acknowledged By
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Consumed')].status
+      name: Consumed
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Stale')].status
+      name: Stale
+      type: string
+    - jsonPath: .spec.operationID
+      name: Operation
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              acknowledgedAt:
+                format: date-time
+                type: string
+              acknowledgedBy:
+                properties:
+                  groups:
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                  uid:
+                    type: string
+                  username:
+                    type: string
+                required:
+                - username
+                type: object
+              migrationRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              mutationRequestUID:
+                type: string
+              operationID:
+                pattern: ^sha256:[0-9a-f]{64}$
+                type: string
+            required:
+            - acknowledgedAt
+            - acknowledgedBy
+            - migrationRef
+            - mutationRequestUID
+            - operationID
+            type: object
+            x-kubernetes-validations:
+            - message: an acknowledgment is immutable; create a new acknowledgment
+                instead
+              rule: self == oldSelf
+          status:
+            properties:
+              conditions:
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -25,6 +25,9 @@ const (
 	PtahMigrationCRDName         = "ptahmigrations.operator.ptah.run"
 	PtahMigrationApprovalCRDName = "ptahmigrationapprovals.operator.ptah.run"
 	PtahMigrationPlanCRDName     = "ptahmigrationplans.operator.ptah.run"
+	// The acknowledgment a person writes to settle a run a migration recorded
+	// as unresolved. It carries no controller state of its own.
+	PtahMigrationRunAcknowledgmentCRDName = "ptahmigrationrunacknowledgments.operator.ptah.run"
 	// The realm kind. It carries no controller state: an administrator writes
 	// it and the manager only reads it. It is owned here for the same reason
 	// as the rest, because a manager whose census reads a kind the cluster
@@ -43,12 +46,13 @@ const (
 	ControllerStateVersionAnnotation = "operator.ptah.run/controller-state-version"
 	// CurrentCRDSchemaVersion must match CRD_SCHEMA_VERSION in the Makefile and
 	// every generated CRD annotation.
-	CurrentCRDSchemaVersion uint64 = 30
+	CurrentCRDSchemaVersion uint64 = 31
 )
 
 var expectedNames = []string{
 	PtahMigrationApprovalCRDName,
 	PtahMigrationPlanCRDName,
+	PtahMigrationRunAcknowledgmentCRDName,
 	PtahMigrationCRDName,
 	PtahRealmCRDName,
 	PtahSchemaApprovalCRDName,

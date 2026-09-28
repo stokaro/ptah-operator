@@ -2271,11 +2271,13 @@ for controller_revision_crd in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	operator.ptah.run_ptahrealms.yaml | operator.ptah.run_ptahschemaplanchunks.yaml)
 		controller_revision_minimum=0
 		;;
-	*approvals.yaml)
+	*approvals.yaml | *acknowledgments.yaml)
 		# An approval binds nothing about the manager that published the plan
-		# or dispatched the Job, so it carries no revision at all.
+		# or dispatched the Job, and an acknowledgment of a run nobody
+		# accounted for binds nothing but the run, so neither carries a
+		# revision at all.
 		if [ "$controller_revision_fields" -ne 0 ]; then
-			printf 'e2e static: %s carries a controllerRevision an approval must not bind\n' \
+			printf 'e2e static: %s carries a controllerRevision a decision must not bind\n' \
 				"$controller_revision_crd" >&2
 			exit 1
 		fi
@@ -5836,9 +5838,10 @@ finalizer_verbs=$(awk '
 [ "$(grep -c '^kind: MutatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
 [ "$(grep -c '^kind: ValidatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
 # approvals.requireDistinctApprover defaults to false, and the spec-writer
-# entries exist only when it is on: 2 mutating (approval, migration approval)
-# plus 4 validating, none of them failurePolicy anything but Fail.
-[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 6 ]
+# entries exist only when it is on: 3 mutating (approval, migration approval,
+# run acknowledgment) plus 5 validating, none of them failurePolicy anything
+# but Fail.
+[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 8 ]
 if grep -Fq 'name: mschemawriter.operator.ptah.run' "$ADMISSION_RENDER" ||
 	grep -Fq 'name: mmigrationwriter.operator.ptah.run' "$ADMISSION_RENDER"; then
 	printf '%s\n' 'e2e static: the default-off release renders the spec-writer webhook entries' >&2
@@ -5847,6 +5850,9 @@ fi
 grep -F 'name: mmigrationapproval.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: vmigrationapproval.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["ptahmigrationapprovals"]' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: mmigrationrunacknowledgment.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: vmigrationrunacknowledgment.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
+grep -F 'resources: ["ptahmigrationrunacknowledgments"]' "$ADMISSION_RENDER" >/dev/null
 
 # The two spec-writer entries render only when approvals.requireDistinctApprover
 # is on, and the manager's own --require-distinct-approver flag, the CRD hook's
@@ -5882,7 +5888,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=ZTJlLWNh \
 	--set approvals.requireDistinctApprover=true >"$DISTINCT_APPROVER_ON_ADMISSION_RENDER"
-[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER")" -eq 8 ]
+[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER")" -eq 10 ]
 grep -F 'name: mschemawriter.operator.ptah.run' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER" >/dev/null
 grep -F 'path: /mutate-operator-ptah-run-v1alpha1-ptahschema' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER" >/dev/null
 grep -F 'name: mmigrationwriter.operator.ptah.run' "$DISTINCT_APPROVER_ON_ADMISSION_RENDER" >/dev/null
@@ -5895,21 +5901,21 @@ grep -F 'path: /mutate-operator-ptah-run-v1alpha1-ptahmigration' "$DISTINCT_APPR
 	printf '%s\n' 'e2e static: --require-distinct-approver=true does not reach the manager and both runtime-verify hooks' >&2
 	exit 1
 }
-grep -F -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run' \
+grep -F -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run' \
 	"$DISTINCT_APPROVER_ON_RENDER" >/dev/null ||
 	{
 		printf '%s\n' 'e2e static: the rotator does not probe the spec-writer entries when the four-eyes control is on' >&2
 		exit 1
 	}
-if grep -Fq -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run' \
+if grep -Fq -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run' \
 	"$DISTINCT_APPROVER_OFF_RENDER"; then
 	printf '%s\n' 'e2e static: the rotator still probes the spec-writer entries with the four-eyes control off' >&2
 	exit 1
 fi
-grep -F -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run"' \
+grep -F -- '--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run"' \
 	"$DISTINCT_APPROVER_OFF_RENDER" >/dev/null ||
 	{
-		printf '%s\n' 'e2e static: the rotator does not probe exactly the two approval entries with the four-eyes control off' >&2
+		printf '%s\n' 'e2e static: the rotator does not probe exactly the approval and acknowledgment entries with the four-eyes control off' >&2
 		exit 1
 	}
 controller_service_account_name=$(awk '
@@ -6163,8 +6169,8 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	[ "$(grep -Fc "operator.ptah.run/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]run/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
-[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 8 ]
-[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 8 ]
+[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 9 ]
+[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 9 ]
 for crd_directory in \
 	"$ROOT_DIR/config/crd/bases" \
 	"$ROOT_DIR/charts/ptah-operator/crds" \
@@ -6484,9 +6490,10 @@ hook_service_account_name=$(awk '
 [ "$(grep -Fc -- \
 	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
-# The release keeps seven admission policies -- six on the manager's own writes
-# and the apply-policy guard on everyone else's -- and each is an ordinary
-# release object: no hook annotation, no keep policy and no parameter. Their
+# The release keeps nine admission policies -- six on the manager's own
+# writes, the apply-policy guard, and the two that keep status and the copy of
+# an unresolved run the manager's -- and each is an ordinary release object: no
+# hook annotation, no keep policy and no parameter. Their
 # names carry the release's own digest and nothing that changes between its
 # upgrades, so an upgrade updates each in place and the uninstall deletes it.
 controller_guard_policy_names() {
@@ -6497,12 +6504,12 @@ controller_guard_policy_names() {
     ' "$1" | sort
 }
 controller_guard_names=$(controller_guard_policy_names "$CRD_FULL_RENDER")
-[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 7 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly seven admission policies' >&2
+[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 9 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly nine admission policies' >&2
 	exit 1
 }
-[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 7 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly seven admission policy bindings' >&2
+[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 9 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly nine admission policy bindings' >&2
 	exit 1
 }
 for controller_guard_family in \
@@ -6512,7 +6519,9 @@ for controller_guard_family in \
 	projection-write-guard \
 	plan-write-guard \
 	migration-plan-write-guard \
-	apply-policy-guard; do
+	apply-policy-guard \
+	status-write-guard \
+	unresolved-run-guard; do
 	[ "$(printf '%s\n' "$controller_guard_names" |
 		grep -Ec "^ptah-operator-${controller_guard_family}-[0-9a-f]{12}\$")" -eq 1 ] || {
 		printf 'e2e static: the release does not render one %s policy\n' "$controller_guard_family" >&2
@@ -6540,6 +6549,7 @@ controller_guard_successor_names=$(helm template ptah-e2e "$ROOT_DIR/charts/ptah
 	--show-only templates/controller-write-guard.yaml \
 	--show-only templates/controller-object-guard.yaml \
 	--show-only templates/apply-policy-guard.yaml \
+	--show-only templates/manager-state-guard.yaml \
 	$crd_render_args \
 	--set-string image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333 |
 	controller_guard_policy_names /dev/stdin)
@@ -6580,11 +6590,11 @@ grep -F -- 'expression: "[\"platform:apply-policy\", \"system:serviceaccounts:fl
 	printf '%s\n' 'e2e static: the exempt groups an installer names do not reach the apply-policy guard' >&2
 	exit 1
 }
-# Off, the release renders the six guards on the manager's writes and no
-# trace of this one, so an upgrade that turns it off removes it.
-[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 6 ] &&
-	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 6 ] || {
-	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the six controller guards' >&2
+# Off, the release renders the other eight policies and no trace of this one,
+# so an upgrade that turns it off removes it.
+[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 8 ] &&
+	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 8 ] || {
+	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the other eight policies' >&2
 	exit 1
 }
 if grep -F 'apply-policy-guard' "$APPLY_POLICY_GUARD_OFF_RENDER" >/dev/null; then

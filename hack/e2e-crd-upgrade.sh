@@ -268,6 +268,34 @@ controller_kube() {
 		"$@"
 }
 
+# Status is the manager's alone: the chart's status guard refuses a status
+# write from any other identity, this harness included. A fixture that stages
+# state the manager would have written writes it as the manager's
+# ServiceAccount, read from the release's own Deployment so it is the identity
+# the guard and the RBAC both name. Most fixtures stage that state with the
+# manager stopped, and stopping it deletes the Deployment, so the account is
+# read from the snapshot stop_controller_deployment took when no controller
+# Deployment stands.
+manager_status_kube() {
+	status_deployments=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment \
+		-l 'app.kubernetes.io/component=controller' -o json) ||
+		fail "could not list the controller Deployment the manager writes status as"
+	case "$(printf '%s\n' "$status_deployments" | jq '.items | length')" in
+	1)
+		status_account=$(printf '%s\n' "$status_deployments" |
+			jq -r '.items[0].spec.template.spec.serviceAccountName // empty')
+		;;
+	0)
+		[ -n "${CONTROLLER_DEPLOYMENT_SNAPSHOT:-}" ] && [ -s "$CONTROLLER_DEPLOYMENT_SNAPSHOT" ] ||
+			fail "no controller Deployment stands and none was snapshotted to write status as"
+		status_account=$(jq -r '.spec.template.spec.serviceAccountName // empty' "$CONTROLLER_DEPLOYMENT_SNAPSHOT")
+		;;
+	*) fail "more than one controller Deployment could name the ServiceAccount to write status as" ;;
+	esac
+	[ -n "$status_account" ] || fail "the manager Deployment names no ServiceAccount to write status as"
+	kube --as "system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$status_account" "$@"
+}
+
 verify_supported_server_version() {
 	printf '%s\n' "$E2E_KUBERNETES_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
 		fail "E2E_KUBERNETES_VERSION must be an exact major.minor.patch version"
@@ -677,7 +705,7 @@ prove_rollback_refused_over_future_state() {
 		-o jsonpath='{.status.executionBinding.controllerStateVersion}')
 	[ "$stored_version" = "$CONTROLLER_STATE_VERSION" ] ||
 		fail "proof PtahSchema controller state version is $stored_version, expected $CONTROLLER_STATE_VERSION"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
 		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$NEWER_CONTROLLER_STATE_VERSION}]" >/dev/null
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
 		jq -S '.status' >"$WORK_DIR/rollback-future-state.json"
@@ -708,7 +736,7 @@ prove_rollback_refused_over_future_state() {
 		jq -S '.status' >"$WORK_DIR/rollback-future-state-after.json"
 	cmp "$WORK_DIR/rollback-future-state.json" "$WORK_DIR/rollback-future-state-after.json" ||
 		fail "the refused rollback rewrote the future PtahSchema state"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
 		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]" >/dev/null
 	wait_runtime_ready
 	printf '%s\n' 'e2e crd: the rollback was refused before any Pod changed'
@@ -937,7 +965,7 @@ stage_read_only_job_completion() {
 stage_read_only_job_uid_gap() {
 	[ -n "$READ_ONLY_JOB_NAME" ] || fail "read-only Job name is missing"
 	[ -n "$READ_ONLY_JOB_UID" ] || fail "read-only Job UID is missing"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$READ_ONLY_JOB_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$READ_ONLY_JOB_SCHEMA" --subresource=status \
 		--type=json -p='[{"op":"remove","path":"/status/activeOperation/jobUID"}]' >/dev/null
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$READ_ONLY_JOB_SCHEMA" -o json |
 		jq -e \
@@ -2149,7 +2177,7 @@ EOF
 	running_apply_chunk_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplanchunk "$running_apply_chunk_name" \
 		-o jsonpath='{.metadata.uid}')
 	running_apply_plan_ready_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-	kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$RUNNING_APPLY_PLAN_NAME" \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$RUNNING_APPLY_PLAN_NAME" \
 		--subresource=status --type=merge \
 		-p "{\"status\":{\"observedGeneration\":$running_apply_plan_generation,\"publishedChunks\":[{\"name\":\"$running_apply_chunk_name\",\"uid\":\"$running_apply_chunk_uid\",\"index\":0}],\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"reason\":\"Published\",\"message\":\"Verified 1 immutable plan chunks\",\"observedGeneration\":$running_apply_plan_generation,\"lastTransitionTime\":\"$running_apply_plan_ready_at\"}]}}" >/dev/null
 }
@@ -2178,7 +2206,7 @@ start_running_apply_fixture() {
       (.status.conditions[].observedGeneration) = $generation
     ' "$WORK_DIR/running-apply-schema-enabled.json" \
 		>"$WORK_DIR/running-apply-schema-ready.json"
-	kube replace --subresource=status -f "$WORK_DIR/running-apply-schema-ready.json" >/dev/null
+	manager_status_kube replace --subresource=status -f "$WORK_DIR/running-apply-schema-ready.json" >/dev/null
 	start_controller_deployment
 	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$CONTROLLER_DEPLOYMENT" \
 		--timeout=3m >/dev/null
@@ -2307,7 +2335,7 @@ stage_predecessor_apply_job_uid_gap_while_running() {
       spec: (.spec | del(.ttlSecondsAfterFinished))
     }' "$WORK_DIR/running-apply-before-upgrade.json" \
 		>"$WORK_DIR/running-apply-job-before-cleanup.json"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$RUNNING_APPLY_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$RUNNING_APPLY_SCHEMA" --subresource=status \
 		--type=json -p='[{"op":"remove","path":"/status/activeOperation/jobUID"}]' >/dev/null
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
 		>"$WORK_DIR/running-apply-staged-gap.json"
@@ -2545,7 +2573,7 @@ prove_controller_downgrade_guard() {
 		-o jsonpath='{.status.executionBinding.controllerStateVersion}')
 	[ "$stored_version" = "$CONTROLLER_STATE_VERSION" ] ||
 		fail "proof PtahSchema controller state version is $stored_version, expected $CONTROLLER_STATE_VERSION"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
 		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$NEWER_CONTROLLER_STATE_VERSION}]" >/dev/null
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
 		jq -S '.status' >"$WORK_DIR/future-controller-state.json"
@@ -2555,7 +2583,7 @@ prove_controller_downgrade_guard() {
 		jq -S '.status' >"$WORK_DIR/future-controller-state-after.json"
 	cmp "$WORK_DIR/future-controller-state.json" "$WORK_DIR/future-controller-state-after.json" ||
 		fail "blocked candidate manager rewrote future PtahSchema state"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
 		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]" >/dev/null
 	kube -n "$E2E_OPERATOR_NAMESPACE" delete pod \
 		-l 'app.kubernetes.io/component=controller' --wait=false >/dev/null
@@ -2629,7 +2657,7 @@ spec:
     - {name: proof-chunk, index: 0, digest: sha256:chunk, size: 1}
 EOF
 	plan_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan "$PROOF_PLAN" -o jsonpath='{.metadata.uid}')
-	kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$PROOF_PLAN" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$PROOF_PLAN" --subresource=status \
 		--type=merge -p '{"status":{"observedGeneration":1,"conditions":[{"type":"Ready","status":"True","reason":"UpgradeProof","message":"proof status","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' >/dev/null
 
 	kube -n "$PROOF_NAMESPACE" create -f - >/dev/null <<EOF
@@ -2645,7 +2673,7 @@ spec:
   approvedAt: "2026-01-01T00:00:00Z"
   mutationRequestUID: crd-upgrade-proof
 EOF
-	kube -n "$PROOF_NAMESPACE" patch ptahschemaapproval "$PROOF_APPROVAL" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschemaapproval "$PROOF_APPROVAL" --subresource=status \
 		--type=merge -p '{"status":{"observedGeneration":1,"conditions":[{"type":"Accepted","status":"True","reason":"UpgradeProof","message":"proof status","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' >/dev/null
 }
 
@@ -2798,7 +2826,7 @@ run_upgrade_proof() {
 			-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"outdated e2e schema"}]' >/dev/null
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-future-state.json"
 	done
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
 		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$NEWER_CONTROLLER_STATE_VERSION}]" >/dev/null
 	expect_upgrade_failure_without_deployment_change "upgrade against future controller state"
 	for crd_name in \
@@ -2811,7 +2839,7 @@ run_upgrade_proof() {
 		-o jsonpath='{.status.executionBinding.controllerStateVersion}')
 	[ "$stored_version" = "$NEWER_CONTROLLER_STATE_VERSION" ] ||
 		fail "failed CRD preflight rewrote future controller state"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
+	manager_status_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" --subresource=status \
 		--type=json -p="[{\"op\":\"replace\",\"path\":\"/status/executionBinding/controllerStateVersion\",\"value\":$CONTROLLER_STATE_VERSION}]" >/dev/null
 
 	printf '%s\n' 'e2e crd: upgrading drifted CRDs before the manager rollout'

@@ -35,6 +35,8 @@ func init() {
 		&PtahMigrationPlanList{},
 		&PtahMigrationApproval{},
 		&PtahMigrationApprovalList{},
+		&PtahMigrationRunAcknowledgment{},
+		&PtahMigrationRunAcknowledgmentList{},
 		&PtahRealm{},
 		&PtahRealmList{},
 	)

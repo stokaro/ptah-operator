@@ -88,7 +88,8 @@ rollback the engine will not perform.
 There is no setting that makes such a failure recover on its own. The operator
 records what it cannot account for in `status.unresolvedRun` and stops, and a
 person decides what the interrupted file did before anything runs against that
-database again; [Operations](../../use/operations/) has the procedure. A checkpoint
+database again, then says so with a `PtahMigrationRunAcknowledgment`;
+[Operations](../../use/operations/) has the procedure. A checkpoint
 is not that answer either -- it decides where a new database starts, not what
 an interrupted one has run.
 
@@ -503,7 +504,19 @@ spec:
 | `status.plan` | `object` | Plan names the immutable plan object the controller published for the current pending sequence, and is cleared once that sequence is gone. |
 | `status.plan.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.plan.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
-| `status.unresolvedRun` | `object` | UnresolvedRun is the execution nobody could account for, and is absent while there is none. It is written when a run ends Partial or Unknown, and removed only when a read-only reading of the same database finds nothing of this artifact left to apply. While it is here nothing is planned and nothing runs, whatever the conditions happen to say. |
+| `status.resolvedRun` | `object` | ResolvedRun is how the most recent unresolved run was settled, and who settled it when a person did. It stays until the next one is settled. |
+| `status.resolvedRun.acknowledgedBy` | `object` | AcknowledgedBy is the identity admission stamped on that acknowledgment. |
+| `status.resolvedRun.acknowledgedBy.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
+| `status.resolvedRun.acknowledgedBy.uid` | `string` | UID of that user, where the authenticator provides one. |
+| `status.resolvedRun.acknowledgedBy.username` | `string`, required | Username the API server authenticated the request as. |
+| `status.resolvedRun.acknowledgmentRef` | `object` | AcknowledgmentRef is the PtahMigrationRunAcknowledgment that settled it, when a person did. |
+| `status.resolvedRun.acknowledgmentRef.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.resolvedRun.acknowledgmentRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
+| `status.resolvedRun.operationID` | `string`, required | OperationID is the Apply attempt the settled record named. |
+| `status.resolvedRun.outcome` | `string`, required, one of `UpToDate`, `Applied`, `Failed`, `Partial`, `Unknown` | Outcome is what that record said. |
+| `status.resolvedRun.resolution` | `string`, required, one of `HistoryRead`, `Acknowledged` | Resolution is what settled it. |
+| `status.resolvedRun.resolvedAt` | `string`, required | ResolvedAt is when the controller settled it. |
+| `status.unresolvedRun` | `object` | UnresolvedRun is the execution nobody could account for, and is absent while there is none. It is written when a run ends Partial or Unknown, and removed only when a read-only reading of the same database finds nothing of this artifact left to apply, or when a PtahMigrationRunAcknowledgment names its operationID. While it is here nothing is planned and nothing runs, whatever the conditions happen to say. The manager keeps a copy in the operator.ptah.run/unresolved-run annotation, written before this field and removed after it, so a restore that drops status restores the record from metadata. |
 | `status.unresolvedRun.dispatchedBy` | `object` | DispatchedBy is the manager that built and dispatched the run's Job, as status.lastRun recorded it. It is absent when the run was settled without its Job. |
 | `status.unresolvedRun.dispatchedBy.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager image. |
 | `status.unresolvedRun.dispatchedBy.controllerRevision` | `string`, required | ControllerRevision is the source revision the manager was built from. |

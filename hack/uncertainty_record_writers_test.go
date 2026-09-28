@@ -33,10 +33,16 @@ var uncertaintyRecords = []struct {
 		writers: []string{"consumeResult", "finishUncertainApplyWithEvidenceAndBinding"},
 		clears:  []string{"consumeResult", "reconcileDeletion", "verificationPolicyChanged"},
 	},
+	// A migration's record has a second writer and a second way out, both
+	// declared on purpose. reconcileUnresolvedRunCopy puts back the record a
+	// restore dropped, from the copy the manager kept on the resource's
+	// metadata, and writes nothing that copy did not hold. The acknowledgment
+	// a person creates is the way out a person chose, and
+	// settleUnresolvedRunByAcknowledgment takes it in that person's name.
 	{
 		field:   "UnresolvedRun",
-		writers: []string{"recordUnresolvedMigrationRun"},
-		clears:  []string{"recordMigrationHistory"},
+		writers: []string{"recordUnresolvedMigrationRun", "reconcileUnresolvedRunCopy"},
+		clears:  []string{"recordMigrationHistory", "settleUnresolvedRunByAcknowledgment"},
 	},
 }
 

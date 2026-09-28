@@ -61,6 +61,7 @@ func managedMutatingWebhooks(requireDistinctApprover bool) []managedWebhook {
 	entries := []managedWebhook{
 		{name: "mapproval.operator.ptah.run", path: "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"},
 		{name: "mmigrationapproval.operator.ptah.run", path: "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"},
+		{name: "mmigrationrunacknowledgment.operator.ptah.run", path: "/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"},
 	}
 	if requireDistinctApprover {
 		entries = append(entries,
@@ -77,6 +78,7 @@ func managedValidatingWebhooks() []managedWebhook {
 	return []managedWebhook{
 		{name: "vapproval.operator.ptah.run", path: "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"},
 		{name: "vmigrationapproval.operator.ptah.run", path: "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"},
+		{name: "vmigrationrunacknowledgment.operator.ptah.run", path: "/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"},
 		{name: "vpodintent.operator.ptah.run", path: "/validate-v1-pod-ptah-operation-intent"},
 		{name: "vcontrollerwrite.operator.ptah.run", path: "/validate-operator-controller-write"},
 	}

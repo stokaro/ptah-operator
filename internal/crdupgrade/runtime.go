@@ -38,6 +38,8 @@ const (
 	validatingApprovalWebhookName          = "vapproval.operator.ptah.run"
 	mutatingMigrationApprovalWebhookName   = "mmigrationapproval.operator.ptah.run"
 	validatingMigrationApprovalWebhookName = "vmigrationapproval.operator.ptah.run"
+	mutatingRunAcknowledgmentWebhookName   = "mmigrationrunacknowledgment.operator.ptah.run"
+	validatingRunAcknowledgmentWebhookName = "vmigrationrunacknowledgment.operator.ptah.run"
 	mutatingSchemaWriterWebhookName        = "mschemawriter.operator.ptah.run"
 	mutatingMigrationWriterWebhookName     = "mmigrationwriter.operator.ptah.run"
 	podIntentWebhookName                   = "vpodintent.operator.ptah.run"
@@ -46,6 +48,8 @@ const (
 	validatingApprovalPath                 = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	mutatingMigrationApprovalPath          = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
 	validatingMigrationApprovalPath        = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	mutatingRunAcknowledgmentPath          = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"
+	validatingRunAcknowledgmentPath        = "/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"
 	mutatingSchemaWriterPath               = "/mutate-operator-ptah-run-v1alpha1-ptahschema"
 	mutatingMigrationWriterPath            = "/mutate-operator-ptah-run-v1alpha1-ptahmigration"
 	podIntentPath                          = "/validate-v1-pod-ptah-operation-intent"
@@ -368,6 +372,7 @@ func verifyMutatingWebhookContract(configuration *admissionregistrationv1.Mutati
 	want := []webhookContract{
 		currentMutatingApprovalWebhookContract(expected),
 		currentMutatingMigrationApprovalWebhookContract(expected),
+		currentMutatingRunAcknowledgmentWebhookContract(expected),
 	}
 	// The spec-writer entries exist only when the four-eyes control is on: they
 	// record the identity refuseSelfApproval compares against, and a control
@@ -428,6 +433,7 @@ func verifyValidatingWebhookContract(configuration *admissionregistrationv1.Vali
 	return verifyValidatingWebhookContracts(configuration, []webhookContract{
 		currentValidatingApprovalWebhookContract(expected),
 		currentValidatingMigrationApprovalWebhookContract(expected),
+		currentValidatingRunAcknowledgmentWebhookContract(expected),
 		currentPodIntentWebhookContract(expected),
 		currentControllerWriteWebhookContract(expected),
 	})
@@ -550,6 +556,25 @@ func currentValidatingMigrationApprovalWebhookContract(expected RuntimeInvariant
 	contract.name = validatingMigrationApprovalWebhookName
 	contract.path = validatingMigrationApprovalPath
 	contract.rules[0].Rule.Resources = []string{"ptahmigrationapprovals"}
+	return contract
+}
+
+// The run acknowledgment entries stamp and check the person who settles a run
+// a migration recorded as unresolved. They are contracts of their own for the
+// reason the migration approval entries are: they carry a different decision.
+func currentMutatingRunAcknowledgmentWebhookContract(expected RuntimeInvariants) webhookContract {
+	contract := currentMutatingApprovalWebhookContract(expected)
+	contract.name = mutatingRunAcknowledgmentWebhookName
+	contract.path = mutatingRunAcknowledgmentPath
+	contract.rules[0].Rule.Resources = []string{"ptahmigrationrunacknowledgments"}
+	return contract
+}
+
+func currentValidatingRunAcknowledgmentWebhookContract(expected RuntimeInvariants) webhookContract {
+	contract := currentValidatingApprovalWebhookContract(expected)
+	contract.name = validatingRunAcknowledgmentWebhookName
+	contract.path = validatingRunAcknowledgmentPath
+	contract.rules[0].Rule.Resources = []string{"ptahmigrationrunacknowledgments"}
 	return contract
 }
 

@@ -396,6 +396,8 @@ func fixtureCRD(name, description string) *apiextensionsv1.CustomResourceDefinit
 		kind = "PtahMigrationApproval"
 	case "ptahmigrationplans":
 		kind = "PtahMigrationPlan"
+	case "ptahmigrationrunacknowledgments":
+		kind = "PtahMigrationRunAcknowledgment"
 	case "ptahrealms":
 		kind = "PtahRealm"
 	}

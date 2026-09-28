@@ -81,6 +81,7 @@ var runbookGroups = []runbookGroup{
 		runbooks: []runbookEntry{{"clear-unresolved-run", "clear"}},
 		reference: []string{
 			"How it clears",
+			"A restore that drops status",
 			"Deleting the resource discards it",
 		},
 	},
@@ -403,7 +404,7 @@ var runbookAccess = map[string]string{
 	"repair-runtime":              "`cluster-admin`",
 	"uninstall":                   "`cluster-admin`",
 	"offline-singleton-migration": "maintenance window",
-	"clear-unresolved-run":        "`status` subresource",
+	"clear-unresolved-run":        "`create` on `ptahmigrationrunacknowledgments`",
 	"prune-plans":                 "delete access",
 	"adopt":                       "write access to the target database",
 }

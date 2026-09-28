@@ -58,6 +58,11 @@ func templates(v values) []template {
 		ReleaseNamespace:             v.ReleaseNamespace,
 		ControllerServiceAccountName: v.ControllerServiceAccount,
 	}
+	state := &crdupgrade.ManagerStateGuard{
+		ReleaseName:                  v.ReleaseName,
+		ReleaseNamespace:             v.ReleaseNamespace,
+		ControllerServiceAccountName: v.ControllerServiceAccount,
+	}
 	secret := certrotation.SecretCreateGuard{
 		Namespace:          v.ReleaseNamespace,
 		ReleaseName:        v.ReleaseName,
@@ -69,6 +74,10 @@ func templates(v values) []template {
 	var objectPairs []policyPair
 	for _, guard := range object.Policies() {
 		objectPairs = append(objectPairs, policyPair{policy: guard.Policy, binding: guard.Binding})
+	}
+	var statePairs []policyPair
+	for _, guard := range state.Policies() {
+		statePairs = append(statePairs, policyPair{policy: guard.Policy, binding: guard.Binding})
 	}
 	return []template{
 		{
@@ -102,6 +111,18 @@ func templates(v values) []template {
 				{v.ControllerServiceAccount, "$controllerServiceAccount"},
 			},
 			pairs: []policyPair{{policy: write.Policy(), binding: write.Binding()}},
+		},
+		{
+			path:     "templates/manager-state-guard.yaml",
+			source:   "internal/crdupgrade/manager_state_guard.go",
+			preamble: []string{controllerServiceAccount},
+			parameters: []parameter{
+				{crdupgrade.StatusWriteGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.statusWriteGuardPolicyName" .`},
+				{crdupgrade.UnresolvedRunGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.unresolvedRunGuardPolicyName" .`},
+				{v.ReleaseNamespace, ".Release.Namespace"},
+				{v.ControllerServiceAccount, "$controllerServiceAccount"},
+			},
+			pairs: statePairs,
 		},
 		{
 			path:   "templates/certificate-secret-guard.yaml",

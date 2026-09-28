@@ -94,7 +94,7 @@ func TestRuntimeVerifierAcceptsMutatingSingletonWithoutSpecWriterEntriesWhenCont
 	verifier := readyRuntimeVerifier(t)
 	verifier.Expected.RequireDistinctApprover = false
 	configuration := verifier.Mutating.(*mutatingAdmissionClient).object
-	configuration.Webhooks = configuration.Webhooks[:2]
+	configuration.Webhooks = configuration.Webhooks[:3]
 	if err := verifier.Verify(context.Background()); err != nil {
 		t.Fatalf("Verify a mutating singleton with the four-eyes control off and no spec-writer entries: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestRuntimeVerifierRejectsSpecWriterEntriesWhenControlIsOff(t *testing.T) {
 	verifier := readyRuntimeVerifier(t)
 	verifier.Expected.RequireDistinctApprover = false
 	err := verifier.Verify(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "expected exactly 2") {
+	if err == nil || !strings.Contains(err.Error(), "expected exactly 3") {
 		t.Fatalf("Verify error = %v, want the exact webhook count refusal", err)
 	}
 }
@@ -112,9 +112,9 @@ func TestRuntimeVerifierRejectsSpecWriterEntriesWhenControlIsOff(t *testing.T) {
 func TestRuntimeVerifierRejectsMissingSpecWriterEntriesWhenControlIsOn(t *testing.T) {
 	verifier := readyRuntimeVerifier(t)
 	configuration := verifier.Mutating.(*mutatingAdmissionClient).object
-	configuration.Webhooks = configuration.Webhooks[:2]
+	configuration.Webhooks = configuration.Webhooks[:3]
 	err := verifier.Verify(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "expected exactly 4") {
+	if err == nil || !strings.Contains(err.Error(), "expected exactly 5") {
 		t.Fatalf("Verify error = %v, want the exact webhook count refusal", err)
 	}
 }
@@ -194,14 +194,14 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 		mutate func(*RuntimeVerifier)
 	}{
 		{
-			name: "cardinality", want: "expected exactly 4",
+			name: "cardinality", want: "expected exactly 5",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Mutating.(*mutatingAdmissionClient)
 				client.object.Webhooks = append(client.object.Webhooks, client.object.Webhooks[0])
 			},
 		},
 		{
-			name: "validating missing webhook", want: "expected exactly 4",
+			name: "validating missing webhook", want: "expected exactly 5",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Validating.(*validatingAdmissionClient)
 				client.object.Webhooks = client.object.Webhooks[:1]
@@ -975,6 +975,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		Webhooks: []admissionregistrationv1.MutatingWebhook{
 			readyMutatingApprovalWebhook(expected),
 			readyMutatingMigrationApprovalWebhook(expected),
+			readyMutatingRunAcknowledgmentWebhook(expected),
 			readySchemaWriterWebhook(expected),
 			readyMigrationWriterWebhook(expected),
 		},
@@ -984,6 +985,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{
 			readyValidatingApprovalWebhook(expected),
 			readyValidatingMigrationApprovalWebhook(expected),
+			readyValidatingRunAcknowledgmentWebhook(expected),
 			readyPodIntentWebhook(expected),
 			readyControllerWriteWebhook(expected),
 		},
@@ -1099,6 +1101,30 @@ func readyMutatingMigrationApprovalWebhook(expected RuntimeInvariants) admission
 	webhook.ClientConfig = readyWebhookClientConfig(expected, mutatingMigrationApprovalPath)
 	webhook.Rules = migrationApprovalRules([]admissionregistrationv1.OperationType{admissionregistrationv1.Create})
 	return webhook
+}
+
+func readyMutatingRunAcknowledgmentWebhook(expected RuntimeInvariants) admissionregistrationv1.MutatingWebhook {
+	webhook := readyMutatingApprovalWebhook(expected)
+	webhook.Name = mutatingRunAcknowledgmentWebhookName
+	webhook.ClientConfig = readyWebhookClientConfig(expected, mutatingRunAcknowledgmentPath)
+	webhook.Rules = runAcknowledgmentRules([]admissionregistrationv1.OperationType{admissionregistrationv1.Create})
+	return webhook
+}
+
+func readyValidatingRunAcknowledgmentWebhook(expected RuntimeInvariants) admissionregistrationv1.ValidatingWebhook {
+	webhook := readyValidatingApprovalWebhook(expected)
+	webhook.Name = validatingRunAcknowledgmentWebhookName
+	webhook.ClientConfig = readyWebhookClientConfig(expected, validatingRunAcknowledgmentPath)
+	webhook.Rules = runAcknowledgmentRules([]admissionregistrationv1.OperationType{
+		admissionregistrationv1.Create, admissionregistrationv1.Update,
+	})
+	return webhook
+}
+
+func runAcknowledgmentRules(operations []admissionregistrationv1.OperationType) []admissionregistrationv1.RuleWithOperations {
+	rules := approvalRules(operations)
+	rules[0].Rule.Resources = []string{"ptahmigrationrunacknowledgments"}
+	return rules
 }
 
 func readySchemaWriterWebhook(expected RuntimeInvariants) admissionregistrationv1.MutatingWebhook {

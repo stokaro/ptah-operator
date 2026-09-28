@@ -75,8 +75,49 @@ func TestRenderedControllerWriteGuardConfinesMigrationPatches(t *testing.T) {
 		before   []string
 		after    []string
 		mutate   func(object map[string]any)
-		admitted bool
+		// mutateOld shapes the stored object the request replaces.
+		mutateOld func(object map[string]any)
+		admitted  bool
 	}{
+		{
+			name:     "a migration patch that writes the copy of its unresolved run",
+			resource: "ptahmigrations",
+			mutate: func(object map[string]any) {
+				object["metadata"].(map[string]any)["annotations"].(map[string]any)[unresolvedRunAnnotation] = `{"outcome":"Unknown"}`
+			},
+			admitted: true,
+		},
+		{
+			name:     "a migration patch that removes the copy of a settled run",
+			resource: "ptahmigrations",
+			mutateOld: func(object map[string]any) {
+				object["metadata"].(map[string]any)["annotations"].(map[string]any)[unresolvedRunAnnotation] = `{"outcome":"Unknown"}`
+			},
+			admitted: true,
+		},
+		{
+			name:     "a migration patch that writes the copy and rewrites another annotation",
+			resource: "ptahmigrations",
+			mutate: func(object map[string]any) {
+				annotations := object["metadata"].(map[string]any)["annotations"].(map[string]any)
+				annotations[unresolvedRunAnnotation] = `{"outcome":"Unknown"}`
+				annotations["note"] = "rewritten"
+			},
+		},
+		{
+			name:     "a migration patch that removes another annotation",
+			resource: "ptahmigrations",
+			mutate: func(object map[string]any) {
+				delete(object["metadata"].(map[string]any)["annotations"].(map[string]any), "note")
+			},
+		},
+		{
+			name:     "a schema patch that writes the migration family's copy",
+			resource: "ptahschemas",
+			mutate: func(object map[string]any) {
+				object["metadata"].(map[string]any)["annotations"].(map[string]any)[unresolvedRunAnnotation] = `{"outcome":"Unknown"}`
+			},
+		},
 		{
 			name:     "a migration patch that adds its own finalizer",
 			resource: "ptahmigrations", before: nil, after: []string{migrationFinalizer}, admitted: true,
@@ -177,6 +218,9 @@ func TestRenderedControllerWriteGuardConfinesMigrationPatches(t *testing.T) {
 			if test.mutate != nil {
 				object = controllerWriteSubject(test.resource, test.before)
 				test.mutate(object)
+			}
+			if test.mutateOld != nil {
+				test.mutateOld(oldObject)
 			}
 			request := controllerWriteRequest(test.resource, serviceAccount)
 			if !evaluatePolicyMatchConditions(t, policy, object, oldObject, request) {

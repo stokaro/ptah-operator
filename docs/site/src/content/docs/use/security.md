@@ -99,9 +99,6 @@ database reaches past its namespace only when a `PtahRealm` grants it, as
 [Who may claim a database](#who-may-claim-a-database) describes. The open work
 that hardens the rest:
 
-- [#446](https://github.com/stokaro/ptah-operator/issues/446): keep status
-  writable only by the manager, and resolve an unaccounted run through an
-  identity-stamped acknowledgment.
 - [#447](https://github.com/stokaro/ptah-operator/issues/447): let operation
   Pods carry bounded metadata for third-party mutating admission.
 - [#449](https://github.com/stokaro/ptah-operator/issues/449): keep plan bytes
@@ -152,7 +149,8 @@ The operator separates five authorities:
    [Who may turn the approval requirement off](#who-may-turn-the-approval-requirement-off).
 2. An approver may read schemas, migrations, their plans and the chunks a
    schema plan's SQL is stored in, and create immutable approvals for either
-   family. The chart creates an optional
+   family, and the acknowledgment that settles a migration run nobody
+   accounted for. The chart creates an optional
    ClusterRole but never binds it automatically. RBAC decides who may
    approve; it does not by itself decide that the approver is a second
    person rather than the author. See
@@ -163,7 +161,13 @@ The operator separates five authorities:
    that ship with the release constrain its main-resource writes to structural
    Job, immutable plan, immutable chunk and immutable projection shapes; a
    fail-closed webhook then reconstructs and compares the complete write
-   intent through direct API reads.
+   intent through direct API reads. Nobody else writes status: a policy the
+   chart installs refuses a write to the status subresource of every operator
+   kind from any identity but the manager's ServiceAccount, a cluster
+   administrator included, and another refuses anyone else a change to the copy
+   of a migration's unresolved-run record on its metadata. A person settles such
+   a run with a `PtahMigrationRunAcknowledgment`, which admission stamps with
+   who made it and the migration records.
 4. A Job receives only the credentials needed for its fixed operation through
    same-namespace Secret selectors resolved by the kubelet.
 5. A realm administrator decides which namespaces may manage a database more

@@ -30,7 +30,15 @@ rather than interpreting it, at startup and on every reconciliation.
 | `PtahMigrationApproval` | `spec` |
 
 A `PtahRealm` carries no controller state. It is an administrator's grant,
-written and read as `spec` alone.
+written and read as `spec` alone. Neither does a
+`PtahMigrationRunAcknowledgment`: it is a person's statement that one run was
+accounted for, and the migration it settled names it by UID in
+`status.resolvedRun`.
+
+A `PtahMigration` also keeps one thing outside status: a copy of
+`status.unresolvedRun` in its `operator.ptah.run/unresolved-run` annotation,
+which the manager writes before the status record and removes after it. It is
+what survives a restore that drops status.
 
 Some of what a recovery needs lives outside those objects:
 
@@ -87,8 +95,11 @@ database holds what it held before the loss.
 
 A backup that omits any of these turns a consistent restore into a rebuild.
 
-- The six namespaced kinds that carry status, **including status**. A backup
-  that keeps only `spec` keeps none of the record.
+- The seven namespaced kinds that carry status, **including status**, and their
+  annotations. A backup that keeps only `spec` keeps none of the record. One
+  that keeps metadata and drops status -- Velero's default -- keeps the record
+  of a run nobody accounted for, through its copy in the annotation, and
+  nothing else of it: status is rebuilt by reading the database again.
 - Every `PtahSchemaPlanChunk`, with its UID. A chunk has no status, but it
   holds the plan's bytes, and a `PtahSchemaPlan` names each of its chunks by
   UID in `status.publishedChunks`.
@@ -121,7 +132,7 @@ holder that no longer exists and makes it wait out an interval for nothing.
 2. Restore or reinstall the release: CRDs, the chart, the admission singleton,
    the certificate Secret.
 3. Restore the Secrets and the verification-policy ConfigMaps.
-4. Restore the `PtahRealm` objects, then the six namespaced kinds with their
+4. Restore the `PtahRealm` objects, then the seven namespaced kinds with their
    status, then the plan chunks.
 5. Start the manager. It re-reads the database before it plans.
 
@@ -153,12 +164,20 @@ What you can establish depends on the family.
 A `PtahMigration` keeps the answer in the database. The revision table records
 which versions were applied, and a rebuilt resource reads it -- after resolving
 and verifying its artifact, and before it plans anything. A version that was mid-flight is either recorded or not, and the
-history read says which. What a rebuild loses is
-`status.unresolvedRun` — the record that stops a blind replay — so if the old
-resource carried one, establish what that run did **before** you let the
-rebuilt resource proceed. A migration that committed part of a file and cannot
-say which part is the case that needs a person; the runbook for it is [A
-migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for).
+history read says which.
+
+What stops a blind replay is `status.unresolvedRun`, and whether a rebuild
+keeps it depends on what the rebuild was made from. A backup that kept the
+resource's metadata keeps the record's copy in the
+`operator.ptah.run/unresolved-run` annotation, and the manager puts the record
+back from it before the rebuilt resource plans anything. Specs reapplied from
+source control carry no copy, and neither does a backup taken while the Apply
+was still running, before its outcome was read: then the record is lost, so if
+the old resource carried one, or may have been about to, establish what that
+run did **before** you let the rebuilt resource proceed. A migration that
+committed part of a file and cannot say which part is the case that needs a
+person; the runbook for it is [A migration run nobody accounted
+for](../operations/#a-migration-run-nobody-accounted-for).
 
 A `PtahSchema` is declarative, and the database is the whole answer. A rebuilt
 resource observes the live schema and plans the difference. An Apply that was

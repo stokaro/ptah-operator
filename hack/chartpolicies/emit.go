@@ -320,7 +320,13 @@ func (e *emitter) matchResources(m *admissionregistrationv1.MatchResources, inde
 			}
 			e.printf("%s%s: %s\n", prefix, field.name, list)
 		}
-		scope, err := e.scalar(string(*rule.Scope), bare)
+		// "*" is the one scope YAML would read as an alias, so it is the one
+		// written quoted; the named scopes stay bare, as the chart writes them.
+		mode := bare
+		if *rule.Scope == admissionregistrationv1.AllScopes {
+			mode = quoted
+		}
+		scope, err := e.scalar(string(*rule.Scope), mode)
 		if err != nil {
 			return fmt.Errorf("rule %d scope: %w", index, err)
 		}

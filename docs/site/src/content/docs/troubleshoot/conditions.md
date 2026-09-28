@@ -40,7 +40,7 @@ retired execution binding made the last evidence historical.
 | --- | --- |
 | `ApprovalRequired` | True while a plan waits for the exact approval its policy requires. False when the requirements are satisfied, when the apply policy is `Never`, or while the realm is contested or does not admit the resource and nothing is approvable. |
 | `ArtifactVerified` | True when the resolved artifact satisfied its verification policy. Unknown when it resolved to a digest and has not been verified yet. |
-| `Blocked` | True for a history this artifact cannot continue, which the controller never resolves by writing to the database. False when the history continues the artifact. |
+| `Blocked` | True for a history this artifact cannot continue, which the controller never resolves by writing to the database. False when the history continues the artifact, or once a person's acknowledgment settled a run nobody accounted for and the database is being read again. |
 | `Progressing` | True while work is in flight, including the read-back that confirms what a run did. False when nothing is pending, when operations are suspended, when the apply policy is `Never`, or when an operation was retired because an execution component changed. |
 | `Ready` | True when the history matches the artifact and nothing is pending. False carrying what holds it: a dirty or modified revision row, a migration out of order or ahead of the artifact, a plan awaiting approval, a lost lock epoch, or an Apply whose outcome a person has to establish. |
 
@@ -61,6 +61,13 @@ retired execution binding made the last evidence historical.
 A migration approval publishes only this one. Whether it matches the plan is
 reported on the `PtahMigration` through `ApprovalRequired` rather than on the
 approval, so a consumer waiting for a decision watches the migration.
+
+## PtahMigrationRunAcknowledgment
+
+| Condition | What it says |
+| --- | --- |
+| `Consumed` | True when the acknowledgment settled the unresolved run it names. The migration records it by UID in `status.resolvedRun`. |
+| `Stale` | True when the acknowledgment named a run the migration was not waiting on, so it settled nothing: a reading or another acknowledgment settled that run first, or it was never this migration's. |
 
 ## PtahSchemaPlan
 

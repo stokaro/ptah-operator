@@ -442,6 +442,57 @@ type UnresolvedMigrationRunStatus struct {
 	RecordedAt metav1.Time `json:"recordedAt"`
 }
 
+// UnresolvedRunAnnotation holds a copy of status.unresolvedRun, encoded as
+// JSON, on the PtahMigration's own metadata.
+//
+// A restore that drops status -- Velero's default -- keeps annotations, and
+// the record is what refuses to replay a migration that may already have run.
+// The manager writes the copy before the status field and removes it after,
+// and restores the status field from it when status comes back without it.
+// Only the manager's ServiceAccount may add, change or remove it once the
+// resource exists; the chart's admission policy refuses anyone else.
+const UnresolvedRunAnnotation = "operator.ptah.run/unresolved-run"
+
+// MigrationRunResolution is what settled an unresolved run.
+// +kubebuilder:validation:Enum=HistoryRead;Acknowledged
+type MigrationRunResolution string
+
+const (
+	// MigrationRunResolvedByHistoryRead means a read-only reading of the
+	// database the run addressed found nothing of the artifact left to apply.
+	MigrationRunResolvedByHistoryRead MigrationRunResolution = "HistoryRead"
+	// MigrationRunResolvedByAcknowledgment means a person created a
+	// PtahMigrationRunAcknowledgment naming the run.
+	MigrationRunResolvedByAcknowledgment MigrationRunResolution = "Acknowledged"
+)
+
+// ResolvedMigrationRunStatus is how an unresolved run was settled.
+//
+// It is also what lets the manager tell a copy of the record left behind by
+// an interrupted removal from a record a restore brought back: the first names
+// a run this field says was settled, and the second names one status knows
+// nothing about.
+// +kubebuilder:validation:XValidation:rule="self.resolution == 'Acknowledged' ? has(self.acknowledgmentRef) && has(self.acknowledgedBy) : !has(self.acknowledgmentRef) && !has(self.acknowledgedBy)",message="an acknowledged resolution names its acknowledgment and the identity that made it, and a resolution by reading names neither"
+type ResolvedMigrationRunStatus struct {
+	// OperationID is the Apply attempt the settled record named.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	OperationID string `json:"operationID"`
+	// Outcome is what that record said.
+	Outcome MigrationRunOutcome `json:"outcome"`
+	// Resolution is what settled it.
+	Resolution MigrationRunResolution `json:"resolution"`
+	// AcknowledgmentRef is the PtahMigrationRunAcknowledgment that settled it,
+	// when a person did.
+	// +optional
+	AcknowledgmentRef *ImmutableObjectReference `json:"acknowledgmentRef,omitempty"`
+	// AcknowledgedBy is the identity admission stamped on that
+	// acknowledgment.
+	// +optional
+	AcknowledgedBy *ApprovalIdentity `json:"acknowledgedBy,omitempty"`
+	// ResolvedAt is when the controller settled it.
+	ResolvedAt metav1.Time `json:"resolvedAt"`
+}
+
 // PtahMigrationStatus is the controller's account of one migration resource.
 type PtahMigrationStatus struct {
 	// ObservedGeneration is the spec generation this status describes.
@@ -490,9 +541,19 @@ type PtahMigrationStatus struct {
 	// UnresolvedRun is the execution nobody could account for, and is absent
 	// while there is none. It is written when a run ends Partial or Unknown,
 	// and removed only when a read-only reading of the same database finds
-	// nothing of this artifact left to apply. While it is here nothing is
-	// planned and nothing runs, whatever the conditions happen to say.
+	// nothing of this artifact left to apply, or when a
+	// PtahMigrationRunAcknowledgment names its operationID. While it is here
+	// nothing is planned and nothing runs, whatever the conditions happen to
+	// say.
+	//
+	// The manager keeps a copy in the operator.ptah.run/unresolved-run
+	// annotation, written before this field and removed after it, so a
+	// restore that drops status restores the record from metadata.
 	UnresolvedRun *UnresolvedMigrationRunStatus `json:"unresolvedRun,omitempty"`
+
+	// ResolvedRun is how the most recent unresolved run was settled, and who
+	// settled it when a person did. It stays until the next one is settled.
+	ResolvedRun *ResolvedMigrationRunStatus `json:"resolvedRun,omitempty"`
 
 	// PendingLockRelease is a database-realm Lease this resource still owes
 	// back, kept whole so the release survives the process that owed it. The

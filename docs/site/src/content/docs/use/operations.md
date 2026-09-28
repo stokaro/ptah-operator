@@ -140,7 +140,7 @@ is what you mean.
 Helm reporting success means its hook completed, which is not the same as the
 manager serving.
 [Confirm it installed](../../start/install/#confirm-it-installed) carries the
-two readings that settle it: eight CRDs at `Established=True`, and the manager
+two readings that settle it: nine CRDs at `Established=True`, and the manager
 and certificate-rotator Deployments available.
 
 #### Where to stop {#install-stop}
@@ -214,7 +214,7 @@ helm upgrade <release> <chart> --values <values>
 #### What proves it worked {#upgrade-evidence}
 
 The readings are the ones an install ends with, against the new digests:
-`Established=True` on eight CRDs, both Deployments available, and manager Pods
+`Established=True` on nine CRDs, both Deployments available, and manager Pods
 whose image is the candidate's.
 
 An upgrade that keeps the manager image, the shape a GitOps re-sync or a
@@ -294,7 +294,7 @@ left behind. Helm then applies the candidate over the stopped Deployments.
 
 #### What proves it worked {#retry-evidence}
 
-The same readings an upgrade ends with: `Established=True` on eight CRDs, both
+The same readings an upgrade ends with: `Established=True` on nine CRDs, both
 Deployments available, and manager Pods carrying the candidate image.
 
 #### Where to stop {#retry-stop}
@@ -430,7 +430,7 @@ helm uninstall <release> --wait --timeout 5m
 #### What proves it worked {#uninstall-evidence}
 
 Helm reports the release uninstalled. What remains afterwards is deliberate:
-the eight CRDs with their custom resources.
+the nine CRDs with their custom resources.
 
 #### Where to stop {#uninstall-stop}
 
@@ -461,9 +461,13 @@ same procedure. Record the old coordination Leases before starting, and retain
 them as audit evidence until no interrupted operation can refer to them.
 
 A migration suspended mid-sequence keeps `status.history` and, if one was left,
-`status.unresolvedRun`. Both have to survive the uninstall: the first is what
-says how far the sequence got, and the second is the record that stops a
-replacement Apply from running a migration that may already have executed.
+`status.unresolvedRun`. The first is what says how far the sequence got, and the
+second is the record that stops a replacement Apply from running a migration
+that may already have executed. The record is the one that has to survive: the
+history is read again, and the record cannot be. The manager keeps a copy of it
+in the resource's `operator.ptah.run/unresolved-run` annotation, so a backup
+that keeps metadata keeps the record even where it drops status; see
+[A restore that drops status](#a-restore-that-drops-status).
 
 #### Run it {#offline-run}
 
@@ -474,7 +478,7 @@ In this order:
 3. Place the databases in a maintenance window.
 4. Scale the manager and certificate-rotation Deployments to zero.
 5. Back up all Ptah custom resources.
-6. Uninstall the release, and verify that the eight CRDs and their objects
+6. Uninstall the release, and verify that the nine CRDs and their objects
    remain.
 7. Install exactly one release of the first published version or newer, with
    the new invariant values where those are what is changing.
@@ -483,7 +487,7 @@ In this order:
 
 #### What proves it worked {#offline-evidence}
 
-The eight CRDs and their objects present after the uninstall, before anything is
+The nine CRDs and their objects present after the uninstall, before anything is
 installed over them. Then the new release's admission annotations carrying its
 own identity, manager readiness, and both kinds converging again.
 
@@ -491,16 +495,17 @@ own identity, manager readiness, and both kinds converging again.
 
 Do not start with a migration still running: a migration left running is a
 writer this procedure does not stop. Do not install over the uninstalled
-release if the eight CRDs or their objects did not survive it, and do not treat a
-resource whose `status.unresolvedRun` went missing as one that has nothing
-outstanding.
+release if the nine CRDs or their objects did not survive it, and do not treat a
+resource whose `status.unresolvedRun` and its copy in the
+`operator.ptah.run/unresolved-run` annotation both went missing as one that has
+nothing outstanding.
 
 #### If it fails {#offline-recovery}
 
 Nothing here is time-bounded, so a failed step is repeated rather than worked
 around: the databases are in maintenance and both kinds are suspended, which is
 the state the procedure is safe to sit in. Restore the backed-up custom
-resources into the eight retained CRDs before resuming either kind.
+resources into the nine retained CRDs before resuming either kind.
 
 `coordination.namespace` contains the fixed manager leader-election Lease and
 the database target Leases. It defaults to the release namespace and may name
@@ -1329,7 +1334,8 @@ clears. Four gates are answered before any operation is claimed, and a resource
 held at one of them never reaches the reading that would clear its record:
 suspension, an engine this operator does not support, a database realm another
 resource claims, and stored state written by a newer manager than the one
-running.
+running. The first three do not stop a person's acknowledgment, which reads no
+database and is taken ahead of them.
 
 Passing those gates is not the same as getting the reading. Resolve, verify and
 the history read are retried for as long as they keep failing, with no attempt
@@ -1365,56 +1371,117 @@ before it is stored. Neither does an artifact that ends before the database
 does: an artifact pointed at a shorter sequence says nothing about a run that
 went past it.
 
-### Clearing it by hand {#clear-unresolved-run}
+The other way it clears is a person's acknowledgment, below: the case where the
+database is accounted for and still has work pending, which no reading can
+settle. Either way the resource records how in `status.resolvedRun`, and who,
+when a person did.
+
+Nobody clears the record by writing status. The chart refuses a write to the
+`status` subresource of every operator kind from anyone but the manager's
+ServiceAccount, a cluster administrator included, because status is what the
+controller and its admission webhooks decide from; a write that removed the
+record would also have recorded nobody.
+
+### Settling it by hand {#clear-unresolved-run}
 
 #### Before you start {#clear-before}
 
-You need write access to the `PtahMigration` and its `status` subresource in
-its namespace. Nothing cluster-scoped is touched.
+You need `create` on `ptahmigrationrunacknowledgments` in the resource's
+namespace. The approver ClusterRole the chart ships grants it, since the
+decision is of the same weight as an approval: it lets the next plan be made
+against that database. Nothing cluster-scoped is touched.
 
 Establish what the run did. The record is the operator saying it cannot tell,
-so removing it without answering that question hands the next Apply a database
-in a state nobody checked.
+so acknowledging it without answering that question hands the next Apply a
+database in a state nobody checked.
 
 #### Run it {#clear-run}
 
-The record and the `Blocked` condition it set go in one write.
+Copy the resource's UID and the run's operation ID the operator published:
 
 ```sh
-kubectl get ptahmigration orders -o json \
-  | jq 'del(.status.unresolvedRun)
-        | .status.conditions = [
-            .status.conditions[] | select(.type != "Blocked")
-          ]' \
-  | kubectl replace --subresource=status -f -
+kubectl -n application get ptahmigration orders \
+  -o jsonpath='{.metadata.uid}{"\n"}{.status.unresolvedRun.operationID}{"\n"}'
 ```
 
-The condition is removed rather than set to `False`, because setting it leaves
-`lastTransitionTime` describing the moment it became `True`: the operator's
-next reading sees a condition already at the value it wants and keeps that
-timestamp, so `Blocked=False` would go on claiming it became false at the
-instant it became true. Removing it lets the next reading write the condition
-whole.
+and name them in a `PtahMigrationRunAcknowledgment`:
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigrationRunAcknowledgment
+metadata:
+  name: orders-run-accounted-for
+  namespace: application
+spec:
+  migrationRef:
+    name: orders
+    uid: <metadata.uid of the PtahMigration>
+  operationID: <status.unresolvedRun.operationID>
+```
+
+The admission webhook stamps your authenticated identity on it and refuses one
+written for anybody else, or one that names a run the resource does not record
+right now. The controller takes it on its next pass, whether or not the
+resource is suspended, and reads the database again before it plans anything.
 
 #### What proves it worked {#clear-evidence}
 
-The operator rewrites the conditions on its next reading, so the resource comes
-back carrying a `Blocked` condition written whole and no
-`status.unresolvedRun`.
+`status.unresolvedRun` and the `operator.ptah.run/unresolved-run` annotation
+are gone, and `status.resolvedRun` names the run, the acknowledgment and you:
+
+```sh
+kubectl -n application get ptahmigration orders -o jsonpath='{.status.resolvedRun}' | jq
+kubectl -n application get ptahmigrationrunacknowledgment orders-run-accounted-for
+```
+
+The acknowledgment reads `Consumed=True`, and a Normal Event,
+`UnresolvedRunAcknowledged`, names who acknowledged which run. The resource then
+plans whatever the database still lacks: under `apply: OnApproval` that plan
+waits for an approval like any other, and under `Always` it runs.
 
 #### Where to stop {#clear-stop}
 
-Do not clear the record to make a resource move again, and do not set
-`Blocked=False` in place of removing the condition. Do not reach for
-`kubectl delete` either;
+Do not acknowledge a run to make a resource move again. An acknowledgment the
+controller answers `Stale=True` settled nothing: it named a run the resource is
+not waiting on, usually because a reading settled it first, and a second
+acknowledgment of one run is answered the same way once the first has settled
+it. Do not reach for `kubectl delete` either;
 [Deleting the resource discards it](#deleting-the-resource-discards-it) says
 what that costs.
 
 #### If it fails {#clear-recovery}
 
-A record is written only where an Apply ends `Partial` or `Unknown`, so one
-that is back names a later run. Compare its `operationID` and `jobUID` with the
-record you cleared, and account for that run the same way.
+An acknowledgment admission refused says why: the operation ID the resource
+does record, a resource recreated under the same name, or a resource that
+records nothing to acknowledge. A record is written only where an Apply ends
+`Partial` or `Unknown`, so one that is back names a later run. Compare its
+`operationID` and `jobUID` with the run you acknowledged, and account for that
+run the same way.
+
+### A restore that drops status
+
+The manager keeps a copy of the record in the resource's own
+`operator.ptah.run/unresolved-run` annotation, as JSON. The copy is written
+before `status.unresolvedRun` and removed after it, so a stored record always
+has its copy. A backup tool that recreates the resource with its metadata and
+without its status -- Velero does by default -- brings the copy back, and the
+manager puts `status.unresolvedRun` back from it before it reads anything else,
+with a Warning Event, `UnresolvedRunRestored`. The restored record names the
+same run and clears the same two ways. The restored resource has a new UID, so
+an acknowledgment written before the loss does not carry over to it.
+
+Once the resource exists, only the manager's ServiceAccount may add, change or
+remove the annotation; the chart refuses anyone else, as it refuses a status
+write. Creating a resource that carries it is admitted, because a restore is
+exactly that. A copy the manager cannot read holds the resource `Blocked` with
+`ApplyOutcomeUnknown` and runs nothing; delete and recreate the resource once
+the database is accounted for.
+
+Two restores keep nothing. Specs reapplied from Git carry no annotation, and a
+backup taken while an Apply was still in flight predates the record: the record
+is written when the run's outcome is read. What protects those is the history
+read every rebuilt resource takes before it plans, and the approval a new plan
+waits for; [Recover operator state](../recovery/) says what to establish first.
 
 ### Deleting the resource discards it
 

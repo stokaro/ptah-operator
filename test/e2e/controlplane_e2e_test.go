@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -1203,15 +1204,26 @@ func (p *controlPlanePhase) suspendedSchemaFixture(t *testing.T) {
 		}})
 }
 
+// patchStatus writes a fixture's status as the manager's ServiceAccount.
+// Status is the manager's alone: the chart's status guard refuses every other
+// writer, this harness included, and the fixture stands in for what the
+// manager would have written.
 func (p *controlPlanePhase) patchStatus(t *testing.T, object client.Object, status map[string]any) {
 	t.Helper()
+	if p.serviceAccount == "" {
+		p.fatalf(t, "cannot write the status of %s before the manager's ServiceAccount is known", object.GetName())
+	}
 	patch, err := json.Marshal(status)
 	if err != nil {
 		p.fatalf(t, "encode the status of %s: %v", object.GetName(), err)
 	}
-	if err := p.cluster.Client.Status().Patch(p.ctx, object, client.RawPatch(types.MergePatchType, patch),
+	manager, err := p.cluster.As(rest.ImpersonationConfig{UserName: p.serviceAccount})
+	if err != nil {
+		p.fatalf(t, "could not build a client that acts as %s: %v", p.serviceAccount, err)
+	}
+	if err := manager.Status().Patch(p.ctx, object, client.RawPatch(types.MergePatchType, patch),
 		client.FieldOwner(harness.FieldOwner)); err != nil {
-		p.fatalf(t, "could not write the status of %s: %v", object.GetName(), err)
+		p.fatalf(t, "could not write the status of %s as %s: %v", object.GetName(), p.serviceAccount, err)
 	}
 }
 

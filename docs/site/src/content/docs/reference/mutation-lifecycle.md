@@ -238,16 +238,28 @@ has to outlive that.
 | `PtahSchema` | `status.pendingObservation`, written by `pendingObservationFor` |
 | `PtahMigration` | `status.unresolvedRun`, written by `recordUnresolvedMigrationRun` |
 
-Each is written by exactly one function and cleared at exactly one place. The
-claim and the record are swapped in a single status patch, so a crash on either
-side leaves either a live claim or a retained record, never both and never
-neither.
+Each is written by exactly one function. The claim and the record are swapped
+in a single status patch, so a crash on either side leaves either a live claim
+or a retained record, never both and never neither.
+
+A migration's record also lives outside status, because a restore that drops
+status would otherwise drop it. The manager copies it into the resource's
+`operator.ptah.run/unresolved-run` annotation before the status patch that
+stores it, removes the copy after the status patch that settles it, and
+`reconcileUnresolvedRunCopy` puts the record back from the copy when status
+comes back without it. `status.resolvedRun` names the attempt that was settled,
+so a copy left by an interrupted removal is told apart from one a restore
+brought back.
 
 ## Prove or refuse
 
-Only a fresh read-only reading settles an uncertain attempt. A Job exit code
-never does, and neither does an edit to a condition, an unrelated approval, a
-suspension, a spec change or a restart.
+Only a fresh read-only reading settles an uncertain attempt on its own. A Job
+exit code never does, and neither does an edit to a condition, an unrelated
+approval, a suspension, a spec change or a restart. A migration has one more
+way out, which a person takes: a `PtahMigrationRunAcknowledgment` that names the
+attempt, settled in `settleUnresolvedRunByAcknowledgment` in the name admission
+stamped on it and followed by a fresh reading before anything is planned. A
+write to status is not one: the chart refuses it to anyone but the manager.
 
 | | Enforcement |
 | --- | --- |
@@ -414,6 +426,7 @@ check that it still does.
 | `status.pendingBindingRetirement` | yes | no |
 | `status.pendingObservation` | yes | no |
 | `status.unresolvedRun` | no | yes |
+| `status.resolvedRun` | no | yes |
 
 A field one family keeps and the other does not is not automatically a gap. It
 is a gap where the obligation is the same and only the machinery differs, which
