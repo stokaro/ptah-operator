@@ -309,6 +309,92 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 	IsolatesNode: true,
 })
 
+// ReferenceDataInputs is what the driver hands the reference-data phases.
+// They run in the namespace the data plane stood up, on its database servers,
+// each on a database of its own that no other phase touched.
+type ReferenceDataInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// TestNamespace is the namespace the data plane stood up in preparation:
+	// its registry Service, its databases and its registry credentials.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// OperatorNamespace is the release namespace, whose controller log the
+	// phase scans for declared row values.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// ExecutorImage publishes the reference-data artifacts, with the command a
+	// person would use.
+	ExecutorImage string `env:"E2E_EXECUTOR_IMAGE"`
+	// RunnerImage is the runner image the operation Jobs carry.
+	RunnerImage string `env:"E2E_RUNNER_IMAGE"`
+	// RegistryService is the Service the cluster reaches the registry by.
+	RegistryService string `env:"E2E_REGISTRY_SERVICE"`
+	// Engine is postgresql or mysql, and has to be the phase's own.
+	Engine string `env:"E2E_ENGINE"`
+}
+
+// ReferenceDataPostgreSQL proves declared reference data on PostgreSQL, from
+// a database with no tables: the first rows, a data-only change, a stale
+// approval after an external edit, a withdrawn and an emptied declaration, a
+// protected table, and no row value anywhere but the database.
+var ReferenceDataPostgreSQL = define[ReferenceDataInputs](Phase{
+	Name:    "reference-data-postgresql",
+	Test:    "TestReferenceDataPostgreSQL",
+	Timeout: 60 * time.Minute,
+	Scenarios: []string{
+		"declared-row-values",
+		"postgresql-reference-data",
+	},
+})
+
+// ReferenceDataMySQL proves the same on MySQL.
+var ReferenceDataMySQL = define[ReferenceDataInputs](Phase{
+	Name:    "reference-data-mysql",
+	Test:    "TestReferenceDataMySQL",
+	Timeout: 60 * time.Minute,
+	Scenarios: []string{
+		"declared-row-values",
+		"mysql-reference-data",
+	},
+})
+
+// AlertingInputs is what the driver hands the alerting phase, which runs last
+// in the PostgreSQL migrations suite, on the cluster that suite leaves.
+type AlertingInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// OperatorNamespace is the release namespace.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// HelmRelease is the installed release, whose values the rules are
+	// rendered with.
+	HelmRelease string `env:"E2E_HELM_RELEASE"`
+	// ChartPackage is the chart the release was installed from.
+	ChartPackage string `env:"E2E_CHART_PACKAGE"`
+	// FixtureImage carries the alert receiver.
+	FixtureImage string `env:"E2E_FIXTURE_IMAGE"`
+	// PrometheusImage and AlertmanagerImage are the monitoring path, mirrored
+	// into the registry and pinned by digest.
+	PrometheusImage   string `env:"E2E_PROMETHEUS_IMAGE"`
+	AlertmanagerImage string `env:"E2E_ALERTMANAGER_IMAGE"`
+	// RegistryCredentialsFile holds the registry's username and password,
+	// which the monitoring Pods pull their images with.
+	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
+}
+
+// Alerting proves the path from a manager's metrics to a person: an Apply
+// nobody accounted for, an operation that stops moving, and every manager
+// gone each reach a receiver, and the two that can clear do.
+var Alerting = define[AlertingInputs](Phase{
+	Name:    "alerting",
+	Test:    "TestAlerting",
+	Timeout: 80 * time.Minute,
+	Scenarios: []string{
+		"monitoring-path",
+		"unresolved-apply",
+		"stalled-operation",
+		"lost-view",
+	},
+})
+
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
 	ControlPlane.Phase,
@@ -316,6 +402,9 @@ var all = []Phase{
 	DataPlane.Phase,
 	MigrationsPostgreSQL.Phase,
 	MigrationsMySQL.Phase,
+	ReferenceDataPostgreSQL.Phase,
+	ReferenceDataMySQL.Phase,
+	Alerting.Phase,
 }
 
 func init() {

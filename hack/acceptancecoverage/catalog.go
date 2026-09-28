@@ -240,12 +240,11 @@ func markedScenarios(source string) []string {
 }
 
 // nestedScripts names the phase scripts a phase script runs inside itself.
-// The stopwatch helper and the SQL wrappers are libraries rather than phases,
-// and a script never nests itself.
+// The stopwatch helper and the image resolver are libraries rather than
+// phases, and a script never nests itself.
 func nestedScripts(source, self string) []string {
 	library := map[string]bool{
 		"e2e-timing.sh":                   true,
-		"e2e-sql.sh":                      true,
 		"e2e-kubernetes-support-image.sh": true,
 		self:                              true,
 	}

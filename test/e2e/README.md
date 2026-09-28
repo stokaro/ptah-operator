@@ -379,10 +379,12 @@ Job.
 The phases are moving from shell scripts under `hack/` to Go tests in this
 directory, one suite at a time. The certificates suite and the data-plane
 suite are ported: the control-plane phase, `assert`, and the data plane
-itself, `dataplane`, restart and fault injection included. So are the two
-migration phases, `migrations-postgresql` and `migrations-mysql`; the reference
-data and the alerting phase that share their suites are still scripts. The
-driver keeps
+itself, `dataplane`, restart and fault injection included. So are both
+migration suites: the migration phases, `migrations-postgresql` and
+`migrations-mysql`, the reference-data phases, `reference-data-postgresql` and
+`reference-data-mysql`, and `alerting`. The lifecycle suite's phases are still
+scripts.
+The driver keeps
 the bootstrap: the kind cluster, the images, the registry, the
 databases and the chart install. Before it creates the cluster it builds one
 test binary from the snapshot:

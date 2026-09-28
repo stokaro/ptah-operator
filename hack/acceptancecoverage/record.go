@@ -87,7 +87,8 @@ var requirements = []requirement{
 			"`prove_controller_write_guard`, `prove_controller_object_supported_window_guard`, `prove_controller_downgrade_guard`, " +
 			"the egress policies in `test/e2e/migrations_isolation_e2e_test.go` on a CNI that enforces, " +
 			"and the credential scans in `test/e2e/dataplane_audit_e2e_test.go`, " +
-			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`, " +
+			"which reads the manager's metrics as well as its logs, and the same scanner over what the reference-data phase reads " +
+			"in `test/e2e/referencedata_e2e_test.go`, " +
 			"author, approver and administrator identities against RBAC and the example guard in `test/e2e/migrations_guard_e2e_test.go`, " +
 			"and a realm claim made from a namespace the PtahRealm does not list, by an author the API server will not let write the realm, " +
 			"refused alone while the listed claimant keeps running, in `test/e2e/migrations_realm_e2e_test.go`",
@@ -112,7 +113,7 @@ var requirements = []requirement{
 			"and behavior beyond the admitted limits"},
 	{"PA-09", "Detect and diagnose operational failures",
 		"alerts firing inside a declared detection target and reaching a configured receiver",
-		"`hack/e2e-alerting.sh`, which delivers the unresolved-Apply, stalled-operation and lost-view alerts " +
+		"`test/e2e/alerting_e2e_test.go`, which delivers the unresolved-Apply, stalled-operation and lost-view alerts " +
 			"from the chart's rules through Alertmanager to a receiver, and the operator metrics on a new leader in `hack/e2e-ha.sh`",
 		"on a cluster, the certificate, upgrade, overdue, lock-release, plan-store, failure-rate, admission and view-read alerts; " +
 			"one scrape target lost; and approval waits kept from paging"},
