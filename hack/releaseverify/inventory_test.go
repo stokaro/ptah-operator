@@ -18,7 +18,7 @@ import (
 //
 // The tests around it checked workflow structure, script identity and filter
 // syntax. None of them ran the filter over what the producer actually
-// publishes, which is why a filter that compiled, matched its audited digest
+// publishes, which is why a filter that compiled, passed its structure checks
 // and refused every real run went unnoticed.
 const inventoryFilterMarker = "so it is a partial page"
 

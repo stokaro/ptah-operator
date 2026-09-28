@@ -2955,13 +2955,13 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name:        "installed chart export uses synthetic next chart",
 			old:         `cp "$CHART_PACKAGE" "$RELEASE_CHART_OUTPUT_TEMP"`,
 			replacement: `cp "$NEXT_CHART_PACKAGE" "$RELEASE_CHART_OUTPUT_TEMP"`,
-			wantError:   "export_release_chart digest",
+			wantError:   "export_release_chart is missing its installed chart export source",
 		},
 		{
 			name:        "installed chart export clobbers a raced target",
 			old:         `ln "$RELEASE_CHART_OUTPUT_TEMP" "$RELEASE_CHART_OUTPUT_TARGET"`,
 			replacement: `mv "$RELEASE_CHART_OUTPUT_TEMP" "$RELEASE_CHART_OUTPUT_TARGET"`,
-			wantError:   "export_release_chart digest",
+			wantError:   "export_release_chart is missing its installed chart export without replacement",
 		},
 		{
 			name:        "terminal evidence omitted",
@@ -3748,22 +3748,6 @@ func TestVerifyControllerObjectSchemaAssetsRejectCriticalMutations(t *testing.T)
 	t.Parallel()
 
 	files := repositoryE2EWiringFiles()
-	t.Run("reviewed field inventory changed", func(t *testing.T) {
-		t.Parallel()
-		source := readE2ESource(t, files.controllerSchemaContract)
-		mutated := files
-		mutated.controllerSchemaContract = writeMutatedE2ESource(
-			t,
-			"controller-object-schema-contract.jq",
-			source,
-			`    "scheduling",`,
-			`    "schedulingGroup",`,
-		)
-		if err := verifyControllerObjectSchemaAssets(mutated); err == nil || !strings.Contains(err.Error(), "field inventory digest") {
-			t.Fatalf("verifyControllerObjectSchemaAssets() error = %v, want inventory digest rejection", err)
-		}
-	})
-
 	t.Run("unreviewed minor negative removed", func(t *testing.T) {
 		t.Parallel()
 		source := readE2ESource(t, files.controllerSchemaSelftest)
