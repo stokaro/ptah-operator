@@ -125,7 +125,7 @@ func (r *SchemaReconciler) reconcileBindingRetirement(
 		return ctrl.Result{}, false, nil
 	}
 	// The Job the record names belongs to no claim this resource still
-	// carries: deletion dropped the claim, or the record names something else.
+	// carries: a status that lost the claim, or a record naming another Job.
 	// There is nothing left to clean up through it.
 	before := schema.DeepCopy()
 	settleRetirement(schema, retiredPlanApprovals, retiredJobCleanup)
@@ -229,10 +229,13 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+	case err == nil && retiredJobMayStillRun(schema, retired, job):
+		// The claim is what holds a Plan's Lease while its Pod can still reach
+		// the database, so it waits for a Job of this resource under the
+		// recorded name to stop, whether or not the envelope below would let
+		// the controller touch it.
+		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	case err == nil && retiredReadOnlyJobMatches(schema, operation, job):
-		if !jobTerminal(job) {
-			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
-		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -252,6 +255,22 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// retiredJobMayStillRun reports whether job is one this resource dispatched
+// under the name the record holds -- its UID the recorded one, or none
+// recorded yet -- and has not reached a terminal condition. It asks nothing
+// about the envelope: a Job whose envelope the controller cannot prove is
+// never touched, but it can still be running.
+func retiredJobMayStillRun(
+	schema *operatorv1alpha1.PtahSchema,
+	retired *operatorv1alpha1.RetiredJobStatus,
+	job *batchv1.Job,
+) bool {
+	return retired != nil && job != nil && job.Name == retired.Name &&
+		(retired.UID == "" || job.UID == retired.UID) && !jobTerminal(job) &&
+		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(),
+			"PtahSchema", schema.Name, schema.UID)
 }
 
 // adoptRetiredApplyJobUID looks for the Job a retired Apply claim may have
@@ -331,7 +350,10 @@ func (r *SchemaReconciler) cleanupRetiredApplyJob(
 // retiredPredecessorApplyJobMatches holds the Apply Job a retirement record
 // names to the exact envelope the retired claim dispatched: the record's name
 // and UID, the retired epoch, and the pending observation's plan, operation
-// and admission snapshot.
+// and admission snapshot. Beside the keys the envelope fixes, the Job may
+// carry what spec.execution.podMetadata declared when it was dispatched, by
+// the rule the controller-write validator applies; the template digest pins
+// what that was.
 func retiredPredecessorApplyJobMatches(
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
@@ -360,7 +382,7 @@ func retiredPredecessorApplyJobMatches(
 		workload.LabelOperation:   "apply",
 		workload.LabelOperationID: workload.OperationIDLabelValue(pending.ApplyOperationID),
 	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) ||
+	if workload.ValidateClaimedMetadata(job.Labels, wantLabels) != nil ||
 		!sha256DigestPattern.MatchString(pending.Plan.Fingerprint) ||
 		!sha256DigestPattern.MatchString(pending.Plan.ContentDigest) ||
 		strings.TrimSpace(pending.Plan.PtahVersion) == "" ||
@@ -403,15 +425,15 @@ func retiredPredecessorApplyJobMatches(
 	)
 	if !sha256DigestPattern.MatchString(inputFingerprint) ||
 		!sha256DigestPattern.MatchString(snapshotDigest) ||
-		!reflect.DeepEqual(job.Annotations, wantAnnotations) ||
-		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+		workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations) != nil ||
+		!reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
 		return false
 	}
 	normalized := job.DeepCopy()
 	if err := normalizeGeneratedJobSelector(normalized); err != nil {
 		return false
 	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
 		return false
 	}
 	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
@@ -419,7 +441,8 @@ func retiredPredecessorApplyJobMatches(
 }
 
 // readOnlyJobEnvelopeMatches holds the read-only Job a retirement record names
-// to the exact envelope the workload builder writes. Its two callers differ in
+// to the exact envelope the workload builder writes, declared Pod metadata
+// admitted as retiredPredecessorApplyJobMatches admits it. Its two callers differ in
 // one thing: what they know about the committed Job UID. After an ordinary
 // dispatch the claim and the record carry it and the live object must repeat
 // it; after a cutover that lost it, neither carries one and the caller is
@@ -469,7 +492,7 @@ func readOnlyJobEnvelopeMatches(
 		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
 		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
 	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
+	if workload.ValidateClaimedMetadata(job.Labels, wantLabels) != nil {
 		return false
 	}
 	ptahVersion := job.Annotations[workload.AnnotationPtahVersion]
@@ -495,13 +518,13 @@ func readOnlyJobEnvelopeMatches(
 	wantAnnotations[workload.AnnotationControllerImage] = controllerImage
 	wantAnnotations[workload.AnnotationControllerRevision] = controllerRevision
 	wantAnnotations[workload.AnnotationControllerStateVersion] = controllerStateVersion
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) ||
-		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+	if workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations) != nil ||
+		!reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
 		return false
 	}
 	normalized := job.DeepCopy()
 	if err := normalizeGeneratedJobSelector(normalized); err != nil ||
-		!reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+		!reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
 		return false
 	}
 	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)

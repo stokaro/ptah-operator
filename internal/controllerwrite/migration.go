@@ -170,7 +170,7 @@ func validateClaimBoundMigrationJobCleanup(
 		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
 		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
 	}
-	if err := validateClaimedMetadata(job.Labels, wantLabels); err != nil {
+	if err := workload.ValidateClaimedMetadata(job.Labels, wantLabels); err != nil {
 		return fmt.Errorf("Job labels do not match the persisted operation claim: %w", err)
 	}
 	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
@@ -189,7 +189,7 @@ func validateClaimBoundMigrationJobCleanup(
 	if operation.Type == operatorv1alpha1.MigrationOperationApply {
 		workload.MarkMutatingOperation(wantAnnotations)
 	}
-	if err := validateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
+	if err := workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
 		return fmt.Errorf("Job annotations are not the exact current operation envelope: %w", err)
 	}
 	// The template carries what the object carries, declared metadata

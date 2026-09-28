@@ -2839,6 +2839,17 @@ func (r *SchemaReconciler) executionBindingChanged(
 			}
 		}
 		schema.Status.ActiveOperation = nil
+	} else if pending := schema.Status.PendingObservation; pending != nil &&
+		pending.Outcome == operatorv1alpha1.PendingObservationOutcomeUnknown && pending.ApplyJobName != "" &&
+		schema.Status.ExecutionBinding != nil && pending.Plan.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
+		// An Apply of the epoch being retired, settled as outcome-unknown
+		// without its Job in hand -- a create whose result was uncertain, a Job
+		// that could not be read -- can leave a Job no pass has harvested. The
+		// record names it, so it is adopted and cleaned up before the proof. One
+		// that was harvested already settles at once.
+		retainedJob = &operatorv1alpha1.RetiredJobStatus{
+			Operation: operatorv1alpha1.OperationApply, Name: pending.ApplyJobName, UID: pending.ApplyJobUID,
+		}
 	}
 	if schema.Status.PendingObservation != nil {
 		// Any Observe/Plan evidence produced by the retired components is
