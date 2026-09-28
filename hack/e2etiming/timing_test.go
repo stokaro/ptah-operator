@@ -15,11 +15,48 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
+
+// A Go phase records its scenarios through test/e2e/harness, into the ledger
+// the shell stopwatch writes, and the report has to read them the same way.
+func TestReadLedgerReadsTheGoHarnessRows(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "timings.jsonl")
+	start := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	ledger := harness.NewLedger(path, io.Discard)
+	ledger.Row("scenario", "live-helm-lookup", "pass", start, start.Add(95*time.Second))
+	ledger.Row("scenario", "corrupt-ca-recovery", "fail", start.Add(95*time.Second), start.Add(700*time.Second))
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	stages, problems, err := readLedger(file)
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("readLedger() = %v, problems %v", err, problems)
+	}
+	want := []Stage{
+		{Kind: "scenario", Name: "live-helm-lookup", Outcome: "pass", Start: "2026-09-28T10:00:00Z", End: "2026-09-28T10:01:35Z", Seconds: 95},
+		{Kind: "scenario", Name: "corrupt-ca-recovery", Outcome: "fail", Start: "2026-09-28T10:01:35Z", End: "2026-09-28T10:11:40Z", Seconds: 605},
+	}
+	if len(stages) != len(want) {
+		t.Fatalf("readLedger() read %d stages, want %d: %+v", len(stages), len(want), stages)
+	}
+	for index := range want {
+		if stages[index] != want[index] {
+			t.Errorf("stage %d = %+v, want %+v", index, stages[index], want[index])
+		}
+	}
+}
 
 const ledgerSample = `{"kind":"bootstrap","name":"operator-image","outcome":"pass","start":"2026-09-17T10:00:00Z","end":"2026-09-17T10:04:10Z","seconds":250}
 {"kind":"phase","name":"dataplane","outcome":"pass","start":"2026-09-17T10:10:00Z","end":"2026-09-17T11:38:00Z","seconds":5280}

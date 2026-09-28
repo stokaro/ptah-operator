@@ -137,7 +137,7 @@ func buildCoverage(root, operator string) (*coverage, error) {
 				if !found {
 					return nil, fmt.Errorf("suite %q lists phase %q, which the driver does not run", item.Name, name)
 				}
-				scenarios, scenarioErr := readScenarios(root, phase.script)
+				scenarios, scenarioErr := phaseScenarios(root, phase)
 				if scenarioErr != nil {
 					return nil, scenarioErr
 				}
@@ -181,7 +181,7 @@ func (c *coverage) markdown() string {
 	var out strings.Builder
 	out.WriteString("### PA-01 coverage\n\n")
 	fmt.Fprintf(&out, "Derived from `support/kubernetes.json`, `support/e2e-suites.json`, "+
-		"`support/ptah.json` and `hack/e2e-kind.sh`. %d supported minors and %d suites make "+
+		"`support/ptah.json`, `hack/e2e-kind.sh` and `test/e2e/phases`. %d supported minors and %d suites make "+
 		"%d required cells. Preparation phases are listed because they explain what a suite "+
 		"stands up, and they are not coverage: a phase counts where a suite lists it under "+
 		"`phases` and nowhere else.\n\n",

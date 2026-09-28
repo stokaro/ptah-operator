@@ -92,7 +92,7 @@ var requirements = []requirement{
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",
 		"`run_upgrade_proof`, `run_next_release_upgrade_proof` and `run_uninstall_proof`, leader failover in `hack/e2e-ha.sh`, " +
-			"and certificate recovery in `hack/e2e-cert-rotation.sh`, on every supported minor",
+			"and certificate recovery in `test/e2e/certrotation_e2e_test.go`, on every supported minor",
 		"an upgrade from a published release, since none exists yet; a cluster with a ResourceQuota or Pod Security admission; " +
 			"and a database audit after the lifecycle"},
 	{"PA-07", "Restore operator and database state safely",

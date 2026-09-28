@@ -1,0 +1,128 @@
+package harness
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+)
+
+// FieldOwner is the field manager every write the harness makes carries, so
+// a phase's own writes can be told apart from the operator's and Helm's in
+// managedFields.
+const FieldOwner = "ptah-e2e"
+
+// Cluster is the cluster the driver stood up, reached through the kubeconfig
+// it wrote.
+//
+// Client reads straight from the API server. A phase asserts what the cluster
+// holds now, and a cache that trails a write by one watch event would make an
+// assertion about the harness rather than the operator.
+type Cluster struct {
+	Kubeconfig string
+	Config     *rest.Config
+	Client     client.Client
+	Clientset  kubernetes.Interface
+	Scheme     *runtime.Scheme
+}
+
+// Connect reaches the cluster the kubeconfig names, with the built-in types
+// and the operator's own API registered.
+func Connect(kubeconfig string) (*Cluster, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("read the kubeconfig %s: %w", kubeconfig, err)
+	}
+	// The phases poll every second or two across a handful of objects; the
+	// client's default of five requests a second would make a wait measure
+	// its own throttle.
+	config.QPS, config.Burst = 50, 100
+	config.UserAgent = FieldOwner
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+	if err := ptahv1alpha1.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+	direct, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("build a client for %s: %w", kubeconfig, err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("build a clientset for %s: %w", kubeconfig, err)
+	}
+	return &Cluster{Kubeconfig: kubeconfig, Config: config, Client: direct, Clientset: clientset, Scheme: scheme}, nil
+}
+
+// As returns a client that sends every request as the given identity. The
+// administrator the kubeconfig names has to be allowed to impersonate it,
+// which kind's is.
+func (c *Cluster) As(identity rest.ImpersonationConfig) (client.Client, error) {
+	config := rest.CopyConfig(c.Config)
+	config.Impersonate = identity
+	return client.New(config, client.Options{Scheme: c.Scheme})
+}
+
+// WaitForRollout waits for the Deployment the way `kubectl rollout status`
+// does, reading DeploymentRolledOut every two seconds.
+func (c *Cluster) WaitForRollout(ctx context.Context, namespace, name string, timeout time.Duration) error {
+	return Wait(ctx, fmt.Sprintf("rollout of Deployment %s/%s", namespace, name), timeout, 2*time.Second,
+		func(ctx context.Context) (bool, string, error) {
+			deployment := &appsv1.Deployment{}
+			if err := c.Client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, deployment); err != nil {
+				return false, fmt.Sprintf("read failed: %v", err), nil
+			}
+			return DeploymentRolledOut(deployment)
+		})
+}
+
+// ContainerLog reads what one container of a Pod has written so far.
+func (c *Cluster) ContainerLog(ctx context.Context, namespace, pod, container string) ([]byte, error) {
+	return c.Clientset.CoreV1().Pods(namespace).
+		GetLogs(pod, &corev1.PodLogOptions{Container: container}).
+		DoRaw(ctx)
+}
+
+// Describe writes `kubectl describe` of one object to w. It is diagnostics
+// for a failure the phase is about to report, so its own failure is written
+// down rather than returned.
+func (c *Cluster) Describe(ctx context.Context, w io.Writer, namespace, kind, name string) {
+	command := exec.CommandContext(ctx, "kubectl", "--kubeconfig", c.Kubeconfig, //nolint:gosec // Arguments, not a shell.
+		"-n", namespace, "describe", kind, name)
+	command.Stdout, command.Stderr = w, w
+	if err := command.Run(); err != nil {
+		_, _ = fmt.Fprintf(w, "e2e: kubectl describe %s %s/%s: %v\n", kind, namespace, name, err)
+	}
+}
+
+// Helm runs the helm CLI against the cluster and returns what it printed on
+// standard output. Its standard error goes to the phase's as it is written,
+// as it did when a shell phase ran it, so a refusal is in the log above the
+// failure that reports it.
+func (c *Cluster) Helm(ctx context.Context, arguments ...string) ([]byte, error) {
+	var stdout bytes.Buffer
+	command := exec.CommandContext(ctx, "helm", append([]string{"--kubeconfig", c.Kubeconfig}, arguments...)...) //nolint:gosec // Arguments, not a shell.
+	command.Stdout = &stdout
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
+		return stdout.Bytes(), fmt.Errorf("helm %v: %w; its standard error is above", arguments, err)
+	}
+	return stdout.Bytes(), nil
+}

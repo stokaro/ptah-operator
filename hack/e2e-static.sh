@@ -1272,7 +1272,6 @@ for packaged_chart_marker in \
 done
 for deployment_patch_script in \
 	e2e-assert.sh \
-	e2e-cert-rotation.sh \
 	e2e-crd-upgrade.sh \
 	e2e-dataplane.sh; do
 	if grep -Eq '(^|[[:space:]])scale[[:space:]]+deployment(/|[[:space:]])' \
@@ -1288,6 +1287,28 @@ for deployment_patch_script in \
 		exit 1
 	fi
 done
+# The Go phases are held to the same two rules. A census from git rather than
+# a glob, held above a floor, because a glob that stopped matching reports
+# nothing and reads as a pass.
+GO_PHASE_SOURCES=$(git -C "$ROOT_DIR" ls-files 'test/e2e/*.go')
+GO_PHASE_SOURCE_COUNT=$(printf '%s\n' "$GO_PHASE_SOURCES" | grep -c . || true)
+[ "$GO_PHASE_SOURCE_COUNT" -ge 3 ] || {
+	printf 'e2e static: found %s Go phase sources, and the harness carries more than that\n' \
+		"$GO_PHASE_SOURCE_COUNT" >&2
+	exit 1
+}
+printf '%s\n' "$GO_PHASE_SOURCES" | while IFS= read -r go_phase_source; do
+	if grep -Eq 'SubResource\("scale"\)|GetScale|UpdateScale' "$ROOT_DIR/$go_phase_source"; then
+		printf 'e2e static: %s bypasses the Deployment admission contract through the scale subresource\n' \
+			"$go_phase_source" >&2
+		exit 1
+	fi
+	if grep -F '{"spec":{"replicas":0}}' "$ROOT_DIR/$go_phase_source" >/dev/null; then
+		printf 'e2e static: %s mutates an immutable runtime Deployment to manufacture an outage\n' \
+			"$go_phase_source" >&2
+		exit 1
+	fi
+done || exit 1
 grep -F 'LeaderElectionNamespace: targetLockNamespace' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 grep -F 'ptah-operator.operator.ptah.run' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 for ha_marker in \
@@ -6176,40 +6197,6 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 fi
 grep -F 'StartedChecker()' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 [ "$(grep -Fc 'recreateMissingSecret: true' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 1 ]
-for recovery_marker in \
-	'ptah-rotator-unauthorized' \
-	'--dry-run=server' \
-	"delete secret \"\$SECRET_NAME\"" \
-	'operator.ptah.run/generated-webhook-certificate' \
-	'did not contract after Secret recreation'; do
-	grep -F -- "$recovery_marker" "$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
-done
-for helm_lookup_marker in \
-	"E2E_CHART_PACKAGE=\$CHART_PACKAGE" \
-	"E2E_TEST_NAMESPACE=\$TEST_NAMESPACE" \
-	'generate_upgrade_ca mutating' \
-	'generate_upgrade_ca approval-validating' \
-	'generate_upgrade_ca pod-validating' \
-	'assert_entry_bundle mutatingwebhookconfiguration' \
-	'assert_entry_bundle validatingwebhookconfiguration' \
-	'--reuse-values --wait --timeout 5m' \
-	"caBundle for \${webhook_name} gained another entry" \
-	'assert_approval_admission_callable "after the Helm upgrade"'; do
-	grep -F -- "$helm_lookup_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
-		"$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
-done
-for certificate_proof_marker in \
-	"chmod 700 \"\$UPGRADE_WORK_DIR\"" \
-	"rotation_transition_complete \"\$NEW_CA\"" \
-	"rotation_transition_complete \"\$RECREATED_CA\""; do
-	grep -F -- "$certificate_proof_marker" \
-		"$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
-done
-if grep -Eq -- 'OLD_CA_KEY=|--arg[[:space:]]+caKey|-p=.*ca\.key' \
-	"$ROOT_DIR/hack/e2e-cert-rotation.sh"; then
-	printf '%s\n' 'e2e static: the certificate rotation proof exposes private key material through shell arguments' >&2
-	exit 1
-fi
 for per_entry_marker in \
 	'"mutating"' \
 	'"approvalValidating"' \

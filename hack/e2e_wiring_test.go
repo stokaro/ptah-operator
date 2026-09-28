@@ -27,6 +27,8 @@ import (
 	"testing"
 
 	celgo "github.com/google/cel-go/cel"
+
+	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
 func TestVerifyE2EWiring(t *testing.T) {
@@ -178,9 +180,27 @@ func TestVerifyE2ESourceSnapshotRejectsLivePathMutations(t *testing.T) {
 		},
 		{
 			name:        "child evidence script read from live checkout",
-			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
-			replacement: `"$SOURCE_REPOSITORY_ROOT/hack/e2e-cert-rotation.sh"`,
+			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
+			replacement: `"$SOURCE_REPOSITORY_ROOT/hack/e2e-ha.sh"`,
 			wantError:   "live checkout path escapes",
+		},
+		{
+			name:        "Go phases built from live checkout",
+			old:         `go -C "$ROOT_DIR" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||`,
+			replacement: `go -C "$SOURCE_REPOSITORY_ROOT" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||`,
+			wantError:   "original checkout must have only",
+		},
+		{
+			name:        "Go phase run from live checkout",
+			old:         `(cd "$ROOT_DIR/test/e2e" &&`,
+			replacement: `(cd "$SOURCE_REPOSITORY_ROOT/test/e2e" &&`,
+			wantError:   "live checkout path escapes",
+		},
+		{
+			name:        "Go phases built from somewhere else",
+			old:         `go -C "$ROOT_DIR" test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||`,
+			replacement: `go -C "$ROOT_DIR/.." test -tags e2e -c -o "$GO_PHASE_BINARY" ./test/e2e ||`,
+			wantError:   "exact snapshot path",
 		},
 		{
 			name:        "snapshot archive replaced by live copy",
@@ -2813,15 +2833,61 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "certificate lifecycle omitted",
-			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			old:         `run_recorded_phase cert-rotation run_go_phase cert-rotation`,
 			replacement: `true # certificate lifecycle omitted`,
 			wantError:   "certificate lifecycle",
 		},
 		{
 			name:        "certificate lifecycle hidden in false branch",
-			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
-			replacement: "if false; then\n\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-cert-rotation.sh\"\nfi",
+			old:         `run_recorded_phase cert-rotation run_go_phase cert-rotation`,
+			replacement: "if false; then\n\trun_recorded_phase cert-rotation run_go_phase cert-rotation\nfi",
 			wantError:   "always-false wrapper",
+		},
+		{
+			// Every Go phase passes through the runner, so a runner that
+			// returns without running the binary passes all of them.
+			name:        "Go phase runner that returns first",
+			old:         "run_go_phase() {\n",
+			replacement: "run_go_phase() {\n\treturn 0\n",
+			wantError:   "Go phase runner contract",
+		},
+		{
+			name:        "Go phase runner asked for a fixed phase",
+			old:         `"$GO_PHASE_BINARY" -test.v -e2e.phase="$1" -e2e.completed="$go_phase_record") || return 1`,
+			replacement: `"$GO_PHASE_BINARY" -test.v -e2e.phase=cert-rotation -e2e.completed="$go_phase_record") || return 1`,
+			wantError:   "Go phase runner contract",
+		},
+		{
+			// The record is the evidence a phase passed; a runner that trusts
+			// the exit status alone passes a program that ran nothing.
+			name:        "Go phase runner that ignores the completion record",
+			old:         "\t[ \"$(cat -- \"$go_phase_record\" 2>/dev/null)\" = \"$1\" ] || {\n",
+			replacement: "\t[ -n \"$1\" ] || {\n",
+			wantError:   "Go phase runner contract",
+		},
+		{
+			name:        "Go phase runner defined twice",
+			old:         "run_go_phase() {\n",
+			replacement: "run_go_phase() { :; }\nrun_go_phase() {\n",
+			wantError:   "run_go_phase must have exactly one",
+		},
+		{
+			name:        "Go phase binary pointed at another program after the build",
+			old:         "\t\tfail \"the Go acceptance phases do not compile\"\nfi\n",
+			replacement: "\t\tfail \"the Go acceptance phases do not compile\"\nfi\nGO_PHASE_BINARY=/usr/bin/true\n",
+			wantError:   "GO_PHASE_BINARY must appear exactly three times",
+		},
+		{
+			name:        "Go phase binary assigned another program",
+			old:         "GO_PHASE_BINARY=$WORK_DIR/ptah-e2e.test\n",
+			replacement: "GO_PHASE_BINARY=/usr/bin/true\n",
+			wantError:   "must be assigned exactly once, found 0",
+		},
+		{
+			name:        "Go phase binary overwritten after the build",
+			old:         "\t\tfail \"the Go acceptance phases do not compile\"\nfi\n",
+			replacement: "\t\tfail \"the Go acceptance phases do not compile\"\nfi\ncp /usr/bin/true \"$GO_PHASE_BINARY\"\n",
+			wantError:   "GO_PHASE_BINARY must appear exactly three times",
 		},
 		{
 			name:        "data plane lifecycle omitted",
@@ -4823,42 +4889,6 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			replacement: `printf '%s\n' 'e2e HA finished'`,
 			wantError:   "terminal high-availability lifecycle evidence",
 		},
-		{
-			name:        "certificate interpreter bypass",
-			child:       "certificate-rotation",
-			old:         "#!/bin/sh\n",
-			replacement: "#!/bin/true\n",
-			wantError:   "must execute with #!/bin/sh",
-		},
-		{
-			name:        "certificate trap discards failure",
-			child:       "certificate-rotation",
-			old:         "trap cleanup_upgrade_files EXIT\n",
-			replacement: "trap 'exit 0' EXIT\n",
-			wantError:   "failure-preserving trap",
-		},
-		{
-			name:        "certificate proof call removed",
-			child:       "certificate-rotation",
-			old:         `assert_approval_admission_callable "before the Helm upgrade"`,
-			replacement: `true # pre-upgrade admission proof removed`,
-			wantError:   "pre-upgrade admission proof call",
-		},
-		{
-			name:  "certificate proof call hidden in false branch",
-			child: "certificate-rotation",
-			old:   `assert_approval_admission_callable "before the Helm upgrade"`,
-			replacement: "if false; then\n\t" +
-				"assert_approval_admission_callable \"before the Helm upgrade\"\nfi",
-			wantError: "always-false wrapper",
-		},
-		{
-			name:        "certificate terminal evidence removed",
-			child:       "certificate-rotation",
-			old:         `printf '%s\n' 'e2e certificate rotation: PASS live Helm lookup, corrupt-CA recovery, and exact guarded recreation'`,
-			replacement: `printf '%s\n' 'e2e certificate rotation finished'`,
-			wantError:   "terminal certificate lifecycle evidence",
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -4885,6 +4915,33 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 // The last case is the regression that motivated the change. Reordering the
 // bindings takes nothing away, so the audit has to accept it -- an addition in
 // the middle of the block is what removed every lifecycle verdict from master.
+// certRotationCall is the driver's call of the Go certificate phase.
+const certRotationCall = "\trun_recorded_phase cert-rotation run_go_phase cert-rotation\n"
+
+// Every input a Go phase declares has a driver variable to be bound to, and
+// every line of that table feeds some phase: a binding nothing reads is a
+// line that goes on reading as a contract.
+func TestGoPhaseBindingsCoverTheDeclaredInputs(t *testing.T) {
+	t.Parallel()
+	read := map[string]bool{}
+	for _, phase := range phases.All() {
+		for _, name := range phase.Inputs() {
+			read[name] = true
+			if _, bound := goPhaseBindings[name]; !bound {
+				t.Errorf("Go phase %s reads %s, and goPhaseBindings does not say which driver variable feeds it", phase.Name, name)
+			}
+		}
+	}
+	if len(read) == 0 {
+		t.Fatal("no Go phase declares an input, so the check above checked nothing")
+	}
+	for name := range goPhaseBindings {
+		if !read[name] {
+			t.Errorf("goPhaseBindings binds %s, which no Go phase reads", name)
+		}
+	}
+}
+
 func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 	t.Parallel()
 
@@ -4964,6 +5021,56 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			old:         "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
 			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
 			wantError:   `lifecycle phase "migrations-mysql" is invoked more than once`,
+		},
+		// A Go phase declares what it reads in test/e2e/phases, and the call
+		// is held to exactly that declaration.
+		{
+			name:        "Go phase input unbound",
+			old:         "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" + certRotationCall,
+			replacement: certRotationCall,
+			wantError:   `cert-rotation phase must bind E2E_CHART_PACKAGE to "$CHART_PACKAGE", and binds nothing`,
+		},
+		{
+			name:        "Go phase input redirected",
+			old:         "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" + certRotationCall,
+			replacement: "E2E_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n" + certRotationCall,
+			wantError:   `cert-rotation phase must bind E2E_CHART_PACKAGE to "$CHART_PACKAGE", and binds "$NEXT_CHART_PACKAGE"`,
+		},
+		{
+			name:        "Go phase handed an input it does not read",
+			old:         "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" + certRotationCall,
+			replacement: "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\nE2E_ENGINE=postgresql \\\n" + certRotationCall,
+			wantError:   "cert-rotation phase binds E2E_ENGINE, which test/e2e/phases does not declare it reads",
+		},
+		{
+			name:        "Go phase input bound twice",
+			old:         "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" + certRotationCall,
+			replacement: "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\nE2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" + certRotationCall,
+			wantError:   "cert-rotation phase binds E2E_CHART_PACKAGE twice",
+		},
+		{
+			name:        "Go phase recorded under one name and run under another",
+			old:         certRotationCall,
+			replacement: "\trun_recorded_phase cert-rotation run_go_phase dataplane\n",
+			wantError:   "run_recorded_phase cert-rotation runs the Go phase dataplane",
+		},
+		{
+			name:        "Go phase run as a script",
+			old:         certRotationCall,
+			replacement: "\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-assert.sh\"\n",
+			wantError:   "cert-rotation is a Go phase and must run through run_go_phase cert-rotation",
+		},
+		{
+			name:        "shell phase run as a Go phase",
+			old:         "\trun_recorded_phase ha \"$ROOT_DIR/hack/e2e-ha.sh\"\n",
+			replacement: "\trun_recorded_phase ha run_go_phase ha\n",
+			wantError:   `lifecycle phase "ha" must run hack/e2e-ha.sh, not the Go phase ha`,
+		},
+		{
+			name:        "Go phase left out",
+			old:         certRotationCall,
+			replacement: "\t:\n",
+			wantError:   `Go phase "cert-rotation" is never invoked`,
 		},
 		{
 			name:        "script grows an input nobody passes",
@@ -5071,7 +5178,6 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		crdUpgrade:                 filepath.Join("..", e2eCRDUpgradePath),
 		faults:                     filepath.Join("..", e2eFaultsPath),
 		highAvailability:           filepath.Join("..", e2eHAPath),
-		certRotation:               filepath.Join("..", e2eCertRotationPath),
 		migrations:                 filepath.Join("..", e2eMigrationsPath),
 		referenceData:              filepath.Join("..", e2eReferenceDataPath),
 		alerting:                   filepath.Join("..", e2eAlertingPath),
@@ -5094,8 +5200,6 @@ func e2eChildPath(files e2eWiringFiles, child string) string {
 		return files.faults
 	case "high-availability":
 		return files.highAvailability
-	case "certificate-rotation":
-		return files.certRotation
 	default:
 		panic("unknown E2E child fixture: " + child)
 	}
@@ -5111,8 +5215,6 @@ func setE2EChildPath(files *e2eWiringFiles, child, path string) {
 		files.faults = path
 	case "high-availability":
 		files.highAvailability = path
-	case "certificate-rotation":
-		files.certRotation = path
 	default:
 		panic("unknown E2E child fixture: " + child)
 	}
