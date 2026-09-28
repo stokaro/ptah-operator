@@ -457,8 +457,10 @@ pending approval carry over, and the replacement manager applies the approval.
 It adopts a Job its predecessor dispatched only when it builds the same Job
 apart from the recorded manager identity. A release that also changes the Job
 or its Pod template settles a dispatched `PtahSchema` Apply as outcome unknown,
-which a read-only observation then resolves, and runs a dispatched read-only
-Job again; a `PtahMigration` run is read from its own Job and is not affected.
+which a read-only observation then resolves, records a dispatched
+`PtahMigration` Apply as an `Unknown` run, which a History reading or an
+acknowledgment then settles, and runs a dispatched read-only Job of either
+family again.
 [Normal status progression](../../use/operations/#normal-status-progression)
 states the rule. The runner's enforcement is bound through the runner protocol
 version rather than its digest, and a release that changes what the runner

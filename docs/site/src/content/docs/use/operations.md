@@ -1072,16 +1072,17 @@ is applied, and a published plan stays current.
 
 Work the previous manager already dispatched is adopted under one rule: the
 replacement has to build the same Job, apart from the recorded manager
-identity. A `PtahSchema` claim's live Job is compared with the Job the
+identity. A claim's live Job, in either family, is compared with the Job the
 replacement builds for it, with the manager identity taken from the live Pod
 template and the template held to the admission snapshot the claim persisted
 before dispatch. A release that changed nothing else in the Job adopts it. A
 release that also changed the Job or its Pod template -- an environment
-variable, an annotation, a security setting -- cannot confirm it: a dispatched
-Apply is settled as outcome unknown and the database is observed before
-anything else runs, and a dispatched read-only Job is run again under a new
-attempt. A `PtahMigration` run is read from its own Job and Pods and is never
-rebuilt, so a change to the Job template does not affect it.
+variable, an annotation, a security setting -- cannot confirm it. A dispatched
+`PtahSchema` Apply is settled as outcome unknown and the database is observed
+before anything else runs. A dispatched `PtahMigration` Apply is recorded as
+an `Unknown` run in `status.unresolvedRun`, and no further Apply is claimed
+until a History reading or a `PtahMigrationRunAcknowledgment` accounts for it.
+A dispatched read-only Job of either family is run again under a new attempt.
 
 A claim that had not dispatched yet resolves its admission snapshot again from
 the template the replacement builds, and the `AdmissionSnapshotRefreshed` Event

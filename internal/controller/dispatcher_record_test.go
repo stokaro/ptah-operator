@@ -90,6 +90,19 @@ func (jobs stampedJobs) Build(
 	return job, nil
 }
 
+func (jobs stampedJobs) BuildMigration(
+	migration *operatorv1alpha1.PtahMigration,
+	operation operatorv1alpha1.MigrationOperationStatus,
+	plan *operatorv1alpha1.PtahMigrationPlan,
+) (*batchv1.Job, error) {
+	job, err := jobs.fakeJobs.BuildMigration(migration, operation, plan)
+	if err != nil {
+		return nil, err
+	}
+	stampJob(job, jobs.manager)
+	return job, nil
+}
+
 func (jobs stampedJobs) ManagerIdentity() (string, string, string) {
 	return jobs.manager.controllerImage, jobs.manager.controllerRevision, jobs.manager.runnerImage
 }
@@ -143,18 +156,31 @@ func TestTheApplyHarvestRecordsTheManagerThatDispatchedIt(t *testing.T) {
 // account for, on status.unresolvedRun, which is what a person reads to find
 // out what ran. A Job whose template records no complete identity still
 // settles, with no record.
+//
+// The manager harvesting a stamped run is not the one that dispatched it, and
+// builds its own identity into the Job it rebuilds, as the real builder does.
+// The run is still harvested for what its frame reports: the harvester takes
+// the dispatcher's identity from the live Pod template before it holds the
+// Job to its claim.
 func TestAMigrationRunRecordsTheManagerThatDispatchedIt(t *testing.T) {
 	t.Parallel()
 
+	harvester := executionBindingJobs{
+		controllerImage: testControllerImage, controllerRevision: testControllerRevision, runnerImage: testRunnerImage,
+	}
 	for _, row := range []struct {
 		name       string
 		outcome    string
+		want       operatorv1alpha1.MigrationRunOutcome
 		stamp      bool
 		unresolved bool
 	}{
-		{name: "an applied run", outcome: dataplane.MigrationOutcomeApplied, stamp: true},
-		{name: "a partial run", outcome: dataplane.MigrationOutcomePartial, stamp: true, unresolved: true},
-		{name: "a Job that records no manager", outcome: dataplane.MigrationOutcomeApplied},
+		{name: "an applied run", outcome: dataplane.MigrationOutcomeApplied,
+			want: operatorv1alpha1.MigrationRunOutcomeApplied, stamp: true},
+		{name: "a partial run", outcome: dataplane.MigrationOutcomePartial,
+			want: operatorv1alpha1.MigrationRunOutcomePartial, stamp: true, unresolved: true},
+		{name: "a Job that records no manager", outcome: dataplane.MigrationOutcomeApplied,
+			want: operatorv1alpha1.MigrationRunOutcomeApplied},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -189,6 +215,12 @@ func TestAMigrationRunRecordsTheManagerThatDispatchedIt(t *testing.T) {
 			reconciler, api := fakeMigrationReconciler(
 				t, staticLogs{content: logs}, migration, plan, job, pod, verificationPolicyConfigMap(),
 			)
+			if row.stamp {
+				if harvester.controllerImage == want.ControllerImage {
+					t.Fatal("the harvester is the dispatcher, so the record proves nothing about carrying it")
+				}
+				reconciler.Jobs = stampedJobs{manager: harvester}
+			}
 			holdMigrationApplyLease(t, reconciler, api, migration)
 
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
@@ -197,6 +229,10 @@ func TestAMigrationRunRecordsTheManagerThatDispatchedIt(t *testing.T) {
 			actual := readMigration(t, api, migration)
 			if actual.Status.LastRun == nil {
 				t.Fatalf("the run left no record: %#v", actual.Status)
+			}
+			if actual.Status.LastRun.Outcome != row.want {
+				t.Fatalf("lastRun outcome = %q (%s), want the %q its frame reports",
+					actual.Status.LastRun.Outcome, actual.Status.LastRun.Message, row.want)
 			}
 			if !reflect.DeepEqual(actual.Status.LastRun.DispatchedBy, want) {
 				t.Fatalf("lastRun records dispatcher %#v, want %#v", actual.Status.LastRun.DispatchedBy, want)
