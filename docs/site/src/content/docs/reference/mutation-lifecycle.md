@@ -16,8 +16,8 @@ exists. An obligation stated once and enforced twice drifts, and the way to see
 the drift is to put both enforcement points beside each other.
 
 Symbols named without a package live in `internal/controller`:
-`schema_controller.go` for `PtahSchema`, `migration_controller.go` and
-`migration_apply.go` for `PtahMigration`. A dotted name such as
+`schema_controller.go` and `schema_binding_retirement.go` for `PtahSchema`,
+`migration_controller.go` and `migration_apply.go` for `PtahMigration`. A dotted name such as
 `targetlock.Acquire` names a package under `internal/`.
 
 ## The obligations
@@ -295,6 +295,47 @@ Deciding the hand-back once, for both families, is
 [#457](https://github.com/stokaro/ptah-operator/issues/457). Until then the
 two orders above are the contract.
 
+## Retire an execution binding
+
+A change to what the execution binding names -- the executor image, the Ptah
+version, the runner protocol or the controller-state version -- installs a new
+epoch, and work authorized under the old one cannot finish under the new one.
+Both families retire it; they differ in what is left over.
+
+| | Enforcement |
+| --- | --- |
+| `PtahSchema` | `rotateExecutionBinding` writes `status.pendingBindingRetirement` with the epoch, `reconcileBindingRetirement` works it off, `settleRetirement` clears it |
+| `PtahMigration` | `reconcileMigrationExecutionBinding` drops an undispatched claim in the same write, `applyUncertainUnderBindingChange` records a dispatched one first |
+
+A migration leaves nothing behind. An undispatched claim goes in the write that
+installs the epoch, and a dispatched Apply becomes an unresolved run first, so
+the epoch moves on the next pass once no claim is in flight.
+
+A schema leaves up to two things, and names them in the write that installs
+the epoch: the retired plan, whose approvals are still to be marked stale, and
+the Job the retired claim dispatched, by name and, once known, by UID. The plan
+leaves `status.plan` in that write, so the plan status names always belongs to
+the current epoch. A read-only claim stays in `status.activeOperation` until its
+Job has stopped, holding whatever Lease it took, and is retired together with
+the cleanup TTL on its Job. A dispatched Apply moves into
+`status.pendingObservation` as outcome-unknown, and no proof is claimed until
+its Job is accounted for: its UID adopted from a late create, or given up on at
+the Apply's `ObserveAfter` horizon, and its cleanup TTL set once it stops. The
+controller-write webhook admits either TTL only for the Job the record names.
+
+Each obligation is removed as it is met, and the record with its last one. No
+condition reason and no phase takes part in any of these decisions, so a later
+refusal that rewrites a reason changes nothing. No other rotation starts while
+the record is present, so it always describes exactly one retired epoch; while
+it holds a Job, that Job is also what stops everything else from proceeding,
+so the wait costs nothing.
+
+Proof that completes after its plan's epoch was retired sweeps that plan's
+approvals once more in the same pass, for an approval admitted before the Apply
+claim that committed after the rotation's sweep. It needs no record: the
+approval boundary closed at the rotation, and a pass that stops before the
+status write reads the proof Job again.
+
 ## Every durable write, and what follows it
 
 The obligations above are stated step by step, and each names the window its
@@ -318,6 +359,7 @@ next pass cannot tell" would be a defect; none of them is.
 | The Job's cleanup TTL | The outcome status patch | A Job carrying a TTL under a live claim. The next pass re-reads the same terminal Job and reaches the same verdict |
 | The outcome patch: the claim cleared and the record written together | For a migration, the Lease release. For a schema, the proof, under the same Lease | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
 | `pendingLockRelease`, staged in the patch that clears the last record holding the realm | The release itself | The realm still claimed, with a record saying so. The next pass releases it before doing anything else |
+| A schema's `pendingBindingRetirement`, written in the patch that installs a new execution-binding epoch | The retired plan's approvals marked stale; the retired Job's UID adopted and its cleanup TTL set | The new epoch with the record beside it. The next pass works the record off before anything else, a Job's TTL already set counts as met, and no other rotation starts until the record is gone |
 
 The one window that is not closed by a record is a migration run retired as
 uncertain. `finishUncertainMigrationApply` releases after its outcome patch, and
@@ -339,6 +381,7 @@ check that it still does.
 | --- | --- | --- |
 | `status.activeOperation` | yes | yes |
 | `status.pendingLockRelease` | yes | yes |
+| `status.pendingBindingRetirement` | yes | no |
 | `status.pendingObservation` | yes | no |
 | `status.unresolvedRun` | no | yes |
 
@@ -395,10 +438,10 @@ two sites still hold, and each of them is about something else -- one publishes
 a phase, the other publishes a plan -- so the invariant no longer depends on
 neither being given a branch that leaves a plan standing.
 
-Two condition reasons still gate schema behavior:
-`predecessorApplyRetirementPending` and `executionBindingCleanupPending` decide
-whether a retired binding's Apply Job is looked for and adopted. They gate the
-quality of the evidence rather than permission to run -- without an adopted UID
-the pass falls back to the immutable `ObserveAfter` horizon -- but a durable
-comparison is already there beside them, and the shared module is where they
-should read it instead.
+An execution-binding rotation leaves a record for a schema and none for a
+migration. A migration retires everything in the write that moves the epoch. A
+schema keeps a read-only claim until its Job stops, and keeps the retired plan
+and the retired Apply's Job named until they are tidied, so it carries
+`status.pendingBindingRetirement` until they are.
+[Retire an execution binding](#retire-an-execution-binding) says what each
+family retires and when.

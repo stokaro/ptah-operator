@@ -511,6 +511,11 @@ type PtahSchemaStatus struct {
 	// idempotent release succeeds. It closes the manager-crash window between a
 	// terminal status transition and clearing the owner-neutral Lease.
 	PendingLockRelease *TargetLockReleaseStatus `json:"pendingLockRelease,omitempty"`
+	// PendingBindingRetirement is the cleanup an execution-binding rotation
+	// still owes the epoch it replaced. The status write that installs the new
+	// epoch writes it, and it is removed once nothing in it is left. Another
+	// rotation waits until it is gone.
+	PendingBindingRetirement *BindingRetirementStatus `json:"pendingBindingRetirement,omitempty"`
 
 	// ActiveOperation is the claim for the operation in flight. It is written
 	// before the Job exists, which is what lets the controller tell a Job it
@@ -610,6 +615,72 @@ type TargetLockReleaseStatus struct {
 	// LeaseEpoch identifies that acquisition, so a release cannot free a lock
 	// somebody else acquired in the meantime.
 	LeaseEpoch string `json:"leaseEpoch"`
+}
+
+// BindingRetirementStatus is what retiring one execution-binding epoch still
+// owes. Each optional field is one obligation and is removed when it is met,
+// so what is present is the state of the cleanup: a plan whose approvals are
+// still to be marked stale, a Job whose UID is still to be adopted, a Job
+// whose cleanup TTL is still to be set.
+//
+// Nothing here authorizes anything. The write that created the record also
+// moved the epoch every plan, approval and claim is checked against, so the
+// record only says which leftovers of the old epoch are this resource's to
+// tidy.
+type BindingRetirementStatus struct {
+	// RetiredEpoch is the epoch the rotation replaced. The plan and the Job
+	// this record names belong to it, and the controller touches a Job only
+	// when the Job carries this epoch.
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	RetiredEpoch string `json:"retiredEpoch"`
+
+	// Plan is the retired epoch's plan, while approvals that name it are
+	// still to be marked stale.
+	// +optional
+	Plan *RetiredPlanReference `json:"plan,omitempty"`
+
+	// Job is the Job the retired epoch's claim dispatched, while its cleanup
+	// is still to be scheduled.
+	// +optional
+	Job *RetiredJobStatus `json:"job,omitempty"`
+}
+
+// RetiredPlanReference names a retired PtahSchemaPlan the way an approval
+// names it: by name, UID and fingerprint.
+type RetiredPlanReference struct {
+	// Name of the PtahSchemaPlan.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+	// UID it had.
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	UID types.UID `json:"uid"`
+	// Fingerprint is its approval identity.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// RetiredJobStatus is the Job a retired epoch's claim dispatched. The claim
+// that holds the rest of its identity stays where it was: an Apply in
+// status.pendingObservation, a read-only operation in status.activeOperation
+// until its Job is cleaned up.
+type RetiredJobStatus struct {
+	// Operation is the claim that dispatched the Job.
+	// +kubebuilder:validation:Enum=Resolve;Verify;Observe;Plan;Apply
+	Operation OperationType `json:"operation"`
+	// Name is the Job's deterministic name.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+	// UID is the Job's UID once it is known. It is absent while a create the
+	// retired claim started may still commit; the controller adopts it from a
+	// Job under Name that carries the claim's exact envelope.
+	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MaxLength=128
+	UID types.UID `json:"uid,omitempty"`
 }
 
 // AdmissionObjectBinding identifies one API object whose credential-free

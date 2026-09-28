@@ -44,7 +44,6 @@ func TestOnlyAnApplyOwesTheDatabaseBackWhenTheBindingChanges(t *testing.T) {
 
 			schema := safetyLockedOperationSchema(operatorv1alpha1.OperationApply)
 			schema.Status.ActiveOperation.Type = row.operation
-			plan := schema.Status.Plan.DeepCopy()
 
 			reconciler, api := fakeReconciler(t, staticLogs{}, schema)
 			writes := &[]retiredClaim{}
@@ -56,7 +55,7 @@ func TestOnlyAnApplyOwesTheDatabaseBackWhenTheBindingChanges(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := reconciler.executionBindingChanged(
-				context.Background(), stored, plan,
+				context.Background(), stored,
 				errors.New("the controller image changed under the claim")); err != nil {
 				t.Fatal(err)
 			}

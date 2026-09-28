@@ -68,6 +68,13 @@ Three durable claims live in status, and they are independent on purpose:
   idempotent release succeeds. It closes the window between a terminal status
   transition and clearing an owner-neutral Lease.
 
+After an execution-binding rotation a `PtahSchema` also carries
+`status.pendingBindingRetirement`, which names what the retired epoch left
+behind: the plan whose approvals are still to be marked stale, and the Job its
+claim dispatched, until that Job has stopped and its cleanup is scheduled. It
+authorizes nothing, and no further rotation starts while it is present
+([Retire an execution binding](../mutation-lifecycle/#retire-an-execution-binding)).
+
 A terminal Job stays the active operation until the controller has both read
 its result and scheduled its bounded cleanup TTL, so a transient API or RBAC
 failure retries the transition instead of orphaning the Job. That TTL is the

@@ -49,6 +49,8 @@ func TestGeneratedCRDsContainSafetyCriticalFields(t *testing.T) {
 				"terminationGracePeriodSeconds:",
 				"leaseEpoch:",
 				"pendingLockRelease:",
+				"pendingBindingRetirement:",
+				"retiredEpoch:",
 				"applyJobName:",
 				"applyPodUIDs:",
 				"applyPodCount:",
