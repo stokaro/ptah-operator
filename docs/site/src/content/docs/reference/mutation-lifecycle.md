@@ -254,8 +254,8 @@ claim's, and the controller never touches one the webhook would refuse.
 | `PtahMigration` | `jobclaim.Match`, then the UID written by `mutationlifecycle.Dispatch` |
 
 A crash between the create and the UID write is covered by the dispatch marker:
-the next pass adopts the Job found under the reserved name, having checked that
-it is owned by exactly this resource.
+the next pass adopts the Job found under the reserved name once `jobclaim.Match`
+holds it to the claim, in both families.
 
 ## Supervise
 
@@ -263,10 +263,34 @@ Every pass rebinds by UID, renews the Lease, and re-validates that the Job is
 still the one the claim named and still owned by exactly this resource. Drift
 in any of those is an uncertain outcome for a mutating claim, never a discard.
 
+While the claim's inputs still hold, the same pass rebuilds the Job and holds
+the one under the reserved name to it through `jobclaim.Match`, before it
+adopts that Job and on every pass that supervises it: the epoch, the Pod
+template against the admission snapshot, and the rest of the rebuilt Job. The
+manager identity the Job records -- the controller image and revision and the
+runner image -- is taken from the live Pod template first, because it binds
+nothing and the snapshot pins it. A Job that fails the match, or a claim that
+cannot rebuild its Job, is settled the way a lost Job is: a mutating claim's
+run is recorded `Unknown` and never gets a second executor, and a read-only
+claim runs again under a new attempt, leaving the old Job to its own deadline.
+Once the inputs have moved the claim cannot rebuild its Job, and the Job is
+not harvested either: the terminal pass settles the claim as stale or
+`Unknown` without reading its result.
+
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `reconcileActive`, `jobclaim.Match` on every pass |
-| `PtahMigration` | `reconcileActiveMigration`, UID and owner compared each pass |
+| `PtahSchema` | `reconcileActive`, `validateAdoptedJobIntent` and `jobclaim.Match` on every pass |
+| `PtahMigration` | `reconcileActiveMigration`, `holdMigrationJobToItsClaim` and `jobclaim.Match` on every pass |
+
+This decides what an operator upgrade does to work in flight. A release that
+keeps the execution binding and changes only the manager identity adopts every
+run its predecessor dispatched. A release that also changes the operation Job
+or its Pod template cannot confirm them: a running `PtahSchema` or
+`PtahMigration` Apply is recorded `Unknown` rather than adopted, and nothing
+else is applied until that run is accounted for; a running read-only Job is
+run again. A migration Apply whose plan was deleted while it ran is
+recorded `Unknown` the same way, because its Job cannot be rebuilt without the
+plan it runs.
 
 Suspension cannot discard a dispatched mutating claim in either family. A
 resource suspended mid-Apply keeps its claim and keeps renewing the Lease.
@@ -478,7 +502,7 @@ next pass cannot tell" would be a defect; none of them is.
 | A schema plan's projection ConfigMaps | The `dispatchStarted` write | Projections with no Job to mount them. The next pass reads them back, finds them matching and goes on; they are owned by the plan and go with it |
 | The approval's `Consumed` condition, for a mutating claim | The `dispatchStarted` write | An approval spent with nothing marked. The same claim dispatches on the next pass under the approval it spent; a claim retired instead leaves the approval spent, which authorizes nothing |
 | `dispatchStarted` | The one permitted create | A claim that says a Job may exist, with its approval already spent. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again |
-| `jobUID` | An Event and the telemetry | Covered by the marker above: the next pass finds the Job under the reserved name and adopts its UID |
+| `jobUID` | An Event and the telemetry | Covered by the marker above: the next pass finds the Job under the reserved name and adopts its UID once `jobclaim.Match` holds it to the claim |
 | The Job's cleanup TTL | The outcome status patch | A Job carrying a TTL under a live claim. The next pass re-reads the same terminal Job and reaches the same verdict |
 | The outcome patch: the claim cleared, the record written and the release it owes staged, together | For a migration, the Lease release. For a schema, the proof, under the same Lease | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
 | `pendingLockRelease`, staged in the patch that clears the last record holding the realm | The release itself | The realm still claimed, with a record saying so. The next pass releases it before doing anything else |

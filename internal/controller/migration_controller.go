@@ -39,6 +39,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 const (
@@ -415,10 +416,11 @@ func (r *MigrationReconciler) dispatchedMigrationApplyJob(
 //
 // The manager's own image and revision and the runner image built beside it
 // are not compared. A release that changes only them keeps the epoch, the
-// plan and the approval. A run the previous manager dispatched is read from
-// its own Job and Pods and held to the admission snapshot its claim persisted,
-// never rebuilt, so it is harvested whatever the new release changed in the
-// Job it builds; the runner in it speaks the same protocol.
+// plan and the approval. A run the previous manager dispatched is adopted only
+// when this release builds the same Job apart from that identity
+// (holdMigrationJobToItsClaim); a release that also changed the Job or its Pod
+// template records a dispatched Apply as outcome unknown and runs a read-only
+// claim again.
 func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -694,6 +696,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	case mutationlifecycle.VerdictRetry:
 		return r.retryMigrationOperation(ctx, migration, job, errors.New(retriedMigrationJobReason(cause)))
 	}
+	if result, settled, err := r.holdMigrationJobToItsClaim(ctx, migration, job); settled || err != nil {
+		return result, err
+	}
 	if verdict == mutationlifecycle.VerdictAdopt {
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation.JobUID = job.UID
@@ -808,6 +813,84 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s result was truncated", operation.Type))
 	}
 	return r.consumeMigrationResult(ctx, migration, job, result)
+}
+
+// holdMigrationJobToItsClaim asks whether the Job standing under the active
+// claim's reserved name, owned by this resource, is the Job that claim built,
+// and settles the claim when it cannot say yes. It reports whether it settled
+// the claim.
+//
+// The question is the schema family's, asked the same way and at the same
+// points: before the claim adopts a Job a stopped pass created, and on every
+// pass that supervises one. The Job the claim builds now is held to the live
+// one by jobclaim.Match, with the manager's recorded identity taken from the
+// live Pod template (validateAdoptedMigrationJobIntent says why that is safe).
+// It is asked while the inputs the claim was made from still hold. Once they
+// have moved, the claim cannot rebuild its Job, and the Job is never harvested
+// either: the terminal branch reads the same inputs and settles the claim as
+// stale or as outcome unknown without reading a result.
+//
+// A Job the claim cannot confirm is settled by the asymmetry every lost Job
+// is. A mutating claim's Job may already be running SQL, so the run is
+// recorded as outcome unknown, naming the Job, and nothing is dispatched
+// beside it. A read-only claim moves to a new attempt under a new name. The
+// Job it leaves keeps its own deadline and gets no cleanup TTL here: the
+// controller-write webhook judges that TTL by the same matcher, and a refusal
+// would hold the retry behind it.
+//
+// A release that changes the Job or its Pod template therefore cannot adopt a
+// run its predecessor dispatched: a running Apply is recorded unknown, and a
+// read-only claim is run again.
+func (r *MigrationReconciler) holdMigrationJobToItsClaim(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) (ctrl.Result, bool, error) {
+	operation := migration.Status.ActiveOperation
+	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
+	if currentErr != nil || current != operation.InputFingerprint {
+		return ctrl.Result{}, false, nil
+	}
+	mutating := migrationOperation(operation).Mutating
+	expected, err := r.expectedMigrationJob(ctx, migration, operation)
+	if err != nil {
+		if mutating {
+			result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
+				fmt.Errorf("rebuild immutable Apply Job intent: %w", err), "")
+			return result, true, settleErr
+		}
+		result, settleErr := r.retryMigrationOperation(ctx, migration, nil,
+			fmt.Errorf("rebuild immutable Job intent: %w", err))
+		return result, true, settleErr
+	}
+	if err := validateAdoptedMigrationJobIntent(job, expected, migration); err != nil {
+		if mutating {
+			result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
+				fmt.Errorf("dispatched Apply Job intent changed: %w", err), "")
+			return result, true, settleErr
+		}
+		result, settleErr := r.retryMigrationOperation(ctx, migration, nil,
+			fmt.Errorf("active Job intent changed: %w", err))
+		return result, true, settleErr
+	}
+	return ctrl.Result{}, false, nil
+}
+
+// expectedMigrationJob is the Job the active claim builds now: the plan an
+// Apply names read again, and the Job built from it and the claim.
+func (r *MigrationReconciler) expectedMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) (*batchv1.Job, error) {
+	if r.Jobs == nil {
+		return nil, errors.New("Job builder is not configured")
+	}
+	plan, err := r.migrationPlanForJob(ctx, migration, operation)
+	if err != nil {
+		return nil, err
+	}
+	return r.Jobs.BuildMigration(migration, *operation, plan)
 }
 
 // migrationPlanForJob re-reads the immutable plan an Apply claim named. Every
@@ -1927,6 +2010,25 @@ func validateMigrationJobIntent(actual, expected *batchv1.Job, migration *operat
 	claim.Binding = migration.Status.ExecutionBinding
 	claim.Built, claim.Stored = expected, true
 	return jobclaim.Match(actual, claim)
+}
+
+// validateAdoptedMigrationJobIntent is validateMigrationJobIntent for a live
+// Job an earlier manager of the same execution binding may have built.
+//
+// The manager's recorded identity -- the controller image and revision
+// annotations and the runner image -- binds nothing, so the rebuild takes it
+// from the live Pod template and compares everything else exactly. The live
+// template must still be the one the claim's admission snapshot recorded
+// before dispatch, as every Job a claim accepts must, which pins what was
+// taken to the claim rather than to the object being checked.
+//
+// That identity is the only value two managers of one execution binding write
+// differently into a migration Job. Two processes of one release write
+// nothing differently: a schema Plan Job carries its process's own seal key
+// (workload.CarrySealedPlanKey), and no migration operation seals anything.
+func validateAdoptedMigrationJobIntent(actual, expected *batchv1.Job, migration *operatorv1alpha1.PtahMigration) error {
+	workload.CarryManagerIdentity(expected, actual)
+	return validateMigrationJobIntent(actual, expected, migration)
 }
 
 func boundedVersions(versions []int64, limit int) []int64 {
