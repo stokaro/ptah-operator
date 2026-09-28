@@ -15,6 +15,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
@@ -233,10 +234,11 @@ func dispatchedApplyFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, []clien
 
 // A rotation that finds an Apply already dispatched retires it into
 // outcome-unknown proof, and the record names its Job. While that Job runs,
-// no proof is claimed and nothing touches it; once it stops, its cleanup is
-// scheduled and the record is cleared, and only then does proof start under
-// the new epoch. A record that does not name the Job exactly -- another UID,
-// another epoch -- leaves the Job alone.
+// no proof is claimed and nothing touches it, even once the Apply's own
+// ObserveAfter horizon has passed; once it stops, its cleanup is scheduled and
+// the record is cleared, and only then does proof start under the new epoch. A
+// record that does not name the Job exactly -- another UID, another epoch --
+// leaves the Job alone, and proof no longer waits for it.
 func TestARetiredApplyJobIsCleanedUpOnceItStopsAndBeforeProof(t *testing.T) {
 	t.Parallel()
 
@@ -270,7 +272,8 @@ func TestARetiredApplyJobIsCleanedUpOnceItStopsAndBeforeProof(t *testing.T) {
 			rolloutEpoch := rotated.Status.ExecutionBinding.Epoch
 			pending := rotated.Status.PendingObservation
 			if rolloutEpoch == retiredEpoch || rotated.Status.ActiveOperation != nil || pending == nil ||
-				pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown || pending.ApplyJobUID != applyJob.UID {
+				pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown || pending.ApplyJobUID != applyJob.UID ||
+				pending.ObserveAfter == nil {
 				t.Fatalf("rotation over a dispatched Apply = %#v", rotated.Status)
 			}
 			wantRetirement(t, rotated, &operatorv1alpha1.BindingRetirementStatus{
@@ -282,17 +285,25 @@ func TestARetiredApplyJobIsCleanedUpOnceItStopsAndBeforeProof(t *testing.T) {
 					Operation: operatorv1alpha1.OperationApply, Name: applyJob.Name, UID: applyJob.UID,
 				},
 			})
+			// Past the horizon the pending observation would claim its proof at
+			// once, so from here only the record holds it back.
+			afterHorizon := pending.ObserveAfter.Add(time.Second)
+			reconciler.Clock = func() time.Time { return afterHorizon }
 
 			rewriteRetirementVerdicts(t, api, schema, row.breakRecord)
 			reconcileRetirementPass(t, reconciler, request, "sweep the retired plan's approvals")
 
-			// The predecessor's Job is still running.
+			// The predecessor's Job is still running, with no Pod left active.
 			running := reconcileRetirementPass(t, reconciler, request, "wait for the running Apply Job")
 			waiting := safetyGetSchema(t, api, schema)
 			if running.RequeueAfter != maxLockContentionPoll || waiting.Status.ActiveOperation != nil ||
 				waiting.Status.PendingObservation == nil || jobTTL(t, api, applyJob) != nil {
 				t.Fatalf("a running retired Apply Job let proof start or was cleaned up: result %#v, status %#v",
 					running, waiting.Status)
+			}
+			if held := waiting.Status.PendingBindingRetirement != nil; held != row.wantCleanup {
+				t.Fatalf("the record still names the running Apply Job = %t, want %t: %#v",
+					held, row.wantCleanup, waiting.Status.PendingBindingRetirement)
 			}
 
 			finishJob(t, api, applyJob)
@@ -301,14 +312,14 @@ func TestARetiredApplyJobIsCleanedUpOnceItStopsAndBeforeProof(t *testing.T) {
 			if ttl := jobTTL(t, api, applyJob); (ttl != nil) != row.wantCleanup {
 				t.Fatalf("retired Apply Job cleanup TTL = %v, want scheduled %t", ttl, row.wantCleanup)
 			}
-			if cleaned.Status.PendingBindingRetirement != nil || cleaned.Status.ActiveOperation != nil ||
-				cleaned.Status.ExecutionBinding.Epoch != rolloutEpoch ||
+			if cleaned.Status.PendingBindingRetirement != nil || cleaned.Status.ExecutionBinding.Epoch != rolloutEpoch ||
 				cleaned.Status.PendingObservation == nil || cleaned.Status.Applied != nil {
 				t.Fatalf("the retirement did not settle before proof: %#v", cleaned.Status)
 			}
+			if row.wantCleanup && cleaned.Status.ActiveOperation != nil {
+				t.Fatalf("proof was claimed in the pass that scheduled the cleanup: %#v", cleaned.Status.ActiveOperation)
+			}
 
-			afterHorizon := cleaned.Status.PendingObservation.ObserveAfter.Add(time.Second)
-			reconciler.Clock = func() time.Time { return afterHorizon }
 			reconcileRetirementPass(t, reconciler, request, "claim proof under the new epoch")
 			observing := safetyGetSchema(t, api, schema)
 			if observing.Status.ActiveOperation == nil ||
@@ -321,20 +332,163 @@ func TestARetiredApplyJobIsCleanedUpOnceItStopsAndBeforeProof(t *testing.T) {
 	}
 }
 
+// A dispatched Apply whose claim recorded no UID may still have a create in
+// flight that commits after the rotation. The record keeps looking for it
+// under the claim's name until the Apply's ObserveAfter horizon, adopts its UID
+// into the record and the pending observation when it appears, and gives up
+// on it only once the horizon has passed.
+func TestARetiredApplyCreateIsLookedForUntilItsHorizon(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name     string
+		commits  bool
+		wantUID  bool
+		wantKept bool
+	}{
+		{name: "a create that commits before the horizon is adopted", commits: true, wantUID: true, wantKept: true},
+		{name: "no create by the horizon"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, objects, applyJob := dispatchedApplyFixture(t)
+			schema.Status.ActiveOperation.JobUID = ""
+			objects = objects[:len(objects)-1]
+			reconciler, api := fakeReconciler(t, &safetyCountingLogs{}, objects...)
+			reconciler.Jobs = rotatedJobs
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+			reconcileRetirementPass(t, reconciler, request, "retire the dispatched Apply")
+			reconcileRetirementPass(t, reconciler, request, "sweep the retired plan's approvals")
+
+			looking := reconcileRetirementPass(t, reconciler, request, "look for the Job before it commits")
+			before := safetyGetSchema(t, api, schema)
+			if retirement := before.Status.PendingBindingRetirement; looking.RequeueAfter != maxLockContentionPoll ||
+				retirement == nil || retirement.Job == nil || retirement.Job.Name != applyJob.Name || retirement.Job.UID != "" ||
+				before.Status.ActiveOperation != nil {
+				t.Fatalf("the record stopped looking for the Apply's Job before its horizon: result %#v, status %#v",
+					looking, before.Status)
+			}
+
+			if row.commits {
+				if err := api.Create(context.Background(), applyJob); err != nil {
+					t.Fatalf("commit the retired Apply's Job late: %v", err)
+				}
+			} else {
+				afterHorizon := before.Status.PendingObservation.ObserveAfter.Add(time.Second)
+				reconciler.Clock = func() time.Time { return afterHorizon }
+			}
+			reconcileRetirementPass(t, reconciler, request, "look for the Job again")
+			after := safetyGetSchema(t, api, schema)
+			retirement := after.Status.PendingBindingRetirement
+			if kept := retirement != nil && retirement.Job != nil; kept != row.wantKept {
+				t.Fatalf("the record still names the Apply's Job = %t, want %t: %#v", kept, row.wantKept, retirement)
+			}
+			adopted := after.Status.PendingObservation.ApplyJobUID == applyJob.UID &&
+				retirement != nil && retirement.Job != nil && retirement.Job.UID == applyJob.UID
+			if adopted != row.wantUID {
+				t.Fatalf("the late Apply Job's UID adopted = %t, want %t: pending UID %q, record %#v",
+					adopted, row.wantUID, after.Status.PendingObservation.ApplyJobUID, retirement)
+			}
+			if after.Status.ActiveOperation != nil {
+				t.Fatalf("proof was claimed in the pass that settled the Job: %#v", after.Status.ActiveOperation)
+			}
+		})
+	}
+}
+
+// An Apply settled as outcome-unknown without its Job in hand can leave a Job
+// no pass harvested. A rotation that finds such a pending observation, and no
+// claim, names the Job in the record, so it is cleaned up before the proof.
+func TestARotationNamesTheJobOfAnUnknownApply(t *testing.T) {
+	t.Parallel()
+
+	schema, job := predecessorApplyCleanupMatchFixture(t)
+	retiredEpoch := schema.Status.PendingObservation.Plan.ExecutionBindingID
+	schema.Status.ExecutionBinding.Epoch = retiredEpoch
+	schema.Status.PendingBindingRetirement = nil
+	schema.Finalizers = []string{activeOperationFinalizer}
+	pending := schema.Status.PendingObservation
+	pending.CoordinationDigest = testCoordinationDigest
+	pending.Plan.CoordinationDigest = testCoordinationDigest
+	pending.LeaseDurationSeconds = 960
+	pending.LeaseEpoch = testLeaseEpoch
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	reconciler, api := fakeReconciler(t, &safetyCountingLogs{}, schema, job)
+	reconciler.Jobs = rotatedJobs
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	reconcileRetirementPass(t, reconciler, request, "rotate over outcome-unknown evidence")
+	rotated := safetyGetSchema(t, api, schema)
+	if rotated.Status.ExecutionBinding.Epoch == retiredEpoch || rotated.Status.PendingObservation == nil {
+		t.Fatalf("rotation over outcome-unknown evidence = %#v", rotated.Status)
+	}
+	wantRetirement(t, rotated, &operatorv1alpha1.BindingRetirementStatus{
+		RetiredEpoch: retiredEpoch,
+		Job: &operatorv1alpha1.RetiredJobStatus{
+			Operation: operatorv1alpha1.OperationApply, Name: job.Name, UID: job.UID,
+		},
+	})
+
+	reconcileRetirementPass(t, reconciler, request, "schedule the unharvested Apply Job's cleanup")
+	if ttl := jobTTL(t, api, job); ttl == nil || *ttl != jobCleanupTTLSeconds {
+		t.Fatalf("unharvested Apply Job cleanup TTL = %v, want %d", ttl, jobCleanupTTLSeconds)
+	}
+	if settled := safetyGetSchema(t, api, schema); settled.Status.PendingBindingRetirement != nil {
+		t.Fatalf("the retirement outlived the cleanup it owed: %#v", settled.Status.PendingBindingRetirement)
+	}
+}
+
+// declarePodMetadata gives a built read-only Job what spec.execution.podMetadata
+// declares, as the builder writes it: on the Job and on its template, pinned
+// by the claim's admission snapshot.
+func declarePodMetadata(
+	t *testing.T,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+) {
+	t.Helper()
+	for key, value := range schema.Spec.Execution.PodMetadata.Labels {
+		job.Labels[key] = string(value)
+		job.Spec.Template.Labels[key] = string(value)
+	}
+	for key, value := range schema.Spec.Execution.PodMetadata.Annotations {
+		job.Annotations[key] = string(value)
+		job.Spec.Template.Annotations[key] = string(value)
+	}
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.TemplateDigest = templateDigest
+	operation.AdmissionSnapshot.Digest = ""
+	snapshotDigest, err := fingerprint.DigestCanonicalJSON(*operation.AdmissionSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.Digest = snapshotDigest
+	job.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+}
+
 // A rotation keeps a read-only claim whose Job may still reach the database,
-// and the claim goes on holding the Lease it took until that Job stops. Only
-// then is its cleanup scheduled, the claim retired and its Lease staged for
-// release, all in one write that also clears the record. A record naming an
-// epoch the claim does not carry does not hold it back at all.
+// and the claim goes on holding the Lease it took until that Job stops,
+// whatever the controller can prove about the Job's envelope. Only then is the
+// claim retired and its Lease handed back, in one write that also clears the
+// record; the cleanup TTL is set only on a Job whose envelope the claim and the
+// record both vouch for, declared Pod metadata included.
 func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
 		name        string
+		declare     bool
 		breakRecord func(*operatorv1alpha1.BindingRetirementStatus)
-		wantHold    bool
+		wantCleanup bool
 	}{
-		{name: "the record names the retained claim", wantHold: true},
+		{name: "the record names the retained claim", wantCleanup: true},
+		{name: "a Job that carries declared Pod metadata", declare: true, wantCleanup: true},
 		{
 			name:        "a record that retired another epoch",
 			breakRecord: func(record *operatorv1alpha1.BindingRetirementStatus) { record.RetiredEpoch = unretiredEpoch },
@@ -345,6 +499,12 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 
 			schema := schemaFixture()
 			schema.Finalizers = []string{activeOperationFinalizer}
+			if row.declare {
+				schema.Spec.Execution.PodMetadata = &operatorv1alpha1.PodMetadataSpec{
+					Labels:      map[string]operatorv1alpha1.PodLabelValue{"acme.example/team": "platform"},
+					Annotations: map[string]operatorv1alpha1.PodAnnotationValue{"sidecar.istio.io/inject": "false"},
+				}
+			}
 			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
 				RequestedReference: schema.Spec.Desired.OCIRef,
 				ResolvedReference:  "oci://registry.example/team/schema@" + testDigest,
@@ -363,6 +523,9 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			bindActiveInput(t, schema)
 			job, pod := terminalWorkload(schema, batchv1.JobComplete)
 			bindRetiredReadOnlyJob(job, schema.Status.ActiveOperation)
+			if row.declare {
+				declarePodMetadata(t, schema, job, schema.Status.ActiveOperation)
+			}
 			job.Status.Conditions = nil
 			pod.Status = corev1.PodStatus{Phase: corev1.PodRunning}
 			retiredEpoch := schema.Status.ExecutionBinding.Epoch
@@ -371,6 +534,10 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			reconciler, api := fakeReconciler(t, logs, schema, job, pod)
 			reconciler.Jobs = rotatedJobs
 			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+			holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
+			if holder == "" {
+				t.Fatal("the running Plan's claim holds no Lease, so nothing below measures one")
+			}
 
 			reconcileRetirementPass(t, reconciler, request, "rotate over a running Plan")
 			rotated := safetyGetSchema(t, api, schema)
@@ -392,26 +559,26 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			if waiting.Status.ExecutionBinding.Epoch != rolloutEpoch || jobTTL(t, api, job) != nil || logs.reads != 0 {
 				t.Fatalf("a running retired Plan Job was rotated again, cleaned or read: %#v", waiting.Status)
 			}
-			held := waiting.Status.ActiveOperation != nil && waiting.Status.ActiveOperation.ID == retained.ID &&
-				waiting.Status.PendingLockRelease == nil && result.RequeueAfter == maxLockContentionPoll
-			if held != row.wantHold {
-				t.Fatalf("the running Plan's claim held = %t, want %t: result %#v, status %#v",
-					held, row.wantHold, result, waiting.Status)
-			}
-			if !row.wantHold {
-				return
+			if waiting.Status.ActiveOperation == nil || waiting.Status.ActiveOperation.ID != retained.ID ||
+				waiting.Status.PendingLockRelease != nil || result.RequeueAfter != maxLockContentionPoll ||
+				safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest) != holder {
+				t.Fatalf("the running Plan's claim let go of its Lease: result %#v, status %#v", result, waiting.Status)
 			}
 
 			finishJob(t, api, job)
 			reconcileRetirementPass(t, reconciler, request, "retire the stopped Plan claim")
 			retired := safetyGetSchema(t, api, schema)
-			if ttl := jobTTL(t, api, job); ttl == nil || *ttl != jobCleanupTTLSeconds {
-				t.Fatalf("stopped retired Plan Job cleanup TTL = %v, want %d", ttl, jobCleanupTTLSeconds)
+			if ttl := jobTTL(t, api, job); (ttl != nil) != row.wantCleanup {
+				t.Fatalf("stopped retired Plan Job cleanup TTL = %v, want scheduled %t", ttl, row.wantCleanup)
 			}
 			if retired.Status.ActiveOperation != nil || retired.Status.PendingBindingRetirement != nil ||
 				retired.Status.PendingLockRelease == nil || retired.Status.PendingLockRelease.OperationID != retained.ID ||
 				retired.Status.ExecutionBinding.Epoch != rolloutEpoch || logs.reads != 0 {
 				t.Fatalf("the stopped Plan's claim was not retired with its Lease staged: %#v", retired.Status)
+			}
+			reconcileRetirementPass(t, reconciler, request, "hand the stopped Plan's Lease back")
+			if got := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); got != "" {
+				t.Fatalf("the retired Plan's Lease is still held by %q", got)
 			}
 		})
 	}

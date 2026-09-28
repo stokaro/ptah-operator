@@ -376,7 +376,7 @@ func validatePendingApplyJobCleanup(
 		workload.LabelOperation:   "apply",
 		workload.LabelOperationID: workload.OperationIDLabelValue(pending.ApplyOperationID),
 	}
-	if err := validateClaimedMetadata(job.Labels, wantLabels); err != nil {
+	if err := workload.ValidateClaimedMetadata(job.Labels, wantLabels); err != nil {
 		return fmt.Errorf("Job labels do not match the pending Apply evidence: %w", err)
 	}
 	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
@@ -409,7 +409,7 @@ func validatePendingApplyJobCleanup(
 		workload.AnnotationAdmissionSnapshotDigest: pending.AdmissionSnapshot.Digest,
 	}
 	workload.MarkMutatingOperation(wantAnnotations)
-	if err := validateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
+	if err := workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
 		return fmt.Errorf("Job annotations are not the exact pending Apply envelope: %w", err)
 	}
 	// The template carries what the object carries, declared metadata
@@ -483,7 +483,7 @@ func validateClaimBoundJobCleanup(
 		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
 		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
 	}
-	if err := validateClaimedMetadata(job.Labels, wantLabels); err != nil {
+	if err := workload.ValidateClaimedMetadata(job.Labels, wantLabels); err != nil {
 		return fmt.Errorf("Job labels do not match the persisted operation claim: %w", err)
 	}
 	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
@@ -512,7 +512,7 @@ func validateClaimBoundJobCleanup(
 		wantAnnotations[workload.AnnotationPlanContentDigest] = plan.ContentDigest
 		workload.MarkMutatingOperation(wantAnnotations)
 	}
-	if err := validateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
+	if err := workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
 		return fmt.Errorf("Job annotations are not the exact current operation envelope: %w", err)
 	}
 	// The template carries what the object carries, declared metadata

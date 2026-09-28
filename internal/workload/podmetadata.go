@@ -13,8 +13,8 @@ import (
 // ReservedPodMetadataKey reports whether key is one spec.execution.podMetadata
 // may not declare. It is the CRD's rule written once more in Go, for the
 // readers that judge a Job after the API server admitted the resource: the
-// builder, and the controller-write validator's cleanup path, which judges a
-// terminal Job without rebuilding it.
+// builder, and ValidateClaimedMetadata, by which the controller-write
+// validator and the controller judge a dispatched Job without rebuilding it.
 //
 // The reserved namespaces are the operator's own (ptah.run and every
 // subdomain of it), and the ones Kubernetes keeps for its components
@@ -35,6 +35,40 @@ func ReservedPodMetadataKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// ValidateClaimedMetadata holds one of a Job's metadata maps to the claim
+// without rebuilding the Job: every key the claim fixes carries the claim's
+// value, and every other key is one spec.execution.podMetadata may declare,
+// in number and in namespace. What those declared keys were when the Job was
+// dispatched is not re-derived from the spec, which may have changed since;
+// the caller pins them through the template digest the claim's admission
+// snapshot recorded.
+//
+// The controller-write validator and the controller judge a dispatched Job by
+// this one rule, so the controller never refuses to recognize a Job the
+// validator would let it touch, nor the other way round.
+func ValidateClaimedMetadata(actual, claimed map[string]string) error {
+	for key, value := range claimed {
+		if actual[key] != value {
+			return fmt.Errorf("%s is not the claim's value", key)
+		}
+	}
+	declared := 0
+	for key := range actual {
+		if _, fixed := claimed[key]; fixed {
+			continue
+		}
+		if ReservedPodMetadataKey(key) {
+			return fmt.Errorf("%s is a reserved key the claim does not fix", key)
+		}
+		declared++
+	}
+	if declared > operatorv1alpha1.MaxPodMetadataEntries {
+		return fmt.Errorf("%d declared keys exceed the %d spec.execution.podMetadata allows",
+			declared, operatorv1alpha1.MaxPodMetadataEntries)
+	}
+	return nil
 }
 
 const (

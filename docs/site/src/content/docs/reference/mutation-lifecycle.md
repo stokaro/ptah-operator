@@ -336,20 +336,28 @@ A schema leaves up to two things, and names them in the write that installs
 the epoch: the retired plan, whose approvals are still to be marked stale, and
 the Job the retired claim dispatched, by name and, once known, by UID. The plan
 leaves `status.plan` in that write, so the plan status names always belongs to
-the current epoch. A read-only claim stays in `status.activeOperation` until its
-Job has stopped, holding whatever Lease it took, and is retired together with
-the cleanup TTL on its Job. A dispatched Apply moves into
-`status.pendingObservation` as outcome-unknown, and no proof is claimed until
-its Job is accounted for: its UID adopted from a late create, or given up on at
-the Apply's `ObserveAfter` horizon, and its cleanup TTL set once it stops. The
-controller-write webhook admits either TTL only for the Job the record names.
+the current epoch. A read-only claim stays in `status.activeOperation` until a
+Job of this resource under the recorded name has stopped, whether or not the
+controller can prove that Job's envelope, so a Plan's Lease is not handed back
+while its Pod can still reach the database. The claim is then retired, and the
+Job gets its cleanup TTL only when its envelope carries the retired epoch and
+the claim's admission snapshot. A dispatched Apply, or an outcome-unknown Apply
+of the retired epoch that no pass harvested, stays in
+`status.pendingObservation`, and no proof is claimed until its Job is accounted
+for: its UID adopted from a late create, or given up on at the Apply's
+`ObserveAfter` horizon, and its cleanup TTL set once it stops. The
+controller-write webhook admits either TTL only for the Job the record names,
+and judges the Job's metadata by the rule the controller uses,
+`workload.ValidateClaimedMetadata`, so declared Pod metadata neither hides a
+Job from the controller nor passes the webhook unchecked.
 
 Each obligation is removed as it is met, and the record with its last one. No
 condition reason and no phase takes part in any of these decisions, so a later
 refusal that rewrites a reason changes nothing. No other rotation starts while
-the record is present, so it always describes exactly one retired epoch; while
-it holds a Job, that Job is also what stops everything else from proceeding,
-so the wait costs nothing.
+the record is present, so it always describes exactly one retired epoch. A
+rotation that arrives meanwhile waits for the Job the record names: at most
+that Job's own deadline for a read-only claim, and for an Apply no longer than
+the proof, which waits for the same Job, would have waited anyway.
 
 Proof that completes after its plan's epoch was retired sweeps that plan's
 approvals once more in the same pass, for an approval admitted before the Apply
