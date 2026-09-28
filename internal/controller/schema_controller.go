@@ -560,8 +560,7 @@ func (r *SchemaReconciler) reconcileExecutionBinding(
 	}
 
 	operation := schema.Status.ActiveOperation
-	if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
-		schemaMayHaveDispatched(operation) {
+	if schemaOperation(operation).Mutating && schemaMayHaveDispatched(operation) {
 		result, err := r.finishUncertainApplyForExecutionBindingChange(
 			ctx,
 			schema,
@@ -730,7 +729,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		}
 		job := &batchv1.Job{}
 		err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job)
-		dispatchedApplyUnknown := operation.Type == operatorv1alpha1.OperationApply &&
+		dispatchedApplyUnknown := schemaOperation(operation).Mutating &&
 			schemaMayHaveDispatched(operation) &&
 			(apierrors.IsNotFound(err) || err == nil && (operation.JobUID != "" && operation.JobUID != job.UID || !ownedByUID(job.OwnerReferences, schema.UID)))
 		// A running Job is waited on only while the claim holds the database
@@ -742,7 +741,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		// discards a read-only claim. Waiting on it would hold the resource
 		// for the Job's whole deadline when its Pod is refused at admission
 		// and never runs.
-		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) && operationNeedsTargetLock(schema) {
+		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) && schemaClaimHoldsLock(schema) {
 			acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
 			if lockErr != nil {
 				return ctrl.Result{}, lockErr
@@ -765,7 +764,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			}
 			return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job identity was lost during deletion"))
 		}
-		if operation.Type == operatorv1alpha1.OperationApply && !dispatchedApplyUnknown {
+		if schemaOperation(operation).Mutating && !dispatchedApplyUnknown {
 			if err == nil {
 				evidence, _, evidenceErr := r.collectTerminalPodEvidence(ctx, schema, job)
 				if evidenceErr != nil &&
@@ -844,8 +843,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if operation.LeaseContinuityLost {
 		return r.recoverLeaseContinuity(ctx, schema)
 	}
-	if schema.Status.PendingObservation != nil &&
-		(operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) {
+	if schemaClaimServesProof(schema) {
 		// A Job controller can create another exact-owner Apply Pod after the
 		// first terminal attempt was recorded. Refresh that immutable evidence
 		// before inspecting or consuming any post-Apply proof result. An active
@@ -867,7 +865,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		operation = schema.Status.ActiveOperation
 	}
-	if operation.Type == operatorv1alpha1.OperationApply && !schemaMayHaveDispatched(operation) &&
+	if schemaOperation(operation).Mutating && !schemaMayHaveDispatched(operation) &&
 		schema.Status.Plan != nil {
 		if bindingErr := r.ensureCurrentStatusExecutionBinding(schema, schema.Status.Plan); bindingErr != nil {
 			return r.executionBindingChanged(ctx, schema, bindingErr)
@@ -877,8 +875,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		failedRetryTime := r.now()
 		if !due(schema.Status.NextReconciliationTime, failedRetryTime) {
 			result := requeueAtDeadline(schema.Status.NextReconciliationTime, failedRetryTime)
-			if (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) &&
-				schema.Status.PendingObservation != nil {
+			if schemaClaimServesProof(schema) {
 				// Retry timers are user-configurable and may exceed the immutable
 				// Apply Lease. Renew the same holder while proof is pending.
 				if result.RequeueAfter > maxLockContentionPoll {
@@ -893,7 +890,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	key := types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
 	if apierrors.IsNotFound(err) {
-		if operation.Type == operatorv1alpha1.OperationApply && schemaMayHaveDispatched(operation) {
+		if schemaOperation(operation).Mutating && schemaMayHaveDispatched(operation) {
 			acquired, requeue, lockErr := r.acquireApplyLock(ctx, schema)
 			if lockErr != nil {
 				return ctrl.Result{}, lockErr
@@ -911,13 +908,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if currentErr == nil {
 				currentErr = fmt.Errorf("operation inputs changed after the claim")
 			}
-			if operation.Type == operatorv1alpha1.OperationApply {
+			if schemaOperation(operation).Mutating {
 				return r.applyBecameStale(ctx, schema, currentErr)
 			}
 			return r.discardStaleOperation(ctx, schema, currentErr)
 		}
 		var plan *operatorv1alpha1.PtahSchemaPlan
-		if operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			plan, err = r.currentPlan(ctx, schema)
 			if err != nil {
 				return r.applyBecameStale(ctx, schema, err)
@@ -929,7 +926,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.executionBindingChanged(ctx, schema, err)
 			}
 		}
-		if operationNeedsTargetLock(schema) {
+		if schemaClaimHoldsLock(schema) {
 			acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
 			if lockErr != nil {
 				return ctrl.Result{}, lockErr
@@ -947,7 +944,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.verificationPolicyChanged(ctx, schema, bindingErr)
 			}
 		}
-		if operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			content, err := r.Plans.Load(ctx, plan)
 			if err != nil {
 				return r.applyBecameStale(ctx, schema, fmt.Errorf("verify plan storage: %w", err))
@@ -1027,7 +1024,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		job, err = r.Jobs.Build(schema, *operation, plan)
 		if err != nil {
-			if operation.Type == operatorv1alpha1.OperationApply {
+			if schemaOperation(operation).Mutating {
 				return r.applyBecameStale(ctx, schema, fmt.Errorf("build Apply Job: %w", err))
 			}
 			return r.operationFailure(ctx, schema, fmt.Errorf("build %s Job: %w", operation.Type, err))
@@ -1039,7 +1036,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			templateDigest, digestErr := podintent.DigestTemplate(&job.Spec.Template)
 			if digestErr != nil {
 				failure := fmt.Errorf("validate rebuilt Job Pod template: %w", digestErr)
-				if operation.Type != operatorv1alpha1.OperationApply {
+				if !schemaOperation(operation).Mutating {
 					return r.discardStaleOperation(ctx, schema, failure)
 				}
 				return r.operationFailure(ctx, schema, failure)
@@ -1047,7 +1044,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
 				if operation.AdmissionSnapshotRefreshed {
 					failure := fmt.Errorf("rebuilt Job Pod template differs from the admission snapshot it was already resolved again for")
-					if operation.Type != operatorv1alpha1.OperationApply {
+					if !schemaOperation(operation).Mutating {
 						return r.discardStaleOperation(ctx, schema, failure)
 					}
 					return r.operationFailure(ctx, schema, failure)
@@ -1075,7 +1072,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 		}
 		expectedJob := job.DeepCopy()
-		if operationNeedsTargetLock(schema) && !operation.DispatchStarted {
+		if schemaClaimHoldsLock(schema) && !operation.DispatchStarted {
 			before := schema.DeepCopy()
 			schema.Status.ActiveOperation.DispatchStarted = true
 			if operation.Type == operatorv1alpha1.OperationPlan {
@@ -1109,7 +1106,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				operation = schema.Status.ActiveOperation
 			}
 		}
-		if operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			if planRequiresApproval(schema, plan) {
 				valid, err := r.ensureCurrentApproval(ctx, schema, plan, true)
 				if err != nil {
@@ -1120,7 +1117,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				}
 			}
 		}
-		mutating := operation.Type == operatorv1alpha1.OperationApply
+		mutating := schemaOperation(operation).Mutating
 		if err := r.Client.Create(ctx, job); err != nil {
 			switch mutationlifecycle.DispatchFailure(
 				mutationlifecycle.StageCreate, mutating, apierrors.IsAlreadyExists(err),
@@ -1156,7 +1153,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return ctrl.Result{}, err
 		}
 		r.event(schema, corev1.EventTypeNormal, "OperationStarted", "%s Job %s started", operation.Type, job.Name)
-		if operation.Type == operatorv1alpha1.OperationApply && r.Telemetry != nil {
+		if schemaOperation(operation).Mutating && r.Telemetry != nil {
 			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStarted)
 		}
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
@@ -1177,7 +1174,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	// The same decision both families make about the Job under a reserved
 	// name, with the wording each one owes its reader kept here.
 	verdict, cause := mutationlifecycle.VerdictFor(mutationlifecycle.JobClaim{
-		Mutating:        operation.Type == operatorv1alpha1.OperationApply,
+		Mutating:        schemaOperation(operation).Mutating,
 		DispatchStarted: operation.DispatchStarted,
 		RecordedJobUID:  string(operation.JobUID),
 		Found:           true,
@@ -1195,13 +1192,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if inputErr == nil && currentInputs == operation.InputFingerprint {
 		expectedJob, expectedErr := r.expectedJob(ctx, schema, operation)
 		if expectedErr != nil {
-			if operation.Type == operatorv1alpha1.OperationApply {
+			if schemaOperation(operation).Mutating {
 				return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("rebuild immutable Apply Job intent: %w", expectedErr))
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("rebuild immutable Job intent: %w", expectedErr))
 		}
 		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation); intentErr != nil {
-			if operation.Type == operatorv1alpha1.OperationApply {
+			if schemaOperation(operation).Mutating {
 				return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job intent changed: %w", intentErr))
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job intent changed: %w", intentErr))
@@ -1210,7 +1207,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if operation.JobUID == "" {
 		before := schema.DeepCopy()
 		schema.Status.ActiveOperation.JobUID = job.UID
-		if operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			schema.Status.ActiveOperation.DispatchStarted = true
 		}
 		if err := r.patchStatus(ctx, before, schema); err != nil {
@@ -1218,7 +1215,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		operation = schema.Status.ActiveOperation
 	}
-	if operationNeedsTargetLock(schema) {
+	if schemaClaimHoldsLock(schema) {
 		acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
 		if lockErr != nil {
 			return ctrl.Result{}, lockErr
@@ -1239,7 +1236,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			currentErr = fmt.Errorf("operation inputs changed while the Job was running")
 		}
 		if mutationlifecycle.HarvestFailure(
-			mutationlifecycle.FaultInputsChanged, operation.Type == operatorv1alpha1.OperationApply,
+			mutationlifecycle.FaultInputsChanged, schemaOperation(operation).Mutating,
 		) == mutationlifecycle.DispositionUnaccounted {
 			// Once an Apply Job exists, a mutation may have started even when
 			// its formerly exact inputs became stale. Never classify that case
@@ -1264,7 +1261,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				failure = fmt.Errorf("Job produced multiple executor Pods")
 			}
 			if mutationlifecycle.HarvestFailure(
-				mutationlifecycle.FaultPodMultiplicity, operation.Type == operatorv1alpha1.OperationApply,
+				mutationlifecycle.FaultPodMultiplicity, schemaOperation(operation).Mutating,
 			) == mutationlifecycle.DispositionUnaccounted {
 				return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
 			}
@@ -1284,7 +1281,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		return ctrl.Result{}, err
 	}
-	result, parseErr := runner.ParseResultFor(evidence.Logs, runnerOperation(operation.Type), operation.ID)
+	result, parseErr := runner.ParseResultFor(evidence.Logs, schemaOperation(operation).Runner, operation.ID)
 	if evidence.LogLost != nil {
 		parseErr = evidence.LogLost
 	}
@@ -1294,7 +1291,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if refusal := runnerProtocolRefusal(result, parseErr); refusal != nil {
 		r.event(schema, corev1.EventTypeWarning, "RunnerProtocolMismatch",
 			"the %s runner refused the Job before starting the executor: %s", operation.Type, bounded(refusal.Error(), 512))
-		if operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			// The refusal says this Pod started nothing, and it is the Pod's
 			// own account. A Job may run its Pod more than once, so an Apply
 			// still owes the read-only proof every Apply error owes; that
@@ -1307,7 +1304,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	}
 	if parseErr != nil || !jobSucceeded(job) {
 		if mutationlifecycle.HarvestFailure(
-			mutationlifecycle.FaultUnreadableResult, operation.Type == operatorv1alpha1.OperationApply,
+			mutationlifecycle.FaultUnreadableResult, schemaOperation(operation).Mutating,
 		) == mutationlifecycle.DispositionUnaccounted {
 			failure := parseErr
 			if failure == nil {
@@ -1349,7 +1346,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		if operation.Type == operatorv1alpha1.OperationPlan && result.Error.Code == "protected_table" {
 			return r.refuseProtectedTable(ctx, schema, job, result.Error.Message)
 		}
-		if operation.Type == operatorv1alpha1.OperationApply || result.Uncertain {
+		if schemaOperation(operation).Mutating || result.Uncertain {
 			// A terminal result belongs to only one Pod attempt. Kubernetes may
 			// start a Job workload more than once, so no child-side pre-mutation
 			// claim can prove that every attempt stayed pre-mutation. Once Job
@@ -1361,7 +1358,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if result.Truncation != nil && result.Truncation.Stdout {
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s result was truncated", operation.Type))
 	}
-	if operation.Type == operatorv1alpha1.OperationApply {
+	if schemaOperation(operation).Mutating {
 		if schema.Status.Plan == nil || result.CoordinationDigest != schema.Status.Plan.CoordinationDigest ||
 			result.TargetIdentityDigest != schema.Status.Plan.TargetIdentityDigest {
 			return r.finishUncertainApplyWithEvidence(
@@ -1378,7 +1375,7 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	schema *operatorv1alpha1.PtahSchema,
 ) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
-	if operation == nil || !operation.LeaseContinuityLost || !operationNeedsTargetLock(schema) {
+	if operation == nil || !operation.LeaseContinuityLost || !schemaClaimHoldsLock(schema) {
 		return ctrl.Result{}, fmt.Errorf("database lock continuity recovery lacks an active locked operation")
 	}
 	acquired, requeue, err := r.acquireOperationLock(ctx, schema)
@@ -1396,7 +1393,7 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	}
 	honestJob := jobErr == nil && (operation.JobUID == "" || operation.JobUID == job.UID) &&
 		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID)
-	if operation.Type == operatorv1alpha1.OperationApply {
+	if schemaOperation(operation).Mutating {
 		if !honestJob || schema.DeletionTimestamp != nil {
 			job = nil
 		}
@@ -1695,8 +1692,7 @@ func (r *SchemaReconciler) consumeResult(
 	var completedProofExecutionBindingErr error
 	now := metav1.NewTime(r.now())
 	schema.Status.LastAttemptTime = &now
-	if operation != nil && (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) &&
-		schema.Status.PendingObservation != nil {
+	if schemaClaimServesProof(schema) {
 		schema.Status.ObservedGeneration = schema.Status.PendingObservation.ApplyGeneration
 	} else {
 		schema.Status.ObservedGeneration = schema.Generation
@@ -2018,7 +2014,7 @@ func (r *SchemaReconciler) consumeResult(
 			}
 			r.Telemetry.ObserveDrift(schema.Spec.Target.Engine, outcome)
 		}
-		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyCompleted)
 		}
 	}
@@ -2050,7 +2046,7 @@ func (r *SchemaReconciler) expectedJob(
 	}
 	var plan *operatorv1alpha1.PtahSchemaPlan
 	var err error
-	if operation.Type == operatorv1alpha1.OperationApply {
+	if schemaOperation(operation).Mutating {
 		plan, err = r.currentPlan(ctx, schema)
 		if err != nil {
 			return nil, err
@@ -2251,6 +2247,7 @@ func (r *SchemaReconciler) claimAt(
 		// true if it ever stops being true.
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
+	kind := mutationlifecycle.SchemaOperation(operation)
 	inputs, err := operationInputs(schema, operation)
 	if err != nil {
 		return r.operationFailure(ctx, schema, err)
@@ -2288,8 +2285,7 @@ func (r *SchemaReconciler) claimAt(
 		active.VerificationPolicyUID = verificationPolicy.UID
 		active.VerificationPolicyDigest = verificationPolicy.Digest
 	}
-	if operation == operatorv1alpha1.OperationApply || operation == operatorv1alpha1.OperationPlan ||
-		operation == operatorv1alpha1.OperationObserve && schema.Status.PendingObservation != nil {
+	if kind.HoldsLock(schema.Status.PendingObservation != nil) {
 		active.LeaseEpoch = "v1-" + strings.TrimPrefix(id, "sha256:")[:32]
 	}
 	if operation == operatorv1alpha1.OperationObserve {
@@ -2398,16 +2394,14 @@ func (r *SchemaReconciler) claimAt(
 	schema.Status.ActiveOperation = active
 	schema.Status.LastAttemptTime = ptrTime(active.StartedAt)
 	schema.Status.ObservedGeneration = schema.Generation
-	if pending := schema.Status.PendingObservation; pending != nil &&
-		(operation == operatorv1alpha1.OperationObserve || operation == operatorv1alpha1.OperationPlan) {
+	if pending := schema.Status.PendingObservation; pending != nil && kind.ServesProof {
 		schema.Status.ObservedGeneration = pending.ApplyGeneration
 	}
 	schema.Status.NextReconciliationTime = nil
-	if (operation == operatorv1alpha1.OperationObserve || operation == operatorv1alpha1.OperationPlan) &&
-		schema.Status.PendingObservation != nil {
+	if schema.Status.PendingObservation != nil && kind.ServesProof {
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 	} else {
-		schema.Status.Phase = phaseFor(operation)
+		schema.Status.Phase = kind.Phase
 	}
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operation))
 	if operation == operatorv1alpha1.OperationResolve {
@@ -2756,7 +2750,7 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 	}
 	if r.Telemetry != nil {
 		stage := telemetry.FailureStagePlan
-		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			stage = telemetry.FailureStageApply
 			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 		}
@@ -2800,8 +2794,7 @@ func (r *SchemaReconciler) executionBindingChanged(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
-		schemaMayHaveDispatched(operation) {
+	if schemaOperation(operation).Mutating && schemaMayHaveDispatched(operation) {
 		return r.finishUncertainApplyForExecutionBindingChange(
 			ctx,
 			schema,
@@ -2869,7 +2862,7 @@ func (r *SchemaReconciler) executionBindingChanged(
 	}
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, failureStage, telemetry.FailureStaleInput)
-		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 		}
 	}
@@ -2878,19 +2871,11 @@ func (r *SchemaReconciler) executionBindingChanged(
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
+// isReadOnlyOperation reports whether the claim is known not to change the
+// database. It is not the negation of Mutating: a claim of a type this binary
+// does not define is neither.
 func isReadOnlyOperation(operation *operatorv1alpha1.ActiveOperationStatus) bool {
-	if operation == nil {
-		return false
-	}
-	switch operation.Type {
-	case operatorv1alpha1.OperationResolve,
-		operatorv1alpha1.OperationVerify,
-		operatorv1alpha1.OperationObserve,
-		operatorv1alpha1.OperationPlan:
-		return true
-	default:
-		return false
-	}
+	return schemaOperation(operation).ReadOnly()
 }
 
 func (r *SchemaReconciler) markRecordedApprovalStale(ctx context.Context, schema *operatorv1alpha1.PtahSchema) error {
@@ -3101,7 +3086,7 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 	}
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageVerify, telemetry.FailurePolicyChanged)
-		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 		}
 	}
@@ -3137,8 +3122,7 @@ func (r *SchemaReconciler) operationFailure(ctx context.Context, schema *operato
 func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema, failure error) (ctrl.Result, error) {
 	before := schema.DeepCopy()
 	operation := schema.Status.ActiveOperation
-	if operation != nil && (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) &&
-		schema.Status.PendingObservation != nil {
+	if schemaClaimServesProof(schema) {
 		schema.Status.ActiveOperation = nil
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 		schema.Status.NextReconciliationTime = nil
@@ -3184,7 +3168,7 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 		stage := telemetry.FailureStageController
 		if operation != nil {
 			stage = telemetry.StageForOperation(operation.Type)
-			if operation.Type == operatorv1alpha1.OperationApply {
+			if schemaOperation(operation).Mutating {
 				r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 			}
 		}
@@ -3514,7 +3498,7 @@ func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *op
 		}
 	}
 	if r.Telemetry != nil {
-		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+		if schemaOperation(operation).Mutating {
 			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStale)
 			r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageApply, telemetry.FailureStaleInput)
 		}
@@ -3808,7 +3792,7 @@ func (r *SchemaReconciler) removeActiveFinalizer(ctx context.Context, schema *op
 
 func (r *SchemaReconciler) acquireApplyLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
 	operation := schema.Status.ActiveOperation
-	if operation == nil || operation.Type != operatorv1alpha1.OperationApply || operation.CoordinationDigest == "" || operation.LeaseDurationSeconds == 0 {
+	if operation == nil || !schemaOperation(operation).Mutating || operation.CoordinationDigest == "" || operation.LeaseDurationSeconds == 0 {
 		return false, 0, fmt.Errorf("apply target lock inputs are incomplete")
 	}
 	return r.acquireActiveLock(ctx, schema, targetlock.Request{
@@ -3852,20 +3836,10 @@ func planSealPublicKeyDigest(key planseal.PublicKey) string {
 	return fingerprint.DigestBytes([]byte(key.Encode()))
 }
 
-func operationNeedsTargetLock(schema *operatorv1alpha1.PtahSchema) bool {
-	if schema.Status.ActiveOperation == nil {
-		return false
-	}
-	return schema.Status.ActiveOperation.Type == operatorv1alpha1.OperationApply ||
-		schema.Status.ActiveOperation.Type == operatorv1alpha1.OperationPlan ||
-		schema.Status.ActiveOperation.Type == operatorv1alpha1.OperationObserve && schema.Status.PendingObservation != nil
-}
-
 func (r *SchemaReconciler) acquirePendingObservationLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
 	pending := schema.Status.PendingObservation
 	operation := schema.Status.ActiveOperation
-	if pending == nil || operation == nil ||
-		(operation.Type != operatorv1alpha1.OperationObserve && operation.Type != operatorv1alpha1.OperationPlan) {
+	if pending == nil || operation == nil || !schemaOperation(operation).ServesProof {
 		return false, 0, fmt.Errorf("pending observation lock inputs are incomplete")
 	}
 	return r.acquireActiveLock(ctx, schema, r.pendingLockRequest(schema, pending))
@@ -3922,7 +3896,7 @@ func (r *SchemaReconciler) acquireActiveLock(
 	}
 	expected := operation.LeaseEpoch
 	pending := schema.Status.PendingObservation
-	if pending != nil && (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) {
+	if pending != nil && schemaOperation(operation).ServesProof {
 		if expected == "" {
 			expected = pending.LeaseEpoch
 		}
@@ -3945,7 +3919,7 @@ func (r *SchemaReconciler) acquireActiveLock(
 	}
 	operation.LeaseEpoch = epoch
 	operation.LeaseContinuityLost = continuityLost
-	if pending != nil && (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) {
+	if pending != nil && schemaOperation(operation).ServesProof {
 		if pending.LeaseEpoch != "" && pending.LeaseEpoch != epoch {
 			continuityLost = true
 			operation.LeaseContinuityLost = true
@@ -4031,9 +4005,8 @@ func schemaRealmClaim(schema *operatorv1alpha1.PtahSchema) mutationlifecycle.Rea
 		return mutationlifecycle.RealmClaim{ProofOutstanding: schema.Status.PendingObservation != nil}
 	}
 	return mutationlifecycle.RealmClaim{
-		Mutating: operation.Type == operatorv1alpha1.OperationApply,
-		ServesProof: operation.Type == operatorv1alpha1.OperationPlan ||
-			operation.Type == operatorv1alpha1.OperationObserve,
+		Mutating:         schemaOperation(operation).Mutating,
+		ServesProof:      schemaOperation(operation).ServesProof,
 		Locked:           operation.LeaseEpoch != "",
 		ProofOutstanding: schema.Status.PendingObservation != nil,
 	}
@@ -4716,27 +4689,6 @@ func policyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {
 		LockTimeout:     schema.Spec.Policy.LockTimeout.Duration.String(),
 		TransactionMode: schema.Spec.Policy.TransactionMode, ConnectTimeout: schema.Spec.Execution.ConnectTimeout.Duration.String(),
 	})
-}
-
-func phaseFor(operation operatorv1alpha1.OperationType) operatorv1alpha1.ReconciliationPhase {
-	switch operation {
-	case operatorv1alpha1.OperationResolve:
-		return operatorv1alpha1.PhaseResolving
-	case operatorv1alpha1.OperationVerify:
-		return operatorv1alpha1.PhaseVerifying
-	case operatorv1alpha1.OperationObserve:
-		return operatorv1alpha1.PhaseObserving
-	case operatorv1alpha1.OperationPlan:
-		return operatorv1alpha1.PhasePlanning
-	case operatorv1alpha1.OperationApply:
-		return operatorv1alpha1.PhaseApplying
-	default:
-		return operatorv1alpha1.PhaseFailed
-	}
-}
-
-func runnerOperation(operation operatorv1alpha1.OperationType) runner.Operation {
-	return runner.Operation(strings.ToLower(string(operation)))
 }
 
 func interval(schema *operatorv1alpha1.PtahSchema) time.Duration {

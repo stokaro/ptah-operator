@@ -33,6 +33,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
@@ -2507,7 +2508,7 @@ func TestExecutionBindingChangeRejectsDispatchedReadOnlyJobResult(t *testing.T) 
 				Engine: schema.Spec.Target.Engine, CoordinationDigest: testCoordinationDigest,
 				IdentityDigest: testDigest, DriftReportDigest: safetyOtherDigest,
 			}
-			schema.Status.Phase = phaseFor(operation)
+			schema.Status.Phase = mutationlifecycle.SchemaOperation(operation).Phase
 			schema.Status.Plan = nil
 			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 				Type: operation, ID: "retired-read-only-" + strings.ToLower(string(operation)),
@@ -5027,7 +5028,7 @@ func predecessorReadOnlyLateCreateFixture(
 
 	schema := schemaFixture()
 	schema.Finalizers = []string{activeOperationFinalizer}
-	schema.Status.Phase = phaseFor(operationType)
+	schema.Status.Phase = mutationlifecycle.SchemaOperation(operationType).Phase
 	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
 		ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
 		Digest:                   testDigest,

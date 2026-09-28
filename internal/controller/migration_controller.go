@@ -249,7 +249,7 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 	migration *operatorv1alpha1.PtahMigration,
 ) (ctrl.Result, error) {
 	if operation := migration.Status.ActiveOperation; operation != nil {
-		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+		if migrationOperation(operation).Mutating {
 			job, err := r.dispatchedMigrationApplyJob(ctx, migration, operation)
 			if err != nil {
 				return ctrl.Result{}, err
@@ -417,8 +417,7 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 		result, failureErr := r.migrationOperationFailure(ctx, migration, err)
 		return result, true, failureErr
 	}
-	if operation := migration.Status.ActiveOperation; operation != nil &&
-		operation.Type == operatorv1alpha1.MigrationOperationApply &&
+	if operation := migration.Status.ActiveOperation; migrationOperation(operation).Mutating &&
 		migrationMayHaveDispatched(operation) {
 		// A dispatched Apply is not retired by a rollout. Its Job may already
 		// have changed the database, and dropping the claim would drop the only
@@ -597,7 +596,7 @@ func (r *MigrationReconciler) claimMigration(
 	migration.Status.ActiveOperation = operation
 	migration.Status.ObservedGeneration = migration.Generation
 	migration.Status.NextReconciliationTime = nil
-	migration.Status.Phase = migrationPhaseFor(operationType)
+	migration.Status.Phase = mutationlifecycle.MigrationOperation(operationType).Phase
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 		operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operationType))
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
@@ -616,8 +615,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return r.finishUncertainMigrationApply(ctx, migration, nil,
 			errors.New("the database lock epoch changed under the dispatched run"), "")
 	}
-	applying := operation.Type == operatorv1alpha1.MigrationOperationApply
-	if applying {
+	kind := migrationOperation(operation)
+	mutating := kind.Mutating
+	if kind.HoldsLock(false) {
 		acquired, requeue, lockErr := r.acquireMigrationApplyLock(ctx, migration)
 		if lockErr != nil {
 			return ctrl.Result{}, lockErr
@@ -637,12 +637,12 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	// Suspension is judged only against a Job that exists. A claim with none
 	// goes to dispatch, which refuses a suspended resource itself and is where
 	// that refusal has always lived.
-	if found && migration.Spec.Suspend && !applying {
+	if found && migration.Spec.Suspend && !mutating {
 		return r.discardMigrationOperation(ctx, migration, telemetry.OperationCanceled,
 			errors.New("reconciliation was suspended while the operation ran"))
 	}
 	verdict, cause := mutationlifecycle.VerdictFor(mutationlifecycle.JobClaim{
-		Mutating:        applying,
+		Mutating:        mutating,
 		DispatchStarted: operation.DispatchStarted,
 		RecordedJobUID:  string(operation.JobUID),
 		Found:           found,
@@ -668,7 +668,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	if verdict == mutationlifecycle.VerdictAdopt {
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation.JobUID = job.UID
-		if applying {
+		if mutating {
 			migration.Status.ActiveOperation.DispatchStarted = true
 		}
 		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
@@ -678,7 +678,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		// The Job this claim reserved a name for already existed, so the pass
 		// that created it lost its own status write. Recording the UID is the
 		// same transition either way, and the guard above makes it happen once.
-		if applying && r.Telemetry != nil {
+		if mutating && r.Telemetry != nil {
 			r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
 		}
 	}
@@ -694,7 +694,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			currentErr = errors.New("the operation inputs changed while the Job was running")
 		}
 		if mutationlifecycle.HarvestFailure(
-			mutationlifecycle.FaultInputsChanged, applying,
+			mutationlifecycle.FaultInputsChanged, mutating,
 		) == mutationlifecycle.DispositionUnaccounted {
 			// An Apply Job that exists may already have changed the database,
 			// whatever its formerly exact inputs now say.
@@ -712,7 +712,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 		if errors.Is(err, errTerminalPodMultiplicity) || errors.Is(err, errTerminalPodIntent) {
 			if mutationlifecycle.HarvestFailure(
-				mutationlifecycle.FaultPodMultiplicity, applying,
+				mutationlifecycle.FaultPodMultiplicity, mutating,
 			) == mutationlifecycle.DispositionUnaccounted {
 				return r.finishUncertainMigrationApply(ctx, migration, job, err, "")
 			}
@@ -732,7 +732,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 		return ctrl.Result{}, err
 	}
-	result, parseErr := runner.ParseResultFor(evidence.Logs, migrationRunnerOperation(operation.Type), operation.ID)
+	result, parseErr := runner.ParseResultFor(evidence.Logs, kind.Runner, operation.ID)
 	if evidence.LogLost != nil {
 		parseErr = evidence.LogLost
 	}
@@ -742,7 +742,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	if refusal := runnerProtocolRefusal(result, parseErr); refusal != nil {
 		r.event(migration, corev1.EventTypeWarning, "RunnerProtocolMismatch",
 			"the %s runner refused the Job before starting the executor: %s", operation.Type, bounded(refusal.Error(), 512))
-		if !applying {
+		if !mutating {
 			return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonRunnerProtocolMismatch, refusal)
 		}
 		// An Apply is settled from its own evidence as every Apply is. A
@@ -751,7 +751,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		// nobody accounted for; one from a runner of this protocol is its
 		// frame, and says the child never started.
 	}
-	if applying {
+	if mutating {
 		// The run's own evidence settles an Apply, whatever the Job's exit
 		// status said: a run that stopped is exactly the run whose controller
 		// has to be told what the database now holds.
@@ -945,7 +945,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 			"%s Job Pod template changed before dispatch; resolving its admission snapshot again", operation.Type)
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
-	if operation.Type == operatorv1alpha1.MigrationOperationApply && !operation.DispatchStarted {
+	if migrationOperation(operation).Mutating && !operation.DispatchStarted {
 		if err := r.consumeMigrationApproval(ctx, migration, operation.ApprovalRef); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -957,7 +957,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		operation = migration.Status.ActiveOperation
 	}
 	expected := job.DeepCopy()
-	mutating := operation.Type == operatorv1alpha1.MigrationOperationApply
+	mutating := migrationOperation(operation).Mutating
 	if err := r.Client.Create(ctx, job); err != nil {
 		switch mutationlifecycle.DispatchFailure(
 			mutationlifecycle.StageCreate, mutating, apierrors.IsAlreadyExists(err),
@@ -1003,7 +1003,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeNormal, "OperationStarted", "%s Job %s started", operation.Type, job.Name)
-	if operation.Type == operatorv1alpha1.MigrationOperationApply && r.Telemetry != nil {
+	if mutating && r.Telemetry != nil {
 		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
 	}
 	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
@@ -1648,7 +1648,7 @@ func (r *MigrationReconciler) discardUndispatchedMigrationOperation(
 	if err != nil {
 		return result, err
 	}
-	if operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
+	if migrationOperation(operation).HoldsLock(false) {
 		r.settleOwedMigrationRelease(ctx, migration)
 	}
 	return result, nil
@@ -1674,7 +1674,7 @@ func (r *MigrationReconciler) failUndispatchedMigrationOperation(
 	if err != nil {
 		return result, err
 	}
-	if operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
+	if migrationOperation(operation).HoldsLock(false) {
 		r.settleOwedMigrationRelease(ctx, migration)
 	}
 	return result, nil
@@ -2093,32 +2093,6 @@ func migrationBindingEpoch(migration *operatorv1alpha1.PtahMigration) string {
 		return ""
 	}
 	return migration.Status.ExecutionBinding.Epoch
-}
-
-func migrationPhaseFor(operation operatorv1alpha1.MigrationOperationType) operatorv1alpha1.MigrationPhase {
-	switch operation {
-	case operatorv1alpha1.MigrationOperationResolve:
-		return operatorv1alpha1.MigrationPhaseResolving
-	case operatorv1alpha1.MigrationOperationVerify:
-		return operatorv1alpha1.MigrationPhaseVerifying
-	case operatorv1alpha1.MigrationOperationHistory:
-		return operatorv1alpha1.MigrationPhaseReading
-	default:
-		return operatorv1alpha1.MigrationPhaseApplying
-	}
-}
-
-func migrationRunnerOperation(operation operatorv1alpha1.MigrationOperationType) runner.Operation {
-	switch operation {
-	case operatorv1alpha1.MigrationOperationResolve:
-		return runner.OperationResolve
-	case operatorv1alpha1.MigrationOperationVerify:
-		return runner.OperationVerify
-	case operatorv1alpha1.MigrationOperationHistory:
-		return runner.OperationMigrationHistory
-	default:
-		return runner.OperationMigrationApply
-	}
 }
 
 func migrationInterval(migration *operatorv1alpha1.PtahMigration) time.Duration {

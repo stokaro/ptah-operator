@@ -37,6 +37,22 @@ The order matters as much as the list. Each step's durable write is what makes
 the next step's failure survivable, so a step that writes after acting instead
 of before has no failure window at all -- it has a gap.
 
+## Operation types
+
+Which obligations a claim carries depends on its operation type, and both
+families read the answers from one table: `mutationlifecycle.SchemaOperation`
+and `mutationlifecycle.MigrationOperation`, which also name the phase a claim
+publishes and the operation the runner is told to perform.
+
+| | Mutating | Holds the database realm | Carries out a proof |
+| --- | --- | --- | --- |
+| `PtahSchema` | Apply | Apply and Plan, and an Observe while it proves an Apply | Observe and Plan |
+| `PtahMigration` | Apply | Apply | none |
+
+A type this binary does not define, which a resource written by a newer
+operator can carry, answers no to every question, and in particular is not
+read-only: a site that acts on "not mutating" would act on it.
+
 ## Authorize
 
 A claim is permitted only when every binding the plan was computed under still
