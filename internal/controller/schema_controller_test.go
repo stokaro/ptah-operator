@@ -28,6 +28,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -1276,7 +1277,7 @@ func TestMissingReadOnlyJobWithPersistedUIDAdvancesAttemptBeforeRecreate(t *test
 			policyBytes := []byte("policy")
 			schema := schemaFixture()
 			schema.Finalizers = []string{activeOperationFinalizer}
-			schema.Status.Phase = phaseFor(operationType)
+			schema.Status.Phase = mutationlifecycle.SchemaOperation(operationType).Phase
 			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 				Type:      operationType,
 				ID:        "missing-" + strings.ToLower(string(operationType)),
@@ -3250,7 +3251,7 @@ func bindActiveInput(t *testing.T, schema *operatorv1alpha1.PtahSchema) {
 	if operation.Type == operatorv1alpha1.OperationApply && operation.LeaseEpoch == "" {
 		operation.LeaseEpoch = testLeaseEpoch
 	}
-	if operationNeedsTargetLock(schema) && operation.JobUID != "" {
+	if schemaClaimHoldsLock(schema) && operation.JobUID != "" {
 		operation.DispatchStarted = true
 	}
 	inputs, err := operationInputs(schema, schema.Status.ActiveOperation.Type)

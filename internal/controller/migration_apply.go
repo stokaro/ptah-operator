@@ -323,7 +323,7 @@ func (r *MigrationReconciler) acquireMigrationApplyLock(
 	migration *operatorv1alpha1.PtahMigration,
 ) (bool, time.Duration, error) {
 	operation := migration.Status.ActiveOperation
-	if operation == nil || operation.Type != operatorv1alpha1.MigrationOperationApply {
+	if !migrationOperation(operation).HoldsLock(false) {
 		return true, 0, nil
 	}
 	if r.Locks == nil || strings.TrimSpace(r.LockNamespace) == "" {

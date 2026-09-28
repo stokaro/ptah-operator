@@ -28,6 +28,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
@@ -289,13 +290,13 @@ func (b Builder) Build(
 		owner:              schema,
 		name:               name,
 		operationType:      string(operation.Type),
-		runnerOperation:    strings.ToLower(string(operation.Type)),
+		runnerOperation:    string(mutationlifecycle.SchemaOperation(operation.Type).Runner),
 		operationID:        operation.ID,
 		inputFingerprint:   operation.InputFingerprint,
 		executionBindingID: operation.ExecutionBindingID,
 		admissionSnapshot:  operation.AdmissionSnapshot,
 		execution:          schema.Spec.Execution,
-		mutating:           operation.Type == operatorv1alpha1.OperationApply,
+		mutating:           mutationlifecycle.SchemaOperation(operation.Type).Mutating,
 		startedAt:          operation.StartedAt,
 		executionNotAfter:  operation.ExecutionNotAfter,
 		env:                environment,
@@ -837,13 +838,7 @@ func validateSchema(schema *operatorv1alpha1.PtahSchema) error {
 }
 
 func validateOperation(operation operatorv1alpha1.ActiveOperationStatus) error {
-	switch operation.Type {
-	case operatorv1alpha1.OperationResolve,
-		operatorv1alpha1.OperationVerify,
-		operatorv1alpha1.OperationObserve,
-		operatorv1alpha1.OperationPlan,
-		operatorv1alpha1.OperationApply:
-	default:
+	if !mutationlifecycle.SchemaOperation(operation.Type).Known {
 		return fmt.Errorf("unsupported operation %q", operation.Type)
 	}
 	if strings.TrimSpace(operation.ID) == "" {

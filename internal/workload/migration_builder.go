@@ -17,6 +17,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -119,13 +120,13 @@ func (b Builder) BuildMigration(
 		owner:              migration,
 		name:               name,
 		operationType:      string(operation.Type),
-		runnerOperation:    string(migrationRunnerOperation(operation.Type)),
+		runnerOperation:    string(mutationlifecycle.MigrationOperation(operation.Type).Runner),
 		operationID:        operation.ID,
 		inputFingerprint:   operation.InputFingerprint,
 		executionBindingID: operation.ExecutionBindingID,
 		admissionSnapshot:  operation.AdmissionSnapshot,
 		execution:          migration.Spec.Execution,
-		mutating:           operation.Type == operatorv1alpha1.MigrationOperationApply,
+		mutating:           mutationlifecycle.MigrationOperation(operation.Type).Mutating,
 		startedAt:          operation.StartedAt,
 		executionNotAfter:  operation.ExecutionNotAfter,
 		env:                environment,
@@ -150,19 +151,6 @@ func (b Builder) BuildMigration(
 func migrationReadsArtifactBytes(operation operatorv1alpha1.MigrationOperationType) bool {
 	return operation == operatorv1alpha1.MigrationOperationHistory ||
 		operation == operatorv1alpha1.MigrationOperationApply
-}
-
-func migrationRunnerOperation(operation operatorv1alpha1.MigrationOperationType) runner.Operation {
-	switch operation {
-	case operatorv1alpha1.MigrationOperationResolve:
-		return runner.OperationResolve
-	case operatorv1alpha1.MigrationOperationVerify:
-		return runner.OperationVerify
-	case operatorv1alpha1.MigrationOperationHistory:
-		return runner.OperationMigrationHistory
-	default:
-		return runner.OperationMigrationApply
-	}
 }
 
 func migrationDataPlane(
@@ -394,12 +382,7 @@ func validateMigration(migration *operatorv1alpha1.PtahMigration) error {
 }
 
 func validateMigrationOperation(operation operatorv1alpha1.MigrationOperationStatus) error {
-	switch operation.Type {
-	case operatorv1alpha1.MigrationOperationResolve,
-		operatorv1alpha1.MigrationOperationVerify,
-		operatorv1alpha1.MigrationOperationHistory,
-		operatorv1alpha1.MigrationOperationApply:
-	default:
+	if !mutationlifecycle.MigrationOperation(operation.Type).Known {
 		return fmt.Errorf("unsupported migration operation %q", operation.Type)
 	}
 	if !sha256Pattern.MatchString(operation.ID) {
