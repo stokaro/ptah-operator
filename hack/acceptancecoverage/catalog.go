@@ -5,10 +5,9 @@
 // required cell, the scenarios it executed, and the evidence that it passed.
 // Every part of that except the evidence is already written down somewhere in
 // this repository: the supported Kubernetes minors in support/kubernetes.json,
-// the suites and their phases in support/e2e-suites.json, the script or Go
-// phase each phase runs and the engine it is handed in hack/e2e-kind.sh, and
-// the scenarios inside a phase in its stopwatch marks or, for a Go phase, in
-// its declaration in test/e2e/phases.
+// the suites and their phases in support/e2e-suites.json, the Go phase each
+// phase runs and the engine it is handed in hack/e2e-kind.sh, and the
+// scenarios inside a phase in its declaration in test/e2e/phases.
 //
 // A table typed out by hand from those sources is one more copy, and the
 // first one to go stale. This reads them.
@@ -21,7 +20,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	e2ephases "github.com/stokaro/ptah-operator/test/e2e/phases"
@@ -79,9 +77,10 @@ type ptahCatalog struct {
 	Releases []ptahRelease `json:"releases"`
 }
 
-// driverPhase is one phase the lifecycle driver runs: the script that carries
-// it, or the Go phase it asks the harness for, and the engine the driver hands
-// it, if any.
+// driverPhase is one phase the lifecycle driver runs: the Go phase it asks
+// the harness for, and the engine the driver hands it, if any. A call that
+// still runs a script under hack/ is read too, with the script named, so the
+// table refuses it instead of leaving the phase out.
 type driverPhase struct {
 	name    string
 	script  string
@@ -93,8 +92,6 @@ var (
 	recordedPhase   = regexp.MustCompile(`^\s*run_recorded_phase (\S+) "\$ROOT_DIR/hack/(e2e-[a-z-]+\.sh)"`)
 	recordedGoPhase = regexp.MustCompile(`^\s*run_recorded_phase (\S+) run_go_phase (\S+)\s*$`)
 	phaseEngine     = regexp.MustCompile(`^E2E_ENGINE=([a-z]+) \\$`)
-	nestedPhase     = regexp.MustCompile(`"\$ROOT_DIR/hack/(e2e-[a-z-]+\.sh)"`)
-	scenarioMark    = regexp.MustCompile(`(?m)^\s*timing_next scenario (\S+)`)
 )
 
 // readSuites reads the suite catalog.
@@ -152,7 +149,7 @@ func readPtahIdentity(root, operator string) (ptahVerification, error) {
 	return ptahVerification{}, fmt.Errorf("the Ptah catalog has no row for operator %q", operator)
 }
 
-// readDriverPhases reads which script carries each phase and which engine the
+// readDriverPhases reads which Go phase carries each phase and which engine the
 // driver hands it. The driver is the authority on both: a phase asked to run
 // with no engine refuses rather than covering one engine and reporting two.
 func readDriverPhases(root string) ([]driverPhase, error) {
@@ -168,7 +165,7 @@ func readDriverPhases(root string) ([]driverPhase, error) {
 }
 
 // parseDriverPhases reads the driver's own record of what it runs: the phase
-// name, the script that carries it, and the engine the environment block in
+// name, the Go phase that carries it, and the engine the environment block in
 // front of the call hands it.
 func parseDriverPhases(source string) []driverPhase {
 	var phases []driverPhase
@@ -198,68 +195,19 @@ func parseDriverPhases(source string) []driverPhase {
 	return phases
 }
 
-// phaseScenarios reads the scenarios a phase records: a shell phase's
-// stopwatch marks, or the scenarios a Go phase declares in test/e2e/phases,
-// which the harness refuses to end the phase without running.
-func phaseScenarios(root string, phase driverPhase) ([]string, error) {
+// phaseScenarios reads the scenarios a phase records: the ones its Go phase
+// declares in test/e2e/phases, which the harness refuses to end the phase
+// without running. Every phase is a Go phase, so a script is refused rather
+// than read as a phase with no scenarios.
+func phaseScenarios(phase driverPhase) ([]string, error) {
 	if phase.goPhase == "" {
-		return readScenarios(root, phase.script)
+		return nil, fmt.Errorf("phase %q runs hack/%s; every phase is a Go phase test/e2e/phases declares", phase.name, phase.script)
 	}
 	declared, found := e2ephases.Lookup(phase.goPhase)
 	if !found {
 		return nil, fmt.Errorf("phase %q runs the Go phase %q, which test/e2e/phases does not declare", phase.name, phase.goPhase)
 	}
 	return slices.Clone(declared.Scenarios), nil
-}
-
-// readScenarios reads the stopwatch marks a phase script names, following the
-// one level of nesting a shell phase may use: a phase run inside another
-// records its scenarios as that phase's.
-func readScenarios(root, script string) ([]string, error) {
-	source, err := os.ReadFile(filepath.Join(root, "hack", script)) //nolint:gosec // A path built from the repository root.
-	if err != nil {
-		return nil, err
-	}
-	scenarios := markedScenarios(string(source))
-	for _, nested := range nestedScripts(string(source), script) {
-		nestedSource, nestedErr := os.ReadFile(filepath.Join(root, "hack", nested)) //nolint:gosec // A path built from the repository root.
-		if nestedErr != nil {
-			return nil, nestedErr
-		}
-		scenarios = append(scenarios, markedScenarios(string(nestedSource))...)
-	}
-	return scenarios, nil
-}
-
-func markedScenarios(source string) []string {
-	var scenarios []string
-	for _, match := range scenarioMark.FindAllStringSubmatch(source, -1) {
-		scenarios = append(scenarios, match[1])
-	}
-	return scenarios
-}
-
-// nestedScripts names the phase scripts a phase script runs inside itself.
-// The stopwatch helper and the image resolver are libraries rather than
-// phases, and a script never nests itself.
-func nestedScripts(source, self string) []string {
-	library := map[string]bool{
-		"e2e-timing.sh":                   true,
-		"e2e-kubernetes-support-image.sh": true,
-		self:                              true,
-	}
-	seen := make(map[string]bool)
-	var nested []string
-	for _, match := range nestedPhase.FindAllStringSubmatch(source, -1) {
-		name := match[1]
-		if library[name] || seen[name] {
-			continue
-		}
-		seen[name] = true
-		nested = append(nested, name)
-	}
-	sort.Strings(nested)
-	return nested
 }
 
 func readJSON(path string, into any) error {

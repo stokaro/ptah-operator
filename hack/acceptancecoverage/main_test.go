@@ -100,9 +100,9 @@ func TestTheCoverageTableNamesEveryRequiredCell(t *testing.T) {
 	}
 }
 
-// One script carries both engines and the driver says which one a phase runs.
-// Listing every mark inside it would report two engines from a job that
-// exercised one.
+// A scenario list can name both engines, and the driver says which one a phase
+// runs. Listing every name would report two engines from a job that exercised
+// one.
 func TestScenariosForEngineDropsTheOtherEngine(t *testing.T) {
 	t.Parallel()
 	known := map[string]bool{"postgresql": true, "mysql": true}
@@ -158,7 +158,7 @@ func TestReadDriverPhasesBindsAnEngineToOnePhase(t *testing.T) {
 				"\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql",
 				``,
 				`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
-				"\trun_recorded_phase uninstall \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
+				"\trun_recorded_phase uninstall run_go_phase uninstall",
 				``,
 			},
 		},
@@ -169,7 +169,7 @@ func TestReadDriverPhasesBindsAnEngineToOnePhase(t *testing.T) {
 			source: []string{
 				`E2E_ENGINE=postgresql \`,
 				"\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql",
-				"\trun_recorded_phase uninstall \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
+				"\trun_recorded_phase uninstall run_go_phase uninstall",
 			},
 		},
 	}
@@ -188,6 +188,21 @@ func TestReadDriverPhasesBindsAnEngineToOnePhase(t *testing.T) {
 				t.Fatalf("the engine travelled to %q, which the driver hands none", phases[1].name)
 			}
 		})
+	}
+}
+
+// Every phase is a Go phase, so a call that still runs a script is read with
+// the script named and refused, rather than listed as a phase that proved
+// nothing.
+func TestAScriptPhaseIsRefused(t *testing.T) {
+	t.Parallel()
+	phases := parseDriverPhases("\trun_recorded_phase legacy \"$ROOT_DIR/hack/e2e-legacy.sh\"")
+	if len(phases) != 1 || phases[0].script != "e2e-legacy.sh" || phases[0].goPhase != "" {
+		t.Fatalf("phases = %#v, want the legacy script read", phases)
+	}
+	_, err := phaseScenarios(phases[0])
+	if err == nil || !strings.Contains(err.Error(), "every phase is a Go phase") {
+		t.Fatalf("phaseScenarios() error = %v, want the script refused", err)
 	}
 }
 
@@ -211,14 +226,14 @@ func TestGoPhasesReadTheirDeclaredScenarios(t *testing.T) {
 	if phases[1].engine != "" {
 		t.Fatalf("the engine travelled to %q", phases[1].name)
 	}
-	scenarios, err := phaseScenarios(repositoryRoot, phases[0])
+	scenarios, err := phaseScenarios(phases[0])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(scenarios, ",") != strings.Join(e2ephases.CertRotation.Scenarios, ",") {
 		t.Fatalf("scenarios = %v, want the declared %v", scenarios, e2ephases.CertRotation.Scenarios)
 	}
-	if _, err := phaseScenarios(repositoryRoot, phases[1]); err == nil {
+	if _, err := phaseScenarios(phases[1]); err == nil {
 		t.Fatal("a Go phase the harness does not carry was read as having scenarios")
 	}
 
@@ -267,9 +282,9 @@ func TestEnginePhasesReadTheirEngineAndDeclaredScenarios(t *testing.T) {
 					continue
 				}
 				listed++
-				if phase.engine != engine || phase.script != "" {
-					t.Fatalf("%s lists %s with engine %q and script %q, want the Go phase on %s",
-						cell.ciJobName, phase.name, phase.engine, phase.script, engine)
+				if phase.engine != engine {
+					t.Fatalf("%s lists %s with engine %q, want %s",
+						cell.ciJobName, phase.name, phase.engine, engine)
 				}
 				if strings.Join(phase.scenarios, ",") != strings.Join(declared.Scenarios, ",") {
 					t.Fatalf("%s lists %v for %s, want the declared %v",

@@ -96,16 +96,15 @@ through a fresh run. Nothing in CI sets it; the run names what it kept, and the
 caller removes those resources by name afterwards.
 
 Replaying one phase is what `hack/e2e-rerun-phase.sh <work-dir> <phase>` does.
-Each phase is a separate script or Go test driven entirely by the environment
-the harness hands it, and the harness records that environment beside the work
-directory, so the tool puts the phase back on the retained cluster from the
-working tree:
+Each phase is a Go test driven entirely by the environment the harness hands
+it, and the harness records that environment beside the work directory, so the
+tool puts the phase back on the retained cluster from the working tree:
 
 ```bash
 hack/e2e-rerun-phase.sh /tmp/ptah-operator-e2e.XXXXXX uninstall
 ```
 
-A Go phase is rerun through `go test`, so an edit to it is compiled into the
+A phase is rerun through `go test`, so an edit to it is compiled into the
 rerun. That turns an edit to a phase or to the chart into a loop of minutes
 instead of the hour and three quarters a run spends rebuilding the state the
 last phase needs. It does not rebuild the manager image, which the cluster
@@ -376,18 +375,14 @@ Job.
 
 ## Phases in Go
 
-The phases are moving from shell scripts under `hack/` to Go tests in this
-directory, one suite at a time. The certificates suite and the data-plane
-suite are ported: the control-plane phase, `assert`, and the data plane
-itself, `dataplane`, restart and fault injection included. So are both
-migration suites: the migration phases, `migrations-postgresql` and
+Every phase is a Go test in this directory: the lifecycle suite's `upgrade`,
+`ha` and `uninstall`, the control-plane phase, `assert`, the certificate
+rotation, the data plane itself, `dataplane`, restart and fault injection
+included, the migration phases, `migrations-postgresql` and
 `migrations-mysql`, the reference-data phases, `reference-data-postgresql` and
-`reference-data-mysql`, and `alerting`. The lifecycle suite's phases are still
-scripts.
-The driver keeps
-the bootstrap: the kind cluster, the images, the registry, the
-databases and the chart install. Before it creates the cluster it builds one
-test binary from the snapshot:
+`reference-data-mysql`, and `alerting`. The driver keeps the bootstrap: the
+kind cluster, the images, the registry, the databases and the chart install.
+Before it creates the cluster it builds one test binary from the snapshot:
 
 ```bash
 go test -tags e2e -c -o "$WORK_DIR/ptah-e2e.test" ./test/e2e
@@ -411,8 +406,8 @@ on the exit status alone.
 `harness/` loads the inputs, reaches the cluster with a controller-runtime
 client that reads straight from the API server, waits with failures that name
 what was awaited and what was last seen, and writes each scenario into the
-timing ledger the shell phases write. A phase that fails prints its reason and
-the diagnostics the shell phase printed, such as `kubectl describe` of a
+timing ledger beside the driver's own rows. A phase that fails prints its
+reason and the diagnostics that explain it, such as `kubectl describe` of a
 Deployment that did not roll out.
 
 `TestCertRotation` runs its scenarios in order, each starting from the state

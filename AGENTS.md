@@ -162,23 +162,19 @@ Where preparation stops is declared with the data-plane phase in
 `test/e2e/phases`, a unit test there holds it before the phase's own
 acceptance, and the harness fails a run that stops anywhere else.
 
-The phases are moving from shell to Go under `test/e2e`, one suite at a time.
-A Go phase is one test function in a file built only with the `e2e`
-tag, so `go test ./...` never reaches for a cluster; `make vet` compiles it
-with the tag. `test/e2e/phases` declares each one: the name the driver and the
-catalog know it by, the test that is the phase, the environment it reads as a
-struct, the scenarios it records, and its bound. The driver keeps the whole
-bootstrap, builds one test binary from the snapshot before the cluster exists,
-and runs a Go phase as `run_recorded_phase <phase> run_go_phase <phase>`.
-The binary runs that phase's test and nothing else, fails a run in which the
-test did not reach its end, and writes the completion record the driver passes
-the phase on. `hack/verify-kubernetes-support.go` holds the
-call's bindings to the declared inputs, and `test/e2e/harness` writes each
-scenario into the same timing ledger the shell phases do. The certificates and
-data-plane suites are ported, the data plane's restart and fault injection
-included, and so are both migration suites: each engine's migration and
-reference-data phases, and the alerting phase. The lifecycle suite's phases are
-still scripts under `hack/`.
+Every phase is a Go test under `test/e2e`: one test function in a file built
+only with the `e2e` tag, so `go test ./...` never reaches for a cluster; `make
+vet` compiles it with the tag. `test/e2e/phases` declares each one: the name
+the driver and the catalog know it by, the test that is the phase, the
+environment it reads as a struct, the scenarios it records, and its bound. The
+driver keeps the whole bootstrap, builds one test binary from the snapshot
+before the cluster exists, and runs a Go phase as `run_recorded_phase <phase>
+run_go_phase <phase>`. The binary runs that phase's test and nothing else,
+fails a run in which the test did not reach its end, and writes the completion
+record the driver passes the phase on. `hack/verify-kubernetes-support.go`
+holds the call's bindings to the declared inputs and refuses a phase the driver
+runs as a script, and `test/e2e/harness` writes each scenario into the timing
+ledger beside the driver's own rows.
 
 What that partition covers is a table rather than a paragraph, and
 `make acceptance-coverage` prints it: every supported minor against every

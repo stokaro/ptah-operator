@@ -79,7 +79,6 @@ type coverageCell struct {
 // coveredPhase is one phase a suite runs for coverage, with what it proves.
 type coveredPhase struct {
 	name      string
-	script    string
 	engine    string
 	families  []string
 	scenarios []string
@@ -137,13 +136,12 @@ func buildCoverage(root, operator string) (*coverage, error) {
 				if !found {
 					return nil, fmt.Errorf("suite %q lists phase %q, which the driver does not run", item.Name, name)
 				}
-				scenarios, scenarioErr := phaseScenarios(root, phase)
+				scenarios, scenarioErr := phaseScenarios(phase)
 				if scenarioErr != nil {
 					return nil, scenarioErr
 				}
 				cell.phases = append(cell.phases, coveredPhase{
 					name:      phase.name,
-					script:    phase.script,
 					engine:    phase.engine,
 					families:  phaseFamilies[phase.name],
 					scenarios: scenariosForEngine(scenarios, phase.engine, engines),
@@ -215,8 +213,8 @@ func (c *coverage) markdown() string {
 
 // scenariosForEngine drops the scenarios a phase does not run.
 //
-// One script carries both engines and the driver names which one a phase runs,
-// so the marks inside it are a superset of what any single phase executed.
+// A phase's scenarios may name either engine, and the driver names which one a
+// phase runs, so the names are a superset of what any single phase executed.
 // Listing all of them would claim MySQL coverage from the PostgreSQL job and
 // PostgreSQL coverage from the MySQL one -- two engines reported and one
 // exercised, which is the kind of claim a coverage table exists to prevent.

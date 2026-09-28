@@ -9,8 +9,8 @@ set -eu
 # for diagnosing the phase itself. E2E_KEEP_ON_FAILURE=1 already retains the
 # cluster, the registry, the database and the work directory; hack/e2e-kind.sh
 # records the exact environment it handed each phase beside them. This runs a
-# phase from the working tree against that state, so an edit to a phase script
-# or to the chart is measured in minutes.
+# phase from the working tree against that state, so an edit to a phase under
+# test/e2e or to the chart is measured in minutes.
 #
 # What it does not do: rebuild the manager image. The images the cluster pulls
 # were built from the commit the run snapshotted, so a change under cmd/ or
@@ -54,23 +54,15 @@ if [ ! -f "$RERUN_ENV_FILE" ] || [ -L "$RERUN_ENV_FILE" ]; then
 	exit 1
 fi
 
-# A phase the Go harness carries runs through go test from the working tree,
-# so an edit to it is compiled into the rerun; the binary picks the phase's own
+# Every phase is a Go phase and runs through go test from the working tree, so
+# an edit to it is compiled into the rerun; the binary picks the phase's own
 # test and bound, as it does in a full run.
-RERUN_SCRIPT=
-RERUN_GO_PHASE=
 case $RERUN_PHASE in
-	upgrade | uninstall) RERUN_SCRIPT=hack/e2e-crd-upgrade.sh ;;
-	ha) RERUN_SCRIPT=hack/e2e-ha.sh ;;
-	assert) RERUN_GO_PHASE=assert ;;
-	cert-rotation) RERUN_GO_PHASE=cert-rotation ;;
-	dataplane) RERUN_GO_PHASE=dataplane ;;
-	migrations-postgresql | migrations-mysql) RERUN_GO_PHASE=$RERUN_PHASE ;;
-	reference-data-postgresql | reference-data-mysql) RERUN_GO_PHASE=$RERUN_PHASE ;;
+	upgrade | ha | uninstall | assert | cert-rotation | dataplane) ;;
+	migrations-postgresql | migrations-mysql) ;;
+	reference-data-postgresql | reference-data-mysql) ;;
 	*) fail "unsupported phase $RERUN_PHASE" ;;
 esac
-[ -n "$RERUN_GO_PHASE" ] || [ -x "$ROOT_DIR/$RERUN_SCRIPT" ] ||
-	fail "phase script is not executable: $RERUN_SCRIPT"
 
 # The recorded file is name=value, one per line, written by `env`. A value can
 # hold anything, so each line is exported through the shell rather than sourced
@@ -102,7 +94,4 @@ printf 'e2e rerun: %s against the cluster in %s, as rerun %s\n' \
 printf 'e2e rerun: the manager image is the one that run built; a change under cmd/ or internal/ needs a full run\n'
 # -timeout 0, because go test otherwise kills the binary eleven minutes in,
 # whatever bound the phase sets for itself, and the binary sets its own.
-if [ -n "$RERUN_GO_PHASE" ]; then
-	exec go -C "$ROOT_DIR" test -tags e2e -count=1 -timeout 0 -v ./test/e2e -args -e2e.phase="$RERUN_GO_PHASE"
-fi
-exec "$ROOT_DIR/$RERUN_SCRIPT"
+exec go -C "$ROOT_DIR" test -tags e2e -count=1 -timeout 0 -v ./test/e2e -args -e2e.phase="$RERUN_PHASE"

@@ -1557,11 +1557,11 @@ collect_diagnostics() {
 # ends the shell without setting $?, so an EXIT trap that reports $? reads the
 # previous command's success and a script that never finished reports a pass.
 # The latch is set where the script reaches its own end; the trap trusts it.
-# Every phase is a separate script driven entirely by the environment this
-# harness hands it. Recording that environment beside the retained work
-# directory is what lets hack/e2e-rerun-phase.sh put a phase back on the
-# cluster a failed run left behind, instead of spending an hour rebuilding the
-# state the phase needs before it can fail again. The record comes from env
+# Every phase is driven entirely by the environment this harness hands it.
+# Recording that environment beside the retained work directory is what lets
+# hack/e2e-rerun-phase.sh put a phase back on the cluster a failed run left
+# behind, instead of spending an hour rebuilding the state the phase needs
+# before it can fail again. The record comes from env
 # itself, which reports exactly what the command received, so it cannot drift
 # from the call.
 # write_timing_context records what this run is, once, beside the ledger of what
@@ -2760,6 +2760,8 @@ fi
 timing_end pass
 write_timing_context
 
+# The lifecycle phases are Go phases: test/e2e/phases declares what each reads,
+# and hack/verify-kubernetes-support.go holds these calls to exactly that.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2767,15 +2769,9 @@ E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \
-E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
-E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
-E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
-E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
-E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
-E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
-E2E_PHASE=upgrade \
-	run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"
+	run_recorded_phase upgrade run_go_phase upgrade
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2784,7 +2780,7 @@ E2E_FOREIGN_NAMESPACE=$FOREIGN_NAMESPACE \
 E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
-	run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"
+	run_recorded_phase ha run_go_phase ha
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2933,7 +2929,7 @@ E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \
-E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
 E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
 E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE \
@@ -2943,8 +2939,7 @@ E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
 E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
 E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
-E2E_PHASE=uninstall \
-	run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"
+	run_recorded_phase uninstall run_go_phase uninstall
 
 export_release_chart
 PHASE_COMPLETED=1

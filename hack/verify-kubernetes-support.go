@@ -38,29 +38,25 @@ import (
 )
 
 const (
-	manifestPath                   = "support/kubernetes.json"
-	e2eSuitesPath                  = "support/e2e-suites.json"
-	goModPath                      = "go.mod"
-	chartPath                      = "charts/ptah-operator/Chart.yaml"
-	workflowPath                   = ".github/workflows/ci.yml"
-	updateWorkflowPath             = ".github/workflows/update-kubernetes-support.yml"
-	releaseWorkflowPath            = ".github/workflows/release.yml"
-	docsPath                       = "docs/site/src/content/docs/support/kubernetes.md"
-	makefilePath                   = "Makefile"
-	e2eHarnessPath                 = "hack/e2e-kind.sh"
-	e2eSupportImageResolverPath    = "hack/e2e-kubernetes-support-image.sh"
-	e2eKindConfigPath              = "testdata/e2e/kind.yaml.tmpl"
-	e2eKindIsolationWorkerPath     = "testdata/e2e/kind-isolation-worker.yaml.tmpl"
-	apiServerEndpointFilterPath    = "hack/api-server-endpoint-inventory.jq"
-	e2eStaticPath                  = "hack/e2e-static.sh"
-	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
-	e2eHAPath                      = "hack/e2e-ha.sh"
-	failedHookEvidencePath         = "hack/failed-hook-evidence.jq"
-	failedHookEvidenceSelftestPath = "hack/failed-hook-evidence-selftest.sh"
-	admissionSchemaContractPath    = "hack/admission-schema-contract.jq"
-	admissionSchemaSelftestPath    = "hack/admission-schema-contract-selftest.sh"
-	controllerSchemaContractPath   = "hack/controller-object-schema-contract.jq"
-	controllerSchemaSelftestPath   = "hack/controller-object-schema-contract-selftest.sh"
+	manifestPath                 = "support/kubernetes.json"
+	e2eSuitesPath                = "support/e2e-suites.json"
+	goModPath                    = "go.mod"
+	chartPath                    = "charts/ptah-operator/Chart.yaml"
+	workflowPath                 = ".github/workflows/ci.yml"
+	updateWorkflowPath           = ".github/workflows/update-kubernetes-support.yml"
+	releaseWorkflowPath          = ".github/workflows/release.yml"
+	docsPath                     = "docs/site/src/content/docs/support/kubernetes.md"
+	makefilePath                 = "Makefile"
+	e2eHarnessPath               = "hack/e2e-kind.sh"
+	e2eSupportImageResolverPath  = "hack/e2e-kubernetes-support-image.sh"
+	e2eKindConfigPath            = "testdata/e2e/kind.yaml.tmpl"
+	e2eKindIsolationWorkerPath   = "testdata/e2e/kind-isolation-worker.yaml.tmpl"
+	apiServerEndpointFilterPath  = "hack/api-server-endpoint-inventory.jq"
+	e2eStaticPath                = "hack/e2e-static.sh"
+	admissionSchemaContractPath  = "hack/admission-schema-contract.jq"
+	admissionSchemaSelftestPath  = "hack/admission-schema-contract-selftest.sh"
+	controllerSchemaContractPath = "hack/controller-object-schema-contract.jq"
+	controllerSchemaSelftestPath = "hack/controller-object-schema-contract-selftest.sh"
 
 	verificationMaxAgeDays = 35
 
@@ -218,21 +214,17 @@ func main() {
 		fatal(err)
 	}
 	if err := verifyE2EWiring(e2eWiringFiles{
-		makefile:                   makefilePath,
-		harness:                    e2eHarnessPath,
-		supportImageResolver:       e2eSupportImageResolverPath,
-		kindConfig:                 e2eKindConfigPath,
-		kindIsolationWorker:        e2eKindIsolationWorkerPath,
-		apiServerEndpointFilter:    apiServerEndpointFilterPath,
-		staticChecks:               e2eStaticPath,
-		crdUpgrade:                 e2eCRDUpgradePath,
-		highAvailability:           e2eHAPath,
-		failedHookEvidence:         failedHookEvidencePath,
-		failedHookEvidenceSelftest: failedHookEvidenceSelftestPath,
-		admissionSchemaContract:    admissionSchemaContractPath,
-		admissionSchemaSelftest:    admissionSchemaSelftestPath,
-		controllerSchemaContract:   controllerSchemaContractPath,
-		controllerSchemaSelftest:   controllerSchemaSelftestPath,
+		makefile:                 makefilePath,
+		harness:                  e2eHarnessPath,
+		supportImageResolver:     e2eSupportImageResolverPath,
+		kindConfig:               e2eKindConfigPath,
+		kindIsolationWorker:      e2eKindIsolationWorkerPath,
+		apiServerEndpointFilter:  apiServerEndpointFilterPath,
+		staticChecks:             e2eStaticPath,
+		admissionSchemaContract:  admissionSchemaContractPath,
+		admissionSchemaSelftest:  admissionSchemaSelftestPath,
+		controllerSchemaContract: controllerSchemaContractPath,
+		controllerSchemaSelftest: controllerSchemaSelftestPath,
 	}); err != nil {
 		fatal(err)
 	}
@@ -2248,33 +2240,17 @@ type sourceContractStep struct {
 }
 
 type e2eWiringFiles struct {
-	makefile                   string
-	harness                    string
-	supportImageResolver       string
-	kindConfig                 string
-	kindIsolationWorker        string
-	apiServerEndpointFilter    string
-	staticChecks               string
-	crdUpgrade                 string
-	highAvailability           string
-	failedHookEvidence         string
-	failedHookEvidenceSelftest string
-	admissionSchemaContract    string
-	admissionSchemaSelftest    string
-	controllerSchemaContract   string
-	controllerSchemaSelftest   string
-}
-
-type lifecycleSourceContract struct {
-	path              string
-	exitTrap          string
-	steps             []sourceContractStep
-	successfulReturns []successfulReturnContract
-}
-
-type successfulReturnContract struct {
-	start      *regexp.Regexp
-	completion *regexp.Regexp
+	makefile                 string
+	harness                  string
+	supportImageResolver     string
+	kindConfig               string
+	kindIsolationWorker      string
+	apiServerEndpointFilter  string
+	staticChecks             string
+	admissionSchemaContract  string
+	admissionSchemaSelftest  string
+	controllerSchemaContract string
+	controllerSchemaSelftest string
 }
 
 // goPhaseRunnerContract is how the driver runs a Go phase: the binary the
@@ -2334,50 +2310,6 @@ const apiServerFeatureGatePatchContract = `append_api_server_feature_gate_patch(
 		;;
 	esac
 }`
-
-const controllerGuardedFieldVersionCaseContract = `case "$KUBERNETES_MAJOR_MINOR" in
-	1.35)
-		manifest=$WORK_DIR/controller-object-workload-ref.json
-		jq '.spec.template.spec.workloadRef = {name: "probe", podGroup: "probe"}' \
-			"$base_manifest" >"$manifest"
-		expect_controller_job_api_acceptance PodSpec.workloadRef "$manifest" \
-			'.spec.template.spec.workloadRef == {name: "probe", podGroup: "probe"}'
-		expect_controller_job_vap_denial PodSpec.workloadRef "$manifest"
-		;;
-	1.36)
-		printf '%s\n' \
-			'e2e crd: Kubernetes 1.36 has no requested version-specific guarded-field probe'
-		;;
-	1.37)
-		manifest=$WORK_DIR/controller-object-job-scheduling.json
-		jq '.spec.scheduling = {schedulingPolicy: {basic: {}}}' \
-			"$base_manifest" >"$manifest"
-		expect_controller_job_api_acceptance JobSpec.scheduling "$manifest" \
-			'.spec.scheduling.schedulingPolicy.basic == {}'
-		expect_controller_job_vap_denial JobSpec.scheduling "$manifest"
-
-		manifest=$WORK_DIR/controller-object-eviction-responders.json
-		jq '.spec.template.spec.evictionResponders = [{name: "example.com/probe", priority: 1000}]' \
-			"$base_manifest" >"$manifest"
-		expect_controller_job_api_acceptance PodSpec.evictionResponders "$manifest" \
-			'.spec.template.spec.evictionResponders == [{name: "example.com/probe", priority: 1000}]'
-		expect_controller_job_vap_denial PodSpec.evictionResponders "$manifest"
-
-		manifest=$WORK_DIR/controller-object-empty-dir-mode.json
-		jq '(.spec.template.spec.volumes[] | select(.name == "work").emptyDir.mode) = 448' \
-			"$base_manifest" >"$manifest"
-		expect_controller_job_api_acceptance EmptyDirVolumeSource.mode "$manifest" \
-			'any(.spec.template.spec.volumes[]; .name == "work" and .emptyDir.mode == 448)'
-		expect_controller_job_vap_denial EmptyDirVolumeSource.mode "$manifest"
-
-		manifest=$WORK_DIR/controller-object-bind-mount-options.json
-		jq '(.spec.template.spec.containers[0].volumeMounts[] | select(.name == "work").bindMountOptions) = ["noexec"]' \
-			"$base_manifest" >"$manifest"
-		expect_controller_job_api_acceptance VolumeMount.bindMountOptions "$manifest" \
-			'any(.spec.template.spec.containers[0].volumeMounts[]; .name == "work" and .bindMountOptions == ["noexec"])'
-		expect_controller_job_vap_denial VolumeMount.bindMountOptions "$manifest"
-		;;
-	esac`
 
 const controlPlaneComponentShapeContract = `wait_for_control_plane_component_shape() {
 	expected_api_server_feature_gates=$1
@@ -2805,18 +2737,11 @@ func verifyKubernetesSupportWindowWiring(files e2eWiringFiles) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", files.harness, err)
 	}
-	crdUpgradeContents, err := os.ReadFile(files.crdUpgrade)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", files.crdUpgrade, err)
-	}
 	if err := verifyAuditedKubernetesMinorSelection(files.harness, harnessContents, apiServerFeatureGatePatchContract); err != nil {
 		return fmt.Errorf("API-server feature gate contract: %w", err)
 	}
-	if err := verifyAuditedKubernetesMinorSelection(files.crdUpgrade, crdUpgradeContents, controllerGuardedFieldVersionCaseContract); err != nil {
-		return err
-	}
 
-	if err := verifyOrderedSourceContract(files.harness, harnessContents, []sourceContractStep{
+	return verifyOrderedSourceContract(files.harness, harnessContents, []sourceContractStep{
 		exactSourceLine("Kubernetes minor behavior selector", `K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`),
 		exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
 			`SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
@@ -2831,17 +2756,6 @@ func verifyKubernetesSupportWindowWiring(files e2eWiringFiles) error {
 		exactSourceLineSequence("support-manifest image equality", []string{
 			`[ "$KIND_NODE_IMAGE" = "$SUPPORTED_KIND_NODE_IMAGE" ] ||`,
 			`fail "KIND_NODE_IMAGE must match the digest-pinned support manifest entry for Kubernetes $K8S_VERSION"`,
-		}),
-	}); err != nil {
-		return err
-	}
-
-	return verifyOrderedSourceContract(files.crdUpgrade, crdUpgradeContents, []sourceContractStep{
-		exactSourceLine("Kubernetes minor behavior selector", `KUBERNETES_MAJOR_MINOR=$(printf '%s\n' "$E2E_KUBERNETES_VERSION" | cut -d. -f1,2)`),
-		exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
-			`"$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
-			`"$ROOT_DIR/support/kubernetes.json" "$E2E_KUBERNETES_VERSION" >/dev/null ||`,
-			`fail "Kubernetes $E2E_KUBERNETES_VERSION is not an exact member of support/kubernetes.json"`,
 		}),
 	})
 }
@@ -2953,8 +2867,6 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 		{marker: `--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"`, count: 1},
 		{marker: `jq -e -f "$ROOT_DIR/hack/admission-schema-contract.jq" \`, count: 1},
 		{marker: `-f "$ROOT_DIR/hack/controller-object-schema-contract.jq" \`, count: 1},
-		{marker: `"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`, count: 2},
-		{marker: `"$ROOT_DIR/hack/e2e-ha.sh"`, count: 1},
 		// The Go phases run from a binary built out of the snapshot, so the
 		// build has to read the snapshot too. The runner that starts it is
 		// pinned whole below, as goPhaseRunnerContract.
@@ -2987,7 +2899,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyMakeRaceTargets(files.makefile); err != nil {
 		return err
 	}
-	if err := verifyFailedHookEvidenceAssets(files); err != nil {
+	if err := verifyStaticChecksWiring(files); err != nil {
 		return err
 	}
 	if err := verifyAdmissionSchemaAssets(files); err != nil {
@@ -3350,8 +3262,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fail "infrastructure readiness loss: current-release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $current_install_status)"`,
 			`fi`,
 		}),
-		exactSourceLine("candidate upgrade lifecycle", `run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
-		exactSourceLine("high-availability lifecycle", `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`),
+		exactSourceLine("candidate upgrade lifecycle", `run_recorded_phase upgrade run_go_phase upgrade`),
+		exactSourceLine("high-availability lifecycle", `run_recorded_phase ha run_go_phase ha`),
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert run_go_phase assert`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation run_go_phase cert-rotation`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane run_go_phase dataplane`),
@@ -3359,7 +3271,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql run_go_phase migrations-mysql`),
 		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql run_go_phase reference-data-postgresql`),
 		exactSourceLine("MySQL reference-data lifecycle", `run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql`),
-		exactSourceLine("uninstall lifecycle", `run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
+		exactSourceLine("uninstall lifecycle", `run_recorded_phase uninstall run_go_phase uninstall`),
 		exactSourceLine("post-lifecycle installed chart export", `export_release_chart`),
 		// The pass line below is reachable only for a run that left no phase out.
 		// A diagnosis run says so in its own words and stops before it.
@@ -3545,378 +3457,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		return err
 	}
 
-	if err := verifyFailedUpgradeEvidenceSource(files.crdUpgrade); err != nil {
-		return err
-	}
-
-	childContracts := []lifecycleSourceContract{
-		{
-			path:     files.crdUpgrade,
-			exitTrap: "cleanup",
-			steps: []sourceContractStep{
-				exactSourceLine("fail-fast shell mode", "set -eu"),
-				exactSourceLine("required bounded proof namespace", `E2E_PROOF_NAMESPACE=${E2E_PROOF_NAMESPACE:?E2E_PROOF_NAMESPACE is required}`),
-				exactSourceLine("required live Kubernetes version", `E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION:?E2E_KUBERNETES_VERSION is required}`),
-				exactSourceLine("private work directory mode", `chmod 700 "$WORK_DIR"`),
-				exactSourceLine("private work file creation mask", `umask 077`),
-				exactSourceLine("cleanup implementation", `cleanup() {`),
-				exactSourceLine("cleanup status capture", `status=$?`),
-				exactSourceLine("late failure blocker cleanup", `if [ -n "$LATE_FAILURE_BLOCKER_WEBHOOK" ]; then`),
-				exactSourceLine("cleanup status preservation", `exit "$status"`),
-				exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
-					`"$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
-					`"$ROOT_DIR/support/kubernetes.json" "$E2E_KUBERNETES_VERSION" >/dev/null ||`,
-					`fail "Kubernetes $E2E_KUBERNETES_VERSION is not an exact member of support/kubernetes.json"`,
-				}),
-				exactSourceLine("live server version verification", `verify_supported_server_version`),
-				exactSourceLine("exact rendered reconcile hook identity", `reconcile_matches=$(rendered_hook_job_name crd-manager 0)`),
-				exactSourceLineSequence("unique rendered reconcile hook identity", []string{
-					`[ "$(printf '%s\n' "$reconcile_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||`,
-					`fail "candidate render does not contain exactly one weight-0 reconcile hook Job"`,
-				}),
-				exactSourceLine("rendered reconcile hook identity assignment", `EXPECTED_RECONCILE_HOOK_NAME=$reconcile_matches`),
-				// The blocker refuses Helm's write of the candidate Deployments and
-				// nothing else, so the hook's scale-down passes it and the failure
-				// lands after the hook stopped the runtime.
-				exactSourceLineSequence("late failure blocker refuses only the candidate Deployments", []string{
-					`- name: exact-runtime-deployment`,
-					`expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && (request.name == "$CONTROLLER_DEPLOYMENT" || request.name == "$ROTATOR_DEPLOYMENT")'`,
-					`- name: candidate-image`,
-					`expression: 'object != null && object.spec.template.spec.containers.exists(container, container.image == "$E2E_NEXT_CONTROLLER_IMAGE")'`,
-				}),
-				exactSourceLineSequence("late failure immutable candidate retry inputs", []string{
-					`late_retry_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE") ||`,
-					`fail "could not checksum the late-failure candidate chart"`,
-					`late_retry_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE") ||`,
-					`fail "could not checksum the late-failure candidate values"`,
-					`if [ "$late_retry_chart_sha256" != "$late_candidate_chart_sha256" ] ||`,
-					`[ "$late_retry_values_sha256" != "$late_candidate_values_sha256" ] ||`,
-					`[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ]; then`,
-					`fail "late-failure recovery changed the candidate chart, values, or image"`,
-					`fi`,
-				}),
-				exactSourceLine("late failure implementation", `prove_late_failure_recovery() {`),
-				exactSourceLineSequence("late failure candidate input snapshot", []string{
-					`late_candidate_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")`,
-					`late_candidate_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE")`,
-					`late_candidate_image=$E2E_NEXT_CONTROLLER_IMAGE`,
-				}),
-				exactSourceLine("late failure blocker before the candidate", `create_late_failure_blocker`),
-				exactSourceLineSequence("late failure Helm execution", []string{
-					`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
-					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
-					`--force-conflicts \`,
-					`--wait --timeout 7m >"$WORK_DIR/late-failure.out" \`,
-					`2>"$WORK_DIR/late-failure.err"; then`,
-					`fail "upgrade with a late-failure blocker unexpectedly succeeded"`,
-					`fi`,
-				}),
-				exactSourceLineSequence("late failure structured revision retrieval", []string{
-					`helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
-					`--revision "$late_revision" -o json >"$late_status_file" 2>/dev/null ||`,
-					`fail "the late failure did not retain structured Helm evidence for revision $late_revision"`,
-				}),
-				exactSourceLineSequence("late failure after a reconcile hook that succeeded", []string{
-					`.version == $expected_revision and`,
-					`.info.status == "failed" and`,
-					`([$hooks[] | select(.last_run.phase == "Failed")] | length == 0) and`,
-					`($reconcile | length == 1) and`,
-					`($reconcile[0] |`,
-					`.last_run.phase == "Succeeded" and`,
-					`((.events // []) | index("pre-upgrade") != null))`,
-				}),
-				exactSourceLine("late failure stopped runtime", `.spec.replicas == 0 and`),
-				exactSourceLine("late failure runtime Pod absence", `' >/dev/null || fail "the late failure left a runtime Pod after the runtime stop"`),
-				exactSourceLine("late failure boundary completion", `printf '%s\n' 'e2e crd: the late failure left the runtime stopped on the predecessor template'`),
-				exactSourceLineSequence("same-candidate retry", []string{
-					`retry_same_candidate() {`,
-					`if ! helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
-					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
-					`--force-conflicts \`,
-				}),
-				// A rollback runs the pre-rollback hook of the release it rolls back
-				// to. Over state that release cannot read, the hook refuses before
-				// Helm touches a Deployment.
-				exactSourceLine("refused rollback implementation", `prove_rollback_refused_over_future_state() {`),
-				exactSourceLineSequence("refused rollback execution", []string{
-					`if helm_e2e rollback "$E2E_HELM_RELEASE" "$rollback_revision" \`,
-					`--namespace "$E2E_OPERATOR_NAMESPACE" --force-conflicts \`,
-					`--wait --timeout 3m >"$WORK_DIR/refused-rollback.out" 2>"$WORK_DIR/refused-rollback.err"; then`,
-					`fail "a rollback over stored state newer than the release it rolls back to was admitted"`,
-					`fi`,
-				}),
-				exactSourceLine("refused rollback reached its hook", `fail "the refused rollback did not reach its pre-rollback hook"`),
-				exactSourceLine("refused rollback left the runtime alone", `cmp "$before" "$after" || fail "the refused rollback changed a runtime Deployment"`),
-				exactSourceLine("refused rollback completion", `printf '%s\n' 'e2e crd: the rollback was refused before any Pod changed'`),
-				exactSourceLine("rollback implementation", `prove_rollback() {`),
-				exactSourceLine("rollback ends deployed", `fail "the rollback to revision $rollback_revision did not end deployed"`),
-				exactSourceLineSequence("read-only Job controller-owned failure staging", []string{
-					`failure_target_patch=$(jq -nc \`,
-					`--arg failure_target_at "$failure_target_at" \`,
-					`--arg reason "$terminal_reason" \`,
-					`--arg message "$terminal_message" '{`,
-					`status: {`,
-					`conditions: [{`,
-					`type: "FailureTarget", status: "True",`,
-					`reason: $reason, message: $message,`,
-					`lastProbeTime: $failure_target_at,`,
-					`lastTransitionTime: $failure_target_at`,
-					`}]`,
-					`}`,
-					`}')`,
-					`kube -n "$PROOF_NAMESPACE" patch job "$READ_ONLY_JOB_NAME" --subresource=status \`,
-					`--type=merge -p "$failure_target_patch" >/dev/null`,
-				}),
-				exactSourceLineSequence("read-only Job complete native terminal predicate", []string{
-					`.metadata.uid == $uid and`,
-					`(.status.startTime != null) and`,
-					`((.status.active // 0) == 0) and`,
-					`((.status.ready // 0) == 0) and`,
-					`((.status.terminating // 0) == 0) and`,
-					`(((.status.uncountedTerminatedPods.succeeded // []) | length) == 0) and`,
-					`(((.status.uncountedTerminatedPods.failed // []) | length) == 0) and`,
-					`(.status | has("completionTime") | not) and`,
-					`((.status.conditions // []) | any(`,
-					`.type == "FailureTarget" and .status == "True" and`,
-					`.reason == $reason and .message == $message`,
-					`)) and`,
-					`((.status.conditions // []) | any(`,
-					`.type == "Failed" and .status == "True" and`,
-					`.reason == $reason and .message == $message`,
-					`)) and`,
-					`(.spec | has("ttlSecondsAfterFinished") | not)`,
-				}),
-				exactSourceLineSequence("read-only Job full terminal invariant latch", []string{
-					`read_only_job_terminal=1`,
-					`break`,
-				}),
-				exactSourceLine("read-only Job native terminal wait", `fail "Job controller did not retire the read-only Job after FailureTarget staging"`),
-				exactSourceLine("certificate Secret identity capture implementation", `capture_certificate_secret_names() {`),
-				exactSourceLineSequence("unlabeled certificate Secrets exact uninstall absence", []string{
-					`remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get \`,
-					`"secret/$CERTIFICATE_SECRET_NAME" --ignore-not-found=true -o name)`,
-					`[ -z "$remaining" ] ||`,
-					`fail "unlabeled generated certificate Secret/$CERTIFICATE_SECRET_NAME survived uninstall"`,
-					`remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get \`,
-					`"secret/$CERTIFICATE_STAGING_SECRET_NAME" --ignore-not-found=true -o name)`,
-					`[ -z "$remaining" ] ||`,
-					`fail "unlabeled certificate staging Secret/$CERTIFICATE_STAGING_SECRET_NAME survived uninstall"`,
-					`CERTIFICATE_SECRET_NAME=`,
-					`CERTIFICATE_STAGING_SECRET_NAME=`,
-				}),
-				exactSourceLineSequence("bounded runtime Deployment deletion", []string{
-					`kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment \`,
-					`"$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT" \`,
-					`--cascade=foreground --wait=true --timeout=2m >/dev/null`,
-				}),
-				exactSourceLineSequence("bounded controller Deployment deletion", []string{
-					`kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_DEPLOYMENT" \`,
-					`--cascade=foreground --wait=true --timeout=2m >/dev/null`,
-				}),
-				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
-				exactSourceLine("controller guarded-field proof call", `prove_controller_object_supported_window_guard`),
-				exactSourceLine("runtime deployment recovery proof implementation", `prove_runtime_deployment_recovery() {`),
-				exactSourceLine("upgrade proof implementation", `run_upgrade_proof() {`),
-				exactSourceLineSequence("current-release read-only Job cleanup staging", []string{
-					`dispatch_read_only_job_fixture`,
-					`stop_runtime_deployments`,
-					`set_pod_webhook_failure_policy Fail Ignore`,
-					`stage_read_only_job_completion`,
-					`set_pod_webhook_failure_policy Ignore Fail`,
-					`start_runtime_deployments`,
-					`wait_runtime_ready`,
-					`wait_for_read_only_job_cleanup`,
-					`quiesce_read_only_job_schema`,
-				}),
-				exactSourceLine("runtime deployment recovery proof call", `prove_runtime_deployment_recovery`),
-				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
-				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
-				exactSourceLine("next-release upgrade proof implementation", `run_next_release_upgrade_proof() {`),
-				exactSourceLineSequence("successor read-only Job dispatch before the late failure", []string{
-					`dispatch_read_only_job_fixture`,
-					`start_running_apply_barrier`,
-					`prepare_running_apply_fixture`,
-					`start_running_apply_fixture`,
-					`stage_predecessor_apply_job_uid_gap_while_running`,
-					`prove_late_failure_recovery "$CURRENT_RELEASE_CONTROLLER_IMAGE"`,
-					`set_pod_webhook_failure_policy Fail Ignore`,
-					`stage_read_only_job_completion`,
-					`set_pod_webhook_failure_policy Ignore Fail`,
-					`stage_read_only_job_uid_gap`,
-					`assert_late_failure_candidate_unchanged`,
-					`delete_late_failure_blocker`,
-				}),
-				exactSourceLineSequence("same-candidate recovery resumes failed revision", []string{
-					`[ "$before_retry_revision" -eq "$late_revision" ] ||`,
-					`fail "late-failure recovery did not resume the exact failed Helm revision"`,
-				}),
-				// The running Apply is read after the upgrade completed, and the
-				// barrier is released only once exclusivity has been proven: an
-				// Apply released earlier would have finished on its own, and the
-				// proof would be about an Apply that was never interrupted.
-				exactSourceLineSequence("same-candidate retry, read-only Job cleanup and running Apply adoption", []string{
-					`retry_same_candidate`,
-					`wait_runtime_ready`,
-					`wait_for_read_only_job_cleanup`,
-					`quiesce_read_only_job_schema`,
-					`assert_predecessor_apply_remains_exclusive_while_running`,
-					`release_running_apply_barrier`,
-					`wait_for_predecessor_apply_job_terminal`,
-					`wait_for_predecessor_apply_job_cleanup`,
-					`after_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \`,
-				}),
-				exactSourceLineSequence("same-candidate recovery exactly one retry revision", []string{
-					`jq -er 'select(.info.status == "deployed") | .version | select(type == "number" and . >= 1)')`,
-					`[ "$after_revision" -eq $((late_revision + 1)) ] ||`,
-					`fail "same-candidate recovery did not create exactly one retry Helm revision"`,
-				}),
-				exactSourceLineSequence("same-candidate recovery kept the controller identity", []string{
-					`[ "$next_service_account" = "$current_service_account" ] ||`,
-					`fail "synthetic next-release upgrade moved the controller from ServiceAccount $current_service_account to $next_service_account"`,
-					`[ "$next_service_account_uid" = "$current_service_account_uid" ] ||`,
-				}),
-				// The synthetic next release changes the manager image and nothing
-				// the execution binding holds, so the schema keeps its epoch and
-				// its plan and approval carry over: the whole object is unchanged.
-				exactSourceLineSequence("manager-only upgrade leaves the schema, its plan and its approval unchanged", []string{
-					`for resource in ptahschema ptahschemaplan ptahschemaapproval; do`,
-					`assert_object_unchanged "$resource" "$PROOF_SCHEMA" \`,
-					`"$WORK_DIR/${resource}-before.json"`,
-					`done`,
-					`printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'`,
-				}),
-				exactSourceLineSequence("refused rollback, then the rollback it leaves pending", []string{
-					`prove_rollback_refused_over_future_state "$current_release_revision"`,
-					`prove_rollback "$current_release_revision" "$CURRENT_RELEASE_CONTROLLER_IMAGE"`,
-				}),
-				exactSourceLine("uninstall proof implementation", `run_uninstall_proof() {`),
-				exactSourceLineSequence("released chart fresh-install inputs", []string{
-					`if [ ! -f "$E2E_CHART_PACKAGE" ] || [ -L "$E2E_CHART_PACKAGE" ]; then`,
-					`fail "E2E_CHART_PACKAGE must name the regular non-symlink current-release chart package"`,
-					`fi`,
-					`if [ ! -f "$E2E_CANDIDATE_VALUES_FILE" ] || [ -L "$E2E_CANDIDATE_VALUES_FILE" ]; then`,
-					`fail "E2E_CANDIDATE_VALUES_FILE must name the regular non-symlink current-release values file"`,
-					`fi`,
-				}),
-				exactSourceLine("rolled-back release uninstall", `fail "the uninstall of the rolled-back release failed; Helm's own error is above"`),
-				exactSourceLine("reinstalled release uninstall", `fail "the uninstall of the release reinstalled over retained CRDs failed; Helm's own error is above"`),
-				exactSourceLineSequence("exact released chart fresh install", []string{
-					`helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
-					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \`,
-					`--force-conflicts \`,
-					`--wait --timeout 5m >/dev/null`,
-				}),
-				exactSourceLineSequence("exact released chart controller identity", []string{
-					`capture_controller_service_account_identity \`,
-					`"$E2E_CANDIDATE_IMAGE" \`,
-					`"$WORK_DIR/fresh-current-release-controller-identity.json"`,
-				}),
-				exactSourceLine("exported release uninstall", `fail "the uninstall of the exported current-release chart failed; Helm's own error is above"`),
-				exactSourceLine("exact released chart installability evidence", `printf '%s\n' 'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall'`),
-				exactSourceLineSequence("phase dispatch", []string{
-					`case "$E2E_PHASE" in`,
-					`upgrade) run_upgrade_proof ;;`,
-					`uninstall) run_uninstall_proof ;;`,
-					`*) fail "unsupported E2E_PHASE $E2E_PHASE" ;;`,
-					`esac`,
-				}),
-				exactSourceLine("terminal CRD lifecycle evidence", `printf 'e2e crd: PASS phase=%s\n' "$E2E_PHASE"`),
-			},
-			successfulReturns: []successfulReturnContract{
-				{
-					start:      sourceLinePattern(`run_upgrade_proof() {`),
-					completion: sourceLinePattern(`printf '%s\n' 'e2e crd: upgrade and singleton proofs passed'`),
-				},
-				{
-					start:      sourceLinePattern(`run_uninstall_proof() {`),
-					completion: sourceLinePattern(`printf '%s\n' 'e2e crd: uninstall retained CRDs and live objects'`),
-				},
-			},
-		},
-		{
-			path:     files.highAvailability,
-			exitTrap: "cleanup",
-			steps: []sourceContractStep{
-				exactSourceLine("fail-fast shell mode", "set -eu"),
-				exactSourceLine("cleanup implementation", `cleanup() {`),
-				exactSourceLine("custom metrics validator implementation", `validate_custom_operator_metrics() {`),
-				exactSourceLineSequence("custom metrics exact labeled samples", []string{
-					`if ($1 == "ptah_operator_reconciliations_total{family=\"schema\",result=\"success\"}") {`,
-					`reconciliation_sample++`,
-					`} else if ($1 == "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"}") {`,
-					`failure_sample++`,
-				}),
-				exactSourceLineSequence("custom metrics duplicate and unexpected-family refusal", []string{
-					`if (malformed || reconciliation_help > 1 || failure_help > 1 ||`,
-					`reconciliation_type > 1 || failure_type > 1 ||`,
-					`reconciliation_sample > 1 || failure_sample > 1) {`,
-				}),
-				exactSourceLineSequence("custom metrics exact two-family acceptance", []string{
-					`if (reconciliation_help == 1 && failure_help == 1 &&`,
-					`reconciliation_type == 1 && failure_type == 1 &&`,
-					`reconciliation_sample == 1 && failure_sample == 1) {`,
-				}),
-				exactSourceLine("Resolve failure counter parser implementation", `resolve_operation_failure_counter_from_metrics() {`),
-				exactSourceLine("prior Resolve metric source exclusion implementation", `assert_prior_resolve_metric_sources_quiesced() {`),
-				exactSourceLine("Resolve failure counter increase proof", `'BEGIN { exit ! ((current + 0) > (baseline + 0)) }'; then`),
-				exactSourceLine("Lease authorization proof", `printf '%s\n' 'e2e HA: verifying namespace-scoped Lease authorization'`),
-				exactSourceLine("initial leader proof", `initial_holder=$(wait_for_leader "")`),
-				exactSourceLine("leader failover proof", `second_holder=$(wait_for_leader "$initial_holder")`),
-				exactSourceLine("prior Resolve metric source exclusion call", `assert_prior_resolve_metric_sources_quiesced`),
-				exactSourceLine("pre-operation Resolve failure counter baseline", `resolve_failure_counter_before=$(read_resolve_operation_failure_counter "$second_holder")`),
-				exactSourceLine("post-failover operation proof", `operation_job=$(wait_for_admitted_operation_pod "$ha_schema_uid")`),
-				exactSourceLine("post-failover failed Resolve lifecycle proof", `wait_for_failed_resolve_lifecycle "$ha_schema_uid"`),
-				exactSourceLine("post-failure custom metrics proof", `assert_custom_operator_metrics "$second_holder" "$resolve_failure_counter_before"`),
-				exactSourceLine("terminal high-availability lifecycle evidence", `printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'`),
-			},
-		},
-	}
-	for _, contract := range childContracts {
-		if err := verifyLifecycleSource(contract); err != nil {
-			return err
-		}
-	}
-	crdUpgradeContents, err := os.ReadFile(files.crdUpgrade)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", files.crdUpgrade, err)
-	}
-	for _, functionName := range []string{
-		"create_late_failure_blocker",
-		"assert_late_failure_candidate_unchanged",
-		"prove_late_failure_recovery",
-		"retry_same_candidate",
-		"prove_rollback_refused_over_future_state",
-		"prove_rollback",
-		"run_next_release_upgrade_proof",
-	} {
-		if err := verifySingleShellFunctionDefinition(files.crdUpgrade, crdUpgradeContents, functionName); err != nil {
-			return err
-		}
-	}
-	candidateCheck := regexp.MustCompile(`(?ms)^assert_late_failure_candidate_unchanged\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`).Find(crdUpgradeContents)
-	if err := rejectEarlySuccessfulReturn(files.crdUpgrade+" assert_late_failure_candidate_unchanged", candidateCheck,
-		sourceLinePattern("assert_late_failure_candidate_unchanged() {"), regexp.MustCompile(`(?m)^\}[ \t]*\r?$`)); err != nil {
-		return err
-	}
-	// Between the late failure and the retry, only the hook may move the
-	// runtime: a proof that stopped or restarted it by hand would measure its
-	// own hand rather than the boundary the failure left.
-	for _, recovery := range []struct{ function, completion string }{
-		{"prove_late_failure_recovery", `printf '%s\n' 'e2e crd: the late failure left the runtime stopped on the predecessor template'`},
-		{"prove_rollback_refused_over_future_state", `printf '%s\n' 'e2e crd: the rollback was refused before any Pod changed'`},
-		{"run_next_release_upgrade_proof", `printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'`},
-	} {
-		if err := rejectEarlySuccessfulReturn(files.crdUpgrade, crdUpgradeContents,
-			sourceLinePattern(recovery.function+"() {"), sourceLinePattern(recovery.completion)); err != nil {
-			return err
-		}
-		body := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(recovery.function) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`).Find(crdUpgradeContents)
-		for _, backward := range []string{"restore_runtime_deployment", "restore_runtime_deployment_snapshot", "stop_runtime_deployments", "start_runtime_deployments"} {
-			if regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(backward) + `(?:[ \t\r\n]|$)`).Match(body) {
-				return fmt.Errorf("%s: %s must leave the runtime to the hook, not invoke %s", files.crdUpgrade, recovery.function, backward)
-			}
-		}
-	}
 	// Last, so that a phase hidden behind an always-false branch or dropped
 	// from the recorded set is reported as the control-flow defect it is. This
 	// audit reads the call the shell would build and would otherwise answer a
@@ -3953,9 +3493,8 @@ func verifyAPIServerEndpointInventoryFilter(path string) error {
 }
 
 // isolationNodeKeyDeclaration names the key the isolation worker is labelled
-// and tainted with. The driver provisions the worker under it and a phase that
-// isolates the worker selects and tolerates it, so both carry this one line,
-// and a phase script that carries it is a phase that isolates a node.
+// and tainted with. The driver provisions the worker under it; the phases that
+// isolate the worker are the ones test/e2e/phases declares IsolatesNode for.
 const isolationNodeKeyDeclaration = "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation"
 
 const kindKubeletPatch = `kind: KubeletConfiguration
@@ -4065,169 +3604,10 @@ func verifyKindHANodes(path string, nodes []kindNodeTemplate, wantRoles []string
 	return nil
 }
 
-func verifyFailedUpgradeEvidenceSource(path string) error {
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-	contract := []sourceContractStep{
-		exactSourceLine("failed-upgrade evidence implementation", `expect_upgrade_failure_without_deployment_change() {`),
-		exactSourceLine("failed-upgrade structured status destination", `status_file=$WORK_DIR/failed-upgrade-status.json`),
-		exactSourceLineSequence("rendered reconcile hook and failed revision binding", []string{
-			`[ -n "$UPGRADE_VALUES_FILE" ] || fail "upgrade values file is not configured"`,
-			`[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"`,
-			`before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \`,
-			`--namespace "$E2E_OPERATOR_NAMESPACE" -o json | jq -er '.version | select(type == "number" and . >= 1)')`,
-			`failed_revision=$((before_revision + 1))`,
-			`deployment_evidence >"$before"`,
-		}),
-		exactSourceLineSequence("failed upgrade execution and explicit revision retrieval", []string{
-			`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
-			`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \`,
-			`--wait --timeout 2m "$@" >"$WORK_DIR/failed-upgrade.out" 2>"$WORK_DIR/failed-upgrade.err"; then`,
-			`fail "$description unexpectedly succeeded"`,
-			`fi`,
-			`if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
-			`--revision "$failed_revision" -o json >"$status_file"; then`,
-			`if [ "${E2E_DEBUG_LOGS:-0}" -eq 1 ]; then`,
-			`printf 'e2e crd: E2E_DEBUG_LOGS=1: stderr of the refused upgrade follows\n' >&2`,
-			`cat "$WORK_DIR/failed-upgrade.err" >&2 || true`,
-			`fi`,
-			`fail "$description did not retain structured Helm evidence for failed revision $failed_revision"`,
-			`fi`,
-		}),
-		exactSourceLineSequence("exact failed reconcile evidence evaluation", []string{
-			`if ! jq -e \`,
-			`--argjson expected_revision "$failed_revision" \`,
-			`--arg expected_name "$EXPECTED_RECONCILE_HOOK_NAME" \`,
-			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null; then`,
-		}),
-		exactSourceLine("failed reconcile evidence refusal", `fail "$description lacks exact revision-bound failed reconcile evidence"`),
-	}
-	if err := verifyOrderedSourceContract(path, contents, contract); err != nil {
-		return err
-	}
-
-	start := contract[0].pattern.FindIndex(contents)
-	end := sourceLinePattern(`expect_upgrade_render_failure_without_deployment_change() {`).FindIndex(contents)
-	if start == nil || end == nil || end[0] <= start[1] {
-		return fmt.Errorf("%s: failed-upgrade evidence function boundaries are invalid", path)
-	}
-	functionBody := contents[start[0]:end[0]]
-	// The stderr is captured once and read back exactly once, verbatim to the
-	// operator under E2E_DEBUG_LOGS. Any other mention is the file being parsed
-	// as evidence, which only the structured Helm status may supply.
-	capture := []byte(`2>"$WORK_DIR/failed-upgrade.err"; then`)
-	debugPrint := []byte(`cat "$WORK_DIR/failed-upgrade.err" >&2 || true`)
-	if bytes.Count(functionBody, []byte("failed-upgrade.err")) != 2 ||
-		bytes.Count(functionBody, capture) != 1 || bytes.Count(functionBody, debugPrint) != 1 {
-		return fmt.Errorf("%s: failed-upgrade stderr may only be captured once, printed once under E2E_DEBUG_LOGS, and never parsed as hook evidence", path)
-	}
-	if bytes.Count(functionBody, []byte("failed-upgrade-status.json")) != 1 || bytes.Count(functionBody, []byte("$status_file")) != 3 {
-		return fmt.Errorf("%s: failed-upgrade evidence must flow only from the explicitly retrieved structured revision status", path)
-	}
-	return nil
-}
-
-const failedHookEvidenceContract = `def hook_phase:
-  .last_run.phase // "";
-
-def hook_weight:
-  if .weight == null then 0 else (.weight | tonumber) end;
-
-(.hooks // []) as $hooks |
-($hooks | map(select(hook_phase == "Failed"))) as $failed |
-(.version == $expected_revision) and
-(.info.status == "failed") and
-($failed | length == 1) and
-($failed[0] |
-  .name == $expected_name and
-  .kind == "Job" and
-  hook_weight == 0 and
-  ((.events // []) | index("pre-upgrade") != null) and
-  ((.last_run.started_at // "") | length > 0) and
-  ((.last_run.completed_at // "") | length > 0)) and
-($hooks | all(.[];
-  if
-    (((.events // []) | index("pre-upgrade")) != null) and
-    (hook_weight > 0)
-  then
-    hook_phase == ""
-  else
-    true
-  end))`
-
-func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
-	filterContents, err := os.ReadFile(files.failedHookEvidence)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", files.failedHookEvidence, err)
-	}
-	if actual, expected := normalizedNonemptyLines(string(filterContents)), normalizedNonemptyLines(failedHookEvidenceContract); !equalStrings(actual, expected) {
-		return fmt.Errorf("%s: failed Helm hook evidence filter must preserve the exact revision, status, hook identity, timestamp, and later-hook exclusion contract", files.failedHookEvidence)
-	}
-
-	selftestContents, err := os.ReadFile(files.failedHookEvidenceSelftest)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", files.failedHookEvidenceSelftest, err)
-	}
-	if err := verifyShellScriptEntrypoint(files.failedHookEvidenceSelftest, selftestContents); err != nil {
-		return err
-	}
-	if err := verifyFailurePreservingExitTrap(files.failedHookEvidenceSelftest, selftestContents, "cleanup"); err != nil {
-		return err
-	}
-	selftestContract := []sourceContractStep{
-		exactSourceLine("fail-fast shell mode", "set -eu"),
-		exactSourceLine("failed-hook evaluator implementation", `evaluate() {`),
-		exactSourceLineSequence("revision-bound failed-hook evaluator", []string{
-			`jq -e \`,
-			`--argjson expected_revision 7 \`,
-			`--arg expected_name ptah-crd-reconcile \`,
-			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$1" >/dev/null`,
-		}),
-		exactSourceLine("negative-fixture implementation", `expect_rejected() {`),
-		exactSourceLine("negative-fixture mutation", `jq "$filter" "$WORK_DIR/valid.json" >"$fixture"`),
-		exactSourceLineSequence("negative-fixture refusal", []string{
-			`if evaluate "$fixture"; then`,
-			`printf 'failed hook evidence self-test: accepted %s\n' "$name" >&2`,
-			`exit 1`,
-			`fi`,
-		}),
-		exactSourceLine("valid fixture evaluation", `evaluate "$WORK_DIR/valid.json"`),
-		exactSourceLine("wrong revision refusal", `expect_rejected wrong-revision '.version = 8'`),
-		exactSourceLine("successful release refusal", `expect_rejected not-failed '.info.status = "deployed"'`),
-		exactSourceLine("wrong hook name refusal", `expect_rejected wrong-name '.hooks[1].name = "other-reconcile"'`),
-		exactSourceLine("wrong hook kind refusal", `expect_rejected wrong-kind '.hooks[1].kind = "Pod"'`),
-		exactSourceLine("wrong hook weight refusal", `expect_rejected wrong-weight '.hooks[1].weight = -60'`),
-		exactSourceLine("wrong hook event refusal", `expect_rejected wrong-event '.hooks[1].events = ["post-upgrade"]'`),
-		exactSourceLine("unstarted hook refusal", `expect_rejected never-started '.hooks[1].last_run.started_at = ""'`),
-		exactSourceLine("multiple failed hooks refusal", `expect_rejected two-failures '.hooks[0].last_run.phase = "Failed"'`),
-		exactSourceLine("missing failure refusal", `expect_rejected no-failure '.hooks[1].last_run.phase = "Succeeded"'`),
-		exactSourceLine("later hook execution refusal", `expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'`),
-		exactSourceLine("malformed later hook weight refusal", `expect_rejected malformed-later-weight '.hooks[2].weight = "not-a-weight"'`),
-		exactSourceLine("terminal failed-hook self-test evidence", `printf '%s\n' 'failed hook evidence self-test: PASS'`),
-	}
-	if err := verifyOrderedSourceContract(files.failedHookEvidenceSelftest, selftestContents, selftestContract); err != nil {
-		return err
-	}
-	if bytes.Count(selftestContents, []byte("hack/failed-hook-evidence.jq")) != 1 {
-		return fmt.Errorf("%s: self-test must invoke the audited failed-hook filter exactly once", files.failedHookEvidenceSelftest)
-	}
-	if err := rejectStaticControlFlowBypass(files.failedHookEvidenceSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
-		return err
-	}
-	if err := rejectEarlySuccessfulReturn(
-		files.failedHookEvidenceSelftest,
-		selftestContents,
-		selftestContract[3].pattern,
-		selftestContract[5].pattern,
-	); err != nil {
-		return err
-	}
-	if err := rejectEarlySuccessfulExit(files.failedHookEvidenceSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
-		return err
-	}
-
+// verifyStaticChecksWiring holds hack/e2e-static.sh to the self-tests it
+// runs: each wired once, in order, and none behind a branch that skips it or
+// an exit that ends the script before it.
+func verifyStaticChecksWiring(files e2eWiringFiles) error {
 	staticContents, err := os.ReadFile(files.staticChecks)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", files.staticChecks, err)
@@ -4237,7 +3617,6 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	}
 	staticContract := []sourceContractStep{
 		exactSourceLine("fail-fast shell mode", "set -eu"),
-		exactSourceLine("failed-hook evidence self-test wiring", `"$(dirname -- "$0")/failed-hook-evidence-selftest.sh"`),
 		exactSourceLine("static-check repository root setup", `unset CDPATH`),
 		// The stopwatch wraps the code that decides whether the operator works.
 		// A measurement that swallowed a failure would read as a pass, so its
@@ -4257,9 +3636,6 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
 	}
-	if bytes.Count(staticContents, []byte("failed-hook-evidence-selftest.sh")) != 1 {
-		return fmt.Errorf("%s: failed-hook evidence self-test must be wired exactly once", files.staticChecks)
-	}
 	if bytes.Count(staticContents, []byte("e2e-timing-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the timing self-test must be wired exactly once", files.staticChecks)
 	}
@@ -4273,8 +3649,7 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		return fmt.Errorf("%s: the control-plane shape self-test must be wired exactly once", files.staticChecks)
 	}
 	for _, step := range []sourceContractStep{
-		staticContract[1], staticContract[3], staticContract[4], staticContract[5],
-		staticContract[6],
+		staticContract[2], staticContract[3], staticContract[4], staticContract[5],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
@@ -4826,35 +4201,6 @@ func verifySharedImageCollection(path string, job workflowJob, name string) erro
 	return nil
 }
 
-func verifyLifecycleSource(contract lifecycleSourceContract) error {
-	contents, err := os.ReadFile(contract.path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", contract.path, err)
-	}
-	if len(contract.steps) == 0 {
-		return fmt.Errorf("%s: lifecycle source contract is empty", contract.path)
-	}
-	if err := verifyShellScriptEntrypoint(contract.path, contents); err != nil {
-		return err
-	}
-	if err := verifyFailurePreservingExitTrap(contract.path, contents, contract.exitTrap); err != nil {
-		return err
-	}
-	if err := verifyOrderedSourceContract(contract.path, contents, contract.steps); err != nil {
-		return err
-	}
-	completion := contract.steps[len(contract.steps)-1].pattern
-	if err := rejectStaticControlFlowBypass(contract.path, contents, completion); err != nil {
-		return err
-	}
-	for _, boundaries := range contract.successfulReturns {
-		if err := rejectEarlySuccessfulReturn(contract.path, contents, boundaries.start, boundaries.completion); err != nil {
-			return err
-		}
-	}
-	return rejectEarlySuccessfulExit(contract.path, contents, completion)
-}
-
 func verifySingleDirectHelmInstallAttempt(path string, contents []byte) error {
 	shellCode := maskShellHeredocBodies(contents)
 	logicalShell := normalizeShellContinuations(shellCode)
@@ -5041,113 +4387,31 @@ func sourceLinePattern(line string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(line) + `[ \t]*\r?$`)
 }
 
-// A lifecycle phase is a script the harness hands an environment to, and the
-// two are audited as one thing because neither half is evidence alone. What a
-// phase proves depends on what it was given: a kubeconfig that is not the
-// cluster the suite built, a controller image that is not the candidate, or a
-// state version nothing pinned would each leave the phase running and its
-// verdict meaningless.
+// Every lifecycle phase is a Go phase, and what it proves depends on what the
+// driver handed it: a kubeconfig that is not the cluster the suite built, a
+// controller image that is not the candidate, or a state version nothing
+// pinned would each leave the phase running and its verdict meaningless. The
+// phase declares its inputs in test/e2e/phases, and the audit below holds the
+// driver's call to exactly those, each bound to the variable goPhaseBindings
+// names.
 //
-// The audit names one property per binding rather than pinning the block of
-// source the call happens to occupy. A block match answers a question nobody
-// asked -- whether the text moved -- and answers it with `found 0`, which does
-// not say which of the guarantees above stopped being checked. It also fails on
-// an addition that takes nothing away, which is how #113 removed every
-// lifecycle verdict from master by handing the migrations phase two variables
-// it genuinely needed.
-//
-// Two independent things are checked. The declarations below pin what each
-// variable must be bound to, so a binding cannot be quietly redirected. The
-// phase script itself supplies the other half: every E2E_ variable it expands
-// without a default has to be bound at the call site, and every binding has to
-// be expanded by the script. That half is not copied from the call, so it
-// catches the case a copied block never can -- a script that grew a new input
-// nobody passes it, and a binding left behind by one that no longer reads it.
+// It names one property per binding rather than pinning the block of source
+// the call happens to occupy. A block match answers a question nobody asked --
+// whether the text moved -- and answers it with `found 0`, which does not say
+// which of the guarantees above stopped being checked. It also fails on an
+// addition that takes nothing away, which is how #113 removed every lifecycle
+// verdict from master by handing the migrations phase two variables it
+// genuinely needed.
 type phaseEnvironmentBinding struct {
 	name  string
 	value string
 }
 
-type phaseEnvironmentContract struct {
-	phase    string
-	script   string
-	bindings []phaseEnvironmentBinding
-	// isolatesNode says the phase cuts the isolation worker off from the API
-	// server. Its script carries the key the worker is labelled and tainted
-	// with, no other phase's script does, and only a suite that declares the
-	// worker may run it.
-	isolatesNode bool
-}
-
-func phaseEnvironmentContracts() []phaseEnvironmentContract {
-	return []phaseEnvironmentContract{
-		{
-			phase:  "upgrade",
-			script: "hack/e2e-crd-upgrade.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_DEBUG_LOGS", value: `$E2E_DEBUG_LOGS`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_PROOF_NAMESPACE", value: `$CRD_PROOF_NAMESPACE`},
-				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
-				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
-				{name: "E2E_CANDIDATE_VALUES_FILE", value: `$CANDIDATE_VALUES_FILE`},
-				{name: "E2E_CANDIDATE_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
-				{name: "E2E_KUBERNETES_VERSION", value: `$K8S_VERSION`},
-				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
-				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
-				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
-				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
-				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
-				{name: "E2E_PHASE", value: `upgrade`},
-			},
-		},
-		{
-			phase:  "ha",
-			script: "hack/e2e-ha.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_HA_TEST_NAMESPACE", value: `$HA_TEST_NAMESPACE`},
-				{name: "E2E_FOREIGN_NAMESPACE", value: `$FOREIGN_NAMESPACE`},
-				{name: "E2E_PROOF_NAMESPACE", value: `$CRD_PROOF_NAMESPACE`},
-				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
-				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
-			},
-		},
-		{
-			phase:  "uninstall",
-			script: "hack/e2e-crd-upgrade.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_DEBUG_LOGS", value: `$E2E_DEBUG_LOGS`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_PROOF_NAMESPACE", value: `$CRD_PROOF_NAMESPACE`},
-				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
-				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
-				{name: "E2E_CANDIDATE_VALUES_FILE", value: `$CANDIDATE_VALUES_FILE`},
-				{name: "E2E_CANDIDATE_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
-				{name: "E2E_NEXT_CHART_PACKAGE", value: `$NEXT_CHART_PACKAGE`},
-				{name: "E2E_NEXT_VALUES_FILE", value: `$NEXT_VALUES_FILE`},
-				{name: "E2E_NEXT_CONTROLLER_IMAGE", value: `$NEXT_CONTROLLER_IMAGE`},
-				{name: "E2E_KUBERNETES_VERSION", value: `$K8S_VERSION`},
-				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
-				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
-				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
-				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
-				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
-				{name: "E2E_PHASE", value: `uninstall`},
-			},
-		},
-	}
-}
-
 // goPhaseBindings is what the driver binds each input a Go phase reads to.
 //
 // A Go phase declares its inputs in test/e2e/phases, as a struct the compiler
-// holds the phase to, so the half of this audit that reads a shell phase's
-// source for what it expands belongs to the compiler there. What a declaration
-// cannot say is which of the driver's variables feeds an input. That is one
+// holds the phase to. What a declaration cannot say is which of the driver's
+// variables feeds an input. That is one
 // line per variable rather than one block per phase, because an input means
 // the same thing in every phase that reads it.
 var goPhaseBindings = map[string]string{
@@ -5164,6 +4428,18 @@ var goPhaseBindings = map[string]string{
 	"E2E_CONTROLLER_REVISION":      `$CONTROLLER_REVISION`,
 	"E2E_CONTROLLER_STATE_VERSION": `$CONTROLLER_STATE_VERSION`,
 	"E2E_FIXTURE_IMAGE":            `$E2E_FIXTURE_IMAGE`,
+	// The lifecycle phases: the namespace the upgrade phase keeps its proof
+	// objects in, the release it installed from, the synthetic next release,
+	// the exact Kubernetes version, and the switch that prints a refused Helm
+	// operation's stderr off CI.
+	"E2E_DEBUG_LOGS":            `$E2E_DEBUG_LOGS`,
+	"E2E_PROOF_NAMESPACE":       `$CRD_PROOF_NAMESPACE`,
+	"E2E_CANDIDATE_VALUES_FILE": `$CANDIDATE_VALUES_FILE`,
+	"E2E_KUBERNETES_VERSION":    `$K8S_VERSION`,
+	"E2E_NEXT_CHART_PACKAGE":    `$NEXT_CHART_PACKAGE`,
+	"E2E_NEXT_VALUES_FILE":      `$NEXT_VALUES_FILE`,
+	"E2E_NEXT_CONTROLLER_IMAGE": `$NEXT_CONTROLLER_IMAGE`,
+	"E2E_HA_TEST_NAMESPACE":     `$HA_TEST_NAMESPACE`,
 	// The alerting phase's monitoring path, mirrored into the registry only
 	// where a suite runs that phase.
 	"E2E_PROMETHEUS_IMAGE":          `$E2E_PROMETHEUS_IMAGE`,
@@ -5200,28 +4476,17 @@ var goPhaseBindings = map[string]string{
 	"E2E_DATAPLANE_MODE": `$DATAPLANE_MODE`,
 }
 
-// phaseInvocationPattern matches one `run_recorded_phase <name> "$ROOT_DIR/<script>"`
-// call, or one `run_recorded_phase <name> run_go_phase <phase>` call for a
-// phase the Go harness carries. The environment is read backwards from it
-// rather than listed here, so what the audit compares against is the command
-// the shell actually builds.
+// phaseInvocationPattern matches one `run_recorded_phase <name> run_go_phase
+// <phase>` call, and one `run_recorded_phase <name> "$ROOT_DIR/<script>"` call
+// so that a phase run as a script is found and refused. The environment is read
+// backwards from it rather than listed here, so what the audit compares against
+// is the command the shell actually builds.
 var phaseInvocationPattern = regexp.MustCompile(
 	`(?m)^[ \t]*run_recorded_phase ([a-z][a-z0-9-]*) ` +
 		`(?:"\$ROOT_DIR/(hack/[a-z0-9-]+\.sh)"|run_go_phase ([a-z][a-z0-9-]*))[ \t]*\r?$`)
 
 var phaseEnvironmentAssignmentPattern = regexp.MustCompile(
 	`(?m)^[ \t]*([A-Za-z_][A-Za-z0-9_]*)=(\S*) \\[ \t]*\r?$`)
-
-// e2eVariableExpansionPattern finds an expansion of an E2E_ variable, in either
-// spelling, with the parameter operator that follows the name. It refuses a
-// longer name that merely ends in one: the migration phase's manifests carry
-// `$(PTAH_E2E_TARGET_URL)`, a Kubernetes field reference that is not a shell
-// variable at all.
-var e2eVariableExpansionPattern = regexp.MustCompile(
-	`(?:^|[^A-Za-z0-9_])\$(?:\{(E2E_[A-Z0-9_]+)(:?[-=+?])?[^}]*\}|(E2E_[A-Z0-9_]+))`)
-
-var e2eVariableAssignmentPattern = regexp.MustCompile(
-	`(?m)^[ \t]*(?:export[ \t]+)?(E2E_[A-Z0-9_]+)=`)
 
 type phaseInvocation struct {
 	phase  string
@@ -5237,7 +4502,7 @@ type phaseInvocation struct {
 // environment.
 func findPhaseInvocations(contents []byte) []phaseInvocation {
 	lines := strings.Split(string(contents), "\n")
-	invocations := make([]phaseInvocation, 0, len(phaseEnvironmentContracts()))
+	invocations := make([]phaseInvocation, 0, len(phases.All()))
 	for index, line := range lines {
 		match := phaseInvocationPattern.FindStringSubmatch(line + "\n")
 		if match == nil {
@@ -5258,78 +4523,6 @@ func findPhaseInvocations(contents []byte) []phaseInvocation {
 	return invocations
 }
 
-// e2eVariablesUsedByPhase separates what a phase script requires from what it
-// merely accepts, by the shell's own rules. `${X:?message}` refuses to run
-// without X, and a bare `$X` reads whatever it was given, so both are required;
-// `${X:-default}` has an answer the harness does not have to supply, and that
-// answer settles the bare reads after it.
-//
-// Whether a name is an input or the script's own is decided by which mention
-// comes first. A script reads what it was given before it defines names of its
-// own, so `X=${X:?message}` and `FIXTURE=${X:-}` are declarations of an input
-// even though one of them assigns, and a later `X=$FIXTURE` that hands the
-// value to a child phase does not take the name back.
-func e2eVariablesUsedByPhase(contents []byte) (required, accepted map[string]bool) {
-	source := string(contents)
-	required, accepted = map[string]bool{}, map[string]bool{}
-	firstMention := map[string]int{}
-	owned := map[string]bool{}
-	defaulted, refused := map[string]bool{}, map[string]bool{}
-
-	mention := func(name string, at int) bool {
-		previous, seen := firstMention[name]
-		if seen && previous <= at {
-			return false
-		}
-		firstMention[name] = at
-		return true
-	}
-	for _, match := range e2eVariableAssignmentPattern.FindAllStringSubmatchIndex(source, -1) {
-		name := source[match[2]:match[3]]
-		assignment := source[match[1]:]
-		if newline := strings.IndexByte(assignment, '\n'); newline >= 0 {
-			assignment = assignment[:newline]
-		}
-		if mention(name, match[2]) {
-			owned[name] = !strings.Contains(assignment, name)
-		}
-	}
-	for _, match := range e2eVariableExpansionPattern.FindAllStringSubmatchIndex(source, -1) {
-		name, operator := submatch(source, match, 1), submatch(source, match, 2)
-		at := match[2]
-		if name == "" {
-			name, at = submatch(source, match, 3), match[6]
-		}
-		if mention(name, at) {
-			owned[name] = false
-		}
-		accepted[name] = true
-		switch {
-		case strings.HasSuffix(operator, "?"):
-			refused[name] = true
-		case operator != "":
-			defaulted[name] = true
-		}
-	}
-	for name := range accepted {
-		if owned[name] {
-			delete(accepted, name)
-			continue
-		}
-		if refused[name] || !defaulted[name] {
-			required[name] = true
-		}
-	}
-	return required, accepted
-}
-
-func submatch(source string, match []int, group int) string {
-	if match[2*group] < 0 {
-		return ""
-	}
-	return source[match[2*group]:match[2*group+1]]
-}
-
 func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 	harness, err := os.ReadFile(files.harness)
 	if err != nil {
@@ -5343,34 +4536,8 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 		}
 		seen[invocation.phase] = invocation
 	}
-	goPhases := map[string]phases.Phase{}
-	for _, phase := range phases.All() {
-		goPhases[phase.Name] = phase
-	}
-	for _, contract := range phaseEnvironmentContracts() {
-		if _, ported := goPhases[contract.phase]; ported {
-			return fmt.Errorf("lifecycle phase %q has both a shell environment contract and a Go declaration in test/e2e/phases; one of them is dead",
-				contract.phase)
-		}
-		invocation, present := seen[contract.phase]
-		if !present {
-			return fmt.Errorf("%s: lifecycle phase %q is never invoked", files.harness, contract.phase)
-		}
-		delete(seen, contract.phase)
-		if invocation.script != contract.script {
-			running := invocation.script
-			if invocation.goPhase != "" {
-				running = "the Go phase " + invocation.goPhase
-			}
-			return fmt.Errorf("%s: lifecycle phase %q must run %s, not %s",
-				files.harness, contract.phase, contract.script, running)
-		}
-		if err := verifyPhaseBindings(files.harness, contract, invocation); err != nil {
-			return err
-		}
-		if err := verifyPhaseScriptInputs(files, contract, invocation); err != nil {
-			return err
-		}
+	if len(invocations) == 0 {
+		return fmt.Errorf("%s: no lifecycle phase is invoked, so no environment was audited", files.harness)
 	}
 	for _, phase := range phases.All() {
 		invocation, present := seen[phase.Name]
@@ -5382,8 +4549,12 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 			return err
 		}
 	}
-	for phase := range seen {
-		return fmt.Errorf("%s: lifecycle phase %q is invoked but declares no environment contract",
+	for phase, invocation := range seen {
+		if invocation.script != "" {
+			return fmt.Errorf("%s: lifecycle phase %q runs %s; every phase is a Go phase test/e2e/phases declares",
+				files.harness, phase, invocation.script)
+		}
+		return fmt.Errorf("%s: lifecycle phase %q is invoked but test/e2e/phases does not declare it",
 			files.harness, phase)
 	}
 	return nil
@@ -5454,96 +4625,6 @@ func verifyGoPhaseInvocation(path string, phase phases.Phase, invocation phaseIn
 		}
 	}
 	return nil
-}
-
-func verifyPhaseBindings(path string, contract phaseEnvironmentContract, invocation phaseInvocation) error {
-	bound := map[string]string{}
-	for _, binding := range invocation.bindings {
-		if _, duplicate := bound[binding.name]; duplicate {
-			return fmt.Errorf("%s: %s phase binds %s twice", path, contract.phase, binding.name)
-		}
-		bound[binding.name] = binding.value
-	}
-	for _, binding := range contract.bindings {
-		value, present := bound[binding.name]
-		if !present {
-			return fmt.Errorf("%s: %s phase must bind %s to %q, and binds nothing",
-				path, contract.phase, binding.name, binding.value)
-		}
-		if value != binding.value {
-			return fmt.Errorf("%s: %s phase must bind %s to %q, and binds %q",
-				path, contract.phase, binding.name, binding.value, value)
-		}
-		delete(bound, binding.name)
-	}
-	for _, binding := range invocation.bindings {
-		if _, undeclared := bound[binding.name]; undeclared {
-			return fmt.Errorf("%s: %s phase binds %s, which no environment contract declares",
-				path, contract.phase, binding.name)
-		}
-	}
-	return nil
-}
-
-func verifyPhaseScriptInputs(files e2eWiringFiles, contract phaseEnvironmentContract, invocation phaseInvocation) error {
-	scriptPath := e2ePhaseScriptPath(files, contract.script)
-	if scriptPath == "" {
-		return fmt.Errorf("%s: lifecycle phase %q runs %s, which this audit cannot read",
-			files.harness, contract.phase, contract.script)
-	}
-	script, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", scriptPath, err)
-	}
-	if declares := sourceLinePattern(isolationNodeKeyDeclaration).Match(script); declares != contract.isolatesNode {
-		if contract.isolatesNode {
-			return fmt.Errorf("%s: the %s phase isolates a node, and %s does not declare %s",
-				files.harness, contract.phase, contract.script, isolationNodeKeyDeclaration)
-		}
-		return fmt.Errorf("%s: %s declares %s, and the %s phase is not one that isolates a node",
-			files.harness, contract.script, isolationNodeKeyDeclaration, contract.phase)
-	}
-	required, accepted := e2eVariablesUsedByPhase(script)
-	bound := map[string]bool{}
-	for _, binding := range invocation.bindings {
-		bound[binding.name] = true
-	}
-	for _, name := range sortedKeys(required) {
-		if !bound[name] {
-			return fmt.Errorf("%s: %s reads %s without a default, and the %s phase binds nothing to it",
-				files.harness, contract.script, name, contract.phase)
-		}
-	}
-	for _, binding := range invocation.bindings {
-		if !strings.HasPrefix(binding.name, "E2E_") {
-			continue
-		}
-		if !accepted[binding.name] {
-			return fmt.Errorf("%s: %s phase binds %s, which %s never reads",
-				files.harness, contract.phase, binding.name, contract.script)
-		}
-	}
-	return nil
-}
-
-func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
-	switch script {
-	case e2eCRDUpgradePath:
-		return files.crdUpgrade
-	case e2eHAPath:
-		return files.highAvailability
-	default:
-		return ""
-	}
-}
-
-func sortedKeys(set map[string]bool) []string {
-	keys := make([]string, 0, len(set))
-	for key := range set {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func exactSourceLineSequence(name string, lines []string) sourceContractStep {
@@ -5853,27 +4934,6 @@ func insideShellQuote(contents []byte, offset int) bool {
 		}
 	}
 	return state == singleQuoted || state == doubleQuoted
-}
-
-func rejectEarlySuccessfulReturn(path string, contents []byte, start, completion *regexp.Regexp) error {
-	shellCode := maskShellHeredocBodies(contents)
-	startMatch := firstUnquotedShellMatch(shellCode, start)
-	if startMatch == nil {
-		return fmt.Errorf("%s: lifecycle function boundaries are invalid", path)
-	}
-	functionBody := shellCode[startMatch[1]:]
-	completionMatch := firstUnquotedShellMatch(functionBody, completion)
-	if completionMatch == nil {
-		return fmt.Errorf("%s: lifecycle function boundaries are invalid", path)
-	}
-	completionStart := startMatch[1] + completionMatch[0]
-	earlyReturn := regexp.MustCompile(`(?m)^[ \t]*(?:(?:builtin|command)[ \t]+)?return(?:[ \t]+0+)?[ \t]*(?:;[ \t]*)?(?:#[^\r\n]*)?\r?$`)
-	if match := firstUnquotedShellMatch(shellCode[startMatch[1]:completionStart], earlyReturn); match != nil {
-		absoluteOffset := startMatch[1] + match[0]
-		line := 1 + bytes.Count(contents[:absoluteOffset], []byte{'\n'})
-		return fmt.Errorf("%s:%d: unconditional successful return precedes per-engine lifecycle evidence", path, line)
-	}
-	return nil
 }
 
 func verifyDocumentation(path string, releases []parsedRelease) error {
@@ -6216,23 +5276,16 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 // isolation worker, fails on a node that does not exist. A suite that declares
 // the worker and runs no such phase pays for a node nothing uses, on a cluster
 // that is no longer the one its phases were measured on. Which phases isolate a
-// node is for the shell phases' environment contracts and the Go phases'
-// declarations in test/e2e/phases to say, and verifyPhaseEnvironmentContracts
-// holds each shell phase to its script.
+// node is for their declarations in test/e2e/phases to say.
 func verifyE2ESuiteIsolationWorker(catalog e2eSuiteCatalog) error {
 	isolating := map[string]bool{}
-	for _, contract := range phaseEnvironmentContracts() {
-		if contract.isolatesNode {
-			isolating[contract.phase] = true
-		}
-	}
 	for _, phase := range phases.All() {
 		if phase.IsolatesNode {
 			isolating[phase.Name] = true
 		}
 	}
 	if len(isolating) == 0 {
-		return errors.New("no phase environment contract isolates a node, so the isolation worker cannot be checked against anything")
+		return errors.New("no phase in test/e2e/phases isolates a node, so the isolation worker cannot be checked against anything")
 	}
 	for _, suite := range catalog.Suites {
 		var needs []string

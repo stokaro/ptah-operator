@@ -68,7 +68,7 @@ var requirements = []requirement{
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
 		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `test/e2e/faults_scenarios_e2e_test.go`, " +
 			"an uncertain Apply and a late dispatch in `test/e2e/migrations_uncertain_e2e_test.go`, " +
-			"an Apply held across an upgrade by `assert_predecessor_apply_remains_exclusive_while_running`, " +
+			"an Apply held across an upgrade in `test/e2e/lifecycle_running_apply_e2e_test.go`, " +
 			"one realm claimed from two listed namespaces in `test/e2e/migrations_realm_e2e_test.go`, " +
 			"a migration deleted during its Apply, one suspended inside it, and a refused realm release " +
 			"in `test/e2e/migrations_faults_e2e_test.go`, " +
@@ -84,7 +84,8 @@ var requirements = []requirement{
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
 		"the CRD schema history gates, the admission rows in `test/e2e/controlplane_e2e_test.go`, " +
-			"`prove_controller_write_guard`, `prove_controller_object_supported_window_guard`, `prove_controller_downgrade_guard`, " +
+			"the manager's write, supported-window and downgrade guards in `test/e2e/lifecycle_guards_e2e_test.go`, " +
+			"the per-minor probe table in `test/e2e/lifecycle_guards.go` and its test in `test/e2e/lifecycle_guards_test.go`, " +
 			"the egress policies in `test/e2e/migrations_isolation_e2e_test.go` on a CNI that enforces, " +
 			"and the credential scans in `test/e2e/dataplane_audit_e2e_test.go`, " +
 			"which reads the manager's metrics as well as its logs, and the same scanner over what the reference-data phase reads " +
@@ -95,7 +96,10 @@ var requirements = []requirement{
 		"accepted values at the size and name limits, and who may read a plan's SQL"},
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",
-		"`run_upgrade_proof`, `run_next_release_upgrade_proof` and `run_uninstall_proof`, leader failover in `hack/e2e-ha.sh`, " +
+		"the upgrade and uninstall phases in `test/e2e/lifecycle_phases_e2e_test.go`, " +
+			"the refused upgrades, the late-failure recovery and the rollbacks in `test/e2e/lifecycle_failures_e2e_test.go`, " +
+			"the runtime they stop and restore in `test/e2e/lifecycle_runtime_e2e_test.go`, " +
+			"leader failover in `test/e2e/lifecycle_ha_e2e_test.go`, " +
 			"and certificate recovery in `test/e2e/certrotation_e2e_test.go`, on every supported minor",
 		"an upgrade from a published release, since none exists yet; a cluster with a ResourceQuota or Pod Security admission; " +
 			"and a database audit after the lifecycle"},
@@ -114,7 +118,7 @@ var requirements = []requirement{
 	{"PA-09", "Detect and diagnose operational failures",
 		"alerts firing inside a declared detection target and reaching a configured receiver",
 		"`test/e2e/alerting_e2e_test.go`, which delivers the unresolved-Apply, stalled-operation and lost-view alerts " +
-			"from the chart's rules through Alertmanager to a receiver, and the operator metrics on a new leader in `hack/e2e-ha.sh`",
+			"from the chart's rules through Alertmanager to a receiver, and the operator metrics on a new leader in `test/e2e/lifecycle_ha_e2e_test.go`",
 		"on a cluster, the certificate, upgrade, overdue, lock-release, plan-store, failure-rate, admission and view-read alerts; " +
 			"one scrape target lost; and approval waits kept from paging"},
 	{"PA-10", "Make documentation executable and usable",
