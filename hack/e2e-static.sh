@@ -34,6 +34,10 @@ CRD_FULL_RENDER=$WORK_DIR/crd-full.yaml
 EXTERNAL_CERTIFICATE_RENDER=$WORK_DIR/external-certificate.yaml
 CONTROLLER_WRITE_GUARD_RENDER=$WORK_DIR/controller-write-guard.yaml
 CONTROLLER_OBJECT_GUARD_RENDER=$WORK_DIR/controller-object-guard.yaml
+APPLY_POLICY_GUARD_RENDER=$WORK_DIR/apply-policy-guard.yaml
+APPLY_POLICY_GUARD_GROUPS_RENDER=$WORK_DIR/apply-policy-guard-groups.yaml
+APPLY_POLICY_GUARD_OFF_RENDER=$WORK_DIR/apply-policy-guard-off.yaml
+APPLY_POLICY_GUARD_EVERYONE_ERROR=$WORK_DIR/apply-policy-guard-everyone.err
 HOOK_FULLNAME_COLLISION_ERROR=$WORK_DIR/hook-fullname-collision.err
 INVALID_SERVICE_ACCOUNT_ERROR=$WORK_DIR/invalid-service-account.err
 CRD_GUARD_PENDING_FIXTURE=$WORK_DIR/crd-guard-pending.json
@@ -553,7 +557,7 @@ export RUNTIME_FULLNAME=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
 eval "$release_values_section"
 render_release_values "$CANDIDATE_VALUES_FIXTURE" candidate.invalid/operator new \
 	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
-	candidate-registry-pull
+	candidate-registry-pull '["e2e:static-administrators", "e2e:static-operators"]'
 jq -e '
   .fullnameOverride == "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr" and
   .image.repository == "candidate.invalid/operator" and
@@ -567,6 +571,22 @@ jq -e '
 	printf '%s\n' 'e2e static: candidate values lost the production digest-pinned image contract' >&2
 	exit 1
 }
+# The harness identity writes most rows' resources with apply: Always, and
+# the chart's apply-policy guard judges it like anyone else, so the release
+# values exempt exactly the groups the harness read from the API server: a
+# JSON array handed in as they were read, not a name the harness assumed.
+jq -e '
+  .applyPolicyGuard == {exemptGroups: ["e2e:static-administrators", "e2e:static-operators"]}
+' "$CANDIDATE_VALUES_FIXTURE" >/dev/null || {
+	printf '%s\n' 'e2e static: candidate values do not exempt the harness groups from the apply-policy guard' >&2
+	exit 1
+}
+if render_release_values "$WORK_DIR/candidate-values-no-groups.json" candidate.invalid/operator new \
+	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+	candidate-registry-pull 'not-a-json-array' 2>/dev/null; then
+	printf '%s\n' 'e2e static: release values accepted exempt groups that are not a JSON array' >&2
+	exit 1
+fi
 
 database_url_rewrite_section=$(sed -n '/^replace_database_url_path()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-faults.sh")
@@ -1410,6 +1430,14 @@ for migration_marker in \
 	'did not settle on the history a person recorded' \
 	'after a person adopted the database' \
 	'(.status | has("lastRun") | not)' \
+	'run_apply_policy_guard_proof' \
+	'read_apply_policy_guard' \
+	'-l app.kubernetes.io/component=apply-policy-guard -o json' \
+	'select(.name == "exemptGroups") | .expression | contains($group | tojson)' \
+	'"the author selected Always"' \
+	'"the author created a migration with Always already set"' \
+	'create --dry-run=server -f "$RESOURCE_FILE"' \
+	'k_as "$GUARD_ADMINISTRATOR" "$GUARD_ADMINISTRATOR_GROUP" -n "$TEST_NAMESPACE" patch ptahmigration' \
 	'e2e migrations: PASS %s approval gate, applied sequence, matching history, and credential isolation'; do
 	grep -F -- "$migration_marker" "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
 		printf 'e2e static: live migration proof marker is missing: %s\n' "$migration_marker" >&2
@@ -6339,6 +6367,34 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/controller-object-guard.yaml \
 	--show-only templates/deployment.yaml \
 	$crd_render_args >"$CONTROLLER_OBJECT_GUARD_RENDER"
+# The apply-policy guard, three ways: as the chart ships it, with two exempt
+# groups an installer named, and turned off. What the fourth render proves is a
+# refusal: system:authenticated is everyone, and a chart that rendered it into
+# the exempt list would ship a guard that judges nobody.
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--show-only templates/apply-policy-guard.yaml \
+	$crd_render_args >"$APPLY_POLICY_GUARD_RENDER"
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--show-only templates/apply-policy-guard.yaml \
+	--set 'applyPolicyGuard.exemptGroups={platform:apply-policy,system:serviceaccounts:flux-system}' \
+	$crd_render_args >"$APPLY_POLICY_GUARD_GROUPS_RENDER"
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--set applyPolicyGuard.enabled=false \
+	$crd_render_args >"$APPLY_POLICY_GUARD_OFF_RENDER"
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--set 'applyPolicyGuard.exemptGroups={system:authenticated}' \
+	$crd_render_args >/dev/null 2>"$APPLY_POLICY_GUARD_EVERYONE_ERROR"; then
+	printf '%s\n' 'e2e static: the chart exempted every authenticated identity from the apply-policy guard' >&2
+	exit 1
+fi
+grep -F 'applyPolicyGuard.exemptGroups names system:authenticated' "$APPLY_POLICY_GUARD_EVERYONE_ERROR" >/dev/null || {
+	printf '%s\n' 'e2e static: the refusal of system:authenticated does not name the value to change' >&2
+	exit 1
+}
 
 # The hook's objects are named after the first 24 characters of the release
 # fullname, so a fullname chosen to be the hook's own name makes the controller
@@ -6521,9 +6577,10 @@ printf '%s\n' "$hook_service_account_name" |
 [ "$(grep -Fc -- \
 	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
-# The release keeps five admission policies, and each is an ordinary release
-# object: no hook annotation, no keep policy and no parameter. Their names
-# carry the release's own digest and nothing that changes between its
+# The release keeps six admission policies -- five on the manager's own writes
+# and the apply-policy guard on everyone else's -- and each is an ordinary
+# release object: no hook annotation, no keep policy and no parameter. Their
+# names carry the release's own digest and nothing that changes between its
 # upgrades, so an upgrade updates each in place and the uninstall deletes it.
 controller_guard_policy_names() {
 	awk '
@@ -6533,12 +6590,12 @@ controller_guard_policy_names() {
     ' "$1" | sort
 }
 controller_guard_names=$(controller_guard_policy_names "$CRD_FULL_RENDER")
-[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 5 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly five admission policies' >&2
+[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 6 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly six admission policies' >&2
 	exit 1
 }
-[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 5 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly five admission policy bindings' >&2
+[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 6 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly six admission policy bindings' >&2
 	exit 1
 }
 for controller_guard_family in \
@@ -6546,7 +6603,8 @@ for controller_guard_family in \
 	job-write-guard \
 	chunk-write-guard \
 	plan-write-guard \
-	migration-plan-write-guard; do
+	migration-plan-write-guard \
+	apply-policy-guard; do
 	[ "$(printf '%s\n' "$controller_guard_names" |
 		grep -Ec "^ptah-operator-${controller_guard_family}-[0-9a-f]{12}\$")" -eq 1 ] || {
 		printf 'e2e static: the release does not render one %s policy\n' "$controller_guard_family" >&2
@@ -6554,7 +6612,7 @@ for controller_guard_family in \
 	}
 done
 [ "$(printf '%s\n' "$controller_guard_names" | sed 's/.*-//' | sort -u | grep -c .)" -eq 1 ] || {
-	printf '%s\n' 'e2e static: the controller guards do not share the release digest' >&2
+	printf '%s\n' 'e2e static: the admission policies do not share the release digest' >&2
 	exit 1
 }
 for controller_guard_name in $controller_guard_names; do
@@ -6573,13 +6631,58 @@ controller_guard_successor_names=$(helm template ptah-e2e "$ROOT_DIR/charts/ptah
 	--namespace ptah-e2e \
 	--show-only templates/controller-write-guard.yaml \
 	--show-only templates/controller-object-guard.yaml \
+	--show-only templates/apply-policy-guard.yaml \
 	$crd_render_args \
 	--set-string image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333 |
 	controller_guard_policy_names /dev/stdin)
 [ "$controller_guard_successor_names" = "$controller_guard_names" ] || {
-	printf '%s\n' 'e2e static: another manager image renames the controller guards, so an upgrade would replace them' >&2
+	printf '%s\n' 'e2e static: another manager image renames the admission policies, so an upgrade would replace them' >&2
 	exit 1
 }
+# The apply-policy guard as the chart ships it: both kinds, both writes that
+# can set the field, its default exempt group as a literal, the transition
+# rule rather than the value, and a refusal that says what to do instead.
+[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicy' "$APPLY_POLICY_GUARD_RENDER")" -eq 1 ] &&
+	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_RENDER")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: the apply-policy guard is not one policy and one binding' >&2
+	exit 1
+}
+for apply_policy_guard_marker in \
+	'app.kubernetes.io/component: apply-policy-guard' \
+	'failurePolicy: Fail' \
+	'matchPolicy: Equivalent' \
+	'operations: ["CREATE", "UPDATE"]' \
+	'resources: ["ptahschemas", "ptahmigrations"]' \
+	'expression: "[\"system:masters\"]"' \
+	'variables.exemptGroups.exists(group, group in request.userInfo.groups)' \
+	'object.spec.policy.apply == "Always"' \
+	'oldObject != null && has(oldObject.spec.policy)' \
+	'variables.requesterIsExempt || !variables.selectsAlways || variables.alreadyAlways' \
+	'reserves that choice for the groups that own apply policy. Use OnApproval, or ask an apply-policy administrator' \
+	'reason: Forbidden' \
+	'validationActions: [Deny]'; do
+	grep -F -- "$apply_policy_guard_marker" "$APPLY_POLICY_GUARD_RENDER" >/dev/null || {
+		printf 'e2e static: the apply-policy guard lacks %s\n' "$apply_policy_guard_marker" >&2
+		exit 1
+	}
+done
+# Every group an installer names reaches the literal, in order and quoted.
+grep -F -- 'expression: "[\"platform:apply-policy\", \"system:serviceaccounts:flux-system\"]"' \
+	"$APPLY_POLICY_GUARD_GROUPS_RENDER" >/dev/null || {
+	printf '%s\n' 'e2e static: the exempt groups an installer names do not reach the apply-policy guard' >&2
+	exit 1
+}
+# Off, the release renders the five guards on the manager's writes and no
+# trace of this one, so an upgrade that turns it off removes it.
+[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 5 ] &&
+	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 5 ] || {
+	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the five controller guards' >&2
+	exit 1
+}
+if grep -F 'apply-policy-guard' "$APPLY_POLICY_GUARD_OFF_RENDER" >/dev/null; then
+	printf '%s\n' 'e2e static: the apply-policy guard is rendered while turned off' >&2
+	exit 1
+fi
 if grep -Eq '^  (paramKind|paramRef):' "$CRD_FULL_RENDER"; then
 	printf '%s\n' 'e2e static: an admission policy still reads a parameter' >&2
 	exit 1

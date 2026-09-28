@@ -21,6 +21,7 @@ func (c *catalog) mutation(mutation policyenv.Mutation) { c.mutations = append(c
 // groups contribute the rows and mutations of one family of policies each.
 var groups = []func(*testing.T, *catalog){
 	controllerRows,
+	applyPolicyRows,
 }
 
 func buildCatalog(t *testing.T) *catalog {

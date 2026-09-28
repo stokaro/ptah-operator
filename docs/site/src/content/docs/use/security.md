@@ -207,28 +207,48 @@ installation that wants it should have it. What matters is that choosing it is
 a decision someone made on purpose, rather than a default an author can reach
 without anyone else noticing.
 
-Where independent approval is an operational requirement, install
-[`examples/approval-policy-guard.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/approval-policy-guard.yaml).
-It is a `ValidatingAdmissionPolicy`, cluster-scoped and administrator-owned, so
-an author with complete rights over resources in their own namespace cannot
-edit, rebind or delete it. It covers both kinds and both `CREATE` and `UPDATE`:
-a guard that watched only updates is bypassed by creating the resource with
-`Always` already set.
+The chart ships the guard that makes it one, on by default. `applyPolicyGuard`
+renders a `ValidatingAdmissionPolicy` and its binding, cluster-scoped and owned
+by the release, so an author with complete rights over resources in their own
+namespace cannot edit, rebind or delete it. It covers both kinds and both
+`CREATE` and `UPDATE`: a guard that watched only updates is bypassed by
+creating the resource with `Always` already set. The refusal names the field
+and says what to do instead: use `OnApproval`, or ask an apply-policy
+administrator to make the change.
 
-What it refuses is the transition into `Always`, not the value itself. That
-distinction is load-bearing. The operator patches these resources to add and
-remove its operation finalizer, and its service account is not exempt, so a
+Who counts as one is `applyPolicyGuard.exemptGroups`, the groups whose members
+may select `Always`. The default is `system:masters` alone. It is the one group
+Kubernetes itself puts beyond authorization, and its members could delete the
+policy anyway, so exempting them opens nothing and keeps a way to choose
+`Always` that needs no Helm upgrade. No other group is guessed: `cluster-admin`
+is a ClusterRole bound to whichever groups a distribution chose, and a chart
+that named one of them would exempt a different set of people on every
+distribution. Add the group that owns apply policy in your cluster, and the
+group of a GitOps controller that creates resources with `Always` (for a
+ServiceAccount, its `system:serviceaccounts:<namespace>` group). The chart
+refuses `system:authenticated` there, because exempting every authenticated
+identity is turning the guard off, and that is `applyPolicyGuard.enabled:
+false`, said openly. An installation that wants unattended apply for everyone
+sets it, and this section then does not apply to it.
+
+What the guard refuses is the transition into `Always`, not the value itself.
+That distinction is load-bearing. The operator patches these resources to add
+and remove its operation finalizer, and its service account is not exempt, so a
 guard that refused every write leaving `Always` in place would stop operations
 from starting and stop a finished one from releasing its finalizer -- an
 administrator who chose `Always` would have wedged every resource they chose it
-for. Leaving the field where an administrator put it is permitted, and so is
-moving back to `OnApproval`; arriving at `Always` from anywhere else is not.
+for. Leaving the field where an administrator put it is permitted, so the
+resource's owner keeps editing everything else in it, and so is moving back to
+`OnApproval`; arriving at `Always` from anywhere else is not. Upgrading an
+installation whose resources already apply with `Always` changes nothing for
+them: they keep applying and their owners keep editing them. What changes is
+who may create the next one.
 
-Two things to check after installing it. A policy with no binding is inert and
-reads exactly like one in force, so confirm the binding exists and that its
-`validationActions` is `Deny` -- `Warn` and `Audit` record the bypass rather
-than refusing it. And the binding's namespace selector decides which namespaces
-are covered; the example covers all of them.
+The binding covers every namespace, and its `validationActions` is `Deny`;
+`Warn` and `Audit` would record the bypass rather than refuse it. The envtest
+suite under `test/envtest/admissionpolicy` holds the installed policy to each
+request above, and the acceptance suite holds it to an impersonated author and
+administrator on a cluster.
 
 Start namespace-scoped bindings from the
 desired-state author (`examples/desired-state-author-role.yaml`) and
