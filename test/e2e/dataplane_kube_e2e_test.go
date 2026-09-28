@@ -210,8 +210,8 @@ func removeLineBreaks(value string) string {
 // waitForSchema reads the schema every two seconds until match holds, and
 // returns the document that satisfied it: a claim about the moment the wait
 // ended is made against that document, not a later read. Every reading audits
-// the Jobs that finished since the last, and a schema that entered Failed ends
-// the wait at once.
+// the Jobs that finished since the last, and a schema that entered Failed for
+// the spec it holds ends the wait at once.
 func (d *dataPlane) waitForSchema(name, description string, match func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
 	d.t.Helper()
 	deadline := time.Now().Add(waitTimeout)
@@ -224,7 +224,7 @@ func (d *dataPlane) waitForSchema(name, description string, match func(*ptahv1al
 			if match(schema) {
 				return schema
 			}
-			if schema.Status.Phase == ptahv1alpha1.PhaseFailed {
+			if failedForCurrentSpec(schema) {
 				d.fatalf("%s entered Failed while waiting for %s", name, description)
 			}
 		}

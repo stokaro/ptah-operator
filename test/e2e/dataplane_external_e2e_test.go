@@ -283,7 +283,7 @@ func (d *dataPlane) waitForHeldPlan(schema string, applyCheckpoint checkpoint, g
 				d.scanObject(candidate, "the "+schema+" "+context)
 				return candidate
 			}
-			if candidate.Status.Phase == ptahv1alpha1.PhaseFailed {
+			if failedForCurrentSpec(candidate) {
 				d.fatalf("%s entered Failed while waiting for %s", schema, messages.failedWhile)
 			}
 		}

@@ -422,6 +422,33 @@ func TestFailedBeforeResolveChild(t *testing.T) {
 	}
 }
 
+func TestFailedForCurrentSpec(t *testing.T) {
+	t.Parallel()
+	failed := failedAccessSchema()
+	failed.Generation, failed.Status.ObservedGeneration = 2, 2
+	if !failedForCurrentSpec(failed) {
+		t.Fatal("a schema that failed for the spec it holds was not recognized")
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*ptahv1alpha1.PtahSchema)
+	}{
+		// The reading that failed CI: suspended, and not yet observed.
+		{"failed for the spec before the edit", func(s *ptahv1alpha1.PtahSchema) { s.Generation = 3 }},
+		{"never observed", func(s *ptahv1alpha1.PtahSchema) { s.Status.ObservedGeneration = 0 }},
+		{"not failed", func(s *ptahv1alpha1.PtahSchema) { s.Status.Phase = ptahv1alpha1.PhaseSuspended }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			schema := failed.DeepCopy()
+			test.mutate(schema)
+			if failedForCurrentSpec(schema) {
+				t.Fatal("the reading passed as a failure of the current spec")
+			}
+		})
+	}
+}
+
 func TestTLSProxyCounter(t *testing.T) {
 	t.Parallel()
 	for body, want := range map[string]int64{"0": 0, "17\n": 17, "12345\n\n": 12345} {
