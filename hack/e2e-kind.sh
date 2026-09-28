@@ -2892,7 +2892,8 @@ E2E_ENGINE=mysql \
 # Reference data runs after the migration path and inside the same namespace, on
 # a database of its own, because "works on first creation of a database, when
 # the target tables do not exist yet" is a scope line that needs tables which
-# really do not exist.
+# really do not exist. Both are Go phases, and each runs the engine its name
+# ends in.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2900,7 +2901,7 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_ENGINE=postgresql \
-	run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"
+	run_recorded_phase reference-data-postgresql run_go_phase reference-data-postgresql
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
@@ -2909,11 +2910,12 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_ENGINE=mysql \
-	run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"
+	run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql
 
 # The alerting path runs last in the PostgreSQL migrations suite, on the cluster
 # that suite leaves: the migration rows are what leave an Apply nobody accounted
-# for, which is the first thing the phase needs a receiver to be told about.
+# for, which is the first thing the phase needs a receiver to be told about. It
+# is a Go phase too.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
@@ -2922,7 +2924,7 @@ E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_PROMETHEUS_IMAGE=$E2E_PROMETHEUS_IMAGE \
 E2E_ALERTMANAGER_IMAGE=$E2E_ALERTMANAGER_IMAGE \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
-	run_recorded_phase alerting "$ROOT_DIR/hack/e2e-alerting.sh"
+	run_recorded_phase alerting run_go_phase alerting
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \

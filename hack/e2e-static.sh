@@ -290,7 +290,6 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 "$ROOT_DIR/hack/e2e-shared-images-selftest.sh"
 "$ROOT_DIR/hack/e2e-suites-selftest.sh"
 "$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"
-"$ROOT_DIR/hack/e2e-sql-selftest.sh"
 "$ROOT_DIR/hack/e2e-ha-metrics-selftest.sh"
 
 # Every phase the driver runs is measured, and it is measured in the one place
@@ -314,27 +313,10 @@ grep -F 'timing_end fail' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 }
 # The longest phases carry scenario marks. Without them the report names a
 # ninety-minute phase and nothing inside it, which is the measurement the
-# critical-path work needs most. A Go phase declares its scenarios in
-# test/e2e/phases, which refuses a declaration with none; the scripts left mark
-# their own.
-timing_phase_script=e2e-reference-data
-# Indented too: a phase that selects its scenarios by engine marks them
-# inside the branch that runs them.
-timing_scenarios=$(grep -cE '^[[:space:]]*timing_next scenario ' \
-	"$ROOT_DIR/hack/$timing_phase_script.sh" || true)
-[ "$timing_scenarios" -ge 3 ] || {
-	printf 'e2e static: %s marks %s scenarios; the report needs its steps named\n' \
-		"$timing_phase_script.sh" "$timing_scenarios" >&2
-	exit 1
-}
-# shellcheck disable=SC2016 # Match the literal source line in the phase.
-grep -F '. "$ROOT_DIR/hack/e2e-timing.sh"' "$ROOT_DIR/hack/$timing_phase_script.sh" >/dev/null || {
-	printf 'e2e static: %s marks scenarios without sourcing the stopwatch\n' \
-		"$timing_phase_script.sh" >&2
-	exit 1
-}
-printf 'e2e static: %s measured lifecycle phases, each naming its scenarios\n' \
-	"$timing_recorded_phases"
+# critical-path work needs most. Those phases are Go phases now, and each
+# declares its scenarios in test/e2e/phases, which refuses a declaration with
+# none.
+printf 'e2e static: %s measured lifecycle phases\n' "$timing_recorded_phases"
 
 # The images a matrix loads are checked against the run that loads them. The
 # refusals live in the driver and are measured by the self-test above; these
@@ -952,38 +934,6 @@ if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null; then
 	printf '%s\n' 'e2e static: registry password is handed off through the host environment' >&2
 	exit 1
 fi
-secret_script=e2e-reference-data.sh
-grep -F 'grep -F -f' "$ROOT_DIR/hack/$secret_script" >/dev/null
-grep -F -- '--rawfile' "$ROOT_DIR/hack/$secret_script" >/dev/null
-
-# The reference-data phase measures a refusal -- no declared row value in
-# status, an Event, or a log -- so the proofs that read for one are pinned here.
-# A phase that kept the scanner and stopped calling it would still pass its own
-# assertions.
-for reference_marker in \
-	'e2e reference data: starting the %s lifecycle on a database with no tables' \
-	'scan_for_rows' \
-	'collect_declared_row_values' \
-	'assert_declared_rows 2 0 ""' \
-	'assert_declared_rows 2 3 "Czech Republic"' \
-	'assert_repeated_reconciliation_changes_nothing' \
-	'assert_data_only_change_reconciles' \
-	'assert_external_edit_refuses_a_stale_approval' \
-	'Reference data:   0 to insert, 1 to update, 0 to delete' \
-	'assert_kubectl_ptah_schema_line' \
-	'kubectl ptah schema never reported' \
-	'assert_removed_declaration_keeps_rows' \
-	'assert_rows_never_left_the_database' \
-	'a reconciliation with no declared change rewrote the managed rows' \
-	'the controller log is empty, so the row scan would have measured nothing' \
-	'an approval naming the replaced plan was accepted' \
-	'removing the declaration changed the managed rows' \
-	'carries a declared row value'; do
-	grep -F -- "$reference_marker" "$ROOT_DIR/hack/e2e-reference-data.sh" >/dev/null || {
-		printf 'e2e static: live reference-data proof marker is missing: %s\n' "$reference_marker" >&2
-		exit 1
-	}
-done
 # The proof is a sequence, and each step is a different statement about the same
 # tables: declared, changed, no longer declared, declared empty, and declared
 # again behind a fence. Each revision carries the Go source Ptah reads and the

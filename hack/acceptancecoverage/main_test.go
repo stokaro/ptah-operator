@@ -245,18 +245,21 @@ func TestGoPhasesReadTheirDeclaredScenarios(t *testing.T) {
 	}
 }
 
-// The migration phases are Go phases that each run one engine. The table reads
-// the engine from the driver's binding and the scenarios from the declaration,
-// so a cell that listed the other engine, or no engine, would report coverage
-// the job never ran.
-func TestMigrationPhasesReadTheirEngineAndDeclaredScenarios(t *testing.T) {
+// The migration and reference-data phases are Go phases that each run one
+// engine. The table reads the engine from the driver's binding and the
+// scenarios from the declaration, so a cell that listed the other engine, or
+// no engine, would report coverage the job never ran.
+func TestEnginePhasesReadTheirEngineAndDeclaredScenarios(t *testing.T) {
 	t.Parallel()
 	table, err := buildCoverage(repositoryRoot, "edge")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, declared := range []e2ephases.Phase{e2ephases.MigrationsPostgreSQL.Phase, e2ephases.MigrationsMySQL.Phase} {
-		engine := strings.TrimPrefix(declared.Name, "migrations-")
+	for _, declared := range []e2ephases.Phase{
+		e2ephases.MigrationsPostgreSQL.Phase, e2ephases.MigrationsMySQL.Phase,
+		e2ephases.ReferenceDataPostgreSQL.Phase, e2ephases.ReferenceDataMySQL.Phase,
+	} {
+		engine := declared.Name[strings.LastIndex(declared.Name, "-")+1:]
 		listed := 0
 		for _, cell := range table.cells {
 			for _, phase := range cell.phases {

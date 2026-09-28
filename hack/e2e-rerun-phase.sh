@@ -66,7 +66,7 @@ case $RERUN_PHASE in
 	cert-rotation) RERUN_GO_PHASE=cert-rotation ;;
 	dataplane) RERUN_GO_PHASE=dataplane ;;
 	migrations-postgresql | migrations-mysql) RERUN_GO_PHASE=$RERUN_PHASE ;;
-	reference-data-postgresql | reference-data-mysql) RERUN_SCRIPT=hack/e2e-reference-data.sh ;;
+	reference-data-postgresql | reference-data-mysql) RERUN_GO_PHASE=$RERUN_PHASE ;;
 	*) fail "unsupported phase $RERUN_PHASE" ;;
 esac
 [ -n "$RERUN_GO_PHASE" ] || [ -x "$ROOT_DIR/$RERUN_SCRIPT" ] ||

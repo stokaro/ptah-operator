@@ -2921,20 +2921,20 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "PostgreSQL reference-data lifecycle omitted",
-			old:         `run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"`,
+			old:         `run_recorded_phase reference-data-postgresql run_go_phase reference-data-postgresql`,
 			replacement: `true # reference-data lifecycle omitted`,
 			wantError:   "PostgreSQL reference-data lifecycle",
 		},
 		{
 			name:        "MySQL reference-data lifecycle omitted",
-			old:         `run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"`,
+			old:         `run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql`,
 			replacement: `true # reference-data lifecycle omitted`,
 			wantError:   "MySQL reference-data lifecycle",
 		},
 		{
 			name:        "reference-data lifecycle call separated from its environment",
-			old:         `run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"`,
-			replacement: "true\n\trun_recorded_phase reference-data-mysql \"$ROOT_DIR/hack/e2e-reference-data.sh\"",
+			old:         `run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql`,
+			replacement: "true\n\trun_recorded_phase reference-data-mysql run_go_phase reference-data-mysql",
 			wantError:   `reference-data-mysql phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
 		},
 		{
@@ -3566,94 +3566,6 @@ func TestVerifyControlPlaneShapeSelftestWiringRejectsMutations(t *testing.T) {
 	}
 }
 
-// A guard that reads the trim instead of the exec skips the phase's own setup
-// in silence, and the phase then blames the operator for a state it never
-// received. The split that fixes it is shell, so the gate has to keep running
-// the self-test that measures it.
-func TestVerifySQLStatementSelftestWiringRejectsMutations(t *testing.T) {
-	t.Parallel()
-
-	files := repositoryE2EWiringFiles()
-	source := readE2ESource(t, files.staticChecks)
-	tests := []struct {
-		name        string
-		replacement string
-		wantError   string
-	}{
-		{
-			name:        "self-test invocation removed",
-			replacement: `: # SQL statement self-test removed`,
-			wantError:   "SQL statement self-test wiring",
-		},
-		{
-			name:        "self-test failure ignored",
-			replacement: `"$ROOT_DIR/hack/e2e-sql-selftest.sh" || true`,
-			wantError:   "SQL statement self-test wiring",
-		},
-		{
-			name: "self-test hidden in false branch",
-			replacement: "if false; then\n" +
-				"\t\"$ROOT_DIR/hack/e2e-sql-selftest.sh\"\n" +
-				"fi",
-			wantError: "always-false wrapper",
-		},
-	}
-	const invocation = `"$ROOT_DIR/hack/e2e-sql-selftest.sh"`
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			mutatedFiles := files
-			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
-			err := verifyE2EWiring(mutatedFiles)
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
-			}
-		})
-	}
-}
-
-// The self-test proves the helpers; this proves the call sites still reach
-// them. The reference-data phase surrounds its guarded statement with value
-// queries that differ by one word, so the way the defect comes back is a copy
-// of the neighbor.
-func TestVerifySQLStatementGuardsRejectValueHelperCallSites(t *testing.T) {
-	t.Parallel()
-
-	files := repositoryE2EWiringFiles()
-	const wantError = "must run through the statement helper"
-	tests := []struct {
-		name        string
-		fixture     string
-		path        string
-		assign      func(*e2eWiringFiles, string)
-		old         string
-		replacement string
-	}{
-		{
-			name:    "external edit restored to the value helper",
-			fixture: "e2e-reference-data.sh",
-			path:    files.referenceData,
-			assign:  func(mutated *e2eWiringFiles, path string) { mutated.referenceData = path },
-			old: `	reference_statement "UPDATE countries SET name = 'Edited outside the operator' WHERE code = 'US'" >/dev/null ||
-		fail "the external edit could not be made"`,
-			replacement: `	reference_query "UPDATE countries SET name = 'Edited outside the operator' WHERE code = 'US'" >/dev/null ||
-		fail "the external edit could not be made"`,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			source := readE2ESource(t, test.path)
-			mutatedFiles := files
-			test.assign(&mutatedFiles, writeMutatedE2ESource(t, test.fixture, source, test.old, test.replacement))
-			err := verifyE2EWiring(mutatedFiles)
-			if err == nil || !strings.Contains(err.Error(), wantError) {
-				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, wantError)
-			}
-		})
-	}
-}
-
 func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 	t.Parallel()
 
@@ -4197,15 +4109,15 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 
 	files := repositoryE2EWiringFiles()
 	harness := readE2ESource(t, files.harness)
-	referenceData := readE2ESource(t, files.referenceData)
+	highAvailability := readE2ESource(t, files.highAvailability)
 	// Between the credentials and the engine, in every migration phase's call.
 	isolationBindings := "E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n"
 	tests := []struct {
-		name          string
-		referenceData bool
-		old           string
-		replacement   string
-		wantError     string
+		name             string
+		highAvailability bool
+		old              string
+		replacement      string
+		wantError        string
 	}{
 		{
 			name:        "binding removed",
@@ -4360,11 +4272,11 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			wantError: `migrations-postgresql phase must bind E2E_DOCKER_CONTEXT to "$DOCKER_CONTEXT", and binds "$SELECTED_DOCKER_CONTEXT"`,
 		},
 		{
-			name:          "another phase's script declares the isolation key",
-			referenceData: true,
-			old:           "PHASE_ENGINE=${E2E_ENGINE:-}\n",
-			replacement:   "PHASE_ENGINE=${E2E_ENGINE:-}\nISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation\n",
-			wantError:     "hack/e2e-reference-data.sh declares ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation, and the reference-data-postgresql phase is not one that isolates a node",
+			name:             "another phase's script declares the isolation key",
+			highAvailability: true,
+			old:              "FOREIGN_NAMESPACE=${E2E_FOREIGN_NAMESPACE:-}\n",
+			replacement:      "FOREIGN_NAMESPACE=${E2E_FOREIGN_NAMESPACE:-}\nISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation\n",
+			wantError:        "hack/e2e-ha.sh declares ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation, and the ha phase is not one that isolates a node",
 		},
 	}
 	for _, test := range tests {
@@ -4372,9 +4284,9 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
 			switch {
-			case test.referenceData:
-				mutatedFiles.referenceData = writeMutatedE2ESource(
-					t, "e2e-reference-data.sh", referenceData, test.old, test.replacement)
+			case test.highAvailability:
+				mutatedFiles.highAvailability = writeMutatedE2ESource(
+					t, "e2e-ha.sh", highAvailability, test.old, test.replacement)
 			default:
 				mutatedFiles.harness = writeMutatedE2ESource(
 					t, "e2e-kind.sh", harness, test.old, test.replacement)
@@ -4404,8 +4316,6 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		staticChecks:               filepath.Join("..", e2eStaticPath),
 		crdUpgrade:                 filepath.Join("..", e2eCRDUpgradePath),
 		highAvailability:           filepath.Join("..", e2eHAPath),
-		referenceData:              filepath.Join("..", e2eReferenceDataPath),
-		alerting:                   filepath.Join("..", e2eAlertingPath),
 		failedHookEvidence:         filepath.Join("..", failedHookEvidencePath),
 		failedHookEvidenceSelftest: filepath.Join("..", failedHookEvidenceSelftestPath),
 		admissionSchemaContract:    filepath.Join("..", admissionSchemaContractPath),

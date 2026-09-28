@@ -384,22 +384,7 @@ func (m *migrationRun) databaseURL(database, user string) string {
 // administrator, in the database given, and returns what the client printed.
 // Use it where the phase guards a statement rather than comparing its output.
 func (m *migrationRun) sqlStatement(database, statement string) (string, error) {
-	var command []string
-	switch m.engine.name {
-	case "postgresql":
-		command = []string{"sh", "-ec",
-			`PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"`,
-			"sh", database, statement}
-	case "mysql":
-		command = []string{"sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`,
-			"sh", database, statement}
-	}
-	stdout, stderr, err := m.kubectl(append([]string{"-n", m.in.TestNamespace, "exec", "deployment/" + m.engine.service, "--"}, command...)...)
-	if err != nil {
-		return string(stdout), fmt.Errorf("exec in deployment/%s: %w: %s", m.engine.service, err, strings.TrimSpace(string(stderr)))
-	}
-	return string(stdout), nil
+	return databaseSQL(m.ctx, m.cluster, m.in.TestNamespace, m.engine, database, statement)
 }
 
 // query is sql_value: one statement for what it printed, with the whitespace
@@ -428,22 +413,7 @@ func (m *migrationRun) widgetColumnCount(column, database string) string {
 // serverStatement runs one statement against the server's own database as
 // its administrator, for the statements that create and drop databases.
 func (m *migrationRun) serverStatement(statement string) (string, error) {
-	var command []string
-	switch m.engine.name {
-	case "postgresql":
-		command = []string{"sh", "-ec",
-			`PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "$1"`,
-			"sh", statement}
-	case "mysql":
-		command = []string{"sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
-			"sh", statement}
-	}
-	stdout, stderr, err := m.kubectl(append([]string{"-n", m.in.TestNamespace, "exec", "deployment/" + m.engine.service, "--"}, command...)...)
-	if err != nil {
-		return string(stdout), fmt.Errorf("exec in deployment/%s: %w: %s", m.engine.service, err, strings.TrimSpace(string(stderr)))
-	}
-	return string(stdout), nil
+	return serverSQL(m.ctx, m.cluster, m.in.TestNamespace, m.engine, statement)
 }
 
 // databaseExists is the count of databases with the name on the server.

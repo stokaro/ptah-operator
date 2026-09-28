@@ -55,8 +55,6 @@ const (
 	e2eStaticPath                  = "hack/e2e-static.sh"
 	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
 	e2eHAPath                      = "hack/e2e-ha.sh"
-	e2eReferenceDataPath           = "hack/e2e-reference-data.sh"
-	e2eAlertingPath                = "hack/e2e-alerting.sh"
 	failedHookEvidencePath         = "hack/failed-hook-evidence.jq"
 	failedHookEvidenceSelftestPath = "hack/failed-hook-evidence-selftest.sh"
 	admissionSchemaContractPath    = "hack/admission-schema-contract.jq"
@@ -229,8 +227,6 @@ func main() {
 		staticChecks:               e2eStaticPath,
 		crdUpgrade:                 e2eCRDUpgradePath,
 		highAvailability:           e2eHAPath,
-		referenceData:              e2eReferenceDataPath,
-		alerting:                   e2eAlertingPath,
 		failedHookEvidence:         failedHookEvidencePath,
 		failedHookEvidenceSelftest: failedHookEvidenceSelftestPath,
 		admissionSchemaContract:    admissionSchemaContractPath,
@@ -2267,8 +2263,6 @@ type e2eWiringFiles struct {
 	admissionSchemaSelftest    string
 	controllerSchemaContract   string
 	controllerSchemaSelftest   string
-	referenceData              string
-	alerting                   string
 }
 
 type lifecycleSourceContract struct {
@@ -3002,9 +2996,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyControllerObjectSchemaAssets(files); err != nil {
 		return err
 	}
-	if err := verifySQLStatementGuards(files); err != nil {
-		return err
-	}
 	if err := verifyAPIServerEndpointInventoryFilter(files.apiServerEndpointFilter); err != nil {
 		return err
 	}
@@ -3366,8 +3357,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane run_go_phase dataplane`),
 		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql`),
 		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql run_go_phase migrations-mysql`),
-		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"`),
-		exactSourceLine("MySQL reference-data lifecycle", `run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"`),
+		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql run_go_phase reference-data-postgresql`),
+		exactSourceLine("MySQL reference-data lifecycle", `run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql`),
 		exactSourceLine("uninstall lifecycle", `run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
 		exactSourceLine("post-lifecycle installed chart export", `export_release_chart`),
 		// The pass line below is reachable only for a run that left no phase out.
@@ -4262,10 +4253,6 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		// refuses one that is wrong, and those are two behaviors of the same
 		// loop. A loop that stopped refusing would still look like it waited.
 		exactSourceLine("control-plane shape self-test wiring", `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"`),
-		// The split that lets a `|| fail` guard see the exec instead of the
-		// trim is shell, and a guard that stopped reporting a failed statement
-		// leaves the phase blaming the operator for setup it never received.
-		exactSourceLine("SQL statement self-test wiring", `"$ROOT_DIR/hack/e2e-sql-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4285,49 +4272,15 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-control-plane-shape-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the control-plane shape self-test must be wired exactly once", files.staticChecks)
 	}
-	if bytes.Count(staticContents, []byte("e2e-sql-selftest.sh")) != 1 {
-		return fmt.Errorf("%s: the SQL statement self-test must be wired exactly once", files.staticChecks)
-	}
 	for _, step := range []sourceContractStep{
 		staticContract[1], staticContract[3], staticContract[4], staticContract[5],
-		staticContract[6], staticContract[7],
+		staticContract[6],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
 		}
 		if err := rejectEarlySuccessfulExit(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-// The statements the reference-data phase runs by hand -- an external edit
-// among them -- are guarded with `|| fail`, and the exit status of a pipeline
-// belongs to its last stage. The value helper ends in the trim, so a guard on
-// one reads tr and never the exec: the statement is skipped in silence and the
-// phase dies at its next wait, accusing the operator of a state the harness
-// never set up. The statement helper differs from the value helper it sits
-// among by one word, with neighboring calls reading the same, which is what
-// this refuses: SQL that changes a database handed to the value helper.
-var mutatingValueQuery = regexp.MustCompile(
-	`(?m)^[^#\r\n]*\breference_query\b[ \t]*(?:\\\r?\n[ \t]*)?` +
-		`"[ \t]*(?i:ALTER|CREATE|DELETE|DROP|GRANT|INSERT|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE)\b`)
-
-// verifySQLStatementGuards refuses a call site that went back to the helper
-// whose status belongs to tr. It reads the source, so a statement assembled in
-// a variable is beyond it; hack/e2e-sql-selftest.sh drives the helpers
-// themselves for the half a reader cannot see.
-func verifySQLStatementGuards(files e2eWiringFiles) error {
-	for _, path := range []string{files.referenceData} {
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		if match := mutatingValueQuery.FindIndex(contents); match != nil {
-			line := 1 + bytes.Count(contents[:match[0]], []byte{'\n'})
-			return fmt.Errorf("%s:%d: a statement that changes the database must run through the statement helper, which reports what the exec reported; the value helper ends in the trim, so a guard on it never sees a failed statement",
-				path, line)
 		}
 	}
 	return nil
@@ -5163,46 +5116,6 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 			},
 		},
 		{
-			phase:  "reference-data-postgresql",
-			script: "hack/e2e-reference-data.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
-				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
-				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
-				{name: "E2E_ENGINE", value: `postgresql`},
-			},
-		},
-		{
-			phase:  "reference-data-mysql",
-			script: "hack/e2e-reference-data.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
-				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
-				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
-				{name: "E2E_ENGINE", value: `mysql`},
-			},
-		},
-		{
-			phase:  "alerting",
-			script: "hack/e2e-alerting.sh",
-			bindings: []phaseEnvironmentBinding{
-				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
-				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
-				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
-				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
-				{name: "E2E_FIXTURE_IMAGE", value: `$E2E_FIXTURE_IMAGE`},
-				{name: "E2E_PROMETHEUS_IMAGE", value: `$E2E_PROMETHEUS_IMAGE`},
-				{name: "E2E_ALERTMANAGER_IMAGE", value: `$E2E_ALERTMANAGER_IMAGE`},
-				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
-			},
-		},
-		{
 			phase:  "uninstall",
 			script: "hack/e2e-crd-upgrade.sh",
 			bindings: []phaseEnvironmentBinding{
@@ -5238,19 +5151,23 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 // line per variable rather than one block per phase, because an input means
 // the same thing in every phase that reads it.
 var goPhaseBindings = map[string]string{
-	"E2E_KUBECONFIG":                `$KUBECONFIG_FILE`,
-	"E2E_OPERATOR_NAMESPACE":        `$OPERATOR_NAMESPACE`,
-	"E2E_TEST_NAMESPACE":            `$TEST_NAMESPACE`,
-	"E2E_FOREIGN_NAMESPACE":         `$FOREIGN_NAMESPACE`,
-	"E2E_HELM_RELEASE":              `$HELM_RELEASE`,
-	"E2E_CHART_PACKAGE":             `$CHART_PACKAGE`,
-	"E2E_EXECUTOR_IMAGE":            `$E2E_EXECUTOR_IMAGE`,
-	"E2E_RUNNER_IMAGE":              `$E2E_RUNNER_IMAGE`,
-	"E2E_PTAH_VERSION":              `$E2E_PTAH_VERSION`,
-	"E2E_CONTROLLER_IMAGE":          `$CANDIDATE_OPERATOR_IMAGE`,
-	"E2E_CONTROLLER_REVISION":       `$CONTROLLER_REVISION`,
-	"E2E_CONTROLLER_STATE_VERSION":  `$CONTROLLER_STATE_VERSION`,
-	"E2E_FIXTURE_IMAGE":             `$E2E_FIXTURE_IMAGE`,
+	"E2E_KUBECONFIG":               `$KUBECONFIG_FILE`,
+	"E2E_OPERATOR_NAMESPACE":       `$OPERATOR_NAMESPACE`,
+	"E2E_TEST_NAMESPACE":           `$TEST_NAMESPACE`,
+	"E2E_FOREIGN_NAMESPACE":        `$FOREIGN_NAMESPACE`,
+	"E2E_HELM_RELEASE":             `$HELM_RELEASE`,
+	"E2E_CHART_PACKAGE":            `$CHART_PACKAGE`,
+	"E2E_EXECUTOR_IMAGE":           `$E2E_EXECUTOR_IMAGE`,
+	"E2E_RUNNER_IMAGE":             `$E2E_RUNNER_IMAGE`,
+	"E2E_PTAH_VERSION":             `$E2E_PTAH_VERSION`,
+	"E2E_CONTROLLER_IMAGE":         `$CANDIDATE_OPERATOR_IMAGE`,
+	"E2E_CONTROLLER_REVISION":      `$CONTROLLER_REVISION`,
+	"E2E_CONTROLLER_STATE_VERSION": `$CONTROLLER_STATE_VERSION`,
+	"E2E_FIXTURE_IMAGE":            `$E2E_FIXTURE_IMAGE`,
+	// The alerting phase's monitoring path, mirrored into the registry only
+	// where a suite runs that phase.
+	"E2E_PROMETHEUS_IMAGE":          `$E2E_PROMETHEUS_IMAGE`,
+	"E2E_ALERTMANAGER_IMAGE":        `$E2E_ALERTMANAGER_IMAGE`,
 	"E2E_POSTGRES_IMAGE":            `$E2E_POSTGRES_IMAGE`,
 	"E2E_MYSQL_IMAGE":               `$E2E_MYSQL_IMAGE`,
 	"E2E_REGISTRY_IP":               `$REGISTRY_IP`,
@@ -5474,16 +5391,17 @@ func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
 
 // goPhaseBinding is what the driver binds one input of a Go phase to.
 // E2E_ENGINE is the one input whose value differs between the phases that read
-// it: each migration phase runs the engine its name ends in, so a phase bound
-// to the other engine would cover one engine twice and leave the other
-// unproven, with both jobs green.
+// it: each migration and reference-data phase runs the engine its name ends
+// in, so a phase bound to the other engine would cover one engine twice and
+// leave the other unproven, with both jobs green.
 func goPhaseBinding(phase, input string) (string, bool) {
 	if input == engineInput {
-		engine, migration := strings.CutPrefix(phase, "migrations-")
-		if !migration || (engine != "postgresql" && engine != "mysql") {
-			return "", false
+		for _, family := range []string{"migrations-", "reference-data-"} {
+			if engine, ok := strings.CutPrefix(phase, family); ok && (engine == "postgresql" || engine == "mysql") {
+				return engine, true
+			}
 		}
-		return engine, true
+		return "", false
 	}
 	value, known := goPhaseBindings[input]
 	return value, known
@@ -5614,10 +5532,6 @@ func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
 		return files.crdUpgrade
 	case e2eHAPath:
 		return files.highAvailability
-	case e2eReferenceDataPath:
-		return files.referenceData
-	case e2eAlertingPath:
-		return files.alerting
 	default:
 		return ""
 	}
