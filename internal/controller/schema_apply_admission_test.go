@@ -39,7 +39,6 @@ func TestASuccessorAdoptsAndRetiresTheApplyJobTheBuilderWrote(t *testing.T) {
 	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
 	schema := schemaOwning(job)
 	annotations := job.Annotations
-	schema.Status.Phase = operatorv1alpha1.PhasePending
 	schema.Status.ActiveOperation = nil
 	schema.Status.ExecutionBinding.Epoch = "v1-99999999999999999999999999999999"
 	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
@@ -49,10 +48,12 @@ func TestASuccessorAdoptsAndRetiresTheApplyJobTheBuilderWrote(t *testing.T) {
 		AdmissionSnapshot: snapshot,
 		Plan:              planBindingOf(t, job),
 	}
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse,
-		operatorv1alpha1.ReasonExecutionBindingChanged, "retired")
-	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse,
-		operatorv1alpha1.ReasonExecutionBindingChanged, "retired")
+	schema.Status.PendingBindingRetirement = &operatorv1alpha1.BindingRetirementStatus{
+		RetiredEpoch: schema.Status.PendingObservation.Plan.ExecutionBindingID,
+		Job: &operatorv1alpha1.RetiredJobStatus{
+			Operation: operatorv1alpha1.OperationApply, Name: job.Name,
+		},
+	}
 	if schema.Status.PendingObservation.Plan.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
 		t.Fatal("the fixture did not retire the epoch the built Job belongs to")
 	}
@@ -60,19 +61,22 @@ func TestASuccessorAdoptsAndRetiresTheApplyJobTheBuilderWrote(t *testing.T) {
 	reconciler.Client = admittedJobWrites(api.(client.WithWatch), refusingJobBuilder{})
 
 	stored := safetyGetSchema(t, api, schema)
-	adopted, err := reconciler.adoptRetiredPredecessorApplyJobUID(context.Background(), stored, stored.Status.PendingObservation)
-	if err != nil || !adopted {
-		t.Fatalf("adoptRetiredPredecessorApplyJobUID() = %t, %v; the successor did not recognize the built Apply Job", adopted, err)
+	if err := reconciler.adoptRetiredApplyJobUID(context.Background(), stored, stored.Status.PendingObservation); err != nil {
+		t.Fatalf("adoptRetiredApplyJobUID() = %v", err)
 	}
 	stored = safetyGetSchema(t, api, schema)
-	if stored.Status.PendingObservation.ApplyJobUID != job.UID {
-		t.Fatalf("adopted Job UID = %q, want %q", stored.Status.PendingObservation.ApplyJobUID, job.UID)
+	if stored.Status.PendingObservation.ApplyJobUID != job.UID || stored.Status.PendingBindingRetirement == nil ||
+		stored.Status.PendingBindingRetirement.Job == nil || stored.Status.PendingBindingRetirement.Job.UID != job.UID {
+		t.Fatalf("the successor did not recognize the built Apply Job: pending UID %q, retirement %#v, want UID %q",
+			stored.Status.PendingObservation.ApplyJobUID, stored.Status.PendingBindingRetirement, job.UID)
 	}
-	retired, err := reconciler.cleanupRetiredPredecessorApplyJob(context.Background(), stored, stored.Status.PendingObservation)
-	if err != nil || !retired {
-		t.Fatalf("cleanupRetiredPredecessorApplyJob() = %t, %v; the built Apply Job was not retired", retired, err)
+	if err := reconciler.cleanupRetiredApplyJob(context.Background(), stored, stored.Status.PendingObservation); err != nil {
+		t.Fatalf("cleanupRetiredApplyJob() = %v; the built Apply Job was not retired", err)
 	}
 	assertCleanupScheduled(t, api, job)
+	if settled := safetyGetSchema(t, api, schema); settled.Status.PendingBindingRetirement != nil {
+		t.Fatalf("the retirement outlived the cleanup it owed: %#v", settled.Status.PendingBindingRetirement)
+	}
 }
 
 // The claim that dispatched an Apply schedules its Job's cleanup from the

@@ -2303,8 +2303,10 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 					t.Fatalf("binding invalidation result = %#v, want the next pass after %s", result, statusPatchRequeue)
 				}
 				actual := safetyGetSchema(t, api, schema)
-				if actual.Status.ActiveOperation != nil || actual.Status.Plan == nil || actual.Status.Plan.UID != retiredPlanUID ||
-					actual.Status.Phase != operatorv1alpha1.PhasePending ||
+				retirement := actual.Status.PendingBindingRetirement
+				if actual.Status.ActiveOperation != nil || actual.Status.Plan != nil || retirement == nil ||
+					retirement.RetiredEpoch != oldEpoch || retirement.Plan == nil || retirement.Plan.UID != retiredPlanUID ||
+					retirement.Job != nil || actual.Status.Phase != operatorv1alpha1.PhasePending ||
 					actual.Status.NextReconciliationTime != nil || actual.Status.Source.Verified || actual.Status.Source.VerifiedAt != nil {
 					t.Fatalf("durable binding fence status = %#v", actual.Status)
 				}
@@ -2356,7 +2358,8 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 					t.Fatalf("retire fenced approvals: %v", err)
 				}
 				retired := safetyGetSchema(t, api, schema)
-				if retired.Status.Plan != nil || retired.Status.ActiveOperation != nil || retired.Status.Phase != operatorv1alpha1.PhasePending {
+				if retired.Status.Plan != nil || retired.Status.ActiveOperation != nil || retired.Status.Phase != operatorv1alpha1.PhasePending ||
+					retired.Status.PendingBindingRetirement != nil {
 					t.Fatalf("binding cleanup status = %#v", retired.Status)
 				}
 				if mode.includeApproval {
@@ -2538,6 +2541,12 @@ func TestExecutionBindingChangeRejectsDispatchedReadOnlyJobResult(t *testing.T) 
 				fenced.Status.Source.Verified || fenced.Status.Plan != nil {
 				t.Fatalf("first fence did not retain retired Job identity: %#v", fenced.Status)
 			}
+			if retirement := fenced.Status.PendingBindingRetirement; retirement == nil || retirement.RetiredEpoch != oldEpoch ||
+				retirement.Plan != nil || retirement.Job == nil || retirement.Job.Operation != operation ||
+				retirement.Job.Name != retiredOperation.JobName || retirement.Job.UID != retiredOperation.JobUID {
+				t.Fatalf("first fence recorded retirement %#v, want the retained claim's Job under epoch %q",
+					retirement, oldEpoch)
+			}
 			newEpoch := fenced.Status.ExecutionBinding.Epoch
 			persistedJob := &batchv1.Job{}
 			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
@@ -2556,7 +2565,7 @@ func TestExecutionBindingChangeRejectsDispatchedReadOnlyJobResult(t *testing.T) 
 			}
 			cleaned := safetyGetSchema(t, api, schema)
 			if cleaned.Status.ActiveOperation != nil || cleaned.Status.ExecutionBinding == nil ||
-				cleaned.Status.ExecutionBinding.Epoch != newEpoch {
+				cleaned.Status.ExecutionBinding.Epoch != newEpoch || cleaned.Status.PendingBindingRetirement != nil {
 				t.Fatalf("retired Job cleanup boundary = %#v", cleaned.Status)
 			}
 			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
@@ -2716,6 +2725,25 @@ func TestRetiredPredecessorReadOnlyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 			name: "status UID already committed",
 			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
 				schema.Status.ActiveOperation.JobUID = "different-job-uid"
+				schema.Status.PendingBindingRetirement.Job.UID = "different-job-uid"
+			},
+		},
+		{
+			name: "no retirement is pending",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement = nil
+			},
+		},
+		{
+			name: "the retirement names another claim's Job",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement.Job.Name += "-beside-it"
+			},
+		},
+		{
+			name: "the retirement retired another epoch",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement.RetiredEpoch = "v1-44444444444444444444444444444444"
 			},
 		},
 	}
@@ -2725,9 +2753,10 @@ func TestRetiredPredecessorReadOnlyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 			t.Parallel()
 
 			schema, job := predecessorReadOnlyLateCreateFixture(t, operatorv1alpha1.OperationResolve)
-			newBinding := schema.Status.ExecutionBinding.DeepCopy()
-			newBinding.Epoch = "v1-22222222222222222222222222222222"
-			schema.Status.ExecutionBinding = newBinding
+			retireReadOnlyClaim(schema)
+			if !retiredPredecessorReadOnlyJobMatches(schema, schema.Status.ActiveOperation, job) {
+				t.Fatal("the unmutated late-created Job was refused, so the row below proves nothing")
+			}
 			test.mutate(schema, job)
 			if retiredPredecessorReadOnlyJobMatches(schema, schema.Status.ActiveOperation, job) {
 				t.Fatal("retiredPredecessorReadOnlyJobMatches() accepted unproven Job")
@@ -2745,9 +2774,7 @@ func TestRetiredPredecessorReadOnlyJobMatchesProvenanceEnvelope(t *testing.T) {
 	t.Parallel()
 
 	schema, job := predecessorReadOnlyLateCreateFixture(t, operatorv1alpha1.OperationResolve)
-	newBinding := schema.Status.ExecutionBinding.DeepCopy()
-	newBinding.Epoch = "v1-22222222222222222222222222222222"
-	schema.Status.ExecutionBinding = newBinding
+	retireReadOnlyClaim(schema)
 	operation := schema.Status.ActiveOperation
 
 	if !retiredPredecessorReadOnlyJobMatches(schema, operation, job) {
@@ -2755,6 +2782,7 @@ func TestRetiredPredecessorReadOnlyJobMatchesProvenanceEnvelope(t *testing.T) {
 	}
 	committed := job.DeepCopy()
 	operation.JobUID = committed.UID
+	schema.Status.PendingBindingRetirement.Job.UID = committed.UID
 	if !retiredReadOnlyJobMatches(schema, operation, committed) {
 		t.Fatal("retiredReadOnlyJobMatches() rejected the envelope the builder writes")
 	}
@@ -3033,7 +3061,9 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 		t.Fatalf("persist execution-binding fence: %v", err)
 	}
 	fenced := safetyGetSchema(t, api, schema)
-	if fenced.Status.Plan == nil || fenced.Status.Plan.UID != retiredPlan.UID ||
+	if retirement := fenced.Status.PendingBindingRetirement; fenced.Status.Plan != nil || retirement == nil ||
+		retirement.RetiredEpoch != retiredPlan.ExecutionBindingID ||
+		retirement.Plan == nil || retirement.Plan.UID != retiredPlan.UID ||
 		fenced.Status.Phase != operatorv1alpha1.PhasePending || fenced.Status.ActiveOperation != nil {
 		t.Fatalf("durable fence lost retired plan identity: %#v", fenced.Status)
 	}
@@ -3087,8 +3117,8 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 		t.Fatalf("cleanup interruption error = %v, want injected status failure", err)
 	}
 	interrupted := safetyGetSchema(t, api, schema)
-	if interrupted.Status.Plan == nil || interrupted.Status.Plan.UID != retiredPlan.UID ||
-		!executionBindingChangeFenced(interrupted) {
+	if retirement := interrupted.Status.PendingBindingRetirement; retirement == nil ||
+		retirement.Plan == nil || retirement.Plan.UID != retiredPlan.UID {
 		t.Fatalf("cleanup interruption lost durable fence: %#v", interrupted.Status)
 	}
 	persistedLate := &operatorv1alpha1.PtahSchemaApproval{}
@@ -3112,7 +3142,7 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 	}
 	cleaned := safetyGetSchema(t, api, schema)
 	if cleaned.Status.Plan != nil || cleaned.Status.ActiveOperation != nil ||
-		cleaned.Status.Phase != operatorv1alpha1.PhasePending {
+		cleaned.Status.PendingBindingRetirement != nil || cleaned.Status.Phase != operatorv1alpha1.PhasePending {
 		t.Fatalf("restart did not finish idempotent cleanup: %#v", cleaned.Status)
 	}
 	rolloutEpoch := cleaned.Status.ExecutionBinding.Epoch
@@ -3212,7 +3242,8 @@ func TestExecutionBindingChangeTakesPrecedenceOverPolicyChange(t *testing.T) {
 	}
 	actual := safetyGetSchema(t, api, schema)
 	verified := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
-	if actual.Status.ActiveOperation != nil || actual.Status.Plan == nil || actual.Status.Plan.UID != plan.UID || actual.Status.Source.Verified ||
+	if retirement := actual.Status.PendingBindingRetirement; actual.Status.ActiveOperation != nil || actual.Status.Plan != nil ||
+		retirement == nil || retirement.Plan == nil || retirement.Plan.UID != plan.UID || actual.Status.Source.Verified ||
 		actual.Status.Phase != operatorv1alpha1.PhasePending || verified == nil ||
 		verified.Status != metav1.ConditionUnknown || verified.Reason != "ExecutionBindingChanged" {
 		t.Fatalf("combined invalidation fence = %#v", actual.Status)
@@ -3226,7 +3257,8 @@ func TestExecutionBindingChangeTakesPrecedenceOverPolicyChange(t *testing.T) {
 		t.Fatalf("retire fenced approvals: %v", err)
 	}
 	actual = safetyGetSchema(t, api, schema)
-	if actual.Status.Plan != nil || actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhasePending {
+	if actual.Status.Plan != nil || actual.Status.ActiveOperation != nil || actual.Status.PendingBindingRetirement != nil ||
+		actual.Status.Phase != operatorv1alpha1.PhasePending {
 		t.Fatalf("combined invalidation cleanup = %#v", actual.Status)
 	}
 	persistedApproval := &operatorv1alpha1.PtahSchemaApproval{}
@@ -3278,7 +3310,8 @@ func TestExecutionBindingChangeAfterApplyClaimReleasesAuthorizationBeforeDispatc
 		t.Fatalf("invalidate claimed Apply: %v", err)
 	}
 	actual := safetyGetSchema(t, api, schema)
-	if actual.Status.ActiveOperation != nil || actual.Status.Plan == nil || actual.Status.PendingLockRelease == nil ||
+	if retirement := actual.Status.PendingBindingRetirement; actual.Status.ActiveOperation != nil || actual.Status.Plan != nil ||
+		retirement == nil || retirement.Plan == nil || retirement.Job != nil || actual.Status.PendingLockRelease == nil ||
 		actual.Status.Phase != operatorv1alpha1.PhasePending || !contains(actual.Finalizers, activeOperationFinalizer) {
 		t.Fatalf("claimed Apply binding fence = %#v, finalizers %v", actual.Status, actual.Finalizers)
 	}
@@ -3293,7 +3326,8 @@ func TestExecutionBindingChangeAfterApplyClaimReleasesAuthorizationBeforeDispatc
 		t.Fatalf("release retired Apply lock: %v", err)
 	}
 	released := safetyGetSchema(t, api, schema)
-	if released.Status.PendingLockRelease != nil || released.Status.Plan == nil {
+	if released.Status.PendingLockRelease != nil || released.Status.PendingBindingRetirement == nil ||
+		released.Status.PendingBindingRetirement.Plan == nil {
 		t.Fatalf("lock release crossed plan cleanup boundary: %#v", released.Status)
 	}
 	leaseName, err := targetlock.LeaseName(testCoordinationDigest)
@@ -3311,7 +3345,8 @@ func TestExecutionBindingChangeAfterApplyClaimReleasesAuthorizationBeforeDispatc
 		t.Fatalf("retire fenced approval and plan: %v", err)
 	}
 	actual = safetyGetSchema(t, api, schema)
-	if actual.Status.Plan != nil || actual.Status.PendingLockRelease != nil || contains(actual.Finalizers, activeOperationFinalizer) {
+	if actual.Status.Plan != nil || actual.Status.PendingLockRelease != nil || actual.Status.PendingBindingRetirement != nil ||
+		contains(actual.Finalizers, activeOperationFinalizer) {
 		t.Fatalf("claimed Apply cleanup = %#v, finalizers %v", actual.Status, actual.Finalizers)
 	}
 }
@@ -3362,7 +3397,8 @@ func TestExecutionBindingChangeInvalidatesClaimDespiteTargetLockContention(t *te
 		t.Fatalf("binding invalidation under contention = %#v, want the next pass after %s", result, statusPatchRequeue)
 	}
 	actual := safetyGetSchema(t, api, schema)
-	if actual.Status.ActiveOperation != nil || actual.Status.Plan == nil || actual.Status.PendingLockRelease == nil ||
+	if actual.Status.ActiveOperation != nil || actual.Status.Plan != nil || actual.Status.PendingBindingRetirement == nil ||
+		actual.Status.PendingBindingRetirement.Plan == nil || actual.Status.PendingLockRelease == nil ||
 		actual.Status.Phase != operatorv1alpha1.PhasePending {
 		t.Fatalf("contended binding fence = %#v", actual.Status)
 	}
@@ -3376,7 +3412,8 @@ func TestExecutionBindingChangeInvalidatesClaimDespiteTargetLockContention(t *te
 		t.Fatalf("retire contended approval and plan: %v", err)
 	}
 	actual = safetyGetSchema(t, api, schema)
-	if actual.Status.Plan != nil || actual.Status.PendingLockRelease != nil || actual.Status.Phase != operatorv1alpha1.PhasePending {
+	if actual.Status.Plan != nil || actual.Status.PendingLockRelease != nil || actual.Status.PendingBindingRetirement != nil ||
+		actual.Status.Phase != operatorv1alpha1.PhasePending {
 		t.Fatalf("contended binding cleanup = %#v", actual.Status)
 	}
 }
@@ -3470,6 +3507,13 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 				t.Fatalf("dispatched binding transition = %#v", actual.Status)
 			}
 			rolloutEpoch := actual.Status.ExecutionBinding.Epoch
+			if retirement := actual.Status.PendingBindingRetirement; actual.Status.Plan != nil || retirement == nil ||
+				retirement.RetiredEpoch != oldExecutionEpoch ||
+				retirement.Plan == nil || retirement.Plan.UID != oldPlan.UID ||
+				retirement.Job == nil || retirement.Job.Operation != operatorv1alpha1.OperationApply ||
+				retirement.Job.Name != pending.ApplyJobName || retirement.Job.UID != pending.ApplyJobUID {
+				t.Fatalf("dispatched binding transition recorded retirement %#v, want the retired plan and Apply Job", retirement)
+			}
 			if pending.Plan.Fingerprint != oldPlan.Fingerprint || pending.Plan.ExecutorImage != oldPlan.ExecutorImage ||
 				pending.Plan.RunnerImage != oldPlan.RunnerImage || pending.Plan.RunnerProtocolVersion != oldPlan.RunnerProtocolVersion {
 				t.Fatalf("pending proof lost immutable old execution evidence: %#v", pending.Plan)
@@ -3512,8 +3556,22 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 			}
 			cleaned := safetyGetSchema(t, api, schema)
 			if cleaned.Status.Plan != nil || cleaned.Status.ExecutionBinding == nil ||
-				cleaned.Status.ExecutionBinding.Epoch != rolloutEpoch || cleaned.Status.PendingObservation == nil {
+				cleaned.Status.ExecutionBinding.Epoch != rolloutEpoch || cleaned.Status.PendingObservation == nil ||
+				cleaned.Status.PendingBindingRetirement == nil || cleaned.Status.PendingBindingRetirement.Plan != nil ||
+				cleaned.Status.PendingBindingRetirement.Job == nil {
 				t.Fatalf("restarted rollout cleanup = %#v", cleaned.Status)
+			}
+			// One retirement at a time: the rollback's epoch waits until the
+			// retired Apply's Job is accounted for. This Job is gone or does not
+			// carry the envelope the retired claim dispatched, so it is left
+			// alone and the record settles without a cleanup write.
+			if _, err := restarted.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("settle the retired Apply Job before the rollback: %v", err)
+			}
+			settled := safetyGetSchema(t, api, schema)
+			if settled.Status.PendingBindingRetirement != nil || settled.Status.ExecutionBinding == nil ||
+				settled.Status.ExecutionBinding.Epoch != rolloutEpoch {
+				t.Fatalf("the rollback did not wait for the retirement to settle: %#v", settled.Status)
 			}
 			if _, err := restarted.Reconcile(context.Background(), request); err != nil {
 				t.Fatalf("persist dispatched-Apply rollback epoch: %v", err)
@@ -4116,6 +4174,10 @@ func TestRetiredPredecessorApplyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 
 			schema, job := predecessorApplyCleanupMatchFixture(t)
 			schema.Status.PendingObservation.ApplyJobUID = ""
+			schema.Status.PendingBindingRetirement.Job.UID = ""
+			if !retiredPredecessorApplyJobMatches(schema, schema.Status.PendingObservation, job) {
+				t.Fatal("the unmutated late-committing Job was refused, so the row below proves nothing")
+			}
 			test.mutate(schema, job)
 			if retiredPredecessorApplyJobMatches(schema, schema.Status.PendingObservation, job) {
 				t.Fatal("retiredPredecessorApplyJobMatches() accepted an unproven late Job")
@@ -4212,6 +4274,11 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 		t.Fatalf("new execution epoch = %#v, old ID %q", fenced.Status.ExecutionBinding, oldBindingID)
 	}
 	newEpoch := fenced.Status.ExecutionBinding.Epoch
+	if retirement := fenced.Status.PendingBindingRetirement; retirement == nil || retirement.RetiredEpoch != oldBindingID ||
+		retirement.Job == nil || retirement.Job.Operation != operatorv1alpha1.OperationPlan ||
+		retirement.Job.Name != fenced.Status.ActiveOperation.JobName {
+		t.Fatalf("post-Apply proof first fence recorded retirement %#v, want the retained Plan's Job", retirement)
+	}
 	if fenced.Status.Applied != nil {
 		t.Fatalf("old read-only result created Apply attribution: %#v", fenced.Status.Applied)
 	}
@@ -4302,14 +4369,15 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 	}, nil, 0); err != nil {
 		t.Fatalf("complete new-epoch post-Apply plan: %v", err)
 	}
+	// The proof settles the Apply and keeps its attribution. The applied
+	// plan's approvals are swept in the same pass, so nothing is left for a
+	// record: the plan is gone and no retirement is pending.
 	proved := safetyGetSchema(t, api, schema)
-	if proved.Status.ActiveOperation != nil || proved.Status.PendingObservation != nil || proved.Status.Plan == nil ||
+	if proved.Status.ActiveOperation != nil || proved.Status.PendingObservation != nil || proved.Status.Plan != nil ||
+		proved.Status.PendingBindingRetirement != nil ||
 		proved.Status.Applied == nil || proved.Status.Applied.ExecutionBindingID != oldBindingID ||
-		proved.Status.Phase != operatorv1alpha1.PhasePending || !executionBindingChangeFenced(proved) {
+		proved.Status.Phase != operatorv1alpha1.PhasePending {
 		t.Fatalf("post-Apply proof did not preserve attribution and schedule current refresh: %#v", proved.Status)
-	}
-	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
-		t.Fatalf("retire historical post-Apply plan after proof: %v", err)
 	}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("start complete current-epoch refresh after proof: %v", err)
@@ -4862,8 +4930,12 @@ func predecessorApplyCleanupMatchFixture(t *testing.T) (*operatorv1alpha1.PtahSc
 			PtahVersion:            "v0.3.0",
 		},
 	}
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "retired")
-	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "retired")
+	schema.Status.PendingBindingRetirement = &operatorv1alpha1.BindingRetirementStatus{
+		RetiredEpoch: retiredEpoch,
+		Job: &operatorv1alpha1.RetiredJobStatus{
+			Operation: operatorv1alpha1.OperationApply, Name: jobName, UID: jobUID,
+		},
+	}
 	labels := map[string]string{
 		workload.LabelManagedBy:   "ptah-operator",
 		workload.LabelComponent:   "schema-operation",
@@ -4930,6 +5002,21 @@ func predecessorApplyCleanupMatchFixture(t *testing.T) (*operatorv1alpha1.PtahSc
 		t.Fatal("the predecessor Apply fixture is not the envelope the retirement contract accepts")
 	}
 	return schema, job
+}
+
+// retireReadOnlyClaim moves the fixture to a fresh epoch the way a rotation
+// does, keeping the read-only claim and recording the Job it dispatched.
+func retireReadOnlyClaim(schema *operatorv1alpha1.PtahSchema) {
+	operation := schema.Status.ActiveOperation
+	schema.Status.PendingBindingRetirement = &operatorv1alpha1.BindingRetirementStatus{
+		RetiredEpoch: operation.ExecutionBindingID,
+		Job: &operatorv1alpha1.RetiredJobStatus{
+			Operation: operation.Type, Name: operation.JobName, UID: operation.JobUID,
+		},
+	}
+	newBinding := schema.Status.ExecutionBinding.DeepCopy()
+	newBinding.Epoch = "v1-22222222222222222222222222222222"
+	schema.Status.ExecutionBinding = newBinding
 }
 
 func predecessorReadOnlyLateCreateFixture(

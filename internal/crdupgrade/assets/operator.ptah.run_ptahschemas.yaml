@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "28"
-    operator.ptah.run/crd-schema-digest: "sha256:1badb70b5d867fecd8a346a2baf634cf1080ccd70e8464d41bb822129f2cca70"
+    operator.ptah.run/crd-schema-version: "29"
+    operator.ptah.run/crd-schema-digest: "sha256:d4953d96c208bf6494a3fab9415a3a31ea74580f43c9173e6a95b8642501597f"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1419,6 +1419,53 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              pendingBindingRetirement:
+                properties:
+                  job:
+                    properties:
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      operation:
+                        enum:
+                        - Resolve
+                        - Verify
+                        - Observe
+                        - Plan
+                        - Apply
+                        type: string
+                      uid:
+                        maxLength: 128
+                        type: string
+                    required:
+                    - name
+                    - operation
+                    type: object
+                  plan:
+                    properties:
+                      fingerprint:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      uid:
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - fingerprint
+                    - name
+                    - uid
+                    type: object
+                  retiredEpoch:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                required:
+                - retiredEpoch
+                type: object
               pendingLockRelease:
                 properties:
                   coordinationDigest:

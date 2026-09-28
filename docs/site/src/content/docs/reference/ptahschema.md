@@ -488,6 +488,16 @@ spec:
 | `status.lastSuccessfulReconciliation` | `string` | LastSuccessfulReconciliation is when it last completed a cycle with nothing left to do. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is the durable earliest time for the next scheduled read-only reconciliation. Event-driven safety work may run sooner. |
 | `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
+| `status.pendingBindingRetirement` | `object` | PendingBindingRetirement is the cleanup an execution-binding rotation still owes the epoch it replaced. The status write that installs the new epoch writes it, and it is removed once nothing in it is left. Another rotation waits until it is gone. |
+| `status.pendingBindingRetirement.job` | `object` | Job is the Job the retired epoch's claim dispatched, while its cleanup is still to be scheduled. |
+| `status.pendingBindingRetirement.job.name` | `string`, required | Name is the Job's deterministic name. |
+| `status.pendingBindingRetirement.job.operation` | `string`, required, one of `Resolve`, `Verify`, `Observe`, `Plan`, `Apply` | Operation is the claim that dispatched the Job. |
+| `status.pendingBindingRetirement.job.uid` | `string` | UID is the Job's UID once it is known. It is absent while a create the retired claim started may still commit; the controller adopts it from a Job under Name that carries the claim's exact envelope. |
+| `status.pendingBindingRetirement.plan` | `object` | Plan is the retired epoch's plan, while approvals that name it are still to be marked stale. |
+| `status.pendingBindingRetirement.plan.fingerprint` | `string`, required | Fingerprint is its approval identity. |
+| `status.pendingBindingRetirement.plan.name` | `string`, required | Name of the PtahSchemaPlan. |
+| `status.pendingBindingRetirement.plan.uid` | `string`, required | UID it had. |
+| `status.pendingBindingRetirement.retiredEpoch` | `string`, required | RetiredEpoch is the epoch the rotation replaced. The plan and the Job this record names belong to it, and the controller touches a Job only when the Job carries this epoch. |
 | `status.pendingLockRelease` | `object` | PendingLockRelease keeps the exact Lease owner and epoch durable until an idempotent release succeeds. It closes the manager-crash window between a terminal status transition and clearing the owner-neutral Lease. |
 | `status.pendingLockRelease.coordinationDigest` | `string`, required | CoordinationDigest is the realm whose lock is still to be released. |
 | `status.pendingLockRelease.leaseDurationSeconds` | `integer`, required | LeaseDurationSeconds is how long it was taken for. |

@@ -17,7 +17,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -332,24 +331,20 @@ func validatePendingApplyJobCleanup(
 	if schema == nil || pending == nil || job == nil || schema.Status.ExecutionBinding == nil {
 		return errors.New("pending Apply cleanup inputs are incomplete")
 	}
-	if schema.Status.ActiveOperation != nil || schema.Status.Phase != operatorv1alpha1.PhasePending ||
-		pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown || pending.PlanRequired {
-		return errors.New("schema is not at the fenced pending-Apply cleanup boundary")
+	if schema.Status.ActiveOperation != nil {
+		return errors.New("schema carries an active operation, so no retired Apply is pending cleanup")
 	}
-	for _, conditionType := range []string{
-		operatorv1alpha1.ConditionPlanReady,
-		operatorv1alpha1.ConditionApprovalRequired,
-	} {
-		condition := apiMeta.FindStatusCondition(schema.Status.Conditions, conditionType)
-		if condition == nil || condition.Status != metav1.ConditionFalse ||
-			condition.Reason != string(operatorv1alpha1.ReasonExecutionBindingChanged) {
-			return fmt.Errorf("schema condition %s does not prove execution-binding retirement", conditionType)
-		}
+	if pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown {
+		return errors.New("a retired Apply is pending as outcome-unknown, and this one is not")
 	}
-	if !isExecutionBindingID(schema.Status.ExecutionBinding.Epoch) ||
-		!isExecutionBindingID(pending.Plan.ExecutionBindingID) ||
-		pending.Plan.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
-		return errors.New("Apply Job does not belong to a distinct retired execution epoch")
+	retirement := schema.Status.PendingBindingRetirement
+	if retirement == nil || retirement.Job == nil || retirement.Job.Operation != operatorv1alpha1.OperationApply ||
+		retirement.Job.Name == "" || retirement.Job.Name != pending.ApplyJobName ||
+		retirement.Job.UID == "" || retirement.Job.UID != pending.ApplyJobUID {
+		return errors.New("no pending execution-binding retirement names this Apply Job")
+	}
+	if err := validateRetiredEpoch(schema, pending.Plan.ExecutionBindingID); err != nil {
+		return fmt.Errorf("Apply Job %w", err)
 	}
 	if pending.ApplyOperationID == "" || pending.ApplyJobName == "" || pending.ApplyJobUID == "" ||
 		job.Namespace != schema.Namespace || job.Name != pending.ApplyJobName || job.UID != pending.ApplyJobUID {
@@ -582,19 +577,6 @@ func validateRetiredReadOnlyStatus(
 	if schema == nil || operation == nil || schema.Status.ExecutionBinding == nil {
 		return errors.New("retired operation status is incomplete")
 	}
-	if schema.Status.Phase != operatorv1alpha1.PhasePending {
-		return errors.New("schema has not entered the durable execution-binding retirement fence")
-	}
-	for _, conditionType := range []string{
-		operatorv1alpha1.ConditionPlanReady,
-		operatorv1alpha1.ConditionApprovalRequired,
-	} {
-		condition := apiMeta.FindStatusCondition(schema.Status.Conditions, conditionType)
-		if condition == nil || condition.Status != metav1.ConditionFalse ||
-			condition.Reason != string(operatorv1alpha1.ReasonExecutionBindingChanged) {
-			return fmt.Errorf("schema condition %s does not prove execution-binding retirement", conditionType)
-		}
-	}
 	switch operation.Type {
 	case operatorv1alpha1.OperationResolve,
 		operatorv1alpha1.OperationVerify,
@@ -603,10 +585,27 @@ func validateRetiredReadOnlyStatus(
 	default:
 		return fmt.Errorf("operation %q is not read-only", operation.Type)
 	}
-	if !isExecutionBindingID(schema.Status.ExecutionBinding.Epoch) ||
-		!isExecutionBindingID(operation.ExecutionBindingID) ||
-		operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
-		return errors.New("operation does not belong to a distinct retired execution epoch")
+	retirement := schema.Status.PendingBindingRetirement
+	if retirement == nil || retirement.Job == nil || retirement.Job.Operation != operation.Type ||
+		retirement.Job.Name == "" || retirement.Job.Name != operation.JobName ||
+		retirement.Job.UID == "" || retirement.Job.UID != operation.JobUID {
+		return errors.New("no pending execution-binding retirement names this operation's Job")
+	}
+	if err := validateRetiredEpoch(schema, operation.ExecutionBindingID); err != nil {
+		return fmt.Errorf("operation %w", err)
+	}
+	return nil
+}
+
+// validateRetiredEpoch holds a retired claim's epoch to the one the pending
+// retirement names, and that epoch to one that is no longer in force.
+func validateRetiredEpoch(schema *operatorv1alpha1.PtahSchema, epoch string) error {
+	retirement := schema.Status.PendingBindingRetirement
+	if retirement == nil || schema.Status.ExecutionBinding == nil ||
+		!isExecutionBindingID(schema.Status.ExecutionBinding.Epoch) ||
+		!isExecutionBindingID(retirement.RetiredEpoch) || epoch != retirement.RetiredEpoch ||
+		retirement.RetiredEpoch == schema.Status.ExecutionBinding.Epoch {
+		return errors.New("does not belong to the execution epoch the pending retirement retired")
 	}
 	return nil
 }

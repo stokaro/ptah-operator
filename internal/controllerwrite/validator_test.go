@@ -635,9 +635,11 @@ func TestValidationHandlerRejectsUnsafeCurrentFormatPendingApplyJobCleanup(t *te
 			},
 		},
 		{
-			name: "the schema has moved past the fence",
+			// The record is the permission. Without it the same pending
+			// observation authorizes nothing, whatever the phase says.
+			name: "no execution-binding retirement is pending",
 			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
-				schema.Status.Phase = operatorv1alpha1.PhaseObserving
+				schema.Status.PendingBindingRetirement = nil
 			},
 		},
 		{
@@ -649,9 +651,43 @@ func TestValidationHandlerRejectsUnsafeCurrentFormatPendingApplyJobCleanup(t *te
 			},
 		},
 		{
-			name: "the pending observation still owes a plan",
+			name: "the retirement owes approvals and no Job",
 			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
-				schema.Status.PendingObservation.PlanRequired = true
+				schema.Status.PendingBindingRetirement.Job = nil
+				schema.Status.PendingBindingRetirement.Plan = &operatorv1alpha1.RetiredPlanReference{
+					Name: "plan-current", UID: "plan-uid", Fingerprint: digest('a'),
+				}
+			},
+		},
+		{
+			name: "the retirement names a read-only claim's Job",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement.Job.Operation = operatorv1alpha1.OperationObserve
+			},
+		},
+		{
+			name: "the retirement names another Job",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement.Job.Name += "-beside-it"
+			},
+		},
+		{
+			// A UID the record has not adopted is a Job it has not proven.
+			name: "the retirement has not adopted the Job's UID",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement.Job.UID = ""
+			},
+		},
+		{
+			name: "the retirement names another Job identity",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement.Job.UID = "a-job-that-ran-later"
+			},
+		},
+		{
+			name: "the retirement retired another epoch",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _, _ *batchv1.Job) {
+				schema.Status.PendingBindingRetirement.RetiredEpoch = "v1-" + strings.Repeat("8", 32)
 			},
 		},
 		{
@@ -1712,18 +1748,24 @@ func pendingApplyCleanupFixture(
 	return schema, oldJob, job
 }
 
+// setExecutionBindingRetirementFence writes the record a rotation leaves
+// behind: the epoch it retired, and the Job the retired claim dispatched as
+// that claim names it. Neither the phase nor any condition is set, because
+// neither is what the cleanup is authorized by.
 func setExecutionBindingRetirementFence(schema *operatorv1alpha1.PtahSchema) {
-	schema.Status.Phase = operatorv1alpha1.PhasePending
-	schema.Status.Conditions = []metav1.Condition{
-		{
-			Type: operatorv1alpha1.ConditionPlanReady, Status: metav1.ConditionFalse,
-			Reason: string(operatorv1alpha1.ReasonExecutionBindingChanged),
-		},
-		{
-			Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionFalse,
-			Reason: string(operatorv1alpha1.ReasonExecutionBindingChanged),
-		},
+	retirement := &operatorv1alpha1.BindingRetirementStatus{}
+	if operation := schema.Status.ActiveOperation; operation != nil {
+		retirement.RetiredEpoch = operation.ExecutionBindingID
+		retirement.Job = &operatorv1alpha1.RetiredJobStatus{
+			Operation: operation.Type, Name: operation.JobName, UID: operation.JobUID,
+		}
+	} else if pending := schema.Status.PendingObservation; pending != nil {
+		retirement.RetiredEpoch = pending.Plan.ExecutionBindingID
+		retirement.Job = &operatorv1alpha1.RetiredJobStatus{
+			Operation: operatorv1alpha1.OperationApply, Name: pending.ApplyJobName, UID: pending.ApplyJobUID,
+		}
 	}
+	schema.Status.PendingBindingRetirement = retirement
 }
 
 func withGeneratedJobIdentity(expected *batchv1.Job) *batchv1.Job {

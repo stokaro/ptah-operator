@@ -3,6 +3,7 @@ package crd_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -99,6 +100,116 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 			t.Fatalf("the API server refused drift in no category on PtahSchema %s: %v", schema.GetName(), err)
 		}
 	})
+}
+
+// status.pendingBindingRetirement is what decides which leftovers of a retired
+// execution binding the controller waits for, adopts and cleans up, so the
+// schema is what keeps a malformed record from being published: an epoch that
+// is not one, a Job under an operation that does not exist or with no name, a
+// plan named by something that is not its identity.
+func TestPtahSchemaStatusRefusesAMalformedBindingRetirement(t *testing.T) {
+	plane.Require(t)
+	t.Parallel()
+
+	namespace := newNamespace(t, "schema-retirement")
+	schema := schemaBase(namespace)()
+	if err := api.Create(context.Background(), schema); err != nil {
+		t.Fatalf("store PtahSchema %s: %v", schema.GetName(), err)
+	}
+
+	const retiredEpoch = "v1-0123456789abcdef0123456789abcdef"
+	plan := func() map[string]any {
+		return map[string]any{
+			"name":        "ptah-plan-0123456789abcdef01234567",
+			"uid":         "4f0c8a52-50b6-4b4e-9d53-6a1f0d8c2e11",
+			"fingerprint": "sha256:" + strings.Repeat("c", 64),
+		}
+	}
+	job := func() map[string]any {
+		return map[string]any{
+			"operation": "Apply",
+			"name":      "ptah-apply-application-0123456789abcdef",
+			"uid":       "a6b0f3c4-8f0e-4a3b-9d1c-2e5f7a9b0c1d",
+		}
+	}
+	const field = "status.pendingBindingRetirement"
+
+	tests := []struct {
+		name   string
+		record map[string]any
+		want   cause
+	}{
+		{
+			name:   "a record that names no retired epoch",
+			record: map[string]any{"plan": plan()},
+			want:   cause{field + ".retiredEpoch", "Required value"},
+		},
+		{
+			name:   "a retired epoch that is not an epoch",
+			record: map[string]any{"retiredEpoch": "v1-not-an-epoch", "plan": plan()},
+			want:   cause{field + ".retiredEpoch", "should match"},
+		},
+		{
+			name:   "a Job under an operation that does not exist",
+			record: map[string]any{"retiredEpoch": retiredEpoch, "job": merged(job(), map[string]any{"operation": "Rehearse"})},
+			want:   cause{field + ".job.operation", "Unsupported value"},
+		},
+		{
+			name:   "a Job with no name",
+			record: map[string]any{"retiredEpoch": retiredEpoch, "job": merged(job(), map[string]any{"name": ""})},
+			want:   cause{field + ".job.name", "should be at least 1 chars long"},
+		},
+		{
+			name:   "a plan named by something that is not its fingerprint",
+			record: map[string]any{"retiredEpoch": retiredEpoch, "plan": merged(plan(), map[string]any{"fingerprint": "sha256:plan"})},
+			want:   cause{field + ".plan.fingerprint", "should match"},
+		},
+		{
+			name: "a plan without its UID",
+			record: map[string]any{"retiredEpoch": retiredEpoch, "plan": map[string]any{
+				"name": plan()["name"], "fingerprint": plan()["fingerprint"],
+			}},
+			want: cause{field + ".plan.uid", "Required value"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			observed := reread(t, schema)
+			set(t, observed, test.record, "status", "pendingBindingRetirement")
+			err := api.Status().Update(context.Background(), observed, client.DryRunAll)
+			if mismatch := refusalMismatch(err, test.want); mismatch != nil {
+				t.Errorf("status of PtahSchema %s: %v", schema.GetName(), mismatch)
+			}
+		})
+	}
+
+	for _, admitted := range []struct {
+		name   string
+		record map[string]any
+	}{
+		{
+			name:   "a rotation that retired a plan and a dispatched Apply",
+			record: map[string]any{"retiredEpoch": retiredEpoch, "plan": plan(), "job": job()},
+		},
+		{
+			// A create the retired claim started may commit later, so its UID
+			// is not known yet.
+			name: "a Job whose UID is still to be adopted",
+			record: map[string]any{"retiredEpoch": retiredEpoch, "job": map[string]any{
+				"operation": "Observe", "name": "ptah-observe-application-0123456789abcdef",
+			}},
+		},
+	} {
+		t.Run(admitted.name, func(t *testing.T) {
+			t.Parallel()
+			observed := reread(t, schema)
+			set(t, observed, admitted.record, "status", "pendingBindingRetirement")
+			if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
+				t.Fatalf("the API server refused a well-formed retirement record on PtahSchema %s: %v", schema.GetName(), err)
+			}
+		})
+	}
 }
 
 // The truncation rule demands exactly 64 summaries, and summaries are keyed by

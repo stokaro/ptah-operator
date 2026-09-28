@@ -1042,6 +1042,15 @@ replacement plan; do not recreate an approval against the old UID or
 fingerprint. A dispatched Apply is never recreated under the new binding; its
 outcome is handled conservatively and requires post-Apply observation.
 
+What the old binding left behind is listed in a `PtahSchema`'s
+`status.pendingBindingRetirement` until it is tidied: the retired epoch, the
+plan whose approvals are being marked stale, and the Job the retired claim
+dispatched. A read-only Job is left to finish and an Apply Job to stop before
+its cleanup is scheduled, and post-Apply observation starts only after that.
+The record then clears. A further change to the binding waits for it, so a
+rollout rolled back while an old Apply still runs takes effect once that
+Apply has stopped.
+
 The manager's own image digest and source revision, and the runner image
 digest, are recorded and not bound. A plan records the manager that published
 it and a Job the manager that dispatched it; neither is in a plan fingerprint
@@ -1763,6 +1772,7 @@ so the set is checkable with `kubectl` rather than inferred:
 | `ptahschema.status.plan` | published and awaiting approval, or being applied |
 | `ptahschema.status.pendingObservation.plan` | the post-Apply verification owed for it has not finished |
 | `ptahschema.status.applied.planRef` | the evidence of what the last confirmed apply ran |
+| `ptahschema.status.pendingBindingRetirement.plan` | an execution-binding rotation retired it, and the approvals that name it are still being marked stale |
 | `ptahschemaapproval.spec.planRef` | a person authorized these exact bytes |
 | `ptahmigrationapproval.spec.planRef` | the same, for a migration sequence |
 | `ptahmigration.status.plan` | published and awaiting approval, or being applied |
@@ -1807,6 +1817,7 @@ kubectl get ptahschemas,ptahmigrations -A -o json |
     ($s.plan.name // empty),
     ($s.pendingObservation.plan.name // empty),
     ($s.applied.planRef.name // empty),
+    ($s.pendingBindingRetirement.plan.name // empty),
     ($s.activeOperation.planRef.name // empty),
     ($s.unresolvedRun.planRef.name // empty)' |
   sort -u > pinned.txt
