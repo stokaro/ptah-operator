@@ -70,11 +70,21 @@ for function_name in \
 	assert_schema_job_boundary_unchanged \
 	materialize_archived_schema_jobs \
 	materialize_terminal_job_records materialize_owned_pod_records materialize_manager_pod_names \
-	all_new_jobs_complete capture_selected_job_result assert_plan_storage_immutable; do
+	all_new_jobs_complete capture_selected_job_result assert_plan_storage_immutable \
+	rebuild_plan_document assert_plan_result_stdout_is_sealed; do
 	function_section=$(sed -n "/^${function_name}()/,/^}/p" "$SOURCE_FILE")
 	[ -n "$function_section" ] || test_fail "could not extract $function_name"
 	printf '%s\n' "$function_section" >>"$FUNCTIONS_FILE" ||
 		test_fail "could not stage $function_name"
+done
+# The fault phase reads plan documents back the same way, from a copy of these
+# helpers it carries itself, since a phase script sources nothing. The copy is
+# held byte for byte to the one under test here, so that the cases below speak
+# for both.
+for shared_helper in sha256 rebuild_plan_document assert_plan_result_stdout_is_sealed; do
+	[ "$(sed -n "/^${shared_helper}()/,/^}/p" "$SOURCE_FILE")" = \
+		"$(sed -n "/^${shared_helper}()/,/^}/p" "$FAULT_SOURCE_FILE")" ] ||
+		test_fail "hack/e2e-faults.sh carries a $shared_helper that differs from hack/e2e-dataplane.sh's"
 done
 for function_name in \
 	assert_fault_audit_complete record_fault_jobs_for_parent record_initial_job_list_for_parent \
@@ -1498,6 +1508,196 @@ plan_storage_immutability_successful_path() (
 		test_fail "the plan storage proof did not report the chunk it protected"
 )
 
+# Since runner protocol 7 a Plan result's stdout is the plan sealed to the
+# manager's key, so the phases read the document back from the plan's chunk
+# ConfigMaps and prove the stdout is not the document. The fixture is one
+# document split into two chunks inside a statement, so that a rebuild that
+# read one ConfigMap, or read both in the wrong order, cannot pass. The first
+# statement quotes an identifier, so the JSON form a plan document spells it
+# in differs from the SQL, and both forms are expected among the patterns the
+# sealed-payload proof searches for.
+REBUILD_PLAN_DOCUMENT_FILE=$WORK_DIR/rebuild-plan-document.json
+REBUILD_PLAN_CHUNK_0_FILE=$WORK_DIR/rebuild-plan-chunk-0.bin
+REBUILD_PLAN_CHUNK_1_FILE=$WORK_DIR/rebuild-plan-chunk-1.bin
+REBUILD_PLAN_OBJECT_FILE=$WORK_DIR/rebuild-plan-object.json
+REBUILT_PLAN_OUTPUT_FILE=$WORK_DIR/rebuilt-plan.json
+SEALED_PLAN_RESULT_FILE=$WORK_DIR/sealed-plan-result.json
+SEALED_PLAN_PATTERNS_FILE=$WORK_DIR/sealed-plan-result-plan-text-patterns.txt
+REBUILD_PLAN_SPLIT_AT=60
+printf '%s' '{"format_version":1,"dialect":"postgres","from_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111","to_fingerprint":"sha256:2222222222222222222222222222222222222222222222222222222222222222","destructive":false,"statements":[{"sql":"CREATE TABLE \"widgets\" (id integer PRIMARY KEY)","severity":"safe"},{"sql":"COMMIT","severity":"safe"}]}' \
+	>"$REBUILD_PLAN_DOCUMENT_FILE"
+jq -e '.statements[0].sql == "CREATE TABLE \"widgets\" (id integer PRIMARY KEY)"' \
+	"$REBUILD_PLAN_DOCUMENT_FILE" >/dev/null ||
+	test_fail "the rebuild fixture document does not quote its identifier as intended"
+dd if="$REBUILD_PLAN_DOCUMENT_FILE" of="$REBUILD_PLAN_CHUNK_0_FILE" bs=1 count="$REBUILD_PLAN_SPLIT_AT" 2>/dev/null
+dd if="$REBUILD_PLAN_DOCUMENT_FILE" of="$REBUILD_PLAN_CHUNK_1_FILE" bs=1 skip="$REBUILD_PLAN_SPLIT_AT" 2>/dev/null
+REBUILD_PLAN_DOCUMENT_BYTES=$(wc -c <"$REBUILD_PLAN_DOCUMENT_FILE" | tr -d ' ')
+REBUILD_PLAN_CHUNK_1_BYTES=$((REBUILD_PLAN_DOCUMENT_BYTES - REBUILD_PLAN_SPLIT_AT))
+[ "$REBUILD_PLAN_CHUNK_1_BYTES" -gt 0 ] || test_fail "the rebuild fixture document is too short to split"
+REBUILD_PLAN_DIGEST="sha256:$(sha256 <"$REBUILD_PLAN_DOCUMENT_FILE")"
+REBUILD_PLAN_CHUNK_0_BASE64=$(jq -Rrs '@base64' "$REBUILD_PLAN_CHUNK_0_FILE")
+REBUILD_PLAN_CHUNK_1_BASE64=$(jq -Rrs '@base64' "$REBUILD_PLAN_CHUNK_1_FILE")
+# What a sealed payload looks like to this proof: base64 that is not the
+# document. The digest is used as the bytes only because it is handy.
+SEALED_PLAN_STDOUT=$(printf '%s%s' "$REBUILD_PLAN_DIGEST" "$REBUILD_PLAN_DIGEST" | jq -Rrs '@base64')
+REBUILD_STUB_CHUNK_1_KEY=chunk
+REBUILD_STUB_CHUNK_1_BASE64=$REBUILD_PLAN_CHUNK_1_BASE64
+
+write_rebuild_plan_object() {
+	jq -n --arg digest "$REBUILD_PLAN_DIGEST" --argjson chunks "$1" '{
+      metadata: {name: "plan-2", uid: "plan-uid-2", resourceVersion: "201"},
+      spec: {destructive: false, contentDigest: $digest, chunks: $chunks}
+    }' >"$REBUILD_PLAN_OBJECT_FILE"
+}
+
+write_rebuild_plan_object_in_order() {
+	write_rebuild_plan_object "$(jq -n \
+		--argjson size0 "$REBUILD_PLAN_SPLIT_AT" --argjson size1 "$REBUILD_PLAN_CHUNK_1_BYTES" '[
+      {name: "plan-2-000", key: "chunk", index: 0, size: $size0},
+      {name: "plan-2-001", key: "chunk", index: 1, size: $size1}
+    ]')"
+}
+
+write_sealed_plan_result() {
+	jq -n --arg stdout "$1" --arg digest "$REBUILD_PLAN_DIGEST" \
+		'{stdout: $stdout, planOutcome: "Changes", planContentDigest: $digest}' \
+		>"$SEALED_PLAN_RESULT_FILE"
+}
+
+emit_rebuild_chunk() {
+	jq -n --arg name "$1" --arg key "$2" --arg value "$3" '{
+      metadata: {name: $name, ownerReferences: [{
+        apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaPlan",
+        name: "plan-2", uid: "plan-uid-2", controller: true}]},
+      immutable: true,
+      binaryData: {($key): $value}
+    }'
+}
+
+# shellcheck disable=SC2317 # Extracted helpers invoke this test-local kubectl stub dynamically.
+rebuild_plan_kubectl() {
+	rebuild_stub_verb=
+	rebuild_stub_kind=
+	rebuild_stub_name=
+	for rebuild_stub_argument in "$@"; do
+		case "$rebuild_stub_argument" in
+		get) [ -n "$rebuild_stub_verb" ] || rebuild_stub_verb=$rebuild_stub_argument ;;
+		configmap) [ -n "$rebuild_stub_kind" ] || rebuild_stub_kind=$rebuild_stub_argument ;;
+		plan-2-*) [ -n "$rebuild_stub_name" ] || rebuild_stub_name=$rebuild_stub_argument ;;
+		esac
+	done
+	case "$rebuild_stub_verb:$rebuild_stub_kind:$rebuild_stub_name" in
+	get:configmap:plan-2-000) emit_rebuild_chunk plan-2-000 chunk "$REBUILD_PLAN_CHUNK_0_BASE64" ;;
+	get:configmap:plan-2-001) emit_rebuild_chunk plan-2-001 "$REBUILD_STUB_CHUNK_1_KEY" "$REBUILD_STUB_CHUNK_1_BASE64" ;;
+	*) return 45 ;;
+	esac
+}
+
+# shellcheck disable=SC2317 # Extracted helpers invoke these test-local kubectl stubs dynamically.
+plan_document_rebuild_successful_path() (
+	reset_fixture
+	kubectl() { rebuild_plan_kubectl "$@"; }
+	write_rebuild_plan_object_in_order
+	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
+	[ "$REBUILT_PLAN_CHUNK_COUNT" -eq 2 ] ||
+		test_fail "the plan rebuild counted $REBUILT_PLAN_CHUNK_COUNT chunks rather than the two it read"
+	cmp -s "$REBUILT_PLAN_OUTPUT_FILE" "$REBUILD_PLAN_DOCUMENT_FILE" ||
+		test_fail "the plan rebuilt from two chunks is not the document they were split from"
+	[ "sha256:$(sha256 <"$REBUILT_PLAN_OUTPUT_FILE")" = "$REBUILD_PLAN_DIGEST" ] ||
+		test_fail "the rebuilt plan does not hash to the fixture's content digest"
+	write_sealed_plan_result "$SEALED_PLAN_STDOUT"
+	assert_plan_result_stdout_is_sealed "$SEALED_PLAN_RESULT_FILE" "$REBUILT_PLAN_OUTPUT_FILE" schema-2
+	[ "$(wc -l <"$SEALED_PLAN_PATTERNS_FILE" | tr -d ' ')" -eq 3 ] ||
+		test_fail "the sealed-payload proof searched for $(wc -l <"$SEALED_PLAN_PATTERNS_FILE" | tr -d ' ') patterns rather than the statement in both spellings and the document key"
+	grep -Fx 'CREATE TABLE "widgets" (id integer PRIMA' "$SEALED_PLAN_PATTERNS_FILE" >/dev/null ||
+		test_fail "the sealed-payload proof did not search for the statement's first forty characters as SQL"
+	grep -Fx 'CREATE TABLE \"widgets\" (id integer PRIMA' "$SEALED_PLAN_PATTERNS_FILE" >/dev/null ||
+		test_fail "the sealed-payload proof did not search for the statement's first forty characters as a plan document spells them"
+	grep -Fx '"format_version"' "$SEALED_PLAN_PATTERNS_FILE" >/dev/null ||
+		test_fail "the sealed-payload proof did not search for the plan document's own key"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_document_rebuild_with_no_chunks() (
+	reset_fixture
+	kubectl() { rebuild_plan_kubectl "$@"; }
+	write_rebuild_plan_object '[]'
+	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_document_rebuild_with_chunks_out_of_order() (
+	reset_fixture
+	kubectl() { rebuild_plan_kubectl "$@"; }
+	write_rebuild_plan_object "$(jq -n \
+		--argjson size0 "$REBUILD_PLAN_SPLIT_AT" --argjson size1 "$REBUILD_PLAN_CHUNK_1_BYTES" '[
+      {name: "plan-2-001", key: "chunk", index: 1, size: $size1},
+      {name: "plan-2-000", key: "chunk", index: 0, size: $size0}
+    ]')"
+	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_document_rebuild_with_missing_chunk_key() (
+	reset_fixture
+	kubectl() { rebuild_plan_kubectl "$@"; }
+	REBUILD_STUB_CHUNK_1_KEY=other
+	write_rebuild_plan_object_in_order
+	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+plan_document_rebuild_with_short_chunk() (
+	reset_fixture
+	kubectl() { rebuild_plan_kubectl "$@"; }
+	REBUILD_STUB_CHUNK_1_BASE64=$(dd if="$REBUILD_PLAN_CHUNK_1_FILE" bs=1 count=5 2>/dev/null | jq -Rrs '@base64')
+	write_rebuild_plan_object_in_order
+	rebuild_plan_document "$REBUILD_PLAN_OBJECT_FILE" "$REBUILT_PLAN_OUTPUT_FILE"
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+sealed_plan_result_with_empty_stdout() (
+	reset_fixture
+	write_sealed_plan_result ''
+	assert_plan_result_stdout_is_sealed "$SEALED_PLAN_RESULT_FILE" "$REBUILD_PLAN_DOCUMENT_FILE" schema-2
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+sealed_plan_result_with_plaintext_stdout() (
+	reset_fixture
+	write_sealed_plan_result "$(cat "$REBUILD_PLAN_DOCUMENT_FILE")"
+	assert_plan_result_stdout_is_sealed "$SEALED_PLAN_RESULT_FILE" "$REBUILD_PLAN_DOCUMENT_FILE" schema-2
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+sealed_plan_result_with_statement_text_in_stdout() (
+	reset_fixture
+	write_sealed_plan_result "${SEALED_PLAN_STDOUT}CREATE TABLE \"widgets\" (id integer PRIMARY KEY)"
+	assert_plan_result_stdout_is_sealed "$SEALED_PLAN_RESULT_FILE" "$REBUILD_PLAN_DOCUMENT_FILE" schema-2
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+sealed_plan_result_with_json_escaped_statement_in_stdout() (
+	reset_fixture
+	write_sealed_plan_result "${SEALED_PLAN_STDOUT}CREATE TABLE \\\"widgets\\\" (id integer PRIMARY KEY)"
+	assert_plan_result_stdout_is_sealed "$SEALED_PLAN_RESULT_FILE" "$REBUILD_PLAN_DOCUMENT_FILE" schema-2
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+sealed_plan_result_with_format_version_in_stdout() (
+	reset_fixture
+	write_sealed_plan_result "${SEALED_PLAN_STDOUT}{\"format_version\":1}"
+	assert_plan_result_stdout_is_sealed "$SEALED_PLAN_RESULT_FILE" "$REBUILD_PLAN_DOCUMENT_FILE" schema-2
+)
+
+# shellcheck disable=SC2317 # Invoked indirectly through expect_failure below.
+sealed_plan_result_for_a_document_without_statements() (
+	reset_fixture
+	write_sealed_plan_result "$SEALED_PLAN_STDOUT"
+	jq -c '.statements = []' "$REBUILD_PLAN_DOCUMENT_FILE" >"$REBUILT_PLAN_OUTPUT_FILE"
+	assert_plan_result_stdout_is_sealed "$SEALED_PLAN_RESULT_FILE" "$REBUILT_PLAN_OUTPUT_FILE" schema-2
+)
+
 # shellcheck disable=SC2317 # Extracted helpers invoke these test-local kubectl stubs dynamically.
 assert_successful_paths() (
 	reset_fixture
@@ -1723,6 +1923,37 @@ archive_publication_uses_uid_bounded_log_during_name_reuse
 transport_settles_after_an_incomplete_read
 schema_boundary_successful_path
 plan_storage_immutability_successful_path
+plan_document_rebuild_successful_path
+expect_failure 'plan rebuild from a plan with no chunks' \
+	'plan-2 has no plan chunks to rebuild its document from' \
+	plan_document_rebuild_with_no_chunks
+expect_failure 'plan rebuild from chunks listed out of order' \
+	'plan-2 chunk at position 0 carries index 1' \
+	plan_document_rebuild_with_chunks_out_of_order
+expect_failure 'plan rebuild from a chunk missing its key' \
+	'plan-2-001 has no binaryData[chunk] to rebuild plan-2 chunk 1 from' \
+	plan_document_rebuild_with_missing_chunk_key
+expect_failure 'plan rebuild from a chunk shorter than its manifest' \
+	"plan-2 chunk 1 decoded to 5 bytes; its manifest says $REBUILD_PLAN_CHUNK_1_BYTES" \
+	plan_document_rebuild_with_short_chunk
+expect_failure 'sealed-payload proof over an empty stdout' \
+	'schema-2 Plan result carries no sealed payload in stdout' \
+	sealed_plan_result_with_empty_stdout
+expect_failure 'sealed-payload proof over a plaintext stdout' \
+	'schema-2 Plan result carries the plan document itself in stdout, not a sealed payload' \
+	sealed_plan_result_with_plaintext_stdout
+expect_failure 'sealed-payload proof over a stdout carrying statement SQL' \
+	'schema-2 Plan result stdout carries plan text in the clear' \
+	sealed_plan_result_with_statement_text_in_stdout
+expect_failure 'sealed-payload proof over a stdout carrying a JSON-spelled statement' \
+	'schema-2 Plan result stdout carries plan text in the clear' \
+	sealed_plan_result_with_json_escaped_statement_in_stdout
+expect_failure 'sealed-payload proof over a stdout carrying the document key' \
+	'schema-2 Plan result stdout carries plan text in the clear' \
+	sealed_plan_result_with_format_version_in_stdout
+expect_failure 'sealed-payload proof over a document without statements' \
+	'schema-2 plan document has no statements to check the sealed payload against' \
+	sealed_plan_result_for_a_document_without_statements
 fault_successful_paths
 
 PHASE_COMPLETED=1

@@ -4731,7 +4731,18 @@ for ledger_selftest_marker in \
 	'existing_archive_identity_collision schema-owner-missing' \
 	'selected_job_schema_owner_uid_mismatch' \
 	'archive_publication_uses_uid_bounded_log_during_name_reuse' \
-	'plan_storage_immutability_successful_path'; do
+	'plan_storage_immutability_successful_path' \
+	'plan_document_rebuild_successful_path' \
+	'plan_document_rebuild_with_no_chunks' \
+	'plan_document_rebuild_with_chunks_out_of_order' \
+	'plan_document_rebuild_with_missing_chunk_key' \
+	'plan_document_rebuild_with_short_chunk' \
+	'sealed_plan_result_with_empty_stdout' \
+	'sealed_plan_result_with_plaintext_stdout' \
+	'sealed_plan_result_with_statement_text_in_stdout' \
+	'sealed_plan_result_with_json_escaped_statement_in_stdout' \
+	'sealed_plan_result_with_format_version_in_stdout' \
+	'sealed_plan_result_for_a_document_without_statements'; do
 	printf '%s\n' "$ledger_selftest_script" | grep -F -- "$ledger_selftest_marker" >/dev/null || {
 		printf 'e2e static: durable Job archive self-test coverage is missing: %s\n' \
 			"$ledger_selftest_marker" >&2

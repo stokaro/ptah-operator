@@ -172,7 +172,7 @@ coordination_digest() {
 	printf 'sha256:%s\n' "$(printf '%s' "$coordination_canonical" | sha256)"
 }
 
-for command_name in docker kubectl helm jq awk sed grep tr cksum mktemp date sleep tail stat wc cmp cut go env curl find cp; do
+for command_name in docker kubectl helm jq awk sed grep tr cksum mktemp date sleep tail stat wc cmp cut go env curl find cp base64; do
 	require_command "$command_name"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -4351,6 +4351,110 @@ assert_plan_storage_immutable() {
 		"$immutable_schema" "$immutable_chunk_count"
 }
 
+# rebuild_plan_document reads a plan document back the way the controller
+# does: from the immutable chunk ConfigMaps the PtahSchemaPlan names, in
+# .spec.chunks order, each chunk's binaryData[key] decoded and the bytes
+# concatenated. Since runner protocol 7 a Plan result's stdout carries the
+# plan sealed to the manager's per-process key, so the chunks are the only
+# place the plaintext a content digest covers can be read from.
+#
+# The first argument is a file holding the PtahSchemaPlan object, so that the
+# chunks read here belong to the exact object whose spec.contentDigest the
+# caller compares against; the second is where the document goes. The number
+# of chunks read is left in REBUILT_PLAN_CHUNK_COUNT, and a plan that names
+# none is refused rather than rebuilt as an empty document.
+rebuild_plan_document() {
+	rebuild_plan_file=$1
+	rebuild_document_file=$2
+	rebuild_plan_name=$(jq -er '.metadata.name' "$rebuild_plan_file") ||
+		fail "the plan object to rebuild a document from has no name"
+	rebuild_chunks_file="$WORK_DIR/${rebuild_plan_name}-rebuild-chunks.tsv"
+	jq -er '
+      .spec.chunks |
+      if type == "array" then . else error("plan spec.chunks must be a list") end |
+      .[] | [.index, .name, .key, .size] | @tsv
+    ' "$rebuild_plan_file" >"$rebuild_chunks_file" ||
+		fail "$rebuild_plan_name has no plan chunks to rebuild its document from"
+	: >"$rebuild_document_file"
+	chmod 600 "$rebuild_document_file"
+	REBUILT_PLAN_CHUNK_COUNT=0
+	while IFS="$(printf '\t')" read -r rebuild_index rebuild_name rebuild_key rebuild_size; do
+		[ "$rebuild_index" = "$REBUILT_PLAN_CHUNK_COUNT" ] ||
+			fail "$rebuild_plan_name chunk at position $REBUILT_PLAN_CHUNK_COUNT carries index ${rebuild_index:-none}"
+		if [ -z "$rebuild_name" ] || [ -z "$rebuild_key" ] || [ -z "$rebuild_size" ]; then
+			fail "$rebuild_plan_name chunk $rebuild_index is an incomplete reference"
+		fi
+		rebuild_chunk_object=$(k -n "$TEST_NAMESPACE" get configmap "$rebuild_name" -o json) ||
+			fail "$rebuild_plan_name chunk $rebuild_index ConfigMap $rebuild_name could not be read"
+		rebuild_chunk_value=$(printf '%s\n' "$rebuild_chunk_object" |
+			jq -er --arg key "$rebuild_key" '
+              .binaryData[$key] |
+              if type == "string" then . else error("chunk key is absent") end
+            ') ||
+			fail "$rebuild_name has no binaryData[$rebuild_key] to rebuild $rebuild_plan_name chunk $rebuild_index from"
+		rebuild_chunk_file="$WORK_DIR/${rebuild_plan_name}-rebuild-chunk-${rebuild_index}.bin"
+		printf '%s' "$rebuild_chunk_value" | base64 -d >"$rebuild_chunk_file" ||
+			fail "$rebuild_name binaryData[$rebuild_key] does not decode as base64"
+		rebuild_chunk_bytes=$(wc -c <"$rebuild_chunk_file" | tr -d ' ')
+		[ "$rebuild_chunk_bytes" = "$rebuild_size" ] ||
+			fail "$rebuild_plan_name chunk $rebuild_index decoded to $rebuild_chunk_bytes bytes; its manifest says $rebuild_size"
+		cat "$rebuild_chunk_file" >>"$rebuild_document_file" ||
+			fail "$rebuild_plan_name chunk $rebuild_index could not be appended to its document"
+		rm -f "$rebuild_chunk_file"
+		REBUILT_PLAN_CHUNK_COUNT=$((REBUILT_PLAN_CHUNK_COUNT + 1))
+	done <"$rebuild_chunks_file"
+	[ "$REBUILT_PLAN_CHUNK_COUNT" -gt 0 ] ||
+		fail "$rebuild_plan_name has no plan chunks to rebuild its document from"
+}
+
+# assert_plan_result_stdout_is_sealed proves a Plan result carried its plan
+# sealed rather than in the clear. Since runner protocol 7 the frame's stdout
+# is the plan encrypted to the manager's per-process key, so the document
+# whose digest the result names must not be readable from the result itself:
+# stdout is non-empty, it is not the document, and it holds neither the
+# document's own "format_version" key nor the opening of any statement in it.
+# Each opening is searched for both as SQL and as the JSON string a plan
+# document spells it in, since a document escapes a quote or a newline.
+#
+# An opening shorter than eight characters is not searched for: a fragment
+# that short can sit inside a base64 payload by chance, and the document's
+# own key catches a plaintext document regardless.
+assert_plan_result_stdout_is_sealed() {
+	sealed_result_file=$1
+	sealed_document_file=$2
+	sealed_context=$3
+	sealed_stdout_file="${sealed_result_file%.json}-stdout.txt"
+	sealed_patterns_file="${sealed_result_file%.json}-plan-text-patterns.txt"
+	jq -e '(.stdout | type) == "string" and (.stdout | length) > 0' \
+		"$sealed_result_file" >/dev/null ||
+		fail "$sealed_context Plan result carries no sealed payload in stdout"
+	jq -jr '.stdout' "$sealed_result_file" >"$sealed_stdout_file" ||
+		fail "$sealed_context Plan result stdout could not be extracted"
+	chmod 600 "$sealed_stdout_file"
+	if cmp -s "$sealed_stdout_file" "$sealed_document_file"; then
+		fail "$sealed_context Plan result carries the plan document itself in stdout, not a sealed payload"
+	fi
+	[ "$(jq -r '.statements | if type == "array" then length else 0 end' "$sealed_document_file")" -gt 0 ] ||
+		fail "$sealed_context plan document has no statements to check the sealed payload against"
+	{
+		jq -r '
+          .statements[].sql | .[0:40] |
+          ((split("\n")[] | select(length >= 8)),
+           (tojson | .[1:-1] | select(length >= 8)))
+        ' "$sealed_document_file" &&
+			printf '%s\n' '"format_version"'
+	} >"$sealed_patterns_file" ||
+		fail "$sealed_context plan statements could not be read to check the sealed payload"
+	chmod 600 "$sealed_patterns_file"
+	if grep -F -f "$sealed_patterns_file" "$sealed_stdout_file" >/dev/null; then
+		fail "$sealed_context Plan result stdout carries plan text in the clear"
+	else
+		sealed_scan_status=$?
+		[ "$sealed_scan_status" -eq 1 ] ||
+			fail "$sealed_context sealed payload scan failed closed"
+	fi
+}
+
 assert_plan() {
 	plan_schema=$1
 	plan_reference=$2
@@ -4460,13 +4564,21 @@ assert_plan() {
       $result.coordinationDigest == .status.plan.coordinationDigest and
       $result.targetIdentityDigest == .status.plan.targetIdentityDigest
     ' >/dev/null || fail "$plan_schema Plan result is not bound to its published immutable plan"
-	jq -jr '.stdout' "$plan_result_file" >"$plan_document_file"
-	chmod 600 "$plan_document_file"
+	# The result's stdout is the plan sealed to the manager's key, so the
+	# document the content digest covers is read back from the plan's own
+	# immutable chunks, and the same digest has to name it in the result, on
+	# the schema and on the plan.
+	plan_object_file="$WORK_DIR/${plan_schema}-changed-plan-object.json"
+	k -n "$TEST_NAMESPACE" get ptahschemaplan "$CURRENT_PLAN" -o json >"$plan_object_file" ||
+		fail "$CURRENT_PLAN could not be read to rebuild its plan document"
+	rebuild_plan_document "$plan_object_file" "$plan_document_file"
 	scan_file_for_credentials "$plan_document_file" "$plan_schema native plan document"
 	plan_document_digest="sha256:$(sha256 <"$plan_document_file")"
 	[ "$plan_document_digest" = "$(jq -er '.planContentDigest' "$plan_result_file")" ] ||
-		fail "$plan_schema Plan result content digest does not cover the exact stdout bytes"
-	k -n "$TEST_NAMESPACE" get ptahschemaplan "$CURRENT_PLAN" -o json | jq -e \
+		fail "$plan_schema Plan result content digest does not cover the plan document its chunks hold"
+	[ "$plan_document_digest" = "$(printf '%s\n' "$plan_schema_object" | jq -er '.status.plan.contentDigest')" ] ||
+		fail "$plan_schema status.plan.contentDigest does not cover the plan document its chunks hold"
+	jq -e \
 		--slurpfile document "$plan_document_file" \
 		--arg contentDigest "$plan_document_digest" '
       $document[0] as $document |
@@ -4476,7 +4588,10 @@ assert_plan() {
       .spec.dialect == $document.dialect and
 	  ($document.destructive != true or .spec.destructive == true) and
       .spec.statementCount == ($document.statements | length)
-    ' >/dev/null || fail "$CURRENT_PLAN is not bound to the exact native Plan result"
+    ' "$plan_object_file" >/dev/null || fail "$CURRENT_PLAN is not bound to the exact native Plan result"
+	assert_plan_result_stdout_is_sealed "$plan_result_file" "$plan_document_file" "$plan_schema"
+	printf 'e2e data plane: %s Plan result is sealed, and its content digest covers the %s-chunk plan document\n' \
+		"$plan_schema" "$REBUILT_PLAN_CHUNK_COUNT"
 }
 
 assert_convergence_result_pair() {
@@ -5788,26 +5903,9 @@ assert_automatic_external_postgresql_lifecycle() {
       (.mutationStarted // false) == false and (.uncertain // false) == false
     ' "$automatic_initial_plan_result" >/dev/null ||
 		fail "$automatic_schema initial Plan result did not describe a safe database change"
-	jq -jr '.stdout' "$automatic_initial_plan_result" >"$automatic_plan_document"
-	chmod 600 "$automatic_plan_document"
-	scan_file_for_credentials "$automatic_plan_document" \
-		"the automatic-policy native PostgreSQL plan"
-	automatic_plan_content_digest="sha256:$(sha256 <"$automatic_plan_document")"
-	[ "$automatic_plan_content_digest" = \
-		"$(jq -er '.planContentDigest' "$automatic_initial_plan_result")" ] ||
-		fail "$automatic_schema automatic Plan result did not hash its exact stdout bytes"
-	jq -e '
-      .format_version == 1 and .dialect == "postgres" and
-      .destructive == false and
-      (.from_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
-      (.to_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
-      .from_fingerprint != .to_fingerprint and
-      (.statements | length) > 0 and
-      all(.statements[]; .severity == "safe") and
-      any(.statements[]; .sql | test("\\bCREATE[[:space:]]+TABLE\\b"; "i")) and
-      all(.statements[]; (.sql | test("\\b(DROP|TRUNCATE|DELETE)\\b"; "i") | not))
-    ' "$automatic_plan_document" >/dev/null ||
-		fail "$automatic_schema automatic plan was not an exact safe additive CREATE TABLE change"
+	# The result's stdout is the plan sealed to the manager's key. The document
+	# is rebuilt below from the applied plan's own chunks, once that plan is
+	# found, and only then read for what it changed.
 
 	k -n "$TEST_NAMESPACE" get ptahschemaplans -o json |
 		jq -ce \
@@ -5827,6 +5925,25 @@ assert_automatic_external_postgresql_lifecycle() {
 		"the automatic-policy immutable plan resource"
 	automatic_plan_name=$(jq -er '.metadata.name' "$automatic_plan_file")
 	automatic_plan_uid=$(jq -er '.metadata.uid' "$automatic_plan_file")
+	rebuild_plan_document "$automatic_plan_file" "$automatic_plan_document"
+	scan_file_for_credentials "$automatic_plan_document" \
+		"the automatic-policy native PostgreSQL plan"
+	automatic_plan_content_digest="sha256:$(sha256 <"$automatic_plan_document")"
+	[ "$automatic_plan_content_digest" = \
+		"$(jq -er '.planContentDigest' "$automatic_initial_plan_result")" ] ||
+		fail "$automatic_schema automatic Plan result content digest does not cover the plan document its chunks hold"
+	jq -e '
+      .format_version == 1 and .dialect == "postgres" and
+      .destructive == false and
+      (.from_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
+      (.to_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
+      .from_fingerprint != .to_fingerprint and
+      (.statements | length) > 0 and
+      all(.statements[]; .severity == "safe") and
+      any(.statements[]; .sql | test("\\bCREATE[[:space:]]+TABLE\\b"; "i")) and
+      all(.statements[]; (.sql | test("\\b(DROP|TRUNCATE|DELETE)\\b"; "i") | not))
+    ' "$automatic_plan_document" >/dev/null ||
+		fail "$automatic_schema automatic plan was not an exact safe additive CREATE TABLE change"
 	jq -e \
 		--arg digest "$automatic_digest" \
 		--arg coordinationKey "$automatic_coordination_key" \
@@ -5862,6 +5979,10 @@ assert_automatic_external_postgresql_lifecycle() {
     ' "$automatic_plan_file" >/dev/null ||
 		fail "$automatic_schema automatically applied plan lost its exact immutable bindings"
 	assert_plan_storage_immutable "$automatic_schema" "$automatic_plan_name" "$automatic_plan_uid"
+	assert_plan_result_stdout_is_sealed "$automatic_initial_plan_result" "$automatic_plan_document" \
+		"$automatic_schema automatic"
+	printf 'e2e data plane: %s automatic Plan result is sealed, and its content digest covers the %s-chunk plan document\n' \
+		"$automatic_schema" "$REBUILT_PLAN_CHUNK_COUNT"
 
 	automatic_apply_job_file="$WORK_DIR/${automatic_schema}-automatic-apply-job.json"
 	automatic_apply_pod_file="$WORK_DIR/${automatic_schema}-automatic-apply-pod.json"
