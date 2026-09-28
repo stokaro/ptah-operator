@@ -2,9 +2,7 @@ package resultframe
 
 import (
 	"bytes"
-	"os"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -220,7 +218,7 @@ func logShapes(t *testing.T) []logShape {
 }
 
 // TestParseExactResultSeparatesArrivalFromRefusal measures the split this
-// command exists to make. A log that may still be arriving and a log that is
+// package exists to make. A log that may still be arriving and a log that is
 // present and wrong are different failures with different answers, and the
 // callers that re-read a transport choose between them by the reason printed.
 func TestParseExactResultSeparatesArrivalFromRefusal(t *testing.T) {
@@ -247,48 +245,20 @@ func TestParseExactResultSeparatesArrivalFromRefusal(t *testing.T) {
 	}
 }
 
-// transportRetryPattern reads the alternation read_result_transport greps its
-// stderr for. A refusal that does not match it is final.
-var transportRetryPattern = regexp.MustCompile(`(?m)^[ \t]*if ! grep -Eq '([^']*)'`)
-
-func transportRetrySet(t *testing.T, path string) string {
-	t.Helper()
-	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	matches := transportRetryPattern.FindAllStringSubmatch(string(source), -1)
-	if len(matches) != 1 {
-		t.Fatalf("%s carries %d result-transport retry filters, want exactly one", path, len(matches))
-	}
-	return matches[0][1]
-}
-
-// TestRefusalsAgreeWithTheTransportRetrySet binds Parse's words to the filters
-// that read them: ArrivingPattern, which the Go phases wait on, and the
-// alternation read_result_transport in hack/e2e-faults.sh greps the command's
-// stderr for. A caller waits only for a refusal matching its set, so wording
-// that drifts out of it turns the bounded wait off for the shape it was written
-// for -- silently, and with every other gate still green. That is what stood
-// between #155 and this test: the filter passed its author's intent and
-// measured something else, and only reading it against the refusals the parser
-// actually emits catches it.
-func TestRefusalsAgreeWithTheTransportRetrySet(t *testing.T) {
+// TestRefusalsAgreeWithTheArrivingSet binds Parse's words to the filter that
+// reads them: StillArriving, which the Go phases wait on. A caller waits only
+// for a refusal the filter matches, so wording that drifts out of it turns the
+// bounded wait off for the shape it was written for -- silently, and with
+// every other gate still green. That is what stood between #155 and this
+// test: the filter passed its author's intent and measured something else,
+// and only reading it against the refusals the parser actually emits catches
+// it.
+func TestRefusalsAgreeWithTheArrivingSet(t *testing.T) {
 	t.Parallel()
-	faultsSet := transportRetrySet(t, "../../../hack/e2e-faults.sh")
-	if faultsSet != ArrivingPattern {
-		t.Fatalf("the result-transport retry filters differ:\n  ArrivingPattern: %s\n  e2e-faults.sh:   %s",
-			ArrivingPattern, faultsSet)
-	}
-	retrySet, err := regexp.Compile(ArrivingPattern)
-	if err != nil {
-		t.Fatalf("compile the result-transport retry filter %q: %v", ArrivingPattern, err)
-	}
-
 	// Every alternative has to be reached by a shape that is genuinely still
 	// arriving. One nothing reaches is a filter widened to swallow a refusal
 	// that should have been fixed at the source instead.
-	alternatives := strings.Split(ArrivingPattern, "|")
+	alternatives := strings.Split(arrivingPattern, "|")
 	reached := make(map[string]bool, len(alternatives))
 	for _, alternative := range alternatives {
 		reached[alternative] = false
@@ -299,10 +269,7 @@ func TestRefusalsAgreeWithTheTransportRetrySet(t *testing.T) {
 		if err == nil {
 			continue
 		}
-		matched := retrySet.MatchString(err.Error())
-		if matched != StillArriving(err) {
-			t.Errorf("%s: StillArriving disagrees with ArrivingPattern on %q", shape.name, err)
-		}
+		matched := StillArriving(err)
 		if matched && !shape.arriving {
 			t.Errorf("%s: the retry filter waits on its refusal %q, and reading the log again cannot change it",
 				shape.name, err)

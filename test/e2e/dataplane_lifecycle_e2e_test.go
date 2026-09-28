@@ -3,8 +3,6 @@
 package e2e
 
 import (
-	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -215,33 +213,6 @@ func (d *dataPlane) assertUnderclassifiedDropIndex() {
 	}
 	if !d.schemaPlan(d.plan.name).Spec.Destructive {
 		d.fatalf("MySQL DROP INDEX was not conservatively elevated to destructive")
-	}
-}
-
-// faults runs the restart and fault injection, still a shell phase of its own,
-// on the ledgers this phase kept, and reads them back afterwards: the fault
-// phase appends every Job it observed and audited.
-func (d *dataPlane) faults() {
-	d.t.Helper()
-	d.logf("starting restart and fault-injection acceptance")
-	command := exec.CommandContext(d.ctx, repositoryRoot+"/hack/e2e-faults.sh") //nolint:gosec // The repository's own script.
-	command.Env = append(os.Environ(),
-		"E2E_AUDITED_JOBS_FILE="+d.audited.path,
-		"E2E_FULLY_AUDITED_JOBS_FILE="+d.fullyAudited.path,
-		"E2E_OBSERVED_JOBS_FILE="+d.observed.path,
-		"E2E_FIXTURE_IMAGE="+d.in.FixtureImage,
-		"E2E_RESULT_ASSERT_BINARY="+d.resultAssert,
-		"E2E_CONTROLLER_IMAGE="+d.in.ControllerImage,
-		"E2E_CONTROLLER_REVISION="+d.in.ControllerRevision,
-		"E2E_CONTROLLER_STATE_VERSION="+d.in.ControllerStateVersion,
-	)
-	command.Stdout, command.Stderr = os.Stdout, os.Stderr
-	err := command.Run()
-	for _, reload := range []func() error{d.observed.reload, d.audited.reload, d.fullyAudited.reload} {
-		d.check(reload(), "read back the ledgers the fault phase shares")
-	}
-	if err != nil {
-		d.fatalf("the restart and fault-injection phase failed; its reason is above: %v", err)
 	}
 }
 

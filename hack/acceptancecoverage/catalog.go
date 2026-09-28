@@ -200,8 +200,7 @@ func parseDriverPhases(source string) []driverPhase {
 
 // phaseScenarios reads the scenarios a phase records: a shell phase's
 // stopwatch marks, or the scenarios a Go phase declares in test/e2e/phases,
-// which the harness refuses to end the phase without running, followed by the
-// stopwatch marks of the shell phases it still runs inside itself.
+// which the harness refuses to end the phase without running.
 func phaseScenarios(root string, phase driverPhase) ([]string, error) {
 	if phase.goPhase == "" {
 		return readScenarios(root, phase.script)
@@ -210,15 +209,7 @@ func phaseScenarios(root string, phase driverPhase) ([]string, error) {
 	if !found {
 		return nil, fmt.Errorf("phase %q runs the Go phase %q, which test/e2e/phases does not declare", phase.name, phase.goPhase)
 	}
-	scenarios := slices.Clone(declared.Scenarios)
-	for _, nested := range declared.NestedScripts {
-		source, err := os.ReadFile(filepath.Join(root, nested)) //nolint:gosec // A path the phase catalog declares.
-		if err != nil {
-			return nil, fmt.Errorf("the Go phase %q runs %s: %w", phase.goPhase, nested, err)
-		}
-		scenarios = append(scenarios, markedScenarios(string(source))...)
-	}
-	return scenarios, nil
+	return slices.Clone(declared.Scenarios), nil
 }
 
 // readScenarios reads the stopwatch marks a phase script names, following the

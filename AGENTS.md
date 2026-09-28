@@ -175,9 +175,8 @@ test did not reach its end, and writes the completion record the driver passes
 the phase on. `hack/verify-kubernetes-support.go` holds the
 call's bindings to the declared inputs, and `test/e2e/harness` writes each
 scenario into the same timing ledger the shell phases do. The certificates and
-data-plane suites are ported, except the restart and fault injection, which the
-data-plane phase still runs as `hack/e2e-faults.sh` inside one of its
-scenarios; every other phase is still a script under `hack/`.
+data-plane suites are ported, the data plane's restart and fault injection
+included; every other phase is still a script under `hack/`.
 
 What that partition covers is a table rather than a paragraph, and
 `make acceptance-coverage` prints it: every supported minor against every
@@ -218,8 +217,8 @@ every refusal.
 ## Where a run's time went
 
 A lifecycle records one row per stage: the bootstrap steps, each phase, the
-scenarios inside the four longest shell phases, and the scenarios every Go
-phase declares. The rows land in the ledger
+scenarios the migration and reference-data scripts mark, and the scenarios
+every Go phase declares. The rows land in the ledger
 `E2E_TIMING_LEDGER` names, the run's identity in `E2E_TIMING_CONTEXT`, and
 `hack/e2etiming` joins them into a report and a Markdown summary:
 

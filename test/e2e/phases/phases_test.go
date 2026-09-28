@@ -192,11 +192,6 @@ func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 			p.Preparation = len(p.Scenarios)
 			return withInputs(p, reflect.TypeFor[wellFormed]())
 		}(), refuse: "leaves none of its own acceptance"},
-		{name: "nested script outside hack", phase: func() Phase {
-			p := base
-			p.NestedScripts = []string{"test/e2e-faults.sh"}
-			return withInputs(p, reflect.TypeFor[wellFormed]())
-		}(), refuse: "not a phase script"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -218,7 +213,10 @@ func TestDataPlanePreparesBeforeItsOwnAcceptance(t *testing.T) {
 	if !slices.Equal(prepared, []string{"databases-and-fixtures"}) {
 		t.Fatalf("the data plane prepares with %v, want the databases and fixtures alone", prepared)
 	}
-	for _, acceptance := range []string{"postgresql-lifecycle", "mysql-lifecycle", "faults"} {
+	for _, acceptance := range []string{
+		"postgresql-lifecycle", "mysql-lifecycle",
+		"watches", "job-deadline", "manager-restart", "runner-termination", "job-deletion",
+	} {
 		if !slices.Contains(DataPlane.Scenarios, acceptance) {
 			t.Errorf("the data plane no longer runs %s", acceptance)
 		}

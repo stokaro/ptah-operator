@@ -45,6 +45,9 @@ func TestDataPlane(t *testing.T) {
 		run.Prepared()
 		return
 	}
+	// The fault injection is five scenarios that share one run: its watches,
+	// barriers and audit live from the first to the last.
+	var f *faultRun
 	for _, scenario := range []struct {
 		name string
 		body func()
@@ -53,7 +56,11 @@ func TestDataPlane(t *testing.T) {
 		{"external-postgresql-lifecycle", d.externalPostgresqlLifecycle},
 		{"mysql-lifecycle", d.mysqlLifecycle},
 		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
-		{"faults", d.faults},
+		{"watches", func() { f = newFaultRun(d); f.watches() }},
+		{"job-deadline", func() { f.jobDeadline() }},
+		{"manager-restart", func() { f.managerRestart() }},
+		{"runner-termination", func() { f.runnerTermination() }},
+		{"job-deletion", func() { f.jobDeletion() }},
 		{"closing-audits", d.closingAudits},
 		{"four-eyes-distinct-approver", d.fourEyesDistinctApprover},
 		{"pod-metadata-admission", d.podMetadataAdmission},
@@ -91,14 +98,13 @@ type dataPlane struct {
 	tlsProxyIdentity tlsProxyPod
 
 	workDir string
-	// The ledgers the fault phase shares: every Job the phase has seen, and
-	// the Jobs whose credential audit it completed, broadly and fully.
+	// Every Job the phase has seen, and the Jobs whose credential audit it
+	// completed, broadly and fully. The fault injection records into the same
+	// three.
 	observed     *jobLedger
 	audited      *uidLedger
 	fullyAudited *uidLedger
 	evidence     map[string]*jobEvidence
-	// resultAssert is the command the fault phase reads results with.
-	resultAssert string
 
 	rbac                     rbacPause
 	ephemeralTested          bool
@@ -234,16 +240,7 @@ func newDataPlane(t *testing.T, run *harness.Run, in phases.DataPlaneInputs) *da
 	d.workDir, err = os.MkdirTemp("", "ptah-operator-data-e2e.")
 	d.check(err, "create the work directory")
 	d.check(os.Chmod(d.workDir, 0o700), "make the work directory private")
-	if d.observed, err = newJobLedger(filepath.Join(d.workDir, "observed-jobs.jsonl")); err != nil {
-		d.fatalf("create the observed Job ledger: %v", err)
-	}
-	if d.audited, err = newUIDLedger(filepath.Join(d.workDir, "audited-jobs.txt")); err != nil {
-		d.fatalf("create the audited Job ledger: %v", err)
-	}
-	if d.fullyAudited, err = newUIDLedger(filepath.Join(d.workDir, "fully-audited-jobs.txt")); err != nil {
-		d.fatalf("create the fully audited Job ledger: %v", err)
-	}
-	d.buildResultAssert()
+	d.observed, d.audited, d.fullyAudited = newJobLedger(), newUIDLedger(), newUIDLedger()
 
 	d.credentials = deriveFixtureCredentials(in.TestNamespace)
 	d.registryHost = in.RegistryService + "." + in.TestNamespace + ".svc.cluster.local:5000"
@@ -337,19 +334,6 @@ func (d *dataPlane) resolveController() {
 	if image != d.in.ControllerImage {
 		d.fatalf("manager controller image argument does not match E2E_CONTROLLER_IMAGE")
 	}
-}
-
-// buildResultAssert builds the command the fault phase reads results with,
-// from this snapshot, with a build cache of the phase's own.
-func (d *dataPlane) buildResultAssert() {
-	d.t.Helper()
-	d.resultAssert = filepath.Join(d.workDir, "e2e-resultassert")
-	cache := filepath.Join(d.workDir, "go-cache")
-	d.check(os.MkdirAll(cache, 0o700), "create the result parser's build cache")
-	command := exec.CommandContext(d.ctx, "go", "build", "-trimpath", "-o", d.resultAssert, "./resultassert") //nolint:gosec // Arguments, not a shell.
-	command.Env = append(os.Environ(), "GOCACHE="+cache)
-	command.Stdout, command.Stderr = os.Stderr, os.Stderr
-	d.check(command.Run(), "build the result parser the fault phase reads results with")
 }
 
 // cleanup runs on every exit. A failure leaves credential-safe diagnostics
