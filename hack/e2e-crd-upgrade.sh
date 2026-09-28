@@ -1412,7 +1412,10 @@ expect_controller_write_denial() {
 	fi
 	if ! grep -F 'Ptah controller write guard rejected a desired-state mutation' "$stderr" >/dev/null &&
 		! grep -F 'Ptah controller write guard rejected a desired-state mutation' "$stdout" >/dev/null; then
-		fail "controller $description mutation failed without the exact write-guard denial"
+		# The refusal that did come back is the API server's answer to a patch
+		# of this resource, which carries no credential, and it is the only
+		# evidence of which admission step refused instead.
+		fail "controller $description mutation failed without the exact write-guard denial: $(head -c 600 "$stderr" | tr '\n' ' ')"
 	fi
 }
 
