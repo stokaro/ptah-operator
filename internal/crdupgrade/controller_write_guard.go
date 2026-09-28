@@ -11,6 +11,7 @@ import (
 
 const (
 	controllerWriteGuardNamePrefix = "ptah-operator-controller-write-guard-"
+	controllerWriteGuardComponent  = "controller-write-guard"
 
 	activeOperationFinalizer    = "operator.ptah.run/active-operation"
 	migrationOperationFinalizer = "operator.ptah.run/migration-operation"
@@ -49,8 +50,10 @@ func controllerPrincipalMatchExpression(releaseNamespace, serviceAccount string)
 // to the one finalizer it owns on the kind being written. Status writes use
 // the status subresource and therefore do not match it.
 //
-// The chart renders the policy in templates/controller-write-guard.yaml, and a
-// render test holds the two to the same spec.
+// This is the only place the policy is written. hack/chartpolicies generates
+// templates/controller-write-guard.yaml from it, with the release namespace
+// and the controller ServiceAccount left as Helm expressions, and
+// verify-source refuses a template the generator did not write.
 type ControllerWriteGuard struct {
 	ReleaseName                  string
 	ReleaseNamespace             string
@@ -61,12 +64,13 @@ func (g *ControllerWriteGuard) name() string {
 	return ControllerWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
 }
 
-func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmissionPolicy {
+// Policy is the guard's ValidatingAdmissionPolicy.
+func (g *ControllerWriteGuard) Policy() *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	message := controllerWriteGuardDenialMessage()
 	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
-		ObjectMeta: metav1.ObjectMeta{Name: g.name()},
+		ObjectMeta: metav1.ObjectMeta{Name: g.name(), Labels: componentLabels(controllerWriteGuardComponent)},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(),
@@ -100,10 +104,11 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 	}
 }
 
-func (g *ControllerWriteGuard) binding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
+// Binding is the binding that enforces Policy.
+func (g *ControllerWriteGuard) Binding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
 	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
-		ObjectMeta: metav1.ObjectMeta{Name: g.name()},
+		ObjectMeta: metav1.ObjectMeta{Name: g.name(), Labels: componentLabels(controllerWriteGuardComponent)},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
 			PolicyName:        g.name(),
 			MatchResources:    g.matchResources(),
@@ -113,7 +118,7 @@ func (g *ControllerWriteGuard) binding() *admissionregistrationv1.ValidatingAdmi
 }
 
 // controllerWriteFinalizerExpression names the finalizer the controller owns
-// on the resource this request writes. The chart renders the same expression.
+// on the resource this request writes.
 func controllerWriteFinalizerExpression() string {
 	return fmt.Sprintf(
 		`request.resource.resource == %q ? %q : %q`,

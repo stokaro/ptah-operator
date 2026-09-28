@@ -14,7 +14,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test test-envtest test-race vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-runner-protocol verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
+.PHONY: all build test test-envtest test-race vet fmt-check generate manifests chart-policies verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-runner-protocol verify-release docker-build acceptance-coverage acceptance-record acceptance-issue-map scan-vulnerabilities e2e-static e2e
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -85,6 +85,14 @@ manifests:
 	@rm -f internal/crdupgrade/assets/*.yaml
 	@cp config/crd/bases/*.yaml internal/crdupgrade/assets/
 
+# The chart's admission policies are written once, in Go, and the templates
+# that ship them are generated from those definitions: hack/chartpolicies
+# writes each into charts/ptah-operator/templates with the release values left
+# as Helm expressions. verify-source runs this and refuses a template the
+# generator did not write, the way it refuses a hand-edited CRD.
+chart-policies:
+	$(GO) run ./hack/chartpolicies -chart charts/ptah-operator
+
 .PHONY: docs-reference docs-reference-check
 
 # The field reference the site publishes, generated from the API types.
@@ -122,8 +130,11 @@ lint-workflows:
 
 verify: verify-source test-race
 
-verify-source: fmt-check lint-workflows generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release e2e-static vet build test test-envtest
-	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets
+verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release e2e-static vet build test test-envtest
+	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets \
+		charts/ptah-operator/templates/controller-object-guard.yaml \
+		charts/ptah-operator/templates/controller-write-guard.yaml \
+		charts/ptah-operator/templates/certificate-secret-guard.yaml
 
 verify-crd-schema-history: manifests
 	$(GO) run ./hack/verifycrdschemahistory

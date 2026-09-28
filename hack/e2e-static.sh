@@ -6125,6 +6125,7 @@ done
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--namespace ptah-e2e \
 	--show-only templates/certificate-rotation.yaml \
+	--show-only templates/certificate-secret-guard.yaml \
 	--set certificateRotation.recreateMissingSecret=true \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
@@ -6142,6 +6143,20 @@ for recreation_marker in \
 		'--recreate-missing-secret=true'; do
 	grep -F -- "$recreation_marker" "$ROTATOR_RECREATE_RENDER" >/dev/null
 done
+# Off by default: with recreation not opted into there is no create grant to
+# narrow, and the guard's template renders nothing, which Helm reports as a
+# template it cannot find.
+if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--show-only templates/certificate-secret-guard.yaml \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	>/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: the certificate Secret CREATE guard renders without recreateMissingSecret' >&2
+	exit 1
+fi
 grep -F 'StartedChecker()' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 [ "$(grep -Fc 'recreateMissingSecret: true' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 1 ]
 for recovery_marker in \
@@ -6336,9 +6351,11 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--set-string webhook.existingSecret=external-tls \
 	--set-string webhook.caBundle=Y2E= \
 	$crd_render_args >"$EXTERNAL_CERTIFICATE_RENDER"
-# Each guard family is compared with the contract compiled in Go in a render of
-# its own, so a test holds the render to exactly its own policies. The
-# Deployment comes along because the guards name the ServiceAccount it runs as.
+# Each guard family is rendered on its own, so the markers below read exactly
+# its own policies. The Deployment comes along because the guards name the
+# ServiceAccount it runs as. The templates are generated from the Go
+# definitions (make chart-policies), and verify-source holds them to the
+# generator; what is read here is that the release values reach the policies.
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/controller-write-guard.yaml \
@@ -6671,7 +6688,7 @@ for controller_write_marker in \
 	'dyn(object).spec == dyn(oldObject).spec' \
 	'dyn(object).status == dyn(oldObject).status' \
 	'resources: ["ptahschemas", "ptahmigrations"]' \
-	'request.resource.resource == "ptahmigrations" ? "operator.ptah.run/migration-operation" : "operator.ptah.run/active-operation"' \
+	'request.resource.resource == \"ptahmigrations\" ? \"operator.ptah.run/migration-operation\" : \"operator.ptah.run/active-operation\"' \
 	'Ptah controller write guard rejected a desired-state mutation'; do
 	grep -F -- "$controller_write_marker" "$CONTROLLER_WRITE_GUARD_RENDER" >/dev/null
 done
@@ -6721,15 +6738,10 @@ for retired_controller_object_marker in \
 done
 (cd "$ROOT_DIR" && \
 	PTAH_ADMISSION_RENDER="$ADMISSION_RENDER" \
-	PTAH_CONTROLLER_GUARD_RENDER="$CONTROLLER_WRITE_GUARD_RENDER" \
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
-(cd "$ROOT_DIR" && \
-	PTAH_CONTROLLER_GUARD_RENDER="$CONTROLLER_OBJECT_GUARD_RENDER" \
-	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
-	go test ./internal/crdupgrade -run '^TestRenderedControllerObjectGuardsMatchCompiledContracts$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedReleaseRBACMatchesCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_PRIVILEGE_RENDER="$EXTERNAL_CERTIFICATE_RENDER" \
 	PTAH_RBAC_CERTIFICATE_RUNTIME_ENABLED=false \

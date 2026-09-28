@@ -14,8 +14,6 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-const renderedGuardManagerImage = "ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"
-
 // chartPath is the chart this package's render tests render.
 func chartPath(t *testing.T) string {
 	t.Helper()

@@ -148,44 +148,81 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 	}
 }
 
-func TestExportedSecretCreateGuardContractVerifiers(t *testing.T) {
+// TestSecretCreateGuardIsExactAndFailClosed holds the guard to what the
+// rotator's recovery relies on: it judges the rotator's ServiceAccount alone,
+// refuses rather than ignores a request it cannot evaluate, admits exactly
+// the generated Secret, and its binding denies in the release namespace
+// alone. What each clause refuses is proven against a live API server by the
+// certificates acceptance suite, which creates an unrelated Secret as the
+// rotator and reads the denial back.
+func TestSecretCreateGuardIsExactAndFailClosed(t *testing.T) {
 	t.Parallel()
 
-	const guardName = "ptah-cert-rotator"
+	guard := testSecretCreateGuard()
+	policy, binding := guard.Policy(), guard.Binding()
+	if policy.Name != guard.ServiceAccountName || binding.Name != guard.ServiceAccountName || binding.Spec.PolicyName != policy.Name {
+		t.Fatalf("guard names policy %q and binding %q for policy %q; want all %q",
+			policy.Name, binding.Name, binding.Spec.PolicyName, guard.ServiceAccountName)
+	}
+	if policy.Spec.ParamKind != nil || binding.Spec.ParamRef != nil {
+		t.Fatal("Secret CREATE guard reads a parameter")
+	}
+	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
+		t.Fatal("Secret CREATE guard is not fail-closed")
+	}
+	rules := policy.Spec.MatchConstraints.ResourceRules
+	if len(rules) != 1 || len(rules[0].ResourceNames) != 0 ||
+		!slices.Equal(rules[0].Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create}) ||
+		!slices.Equal(rules[0].APIGroups, []string{""}) || !slices.Equal(rules[0].APIVersions, []string{"v1"}) ||
+		!slices.Equal(rules[0].Resources, []string{"secrets"}) ||
+		rules[0].Scope == nil || *rules[0].Scope != admissionregistrationv1.NamespacedScope {
+		t.Fatalf("Secret CREATE guard rules = %#v, want exactly namespaced core/v1 Secret CREATE", rules)
+	}
+	wantMatch := "request.userInfo.username == 'system:serviceaccount:ptah-system:ptah-cert-rotator'"
+	if len(policy.Spec.MatchConditions) != 1 || policy.Spec.MatchConditions[0].Expression != wantMatch {
+		t.Fatalf("Secret CREATE guard match conditions = %#v, want the exact rotator identity", policy.Spec.MatchConditions)
+	}
+	if len(policy.Spec.Validations) != 1 || policy.Spec.Validations[0].Message != secretCreateGuardDenialMessage ||
+		policy.Spec.Validations[0].Reason != nil || policy.Spec.Validations[0].MessageExpression != "" {
+		t.Fatalf("Secret CREATE guard validations = %#v, want one with the denial message", policy.Spec.Validations)
+	}
+	expression := policy.Spec.Validations[0].Expression
+	for _, required := range []string{
+		"object.metadata.name == 'ptah-webhook-cert'",
+		"object.metadata.namespace == 'ptah-system'",
+		"object.metadata.labels == {'operator.ptah.run/generated-webhook-certificate': 'true', 'app.kubernetes.io/managed-by': 'Helm'}",
+		"object.metadata.annotations == {'meta.helm.sh/release-name': 'ptah', 'meta.helm.sh/release-namespace': 'ptah-system'}",
+		"(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0)",
+		"object.type == 'kubernetes.io/tls'",
+		"!has(object.immutable)",
+		"object.data.size() == 4",
+		"'tls.key' in object.data && object.data['tls.key'].size() > 0",
+	} {
+		if !strings.Contains(expression, required) {
+			t.Errorf("Secret CREATE guard expression lacks %q:\n%s", required, expression)
+		}
+	}
+	if strings.ContainsAny(expression, "\n\t") {
+		t.Fatalf("Secret CREATE guard expression is not one line:\n%s", expression)
+	}
+	if !slices.Equal(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
+		t.Fatalf("Secret CREATE guard binding actions = %v, want Deny alone", binding.Spec.ValidationActions)
+	}
+	resources := binding.Spec.MatchResources
+	if resources == nil || resources.NamespaceSelector == nil || len(resources.NamespaceSelector.MatchExpressions) != 0 ||
+		!maps.Equal(resources.NamespaceSelector.MatchLabels, map[string]string{"kubernetes.io/metadata.name": "ptah-system"}) ||
+		resources.ObjectSelector != nil || len(resources.ResourceRules) != 0 || len(resources.ExcludeResourceRules) != 0 {
+		t.Fatalf("Secret CREATE guard binding selects %#v, want the release namespace alone", resources)
+	}
+}
+
+func testSecretCreateGuard() SecretCreateGuard {
 	config := testConfig()
-	client := fake.NewSimpleClientset()
-	installUnestablishedSecretCreateGuard(t, client, config, guardName)
-	policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
-		context.Background(), guardName, metav1.GetOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
-		context.Background(), guardName, metav1.GetOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifySecretCreatePolicyContract(policy, config, guardName); err != nil {
-		t.Fatalf("verify exact policy: %v", err)
-	}
-	if err := VerifySecretCreateBindingContract(binding, config, guardName); err != nil {
-		t.Fatalf("verify exact binding: %v", err)
-	}
-	if err := VerifySecretCreatePolicyContract(nil, config, guardName); err == nil {
-		t.Fatal("nil policy was accepted")
-	}
-	if err := VerifySecretCreateBindingContract(nil, config, guardName); err == nil {
-		t.Fatal("nil binding was accepted")
-	}
-	policy.Spec.Validations[0].Message = "foreign"
-	if err := VerifySecretCreatePolicyContract(policy, config, guardName); err == nil {
-		t.Fatal("foreign policy was accepted")
-	}
-	binding.Spec.PolicyName = "foreign"
-	if err := VerifySecretCreateBindingContract(binding, config, guardName); err == nil {
-		t.Fatal("foreign binding was accepted")
+	return SecretCreateGuard{
+		Namespace:          config.Namespace,
+		ReleaseName:        config.ReleaseName,
+		SecretName:         config.SecretName,
+		ServiceAccountName: "ptah-cert-rotator",
 	}
 }
 
@@ -458,7 +495,7 @@ func TestMissingSecretRecreationIsDisabledByDefault(t *testing.T) {
 func TestSecretCreateValidationExpressionHandlesOptionalGenerateName(t *testing.T) {
 	t.Parallel()
 	const want = "(!has(object.metadata.generateName) || object.metadata.generateName == '')"
-	if expression := compactCEL(secretCreateValidationExpression(testConfig())); !strings.Contains(expression, want) {
+	if expression := testSecretCreateGuard().Policy().Spec.Validations[0].Expression; !strings.Contains(expression, want) {
 		t.Fatalf("Secret CREATE validation expression = %q, want presence-safe generateName check %q", expression, want)
 	}
 }
@@ -1259,59 +1296,6 @@ func assertCANotCopiedToValidatingUpdates(t *testing.T, client *fake.Clientset, 
 		}
 		return false, nil, nil
 	})
-}
-
-func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset, config Config, guardName string) {
-	t.Helper()
-	failurePolicy := admissionregistrationv1.Fail
-	scope := admissionregistrationv1.NamespacedScope
-	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: guardName, Generation: 1},
-		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-			FailurePolicy: &failurePolicy,
-			MatchConstraints: &admissionregistrationv1.MatchResources{
-				NamespaceSelector: &metav1.LabelSelector{},
-				ObjectSelector:    &metav1.LabelSelector{},
-				ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
-					RuleWithOperations: admissionregistrationv1.RuleWithOperations{
-						Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-						Rule: admissionregistrationv1.Rule{
-							APIGroups: []string{""}, APIVersions: []string{"v1"},
-							Resources: []string{"secrets"}, Scope: &scope,
-						},
-					},
-				}},
-			},
-			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name: "exact-certificate-rotator-service-account",
-				Expression: "request.userInfo.username == 'system:serviceaccount:" +
-					config.Namespace + ":" + guardName + "'",
-			}},
-			Validations: []admissionregistrationv1.Validation{{
-				Expression: secretCreateValidationExpression(config),
-				Message:    secretCreateGuardDenialMessage,
-			}},
-		},
-	}
-	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: guardName},
-		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
-			PolicyName:        guardName,
-			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
-			MatchResources: &admissionregistrationv1.MatchResources{
-				NamespaceSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"kubernetes.io/metadata.name": config.Namespace},
-				},
-				ObjectSelector: &metav1.LabelSelector{},
-			},
-		},
-	}
-	if err := client.Tracker().Add(policy); err != nil {
-		t.Fatalf("add test Secret CREATE guard policy: %v", err)
-	}
-	if err := client.Tracker().Add(binding); err != nil {
-		t.Fatalf("add test Secret CREATE guard binding: %v", err)
-	}
 }
 
 // installFakeSecretCreateResponse makes a Secret CREATE against the fake

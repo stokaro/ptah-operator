@@ -785,9 +785,10 @@ fail-closed `ValidatingAdmissionPolicy` and binding that limit the rotator
 ServiceAccount to one exact TLS Secret name, namespace, two labels, two release
 annotations, and four nonempty data fields. A recovered Secret therefore stays
 owned by the same Helm release instead of becoming an unmanaged replacement.
-The rotator requires the policy's current generation to
-be type-checked, verifies the complete policy and binding structure, and runs
-negative server-side dry runs before using `create`.
+The policy is written once, in Go, and the chart template that ships it is
+generated from that definition; the certificates acceptance suite proves the
+refusal against a live API server by creating an unrelated Secret as the
+rotator's ServiceAccount and reading the denial back.
 
 The single-release opt-in has a bootstrap tradeoff: Helm cannot atomically
 establish the admission policy and grant RBAC. A namespace-wide `create` grant

@@ -51,13 +51,15 @@ make test           # unit contour
 make test-envtest   # CRDs, admission policies and webhooks against a real API server
 make generate       # deepcopy
 make manifests      # CRDs and RBAC from the markers
+make chart-policies # the chart's admission policy templates, from the Go definitions
 make verify         # the checks CI runs, including the CRD schema history
 make e2e            # the suite against kind
 ```
 
 `make verify` is the one that refuses a change the generators did not produce:
 `verify-source`, `verify-crd-schema-history` and `verify-kubernetes-support` are
-separate targets under it, so run it after touching `api/` or any marker.
+separate targets under it, so run it after touching `api/`, any marker, or an
+admission policy definition.
 
 ## The envtest suites
 
@@ -268,6 +270,25 @@ worth stating here because no gate catches them:
   envtest is evidence about this controller and about the API contract, and
   about nothing Kubernetes would have done. That belongs in `test/e2e`, against
   kind.
+
+## What a change to an admission policy owes
+
+The chart's ValidatingAdmissionPolicies are written once, in Go:
+`internal/crdupgrade/controller_object_guard.go` and
+`controller_write_guard.go` hold the five guards on the manager's own writes,
+`internal/certrotation/secret_create_guard.go` the certificate rotator's Secret
+CREATE guard. `hack/chartpolicies` generates the chart templates from them,
+with the release values left as Helm expressions, and `verify-source` refuses
+a template the generator did not write, the way it refuses a hand-edited CRD.
+Edit the Go definition, run `make chart-policies`, and commit the template it
+wrote. The one policy the chart writes by hand is
+`templates/apply-policy-guard.yaml`: it has no Go definition, and its
+exempt-groups loop is Helm logic over a value.
+
+The generated template is what `test/envtest/admissionpolicy` installs, so a
+changed definition still owes that suite a row the policy refuses and a
+mutation that shows a row depends on it; `hack/e2e-static.sh` reads the render
+for the release values it has to carry.
 
 ## What a proof owes
 

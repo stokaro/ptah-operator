@@ -74,9 +74,11 @@ type controllerObjectGuardEntry struct {
 // independently reject broad or privileged shapes, and refuse a Job or a plan
 // that names a manager other than this release's.
 //
-// The chart renders the policies in templates/controller-object-guard.yaml,
-// with this release's manager image and controller-state version written
-// into them, and a render test holds the two to the same specs.
+// This is the only place the policies are written. hack/chartpolicies
+// generates templates/controller-object-guard.yaml from it, with the release
+// values -- the namespace, the controller ServiceAccount, the manager image
+// and the controller-state version -- left as Helm expressions, and
+// verify-source refuses a template the generator did not write.
 type ControllerObjectGuard struct {
 	ReleaseName                  string
 	ReleaseNamespace             string
@@ -134,6 +136,30 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 	return entries
 }
 
+// AdmissionPolicy is one ValidatingAdmissionPolicy with the binding that
+// enforces it.
+type AdmissionPolicy struct {
+	Policy  *admissionregistrationv1.ValidatingAdmissionPolicy
+	Binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding
+}
+
+// Policies returns the four object guards, each with its binding, in the
+// order the chart renders them.
+func (g *ControllerObjectGuard) Policies() []AdmissionPolicy {
+	entries := g.entries()
+	policies := make([]AdmissionPolicy, len(entries))
+	for index, entry := range entries {
+		policies[index] = AdmissionPolicy{Policy: g.policy(entry), Binding: g.binding(entry)}
+	}
+	return policies
+}
+
+// componentLabels is the one label the chart sets on a guard beside the
+// release labels every object carries.
+func componentLabels(component string) map[string]string {
+	return map[string]string{"app.kubernetes.io/component": component}
+}
+
 func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	var variables []admissionregistrationv1.Variable
@@ -142,7 +168,7 @@ func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admiss
 	}
 	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
-		ObjectMeta: metav1.ObjectMeta{Name: entry.name},
+		ObjectMeta: metav1.ObjectMeta{Name: entry.name, Labels: componentLabels(entry.component)},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(entry),
@@ -159,7 +185,7 @@ func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admiss
 func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
 	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
-		ObjectMeta: metav1.ObjectMeta{Name: entry.name},
+		ObjectMeta: metav1.ObjectMeta{Name: entry.name, Labels: componentLabels(entry.component)},
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
 			PolicyName:        entry.name,
 			MatchResources:    g.matchResources(entry),
@@ -172,7 +198,9 @@ func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admis
 // controller-state version this release runs. A Job or a plan the controller
 // creates names both, and one that names another manager is refused, so a
 // manager left over from another release cannot create either. The values are
-// CEL literals, written into the policy when the chart renders it.
+// CEL literals, written into the policy when the chart renders it; the
+// generated template computes them with printf "%q" the way strconv.Quote
+// does here.
 func controllerObjectReleaseVariables(managerImage string, controllerStateVersion int32) []admissionregistrationv1.Variable {
 	state := strconv.FormatInt(int64(controllerStateVersion), 10)
 	return []admissionregistrationv1.Variable{
@@ -208,8 +236,8 @@ func (g *ControllerObjectGuard) matchResources(entry controllerObjectGuardEntry)
 // The two shapes are the same shape. Deriving one from the other is what keeps
 // a change to the schema contract from silently leaving the migration contract
 // weaker, which a second hand-written copy would do the first time someone
-// edited only one of them. The Helm template performs the same substitutions in
-// the same order, and a render test compares the results byte for byte.
+// edited only one of them. The generated template carries the derived
+// expression, so the chart performs no substitution of its own.
 var migrationJobShape = strings.NewReplacer(
 	`"operator.ptah.run/schema"`, `"operator.ptah.run/migration"`,
 	`"schema-operation"`, `"migration-operation"`,
