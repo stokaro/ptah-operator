@@ -15,7 +15,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,8 +24,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	celgo "github.com/google/cel-go/cel"
 
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
@@ -96,13 +93,6 @@ func TestVerifyKubernetesSupportWindowWiringRejectsHardCodedAllowlists(t *testin
 			marker:   `K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`,
 			variable: "K8S_MAJOR_MINOR",
 			apply:    func(files *e2eWiringFiles, path string) { files.harness = path },
-		},
-		{
-			name:     "CRD upgrade child",
-			path:     files.crdUpgrade,
-			marker:   `KUBERNETES_MAJOR_MINOR=$(printf '%s\n' "$E2E_KUBERNETES_VERSION" | cut -d. -f1,2)`,
-			variable: "KUBERNETES_MAJOR_MINOR",
-			apply:    func(files *e2eWiringFiles, path string) { files.crdUpgrade = path },
 		},
 	}
 	mutants := []struct {
@@ -176,12 +166,6 @@ func TestVerifyE2ESourceSnapshotRejectsLivePathMutations(t *testing.T) {
 			name:        "admission contract read from live checkout",
 			old:         `jq -e -f "$ROOT_DIR/hack/admission-schema-contract.jq" \`,
 			replacement: `jq -e -f "$SOURCE_REPOSITORY_ROOT/hack/admission-schema-contract.jq" \`,
-			wantError:   "live checkout path escapes",
-		},
-		{
-			name:        "child evidence script read from live checkout",
-			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
-			replacement: `"$SOURCE_REPOSITORY_ROOT/hack/e2e-ha.sh"`,
 			wantError:   "live checkout path escapes",
 		},
 		{
@@ -1040,566 +1024,6 @@ func TestKindHATopologyFilterHoldsTheIsolationWorkerToItsSuite(t *testing.T) {
 			output, err := command.CombinedOutput()
 			if accepted := err == nil; accepted != test.accept {
 				t.Fatalf("filter accepted = %v, want %v; output %s", accepted, test.accept, output)
-			}
-		})
-	}
-}
-
-func TestLateFailureRetryRejectsChangedCandidate(t *testing.T) {
-	t.Parallel()
-	shPath, err := exec.LookPath("sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
-	functions := strings.Replace(extractE2EShellFunction(t, source, "file_sha256"), "file_sha256() {", "real_file_sha256() {", 1) + "\n" +
-		"file_sha256() { real_file_sha256 \"$1\"; if [ \"$checksum_failure_path\" = \"$1\" ]; then return 73; fi; }\n" +
-		extractE2EShellFunction(t, source, "assert_late_failure_candidate_unchanged")
-	for _, mutation := range []string{"none", "chart", "values", "image", "chart checksum failure", "values checksum failure"} {
-		t.Run(mutation, func(t *testing.T) {
-			t.Parallel()
-			directory := t.TempDir()
-			chartPath := filepath.Join(directory, "candidate.tgz")
-			valuesPath := filepath.Join(directory, "candidate-values.json")
-			chart, values := []byte("immutable chart fixture"), []byte(`{"image":"candidate"}`)
-			chartDigest, valuesDigest := sha256.Sum256(chart), sha256.Sum256(values)
-			image := "candidate-image"
-			checksumFailurePath := ""
-			switch mutation {
-			case "chart":
-				chart = []byte("replacement chart")
-			case "values":
-				values = []byte(`{"image":"replacement"}`)
-			case "image":
-				image = "replacement-image"
-			case "chart checksum failure":
-				checksumFailurePath = chartPath
-			case "values checksum failure":
-				checksumFailurePath = valuesPath
-			}
-			for path, contents := range map[string][]byte{chartPath: chart, valuesPath: values} {
-				if err := os.WriteFile(path, contents, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			command := exec.Command(shPath, "-c", "set -eu\nfail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"+functions+"\nassert_late_failure_candidate_unchanged\n")
-			command.Env = append(os.Environ(), "E2E_NEXT_CHART_PACKAGE="+chartPath, "E2E_NEXT_VALUES_FILE="+valuesPath,
-				"E2E_NEXT_CONTROLLER_IMAGE="+image,
-				fmt.Sprintf("late_candidate_chart_sha256=%x", chartDigest), fmt.Sprintf("late_candidate_values_sha256=%x", valuesDigest),
-				"late_candidate_image=candidate-image", "checksum_failure_path="+checksumFailurePath)
-			output, err := command.CombinedOutput()
-			if got, want := err == nil, mutation == "none"; got != want {
-				t.Fatalf("candidate retry accepted = %t, want %t: %s", got, want, output)
-			}
-		})
-	}
-}
-
-// The blocker stands in for whatever fails after the hook stopped the runtime,
-// so it has to let the hook's own scale-down through and refuse only Helm's
-// write of the candidate. Both match conditions must hold for the webhook to
-// be called, as the API server evaluates them.
-func TestLateFailureBlockerMatchesOnlyTheCandidateDeployments(t *testing.T) {
-	t.Parallel()
-
-	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
-	substitute := strings.NewReplacer(
-		"$E2E_OPERATOR_NAMESPACE", "ptah-system",
-		"$CONTROLLER_DEPLOYMENT", "ptah-operator",
-		"$ROTATOR_DEPLOYMENT", "ptah-operator-cert-rotator",
-		"$E2E_NEXT_CONTROLLER_IMAGE", "registry.invalid/operator@sha256:candidate",
-	)
-	environment, err := celgo.NewEnv(
-		celgo.Variable("request", celgo.DynType),
-		celgo.Variable("object", celgo.DynType),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var programs []celgo.Program
-	for _, condition := range []string{"exact-runtime-deployment", "candidate-image"} {
-		pattern := regexp.MustCompile(`(?m)^[\t ]*- name: ` + regexp.QuoteMeta(condition) + `\r?\n[\t ]*expression: '([^'\r\n]+)'[\t ]*\r?$`)
-		matches := pattern.FindAllStringSubmatch(source, -1)
-		if len(matches) != 1 {
-			t.Fatalf("late failure blocker %s condition matches = %d, want 1", condition, len(matches))
-		}
-		ast, issues := environment.Compile(substitute.Replace(matches[0][1]))
-		if issues != nil && issues.Err() != nil {
-			t.Fatalf("compile late failure blocker %s: %v", condition, issues.Err())
-		}
-		program, err := environment.Program(ast)
-		if err != nil {
-			t.Fatalf("build late failure blocker %s: %v", condition, err)
-		}
-		programs = append(programs, program)
-	}
-
-	deployment := func(images ...string) map[string]any {
-		containers := make([]any, 0, len(images))
-		for _, image := range images {
-			containers = append(containers, map[string]any{"image": image})
-		}
-		return map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": containers}}}}
-	}
-	request := func(namespace, name string) map[string]any {
-		return map[string]any{"namespace": namespace, "name": name}
-	}
-	const (
-		candidate   = "registry.invalid/operator@sha256:candidate"
-		predecessor = "registry.invalid/operator@sha256:predecessor"
-	)
-	for _, test := range []struct {
-		name    string
-		request map[string]any
-		object  any
-		want    bool
-	}{
-		{name: "Helm writes the candidate controller", request: request("ptah-system", "ptah-operator"), object: deployment(candidate), want: true},
-		{name: "Helm writes the candidate rotator", request: request("ptah-system", "ptah-operator-cert-rotator"), object: deployment(candidate), want: true},
-		{name: "the hook scales the predecessor to zero", request: request("ptah-system", "ptah-operator"), object: deployment(predecessor)},
-		{name: "another Deployment carries the candidate", request: request("ptah-system", "other"), object: deployment(candidate)},
-		{name: "the controller name in another namespace", request: request("other", "ptah-operator"), object: deployment(candidate)},
-		{name: "a request without an object", request: request("ptah-system", "ptah-operator"), object: nil},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			matched := true
-			for _, program := range programs {
-				result, _, evalErr := program.Eval(map[string]any{"request": test.request, "object": test.object})
-				if evalErr != nil {
-					t.Fatalf("evaluate late failure blocker: %v", evalErr)
-				}
-				value, ok := result.Value().(bool)
-				if !ok {
-					t.Fatalf("late failure blocker result = %T(%v), want bool", result.Value(), result.Value())
-				}
-				matched = matched && value
-			}
-			if matched != test.want {
-				t.Fatalf("late failure blocker matched = %t, want %t", matched, test.want)
-			}
-		})
-	}
-}
-
-// The late failure is told apart from a refusal by its hooks: the reconcile
-// hook of the failed revision ran and succeeded, and no hook failed.
-func TestLateFailureRevisionClassification(t *testing.T) {
-	t.Parallel()
-
-	jqPath, err := exec.LookPath("jq")
-	if err != nil {
-		t.Fatal("jq is required to exercise the embedded late-failure revision classifier")
-	}
-	filter := lateFailureRevisionFilter(t)
-	const (
-		expectedRevision      = 4
-		expectedReconcileName = "ptah-operator-crd-v1-0123456789ab"
-	)
-	hook := func(name, kind string, weight any, phase string) map[string]any {
-		return map[string]any{
-			"name":   name,
-			"kind":   kind,
-			"weight": weight,
-			"events": []any{"pre-install", "pre-upgrade", "pre-rollback"},
-			"last_run": map[string]any{
-				"phase":        phase,
-				"started_at":   "2026-09-04T12:00:00Z",
-				"completed_at": "2026-09-04T12:00:01Z",
-			},
-		}
-	}
-	fixture := func() map[string]any {
-		return map[string]any{
-			"version": expectedRevision,
-			"info":    map[string]any{"status": "failed"},
-			"hooks": []any{
-				hook(expectedReconcileName, "ServiceAccount", -110, "Succeeded"),
-				hook(expectedReconcileName, "Job", nil, "Succeeded"),
-			},
-		}
-	}
-	for _, test := range []struct {
-		name   string
-		mutate func(map[string]any)
-		want   bool
-	}{
-		{name: "the reconcile hook succeeded and the release failed after it", mutate: func(map[string]any) {}, want: true},
-		{
-			name: "the reconcile hook failed",
-			mutate: func(status map[string]any) {
-				status["hooks"].([]any)[1].(map[string]any)["last_run"].(map[string]any)["phase"] = "Failed"
-			},
-		},
-		{
-			name: "another hook failed",
-			mutate: func(status map[string]any) {
-				status["hooks"] = append(status["hooks"].([]any), hook("other-hook", "Job", 5, "Failed"))
-			},
-		},
-		{
-			name: "the reconcile hook never ran",
-			mutate: func(status map[string]any) {
-				status["hooks"].([]any)[1].(map[string]any)["last_run"].(map[string]any)["phase"] = ""
-			},
-		},
-		{
-			name: "another release's reconcile hook",
-			mutate: func(status map[string]any) {
-				status["hooks"].([]any)[1].(map[string]any)["name"] = "other-reconcile"
-			},
-		},
-		{
-			name: "two reconcile hooks",
-			mutate: func(status map[string]any) {
-				status["hooks"] = append(status["hooks"].([]any), hook(expectedReconcileName, "Job", nil, "Succeeded"))
-			},
-		},
-		{
-			name: "the reconcile hook is not a pre-upgrade hook",
-			mutate: func(status map[string]any) {
-				status["hooks"].([]any)[1].(map[string]any)["events"] = []any{"pre-install"}
-			},
-		},
-		{
-			name: "another revision",
-			mutate: func(status map[string]any) {
-				status["version"] = expectedRevision + 1
-			},
-		},
-		{
-			name: "the release did not fail",
-			mutate: func(status map[string]any) {
-				status["info"].(map[string]any)["status"] = "deployed"
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			status := fixture()
-			test.mutate(status)
-			encoded, marshalErr := json.Marshal(status)
-			if marshalErr != nil {
-				t.Fatal(marshalErr)
-			}
-			command := exec.Command(
-				jqPath,
-				"-e",
-				"--argjson", "expected_revision", strconv.Itoa(expectedRevision),
-				"--arg", "expected_reconcile_name", expectedReconcileName,
-				filter,
-			)
-			command.Stdin = strings.NewReader(string(encoded))
-			output, runErr := command.CombinedOutput()
-			if got := runErr == nil; got != test.want {
-				t.Fatalf("late failure revision classification = %t, want %t; jq output = %q", got, test.want, output)
-			}
-		})
-	}
-}
-
-func lateFailureRevisionFilter(t *testing.T) string {
-	t.Helper()
-	source := extractE2EShellFunction(t, readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade), "prove_late_failure_recovery")
-	const startMarker = `--arg expected_reconcile_name "$EXPECTED_RECONCILE_HOOK_NAME" '` + "\n"
-	start := strings.Index(source, startMarker)
-	if start < 0 {
-		t.Fatal("late failure revision classifier filter start is missing")
-	}
-	start += len(startMarker)
-	const endMarker = "\n        ' \"$late_status_file\" >/dev/null; then"
-	end := strings.Index(source[start:], endMarker)
-	if end < 0 {
-		t.Fatal("late failure revision classifier filter end is missing")
-	}
-	return source[start : start+end]
-}
-
-func TestHAResolveOperationFailureCounterParser(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		metrics    string
-		wantOutput string
-		wantError  bool
-	}{
-		{name: "absent", metrics: "# unrelated\n", wantOutput: "0\n"},
-		{name: "zero", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 0\n", wantOutput: "0\n"},
-		{name: "positive exponent", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 3e+02\n", wantOutput: "3e+02\n"},
-		{name: "overflowing exponent", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1e999\n", wantError: true},
-		{name: "duplicate", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1\nptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 2\n", wantError: true},
-		{name: "negative", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} -1\n", wantError: true},
-		{name: "non-finite", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} NaN\n", wantError: true},
-		{name: "timestamped", metrics: "ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1 123\n", wantError: true},
-	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			output, err := runHAResolveMetricParser(t, test.metrics)
-			if test.wantError {
-				if err == nil {
-					t.Fatalf("parser accepted invalid metrics and returned %q", output)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("parser failed: %v: %s", err, output)
-			}
-			if got := string(output); got != test.wantOutput {
-				t.Fatalf("parser output = %q, want %q", got, test.wantOutput)
-			}
-		})
-	}
-}
-
-func TestHACustomMetricValidatorRejectsOverflowingExponent(t *testing.T) {
-	t.Parallel()
-
-	metrics := strings.Join([]string{
-		"# HELP ptah_operator_reconciliations_total Total reconciliations.",
-		"# TYPE ptah_operator_reconciliations_total counter",
-		"ptah_operator_reconciliations_total{family=\"schema\",result=\"success\"} 2",
-		"# HELP ptah_operator_failures_total Total failures.",
-		"# TYPE ptah_operator_failures_total counter",
-		"ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"} 1e999",
-	}, "\n") + "\n"
-	if output, err := runHACustomMetricValidator(t, metrics); err == nil {
-		t.Fatalf("validator accepted an overflowing metric exponent and returned %q", output)
-	}
-}
-
-func TestHACustomMetricsPollsUntilResolveFailureCounterIncreases(t *testing.T) {
-	t.Parallel()
-
-	shPath, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("sh is required to exercise the HA metric delta proof")
-	}
-	source := readE2ESource(t, repositoryE2EWiringFiles().highAvailability)
-	var script strings.Builder
-	script.WriteString(`set -eu
-OPERATOR_NAMESPACE=ptah-system
-METRICS_TIMEOUT_SECONDS=3
-SCRAPE_COUNT_FILE=$1
-leader_pod_name() { printf '%s\n' leader; }
-fail() { printf 'failure: %s\n' "$*" >&2; exit 1; }
-sleep() { :; }
-emit_metrics() {
-  printf '%s\n' '# HELP ptah_operator_reconciliations_total Total reconciliations.'
-  printf '%s\n' '# TYPE ptah_operator_reconciliations_total counter'
-  printf '%s\n' 'ptah_operator_reconciliations_total{family="schema",result="success"} 2'
-  printf '%s\n' '# HELP ptah_operator_failures_total Total failures.'
-  printf '%s\n' '# TYPE ptah_operator_failures_total counter'
-  printf 'ptah_operator_failures_total{category="operation",family="schema",stage="resolve"} %s\n' "$1"
-}
-k() {
-  scrape_count=$(sed -n '1p' "$SCRAPE_COUNT_FILE")
-  scrape_count=$((scrape_count + 1))
-  printf '%s\n' "$scrape_count" >"$SCRAPE_COUNT_FILE"
-  if [ "$scrape_count" -eq 1 ]; then
-    emit_metrics 3
-  else
-    emit_metrics 4
-  fi
-}
-`)
-	for _, functionName := range []string{
-		"validate_custom_operator_metrics",
-		"resolve_operation_failure_counter_from_metrics",
-		"assert_custom_operator_metrics",
-	} {
-		script.WriteString(extractE2EShellFunction(t, source, functionName))
-		script.WriteByte('\n')
-	}
-	script.WriteString("assert_custom_operator_metrics holder 3\n")
-	script.WriteString("cat \"$SCRAPE_COUNT_FILE\"\n")
-
-	tempDir := t.TempDir()
-	scriptPath := filepath.Join(tempDir, "ha-metric-delta.sh")
-	countPath := filepath.Join(tempDir, "scrape-count")
-	if err := os.WriteFile(scriptPath, []byte(script.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(countPath, []byte("0\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	output, err := exec.Command(shPath, scriptPath, countPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("HA metric delta proof failed: %v: %s", err, output)
-	}
-	if got, want := string(output), "2\n"; got != want {
-		t.Fatalf("scrape count = %q, want %q", got, want)
-	}
-}
-
-func runHAResolveMetricParser(t *testing.T, metrics string) ([]byte, error) {
-	t.Helper()
-
-	shPath, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("sh is required to exercise the HA metric parser")
-	}
-	source := readE2ESource(t, repositoryE2EWiringFiles().highAvailability)
-	script := "set -eu\n" +
-		extractE2EShellFunction(t, source, "resolve_operation_failure_counter_from_metrics") +
-		"\nresolve_operation_failure_counter_from_metrics\n"
-	tempDir := t.TempDir()
-	scriptPath := filepath.Join(tempDir, "ha-metric-parser.sh")
-	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	command := exec.Command(shPath, scriptPath)
-	command.Stdin = strings.NewReader(metrics)
-	return command.CombinedOutput()
-}
-
-func runHACustomMetricValidator(t *testing.T, metrics string) ([]byte, error) {
-	t.Helper()
-
-	shPath, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("sh is required to exercise the HA metric validator")
-	}
-	source := readE2ESource(t, repositoryE2EWiringFiles().highAvailability)
-	script := "set -eu\n" +
-		extractE2EShellFunction(t, source, "validate_custom_operator_metrics") +
-		"\nvalidate_custom_operator_metrics\n"
-	tempDir := t.TempDir()
-	scriptPath := filepath.Join(tempDir, "ha-metric-validator.sh")
-	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	command := exec.Command(shPath, scriptPath)
-	command.Stdin = strings.NewReader(metrics)
-	return command.CombinedOutput()
-}
-
-func TestProductionControllerImageUsesOnlyProductionDigest(t *testing.T) {
-	t.Parallel()
-
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq is required to exercise production controller image extraction")
-	}
-	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
-	if strings.Contains(source, `.repository + "@" + .testIdentityDigest`) {
-		t.Fatal("production controller identity uses the mutually exclusive test-only digest")
-	}
-	if !strings.Contains(source, `(has("testIdentityDigest") | not)`) {
-		t.Fatal("production controller identity does not reject a test-only digest")
-	}
-	script := "set -eu\n" +
-		extractE2EShellFunction(t, source, "fail") + "\n" +
-		extractE2EShellFunction(t, source, "production_controller_image_from_values") + "\n" +
-		"production_controller_image_from_values \"$1\"\n"
-	lowerDigest := "sha256:" + strings.Repeat("a", 64)
-	upperDigest := "sha256:" + strings.Repeat("A", 64)
-	testDigest := "sha256:" + strings.Repeat("b", 64)
-
-	for _, shellName := range []string{"sh", "dash"} {
-		shellName := shellName
-		t.Run(shellName, func(t *testing.T) {
-			shellPath, err := exec.LookPath(shellName)
-			if err != nil {
-				t.Skipf("%s is required to exercise production image extraction", shellName)
-			}
-			directory := t.TempDir()
-			scriptPath := filepath.Join(directory, "production-image.sh")
-			if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			tests := []struct {
-				name      string
-				image     map[string]any
-				want      string
-				wantError bool
-			}{
-				{
-					name: "production digest",
-					image: map[string]any{
-						"repository": "registry.example/ptah/operator",
-						"digest":     lowerDigest,
-					},
-					want: "registry.example/ptah/operator@" + lowerDigest + "\n",
-				},
-				{
-					name: "retired empty test-only digest key",
-					image: map[string]any{
-						"repository":         "registry.example/ptah/operator",
-						"digest":             lowerDigest,
-						"testIdentityDigest": "",
-					},
-					wantError: true,
-				},
-				{
-					name: "retired test-only digest",
-					image: map[string]any{
-						"repository":         "registry.example/ptah/operator",
-						"digest":             lowerDigest,
-						"testIdentityDigest": testDigest,
-					},
-					wantError: true,
-				},
-				{
-					name: "uppercase digest",
-					image: map[string]any{
-						"repository": "registry.example/ptah/operator",
-						"digest":     upperDigest,
-					},
-					wantError: true,
-				},
-				{
-					name: "missing digest",
-					image: map[string]any{
-						"repository": "registry.example/ptah/operator",
-					},
-					wantError: true,
-				},
-				{
-					name: "retired mutable tag key",
-					image: map[string]any{
-						"repository":      "registry.example/ptah/operator",
-						"digest":          lowerDigest,
-						"allowMutableTag": false,
-					},
-					wantError: true,
-				},
-				{
-					name: "repository already has a digest",
-					image: map[string]any{
-						"repository": "registry.example/ptah/operator@" + testDigest,
-						"digest":     lowerDigest,
-					},
-					wantError: true,
-				},
-			}
-			for _, test := range tests {
-				test := test
-				t.Run(test.name, func(t *testing.T) {
-					values, err := json.Marshal(map[string]any{"image": test.image})
-					if err != nil {
-						t.Fatal(err)
-					}
-					valuesPath := filepath.Join(t.TempDir(), "values.json")
-					if err := os.WriteFile(valuesPath, values, 0o600); err != nil {
-						t.Fatal(err)
-					}
-					output, runErr := exec.Command(shellPath, scriptPath, valuesPath).CombinedOutput()
-					if test.wantError {
-						if runErr == nil {
-							t.Fatalf("production identity unexpectedly succeeded with %q", output)
-						}
-						return
-					}
-					if runErr != nil {
-						t.Fatalf("production identity failed: %v: %s", runErr, output)
-					}
-					if got := string(output); got != test.want {
-						t.Fatalf("production identity = %q, want %q", got, test.want)
-					}
-				})
 			}
 		})
 	}
@@ -2788,35 +2212,33 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "upgrade lifecycle omitted",
-			old:         "E2E_PHASE=upgrade \\\n",
-			replacement: "E2E_PHASE=upgrade-omitted \\\n",
-			wantError:   `upgrade phase must bind E2E_PHASE to "upgrade", and binds "upgrade-omitted"`,
-		},
-		{
-			name: "upgrade child call removed",
-			old: "E2E_PHASE=upgrade \\\n" +
-				"\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
-			replacement: `true # upgrade child call removed`,
+			old:         `run_recorded_phase upgrade run_go_phase upgrade`,
+			replacement: `true # upgrade lifecycle omitted`,
 			wantError:   "candidate upgrade lifecycle",
 		},
 		{
-			name: "upgrade child call hidden in false branch",
-			old: "E2E_PHASE=upgrade \\\n" +
-				"\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
-			replacement: "if false; then\n\tE2E_PHASE=upgrade \\\n" +
-				"\t\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"\nfi",
+			name: "upgrade lifecycle hidden in false branch",
+			old:  "E2E_KUBERNETES_VERSION=$K8S_VERSION \\\n\trun_recorded_phase upgrade run_go_phase upgrade",
+			replacement: "if false; then\nE2E_KUBERNETES_VERSION=$K8S_VERSION \\\n" +
+				"\trun_recorded_phase upgrade run_go_phase upgrade\nfi",
 			wantError: "always-false wrapper",
 		},
 		{
+			name:        "upgrade lifecycle call separated from its environment",
+			old:         `run_recorded_phase upgrade run_go_phase upgrade`,
+			replacement: "true\n\trun_recorded_phase upgrade run_go_phase upgrade",
+			wantError:   `upgrade phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
+		},
+		{
 			name:        "high availability lifecycle omitted",
-			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
+			old:         `run_recorded_phase ha run_go_phase ha`,
 			replacement: `true # high availability lifecycle omitted`,
 			wantError:   "high-availability lifecycle",
 		},
 		{
 			name:        "high availability lifecycle hidden in false branch",
-			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
-			replacement: "if false; then\n\trun_recorded_phase ha \"$ROOT_DIR/hack/e2e-ha.sh\"\nfi",
+			old:         `run_recorded_phase ha run_go_phase ha`,
+			replacement: "if false; then\n\trun_recorded_phase ha run_go_phase ha\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
@@ -2966,9 +2388,9 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "uninstall lifecycle omitted",
-			old:         "E2E_PHASE=uninstall \\\n",
-			replacement: "E2E_PHASE=uninstall-omitted \\\n",
-			wantError:   `uninstall phase must bind E2E_PHASE to "uninstall", and binds "uninstall-omitted"`,
+			old:         `run_recorded_phase uninstall run_go_phase uninstall`,
+			replacement: `true # uninstall lifecycle omitted`,
+			wantError:   "uninstall lifecycle",
 		},
 		{
 			name:        "synthetic next chart handoff omitted",
@@ -2980,11 +2402,11 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name: "current release values handoff omitted",
 			old: "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" +
 				"E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \\\n" +
-				"E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
+				"E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
 				"E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
 			replacement: "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" +
 				"E2E_CANDIDATE_VALUES_FILE= \\\n" +
-				"E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
+				"E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
 				"E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
 			wantError: `uninstall phase must bind E2E_CANDIDATE_VALUES_FILE to "$CANDIDATE_VALUES_FILE", and binds ""`,
 		},
@@ -2992,13 +2414,13 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name: "current release image handoff omitted",
 			old: "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" +
 				"E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \\\n" +
-				"E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
+				"E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
 				"E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
 			replacement: "E2E_CHART_PACKAGE=$CHART_PACKAGE \\\n" +
 				"E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \\\n" +
-				"E2E_CANDIDATE_IMAGE= \\\n" +
+				"E2E_CONTROLLER_IMAGE= \\\n" +
 				"E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
-			wantError: `uninstall phase must bind E2E_CANDIDATE_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds ""`,
+			wantError: `uninstall phase must bind E2E_CONTROLLER_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds ""`,
 		},
 		{
 			name:        "installed chart export omitted",
@@ -3065,83 +2487,6 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
 			mutatedFiles.harness = writeMutatedE2ESource(t, "e2e-kind.sh", source, test.old, test.replacement)
-			err := verifyE2EWiring(mutatedFiles)
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
-			}
-		})
-	}
-}
-
-func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
-	t.Parallel()
-
-	files := repositoryE2EWiringFiles()
-	source := readE2ESource(t, files.crdUpgrade)
-	tests := []struct {
-		name        string
-		old         string
-		replacement string
-		wantError   string
-	}{
-		{
-			name:        "next revision is not bound to current revision",
-			old:         `failed_revision=$((before_revision + 1))`,
-			replacement: `failed_revision=$before_revision`,
-			wantError:   "rendered reconcile hook and failed revision binding",
-		},
-		{
-			name: "hook name is not derived from the render",
-			old: "[ -n \"$UPGRADE_VALUES_FILE\" ] || fail \"upgrade values file is not configured\"\n" +
-				"\t[ -n \"$EXPECTED_RECONCILE_HOOK_NAME\" ] || fail \"rendered reconcile hook name is unavailable\"",
-			replacement: "[ -n \"$UPGRADE_VALUES_FILE\" ] || fail \"upgrade values file is not configured\"\n" +
-				"\tEXPECTED_RECONCILE_HOOK_NAME=ptah-crd-reconcile",
-			wantError: "rendered reconcile hook and failed revision binding",
-		},
-		{
-			name:        "failed revision is not selected explicitly",
-			old:         `--revision "$failed_revision" -o json >"$status_file"; then`,
-			replacement: `-o json >"$status_file"; then`,
-			wantError:   "explicit revision retrieval",
-		},
-		{
-			name:        "evidence is checked against previous revision",
-			old:         `--argjson expected_revision "$failed_revision" \`,
-			replacement: `--argjson expected_revision "$before_revision" \`,
-			wantError:   "exact failed reconcile evidence evaluation",
-		},
-		{
-			name:        "evidence omits exact hook name",
-			old:         `--arg expected_name "$EXPECTED_RECONCILE_HOOK_NAME" \`,
-			replacement: `--arg expected_name "" \`,
-			wantError:   "exact failed reconcile evidence evaluation",
-		},
-		{
-			name:        "evidence filter result is ignored",
-			old:         `-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null; then`,
-			replacement: `-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null || true; then`,
-			wantError:   "exact failed reconcile evidence evaluation",
-		},
-		{
-			name: "stderr is parsed as hook evidence",
-			old:  `status_file=$WORK_DIR/failed-upgrade-status.json`,
-			replacement: "status_file=$WORK_DIR/failed-upgrade-status.json\n" +
-				`grep -F preflight "$WORK_DIR/failed-upgrade.err" >/dev/null || true`,
-			wantError: "stderr may only be captured once",
-		},
-		{
-			name: "structured revision evidence is overwritten",
-			old:  `status_file=$WORK_DIR/failed-upgrade-status.json`,
-			replacement: "status_file=$WORK_DIR/failed-upgrade-status.json\n" +
-				`printf '%s\n' '{}' >"$status_file"`,
-			wantError: "must flow only from the explicitly retrieved structured revision status",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			mutatedFiles := files
-			mutatedFiles.crdUpgrade = writeMutatedE2ESource(t, "e2e-crd-upgrade.sh", source, test.old, test.replacement)
 			err := verifyE2EWiring(mutatedFiles)
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
@@ -3240,154 +2585,6 @@ func TestVerifyControllerObjectSchemaAssetsRejectCriticalMutations(t *testing.T)
 	})
 }
 
-func TestVerifyFailedHookEvidenceFilterRejectsContractMutations(t *testing.T) {
-	t.Parallel()
-
-	files := repositoryE2EWiringFiles()
-	source := readE2ESource(t, files.failedHookEvidence)
-	tests := []struct {
-		name        string
-		old         string
-		replacement string
-	}{
-		{name: "revision", old: `(.version == $expected_revision)`, replacement: `(.version >= $expected_revision)`},
-		{name: "release status", old: `(.info.status == "failed")`, replacement: `(.info.status != "deployed")`},
-		{name: "single failed hook", old: `($failed | length == 1)`, replacement: `($failed | length >= 1)`},
-		{name: "hook name", old: `.name == $expected_name`, replacement: `.name != ""`},
-		{name: "hook kind", old: `.kind == "Job" and`, replacement: `.kind != "" and`},
-		{name: "weight default", old: `if .weight == null then 0 else (.weight | tonumber) end;`, replacement: `if .weight == null then -1 else (.weight | tonumber) end;`},
-		{name: "hook weight", old: `hook_weight == 0 and`, replacement: `hook_weight <= 0 and`},
-		{name: "hook event", old: "hook_weight == 0 and\n  ((.events // []) | index(\"pre-upgrade\") != null)", replacement: "hook_weight == 0 and\n  ((.events // []) | length > 0)"},
-		{name: "started timestamp", old: "((.events // []) | index(\"pre-upgrade\") != null) and\n  ((.last_run.started_at // \"\") | length > 0)", replacement: "((.events // []) | index(\"pre-upgrade\") != null) and\n  true"},
-		{name: "completed timestamp", old: "((.events // []) | index(\"pre-upgrade\") != null) and\n  ((.last_run.started_at // \"\") | length > 0) and\n  ((.last_run.completed_at // \"\") | length > 0))", replacement: "((.events // []) | index(\"pre-upgrade\") != null) and\n  ((.last_run.started_at // \"\") | length > 0) and\n  true)"},
-		{name: "later hook cutoff", old: `(hook_weight > 0)`, replacement: `(hook_weight >= 0)`},
-		{name: "later hook exclusion", old: `hook_phase == ""`, replacement: `hook_phase != "Failed"`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			mutatedFiles := files
-			mutatedFiles.failedHookEvidence = writeMutatedE2ESource(t, "failed-hook-evidence.jq", source, test.old, test.replacement)
-			err := verifyE2EWiring(mutatedFiles)
-			if err == nil || !strings.Contains(err.Error(), "failed Helm hook evidence filter") {
-				t.Fatalf("verifyE2EWiring() error = %v, want exact filter contract rejection", err)
-			}
-		})
-	}
-}
-
-func TestVerifyFailedHookEvidenceSelftestRejectsCriticalMutations(t *testing.T) {
-	t.Parallel()
-
-	files := repositoryE2EWiringFiles()
-	source := readE2ESource(t, files.failedHookEvidenceSelftest)
-	tests := []struct {
-		name        string
-		old         string
-		replacement string
-		wantError   string
-	}{
-		{
-			name:        "wrong filter is evaluated",
-			old:         `-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$1" >/dev/null`,
-			replacement: `-f "$ROOT_DIR/hack/other-filter.jq" "$1" >/dev/null`,
-			wantError:   "revision-bound failed-hook evaluator",
-		},
-		{
-			name:        "valid fixture evaluation is removed",
-			old:         `evaluate "$WORK_DIR/valid.json"`,
-			replacement: `: # valid fixture evaluation removed`,
-			wantError:   "valid fixture evaluation",
-		},
-		{
-			name:        "revision negative is removed",
-			old:         `expect_rejected wrong-revision '.version = 8'`,
-			replacement: `: # wrong revision accepted`,
-			wantError:   "wrong revision refusal",
-		},
-		{
-			name:        "name negative is removed",
-			old:         `expect_rejected wrong-name '.hooks[1].name = "other-reconcile"'`,
-			replacement: `: # wrong name accepted`,
-			wantError:   "wrong hook name refusal",
-		},
-		{
-			name:        "weight negative is removed",
-			old:         `expect_rejected wrong-weight '.hooks[1].weight = -60'`,
-			replacement: `: # wrong weight accepted`,
-			wantError:   "wrong hook weight refusal",
-		},
-		{
-			name:        "later hook negative is removed",
-			old:         `expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'`,
-			replacement: `: # later hook execution accepted`,
-			wantError:   "later hook execution refusal",
-		},
-		{
-			name:        "negative checker returns successfully",
-			old:         "expect_rejected() {\n",
-			replacement: "expect_rejected() {\n\treturn 0\n",
-			wantError:   "unconditional successful return",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			mutatedFiles := files
-			mutatedFiles.failedHookEvidenceSelftest = writeMutatedE2ESource(t, "failed-hook-evidence-selftest.sh", source, test.old, test.replacement)
-			err := verifyE2EWiring(mutatedFiles)
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
-			}
-		})
-	}
-}
-
-func TestVerifyFailedHookEvidenceStaticWiringRejectsMutations(t *testing.T) {
-	t.Parallel()
-
-	files := repositoryE2EWiringFiles()
-	source := readE2ESource(t, files.staticChecks)
-	tests := []struct {
-		name        string
-		replacement string
-		wantError   string
-	}{
-		{
-			name:        "self-test invocation removed",
-			replacement: `: # failed hook evidence self-test removed`,
-			wantError:   "failed-hook evidence self-test wiring",
-		},
-		{
-			name:        "self-test failure ignored",
-			replacement: `"$(dirname -- "$0")/failed-hook-evidence-selftest.sh" || true`,
-			wantError:   "failed-hook evidence self-test wiring",
-		},
-		{
-			name: "self-test hidden in false branch",
-			replacement: "if false; then\n" +
-				"\t\"$(dirname -- \"$0\")/failed-hook-evidence-selftest.sh\"\n" +
-				"fi",
-			wantError: "always-false wrapper",
-		},
-	}
-	const invocation = `"$(dirname -- "$0")/failed-hook-evidence-selftest.sh"`
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			mutatedFiles := files
-			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
-			err := verifyE2EWiring(mutatedFiles)
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
-			}
-		})
-	}
-}
-
-// The stopwatch measures the phases that decide whether the operator works, so
-// the risk it carries is a measurement that swallows a failure. Its self-test
-// is what refuses that, and this refuses a static gate that stopped running it.
 func TestVerifyTimingSelftestWiringRejectsMutations(t *testing.T) {
 	t.Parallel()
 
@@ -3566,508 +2763,6 @@ func TestVerifyControlPlaneShapeSelftestWiringRejectsMutations(t *testing.T) {
 	}
 }
 
-func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		child       string
-		old         string
-		replacement string
-		wantError   string
-	}{
-		{
-			name:        "CRD interpreter bypass",
-			child:       "crd-upgrade",
-			old:         "#!/bin/sh\n",
-			replacement: "#!/bin/true\n",
-			wantError:   "must execute with #!/bin/sh",
-		},
-		{
-			name:        "CRD trap discards failure",
-			child:       "crd-upgrade",
-			old:         "trap cleanup EXIT\n",
-			replacement: "trap 'exit 0' EXIT\n",
-			wantError:   "failure-preserving trap",
-		},
-		{
-			name:        "CRD reconcile hook identity is hard-coded",
-			child:       "crd-upgrade",
-			old:         `reconcile_matches=$(rendered_hook_job_name crd-manager 0)`,
-			replacement: `reconcile_matches=ptah-operator-crd-manager`,
-			wantError:   "exact rendered reconcile hook identity",
-		},
-		{
-			name:        "CRD reconcile hook identity assignment is hard-coded",
-			child:       "crd-upgrade",
-			old:         `EXPECTED_RECONCILE_HOOK_NAME=$reconcile_matches`,
-			replacement: `EXPECTED_RECONCILE_HOOK_NAME=ptah-operator-crd-manager`,
-			wantError:   "rendered reconcile hook identity assignment",
-		},
-		{
-			name:        "CRD reconcile hook uniqueness checks the wrong render",
-			child:       "crd-upgrade",
-			old:         `[ "$(printf '%s\n' "$reconcile_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||`,
-			replacement: `[ "$(printf '%s\n' "$other_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||`,
-			wantError:   "unique rendered reconcile hook identity",
-		},
-		{
-			name:        "CRD late failure blocker broadens its target",
-			child:       "crd-upgrade",
-			old:         `expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && (request.name == "$CONTROLLER_DEPLOYMENT" || request.name == "$ROTATOR_DEPLOYMENT")'`,
-			replacement: `expression: 'true'`,
-			wantError:   "late failure blocker refuses only the candidate Deployments",
-		},
-		{
-			name:        "CRD late failure blocker also refuses the hook's scale-down",
-			child:       "crd-upgrade",
-			old:         `expression: 'object != null && object.spec.template.spec.containers.exists(container, container.image == "$E2E_NEXT_CONTROLLER_IMAGE")'`,
-			replacement: `expression: 'object != null'`,
-			wantError:   "late failure blocker refuses only the candidate Deployments",
-		},
-		{
-			name:        "CRD late failure installs no blocker",
-			child:       "crd-upgrade",
-			old:         "\tcreate_late_failure_blocker\n",
-			replacement: "\t: # blocker omitted\n",
-			wantError:   "late failure blocker before the candidate",
-		},
-		{
-			name:        "CRD late failure applies another chart",
-			child:       "crd-upgrade",
-			old:         "\"$E2E_NEXT_CHART_PACKAGE\" \\\n\t\t--namespace \"$E2E_OPERATOR_NAMESPACE\" --values \"$E2E_NEXT_VALUES_FILE\" \\\n\t\t--force-conflicts \\\n\t\t--wait --timeout 7m >\"$WORK_DIR/late-failure.out\"",
-			replacement: "\"$E2E_CHART_PACKAGE\" \\\n\t\t--namespace \"$E2E_OPERATOR_NAMESPACE\" --values \"$E2E_NEXT_VALUES_FILE\" \\\n\t\t--force-conflicts \\\n\t\t--wait --timeout 7m >\"$WORK_DIR/late-failure.out\"",
-			wantError:   "late failure Helm execution",
-		},
-		{
-			name:        "CRD late failure reads another revision",
-			child:       "crd-upgrade",
-			old:         `--revision "$late_revision" -o json >"$late_status_file" 2>/dev/null ||`,
-			replacement: `-o json >"$late_status_file" 2>/dev/null ||`,
-			wantError:   "late failure structured revision retrieval",
-		},
-		{
-			name:        "CRD late failure accepts a failed hook",
-			child:       "crd-upgrade",
-			old:         `([$hooks[] | select(.last_run.phase == "Failed")] | length == 0) and`,
-			replacement: `true and`,
-			wantError:   "late failure after a reconcile hook that succeeded",
-		},
-		{
-			name:        "CRD late failure accepts a running runtime",
-			child:       "crd-upgrade",
-			old:         `.spec.replicas == 0 and`,
-			replacement: `.spec.replicas >= 0 and`,
-			wantError:   "late failure stopped runtime",
-		},
-		{
-			name:        "CRD late failure accepts a runtime Pod",
-			child:       "crd-upgrade",
-			old:         `' >/dev/null || fail "the late failure left a runtime Pod after the runtime stop"`,
-			replacement: `' >/dev/null || true`,
-			wantError:   "late failure runtime Pod absence",
-		},
-		{
-			name:        "CRD recovery permits changed candidate image",
-			child:       "crd-upgrade",
-			old:         `[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ]; then`,
-			replacement: `[ -z "$E2E_NEXT_CONTROLLER_IMAGE" ]; then`,
-			wantError:   "late failure immutable candidate retry inputs",
-		},
-		{
-			name:        "CRD recovery permits changed candidate package",
-			child:       "crd-upgrade",
-			old:         `if [ "$late_retry_chart_sha256" != "$late_candidate_chart_sha256" ] ||`,
-			replacement: `if [ ! -f "$E2E_NEXT_CHART_PACKAGE" ] ||`,
-			wantError:   "late failure immutable candidate retry inputs",
-		},
-		{
-			name:        "CRD recovery ignores candidate chart checksum failure",
-			child:       "crd-upgrade",
-			old:         `fail "could not checksum the late-failure candidate chart"`,
-			replacement: `: # checksum failure ignored`,
-			wantError:   "late failure immutable candidate retry inputs",
-		},
-		{
-			name:        "CRD recovery ignores candidate values checksum failure",
-			child:       "crd-upgrade",
-			old:         `fail "could not checksum the late-failure candidate values"`,
-			replacement: `: # checksum failure ignored`,
-			wantError:   "late failure immutable candidate retry inputs",
-		},
-		{
-			name:        "CRD recovery skips candidate identity recheck",
-			child:       "crd-upgrade",
-			old:         "\tassert_late_failure_candidate_unchanged\n",
-			replacement: "\t: # changed candidate allowed\n",
-			wantError:   "successor read-only Job dispatch before the late failure",
-		},
-		{
-			name:        "CRD recovery removes blocker before staging the UID gap",
-			child:       "crd-upgrade",
-			old:         "\tstage_read_only_job_uid_gap\n\tassert_late_failure_candidate_unchanged\n\tdelete_late_failure_blocker\n",
-			replacement: "\tdelete_late_failure_blocker\n\tstage_read_only_job_uid_gap\n\tassert_late_failure_candidate_unchanged\n",
-			wantError:   "successor read-only Job dispatch before the late failure",
-		},
-		{
-			name:        "CRD recovery permits extra Helm revisions",
-			child:       "crd-upgrade",
-			old:         `[ "$after_revision" -eq $((late_revision + 1)) ] ||`,
-			replacement: `[ "$after_revision" -gt "$late_revision" ] ||`,
-			wantError:   "same-candidate recovery exactly one retry revision",
-		},
-		{
-			name:        "CRD recovery accepts a replaced controller ServiceAccount",
-			child:       "crd-upgrade",
-			old:         `[ "$next_service_account_uid" = "$current_service_account_uid" ] ||`,
-			replacement: `[ -n "$next_service_account_uid" ] ||`,
-			wantError:   "same-candidate recovery kept the controller identity",
-		},
-		{
-			name:        "CRD recovery skips candidate readiness",
-			child:       "crd-upgrade",
-			old:         "\tretry_same_candidate\n\twait_runtime_ready\n",
-			replacement: "\tretry_same_candidate\n",
-			wantError:   "same-candidate retry, read-only Job cleanup and running Apply adoption",
-		},
-		{
-			name:        "CRD recovery returns successfully before doing any work",
-			child:       "crd-upgrade",
-			old:         "run_next_release_upgrade_proof() {\n",
-			replacement: "run_next_release_upgrade_proof() {\n\treturn 0\n",
-			wantError:   "successful return",
-		},
-		{
-			name:        "CRD recovery candidate helper returns before its assertions",
-			child:       "crd-upgrade",
-			old:         "assert_late_failure_candidate_unchanged() {\n",
-			replacement: "assert_late_failure_candidate_unchanged() {\n\treturn 0\n",
-			wantError:   "successful return",
-		},
-		{
-			name:        "CRD late failure restarts the runtime by hand",
-			child:       "crd-upgrade",
-			old:         "\tprintf '%s\\n' 'e2e crd: the late failure left the runtime stopped on the predecessor template'\n",
-			replacement: "\tstart_runtime_deployments\n\tprintf '%s\\n' 'e2e crd: the late failure left the runtime stopped on the predecessor template'\n",
-			wantError:   "must leave the runtime to the hook",
-		},
-		{
-			name:        "CRD recovery retries a different chart",
-			child:       "crd-upgrade",
-			old:         "retry_same_candidate() {\n\tif ! helm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_NEXT_CHART_PACKAGE\" \\\n",
-			replacement: "retry_same_candidate() {\n\tif ! helm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_CHART_PACKAGE\" \\\n",
-			wantError:   "same-candidate retry",
-		},
-		{
-			name:        "CRD refused rollback is not attempted",
-			child:       "crd-upgrade",
-			old:         "\tprove_rollback_refused_over_future_state \"$current_release_revision\"\n",
-			replacement: "\t: # refused rollback omitted\n",
-			wantError:   "refused rollback, then the rollback it leaves pending",
-		},
-		{
-			name:        "CRD refused rollback may be admitted",
-			child:       "crd-upgrade",
-			old:         `fail "a rollback over stored state newer than the release it rolls back to was admitted"`,
-			replacement: `true`,
-			wantError:   "refused rollback execution",
-		},
-		{
-			name:        "CRD refused rollback may be refused before its hook",
-			child:       "crd-upgrade",
-			old:         `fail "the refused rollback did not reach its pre-rollback hook"`,
-			replacement: `true`,
-			wantError:   "refused rollback reached its hook",
-		},
-		{
-			name:        "CRD refused rollback may change a Deployment",
-			child:       "crd-upgrade",
-			old:         `cmp "$before" "$after" || fail "the refused rollback changed a runtime Deployment"`,
-			replacement: `true`,
-			wantError:   "refused rollback left the runtime alone",
-		},
-		{
-			name:        "CRD refused rollback returns before its assertions",
-			child:       "crd-upgrade",
-			old:         "prove_rollback_refused_over_future_state() {\n",
-			replacement: "prove_rollback_refused_over_future_state() {\n\treturn 0\n",
-			wantError:   "successful return",
-		},
-		{
-			name:        "CRD rollback may end anywhere",
-			child:       "crd-upgrade",
-			old:         `fail "the rollback to revision $rollback_revision did not end deployed"`,
-			replacement: `true`,
-			wantError:   "rollback ends deployed",
-		},
-		{
-			name:        "CRD read-only Job terminal fixture bypasses Job controller",
-			child:       "crd-upgrade",
-			old:         `type: "FailureTarget", status: "True",`,
-			replacement: `type: "Failed", status: "True",`,
-			wantError:   "read-only Job controller-owned failure staging",
-		},
-		{
-			name:        "CRD read-only Job terminal fixture alters active status",
-			child:       "crd-upgrade",
-			old:         "status: {\n\t    conditions: [{",
-			replacement: "status: {\n\t    active: 0,\n\t    conditions: [{",
-			wantError:   "read-only Job controller-owned failure staging",
-		},
-		{
-			name:        "CRD read-only Job terminal fixture loses native wait",
-			child:       "crd-upgrade",
-			old:         `fail "Job controller did not retire the read-only Job after FailureTarget staging"`,
-			replacement: `true # native terminal wait removed`,
-			wantError:   "read-only Job native terminal wait",
-		},
-		{
-			name:        "CRD current-release read-only Job staging skips the controller stop",
-			child:       "crd-upgrade",
-			old:         "\tdispatch_read_only_job_fixture\n\tstop_runtime_deployments\n\tset_pod_webhook_failure_policy Fail Ignore\n\tstage_read_only_job_completion\n\tset_pod_webhook_failure_policy Ignore Fail\n\tstart_runtime_deployments\n",
-			replacement: "\tdispatch_read_only_job_fixture\n\tset_pod_webhook_failure_policy Fail Ignore\n\tstage_read_only_job_completion\n\tset_pod_webhook_failure_policy Ignore Fail\n\tstart_runtime_deployments\n",
-			wantError:   "current-release read-only Job cleanup staging",
-		},
-		{
-			name:        "CRD next-release upgrade skips late-failure recovery",
-			child:       "crd-upgrade",
-			old:         "\tprove_late_failure_recovery \"$CURRENT_RELEASE_CONTROLLER_IMAGE\"\n",
-			replacement: "\t: # late failure recovery removed\n",
-			wantError:   "successor read-only Job dispatch before the late failure",
-		},
-		{
-			name:        "CRD successor read-only Job cleanup proof removed",
-			child:       "crd-upgrade",
-			old:         "\twait_for_read_only_job_cleanup\n\tquiesce_read_only_job_schema\n\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n\twait_for_predecessor_apply_job_terminal\n\twait_for_predecessor_apply_job_cleanup\n\tafter_revision=",
-			replacement: "\tquiesce_read_only_job_schema\n\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n\twait_for_predecessor_apply_job_terminal\n\twait_for_predecessor_apply_job_cleanup\n\tafter_revision=",
-			wantError:   "same-candidate retry, read-only Job cleanup and running Apply adoption",
-		},
-		{
-			name:        "CRD read-only Job terminal fixture accepts partial invariant",
-			child:       "crd-upgrade",
-			old:         "read_only_job_terminal=1\n\t\t\tbreak",
-			replacement: "break",
-			wantError:   "read-only Job full terminal invariant latch",
-		},
-		{
-			name:        "CRD read-only Job terminal fixture ignores active Pod accounting",
-			child:       "crd-upgrade",
-			old:         `((.status.active // 0) == 0) and`,
-			replacement: `true and`,
-			wantError:   "read-only Job complete native terminal predicate",
-		},
-		{
-			name:  "CRD runtime Deployment deletion loses its timeout",
-			child: "crd-upgrade",
-			old: `"$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT" \
-		--cascade=foreground --wait=true --timeout=2m >/dev/null`,
-			replacement: `"$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT" \
-		--cascade=foreground --wait=true >/dev/null`,
-			wantError: "bounded runtime Deployment deletion",
-		},
-		{
-			name:  "CRD controller Deployment deletion loses its timeout",
-			child: "crd-upgrade",
-			old: `kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_DEPLOYMENT" \
-		--cascade=foreground --wait=true --timeout=2m >/dev/null`,
-			replacement: `kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_DEPLOYMENT" \
-		--cascade=foreground --wait=true >/dev/null`,
-			wantError: "bounded controller Deployment deletion",
-		},
-		{
-			name:        "CRD proof call removed",
-			child:       "crd-upgrade",
-			old:         "prove_runtime_singleton_guard\n",
-			replacement: "true # singleton proof removed\n",
-			wantError:   "runtime singleton proof call",
-		},
-		{
-			name:        "CRD runtime Deployment recovery proof call removed",
-			child:       "crd-upgrade",
-			old:         "\tprove_runtime_deployment_recovery\n",
-			replacement: "\ttrue # recovery proof removed\n",
-			wantError:   "runtime deployment recovery proof call",
-		},
-		{
-			name:        "CRD running Apply exclusivity proof call removed",
-			child:       "crd-upgrade",
-			old:         "\tassert_predecessor_apply_remains_exclusive_while_running\n",
-			replacement: "\ttrue # running Apply exclusivity proof removed\n",
-			wantError:   "same-candidate retry, read-only Job cleanup and running Apply adoption",
-		},
-		{
-			name:        "CRD manager-only upgrade stops holding the schema unchanged",
-			child:       "crd-upgrade",
-			old:         "retires nothing.\n\tfor resource in ptahschema ptahschemaplan ptahschemaapproval; do\n",
-			replacement: "retires nothing.\n\tfor resource in ptahschemaplan ptahschemaapproval; do\n",
-			wantError:   "manager-only upgrade leaves the schema, its plan and its approval unchanged",
-		},
-		{
-			name:        "CRD running Apply barrier released before the proof",
-			child:       "crd-upgrade",
-			old:         "\tassert_predecessor_apply_remains_exclusive_while_running\n\trelease_running_apply_barrier\n",
-			replacement: "\trelease_running_apply_barrier\n\tassert_predecessor_apply_remains_exclusive_while_running\n",
-			wantError:   "same-candidate retry, read-only Job cleanup and running Apply adoption",
-		},
-		{
-			name:        "CRD controller guarded-field proof removed",
-			child:       "crd-upgrade",
-			old:         "prove_controller_object_supported_window_guard\n",
-			replacement: "true # controller guarded-field proof removed\n",
-			wantError:   "controller guarded-field proof call",
-		},
-		{
-			name:        "CRD exact released chart fresh install removed",
-			child:       "crd-upgrade",
-			old:         `helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
-			replacement: `true # exact released chart fresh install removed \`,
-			wantError:   "exact released chart fresh install",
-		},
-		{
-			name:        "CRD certificate Secret identity capture removed",
-			child:       "crd-upgrade",
-			old:         "capture_certificate_secret_names() {\n",
-			replacement: "capture_certificate_secret_names_removed() {\n",
-			wantError:   "certificate Secret identity capture implementation",
-		},
-		{
-			name:  "CRD unlabeled certificate Secrets absence removed",
-			child: "crd-upgrade",
-			old: "\tremaining=$(kube -n \"$E2E_OPERATOR_NAMESPACE\" get \\\n" +
-				"\t\t\"secret/$CERTIFICATE_SECRET_NAME\" --ignore-not-found=true -o name)\n" +
-				"\t[ -z \"$remaining\" ] ||\n" +
-				"\t\tfail \"unlabeled generated certificate Secret/$CERTIFICATE_SECRET_NAME survived uninstall\"\n" +
-				"\tremaining=$(kube -n \"$E2E_OPERATOR_NAMESPACE\" get \\\n" +
-				"\t\t\"secret/$CERTIFICATE_STAGING_SECRET_NAME\" --ignore-not-found=true -o name)\n" +
-				"\t[ -z \"$remaining\" ] ||\n" +
-				"\t\tfail \"unlabeled certificate staging Secret/$CERTIFICATE_STAGING_SECRET_NAME survived uninstall\"\n" +
-				"\tCERTIFICATE_SECRET_NAME=\n" +
-				"\tCERTIFICATE_STAGING_SECRET_NAME=\n",
-			replacement: "\tCERTIFICATE_SECRET_NAME=\n\tCERTIFICATE_STAGING_SECRET_NAME=\n",
-			wantError:   "unlabeled certificate Secrets exact uninstall absence",
-		},
-		{
-			name:        "CRD rolled-back release uninstall may fail",
-			child:       "crd-upgrade",
-			old:         `fail "the uninstall of the rolled-back release failed; Helm's own error is above"`,
-			replacement: `true`,
-			wantError:   "rolled-back release uninstall",
-		},
-		{
-			name:        "CRD upgrade proof returns immediately",
-			child:       "crd-upgrade",
-			old:         "run_upgrade_proof() {\n",
-			replacement: "run_upgrade_proof() {\n\treturn 0\n",
-			wantError:   "unconditional successful return",
-		},
-		{
-			name:        "CRD proof call hidden in false branch",
-			child:       "crd-upgrade",
-			old:         "prove_runtime_singleton_guard\n",
-			replacement: "if false; then\n\tprove_runtime_singleton_guard\nfi\n",
-			wantError:   "always-false wrapper",
-		},
-		{
-			name:        "CRD phase call removed",
-			child:       "crd-upgrade",
-			old:         "upgrade) run_upgrade_proof ;;",
-			replacement: "upgrade) true ;;",
-			wantError:   "phase dispatch",
-		},
-		{
-			name:        "CRD terminal evidence removed",
-			child:       "crd-upgrade",
-			old:         `printf 'e2e crd: PASS phase=%s\n' "$E2E_PHASE"`,
-			replacement: `printf 'e2e crd: phase=%s finished\n' "$E2E_PHASE"`,
-			wantError:   "terminal CRD lifecycle evidence",
-		},
-		{
-			name:        "HA interpreter bypass",
-			child:       "high-availability",
-			old:         "#!/bin/sh\n",
-			replacement: "#!/bin/true\n",
-			wantError:   "must execute with #!/bin/sh",
-		},
-		{
-			name:        "HA trap discards failure",
-			child:       "high-availability",
-			old:         "trap cleanup EXIT\n",
-			replacement: "trap 'exit 0' EXIT\n",
-			wantError:   "failure-preserving trap",
-		},
-		{
-			name:        "HA proof call removed",
-			child:       "high-availability",
-			old:         `initial_holder=$(wait_for_leader "")`,
-			replacement: `initial_holder=omitted`,
-			wantError:   "initial leader proof",
-		},
-		{
-			name:        "HA proof call hidden in false branch",
-			child:       "high-availability",
-			old:         `initial_holder=$(wait_for_leader "")`,
-			replacement: "if false; then\n\tinitial_holder=$(wait_for_leader \"\")\nfi",
-			wantError:   "always-false wrapper",
-		},
-		{
-			name:        "HA custom metrics proof call removed",
-			child:       "high-availability",
-			old:         `assert_custom_operator_metrics "$second_holder" "$resolve_failure_counter_before"`,
-			replacement: `: # post-failure custom metrics proof removed`,
-			wantError:   "post-failure custom metrics proof",
-		},
-		{
-			name:        "HA Resolve failure baseline removed",
-			child:       "high-availability",
-			old:         `resolve_failure_counter_before=$(read_resolve_operation_failure_counter "$second_holder")`,
-			replacement: `resolve_failure_counter_before=0 # baseline proof removed`,
-			wantError:   "pre-operation Resolve failure counter baseline",
-		},
-		{
-			name:        "HA prior Resolve metric source exclusion removed",
-			child:       "high-availability",
-			old:         "assert_prior_resolve_metric_sources_quiesced\n",
-			replacement: "true # prior Resolve metric source exclusion removed\n",
-			wantError:   "prior Resolve metric source exclusion call",
-		},
-		{
-			name:        "HA Resolve failure increase weakened",
-			child:       "high-availability",
-			old:         `'BEGIN { exit ! ((current + 0) > (baseline + 0)) }'; then`,
-			replacement: `'BEGIN { exit ! ((current + 0) >= (baseline + 0)) }'; then`,
-			wantError:   "Resolve failure counter increase proof",
-		},
-		{
-			name:        "HA custom metrics exact families weakened",
-			child:       "high-availability",
-			old:         `reconciliation_sample == 1 && failure_sample == 1) {`,
-			replacement: `reconciliation_sample == 1 || failure_sample == 1) {`,
-			wantError:   "custom metrics exact two-family acceptance",
-		},
-		{
-			name:        "HA terminal evidence removed",
-			child:       "high-availability",
-			old:         `printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'`,
-			replacement: `printf '%s\n' 'e2e HA finished'`,
-			wantError:   "terminal high-availability lifecycle evidence",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			files := repositoryE2EWiringFiles()
-			path := e2eChildPath(files, test.child)
-			source := readE2ESource(t, path)
-			mutated := writeMutatedE2ESource(t, filepath.Base(path), source, test.old, test.replacement)
-			setE2EChildPath(&files, test.child, mutated)
-			err := verifyE2EWiring(files)
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
-			}
-		})
-	}
-}
-
 // TestPhaseEnvironmentContractsRejectCriticalMutations measures what the audit
 // refuses, because an audit that only passes proves nothing about the source it
 // read. Each case takes away one property the lifecycle depends on and expects
@@ -4109,15 +2804,13 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 
 	files := repositoryE2EWiringFiles()
 	harness := readE2ESource(t, files.harness)
-	highAvailability := readE2ESource(t, files.highAvailability)
 	// Between the credentials and the engine, in every migration phase's call.
 	isolationBindings := "E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n"
 	tests := []struct {
-		name             string
-		highAvailability bool
-		old              string
-		replacement      string
-		wantError        string
+		name        string
+		old         string
+		replacement string
+		wantError   string
 	}{
 		{
 			name:        "binding removed",
@@ -4173,7 +2866,7 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "phase pointed at a script",
 			old:         "\trun_recorded_phase migrations-mysql run_go_phase migrations-mysql\n",
-			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-ha.sh\"\n",
+			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-phase.sh\"\n",
 			wantError:   "migrations-mysql is a Go phase and must run through run_go_phase migrations-mysql",
 		},
 		{
@@ -4231,14 +2924,48 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "Go phase run as a script",
 			old:         certRotationCall,
-			replacement: "\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-ha.sh\"\n",
+			replacement: "\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-phase.sh\"\n",
 			wantError:   "cert-rotation is a Go phase and must run through run_go_phase cert-rotation",
 		},
 		{
-			name:        "shell phase run as a Go phase",
-			old:         "\trun_recorded_phase ha \"$ROOT_DIR/hack/e2e-ha.sh\"\n",
-			replacement: "\trun_recorded_phase ha run_go_phase ha\n",
-			wantError:   `lifecycle phase "ha" must run hack/e2e-ha.sh, not the Go phase ha`,
+			// Every phase is a Go phase, so a script call is refused even for
+			// a phase the catalog has never heard of.
+			name:        "undeclared phase run as a script",
+			old:         certRotationCall,
+			replacement: certRotationCall + "\trun_recorded_phase legacy \"$ROOT_DIR/hack/e2e-legacy.sh\"\n",
+			wantError:   `lifecycle phase "legacy" runs hack/e2e-legacy.sh; every phase is a Go phase`,
+		},
+		{
+			name:        "undeclared Go phase invoked",
+			old:         certRotationCall,
+			replacement: certRotationCall + "\trun_recorded_phase legacy run_go_phase legacy\n",
+			wantError:   `lifecycle phase "legacy" is invoked but test/e2e/phases does not declare it`,
+		},
+		{
+			// The upgrade phase reads no database and no registry; the script
+			// was handed both, and the Go phase must not be.
+			name:        "upgrade phase handed the running Apply's database",
+			old:         "E2E_KUBERNETES_VERSION=$K8S_VERSION \\\n\trun_recorded_phase upgrade run_go_phase upgrade",
+			replacement: "E2E_KUBERNETES_VERSION=$K8S_VERSION \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\n\trun_recorded_phase upgrade run_go_phase upgrade",
+			wantError:   "upgrade phase binds E2E_DOCKER_CONTEXT, which test/e2e/phases does not declare it reads",
+		},
+		{
+			name:        "upgrade phase still told which script path to take",
+			old:         "E2E_KUBERNETES_VERSION=$K8S_VERSION \\\n\trun_recorded_phase upgrade run_go_phase upgrade",
+			replacement: "E2E_KUBERNETES_VERSION=$K8S_VERSION \\\nE2E_PHASE=upgrade \\\n\trun_recorded_phase upgrade run_go_phase upgrade",
+			wantError:   "upgrade phase binds E2E_PHASE, which test/e2e/phases does not declare it reads",
+		},
+		{
+			name:        "uninstall phase handed a synthetic next chart it cannot trust",
+			old:         "E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
+			replacement: "E2E_NEXT_CHART_PACKAGE=$CHART_PACKAGE \\\n",
+			wantError:   `uninstall phase must bind E2E_NEXT_CHART_PACKAGE to "$NEXT_CHART_PACKAGE", and binds "$CHART_PACKAGE"`,
+		},
+		{
+			name:        "high availability phase test namespace unbound",
+			old:         "E2E_HA_TEST_NAMESPACE=$HA_TEST_NAMESPACE \\\n",
+			replacement: "",
+			wantError:   `ha phase must bind E2E_HA_TEST_NAMESPACE to "$HA_TEST_NAMESPACE", and binds nothing`,
 		},
 		{
 			name:        "Go phase left out",
@@ -4271,26 +2998,12 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 				"E2E_ENGINE=postgresql \\\n",
 			wantError: `migrations-postgresql phase must bind E2E_DOCKER_CONTEXT to "$DOCKER_CONTEXT", and binds "$SELECTED_DOCKER_CONTEXT"`,
 		},
-		{
-			name:             "another phase's script declares the isolation key",
-			highAvailability: true,
-			old:              "FOREIGN_NAMESPACE=${E2E_FOREIGN_NAMESPACE:-}\n",
-			replacement:      "FOREIGN_NAMESPACE=${E2E_FOREIGN_NAMESPACE:-}\nISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation\n",
-			wantError:        "hack/e2e-ha.sh declares ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation, and the ha phase is not one that isolates a node",
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
-			switch {
-			case test.highAvailability:
-				mutatedFiles.highAvailability = writeMutatedE2ESource(
-					t, "e2e-ha.sh", highAvailability, test.old, test.replacement)
-			default:
-				mutatedFiles.harness = writeMutatedE2ESource(
-					t, "e2e-kind.sh", harness, test.old, test.replacement)
-			}
+			mutatedFiles.harness = writeMutatedE2ESource(t, "e2e-kind.sh", harness, test.old, test.replacement)
 			err := verifyPhaseEnvironmentContracts(mutatedFiles)
 			if test.wantError == "" {
 				if err != nil {
@@ -4307,43 +3020,17 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 
 func repositoryE2EWiringFiles() e2eWiringFiles {
 	return e2eWiringFiles{
-		makefile:                   filepath.Join("..", makefilePath),
-		harness:                    filepath.Join("..", e2eHarnessPath),
-		supportImageResolver:       filepath.Join("..", e2eSupportImageResolverPath),
-		kindConfig:                 filepath.Join("..", e2eKindConfigPath),
-		kindIsolationWorker:        filepath.Join("..", e2eKindIsolationWorkerPath),
-		apiServerEndpointFilter:    filepath.Join("..", apiServerEndpointFilterPath),
-		staticChecks:               filepath.Join("..", e2eStaticPath),
-		crdUpgrade:                 filepath.Join("..", e2eCRDUpgradePath),
-		highAvailability:           filepath.Join("..", e2eHAPath),
-		failedHookEvidence:         filepath.Join("..", failedHookEvidencePath),
-		failedHookEvidenceSelftest: filepath.Join("..", failedHookEvidenceSelftestPath),
-		admissionSchemaContract:    filepath.Join("..", admissionSchemaContractPath),
-		admissionSchemaSelftest:    filepath.Join("..", admissionSchemaSelftestPath),
-		controllerSchemaContract:   filepath.Join("..", controllerSchemaContractPath),
-		controllerSchemaSelftest:   filepath.Join("..", controllerSchemaSelftestPath),
-	}
-}
-
-func e2eChildPath(files e2eWiringFiles, child string) string {
-	switch child {
-	case "crd-upgrade":
-		return files.crdUpgrade
-	case "high-availability":
-		return files.highAvailability
-	default:
-		panic("unknown E2E child fixture: " + child)
-	}
-}
-
-func setE2EChildPath(files *e2eWiringFiles, child, path string) {
-	switch child {
-	case "crd-upgrade":
-		files.crdUpgrade = path
-	case "high-availability":
-		files.highAvailability = path
-	default:
-		panic("unknown E2E child fixture: " + child)
+		makefile:                 filepath.Join("..", makefilePath),
+		harness:                  filepath.Join("..", e2eHarnessPath),
+		supportImageResolver:     filepath.Join("..", e2eSupportImageResolverPath),
+		kindConfig:               filepath.Join("..", e2eKindConfigPath),
+		kindIsolationWorker:      filepath.Join("..", e2eKindIsolationWorkerPath),
+		apiServerEndpointFilter:  filepath.Join("..", apiServerEndpointFilterPath),
+		staticChecks:             filepath.Join("..", e2eStaticPath),
+		admissionSchemaContract:  filepath.Join("..", admissionSchemaContractPath),
+		admissionSchemaSelftest:  filepath.Join("..", admissionSchemaSelftestPath),
+		controllerSchemaContract: filepath.Join("..", controllerSchemaContractPath),
+		controllerSchemaSelftest: filepath.Join("..", controllerSchemaSelftestPath),
 	}
 }
 

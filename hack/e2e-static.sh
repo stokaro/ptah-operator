@@ -2,7 +2,6 @@
 
 set -eu
 
-"$(dirname -- "$0")/failed-hook-evidence-selftest.sh"
 "$(dirname -- "$0")/admission-schema-contract-selftest.sh"
 "$(dirname -- "$0")/controller-object-schema-contract-selftest.sh"
 "$(dirname -- "$0")/acceptance-issue-map-selftest.sh"
@@ -39,19 +38,12 @@ APPLY_POLICY_GUARD_OFF_RENDER=$WORK_DIR/apply-policy-guard-off.yaml
 APPLY_POLICY_GUARD_EVERYONE_ERROR=$WORK_DIR/apply-policy-guard-everyone.err
 HOOK_FULLNAME_COLLISION_ERROR=$WORK_DIR/hook-fullname-collision.err
 INVALID_SERVICE_ACCOUNT_ERROR=$WORK_DIR/invalid-service-account.err
-CRD_GUARD_PENDING_FIXTURE=$WORK_DIR/crd-guard-pending.json
-CRD_GUARD_FAILED_FIXTURE=$WORK_DIR/crd-guard-failed.json
-CRD_GUARD_RUNNING_FIXTURE=$WORK_DIR/crd-guard-running.json
-CRD_GUARD_TERMINATED_FIXTURE=$WORK_DIR/crd-guard-terminated.json
-CRD_GUARD_STATE=$WORK_DIR/crd-guard-state.json
 CANDIDATE_VALUES_FIXTURE=$WORK_DIR/candidate-values.json
 FEATURE_GATE_135_ACTUAL=$WORK_DIR/feature-gate-1.35.yaml
 FEATURE_GATE_135_EXPECTED=$WORK_DIR/feature-gate-1.35.expected.yaml
 FEATURE_GATE_136_ACTUAL=$WORK_DIR/feature-gate-1.36.yaml
 FEATURE_GATE_137_ACTUAL=$WORK_DIR/feature-gate-1.37.yaml
 FEATURE_GATE_137_EXPECTED=$WORK_DIR/feature-gate-1.37.expected.yaml
-CRD_UPGRADE_INVOCATION_ENV=$WORK_DIR/crd-upgrade-invocation-env
-CRD_UNINSTALL_INVOCATION_ENV=$WORK_DIR/crd-uninstall-invocation-env
 EXIT_LATCH_PROBE_SCRIPT=$WORK_DIR/exit-latch-probe.sh
 EXIT_LATCH_FUNCTIONS=$WORK_DIR/exit-latch-functions
 STATIC_PTAH_VERSION=e2e-explicit-version
@@ -244,8 +236,8 @@ ACTUAL_SHELLCHECK_VERSION=v$(shellcheck --version | awk '/^version:/ { print $2 
 	exit 1
 }
 printf 'e2e static: shellcheck %s\n' "$ACTUAL_SHELLCHECK_VERSION"
-# -x so the stopwatch the driver and the phases source is checked in the
-# context that sources it, rather than reported as a file nothing followed.
+# -x so the stopwatch the driver sources is checked in the context that
+# sources it, rather than reported as a file nothing followed.
 shellcheck -x "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh" \
 	"$ROOT_DIR/hack/acceptance-issue-map.sh" "$ROOT_DIR/hack/acceptance-issue-map-selftest.sh"
 
@@ -290,7 +282,6 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 "$ROOT_DIR/hack/e2e-shared-images-selftest.sh"
 "$ROOT_DIR/hack/e2e-suites-selftest.sh"
 "$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"
-"$ROOT_DIR/hack/e2e-ha-metrics-selftest.sh"
 
 # Every phase the driver runs is measured, and it is measured in the one place
 # that runs them. A phase invoked around run_recorded_phase would be missing
@@ -375,39 +366,6 @@ grep -F 'ln -s "$BUILDX_PLUGIN_PATH" "$DOCKER_CLI_CONFIG/cli-plugins/docker-buil
 	printf '%s\n' 'e2e static: every task image must load its Buildx result into the selected daemon' >&2
 	exit 1
 }
-for read_only_job_marker in \
-	'dispatch_read_only_job_fixture() {' \
-	'stage_read_only_job_completion' \
-	'stage_read_only_job_uid_gap' \
-	'wait_for_read_only_job_cleanup' \
-	'quiesce_read_only_job_schema'; do
-	grep -F "$read_only_job_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
-		printf '%s\n' 'e2e static: read-only Job cleanup proof is incomplete' >&2
-		exit 1
-	}
-done
-[ "$(grep -Fc 'dispatch_read_only_job_fixture' "$ROOT_DIR/hack/e2e-crd-upgrade.sh")" -eq 3 ] || {
-	printf '%s\n' 'e2e static: read-only Job fixture must be dispatched once per release under proof' >&2
-	exit 1
-}
-# shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
-for controller_object_live_marker in \
-	'E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION:?E2E_KUBERNETES_VERSION is required}' \
-	'verify_supported_server_version' \
-	'prove_controller_object_supported_window_guard() {' \
-	'expect_controller_job_api_acceptance' \
-	'expect_controller_job_vap_denial' \
-	'JobSpec.scheduling' \
-	'PodSpec.evictionResponders' \
-	'EmptyDirVolumeSource.mode' \
-	'VolumeMount.bindMountOptions' \
-	'PodSpec.workloadRef' \
-	'Ptah controller Job write guard rejected an unsafe workload shape'; do
-	grep -F "$controller_object_live_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
-		printf '%s\n' 'e2e static: live controller-object guarded-field proof is incomplete' >&2
-		exit 1
-	}
-done
 # shellcheck disable=SC2016 # Match the literal child-process version binding.
 [ "$(grep -Fc 'E2E_KUBERNETES_VERSION=$K8S_VERSION' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ] || {
 	printf '%s\n' 'e2e static: live Kubernetes version is not bound into both CRD lifecycle phases' >&2
@@ -700,18 +658,11 @@ for packaged_chart_marker in \
 	'installing release-form chart'; do
 	grep -F -- "$packaged_chart_marker" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 done
-if grep -Eq '(^|[[:space:]])scale[[:space:]]+deployment(/|[[:space:]])' \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"; then
-	printf '%s\n' 'e2e static: e2e-crd-upgrade.sh bypasses the Deployment admission contract through the scale subresource' >&2
-	exit 1
-fi
-if grep -F '{"spec":{"replicas":0}}' "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null; then
-	printf '%s\n' 'e2e static: e2e-crd-upgrade.sh mutates an immutable runtime Deployment to manufacture an outage' >&2
-	exit 1
-fi
-# The Go phases are held to the same two rules. A census from git rather than
-# a glob, held above a floor, because a glob that stopped matching reports
-# nothing and reads as a pass.
+# No phase reaches a runtime Deployment through the scale subresource, which
+# bypasses the Deployment admission contract, and none zeroes its replicas to
+# manufacture an outage. A census from git rather than a glob, held above a
+# floor, because a glob that stopped matching reports nothing and reads as a
+# pass.
 GO_PHASE_SOURCES=$(git -C "$ROOT_DIR" ls-files 'test/e2e/*.go')
 GO_PHASE_SOURCE_COUNT=$(printf '%s\n' "$GO_PHASE_SOURCES" | grep -c . || true)
 [ "$GO_PHASE_SOURCE_COUNT" -ge 3 ] || {
@@ -719,13 +670,31 @@ GO_PHASE_SOURCE_COUNT=$(printf '%s\n' "$GO_PHASE_SOURCES" | grep -c . || true)
 		"$GO_PHASE_SOURCE_COUNT" >&2
 	exit 1
 }
+# kubectl reaches the same subresource as `kubectl scale`, which a phase would
+# pass as an argument, and a replicas patch may carry spaces.
+GO_PHASE_SCALE_PATTERN='SubResource\("scale"\)|GetScale|UpdateScale|"scale",'
+GO_PHASE_ZERO_REPLICAS_PATTERN='"replicas":[[:space:]]*0[^-9.]'
+# Each pattern is shown to refuse the call it exists for before it is trusted
+# to find none.
+for go_phase_scale_sample in 'l.kubectl("scale", "deployment", name)' 'client.SubResource("scale")'; do
+	printf '%s\n' "$go_phase_scale_sample" | grep -Eq "$GO_PHASE_SCALE_PATTERN" || {
+		printf 'e2e static: the scale census does not refuse %s\n' "$go_phase_scale_sample" >&2
+		exit 1
+	}
+done
+for go_phase_zero_sample in '{"spec":{"replicas":0}}' '{"spec": {"replicas": 0}}'; do
+	printf '%s\n' "$go_phase_zero_sample" | grep -Eq "$GO_PHASE_ZERO_REPLICAS_PATTERN" || {
+		printf 'e2e static: the replicas census does not refuse %s\n' "$go_phase_zero_sample" >&2
+		exit 1
+	}
+done
 printf '%s\n' "$GO_PHASE_SOURCES" | while IFS= read -r go_phase_source; do
-	if grep -Eq 'SubResource\("scale"\)|GetScale|UpdateScale' "$ROOT_DIR/$go_phase_source"; then
+	if grep -Eq "$GO_PHASE_SCALE_PATTERN" "$ROOT_DIR/$go_phase_source"; then
 		printf 'e2e static: %s bypasses the Deployment admission contract through the scale subresource\n' \
 			"$go_phase_source" >&2
 		exit 1
 	fi
-	if grep -F '{"spec":{"replicas":0}}' "$ROOT_DIR/$go_phase_source" >/dev/null; then
+	if grep -Eq "$GO_PHASE_ZERO_REPLICAS_PATTERN" "$ROOT_DIR/$go_phase_source"; then
 		printf 'e2e static: %s mutates an immutable runtime Deployment to manufacture an outage\n' \
 			"$go_phase_source" >&2
 		exit 1
@@ -733,30 +702,6 @@ printf '%s\n' "$GO_PHASE_SOURCES" | while IFS= read -r go_phase_source; do
 done || exit 1
 grep -F 'LeaderElectionNamespace: targetLockNamespace' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 grep -F 'ptah-operator.operator.ptah.run' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
-for ha_marker in \
-	"assert_can_i no \"\$FOREIGN_NAMESPACE\"" \
-	'holder_is_ready_manager_pod' \
-	'manager leader Lease did not move to a ready replica' \
-	'leader Pod failover did not increment leaseTransitions' \
-	'wait_for_admitted_operation_pod' \
-	'operator.ptah.run/admission-snapshot-digest' \
-	'validate_custom_operator_metrics' \
-	'ptah_operator_reconciliations_total{family=\"schema\",result=\"success\"}' \
-	'ptah_operator_failures_total{category=\"operation\",family=\"schema\",stage=\"resolve\"}' \
-	'reconciliation_help == 1 && failure_help == 1' \
-	'reconciliation_type == 1 && failure_type == 1' \
-	'reconciliation_sample == 1 && failure_sample == 1' \
-	"wait_for_failed_resolve_lifecycle \"\$ha_schema_uid\"" \
-	"assert_custom_operator_metrics \"\$second_holder\"" \
-	'--cascade=background' \
-	'operation_pod_deadline' \
-	'background Job deletion left orphan operation Pods' \
-	'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'; do
-	grep -F -- "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null || {
-		printf 'e2e static: live HA proof marker is missing: %s\n' "$ha_marker" >&2
-		exit 1
-	}
-done
 grep -F 'application/vnd.stokaro.ptah.migrations.v1' \
 	"$ROOT_DIR/testdata/e2e/verification-policy-migrations.yaml" >/dev/null || {
 	printf '%s\n' 'e2e static: the migration verification policy does not pin the migration artifact type' >&2
@@ -1072,7 +1017,6 @@ static_require_order() {
 }
 
 next_release_harness_source=$(cat "$ROOT_DIR/hack/e2e-kind.sh")
-next_release_crd_source=$(cat "$ROOT_DIR/hack/e2e-crd-upgrade.sh")
 # shellcheck disable=SC2016 # Exact synthetic-release markers retain runtime variables literally.
 for next_release_harness_marker in \
 	'--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"' \
@@ -1092,10 +1036,6 @@ done
 static_require_count "$next_release_harness_source" \
 	'E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE' 2 \
 	'candidate values handoff to upgrade and fresh-install proofs'
-# shellcheck disable=SC2016 # Exact handoff marker retains shell variables literally.
-static_require_count "$next_release_harness_source" \
-	'E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE' 2 \
-	'candidate image handoff to upgrade and fresh-install proofs'
 # shellcheck disable=SC2016 # Count the literal immutable source repository reads.
 static_require_count "$next_release_harness_source" \
 	'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' 2 \
@@ -1115,7 +1055,7 @@ static_require_order "$next_release_harness_source" \
 	'E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE' \
 	'E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE' \
 	'E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE' \
-	'E2E_PHASE=uninstall'
+	'run_recorded_phase uninstall run_go_phase uninstall'
 
 # The release comparison artifact must be the exact current-release package that the
 # candidate lifecycle installed. It is published only after the mandatory
@@ -1156,106 +1096,19 @@ static_require_order "$next_release_harness_source" \
 	'exact post-lifecycle current-release chart export' \
 	'CHART_PACKAGE="$CHART_PACKAGE_DIR/ptah-operator-${chart_version}.tgz"' \
 	'E2E_CHART_PACKAGE=$CHART_PACKAGE' \
-	'E2E_PHASE=uninstall' \
-	'"$ROOT_DIR/hack/e2e-crd-upgrade.sh"' \
+	'run_recorded_phase uninstall run_go_phase uninstall' \
 	'export_release_chart' \
 	'printf '\''e2e: PASS Kubernetes=%s cluster=%s\n'\'' "$server_version" "$CLUSTER_NAME"'
 
-# shellcheck disable=SC2016 # Exact lifecycle markers intentionally retain runtime variables literally.
-for next_release_crd_marker in \
-	'production_controller_image_from_values() {' \
-	'.repository + "@" + .digest' \
-	'create_late_failure_blocker() {' \
-	'prove_late_failure_recovery() {' \
-	'retry_same_candidate() {' \
-	'prove_rollback_refused_over_future_state() {' \
-	'prove_rollback() {' \
-	'run_next_release_upgrade_proof() {' \
-	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
-	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE"' \
-	'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall'; do
-	static_require_count "$next_release_crd_source" "$next_release_crd_marker" 1 \
-		'synthetic next-release CRD lifecycle'
-done
-# The synthetic next release is applied twice: once behind the late-failure
-# blocker, which refuses Helm's apply of the candidate Deployments after the
-# hook stopped the runtime, and once for real.
-# shellcheck disable=SC2016 # Exact upgrade marker retains runtime variables literally.
-static_require_count "$next_release_crd_source" \
-	'helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' 2 \
-	'late-failure attempt and real next-release upgrade'
-# The definition, and one check after each of the three uninstalls.
-static_require_count "$next_release_crd_source" \
-	'assert_release_runtime_removed' 4 \
-	'uninstall residue checks'
-# shellcheck disable=SC2016 # Exact identity-capture destination retains a runtime variable literally.
-static_require_count "$next_release_crd_source" \
-	'"$WORK_DIR/reinstalled-next-release-controller-identity.json"' 1 \
-	'next-release identity after the reinstall'
-static_reject_marker "$next_release_crd_source" \
-	'.repository + "@" + .testIdentityDigest' \
-	'production controller image identity extraction'
-# shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
-static_require_order "$next_release_crd_source" \
-	'current to next release upgrade, late failure, retry and rollback' \
-	'run_next_release_upgrade_proof() {' \
-	'capture_controller_service_account_identity' \
-	'"$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
-	'prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"' \
-	'start_running_apply_fixture' \
-	'stage_predecessor_apply_job_uid_gap_while_running' \
-	'prove_late_failure_recovery "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
-	'stage_read_only_job_completion' \
-	'stage_read_only_job_uid_gap' \
-	'assert_late_failure_candidate_unchanged' \
-	'delete_late_failure_blocker' \
-	'retry_same_candidate' \
-	'wait_for_read_only_job_cleanup' \
-	'assert_predecessor_apply_remains_exclusive_while_running' \
-	'release_running_apply_barrier' \
-	'"$E2E_NEXT_CONTROLLER_IMAGE"' \
-	'prove_rollback_refused_over_future_state "$current_release_revision"' \
-	'prove_rollback "$current_release_revision" "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
-	'e2e crd: synthetic next-release upgrade kept the controller identity, and the rollback to the current release went through its hook'
-# The blocker has to be in place before the candidate is applied, and the
-# evidence read is the revision the blocker failed.
-# shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
-static_require_order "$next_release_crd_source" \
-	'late failure after the runtime stop' \
-	'prove_late_failure_recovery() {' \
-	'create_late_failure_blocker' \
-	'if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
-	'late-failure-blocker.operator.ptah.run' \
-	'--revision "$late_revision" -o json' \
-	'.spec.replicas == 0 and'
-# shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
-static_require_order "$next_release_crd_source" \
-	'next chart reinstall and final zero-residue proof' \
-	'run_uninstall_proof() {' \
-	'run_next_release_upgrade_proof' \
-	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
-	'assert_release_runtime_removed' \
-	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
-	'"$WORK_DIR/reinstalled-next-release-controller-identity.json"' \
-	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
-	'assert_release_runtime_removed' \
-	'e2e crd: fresh-installing the exact exported current-release chart bytes' \
-	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE"' \
-	'"$WORK_DIR/fresh-current-release-controller-identity.json"' \
-	'helm_e2e uninstall "$E2E_HELM_RELEASE"' \
-	'assert_release_runtime_removed' \
-	'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall' \
-	'e2e crd: uninstall retained CRDs and live objects'
-
 # shellcheck disable=SC2016 # Exact handoff markers intentionally retain shell variables literally.
 static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
-	'external PostgreSQL credential handoff' \
+	'external PostgreSQL credential handoff to the uninstall phase' \
+	'E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE' \
 	'E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT' \
 	'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID' \
 	'E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP' \
 	'E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE' \
-	'E2E_PHASE=upgrade' \
-	'"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
+	'run_recorded_phase uninstall run_go_phase uninstall'
 
 # shellcheck disable=SC2016 # Match the exact generated OpenAPI regular expression.
 controller_revision_pattern='pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$'
@@ -1723,23 +1576,6 @@ for rbac_render in "$DEFAULT_RBAC_RENDER" "$SHARED_RBAC_RENDER"; do
 			exit 1
 		fi
 	done
-done
-
-# shellcheck disable=SC2016 # Match literal impersonation variables in the live proof.
-for controller_write_live_marker in \
-	'prove_controller_write_guard' \
-	'prove_controller_direct_write_webhook' \
-	'directly read plan manifest' \
-	'--as-user-extra "authentication.kubernetes.io/pod-name=$CONTROLLER_IMPERSONATION_POD_NAME"' \
-	'--as-user-extra "authentication.kubernetes.io/pod-uid=$CONTROLLER_IMPERSONATION_POD_UID"' \
-	'expect_controller_write_denial spec' \
-	'expect_controller_write_denial labels' \
-	'expect_controller_write_denial annotations' \
-	'expect_controller_write_denial ownerReferences' \
-	"expect_controller_write_denial 'a foreign finalizer'" \
-	'operator.ptah.run/active-operation' \
-	'controller desired-state and direct-write boundaries passed'; do
-	grep -F -- "$controller_write_live_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
 done
 
 default_role_namespace=$(awk '
@@ -2713,239 +2549,6 @@ for image_file in "$ROOT_DIR/Dockerfile" "$ROOT_DIR/test/e2e/Dockerfile.operator
 	grep -F '/out/ptah-crd-manager ./cmd/ptah-crd-manager' "$image_file" >/dev/null
 	grep -F 'COPY --from=builder /out/ptah-crd-manager /ptah-crd-manager' "$image_file" >/dev/null
 done
-for crd_live_marker in \
-	'E2E_PHASE=upgrade' \
-	'E2E_PHASE=uninstall' \
-	'upgrade with a missing CRD' \
-	'CRD hook recreated a missing CRD' \
-	'proving a newer CRD schema version blocks rollback' \
-	'upgrade with a newer CRD schema version' \
-	'proving an incomplete schema identity and a digest collision are refused' \
-	'upgrade with a missing schema digest' \
-	'upgrade with a same-version schema digest collision' \
-	'outdated e2e schema' \
-	'UID, spec, or status changed during CRD management' \
-	'upgrade against future controller state' \
-	'changed despite failed CRD preflight' \
-	'failed CRD preflight rewrote future controller state' \
-	'a second operator release was installed' \
-	'proving an active release survives losing both runtime Deployments' \
-	'the upgrade that restores both deleted runtime Deployments was refused' \
-	'holding one Apply open across the next-release upgrade' \
-	'the successor did not adopt the running Apply under the epoch it was dispatched in' \
-	'the successor replaced, completed, or cleaned the running Apply Job' \
-	'the successor did not account for the adopted Apply Job through its own result' \
-	'coordination namespace mutation' \
-	'leader-election mutation' \
-	'proving the chart refuses a release namespace that runs foreign workloads' \
-	'shared release namespace upgrade' \
-	'failed without the shared-namespace refusal naming it' \
-	'releaseNamespace.allowSharedNamespace=true did not admit the upgrade over a foreign CronJob' \
-	'runtime rejection of an incomplete singleton' \
-	'incomplete admission singleton' \
-	'proving the runtime refuses an admission singleton another release owns' \
-	'foreign admission singleton owner' \
-	'runtime rejection of drifted admission behavior' \
-	'drifted admission behavior' \
-	'failurePolicy","value":"Ignore' \
-	'clientConfig/service/name","value":"foreign-service' \
-	'proving controller downgrade preflight' \
-	'controller-only downgrade preflight prevented the certificate rotator from remaining ready' \
-	'blocked candidate manager rewrote future PtahSchema state' \
-	'reinstalling over retained and drifted CRDs' \
-	'the reinstall did not reconcile a retained CRD another manager drifted' \
-	'fresh-installing the exact exported current-release chart bytes' \
-	'the exact released-chart install did not reconcile a retained CRD another manager drifted' \
-	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
-	'uninstall retained CRDs and live objects' \
-	'the late failure left the runtime stopped on the predecessor template' \
-	'the late failure did not come after a reconcile hook that succeeded' \
-	'the same-candidate retry did not complete the upgrade' \
-	'the refused rollback did not reach its pre-rollback hook' \
-	'the refused rollback changed a runtime Deployment' \
-	'the rollback was refused before any Pod changed' \
-	'did not end deployed'; do
-	grep -F -- "$crd_live_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
-		"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
-		printf 'e2e static: live CRD proof marker is missing: %s\n' "$crd_live_marker" >&2
-		exit 1
-	}
-done
-
-if grep -F 'expected one controller Deployment' \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null; then
-	printf '%s\n' 'e2e static: stopped-runtime upgrade proof still requires a live controller Deployment' >&2
-	exit 1
-fi
-deployment_evidence_section=$(sed -n '/^deployment_evidence() {$/,/^}$/p' \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh")
-for deployment_evidence_marker in \
-	'get deployment -o json' \
-	'labels: (.metadata.labels // {})' \
-	'annotations: (.metadata.annotations // {})' \
-	'ownerReferences: (.metadata.ownerReferences // [])' \
-	'spec: .spec' \
-	'sort_by(.name)'; do
-	printf '%s\n' "$deployment_evidence_section" |
-		grep -F -- "$deployment_evidence_marker" >/dev/null
-done
-grep -F 'mutated runtime Deployments' "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
-
-if grep -F '((.status.containerStatuses // []) | length) == 0' \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null; then
-	printf '%s\n' 'e2e static: CRD runtime guard treats transient empty main status as proof' >&2
-	exit 1
-fi
-# shellcheck disable=SC2016 # Match literal runtime guard variables in the harness.
-for crd_guard_marker in \
-	'BLOCKED_STABILITY_SECONDS=10' \
-	'BLOCKED_FAILURE_TIMEOUT_SECONDS=150' \
-	'assert_explicit_runtime_guard "$description" all 3' \
-	'assert_explicit_runtime_guard "future stored controller state" controller 2' \
-	'.mainContainersNeverStarted' \
-	'.explicitVerifierFailures' \
-	'blocked_pod_uids=$current_pod_uids'; do
-	grep -F -- "$crd_guard_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
-done
-for crd_guard_filter_marker in \
-	'.state.terminated.exitCode' \
-	'.lastState.terminated.exitCode' \
-	'.restartCount' \
-	'.started' \
-	'PodInitializing'; do
-	grep -F -- "$crd_guard_filter_marker" "$ROOT_DIR/hack/e2e-crd-init-guard.jq" >/dev/null
-done
-
-jq -n '
-  def labels($component): {
-    "app.kubernetes.io/instance": "ptah-e2e",
-    "app.kubernetes.io/component": $component
-  };
-  {items: [
-    {metadata: {uid: "controller-a", labels: labels("controller")}, status: {}},
-    {metadata: {uid: "controller-b", labels: labels("controller")}, status: {}},
-    {metadata: {uid: "rotator", labels: labels("certificate-rotation")}, status: {}}
-  ]}
-' >"$CRD_GUARD_PENDING_FIXTURE"
-jq '
-  .items[].status = {
-    containerStatuses: [{
-      name: "main", ready: false, restartCount: 0, started: false,
-      state: {waiting: {reason: "PodInitializing"}}, lastState: {}
-    }],
-    initContainerStatuses: [{
-      name: "verify-candidate-runtime", ready: false, restartCount: 1,
-      state: {waiting: {reason: "CrashLoopBackOff"}},
-      lastState: {terminated: {exitCode: 1, reason: "Error"}}
-    }]
-  }
-' "$CRD_GUARD_PENDING_FIXTURE" >"$CRD_GUARD_FAILED_FIXTURE"
-jq '.items[0].status.containerStatuses[0] = {
-      name: "main", ready: true, restartCount: 0, started: true,
-      state: {running: {startedAt: "2026-01-01T00:00:00Z"}}, lastState: {}
-    }' "$CRD_GUARD_FAILED_FIXTURE" >"$CRD_GUARD_RUNNING_FIXTURE"
-jq '.items[0].status.containerStatuses[0] = {
-      name: "main", ready: false, restartCount: 1, started: false,
-      state: {waiting: {reason: "CrashLoopBackOff"}},
-      lastState: {terminated: {exitCode: 1, reason: "Error"}}
-    }' "$CRD_GUARD_FAILED_FIXTURE" >"$CRD_GUARD_TERMINATED_FIXTURE"
-
-jq --arg release ptah-e2e --arg scope all --argjson expected 3 \
-	-f "$ROOT_DIR/hack/e2e-crd-init-guard.jq" \
-	"$CRD_GUARD_PENDING_FIXTURE" >"$CRD_GUARD_STATE"
-[ "$(jq -r '.explicitVerifierFailures' "$CRD_GUARD_STATE")" = false ] || {
-	printf '%s\n' 'e2e static: transient Pending Pods satisfy the CRD runtime guard' >&2
-	exit 1
-}
-jq --arg release ptah-e2e --arg scope all --argjson expected 3 \
-	-f "$ROOT_DIR/hack/e2e-crd-init-guard.jq" \
-	"$CRD_GUARD_FAILED_FIXTURE" >"$CRD_GUARD_STATE"
-jq -e '.podCount == 3 and .explicitVerifierFailures and .mainContainersNeverStarted' \
-	"$CRD_GUARD_STATE" >/dev/null || {
-	printf '%s\n' 'e2e static: explicit init failures do not satisfy the stable guard state' >&2
-	exit 1
-}
-for started_fixture in "$CRD_GUARD_RUNNING_FIXTURE" "$CRD_GUARD_TERMINATED_FIXTURE"; do
-	jq --arg release ptah-e2e --arg scope all --argjson expected 3 \
-		-f "$ROOT_DIR/hack/e2e-crd-init-guard.jq" \
-		"$started_fixture" >"$CRD_GUARD_STATE"
-	[ "$(jq -r '.mainContainersNeverStarted' "$CRD_GUARD_STATE")" = false ] || {
-		printf 'e2e static: runtime guard missed main-container start evidence in %s\n' \
-			"$started_fixture" >&2
-		exit 1
-	}
-done
-
-# shellcheck disable=SC2016 # Match the literal runtime ROOT_DIR expression in the harness.
-crd_script_invocation='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
-[ "$(grep -Fc "$crd_script_invocation" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]
-
-# The uninstall phase re-runs the upgrade proof inside itself, so it needs every
-# variable the upgrade invocation passes. A name the uninstall invocation drops
-# does not announce itself: the phase script refuses it through ${VAR:?...},
-# which ends that shell without setting $?.
-crd_invocation_environment() {
-	# GNU awk drops an unescaped terminal backslash in a -v assignment. Build
-	# the continuation inside the program so the exact line match is portable.
-	awk -v phase="E2E_PHASE=$1" -v target='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"' '
-		index($0, "E2E_") == 1 {
-			block = block $0 "\n"
-			if ($0 == phase " \\") { matched = 1 }
-			next
-		}
-		index($0, target) > 0 {
-			if (matched) { printf "%s", block }
-			block = ""
-			matched = 0
-			next
-		}
-		{ block = ""; matched = 0 }
-	' "${2:-$ROOT_DIR/hack/e2e-kind.sh}" | sed 's/=.*//' | sort -u
-}
-
-# shellcheck disable=SC2016 # These are literal harness lines, not commands to execute.
-crd_invocation_parser_probe=$(printf '%s\n' \
-	"E2E_WRONG_PHASE=value \\" \
-	"E2E_PHASE=uninstall \\" \
-	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' \
-	"E2E_WRONG_TARGET=value \\" \
-	"E2E_PHASE=upgrade \\" \
-	'  "$ROOT_DIR/hack/another-phase.sh"' \
-	"E2E_REQUIRED=value \\" \
-	"E2E_PHASE=upgrade \\" \
-	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' |
-	crd_invocation_environment upgrade -)
-[ "$crd_invocation_parser_probe" = "$(printf '%s\n' E2E_PHASE E2E_REQUIRED)" ] || {
-	printf '%s\n' 'e2e static: CRD environment parser mixed invocation blocks or lost an assignment' >&2
-	exit 1
-}
-# shellcheck disable=SC2016 # A phase without a continuation is not part of the command environment.
-crd_invocation_parser_probe=$(printf '%s\n' \
-	"E2E_REQUIRED=value \\" \
-	'E2E_PHASE=upgrade' \
-	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' |
-	crd_invocation_environment upgrade -)
-[ -z "$crd_invocation_parser_probe" ] || {
-	printf '%s\n' 'e2e static: CRD environment parser accepted a phase without a command continuation' >&2
-	exit 1
-}
-
-crd_invocation_environment upgrade >"$CRD_UPGRADE_INVOCATION_ENV"
-crd_invocation_environment uninstall >"$CRD_UNINSTALL_INVOCATION_ENV"
-for crd_invocation_env_file in "$CRD_UPGRADE_INVOCATION_ENV" "$CRD_UNINSTALL_INVOCATION_ENV"; do
-	[ -s "$crd_invocation_env_file" ] || {
-		printf 'e2e static: could not read a CRD phase invocation environment from hack/e2e-kind.sh\n' >&2
-		exit 1
-	}
-done
-crd_invocation_env_missing=$(grep -Fxv -f "$CRD_UNINSTALL_INVOCATION_ENV" \
-	"$CRD_UPGRADE_INVOCATION_ENV" || true)
-[ -z "$crd_invocation_env_missing" ] || {
-	printf 'e2e static: the uninstall CRD phase does not receive %s\n' \
-		"$(printf '%s' "$crd_invocation_env_missing" | tr '\n' ' ')" >&2
-	exit 1
-}
-
 # A shell that ends on a refused ${VAR:?...} or an unset name under set -u never
 # sets $?, so an EXIT trap that reports $? reports the previous command's
 # success. Every trap in the harness therefore latches its own completion.
@@ -3038,20 +2641,24 @@ grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
 	exit 1
 }
 # Each phase that dispatches operations is handed the controller identity in
-# full, spelled the same way: the data plane, the two migration paths -- one per
-# engine -- and the uninstall proof. The count is exact so a phase that stopped
-# receiving one of the three is a failure here rather than a Job the admission
-# guards refuse in a cluster an hour later.
+# full, spelled the same way: the control-plane contract, the data plane and
+# the two migration paths -- one per engine. The upgrade and uninstall phases
+# are handed the image alone, which they hold the installed release to. The
+# counts are exact so a phase that stopped receiving one of the three is a
+# failure here rather than a Job the admission guards refuse in a cluster an
+# hour later.
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
-	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE' \
-	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION' \
-	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION'; do
+	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE 6' \
+	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION 4' \
+	'E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION 4'; do
+	controller_identity_expected=${controller_identity_assignment##* }
+	controller_identity_assignment=${controller_identity_assignment% *}
 	controller_identity_count=$(grep -Fc -- "$controller_identity_assignment" \
 		"$ROOT_DIR/hack/e2e-kind.sh")
-	[ "$controller_identity_count" -eq 4 ] || {
-		printf 'e2e static: %s is handed to %s phases, and four dispatch operations\n' \
-			"$controller_identity_assignment" "$controller_identity_count" >&2
+	[ "$controller_identity_count" -eq "$controller_identity_expected" ] || {
+		printf 'e2e static: %s is handed to %s phases, and %s read it\n' \
+			"$controller_identity_assignment" "$controller_identity_count" "$controller_identity_expected" >&2
 		exit 1
 	}
 done

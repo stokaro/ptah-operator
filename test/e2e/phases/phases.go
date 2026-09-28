@@ -395,8 +395,148 @@ var Alerting = define[AlertingInputs](Phase{
 	},
 })
 
+// UpgradeInputs is what the driver hands the upgrade phase, which proves the
+// CRD upgrade path of the release the driver installed.
+type UpgradeInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// DebugLogs is 1 to print the stderr of a refused Helm operation, and 0
+	// otherwise. The driver refuses 1 on CI, where the run log is public.
+	DebugLogs string `env:"E2E_DEBUG_LOGS"`
+	// OperatorNamespace is the release namespace.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// ProofNamespace holds the schema, plan and approval whose preservation
+	// the phase proves across every CRD change.
+	ProofNamespace string `env:"E2E_PROOF_NAMESPACE"`
+	// HelmRelease is the installed release.
+	HelmRelease string `env:"E2E_HELM_RELEASE"`
+	// ChartPackage is the chart the release was installed from.
+	ChartPackage string `env:"E2E_CHART_PACKAGE"`
+	// CandidateValuesFile is the values file the release was installed with.
+	CandidateValuesFile string `env:"E2E_CANDIDATE_VALUES_FILE"`
+	// ControllerImage is the candidate manager image, pinned by digest.
+	ControllerImage string `env:"E2E_CONTROLLER_IMAGE"`
+	// KubernetesVersion is the exact version the cluster has to report.
+	KubernetesVersion string `env:"E2E_KUBERNETES_VERSION"`
+}
+
+// Upgrade proves the CRD upgrade path: a CRD preflight that refuses a missing
+// CRD, a newer schema or state and an incomplete or colliding identity without
+// changing anything, drifted CRDs converged before the manager rolls out with
+// every live object preserved, the manager's write guards, and one release
+// per namespace.
+var Upgrade = define[UpgradeInputs](Phase{
+	Name:    "upgrade",
+	Test:    "TestUpgrade",
+	Timeout: 120 * time.Minute,
+	Scenarios: []string{
+		"read-only-job-cleanup",
+		"crd-preflight-refusals",
+		"drifted-crd-upgrade",
+		"controller-write-guard",
+		"runtime-recovery",
+		"singleton-coordination",
+	},
+})
+
+// HAInputs is what the driver hands the high-availability phase.
+type HAInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// OperatorNamespace is the release namespace.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// HATestNamespace is the namespace the phase creates its operation in,
+	// and removes.
+	HATestNamespace string `env:"E2E_HA_TEST_NAMESPACE"`
+	// ForeignNamespace and ProofNamespace are namespaces the manager's Lease
+	// grant must not reach.
+	ForeignNamespace string `env:"E2E_FOREIGN_NAMESPACE"`
+	ProofNamespace   string `env:"E2E_PROOF_NAMESPACE"`
+	// HelmRelease is the installed release.
+	HelmRelease string `env:"E2E_HELM_RELEASE"`
+	// RegistryCredentialsFile holds the registry's username and password,
+	// which the operation Pod pulls its images with.
+	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
+}
+
+// HA proves leader election across two manager replicas: one namespaced
+// Lease with exact RBAC, a failover that keeps the Lease and moves its holder,
+// and an operation the new leader admits and reports in its metrics.
+var HA = define[HAInputs](Phase{
+	Name:    "ha",
+	Test:    "TestHA",
+	Timeout: 45 * time.Minute,
+	Scenarios: []string{
+		"lease-authorization",
+		"leader-failover",
+		"operation-after-failover",
+	},
+})
+
+// UninstallInputs is what the driver hands the uninstall phase, which runs
+// last on the cluster the upgrade phase leaves.
+type UninstallInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// DebugLogs is 1 to print the stderr of a refused Helm operation, and 0
+	// otherwise.
+	DebugLogs string `env:"E2E_DEBUG_LOGS"`
+	// OperatorNamespace is the release namespace.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// ProofNamespace holds the objects the upgrade phase created, which every
+	// step here has to leave exactly as they were.
+	ProofNamespace string `env:"E2E_PROOF_NAMESPACE"`
+	// HelmRelease is the installed release.
+	HelmRelease string `env:"E2E_HELM_RELEASE"`
+	// ChartPackage and CandidateValuesFile are the current release, which the
+	// phase rolls back to and installs again from its exact bytes.
+	ChartPackage        string `env:"E2E_CHART_PACKAGE"`
+	CandidateValuesFile string `env:"E2E_CANDIDATE_VALUES_FILE"`
+	// ControllerImage is the candidate manager image, pinned by digest.
+	ControllerImage string `env:"E2E_CONTROLLER_IMAGE"`
+	// NextChartPackage, NextValuesFile and NextControllerImage are the
+	// synthetic next release the phase upgrades to.
+	NextChartPackage    string `env:"E2E_NEXT_CHART_PACKAGE"`
+	NextValuesFile      string `env:"E2E_NEXT_VALUES_FILE"`
+	NextControllerImage string `env:"E2E_NEXT_CONTROLLER_IMAGE"`
+	// KubernetesVersion is the exact version the cluster has to report.
+	KubernetesVersion string `env:"E2E_KUBERNETES_VERSION"`
+	// RegistryCredentialsFile holds the registry's username and password,
+	// which the running Apply's Pod pulls its images with.
+	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
+	// DockerContext and ExternalPostgresContainerID reach the external
+	// PostgreSQL, where the running Apply's barrier holds its lock.
+	DockerContext               string `env:"E2E_DOCKER_CONTEXT"`
+	ExternalPostgresContainerID string `env:"E2E_EXTERNAL_POSTGRES_CONTAINER_ID"`
+	// ExternalPostgresIP and ExternalPostgresCredentialsFile are the address
+	// and credentials the running Apply connects with.
+	ExternalPostgresIP              string `env:"E2E_EXTERNAL_POSTGRES_IP"`
+	ExternalPostgresCredentialsFile string `env:"E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE"`
+}
+
+// Uninstall proves the release transitions after the upgrade: a synthetic
+// next release that recovers from a late failure without interrupting a
+// running Apply, a rollback refused over future state and then allowed, and
+// an uninstall that removes the runtime and keeps the CRDs and live objects,
+// followed by a reinstall over drifted CRDs and a fresh install of the exact
+// exported chart bytes.
+var Uninstall = define[UninstallInputs](Phase{
+	Name:    "uninstall",
+	Test:    "TestUninstall",
+	Timeout: 150 * time.Minute,
+	Scenarios: []string{
+		"next-release-upgrade",
+		"rollback",
+		"uninstall",
+		"reinstall-over-retained-crds",
+		"exported-chart-install",
+	},
+})
+
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
+	Upgrade.Phase,
+	HA.Phase,
 	ControlPlane.Phase,
 	CertRotation.Phase,
 	DataPlane.Phase,
@@ -405,6 +545,7 @@ var all = []Phase{
 	ReferenceDataPostgreSQL.Phase,
 	ReferenceDataMySQL.Phase,
 	Alerting.Phase,
+	Uninstall.Phase,
 }
 
 func init() {
