@@ -984,12 +984,12 @@ The complete stable condition-reason vocabulary is cataloged in
 `type`, `status`, and `reason` tuple and require `observedGeneration` to match
 the resource generation; condition messages are diagnostic text, not an API.
 
-`status.target.driftFindings` is a bounded, canonical summary of the most
-recent raw Observe result. Entries are ordered by descending severity and then
-category, contain no object names or SQL, and are limited to 64 categories.
-`driftFindingCount` covers the complete report rather than the displayed list;
-when `driftFindingsTruncated` is true, undisplayed categories contributed to
-that total. A subsequent scoped Plan deliberately does not replace this raw
+`status.target.driftFindings` is a canonical summary of the most recent raw
+Observe result, one entry for each category the report found. Entries are
+ordered by descending severity and then category and contain no object names
+or SQL. The list is never cut short: the category vocabulary fits under its
+bound of 64 entries, so `driftFindingCount` is always the sum of the entries'
+counts. A subsequent scoped Plan deliberately does not replace this raw
 observation summary: the `DriftDetected` condition describes the authoritative
 managed scope, while `status.target` remains evidence for the observation
 identified by `driftReportDigest` and `lastObservedAt`.

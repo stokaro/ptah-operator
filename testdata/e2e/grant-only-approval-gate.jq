@@ -28,7 +28,6 @@ and ($status.activeOperation // null) == null
 and $target.highestDriftSeverity == "safe"
 and ($target.driftFindingCount // 0) == 0
 and ($target.driftFindings // []) == []
-and ($target.driftFindingsTruncated // false) == false
 and $plan.privilegeChanges == ["Grant"]
 and $plan.destructive == false
 and ($plan.approval // null) == null

@@ -2237,16 +2237,15 @@ func TestObservePersistsCredentialFreeDriftFindings(t *testing.T) {
 	}
 
 	if _, err := reconciler.consumeResult(context.Background(), schema, nil, runner.Result{
-		Operation:              runner.OperationObserve,
-		CoordinationDigest:     testCoordinationDigest,
-		TargetIdentityDigest:   testDigest,
-		DriftReportDigest:      testDigest,
-		ObservedDialect:        "postgresql",
-		ObservedDrift:          true,
-		HighestDriftSeverity:   "error",
-		DriftFindingCount:      3,
-		DriftFindings:          runnerFindings,
-		DriftFindingsTruncated: false,
+		Operation:            runner.OperationObserve,
+		CoordinationDigest:   testCoordinationDigest,
+		TargetIdentityDigest: testDigest,
+		DriftReportDigest:    testDigest,
+		ObservedDialect:      "postgresql",
+		ObservedDrift:        true,
+		HighestDriftSeverity: "error",
+		DriftFindingCount:    3,
+		DriftFindings:        runnerFindings,
 	}, nil, 0); err != nil {
 		t.Fatalf("consumeResult() Observe error = %v", err)
 	}
@@ -2255,7 +2254,7 @@ func TestObservePersistsCredentialFreeDriftFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if actual.Status.Target.HighestDriftSeverity != "error" || actual.Status.Target.DriftFindingCount != 3 ||
-		!reflect.DeepEqual(actual.Status.Target.DriftFindings, wantFindings) || actual.Status.Target.DriftFindingsTruncated {
+		!reflect.DeepEqual(actual.Status.Target.DriftFindings, wantFindings) {
 		t.Fatalf("persisted drift summary = %#v", actual.Status.Target)
 	}
 }
@@ -2321,7 +2320,7 @@ func TestGrantOnlyDriftGoesFromObserveToPlan(t *testing.T) {
 	}
 	if target.LastObservedAt == nil || target.DriftReportDigest != safetyOtherDigest ||
 		target.HighestDriftSeverity != "safe" || target.DriftFindingCount != 0 ||
-		len(target.DriftFindings) != 0 || target.DriftFindingsTruncated {
+		len(target.DriftFindings) != 0 {
 		t.Fatalf("status.target = %#v, want drift recorded with a safe severity and no findings", target)
 	}
 	if !conditionMatches(observed.Status.Conditions, operatorv1alpha1.ConditionDriftDetected,

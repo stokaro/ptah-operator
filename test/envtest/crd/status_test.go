@@ -6,11 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-const truncationMessage = "truncated drift findings require exactly 64 published summaries"
 
 func finding(category string) map[string]any {
 	return map[string]any{"category": category, "count": int64(1), "severity": "safe"}
@@ -34,16 +33,6 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 		target map[string]any
 		want   cause
 	}{
-		{
-			name:   "truncated with one summary",
-			target: map[string]any{"driftFindingCount": int64(70), "driftFindings": []any{finding("tables_added")}, "driftFindingsTruncated": true},
-			want:   cause{"status.target", truncationMessage},
-		},
-		{
-			name:   "truncated with no summaries",
-			target: map[string]any{"driftFindingCount": int64(70), "driftFindingsTruncated": true},
-			want:   cause{"status.target", truncationMessage},
-		},
 		{
 			name:   "one category summarized twice",
 			target: map[string]any{"driftFindingCount": int64(2), "driftFindings": []any{finding("tables_added"), finding("tables_added")}},
@@ -212,24 +201,23 @@ func TestPtahSchemaStatusRefusesAMalformedBindingRetirement(t *testing.T) {
 	}
 }
 
-// The truncation rule demands exactly 64 summaries, and summaries are keyed by
-// category. While the category enum is shorter than 64, no status can satisfy
-// the rule with the flag set: the truncated branch is unreachable, and the
-// runner's own protocol check refuses such a frame first for the same reason.
-// This row walks the largest summary the schema admits -- every category once
-// -- and holds the enum below 64, so the day it reaches 64 the row says the
-// branch became reachable and wants a proof that a truncated summary publishes.
-func TestTruncatedDriftSummariesAreUnreachable(t *testing.T) {
+// Summaries are keyed by category, so the largest summary the schema can be
+// sent names every category once. It publishes, which is why the list needs
+// no way to say it was cut short: the controller copies the runner's
+// summaries, which are the whole report, and the whole report fits. The row
+// holds the enum to the list's bound, so the day the vocabulary outgrows it
+// the row says a complete report no longer publishes.
+func TestEveryDriftCategoryPublishesInOneSummary(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()
 
 	categories := driftCategories(t)
-	if len(categories) >= 64 {
-		t.Fatalf("the drift category enum has %d values, so a truncated summary of 64 distinct categories is now "+
-			"possible: replace this row with one that publishes it", len(categories))
+	if bound := driftFindingsBound(t); int64(len(categories)) > bound {
+		t.Fatalf("the drift category enum has %d values and status.target.driftFindings holds %d, so a report "+
+			"that names every category no longer publishes", len(categories), bound)
 	}
 
-	namespace := newNamespace(t, "schema-truncation")
+	namespace := newNamespace(t, "schema-every-category")
 	schema := schemaBase(namespace)()
 	if err := api.Create(context.Background(), schema); err != nil {
 		t.Fatalf("store PtahSchema %s: %v", schema.GetName(), err)
@@ -240,54 +228,61 @@ func TestTruncatedDriftSummariesAreUnreachable(t *testing.T) {
 	}
 	observed := reread(t, schema)
 	set(t, observed, map[string]any{
-		"driftFindingCount":      int64(len(categories) + 1),
-		"driftFindings":          summaries,
-		"driftFindingsTruncated": true,
+		"driftFindingCount": int64(len(categories)),
+		"driftFindings":     summaries,
 	}, "status", "target")
-	err := api.Status().Update(context.Background(), observed, client.DryRunAll)
-	if mismatch := refusalMismatch(err, cause{"status.target", truncationMessage}); mismatch != nil {
-		t.Fatalf("status of PtahSchema %s with all %d categories and the truncation flag: %v", schema.GetName(), len(categories), mismatch)
-	}
-
-	// Without the flag the same summary publishes, so the refusal above is
-	// the truncation rule's and not the list's.
-	set(t, observed, false, "status", "target", "driftFindingsTruncated")
-	set(t, observed, int64(len(categories)), "status", "target", "driftFindingCount")
 	if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
 		t.Fatalf("the API server refused every category summarized once on PtahSchema %s: %v", schema.GetName(), err)
 	}
 }
 
-// driftCategories reads the category enum out of the CRD the API server
-// installed, rather than out of a list here that could drift from it.
-func driftCategories(t *testing.T) []string {
+// driftFindings reads status.target.driftFindings out of the CRD the API
+// server installed, rather than out of a copy here that could drift from it.
+func driftFindings(t *testing.T) apiextensionsv1.JSONSchemaProps {
 	t.Helper()
 	for _, crd := range plane.Environment.CRDs {
 		if crd.Name != "ptahschemas.operator.ptah.run" {
 			continue
 		}
 		for _, version := range crd.Spec.Versions {
-			if !version.Storage {
-				continue
+			if version.Storage {
+				return version.Schema.OpenAPIV3Schema.Properties["status"].Properties["target"].Properties["driftFindings"]
 			}
-			category := version.Schema.OpenAPIV3Schema.
-				Properties["status"].Properties["target"].Properties["driftFindings"].Items.Schema.Properties["category"]
-			var categories []string
-			for _, value := range category.Enum {
-				var name string
-				if err := json.Unmarshal(value.Raw, &name); err != nil {
-					t.Fatalf("read a drift category out of the CRD: %v", err)
-				}
-				categories = append(categories, name)
-			}
-			if len(categories) == 0 {
-				t.Fatal("the PtahSchema CRD declares no drift categories, so this row would measure nothing")
-			}
-			return categories
 		}
 	}
 	t.Fatal("the PtahSchema CRD is not among the installed CRDs")
-	return nil
+	return apiextensionsv1.JSONSchemaProps{}
+}
+
+// driftFindingsBound is the most summaries status.target.driftFindings holds.
+func driftFindingsBound(t *testing.T) int64 {
+	t.Helper()
+	findings := driftFindings(t)
+	if findings.MaxItems == nil {
+		t.Fatal("status.target.driftFindings declares no maxItems")
+	}
+	return *findings.MaxItems
+}
+
+// driftCategories is the category enum of the installed CRD.
+func driftCategories(t *testing.T) []string {
+	t.Helper()
+	findings := driftFindings(t)
+	if findings.Items == nil || findings.Items.Schema == nil {
+		t.Fatal("status.target.driftFindings declares no item schema")
+	}
+	var categories []string
+	for _, value := range findings.Items.Schema.Properties["category"].Enum {
+		var name string
+		if err := json.Unmarshal(value.Raw, &name); err != nil {
+			t.Fatalf("read a drift category out of the CRD: %v", err)
+		}
+		categories = append(categories, name)
+	}
+	if len(categories) == 0 {
+		t.Fatal("the PtahSchema CRD declares no drift categories, so this row would measure nothing")
+	}
+	return categories
 }
 
 func TestPtahMigrationPlanStatusKeysConditionsByType(t *testing.T) {

@@ -256,9 +256,9 @@ func TestFrameCarriesDriftInNoCategory(t *testing.T) {
 	}
 }
 
-// Drift with no findings has nothing to count, truncate or rate above safe. A
-// frame that says otherwise describes findings it does not carry, and neither
-// side accepts it.
+// Drift with no findings has nothing to count or rate above safe. A frame that
+// says otherwise describes findings it does not carry, and neither side
+// accepts it.
 func TestFrameRefusesDriftWithoutFindingsThatClaimsSome(t *testing.T) {
 	t.Parallel()
 
@@ -279,7 +279,6 @@ func TestFrameRefusesDriftWithoutFindingsThatClaimsSome(t *testing.T) {
 			result.HighestDriftSeverity = "warning"
 			result.DriftFindingCount = 1
 		}},
-		{name: "truncation", mutate: func(result *Result) { result.DriftFindingsTruncated = true }},
 		{name: "no severity", mutate: func(result *Result) { result.HighestDriftSeverity = "" }},
 	}
 	for _, test := range tests {
@@ -362,7 +361,6 @@ func TestFrameRejectsInconsistentStructuredDriftFindings(t *testing.T) {
 				{Category: "columns_added", Count: 2, Severity: "warning"},
 			}
 		}},
-		{name: "invalid truncation", mutate: func(result *Result) { result.DriftFindingsTruncated = true }},
 		{name: "non-observe", mutate: func(result *Result) {
 			result.Operation = OperationResolve
 			result.ResolvedDigest = "sha256:" + strings.Repeat("6", 64)

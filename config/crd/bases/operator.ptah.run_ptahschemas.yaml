@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "31"
-    operator.ptah.run/crd-schema-digest: "sha256:d4953d96c208bf6494a3fab9415a3a31ea74580f43c9173e6a95b8642501597f"
+    operator.ptah.run/crd-schema-version: "32"
+    operator.ptah.run/crd-schema-digest: "sha256:3f8c418f94c5a07efe1ce98cd1442049af6b2818dd56a857ddf6e2d0eaf44cbc"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -2266,8 +2266,6 @@ spec:
                     x-kubernetes-list-map-keys:
                     - category
                     x-kubernetes-list-type: map
-                  driftFindingsTruncated:
-                    type: boolean
                   driftReportDigest:
                     type: string
                   engine:
@@ -2283,10 +2281,6 @@ spec:
                     format: date-time
                     type: string
                 type: object
-                x-kubernetes-validations:
-                - message: truncated drift findings require exactly 64 published summaries
-                  rule: '!has(self.driftFindingsTruncated) || !self.driftFindingsTruncated
-                    || (has(self.driftFindings) && size(self.driftFindings) == 64)'
             type: object
         required:
         - spec
