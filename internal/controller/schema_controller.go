@@ -149,6 +149,11 @@ type SchemaReconciler struct {
 	// AdmissionOptions must match cluster-wide built-in Pod admission settings.
 	// The exact values are copied into each durable operation snapshot.
 	AdmissionOptions podintent.Options
+
+	// dispatch takes a claim to its one permitted create. Its zero value runs
+	// the order mutationlifecycle writes down; tests swap two of its steps to
+	// show which boundary each of them holds.
+	dispatch mutationlifecycle.Driver
 }
 
 func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
@@ -893,263 +898,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job is missing and will not be recreated"))
 		}
-		if schema.Spec.Suspend {
-			return r.suspendActiveOperation(ctx, schema)
-		}
-		current, currentErr := r.operationInputFingerprint(schema, operation.Type)
-		if currentErr != nil || current != operation.InputFingerprint {
-			if currentErr == nil {
-				currentErr = fmt.Errorf("operation inputs changed after the claim")
-			}
-			if schemaOperation(operation).Mutating {
-				return r.applyBecameStale(ctx, schema, currentErr)
-			}
-			return r.discardStaleOperation(ctx, schema, currentErr)
-		}
-		var plan *operatorv1alpha1.PtahSchemaPlan
-		if schemaOperation(operation).Mutating {
-			plan, err = r.currentPlan(ctx, schema)
-			if err != nil {
-				return r.applyBecameStale(ctx, schema, err)
-			}
-			// An old execution binding must lose its authorization without
-			// waiting for an unrelated holder of the database Lease. Releasing
-			// this claim remains safe when it has not acquired the Lease yet.
-			if err := r.ensureCurrentExecutionBinding(schema, plan); err != nil {
-				return r.executionBindingChanged(ctx, schema, err)
-			}
-		}
-		if schemaClaimHoldsLock(schema) {
-			acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
-			if lockErr != nil {
-				return ctrl.Result{}, lockErr
-			}
-			if !acquired {
-				return ctrl.Result{RequeueAfter: requeue}, nil
-			}
-		}
-		if operation.Type == operatorv1alpha1.OperationVerify {
-			binding, bindingErr := policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
-			if bindingErr != nil || binding.UID != operation.VerificationPolicyUID || binding.Digest != operation.VerificationPolicyDigest {
-				if bindingErr == nil {
-					bindingErr = fmt.Errorf("verification policy object changed after the operation claim")
-				}
-				return r.verificationPolicyChanged(ctx, schema, bindingErr)
-			}
-		}
-		if schemaOperation(operation).Mutating {
-			content, err := r.Plans.Load(ctx, plan)
-			if err != nil {
-				return r.applyBecameStale(ctx, schema, fmt.Errorf("verify plan storage: %w", err))
-			}
-			// The plan may have been published by another build of this
-			// manager, and the approval and the apply policy were decided on
-			// that build's reading of the bytes. This build reads them again
-			// before it dispatches; if it reads them differently, the plan is
-			// retired and planned again under this reading, which the plan
-			// fingerprint binds, so it cannot be the same plan.
-			if err := planReadingMatches(schema, plan, content); err != nil {
-				return r.applyBecameStale(ctx, schema, err)
-			}
-			policyBinding, err := policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
-			if err != nil || policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
-				if err == nil {
-					err = fmt.Errorf("verification policy object changed")
-				}
-				return r.verificationPolicyChanged(ctx, schema, err)
-			}
-			if planRequiresApproval(schema, plan) {
-				valid, err := r.ensureCurrentApproval(ctx, schema, plan, false)
-				if err != nil {
-					return ctrl.Result{}, err
-				}
-				if !valid {
-					return r.approvalBecameInvalid(ctx, schema)
-				}
-			}
-			// The Pod holds no Kubernetes credential and cannot read the chunk
-			// kind, so it mounts the verified bytes through ConfigMaps. They are
-			// written on every pass that can still create the Job, before
-			// DispatchStarted: once that is durable, a missing Job is an
-			// uncertain Apply, so nothing that can fail may sit between the two.
-			if err := r.Plans.Project(ctx, plan, content); err != nil {
-				if errors.Is(err, planstore.ErrProjectionConflict) {
-					return r.applyBecameStale(ctx, schema, fmt.Errorf("project plan for Apply: %w", err))
-				}
-				return ctrl.Result{}, fmt.Errorf("project plan for Apply: %w", err)
-			}
-		}
-		if r.Jobs == nil {
-			return ctrl.Result{}, fmt.Errorf("Job builder is not configured")
-		}
-		if operation.JobUID != "" {
-			if !isReadOnlyOperation(operation) {
-				return ctrl.Result{}, fmt.Errorf("missing %s Job has an unsupported persisted UID boundary", operation.Type)
-			}
-			pods, podsErr := r.podsOwnedByJob(ctx, schema.Namespace, operation.JobName, operation.JobUID)
-			if podsErr != nil {
-				return ctrl.Result{}, podsErr
-			}
-			for _, pod := range pods {
-				if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-					// Job deletion does not prove that an already-created Pod has
-					// stopped. Poll the exact owner UID until every old attempt is
-					// terminal or gone before authorizing a new read-only dispatch.
-					return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
-				}
-			}
-			// A persisted UID proves that this attempt already crossed its
-			// dispatch boundary. Job admission only permits CREATE while the
-			// active claim has no UID, so durably advance to a fresh attempt and
-			// deterministic name before a later reconciliation can recreate the
-			// read-only work. Apply is handled above and is never recreated.
-			return r.retryOperation(
-				ctx,
-				schema,
-				nil,
-				fmt.Errorf("%s Job %q with persisted UID %q is missing", operation.Type, operation.JobName, operation.JobUID),
-			)
-		}
-		if operation.AdmissionSnapshot != nil {
-			if snapshotErr := podintent.ValidateSnapshot(operation.AdmissionSnapshot); snapshotErr != nil {
-				return r.operationFailure(ctx, schema, fmt.Errorf("validate persisted Pod admission snapshot: %w", snapshotErr))
-			}
-		}
-		job, err = r.Jobs.Build(schema, *operation, plan)
-		if err != nil {
-			if schemaOperation(operation).Mutating {
-				return r.applyBecameStale(ctx, schema, fmt.Errorf("build Apply Job: %w", err))
-			}
-			return r.operationFailure(ctx, schema, fmt.Errorf("build %s Job: %w", operation.Type, err))
-		}
-		if job.Namespace != schema.Namespace || job.Name != operation.JobName {
-			return ctrl.Result{}, fmt.Errorf("Job builder returned an object outside the operation claim")
-		}
-		if operation.AdmissionSnapshot != nil {
-			templateDigest, digestErr := podintent.DigestTemplate(&job.Spec.Template)
-			if digestErr != nil {
-				failure := fmt.Errorf("validate rebuilt Job Pod template: %w", digestErr)
-				if !schemaOperation(operation).Mutating {
-					return r.discardStaleOperation(ctx, schema, failure)
-				}
-				return r.operationFailure(ctx, schema, failure)
-			}
-			if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-				if operation.AdmissionSnapshotRefreshed {
-					failure := fmt.Errorf("rebuilt Job Pod template differs from the admission snapshot it was already resolved again for")
-					if !schemaOperation(operation).Mutating {
-						return r.discardStaleOperation(ctx, schema, failure)
-					}
-					return r.operationFailure(ctx, schema, failure)
-				}
-				return r.refreshAdmissionSnapshot(ctx, schema)
-			}
-		}
-		if operation.AdmissionSnapshot == nil {
-			snapshot, snapshotErr := podintent.Resolve(
-				ctx, r.directReader(), schema.Namespace, &job.Spec.Template, r.AdmissionOptions,
-			)
-			if snapshotErr != nil {
-				return r.operationFailure(ctx, schema, fmt.Errorf("resolve Pod admission snapshot: %w", snapshotErr))
-			}
-			before := schema.DeepCopy()
-			schema.Status.ActiveOperation.AdmissionSnapshot = snapshot
-			if err := r.patchStatus(ctx, before, schema); err != nil {
-				return ctrl.Result{}, err
-			}
-			// The snapshot is a separate durable boundary. In particular, an
-			// Apply reconciliation must persist it before DispatchStarted and
-			// before the one permitted Job create attempt. The Job built above
-			// carries no snapshot digest, so the next pass rebuilds it from the
-			// claim this write recorded.
-			return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
-		}
-		expectedJob := job.DeepCopy()
-		if schemaClaimHoldsLock(schema) && !operation.DispatchStarted {
-			before := schema.DeepCopy()
-			schema.Status.ActiveOperation.DispatchStarted = true
-			if operation.Type == operatorv1alpha1.OperationPlan {
-				// Recorded in the same patch as the boundary it describes: the
-				// Job just built above is sealed to this process's current
-				// public key, and this is that Job's one dispatch attempt.
-				// Harvest compares its own current key against this digest
-				// rather than trying to open a payload it may not hold the
-				// matching private key for.
-				schema.Status.ActiveOperation.PlanSealPublicKeyDigest = planSealPublicKeyDigest(r.SealKey.PublicKey())
-			}
-			if err := r.patchStatus(ctx, before, schema); err != nil {
-				return ctrl.Result{}, err
-			}
-			operation = schema.Status.ActiveOperation
-		} else if operation.Type == operatorv1alpha1.OperationPlan {
-			// DispatchStarted is already recorded, so a pass before this one
-			// crossed the boundary and died before its Create. The digest it
-			// recorded names that process's key, and the Job built above is
-			// sealed to this one's. Nothing else moves the digest while
-			// DispatchStarted stays set, so bring the claim up to date before
-			// the Create: admission checks the Job's key against the claim,
-			// and harvest checks the claim against this process's key.
-			currentDigest := planSealPublicKeyDigest(r.SealKey.PublicKey())
-			if operation.PlanSealPublicKeyDigest != currentDigest {
-				before := schema.DeepCopy()
-				schema.Status.ActiveOperation.PlanSealPublicKeyDigest = currentDigest
-				if err := r.patchStatus(ctx, before, schema); err != nil {
-					return ctrl.Result{}, err
-				}
-				operation = schema.Status.ActiveOperation
-			}
-		}
-		if schemaOperation(operation).Mutating {
-			if planRequiresApproval(schema, plan) {
-				valid, err := r.ensureCurrentApproval(ctx, schema, plan, true)
-				if err != nil {
-					return ctrl.Result{}, err
-				}
-				if !valid {
-					return r.approvalBecameInvalid(ctx, schema)
-				}
-			}
-		}
-		mutating := schemaOperation(operation).Mutating
-		if err := r.Client.Create(ctx, job); err != nil {
-			switch mutationlifecycle.DispatchFailure(
-				mutationlifecycle.StageCreate, mutating, apierrors.IsAlreadyExists(err),
-			) {
-			case mutationlifecycle.DispositionUnaccounted:
-				return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("Apply Job create result is uncertain: %w", err))
-			case mutationlifecycle.DispositionRetry:
-				return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job name was occupied during dispatch"))
-			}
-			return ctrl.Result{}, fmt.Errorf("create %s Job: %w", operation.Type, err)
-		}
-		if err := r.directReader().Get(ctx, key, job); err != nil {
-			if mutationlifecycle.DispatchFailure(
-				mutationlifecycle.StageConfirm, mutating, false,
-			) == mutationlifecycle.DispositionUnaccounted {
-				return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("cannot confirm dispatched Apply Job: %w", err))
-			}
-			// The boundary is already durable, so the next pass re-enters
-			// through the claim's own verdict and can say more than this one.
-			return ctrl.Result{}, fmt.Errorf("read created %s Job: %w", operation.Type, err)
-		}
-		if err := validateJobIntent(job, expectedJob, schema); err != nil {
-			if mutationlifecycle.DispatchFailure(
-				mutationlifecycle.StageIntent, mutating, false,
-			) == mutationlifecycle.DispositionUnaccounted {
-				return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job failed immutable intent validation: %w", err))
-			}
-			return r.retryOperation(ctx, schema, nil, fmt.Errorf("created Job failed immutable intent validation: %w", err))
-		}
-		before := schema.DeepCopy()
-		schema.Status.ActiveOperation.JobUID = job.UID
-		if err := r.patchStatus(ctx, before, schema); err != nil {
-			return ctrl.Result{}, err
-		}
-		r.event(schema, corev1.EventTypeNormal, "OperationStarted", "%s Job %s started", operation.Type, job.Name)
-		if schemaOperation(operation).Mutating && r.Telemetry != nil {
-			r.Telemetry.ObserveApply(telemetry.FamilySchema, telemetry.ApplyStarted)
-		}
-		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		return r.dispatch.Dispatch(ctx, &schemaDispatch{r: r, schema: schema})
 	}
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("read active Job: %w", err)
@@ -2528,9 +2277,6 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	}
 	before := schema.DeepCopy()
 	operation := schema.Status.ActiveOperation
-	if err := r.consumeRecordedApprovalAtDispatch(ctx, schema); err != nil {
-		return ctrl.Result{}, err
-	}
 	var observeAfter *metav1.Time
 	if waitForDispatchDeadline {
 		if operation == nil || operation.ExecutionNotAfter == nil || operation.ExecutionNotAfter.IsZero() ||
@@ -2576,21 +2322,6 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	r.observeOperation(operation, telemetry.OperationUncertain)
 	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "Apply outcome is uncertain; observing database state")
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
-}
-
-func (r *SchemaReconciler) consumeRecordedApprovalAtDispatch(ctx context.Context, schema *operatorv1alpha1.PtahSchema) error {
-	if schema.Status.Plan == nil || schema.Status.Plan.Approval == nil {
-		return nil
-	}
-	recorded := schema.Status.Plan.Approval
-	approval := &operatorv1alpha1.PtahSchemaApproval{}
-	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: recorded.Name}, approval); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	if approval.UID != recorded.UID {
-		return nil
-	}
-	return r.markApprovalConsumed(ctx, approval)
 }
 
 func (r *SchemaReconciler) finishUnknownRunningApply(

@@ -103,6 +103,11 @@ type MigrationReconciler struct {
 	Clock            func() time.Time
 	Telemetry        telemetry.Observer
 	AdmissionOptions podintent.Options
+
+	// dispatch takes a claim to its one permitted create. Its zero value runs
+	// the order mutationlifecycle writes down; tests swap two of its steps to
+	// show which boundary each of them holds.
+	dispatch mutationlifecycle.Driver
 }
 
 func (r *MigrationReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
@@ -638,16 +643,6 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	}
 	kind := migrationOperation(operation)
 	mutating := kind.Mutating
-	if kind.HoldsLock(false) {
-		acquired, requeue, lockErr := r.acquireMigrationApplyLock(ctx, migration)
-		if lockErr != nil {
-			return ctrl.Result{}, lockErr
-		}
-		if !acquired {
-			return ctrl.Result{RequeueAfter: requeue}, nil
-		}
-		operation = migration.Status.ActiveOperation
-	}
 	job := &batchv1.Job{}
 	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
@@ -671,9 +666,22 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		OwnedExactly: found && exactControllerOwner(job.OwnerReferences,
 			operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID),
 	})
+	if verdict == mutationlifecycle.VerdictDispatch {
+		return r.dispatch.Dispatch(ctx, &migrationDispatch{r: r, migration: migration})
+	}
+	// Every other verdict is about a Job that may be running under the realm
+	// the claim holds, so the Lease is renewed before the pass acts on it.
+	if kind.HoldsLock(false) {
+		acquired, requeue, lockErr := r.acquireMigrationApplyLock(ctx, migration)
+		if lockErr != nil {
+			return ctrl.Result{}, lockErr
+		}
+		if !acquired {
+			return ctrl.Result{RequeueAfter: requeue}, nil
+		}
+		operation = migration.Status.ActiveOperation
+	}
 	switch verdict {
-	case mutationlifecycle.VerdictDispatch:
-		return r.dispatchMigrationJob(ctx, migration, key)
 	case mutationlifecycle.VerdictUnaccounted:
 		// A dispatched Apply is never recreated. Whether it ran is a question
 		// for the database, not for a retry.
@@ -828,206 +836,6 @@ func (r *MigrationReconciler) migrationPlanForJob(
 		return nil, errors.New("the Apply plan was replaced or is being deleted")
 	}
 	return plan, nil
-}
-
-// dispatchMigrationJob creates the Job the claim named, once. Every input the
-// claim was decided from is re-read first: a Job is only worth creating while
-// the decision behind it still holds.
-func (r *MigrationReconciler) dispatchMigrationJob(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	key types.NamespacedName,
-) (ctrl.Result, error) {
-	operation := migration.Status.ActiveOperation
-	// Suspension first, and before the retry deadline. A person who suspends a
-	// resource is asking it to stop now, and a claim waiting out a retry has
-	// dispatched nothing -- so making them wait out an interval of up to an
-	// hour to have it retired would answer a different question than the one
-	// they asked.
-	if migration.Spec.Suspend {
-		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, errors.New("reconciliation was suspended before dispatch"))
-	}
-	// The inputs are re-read before the deadline is applied, not after it. A
-	// person correcting them -- a target Secret named wrong, an artifact
-	// reference that does not resolve -- is the usual reason a read-only
-	// operation failed at all, and the generation watch re-enters
-	// reconciliation the moment they do. Weighing the deadline first would
-	// hold that correction behind an interval of up to an hour, waiting out a
-	// claim nothing is going to dispatch.
-	//
-	// A fingerprint that cannot be read is not a correction by itself, and it
-	// waits like any other retry. Discarding on every pass that fails to read
-	// an input would turn an unreadable Secret into a claim-and-discard loop
-	// driven by whatever else the resource watches, which is the tight loop the
-	// delay exists to stop.
-	//
-	// An edit is visible without reading the inputs at all, and that is what
-	// separates the two: the API server bumps the generation, and the claim
-	// recorded the generation it was made from. So a correction whose new
-	// inputs cannot be read yet -- a reference that does not parse, a
-	// verification policy nobody has created -- retires the claim now rather
-	// than waiting out the interval it was meant to end.
-	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
-	inputsChanged := migration.Generation != migration.Status.ObservedGeneration ||
-		(currentErr == nil && current != operation.InputFingerprint)
-	// A retried attempt waits out the delay the resource asked for. The check
-	// is here rather than only in the requeue that scheduled it, because a
-	// restart and an early Job or watch event both re-enter reconciliation
-	// immediately and would otherwise dispatch at once -- which is how a
-	// failing operation becomes a tight loop against whatever it is failing on.
-	if !inputsChanged && !due(operation.RetryNotBefore, r.now()) {
-		return requeueAtDeadline(operation.RetryNotBefore, r.now()), nil
-	}
-	if inputsChanged || currentErr != nil {
-		if currentErr == nil {
-			currentErr = errors.New("the operation inputs changed after the claim")
-		}
-		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, currentErr)
-	}
-	if operation.Type == operatorv1alpha1.MigrationOperationApply {
-		// An Apply reaches here only before its dispatch boundary: a claim that
-		// already crossed it is retired as uncertain rather than re-examined.
-		// So discarding here cannot abandon a run that is executing SQL.
-		if err := r.claimedApplyPolicyStillBinds(ctx, migration, operation); err != nil {
-			return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, err)
-		}
-	}
-	if operation.JobUID != "" {
-		// A persisted UID proves this attempt already crossed its dispatch
-		// boundary. Admission permits CREATE only while the claim has no UID,
-		// so advance to a fresh attempt and a fresh deterministic name rather
-		// than recreating the Job this claim already had.
-		pods, podsErr := podsOwnedByJob(ctx, r.directReader(), migration.Namespace, operation.JobName, operation.JobUID)
-		if podsErr != nil {
-			return ctrl.Result{}, podsErr
-		}
-		for _, pod := range pods {
-			if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-				return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
-			}
-		}
-		return r.retryMigrationOperation(ctx, migration, nil,
-			fmt.Errorf("%s Job %q with persisted UID %q is missing", operation.Type, operation.JobName, operation.JobUID))
-	}
-	if r.Jobs == nil {
-		return ctrl.Result{}, errors.New("Job builder is not configured")
-	}
-	plan, planErr := r.migrationPlanForJob(ctx, migration, operation)
-	if planErr != nil {
-		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, planErr)
-	}
-	job, err := r.Jobs.BuildMigration(migration, *operation, plan)
-	if err != nil {
-		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("build %s Job: %w", operation.Type, err))
-	}
-	if job.Namespace != migration.Namespace || job.Name != operation.JobName {
-		return ctrl.Result{}, errors.New("the Job builder returned an object outside the operation claim")
-	}
-	if operation.AdmissionSnapshot == nil {
-		snapshot, snapshotErr := podintent.Resolve(ctx, r.directReader(), migration.Namespace, &job.Spec.Template, r.AdmissionOptions)
-		if snapshotErr != nil {
-			return r.migrationOperationFailure(ctx, migration, fmt.Errorf("resolve Pod admission snapshot: %w", snapshotErr))
-		}
-		before := migration.DeepCopy()
-		migration.Status.ActiveOperation.AdmissionSnapshot = snapshot
-		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
-			return ctrl.Result{}, err
-		}
-		// The snapshot is its own durable boundary: it is persisted before the
-		// Job that carries its digest exists.
-		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
-	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("validate persisted Pod admission snapshot: %w", err))
-	}
-	templateDigest, digestErr := podintent.DigestTemplate(&job.Spec.Template)
-	if digestErr != nil {
-		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
-	}
-	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		// Nothing was dispatched and the claim's inputs still hold, so what
-		// differs is the manager that built the template: its recorded
-		// identity, and anything else the new release changed in the Job it
-		// builds. Neither binds the claim. The claim stands, and its snapshot
-		// is resolved again from the template this manager builds -- once. A
-		// template that moves again comes from a builder that does not build
-		// the same Job twice, and refreshing it would never end.
-		if operation.AdmissionSnapshotRefreshed {
-			return r.migrationOperationFailure(ctx, migration, errors.New(
-				"rebuilt Job Pod template differs from the admission snapshot it was already resolved again for"))
-		}
-		before := migration.DeepCopy()
-		migration.Status.ActiveOperation.AdmissionSnapshot = nil
-		migration.Status.ActiveOperation.AdmissionSnapshotRefreshed = true
-		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
-			return ctrl.Result{}, err
-		}
-		r.event(migration, corev1.EventTypeNormal, "AdmissionSnapshotRefreshed",
-			"%s Job Pod template changed before dispatch; resolving its admission snapshot again", operation.Type)
-		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
-	}
-	if migrationOperation(operation).Mutating && !operation.DispatchStarted {
-		if err := r.consumeMigrationApproval(ctx, migration, operation.ApprovalRef); err != nil {
-			return ctrl.Result{}, err
-		}
-		before := migration.DeepCopy()
-		migration.Status.ActiveOperation.DispatchStarted = true
-		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
-			return ctrl.Result{}, err
-		}
-		operation = migration.Status.ActiveOperation
-	}
-	expected := job.DeepCopy()
-	mutating := migrationOperation(operation).Mutating
-	if err := r.Client.Create(ctx, job); err != nil {
-		switch mutationlifecycle.DispatchFailure(
-			mutationlifecycle.StageCreate, mutating, apierrors.IsAlreadyExists(err),
-		) {
-		case mutationlifecycle.DispositionUnaccounted:
-			// Including AlreadyExists. A Job standing under the name this claim
-			// reserved is one this claim may have created on a pass whose
-			// answer was lost, and retrying would rename the claim and dispatch
-			// beside it. What that Job did is a question for the database.
-			return r.finishUncertainMigrationApply(ctx, migration, nil,
-				fmt.Errorf("the Apply Job create result is uncertain: %w", err), "")
-		case mutationlifecycle.DispositionRetry:
-			return r.retryMigrationOperation(ctx, migration, nil, errors.New("the claimed Job name was occupied during dispatch"))
-		}
-		return ctrl.Result{}, fmt.Errorf("create %s Job: %w", operation.Type, err)
-	}
-	if err := r.directReader().Get(ctx, key, job); err != nil {
-		if mutationlifecycle.DispatchFailure(
-			mutationlifecycle.StageConfirm, mutating, false,
-		) == mutationlifecycle.DispositionUnaccounted {
-			return r.finishUncertainMigrationApply(ctx, migration, nil,
-				fmt.Errorf("cannot confirm the dispatched Apply Job: %w", err), "")
-		}
-		// The boundary is already durable, so the next pass re-enters through
-		// the claim's own verdict and can say more than this one.
-		return ctrl.Result{}, fmt.Errorf("read created %s Job: %w", operation.Type, err)
-	}
-	if err := validateMigrationJobIntent(job, expected, migration); err != nil {
-		if mutationlifecycle.DispatchFailure(
-			mutationlifecycle.StageIntent, mutating, false,
-		) == mutationlifecycle.DispositionUnaccounted {
-			// The Job exists by now and its executor may already be opening
-			// the database, so this claim is not free to walk away from it and
-			// dispatch under another name.
-			return r.finishUncertainMigrationApply(ctx, migration, job,
-				fmt.Errorf("the created Apply Job failed immutable intent validation: %w", err), "")
-		}
-		return r.retryMigrationOperation(ctx, migration, nil, fmt.Errorf("the created Job failed immutable intent validation: %w", err))
-	}
-	before := migration.DeepCopy()
-	migration.Status.ActiveOperation.JobUID = job.UID
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
-		return ctrl.Result{}, err
-	}
-	r.event(migration, corev1.EventTypeNormal, "OperationStarted", "%s Job %s started", operation.Type, job.Name)
-	if mutating && r.Telemetry != nil {
-		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
-	}
-	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
 
 func (r *MigrationReconciler) consumeMigrationResult(

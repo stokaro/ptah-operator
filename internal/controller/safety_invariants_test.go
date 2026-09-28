@@ -3439,6 +3439,13 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 			schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
 				Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
 			}
+			// The approval was spent before the dispatch marker was written,
+			// as it is for every Apply that crosses the boundary.
+			approval.Status.Conditions = []metav1.Condition{
+				{Type: operatorv1alpha1.ConditionApprovalAccepted, Status: metav1.ConditionTrue, Reason: string(operatorv1alpha1.ReasonCurrentPlan)},
+				{Type: operatorv1alpha1.ConditionApprovalStale, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonCurrentPlan)},
+				{Type: operatorv1alpha1.ConditionApprovalConsumed, Status: metav1.ConditionTrue, Reason: string(operatorv1alpha1.ReasonDispatchCommitted)},
+			}
 			started := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 			executionNotAfter := metav1.NewTime(started.Add(leaseDuration(schema) - time.Minute))
 			target := databaseTargetBinding(schema.Spec.Target)

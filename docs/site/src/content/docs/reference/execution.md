@@ -23,6 +23,7 @@ sequenceDiagram
   Note over S: named before the Job exists
   C->>K: read ServiceAccount, LimitRange,<br/>RuntimeClass, PriorityClass
   C->>S: persist the admission snapshot digest
+  C->>K: mark an Apply's approval consumed
   C->>S: persist dispatchStarted
   Note over S: the one permitted create
   C->>K: create the Job
