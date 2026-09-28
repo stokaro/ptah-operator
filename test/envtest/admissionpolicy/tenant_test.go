@@ -2,6 +2,7 @@ package admissionpolicy_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
 	"github.com/stokaro/ptah-operator/test/envtest/internal/harness"
+	"github.com/stokaro/ptah-operator/test/envtest/internal/policyenv"
 )
 
 // The tenant is where a person declares databases: one PtahSchema and one
@@ -36,7 +38,29 @@ var (
 	// to Always, and the rows on the apply-policy guard edit them.
 	tenantAlwaysSchema    *operatorv1alpha1.PtahSchema
 	tenantAlwaysMigration *operatorv1alpha1.PtahMigration
+	// The restored migration carries a run nobody accounted for, in status and
+	// in the copy on its metadata a restore keeps, and the acknowledgment a
+	// person wrote for it. The rows on the manager's state edit them.
+	tenantRestoredMigration *operatorv1alpha1.PtahMigration
+	tenantAcknowledgment    *operatorv1alpha1.PtahMigrationRunAcknowledgment
 )
+
+// unresolvedRun is the record the restored migration carries, and
+// unresolvedRunCopy the annotation value the manager keeps beside it.
+func unresolvedRun() *operatorv1alpha1.UnresolvedMigrationRunStatus {
+	return &operatorv1alpha1.UnresolvedMigrationRunStatus{
+		Outcome:     operatorv1alpha1.MigrationRunOutcomeUnknown,
+		OperationID: digest("7"),
+		JobName:     "ptah-m-apply-ledger-restored-0123456789",
+		PlanRef:     operatorv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-ledger-restored", UID: "ledger-restored-plan-uid"},
+		RecordedAt:  metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)),
+	}
+}
+
+func unresolvedRunCopy() (string, error) {
+	encoded, err := json.Marshal(unresolvedRun())
+	return string(encoded), err
+}
 
 // declared is a desired-state resource written the way a person writes it, as
 // the fields they set: a typed object would send every unset duration as "0s",
@@ -122,16 +146,62 @@ func setupTenant(ctx context.Context) error {
 			return fmt.Errorf("read the tenant %s %s back: %w", tenant.object.GetKind(), tenant.object.GetName(), err)
 		}
 	}
+	// Status is the manager's to write: the chart's status guard refuses
+	// anyone else, the envtest administrator included.
+	manager, err := env.As(env.Manager())
+	if err != nil {
+		return err
+	}
 	schema.Status.ExecutionBinding = executionBinding()
-	if err := admin.Status().Update(ctx, schema); err != nil {
+	if err := manager.Status().Update(ctx, schema); err != nil {
 		return fmt.Errorf("record the tenant PtahSchema's execution binding: %w", err)
 	}
 	migration.Status.ExecutionBinding = executionBinding()
-	if err := admin.Status().Update(ctx, migration); err != nil {
+	if err := manager.Status().Update(ctx, migration); err != nil {
 		return fmt.Errorf("record the tenant PtahMigration's execution binding: %w", err)
 	}
 	tenantSchema, tenantMigration = schema.DeepCopy(), migration.DeepCopy()
 	tenantAlwaysSchema, tenantAlwaysMigration = alwaysSchema.DeepCopy(), alwaysMigration.DeepCopy()
+	return setupRestoredTenant(ctx, manager)
+}
+
+// setupRestoredTenant stores a migration the way a restore that dropped
+// status leaves it once the manager has put the record back: the copy on its
+// metadata, created with the object, and the record in status. Beside it is
+// the acknowledgment a person wrote, stamped the way admission stamps one.
+func setupRestoredTenant(ctx context.Context, manager client.Client) error {
+	value, err := unresolvedRunCopy()
+	if err != nil {
+		return err
+	}
+	restored := declared("PtahMigration", "ledger-restored", "")
+	restored.SetAnnotations(map[string]string{operatorv1alpha1.UnresolvedRunAnnotation: value})
+	if err := env.Admin.Create(ctx, restored); err != nil {
+		return fmt.Errorf("create the restored tenant PtahMigration: %w", err)
+	}
+	migration := &operatorv1alpha1.PtahMigration{}
+	if err := env.Admin.Get(ctx, client.ObjectKeyFromObject(restored), migration); err != nil {
+		return fmt.Errorf("read the restored tenant PtahMigration back: %w", err)
+	}
+	migration.Status.ExecutionBinding = executionBinding()
+	migration.Status.UnresolvedRun = unresolvedRun()
+	if err := manager.Status().Update(ctx, migration); err != nil {
+		return fmt.Errorf("record the restored tenant PtahMigration's unresolved run: %w", err)
+	}
+	acknowledgment := &operatorv1alpha1.PtahMigrationRunAcknowledgment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: "ledger-restored-run-accounted-for"},
+		Spec: operatorv1alpha1.PtahMigrationRunAcknowledgmentSpec{
+			MigrationRef:       operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
+			OperationID:        migration.Status.UnresolvedRun.OperationID,
+			AcknowledgedBy:     operatorv1alpha1.ApprovalIdentity{Username: policyenv.OrdinaryUser},
+			AcknowledgedAt:     metav1.NewTime(time.Date(2026, 9, 1, 13, 0, 0, 0, time.UTC)),
+			MutationRequestUID: "envtest-mutating-admission-uid",
+		},
+	}
+	if err := env.Admin.Create(ctx, acknowledgment); err != nil {
+		return fmt.Errorf("create the tenant acknowledgment: %w", err)
+	}
+	tenantRestoredMigration, tenantAcknowledgment = migration.DeepCopy(), acknowledgment.DeepCopy()
 	return nil
 }
 

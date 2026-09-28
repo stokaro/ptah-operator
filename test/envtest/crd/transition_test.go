@@ -2,6 +2,7 @@ package crd_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -69,6 +70,18 @@ func TestImmutableRecordsRefuseEveryChangeToWhatTheyRecord(t *testing.T) {
 			object: resource("PtahMigrationApproval", namespace, "approve-orders-14", migrationApprovalSpec()),
 			change: setting("c5e8a7d2-3b41-4f6e-9a08-1d2c3b4a5e6f", "spec", "planRef", "uid"),
 			want:   cause{"spec", "an approval is immutable; create a new approval instead"},
+		},
+		{
+			name:   "PtahMigrationRunAcknowledgment operation",
+			object: resource("PtahMigrationRunAcknowledgment", namespace, "orders-run-accounted-for", runAcknowledgmentSpec()),
+			change: setting("sha256:"+strings.Repeat("0", 64), "spec", "operationID"),
+			want:   cause{"spec", "an acknowledgment is immutable; create a new acknowledgment instead"},
+		},
+		{
+			name:   "PtahMigrationRunAcknowledgment acknowledger",
+			object: resource("PtahMigrationRunAcknowledgment", namespace, "orders-run-accounted-for-again", runAcknowledgmentSpec()),
+			change: setting("mallory@example.com", "spec", "acknowledgedBy", "username"),
+			want:   cause{"spec", "an acknowledgment is immutable; create a new acknowledgment instead"},
 		},
 		{
 			name:   "PtahRealm engine",

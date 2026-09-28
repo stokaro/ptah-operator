@@ -327,9 +327,10 @@ certificateRotation:
       memory: 64Mi
 
 # A ClusterRole for the people who approve changes: read schemas, migrations,
-# their plans, the chunks a schema plan's SQL is stored in, and approvals, and
-# create an approval of either kind. It reads no ConfigMap and no Pod log. Bind
-# it yourself; the chart binds nobody.
+# their plans, the chunks a schema plan's SQL is stored in, and approvals,
+# create an approval of either kind, and create the acknowledgment that settles
+# a migration run nobody accounted for. It reads no ConfigMap and no Pod log.
+# Bind it yourself; the chart binds nobody.
 approverClusterRole:
   # Whether to create that ClusterRole.
   create: true

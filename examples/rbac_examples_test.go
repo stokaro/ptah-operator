@@ -40,6 +40,7 @@ func TestDiagnosticReaderRoleCannotChangeStateOrReadPlansOrCredentials(t *testin
 		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{
 			"ptahschemas", "ptahschemaplans", "ptahschemaapprovals",
 			"ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals",
+			"ptahmigrationrunacknowledgments",
 		}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log"}, Verbs: []string{"get", "list", "watch"}},

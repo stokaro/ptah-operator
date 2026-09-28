@@ -54,7 +54,7 @@ fresh name. What that Job did becomes a question for the database.
 | --- | --- | --- |
 | Enforced in | `finishUncertainApply` | `finishUncertainMigrationApply` |
 | Durable evidence | `status.pendingObservation`, which owes a fresh reading | `status.unresolvedRun`, which names the attempt, its Job, its plan and the database |
-| Cleared by | the observation it owes, completing | a History reading of the same database with nothing of the artifact pending, in `migrationUnresolvedRunSettledBy`; or a person, by hand |
+| Cleared by | the observation it owes, completing | a History reading of the same database with nothing of the artifact pending, in `migrationUnresolvedRunSettledBy`; or a person's `PtahMigrationRunAcknowledgment` naming the attempt, in `settleUnresolvedRunByAcknowledgment` |
 | Failure behavior | the resource re-observes before it plans again | the resource is `Blocked`; nothing runs until the record is cleared |
 | Proved by | `TestMissingDispatchedApplyJobForcesObservationWithoutRecreation` | `TestMigrationApplyIsNeverRecreatedOnceDispatched` |
 

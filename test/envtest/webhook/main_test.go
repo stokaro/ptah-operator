@@ -47,6 +47,8 @@ const (
 	validateApprovalPath          = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	mutateMigrationApprovalPath   = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
 	validateMigrationApprovalPath = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	mutateRunAcknowledgmentPath   = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"
+	validateRunAcknowledgmentPath = "/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"
 	mutateSchemaSpecWriterPath    = "/mutate-operator-ptah-run-v1alpha1-ptahschema"
 	mutateMigrationSpecWriterPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigration"
 	validatePodIntentPath         = "/validate-v1-pod-ptah-operation-intent"
@@ -294,6 +296,7 @@ func servedPaths() map[string]bool {
 	served := map[string]bool{
 		mutateApprovalPath: true, validateApprovalPath: true,
 		mutateMigrationApprovalPath: true, validateMigrationApprovalPath: true,
+		mutateRunAcknowledgmentPath: true, validateRunAcknowledgmentPath: true,
 		validatePodIntentPath: true, validateControllerWritePath: true,
 	}
 	if manager.requireDistinctApprover {
@@ -379,6 +382,12 @@ func serveManagerHandlers() (func(), error) {
 	server.Register(validateApprovalPath, &cradmission.Webhook{Handler: approval(false)})
 	server.Register(mutateMigrationApprovalPath, &cradmission.Webhook{Handler: migrationApproval(true)})
 	server.Register(validateMigrationApprovalPath, &cradmission.Webhook{Handler: migrationApproval(false)})
+	server.Register(mutateRunAcknowledgmentPath, &cradmission.Webhook{Handler: &approvaladmission.RunAcknowledgmentHandler{
+		Reader: admin, Decoder: decoder, Mutate: true,
+	}})
+	server.Register(validateRunAcknowledgmentPath, &cradmission.Webhook{Handler: &approvaladmission.RunAcknowledgmentHandler{
+		Reader: admin, Decoder: decoder, Mutate: false,
+	}})
 	server.Register(mutateSchemaSpecWriterPath, &cradmission.Webhook{Handler: &approvaladmission.SchemaSpecWriterHandler{
 		Decoder: decoder,
 	}})

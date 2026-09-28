@@ -20,6 +20,7 @@ rules:
       - "ptahmigrations"
       - "ptahmigrationplans"
       - "ptahmigrationapprovals"
+      - "ptahmigrationrunacknowledgments"
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]

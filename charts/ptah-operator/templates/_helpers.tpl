@@ -168,6 +168,14 @@ app.kubernetes.io/component: controller
 {{- printf "ptah-operator-migration-plan-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
+{{- define "ptah-operator.statusWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-status-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- end -}}
+
+{{- define "ptah-operator.unresolvedRunGuardPolicyName" -}}
+{{- printf "ptah-operator-unresolved-run-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- end -}}
+
 {{- define "ptah-operator.applyPolicyGuardPolicyName" -}}
 {{- printf "ptah-operator-apply-policy-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
@@ -198,11 +206,11 @@ app.kubernetes.io/component: controller
 {{- /* The spec-writer entries exist only when the four-eyes control is on;
       webhook.yaml renders them under the same condition, and the rotator
       must probe exactly the entries that exist to serve a canary at each. */ -}}
-{{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run" -}}
+{{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run,mmigrationrunacknowledgment.operator.ptah.run" -}}
 {{- if .Values.approvals.requireDistinctApprover -}}
 {{- $mutatingWebhookNames = printf "%s,mschemawriter.operator.ptah.run,mmigrationwriter.operator.ptah.run" $mutatingWebhookNames -}}
 {{- end -}}
-{{- $validatingWebhookNames := "vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run" -}}
+{{- $validatingWebhookNames := "vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vmigrationrunacknowledgment.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run" -}}
 {{- $args := list
       (printf "--namespace=%s" .Release.Namespace)
       (printf "--release-name=%s" .Release.Name)

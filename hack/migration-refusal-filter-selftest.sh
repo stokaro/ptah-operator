@@ -47,6 +47,7 @@ accepts() {
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		--arg gate operator.ptah.run/e2e-apply-gate \
 		--arg job u-isolated-apply --arg epoch v1-isolated-epoch \
+		--arg operation sha256:77 --arg acknowledgment run-accounted-for --arg person e2e-acknowledger \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null ||
 		fail "$filter refused a reading it has to accept: $description"
@@ -60,6 +61,7 @@ refuses() {
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		--arg gate operator.ptah.run/e2e-apply-gate \
 		--arg job u-isolated-apply --arg epoch v1-isolated-epoch \
+		--arg operation sha256:77 --arg acknowledgment run-accounted-for --arg person e2e-acknowledger \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null 2>&1; then
 		fail "$filter accepted a reading it has to refuse: $description"
@@ -111,6 +113,7 @@ accepts_file() {
 		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		--arg gate operator.ptah.run/e2e-apply-gate \
 		--arg job u-isolated-apply --arg epoch v1-isolated-epoch \
+		--arg operation sha256:77 --arg acknowledgment run-accounted-for --arg person e2e-acknowledger \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$ROOT_DIR/testdata/e2e/readings/$reading" >/dev/null ||
 		fail "$filter refused a reading the operator produced: $description"
@@ -626,6 +629,45 @@ JSON
 refuses migration-lost-log-run-recorded.jq 'a record of another run' <<'JSON'
 {"status":{"lastRun":{"outcome":"Applied","jobUID":"u-replacement",
   "message":"The Apply's frame could not be read from its log; its termination message, bound to frame sha256:ff, reports outcome applied with 3 migrations recorded applied, from version 1 to version 3"}}}
+JSON
+
+# A run nobody accounted for, settled by a person's acknowledgment. Judged with
+# operation=sha256:77, acknowledgment=run-accounted-for and
+# person=e2e-acknowledger.
+accepts migration-run-acknowledged.jq 'the record settled in the acknowledger'"'"'s name' <<'JSON'
+{"metadata":{"annotations":{"operator.ptah.run/last-spec-writer-username":"e2e"}},
+ "status":{"resolvedRun":{"operationID":"sha256:77","outcome":"Unknown","resolution":"Acknowledged",
+  "acknowledgmentRef":{"name":"run-accounted-for","uid":"u-ack"},
+  "acknowledgedBy":{"username":"e2e-acknowledger","groups":["e2e:acknowledgers"]},
+  "resolvedAt":"2026-09-28T10:00:00Z"}}}
+JSON
+refuses migration-run-acknowledged.jq 'the record still stands' <<'JSON'
+{"status":{"unresolvedRun":{"operationID":"sha256:77","outcome":"Unknown"},
+ "resolvedRun":{"operationID":"sha256:77","resolution":"Acknowledged",
+  "acknowledgmentRef":{"name":"run-accounted-for"},"acknowledgedBy":{"username":"e2e-acknowledger"}}}}
+JSON
+refuses migration-run-acknowledged.jq 'the copy a restore keeps still stands' <<'JSON'
+{"metadata":{"annotations":{"operator.ptah.run/unresolved-run":"{\"operationID\":\"sha256:77\"}"}},
+ "status":{"resolvedRun":{"operationID":"sha256:77","resolution":"Acknowledged",
+  "acknowledgmentRef":{"name":"run-accounted-for"},"acknowledgedBy":{"username":"e2e-acknowledger"}}}}
+JSON
+refuses migration-run-acknowledged.jq 'settled by a reading, in nobody'"'"'s name' <<'JSON'
+{"status":{"resolvedRun":{"operationID":"sha256:77","resolution":"HistoryRead"}}}
+JSON
+refuses migration-run-acknowledged.jq 'another run settled' <<'JSON'
+{"status":{"resolvedRun":{"operationID":"sha256:78","resolution":"Acknowledged",
+  "acknowledgmentRef":{"name":"run-accounted-for"},"acknowledgedBy":{"username":"e2e-acknowledger"}}}}
+JSON
+refuses migration-run-acknowledged.jq 'settled in somebody else'"'"'s name' <<'JSON'
+{"status":{"resolvedRun":{"operationID":"sha256:77","resolution":"Acknowledged",
+  "acknowledgmentRef":{"name":"run-accounted-for"},"acknowledgedBy":{"username":"system:serviceaccount:ptah:manager"}}}}
+JSON
+refuses migration-run-acknowledged.jq 'settled by another acknowledgment' <<'JSON'
+{"status":{"resolvedRun":{"operationID":"sha256:77","resolution":"Acknowledged",
+  "acknowledgmentRef":{"name":"an-older-acknowledgment"},"acknowledgedBy":{"username":"e2e-acknowledger"}}}}
+JSON
+refuses migration-run-acknowledged.jq 'nothing settled at all' <<'JSON'
+{"status":{"phase":"Blocked"}}
 JSON
 
 printf 'migration refusal filter self-test: PASS\n'

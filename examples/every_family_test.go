@@ -70,16 +70,16 @@ func clusterScopedResources(t *testing.T) map[string]bool {
 }
 
 // desiredStateResources are the kinds a person writes to ask for work. They are
-// the ones an author Role has to grant; plans, their chunks and approvals are
-// not authored, and a realm is not work but the authorization for it.
+// the ones an author Role has to grant; plans and their chunks are not
+// authored, approvals and run acknowledgments are decisions about work rather
+// than requests for it, and a realm is not work but the authorization for it.
 func desiredStateResources(t *testing.T) []string {
 	t.Helper()
 
 	clusterScoped := clusterScopedResources(t)
 	var authored []string
 	for _, resource := range servedResources(t) {
-		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "planchunks") ||
-			strings.HasSuffix(resource, "approvals") || clusterScoped[resource] {
+		if isDecisionOrPlan(resource) || clusterScoped[resource] {
 			continue
 		}
 		authored = append(authored, resource)
@@ -189,14 +189,21 @@ func TestTheDesiredStateAuthorCoversEveryFamilyAPersonWrites(t *testing.T) {
 		}
 	}
 	// And it grants nothing else: an author Role that reached a plan, its
-	// chunks or an approval would be the separation this example exists to
-	// start.
+	// chunks, an approval or a run acknowledgment would be the separation this
+	// example exists to start.
 	for resource := range granted {
-		if strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "planchunks") ||
-			strings.HasSuffix(resource, "approvals") {
+		if isDecisionOrPlan(resource) {
 			t.Fatalf("the desired-state author reaches %s, which belongs to the approver", resource)
 		}
 	}
+}
+
+// isDecisionOrPlan reports a kind the operator publishes or an approver
+// writes: a plan, an approval of one, or the acknowledgment that settles a run
+// nobody accounted for.
+func isDecisionOrPlan(resource string) bool {
+	return strings.HasSuffix(resource, "plans") || strings.HasSuffix(resource, "planchunks") || strings.HasSuffix(resource, "approvals") ||
+		strings.HasSuffix(resource, "acknowledgments")
 }
 
 // The operations guide counts the CRDs a reader has to preserve across an
@@ -207,7 +214,7 @@ func TestTheOperationsGuideCountsEveryCRD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spelled := map[int]string{3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
+	spelled := map[int]string{3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
 	served := len(servedResources(t))
 	want, ok := spelled[served]
 	if !ok {

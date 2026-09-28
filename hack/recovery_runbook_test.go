@@ -33,13 +33,14 @@ var (
 // carries no controller state, and a restore without it still refuses every
 // resource that names it, so it is named all the same; the PtahSchemaPlanChunk
 // carries none either, and a plan whose chunks did not come back cannot be
-// read.
+// read; and the PtahMigrationRunAcknowledgment carries none, and is the record
+// of who settled a run.
 func TestTheRecoveryRunbookNamesEveryKindThatStoresState(t *testing.T) {
 	t.Parallel()
 	runbook := string(readRecoveryRunbook(t))
 	crds := shippedCRDs(t)
-	if len(crds) != 8 {
-		t.Fatalf("the chart ships %d CRDs; the runbook was written against eight", len(crds))
+	if len(crds) != 9 {
+		t.Fatalf("the chart ships %d CRDs; the runbook was written against nine", len(crds))
 	}
 	for _, crd := range crds {
 		kind := crd.Spec.Names.Kind

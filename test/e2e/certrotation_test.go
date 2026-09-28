@@ -183,7 +183,10 @@ func TestManagedWebhookInventoryFollowsFourEyesFlag(t *testing.T) {
 		}
 		return built
 	}
-	approvals := []string{"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run"}
+	approvals := []string{
+		"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run",
+		"mmigrationrunacknowledgment.operator.ptah.run",
+	}
 	writers := []string{"mschemawriter.operator.ptah.run", "mmigrationwriter.operator.ptah.run"}
 	for _, test := range []struct {
 		name        string
@@ -191,9 +194,9 @@ func TestManagedWebhookInventoryFollowsFourEyesFlag(t *testing.T) {
 		entries     []webhookEntry
 		wantUniform bool
 	}{
-		{name: "off, only the two approval entries", entries: entries(approvals...), wantUniform: true},
+		{name: "off, only the approval and acknowledgment entries", entries: entries(approvals...), wantUniform: true},
 		{name: "off, the spec-writer entries are still present", entries: entries(append(approvals, writers...)...)},
-		{name: "on, all four entries", flag: true, entries: entries(append(approvals, writers...)...), wantUniform: true},
+		{name: "on, all five entries", flag: true, entries: entries(append(approvals, writers...)...), wantUniform: true},
 		{name: "on, the spec-writer entries are missing", flag: true, entries: entries(approvals...)},
 	} {
 		t.Run(test.name, func(t *testing.T) {

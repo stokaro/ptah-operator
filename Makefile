@@ -7,7 +7,7 @@ ACTIONLINT_VERSION ?= v1.7.12
 ENVTEST_KUBERNETES_VERSION ?= 1.37.0
 ENVTEST_INDEX ?= https://raw.githubusercontent.com/kubernetes-sigs/controller-tools/1031496fc98a4f51010c3bdfdeb57b5d67bea7bd/envtest-releases.yaml
 ENVTEST_BIN_DIR ?=
-CRD_SCHEMA_VERSION := 30
+CRD_SCHEMA_VERSION := 31
 CONTROLLER_STATE_VERSION := 2
 override RACE_MUTATION_TESTS := TestVerifyE2EHarnessRejectsCriticalMutations|TestVerifyE2EDataPlaneRejectsCriticalMutations|TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|TestVerifyE2EChildScriptsRejectCriticalMutations
 DOCKER_CONTEXT ?= remote-dev-container
@@ -138,6 +138,7 @@ verify-source: fmt-check lint-workflows generate manifests chart-policies verify
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets \
 		charts/ptah-operator/templates/controller-object-guard.yaml \
 		charts/ptah-operator/templates/controller-write-guard.yaml \
+		charts/ptah-operator/templates/manager-state-guard.yaml \
 		charts/ptah-operator/templates/certificate-secret-guard.yaml
 
 verify-crd-schema-history: manifests

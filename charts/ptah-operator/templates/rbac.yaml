@@ -11,6 +11,7 @@ rules:
     resourceNames:
       - ptahmigrationapprovals.operator.ptah.run
       - ptahmigrationplans.operator.ptah.run
+      - ptahmigrationrunacknowledgments.operator.ptah.run
       - ptahmigrations.operator.ptah.run
       - ptahrealms.operator.ptah.run
       - ptahschemaapprovals.operator.ptah.run
@@ -62,6 +63,14 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahmigrationapprovals/status"]
+    verbs: ["get", "update", "patch"]
+  # A person settles an unresolved run with an acknowledgment; the manager
+  # reads it and answers it, and never creates one.
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahmigrationrunacknowledgments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahmigrationrunacknowledgments/status"]
     verbs: ["get", "update", "patch"]
   # The realm census reads which namespaces a PtahRealm admits. Realms are an
   # administrator's grant, so the manager reads them and never writes them.
@@ -161,10 +170,14 @@ rules:
   # Both families. An approval names a resource and its plan, so an approver
   # reads both, the chunks that hold a schema plan's SQL, and the approvals
   # already made. No ConfigMap and no Pod log: neither is how a plan is read.
+  #
+  # Settling a run a migration recorded as unresolved is the same kind of
+  # decision -- it lets the next plan be made against that database -- so the
+  # approver makes it too, with an acknowledgment rather than a status write.
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaplanchunks", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaplanchunks", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals", "ptahmigrationrunacknowledgments"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemaapprovals", "ptahmigrationapprovals"]
+    resources: ["ptahschemaapprovals", "ptahmigrationapprovals", "ptahmigrationrunacknowledgments"]
     verbs: ["create"]
 {{- end }}

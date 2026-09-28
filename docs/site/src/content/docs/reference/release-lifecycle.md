@@ -87,7 +87,7 @@ The hook never creates, deletes, or force-applies a CRD. A missing CRD, an API
 identity conflict, a stored version absent from the candidate, a rejected
 dry-run, or an incompatible schema identity introduced concurrently makes the
 Helm operation fail. The hook's own ServiceAccount can `get` and `update` only
-the eight exact Ptah CRD names. Separate read-only `list` grants for every kind
+the nine exact Ptah CRD names. Separate read-only `list` grants for every kind
 that stores a controller-state version exist solely for the downgrade
 preflight. In the release namespace it can `get` and `update` the two runtime
 Deployments by name and `list` Pods, which is what stopping the runtime takes.

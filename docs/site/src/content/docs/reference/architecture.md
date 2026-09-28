@@ -151,9 +151,9 @@ declaration names.
 `PtahMigration` answers "which ordered versions have run?". It reads the
 recorded history, selects the pending sequence, and executes it in order.
 
-Each family is three kinds: the resource a person writes, the immutable plan
-the controller publishes, and the immutable approval a person creates to
-authorize exactly that plan.
+Each family has three kinds at its core: the resource a person writes, the
+immutable plan the controller publishes, and the immutable approval a person
+creates to authorize exactly that plan.
 
 | Family | Desired state | Published plan | Decision |
 | --- | --- | --- | --- |
@@ -167,14 +167,24 @@ such kind, because a migration plan carries no SQL: it names the files and
 their checksums, and the Apply reads them from the verified artifact. See
 [Immutable bindings](../plans-and-approvals/#immutable-bindings).
 
-An eighth kind belongs to neither family. `PtahRealm` is cluster-scoped and
+The migration family has an eighth kind for its second decision.
+`PtahMigrationRunAcknowledgment` is how a person settles a run the migration
+recorded in `status.unresolvedRun`: an Apply whose effect on the database
+nobody established. Admission stamps who created it, the controller takes it
+only for the run it names, and the migration's `status.resolvedRun` names that
+person. It replaces a hand-written status update, which needed the manager's
+own authority and recorded nobody; the chart now refuses a write to the status
+subresource of every operator kind from anyone but the manager. See
+[A migration run nobody accounted for](../../use/operations/#a-migration-run-nobody-accounted-for).
+
+A ninth kind belongs to neither family. `PtahRealm` is cluster-scoped and
 written by an administrator: it names a database that resources in more than
 one namespace manage, and lists the namespaces allowed to claim it. The manager
 reads it and never writes it. See
 [Concurrency and coordination](../execution/#concurrency-and-coordination).
 
 The manager reconciles the two desired-state kinds, watches the two approval
-kinds and the realms, and watches the verification-policy ConfigMaps resources
+kinds, the run acknowledgments and the realms, and watches the verification-policy ConfigMaps resources
 point at, so an edited policy is noticed rather than waited out. A realm's
 grant is read before every claim: a withdrawn grant refuses the claimant on
 the pass the change starts, and a new one lifts a standing refusal at that
@@ -224,7 +234,7 @@ is the one to change when the contract changes.
 | Plan publication into immutable chunks, and an Apply's projection of them | `internal/planstore` |
 | Plan byte-size contract | `internal/plancontract` |
 | Migration plan derivation and naming | `internal/migrationplan` |
-| Approval admission | `internal/admission` |
+| Approval and run-acknowledgment admission | `internal/admission` |
 | The manager's own write guard | `internal/controllerwrite` |
 | Pod admission snapshots | `internal/podintent` |
 | Verification policy binding | `internal/policy` |

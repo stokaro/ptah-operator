@@ -22,11 +22,14 @@ import (
 // from the chart as Helm renders it.
 
 const (
-	approverRelease   = "ptah"
-	approverRoleName  = approverRelease + "-ptah-operator-approver"
-	operatorAPIGroup  = "operator.ptah.run"
-	approvalsSuffix   = "approvals"
-	generatedCRDsPath = "config/crd/bases"
+	approverRelease  = "ptah"
+	approverRoleName = approverRelease + "-ptah-operator-approver"
+	operatorAPIGroup = "operator.ptah.run"
+	approvalsSuffix  = "approvals"
+	// acknowledgmentsSuffix is the other decision an approver makes: settling
+	// a run a migration recorded as unresolved.
+	acknowledgmentsSuffix = "acknowledgments"
+	generatedCRDsPath     = "config/crd/bases"
 )
 
 var approverReadVerbs = []string{"get", "list", "watch"}
@@ -64,6 +67,10 @@ func TestTheApproverRoleCheckRefusesWhatItExistsToRefuse(t *testing.T) {
 		"no migration approval": {
 			operatorRule(approverReadVerbs, served...),
 			operatorRule([]string{"create"}, "ptahschemaapprovals"),
+		},
+		"no run acknowledgment": {
+			operatorRule(approverReadVerbs, served...),
+			operatorRule([]string{"create"}, "ptahschemaapprovals", "ptahmigrationapprovals"),
 		},
 		"no list on plans": {
 			operatorRule([]string{"get", "watch"}, served...),
@@ -119,8 +126,8 @@ func TestTheApproverClusterRoleCanBeLeftOut(t *testing.T) {
 }
 
 // approverRoleProblems reports every way rules differ from the approver's
-// role: read on every served resource, create on every approval kind, and no
-// other grant at all.
+// role: read on every served resource, create on every approval kind and on
+// the run acknowledgment, and no other grant at all.
 func approverRoleProblems(rules []rbacv1.PolicyRule, served []string) []string {
 	allowed := map[string][]string{}
 	for _, resource := range served {
@@ -162,10 +169,12 @@ func approverRoleProblems(rules []rbacv1.PolicyRule, served []string) []string {
 	return problems
 }
 
+// approvalResources are the kinds an approver creates: each family's
+// approval, and the acknowledgment that settles a run nobody accounted for.
 func approvalResources(served []string) []string {
 	var approvals []string
 	for _, resource := range served {
-		if strings.HasSuffix(resource, approvalsSuffix) {
+		if strings.HasSuffix(resource, approvalsSuffix) || strings.HasSuffix(resource, acknowledgmentsSuffix) {
 			approvals = append(approvals, resource)
 		}
 	}
@@ -216,8 +225,8 @@ func servedOperatorResources(t *testing.T) []string {
 		}
 	}
 	sort.Strings(served)
-	if len(served) < 7 || len(approvalResources(served)) < 2 || !slices.Contains(served, "ptahschemaplanchunks") {
-		t.Fatalf("read %v from %s, and this operator serves two families of three kinds and the chunks a schema plan is stored in",
+	if len(served) < 8 || len(approvalResources(served)) < 3 || !slices.Contains(served, "ptahschemaplanchunks") {
+		t.Fatalf("read %v from %s, and this operator serves two families, the chunks a schema plan is stored in and the acknowledgment of a migration run",
 			served, generatedCRDsPath)
 	}
 	return served

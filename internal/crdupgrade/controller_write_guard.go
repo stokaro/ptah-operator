@@ -15,6 +15,9 @@ const (
 
 	activeOperationFinalizer    = "operator.ptah.run/active-operation"
 	migrationOperationFinalizer = "operator.ptah.run/migration-operation"
+	// unresolvedRunAnnotation is api/v1alpha1.UnresolvedRunAnnotation, spelled
+	// here the way the finalizers are so the guards do not import the API.
+	unresolvedRunAnnotation = "operator.ptah.run/unresolved-run"
 
 	schemaResource    = "ptahschemas"
 	migrationResource = "ptahmigrations"
@@ -47,8 +50,9 @@ func controllerPrincipalMatchExpression(releaseNamespace, serviceAccount string)
 
 // ControllerWriteGuard builds the policy that confines the main-resource
 // PtahSchema and PtahMigration patches the controller's ServiceAccount makes
-// to the one finalizer it owns on the kind being written. Status writes use
-// the status subresource and therefore do not match it.
+// to the one finalizer it owns on the kind being written, and on a
+// PtahMigration to the copy of its unresolved-run record as well. Status
+// writes use the status subresource and therefore do not match it.
 //
 // This is the only place the policy is written. hack/chartpolicies generates
 // templates/controller-write-guard.yaml from it, with the release namespace
@@ -87,12 +91,20 @@ func (g *ControllerWriteGuard) Policy() *admissionregistrationv1.ValidatingAdmis
 				{Name: "activeFinalizer", Expression: controllerWriteFinalizerExpression()},
 				{Name: "oldActiveCount", Expression: `variables.oldFinalizers.filter(value, value == variables.activeFinalizer).size()`},
 				{Name: "newActiveCount", Expression: `variables.newFinalizers.filter(value, value == variables.activeFinalizer).size()`},
+				{Name: "oldAnnotations", Expression: `has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {}`},
+				{Name: "newAnnotations", Expression: `has(object.metadata.annotations) ? object.metadata.annotations : {}`},
+				// The one annotation the controller writes: the copy of a
+				// migration's unresolved-run record, which a restore that
+				// drops status keeps. A schema has no such record, and an
+				// annotation key is never empty, so on a schema every
+				// annotation is held where it was.
+				{Name: "managedAnnotation", Expression: controllerWriteAnnotationExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `dyn(object).spec == dyn(oldObject).spec`, Message: message},
 				{Expression: `has(dyn(object).status) == has(dyn(oldObject).status) && (!has(dyn(object).status) || dyn(object).status == dyn(oldObject).status)`, Message: message},
 				{
-					Expression: `has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && has(object.metadata.annotations) == has(oldObject.metadata.annotations) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)`,
+					Expression: `has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && variables.newAnnotations.all(key, key == variables.managedAnnotation || (key in variables.oldAnnotations && variables.oldAnnotations[key] == variables.newAnnotations[key])) && variables.oldAnnotations.all(key, key == variables.managedAnnotation || key in variables.newAnnotations) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)`,
 					Message:    message,
 				},
 				{
@@ -126,6 +138,12 @@ func controllerWriteFinalizerExpression() string {
 		migrationOperationFinalizer,
 		activeOperationFinalizer,
 	)
+}
+
+// controllerWriteAnnotationExpression names the annotation the controller
+// owns on the resource this request writes, and nothing on a PtahSchema.
+func controllerWriteAnnotationExpression() string {
+	return fmt.Sprintf(`request.resource.resource == %q ? %q : ""`, migrationResource, unresolvedRunAnnotation)
 }
 
 func (g *ControllerWriteGuard) matchResources() *admissionregistrationv1.MatchResources {

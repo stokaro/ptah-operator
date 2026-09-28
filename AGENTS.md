@@ -5,16 +5,16 @@ Repository-local guidance for coding agents working in `ptah-operator`.
 ## What this is
 
 A Kubernetes operator for Ptah, scaffolded with Kubebuilder v4 under the group
-`ptah.run`. The API is `api/v1alpha1`, and it serves two families of three
-kinds: `PtahSchema`, `PtahSchemaPlan` and `PtahSchemaApproval` for a declared
-schema, `PtahMigration`, `PtahMigrationPlan` and `PtahMigrationApproval` for a
-versioned sequence. Two more kinds sit beside them: `PtahSchemaPlanChunk`, the
-immutable pieces a schema plan's SQL is stored in, and `PtahRealm`, the
-cluster-scoped grant that lets more than one namespace manage a database. The
-work happens in `internal/`, which holds the controllers, admission,
-certificate rotation, the CRD upgrade path, the plan store and the runner. Five
-programs ship from `cmd/`: the manager, the certificate rotator, the CRD
-manager, the runner and the `kubectl ptah` plugin.
+`ptah.run`. The API is `api/v1alpha1`, and it serves two families:
+`PtahSchema`, `PtahSchemaPlan` and `PtahSchemaApproval` for a declared schema,
+and `PtahMigration`, `PtahMigrationPlan`, `PtahMigrationApproval` and
+`PtahMigrationRunAcknowledgment` for a versioned sequence. Two more kinds sit
+beside them: `PtahSchemaPlanChunk`, the immutable pieces a schema plan's SQL is
+stored in, and `PtahRealm`, the cluster-scoped grant that lets more than one
+namespace manage a database. The work happens in `internal/`, which holds the
+controllers, admission, certificate rotation, the CRD upgrade path, the plan
+store and the runner. Five programs ship from `cmd/`: the manager, the
+certificate rotator, the CRD manager, the runner and the `kubectl ptah` plugin.
 
 [The architecture page](docs/site/src/content/docs/reference/architecture.md)
 says how those pieces fit together and which invariant each one holds.
@@ -296,6 +296,8 @@ worth stating here because no gate catches them:
 The chart's ValidatingAdmissionPolicies are written once, in Go:
 `internal/crdupgrade/controller_object_guard.go` and
 `controller_write_guard.go` hold the six guards on the manager's own writes,
+`manager_state_guard.go` the two that keep status and a migration's
+unresolved-run copy the manager's alone, and
 `internal/certrotation/secret_create_guard.go` the certificate rotator's Secret
 CREATE guard. `hack/chartpolicies` generates the chart templates from them,
 with the release values left as Helm expressions, and `verify-source` refuses

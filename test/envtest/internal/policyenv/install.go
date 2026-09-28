@@ -148,6 +148,17 @@ func fixtureRBAC() []client.Object {
 				Resources: []string{"ptahschemas", "ptahmigrations", "ptahschemaplans", "ptahmigrationplans"},
 				Verbs:     []string{"get", "create", "update", "patch"},
 			},
+			// Status, and the acknowledgment a person writes. RBAC admits the
+			// status writes so that the chart's status guard is what refuses
+			// them.
+			{
+				APIGroups: []string{"operator.ptah.run"},
+				Resources: []string{
+					"ptahschemas/status", "ptahmigrations/status",
+					"ptahmigrationrunacknowledgments", "ptahmigrationrunacknowledgments/status",
+				},
+				Verbs: []string{"get", "create", "update", "patch"},
+			},
 			{
 				APIGroups: []string{"admissionregistration.k8s.io"},
 				Resources: []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},

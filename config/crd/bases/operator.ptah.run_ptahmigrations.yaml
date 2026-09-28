@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "30"
-    operator.ptah.run/crd-schema-digest: "sha256:605d23ba858dddf23b10d607017c9da368d1a7f66c1ebdc85473fb6b897d9609"
+    operator.ptah.run/crd-schema-version: "31"
+    operator.ptah.run/crd-schema-digest: "sha256:64d276a739f87bdb5190badde1053436752205bb81a3f1599f3f8d24c3715378"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -1480,6 +1480,63 @@ spec:
                 - name
                 - uid
                 type: object
+              resolvedRun:
+                properties:
+                  acknowledgedBy:
+                    properties:
+                      groups:
+                        items:
+                          type: string
+                        maxItems: 64
+                        type: array
+                      uid:
+                        type: string
+                      username:
+                        type: string
+                    required:
+                    - username
+                    type: object
+                  acknowledgmentRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  operationID:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  outcome:
+                    enum:
+                    - UpToDate
+                    - Applied
+                    - Failed
+                    - Partial
+                    - Unknown
+                    type: string
+                  resolution:
+                    enum:
+                    - HistoryRead
+                    - Acknowledged
+                    type: string
+                  resolvedAt:
+                    format: date-time
+                    type: string
+                required:
+                - operationID
+                - outcome
+                - resolution
+                - resolvedAt
+                type: object
+                x-kubernetes-validations:
+                - message: an acknowledged resolution names its acknowledgment and
+                    the identity that made it, and a resolution by reading names neither
+                  rule: 'self.resolution == ''Acknowledged'' ? has(self.acknowledgmentRef)
+                    && has(self.acknowledgedBy) : !has(self.acknowledgmentRef) &&
+                    !has(self.acknowledgedBy)'
               unresolvedRun:
                 properties:
                   dispatchedBy:

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,8 @@ func mutatingFixture(requireDistinctApprover bool) *admissionregistrationv1.Muta
 	configuration := &admissionregistrationv1.MutatingWebhookConfiguration{Webhooks: []admissionregistrationv1.MutatingWebhook{
 		entry("mapproval.operator.ptah.run", "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval", createOnly, "ptahschemaapprovals"),
 		entry("mmigrationapproval.operator.ptah.run", "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval", createOnly, "ptahmigrationapprovals"),
+		entry("mmigrationrunacknowledgment.operator.ptah.run", "/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment",
+			createOnly, "ptahmigrationrunacknowledgments"),
 	}}
 	if requireDistinctApprover {
 		configuration.Webhooks = append(configuration.Webhooks,
@@ -236,7 +239,28 @@ func TestMutatingAdmissionExact(t *testing.T) {
 			c.Webhooks = mutatingFixture(true).Webhooks
 		}},
 		{"writer entries missing with the control on", true, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
-			c.Webhooks = c.Webhooks[:2]
+			c.Webhooks = c.Webhooks[:3]
+		}},
+		{"the acknowledgment entry missing", false, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
+			c.Webhooks = slices.Delete(c.Webhooks, 2, 3)
+		}},
+		{"the acknowledgment entry missing with the control on", true, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
+			c.Webhooks = slices.Delete(c.Webhooks, 2, 3)
+		}},
+		{"the acknowledgment entry fails open", false, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
+			c.Webhooks[2].FailurePolicy = pointer(admissionregistrationv1.Ignore)
+		}},
+		{"the acknowledgment entry reinvoked", false, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
+			c.Webhooks[2].ReinvocationPolicy = pointer(admissionregistrationv1.IfNeededReinvocationPolicy)
+		}},
+		{"the acknowledgment entry calls the validating path", false, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
+			c.Webhooks[2].ClientConfig.Service.Path = pointer("/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment")
+		}},
+		{"the acknowledgment entry stamps updates", false, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
+			c.Webhooks[2].Rules[0].Operations = createAndUpdate
+		}},
+		{"the acknowledgment entry on approvals", false, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
+			c.Webhooks[2].Rules[0].Resources = []string{"ptahmigrationapprovals"}
 		}},
 		{"an extra entry", false, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
 			extra := c.Webhooks[0]
@@ -289,10 +313,10 @@ func TestMutatingAdmissionExact(t *testing.T) {
 			c.Webhooks[0].Rules[0].Operations = createAndUpdate
 		}},
 		{"a writer entry fails open", true, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
-			c.Webhooks[2].FailurePolicy = pointer(admissionregistrationv1.Ignore)
+			c.Webhooks[3].FailurePolicy = pointer(admissionregistrationv1.Ignore)
 		}},
 		{"a writer entry misses updates", true, func(c *admissionregistrationv1.MutatingWebhookConfiguration) {
-			c.Webhooks[3].Rules[0].Operations = createOnly
+			c.Webhooks[4].Rules[0].Operations = createOnly
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -346,6 +370,8 @@ func validatingFixture() *admissionregistrationv1.ValidatingWebhookConfiguration
 			namespacedRule("operator.ptah.run", "v1alpha1", createAndUpdate, "ptahmigrationapprovals")),
 		pod,
 		write,
+		entry("vmigrationrunacknowledgment.operator.ptah.run", "/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment",
+			namespacedRule("operator.ptah.run", "v1alpha1", createAndUpdate, "ptahmigrationrunacknowledgments")),
 	}}
 }
 
@@ -398,6 +424,21 @@ func TestValidatingAdmissionExact(t *testing.T) {
 		}},
 		{"controller write on another port", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
 			c.Webhooks[3].ClientConfig.Service.Port = pointer[int32](8443)
+		}},
+		{"the acknowledgment entry missing", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks = c.Webhooks[:4]
+		}},
+		{"the acknowledgment entry fails open", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks[4].FailurePolicy = pointer(admissionregistrationv1.Ignore)
+		}},
+		{"the acknowledgment entry misses updates", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks[4].Rules[0].Operations = createOnly
+		}},
+		{"the acknowledgment entry calls the mutating path", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks[4].ClientConfig.Service.Path = pointer("/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment")
+		}},
+		{"the acknowledgment entry narrowed by a condition", func(c *admissionregistrationv1.ValidatingWebhookConfiguration) {
+			c.Webhooks[4].MatchConditions = []admissionregistrationv1.MatchCondition{{Name: "x", Expression: "true"}}
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

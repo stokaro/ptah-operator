@@ -145,6 +145,16 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
 	}
+	// The record of a run nobody accounted for is put back before anything
+	// else reads status: a resource restored without its status carries the
+	// record only in its metadata, and every step below would read a status
+	// that says nothing is outstanding.
+	if handled, err := r.reconcileUnresolvedRunCopy(ctx, migration); handled || err != nil {
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+	}
 	if result, handled, err := r.reconcileMigrationExecutionBinding(ctx, migration); handled || err != nil {
 		return result, err
 	}
@@ -166,6 +176,12 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		if err := r.rejectUnsupportedStoredControllerState(migration); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+	// Between operations, and ahead of every gate below: an acknowledgment
+	// touches no database, so a suspended resource or one another claimant
+	// holds still settles the record a person accounted for.
+	if err := r.reconcileRunAcknowledgments(ctx, migration); err != nil {
+		return ctrl.Result{}, err
 	}
 	if !databaseEngineSupported(migration.Spec.Target.Engine) {
 		return r.migrationBlocked(
@@ -1258,11 +1274,20 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryAhead, "Nothing runs while the database is ahead of the artifact")
 	case len(pending) == 0:
-		// The one transition that settles an unresolved run: this database has
+		// The one reading that settles an unresolved run: this database has
 		// every migration the artifact carries, so nothing is left for that run
-		// to have half-done. It is also the only place the record is removed,
+		// to have half-done. It is the only place a reading removes the record,
 		// and it sits after the refusals above -- a database ahead of its
-		// artifact never reaches it.
+		// artifact never reaches it. The other way a record goes is a person's
+		// acknowledgment, in reconcileRunAcknowledgments.
+		if unresolved != nil {
+			migration.Status.ResolvedRun = &operatorv1alpha1.ResolvedMigrationRunStatus{
+				OperationID: unresolved.OperationID,
+				Outcome:     unresolved.Outcome,
+				Resolution:  operatorv1alpha1.MigrationRunResolvedByHistoryRead,
+				ResolvedAt:  history.ObservedAt,
+			}
+		}
 		migration.Status.UnresolvedRun = nil
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseInSync
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse,
@@ -1870,11 +1895,18 @@ func (r *MigrationReconciler) patchMigrationStatus(
 	if reflect.DeepEqual(before.Status, after.Status) {
 		return nil
 	}
-	if err := r.Client.Status().Patch(ctx, after, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+	// A record of a run nobody accounted for is copied onto metadata before
+	// status stores it, and the copy comes off only after status has settled
+	// it. migration_unresolved_run.go says why the order is this one.
+	base, err := r.copyUnresolvedRunBeforeStatus(ctx, before, after)
+	if err != nil {
+		return err
+	}
+	if err := r.Client.Status().Patch(ctx, after, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("patch migration status: %w", err)
 	}
 	r.observeMigrationStatusTransitions(before, after)
-	return nil
+	return r.dropSettledUnresolvedRunCopy(ctx, before, after)
 }
 
 // observeMigrationStatusTransitions counts what changed, not what is true.
@@ -2026,6 +2058,7 @@ func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 		))).
 		Owns(&batchv1.Job{}).
 		Watches(&operatorv1alpha1.PtahMigrationApproval{}, handler.EnqueueRequestsFromMapFunc(migrationForApproval)).
+		Watches(&operatorv1alpha1.PtahMigrationRunAcknowledgment{}, handler.EnqueueRequestsFromMapFunc(migrationForAcknowledgment)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.migrationsForVerificationPolicy)).
 		Watches(&operatorv1alpha1.PtahRealm{}, handler.EnqueueRequestsFromMapFunc(
 			func(ctx context.Context, object client.Object) []reconcile.Request {

@@ -3418,6 +3418,164 @@ assert_unresolved_run_survives_another_refusal() {
 		"$ENGINE_KIND" >&2
 }
 
+# The recovery issue #446 replaced, on the record the row above left standing.
+#
+# A person used to settle the record by writing status, which needed the
+# manager's own authority and recorded nobody. The chart now refuses a status
+# write from anyone but the manager -- this harness, a cluster administrator,
+# included -- and refuses the same hand on the copy of the record the resource
+# carries in its metadata, which is what a restore that drops status keeps.
+# What settles the record is an acknowledgment a person creates: admission
+# stamps who made it, the controller takes it only for the run it names, and
+# the resolution names that person.
+#
+# The person is a name the cluster has never seen, in a group bound in this
+# namespace to the approver ClusterRole the chart ships, so what lets them
+# acknowledge is the release's own RBAC.
+assert_unresolved_run_acknowledged_by_a_person() {
+	uncertain_status
+	ACKNOWLEDGED_OPERATION=$(jq -er '.status.unresolvedRun.operationID' "$STATUS_FILE") ||
+		fail "$UNCERTAIN_MIGRATION carries no unresolved run to acknowledge"
+	uncertain_uid=$(jq -er '.metadata.uid' "$STATUS_FILE") ||
+		fail "$UNCERTAIN_MIGRATION carries no UID"
+	# The copy names the same run, the same way.
+	jq -e '
+      .status.unresolvedRun as $record |
+      ((.metadata.annotations // {})["operator.ptah.run/unresolved-run"] // "" | fromjson? // {}) as $copy |
+      $copy.operationID == $record.operationID and
+      $copy.outcome == $record.outcome and
+      $copy.targetIdentityDigest == $record.targetIdentityDigest
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$UNCERTAIN_MIGRATION carries no copy of its unresolved run for a restore to keep"
+
+	printf 'e2e migrations: clearing the %s unresolved run by hand, as a cluster administrator\n' \
+		"$ENGINE_KIND" >&2
+	if k -n "$TEST_NAMESPACE" patch ptahmigration "$UNCERTAIN_MIGRATION" --subresource=status \
+		--type=json -p='[{"op":"remove","path":"/status/unresolvedRun"}]' \
+		>"$ADMISSION_ERROR_FILE" 2>&1; then
+		fail "a cluster administrator cleared the unresolved run of $UNCERTAIN_MIGRATION through status"
+	fi
+	scan_for_credentials "$ADMISSION_ERROR_FILE" "the refused status write"
+	grep -q "Ptah status is written only by the operator's manager" "$ADMISSION_ERROR_FILE" || {
+		cat "$ADMISSION_ERROR_FILE" >&2
+		fail "the status write on $UNCERTAIN_MIGRATION was refused by something other than the status guard"
+	}
+	if k -n "$TEST_NAMESPACE" annotate ptahmigration "$UNCERTAIN_MIGRATION" \
+		"operator.ptah.run/unresolved-run-" >"$ADMISSION_ERROR_FILE" 2>&1; then
+		fail "a cluster administrator removed the copy of the unresolved run from $UNCERTAIN_MIGRATION"
+	fi
+	scan_for_credentials "$ADMISSION_ERROR_FILE" "the refused copy removal"
+	grep -q "only the manager changes it" "$ADMISSION_ERROR_FILE" || {
+		cat "$ADMISSION_ERROR_FILE" >&2
+		fail "the copy removal on $UNCERTAIN_MIGRATION was refused by something other than the unresolved-run guard"
+	}
+	uncertain_status
+	jq -e --arg operation "$ACKNOWLEDGED_OPERATION" '
+      .status.unresolvedRun.operationID == $operation and
+      (((.metadata.annotations // {})["operator.ptah.run/unresolved-run"] // "") | length) > 0
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "a refused write moved the unresolved run of $UNCERTAIN_MIGRATION"
+
+	ACKNOWLEDGER="e2e-acknowledger-${ENGINE}@example.test"
+	ACKNOWLEDGER_GROUP="e2e:acknowledgers-${ENGINE}"
+	ACKNOWLEDGMENT="${UNCERTAIN_MIGRATION}-run-accounted-for"
+	approver_role=$(k get clusterrole -l app.kubernetes.io/name=ptah-operator -o json |
+		jq -er '[.items[].metadata.name | select(endswith("-approver"))] |
+          if length == 1 then .[0] else error("want exactly one approver ClusterRole") end') ||
+		fail "the release installed no approver ClusterRole to bind the acknowledger to"
+	jq -n --arg namespace "$TEST_NAMESPACE" --arg name "e2e-acknowledgers-${ENGINE}" \
+		--arg role "$approver_role" --arg group "$ACKNOWLEDGER_GROUP" '
+      {apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding",
+       metadata: {namespace: $namespace, name: $name},
+       roleRef: {apiGroup: "rbac.authorization.k8s.io", kind: "ClusterRole", name: $role},
+       subjects: [{apiGroup: "rbac.authorization.k8s.io", kind: "Group", name: $group}]}
+    ' | k apply -f - >/dev/null ||
+		fail "the acknowledger could not be bound to $approver_role"
+	jq -n --arg namespace "$TEST_NAMESPACE" --arg name "$ACKNOWLEDGMENT" \
+		--arg migration "$UNCERTAIN_MIGRATION" --arg uid "$uncertain_uid" \
+		--arg operation "$ACKNOWLEDGED_OPERATION" '
+      {apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationRunAcknowledgment",
+       metadata: {namespace: $namespace, name: $name},
+       spec: {migrationRef: {name: $migration, uid: $uid}, operationID: $operation}}
+    ' >"$RESOURCE_FILE"
+	printf 'e2e migrations: acknowledging the %s run as %s\n' "$ENGINE_KIND" "$ACKNOWLEDGER" >&2
+	k_as "$ACKNOWLEDGER" "$ACKNOWLEDGER_GROUP" create -f "$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1 || {
+		cat "$ADMISSION_ERROR_FILE" >&2
+		fail "$ACKNOWLEDGER could not acknowledge the run of $UNCERTAIN_MIGRATION"
+	}
+
+	# The document that matched is the one held to the rest of the claim.
+	acknowledged=no
+	acknowledged_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$acknowledged_deadline" ]; do
+		uncertain_status
+		if jq -e --arg operation "$ACKNOWLEDGED_OPERATION" --arg acknowledgment "$ACKNOWLEDGMENT" \
+			--arg person "$ACKNOWLEDGER" -f "$ROOT_DIR/testdata/e2e/migration-run-acknowledged.jq" \
+			"$STATUS_FILE" >/dev/null; then
+			acknowledged=yes
+			break
+		fi
+		sleep 2
+	done
+	if [ "$acknowledged" != yes ]; then
+		jq -c '{phase: .status.phase, unresolvedRun: .status.unresolvedRun, resolvedRun: .status.resolvedRun,
+          copy: ((.metadata.annotations // {})["operator.ptah.run/unresolved-run"] // null)}' "$STATUS_FILE" >&2
+		fail "$UNCERTAIN_MIGRATION did not settle its unresolved run in the name of $ACKNOWLEDGER within ${TIMEOUT_SECONDS}s"
+	fi
+	cp "$STATUS_FILE" "$WORK_DIR/uncertain-acknowledged.json"
+	k -n "$TEST_NAMESPACE" get ptahmigrationrunacknowledgment "$ACKNOWLEDGMENT" -o json \
+		>"$WORK_DIR/uncertain-acknowledgment.json" ||
+		fail "the acknowledgment of $UNCERTAIN_MIGRATION could not be read"
+	# Stamped from the request that created it, and named by UID in the
+	# resolution: the resolution is this acknowledgment's, not one like it.
+	jq -e --arg person "$ACKNOWLEDGER" --arg group "$ACKNOWLEDGER_GROUP" \
+		--slurpfile migration "$WORK_DIR/uncertain-acknowledged.json" '
+      .spec.acknowledgedBy.username == $person and
+      any(.spec.acknowledgedBy.groups[]?; . == $group) and
+      $migration[0].status.resolvedRun.acknowledgmentRef.uid == .metadata.uid and
+      $migration[0].status.resolvedRun.acknowledgedBy.username == .spec.acknowledgedBy.username
+    ' "$WORK_DIR/uncertain-acknowledgment.json" >/dev/null ||
+		fail "the resolution of $UNCERTAIN_MIGRATION does not name the acknowledgment $ACKNOWLEDGER made"
+	consumed=no
+	consumed_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$consumed_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigrationrunacknowledgment "$ACKNOWLEDGMENT" -o json \
+			>"$WORK_DIR/uncertain-acknowledgment.json" ||
+			fail "the acknowledgment of $UNCERTAIN_MIGRATION could not be read"
+		if jq -e 'any(.status.conditions[]?; .type == "Consumed" and .status == "True")' \
+			"$WORK_DIR/uncertain-acknowledgment.json" >/dev/null; then
+			consumed=yes
+			break
+		fi
+		sleep 2
+	done
+	[ "$consumed" = yes ] ||
+		fail "the acknowledgment of $UNCERTAIN_MIGRATION was never answered as consumed"
+
+	# The acknowledgment accounts for the database; it does not say what the
+	# database holds now. The resource reads it again, dated by its own
+	# record, before it decides anything.
+	acknowledged_at=$(jq -er '.status.resolvedRun.resolvedAt | fromdateiso8601' \
+		"$WORK_DIR/uncertain-acknowledged.json") ||
+		fail "the resolution of $UNCERTAIN_MIGRATION carries no time"
+	reread=no
+	reread_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$reread_deadline" ]; do
+		uncertain_status
+		if jq -e --argjson after "$acknowledged_at" '
+          ((.status.history.observedAt // "1970-01-01T00:00:00Z") | fromdateiso8601) > $after
+        ' "$STATUS_FILE" >/dev/null; then
+			reread=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "$reread" = yes ] ||
+		fail "$UNCERTAIN_MIGRATION did not read its database again after the acknowledgment"
+	printf 'e2e migrations: PASS %s refused a status write and settled its run in the name of %s\n' \
+		"$ENGINE_KIND" "$ACKNOWLEDGER" >&2
+}
+
 wait_for_uncertain_phase() {
 	uncertain_phase=$1
 	uncertain_deadline=$(deadline_from_now)
@@ -4155,6 +4313,7 @@ run_uncertain_apply_proof() {
 		fail "the $ENGINE Apply Job could not be removed"
 	assert_uncertain_apply_blocks_without_replaying
 	assert_unresolved_run_survives_another_refusal
+	assert_unresolved_run_acknowledged_by_a_person
 	printf 'e2e migrations: PASS %s stopped on a run it could not read, and replayed nothing\n' \
 		"$ENGINE_KIND" >&2
 }

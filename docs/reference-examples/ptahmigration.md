@@ -79,7 +79,8 @@ rollback the engine will not perform.
 There is no setting that makes such a failure recover on its own. The operator
 records what it cannot account for in `status.unresolvedRun` and stops, and a
 person decides what the interrupted file did before anything runs against that
-database again; [Operations](../../use/operations/) has the procedure. A checkpoint
+database again, then says so with a `PtahMigrationRunAcknowledgment`;
+[Operations](../../use/operations/) has the procedure. A checkpoint
 is not that answer either -- it decides where a new database starts, not what
 an interrupted one has run.
 

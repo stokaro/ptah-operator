@@ -317,14 +317,17 @@ var (
 )
 
 // mutatingAdmissionExact holds the mutating singleton to its exact,
-// fail-closed shape: exactly the approval entries, and the spec-writer
-// entries when the release turned the four-eyes control on, each calling its
-// own path with nothing that could narrow what it sees.
+// fail-closed shape: exactly the approval and run-acknowledgment entries, and
+// the spec-writer entries when the release turned the four-eyes control on,
+// each calling its own path with nothing that could narrow what it sees.
 func mutatingAdmissionExact(configuration *admissionregistrationv1.MutatingWebhookConfiguration,
 	namespace, service string, requireDistinctApprover bool,
 ) error {
 	entries := mutatingAdmissionEntries(configuration)
-	want := []string{"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run"}
+	want := []string{
+		"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run",
+		"mmigrationrunacknowledgment.operator.ptah.run",
+	}
 	if requireDistinctApprover {
 		want = append(want, "mmigrationwriter.operator.ptah.run", "mschemawriter.operator.ptah.run")
 	}
@@ -336,6 +339,12 @@ func mutatingAdmissionExact(configuration *admissionregistrationv1.MutatingWebho
 		"mapproval.operator.ptah.run": {
 			service: serviceReference(namespace, service, "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"),
 			rules:   []admissionregistrationv1.RuleWithOperations{namespacedRule("operator.ptah.run", "v1alpha1", createOnly, "ptahschemaapprovals")},
+		},
+		"mmigrationrunacknowledgment.operator.ptah.run": {
+			service: serviceReference(namespace, service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"),
+			rules: []admissionregistrationv1.RuleWithOperations{
+				namespacedRule("operator.ptah.run", "v1alpha1", createOnly, "ptahmigrationrunacknowledgments"),
+			},
 		},
 	}
 	if requireDistinctApprover {
@@ -372,7 +381,8 @@ func validatingAdmissionExact(configuration *admissionregistrationv1.ValidatingW
 	entries := validatingAdmissionEntries(configuration)
 	if err := entryNames(entries, []string{
 		"vapproval.operator.ptah.run", "vcontrollerwrite.operator.ptah.run",
-		"vmigrationapproval.operator.ptah.run", "vpodintent.operator.ptah.run",
+		"vmigrationapproval.operator.ptah.run", "vmigrationrunacknowledgment.operator.ptah.run",
+		"vpodintent.operator.ptah.run",
 	}); err != nil {
 		return err
 	}
@@ -381,6 +391,13 @@ func validatingAdmissionExact(configuration *admissionregistrationv1.ValidatingW
 			matchPolicy: admissionregistrationv1.Equivalent, timeoutSeconds: 5, matchConditions: noMatchConditions,
 			service: serviceReference(namespace, service, "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"),
 			rules:   []admissionregistrationv1.RuleWithOperations{namespacedRule("operator.ptah.run", "v1alpha1", createAndUpdate, "ptahschemaapprovals")},
+		},
+		"vmigrationrunacknowledgment.operator.ptah.run": {
+			matchPolicy: admissionregistrationv1.Equivalent, timeoutSeconds: 5, matchConditions: noMatchConditions,
+			service: serviceReference(namespace, service, "/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"),
+			rules: []admissionregistrationv1.RuleWithOperations{
+				namespacedRule("operator.ptah.run", "v1alpha1", createAndUpdate, "ptahmigrationrunacknowledgments"),
+			},
 		},
 		"vpodintent.operator.ptah.run": {
 			matchPolicy: admissionregistrationv1.Equivalent, timeoutSeconds: 5,

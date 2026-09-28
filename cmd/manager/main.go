@@ -45,6 +45,8 @@ const (
 	mutateMigrationApprovalPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
 
 	validateMigrationApprovalPath = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	mutateRunAcknowledgmentPath   = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"
+	validateRunAcknowledgmentPath = "/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment"
 	mutateSchemaSpecWriterPath    = "/mutate-operator-ptah-run-v1alpha1-ptahschema"
 	mutateMigrationSpecWriterPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigration"
 	validatePodIntentPath         = "/validate-v1-pod-ptah-operation-intent"
@@ -262,6 +264,15 @@ func main() {
 	manager.GetWebhookServer().Register(validateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false, Execution: execution,
 		RequireDistinctApprover: requireDistinctApprover,
+	}})
+	// An acknowledgment is how a person settles a run the migration recorded
+	// as unresolved. It is stamped and checked the way an approval is, and it
+	// is not held to the execution binding: it approves no plan.
+	manager.GetWebhookServer().Register(mutateRunAcknowledgmentPath, &cradmission.Webhook{Handler: &approvaladmission.RunAcknowledgmentHandler{
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true,
+	}})
+	manager.GetWebhookServer().Register(validateRunAcknowledgmentPath, &cradmission.Webhook{Handler: &approvaladmission.RunAcknowledgmentHandler{
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false,
 	}})
 	manager.GetWebhookServer().Register(mutateSchemaSpecWriterPath, &cradmission.Webhook{Handler: &approvaladmission.SchemaSpecWriterHandler{
 		Decoder: decoder,

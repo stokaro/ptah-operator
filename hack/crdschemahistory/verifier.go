@@ -480,6 +480,7 @@ func requiredCRDNames() []string {
 	return []string{
 		"ptahmigrationapprovals.operator.ptah.run",
 		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrationrunacknowledgments.operator.ptah.run",
 		"ptahmigrations.operator.ptah.run",
 		"ptahrealms.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",

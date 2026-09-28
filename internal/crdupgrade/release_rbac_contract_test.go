@@ -107,6 +107,7 @@ func releaseCRDNames() []string {
 	return []string{
 		"ptahmigrationapprovals.operator.ptah.run",
 		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrationrunacknowledgments.operator.ptah.run",
 		"ptahmigrations.operator.ptah.run",
 		"ptahrealms.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
@@ -138,6 +139,8 @@ func controllerClusterRoleRules() []rbacv1.PolicyRule {
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationplans"}, nil, []string{"get", "list", "watch", "create"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationapprovals"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationapprovals/status"}, nil, []string{"get", "update", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationrunacknowledgments"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahmigrationrunacknowledgments/status"}, nil, []string{"get", "update", "patch"}),
 		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahrealms"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{"batch"}, []string{"jobs"}, nil, []string{"get", "list", "watch", "create", "patch"}),
 		privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"get", "list", "watch"}),

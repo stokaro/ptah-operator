@@ -63,10 +63,26 @@ plan names the manager. Nor does the policy over `PtahSchema` and `PtahMigration
 updates, which judges resources a person owns and no manager stamps.
 
 **Webhooks** perform the stronger semantic check by reading the owning resource
-and plan and reconstructing the exact expected object. Six ship:
-`mapproval` and `mmigrationapproval` on the mutating side; `vapproval`,
-`vmigrationapproval`, `vpodintent` and `vcontrollerwrite` on the validating
-side.
+and plan and reconstructing the exact expected object. Eight ship:
+`mapproval`, `mmigrationapproval` and `mmigrationrunacknowledgment` on the
+mutating side; `vapproval`, `vmigrationapproval`,
+`vmigrationrunacknowledgment`, `vpodintent` and `vcontrollerwrite` on the
+validating side. The two acknowledgment entries stamp and check the person who
+settles a run a migration recorded as unresolved, the way the approval entries
+stamp an approver.
+
+**The manager's state** is guarded against everyone else by two more policies.
+The first refuses a write to the `status` subresource of any kind in the
+`operator.ptah.run` group from anyone but the manager's ServiceAccount, a
+cluster administrator included. It names the subresource rather than the
+kinds, so a kind added later is covered by the rule already there. Status is
+what the controller and the Pod-intent and controller-write webhooks decide
+from: the claims, the admission snapshots, the record of a run nobody
+accounted for. The second refuses anyone but the manager a change to the
+`operator.ptah.run/unresolved-run` annotation of an existing `PtahMigration`,
+the copy of that record a restore that drops status keeps. The policy over
+`PtahSchema` and `PtahMigration` updates lets the manager move that one
+annotation on a migration, and nothing else it did not move before.
 
 A Job carries an annotation envelope that admission checks as a set: eight
 annotations, including the manager image, revision and controller-state

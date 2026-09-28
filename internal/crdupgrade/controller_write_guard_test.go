@@ -58,8 +58,8 @@ func TestControllerWriteGuardCELContract(t *testing.T) {
 	t.Parallel()
 
 	policy := testControllerWriteGuard().Policy()
-	if len(policy.Spec.Variables) != 5 {
-		t.Fatalf("controller write guard variables = %d, want five", len(policy.Spec.Variables))
+	if len(policy.Spec.Variables) != 8 {
+		t.Fatalf("controller write guard variables = %d, want eight", len(policy.Spec.Variables))
 	}
 	variables := map[string]string{}
 	for _, variable := range policy.Spec.Variables {
@@ -71,6 +71,11 @@ func TestControllerWriteGuardCELContract(t *testing.T) {
 		!strings.Contains(variables["oldActiveCount"], "filter") ||
 		!strings.Contains(variables["newActiveCount"], "filter") {
 		t.Fatalf("controller finalizer variables are incomplete: %#v", variables)
+	}
+	if variables["managedAnnotation"] != `request.resource.resource == "ptahmigrations" ? "operator.ptah.run/unresolved-run" : ""` ||
+		!strings.Contains(variables["oldAnnotations"], "oldObject.metadata.annotations") ||
+		!strings.Contains(variables["newAnnotations"], "object.metadata.annotations") {
+		t.Fatalf("controller annotation variables are incomplete: %#v", variables)
 	}
 
 	if len(policy.Spec.Validations) != 4 {
@@ -86,9 +91,17 @@ func TestControllerWriteGuardCELContract(t *testing.T) {
 		t.Fatal("spec or status immutability is not enforced")
 	}
 	metadataExpression := policy.Spec.Validations[2].Expression
-	for _, field := range []string{"labels", "annotations", "ownerReferences"} {
+	for _, field := range []string{"labels", "ownerReferences"} {
 		if !strings.Contains(metadataExpression, "object.metadata."+field+" == oldObject.metadata."+field) {
 			t.Fatalf("mutable metadata field %s is not preserved", field)
+		}
+	}
+	for _, contract := range []string{
+		"variables.newAnnotations.all(key, key == variables.managedAnnotation || (key in variables.oldAnnotations && variables.oldAnnotations[key] == variables.newAnnotations[key]))",
+		"variables.oldAnnotations.all(key, key == variables.managedAnnotation || key in variables.newAnnotations)",
+	} {
+		if !strings.Contains(metadataExpression, contract) {
+			t.Fatalf("annotation contract lacks %q", contract)
 		}
 	}
 	finalizerExpression := policy.Spec.Validations[3].Expression

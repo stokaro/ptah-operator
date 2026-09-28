@@ -67,7 +67,9 @@ decision.
 | `RefreshSuspended` | Source refresh stopped before dispatch because reconciliation was suspended. |
 | `Requested` | The spec requests suspension. |
 | `ResolveFailed` | No immutable source resolution is available. |
+| `RunAcknowledged` | A person's `PtahMigrationRunAcknowledgment` settled the run a migration recorded as unresolved. On the acknowledgment it is `Consumed=True`; on the migration it is `Blocked=False` until the database has been read again, and `status.resolvedRun` names who acknowledged. |
 | `RunnerProtocolMismatch` | The runner refused the Job before starting the executor, because `execution.runnerImage` is a runner that speaks another protocol than this manager. The operation is tried again after the failure interval; set `execution.runnerImage` to the runner of the manager's own release. |
+| `RunNotUnresolved` | A `PtahMigrationRunAcknowledgment` named a run its migration was not waiting on, so it settled nothing. Read the migration's `status.unresolvedRun` for the run it does record, or `status.resolvedRun` for what settled the one you named. |
 | `Satisfied` | Current plan approval requirements passed final validation. |
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
