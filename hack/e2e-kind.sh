@@ -2498,12 +2498,16 @@ external_pg_database_owner=$(printf '%s' "$external_pg_database_owner" | tr -d '
 	fail "external PostgreSQL fixture login does not own its database"
 assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"
 
+# The exempt groups are a JSON array, handed to jq as one so that a value
+# that is not an array fails here rather than rendering a policy that names
+# nobody or everybody.
 render_release_values() {
 	values_destination=$1
 	values_image_repository=$2
 	values_image_tag=$3
 	values_image_digest=$4
 	values_pull_secret=$5
+	values_exempt_groups=$6
 	jq -n \
 		--arg fullnameOverride "$RUNTIME_FULLNAME" \
 		--arg repository "$values_image_repository" \
@@ -2512,7 +2516,9 @@ render_release_values() {
 		--arg pullSecret "$values_pull_secret" \
 		--arg executorImage "$E2E_EXECUTOR_IMAGE" \
 		--arg runnerImage "$E2E_RUNNER_IMAGE" \
-		--arg ptahVersion "$E2E_PTAH_VERSION" '
+		--arg ptahVersion "$E2E_PTAH_VERSION" \
+		--argjson exemptGroups "$values_exempt_groups" '
+      if ($exemptGroups | type) != "array" then error("exempt groups are not a JSON array") else
       {
         fullnameOverride: $fullnameOverride,
         image: {
@@ -2532,18 +2538,32 @@ render_release_values() {
           caSwitchDelay: "60s",
           recreateMissingSecret: true
         },
+        applyPolicyGuard: {exemptGroups: $exemptGroups},
         replicaCount: 2,
         podDisruptionBudget: {enabled: false}
-      }
+      } end
     ' >"$values_destination"
 }
 
+# The identity every phase writes as is the cluster administrator kind hands
+# out, and most rows create resources with apply: Always. The chart's
+# apply-policy guard judges that identity like any other -- on a kubeadm
+# cluster it is not in system:masters -- so the release exempts the groups the
+# harness carries, read from the API server rather than assumed, and the
+# migrations phase impersonates a member of one of them where it proves the
+# exemption. system:authenticated is every identity, so it is left out, and a
+# harness carrying nothing else has no group a guard could exempt without
+# exempting everyone.
+APPLY_POLICY_EXEMPT_GROUPS=$(kubectl --kubeconfig "$KUBECONFIG_FILE" auth whoami -o json |
+	jq -ce '[.status.userInfo.groups[] | select(. != "system:authenticated")] | select(length > 0)') ||
+	fail "the harness identity carries no group the apply-policy guard could exempt"
+
 render_release_values \
 	"$CANDIDATE_VALUES_FILE" "$CANDIDATE_OPERATOR_REPOSITORY" "$IMAGE_TAG" \
-	"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET"
+	"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET" "$APPLY_POLICY_EXEMPT_GROUPS"
 render_release_values \
 	"$NEXT_VALUES_FILE" "$NEXT_CONTROLLER_REPOSITORY" "$IMAGE_TAG" \
-	"$NEXT_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET"
+	"$NEXT_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET" "$APPLY_POLICY_EXEMPT_GROUPS"
 
 # The release namespace and the two the phases work in. They are prerequisites
 # rather than acceptance -- nothing is proved by creating a namespace -- and

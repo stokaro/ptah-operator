@@ -182,6 +182,10 @@ app.kubernetes.io/component: controller
 {{- printf "ptah-operator-migration-plan-write-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
+{{- define "ptah-operator.applyPolicyGuardPolicyName" -}}
+{{- printf "ptah-operator-apply-policy-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- end -}}
+
 {{- define "ptah-operator.controllerRuntimeArgsJSON" -}}
 {{- $args := list
       (printf "--leader-elect=%t" .Values.leaderElection)

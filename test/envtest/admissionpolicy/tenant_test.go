@@ -32,7 +32,43 @@ const (
 var (
 	tenantSchema    *operatorv1alpha1.PtahSchema
 	tenantMigration *operatorv1alpha1.PtahMigration
+	// The unattended pair applies with no approval: an administrator set them
+	// to Always, and the rows on the apply-policy guard edit them.
+	tenantAlwaysSchema    *operatorv1alpha1.PtahSchema
+	tenantAlwaysMigration *operatorv1alpha1.PtahMigration
 )
+
+// declared is a desired-state resource written the way a person writes it, as
+// the fields they set: a typed object would send every unset duration as "0s",
+// which the CRD refuses. apply is the policy the person selects, or "" for one
+// who leaves the field to its default.
+func declared(kind, name string, apply operatorv1alpha1.ApplyPolicy) *unstructured.Unstructured {
+	source := "desired"
+	if kind == "PtahMigration" {
+		source = "artifact"
+	}
+	spec := map[string]any{
+		"target": map[string]any{
+			"engine":          "PostgreSQL",
+			"coordinationKey": "production/" + name + "-primary",
+			"urlFrom":         map[string]any{"name": name + "-database", "key": "url"},
+		},
+		source: map[string]any{
+			"ociRef":                 "oci://registry.example/acme/" + name + ":1.4.0",
+			"verificationPolicyFrom": map[string]any{"name": "ptah-verification-policy", "key": "policy.yaml"},
+		},
+		"execution": map[string]any{"serviceAccountName": "ptah-execution", "activeDeadlineSeconds": int64(900)},
+	}
+	if apply != "" {
+		spec["policy"] = map[string]any{"apply": string(apply)}
+	}
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": operatorv1alpha1.GroupVersion.String(),
+		"kind":       kind,
+		"metadata":   map[string]any{"namespace": tenantNamespace, "name": name},
+		"spec":       spec,
+	}}
+}
 
 func digest(character string) string { return "sha256:" + strings.Repeat(character, 64) }
 
@@ -66,40 +102,24 @@ func setupTenant(ctx context.Context) error {
 	if err := admin.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: tenantNamespace}}); err != nil {
 		return fmt.Errorf("create the tenant namespace: %w", err)
 	}
-	// Written the way a person writes them, as the fields they set: a typed
-	// object would send every unset duration as "0s", which the CRD refuses.
-	declare := func(kind, name, source string) *unstructured.Unstructured {
-		return &unstructured.Unstructured{Object: map[string]any{
-			"apiVersion": operatorv1alpha1.GroupVersion.String(),
-			"kind":       kind,
-			"metadata":   map[string]any{"namespace": tenantNamespace, "name": name},
-			"spec": map[string]any{
-				"target": map[string]any{
-					"engine":          "PostgreSQL",
-					"coordinationKey": "production/" + name + "-primary",
-					"urlFrom":         map[string]any{"name": name + "-database", "key": "url"},
-				},
-				source: map[string]any{
-					"ociRef":                 "oci://registry.example/acme/" + name + ":1.4.0",
-					"verificationPolicyFrom": map[string]any{"name": "ptah-verification-policy", "key": "policy.yaml"},
-				},
-				"execution": map[string]any{"serviceAccountName": "ptah-execution", "activeDeadlineSeconds": int64(900)},
-			},
-		}}
-	}
 	schema, migration := &operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahMigration{}
-	for _, declared := range []struct {
+	alwaysSchema, alwaysMigration := &operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahMigration{}
+	// The administrator is the one identity the installed apply-policy guard
+	// exempts, so it is the one that may declare the unattended pair.
+	for _, tenant := range []struct {
 		object *unstructured.Unstructured
 		typed  client.Object
 	}{
-		{declare("PtahSchema", "orders", "desired"), schema},
-		{declare("PtahMigration", "ledger", "artifact"), migration},
+		{declared("PtahSchema", "orders", ""), schema},
+		{declared("PtahMigration", "ledger", ""), migration},
+		{declared("PtahSchema", "orders-unattended", operatorv1alpha1.ApplyPolicyAlways), alwaysSchema},
+		{declared("PtahMigration", "ledger-unattended", operatorv1alpha1.ApplyPolicyAlways), alwaysMigration},
 	} {
-		if err := admin.Create(ctx, declared.object); err != nil {
-			return fmt.Errorf("create the tenant %s: %w", declared.object.GetKind(), err)
+		if err := admin.Create(ctx, tenant.object); err != nil {
+			return fmt.Errorf("create the tenant %s %s: %w", tenant.object.GetKind(), tenant.object.GetName(), err)
 		}
-		if err := admin.Get(ctx, client.ObjectKeyFromObject(declared.object), declared.typed); err != nil {
-			return fmt.Errorf("read the tenant %s back: %w", declared.object.GetKind(), err)
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(tenant.object), tenant.typed); err != nil {
+			return fmt.Errorf("read the tenant %s %s back: %w", tenant.object.GetKind(), tenant.object.GetName(), err)
 		}
 	}
 	schema.Status.ExecutionBinding = executionBinding()
@@ -111,6 +131,7 @@ func setupTenant(ctx context.Context) error {
 		return fmt.Errorf("record the tenant PtahMigration's execution binding: %w", err)
 	}
 	tenantSchema, tenantMigration = schema.DeepCopy(), migration.DeepCopy()
+	tenantAlwaysSchema, tenantAlwaysMigration = alwaysSchema.DeepCopy(), alwaysMigration.DeepCopy()
 	return nil
 }
 

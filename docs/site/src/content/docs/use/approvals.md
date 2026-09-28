@@ -22,12 +22,11 @@ schema plan that
 whatever it asks. That field is on the desired-state resource, so whoever may
 edit a `PtahSchema` or a `PtahMigration` may also select `Always` and have the
 remaining plans applied without any approval: for a schema, the ones that
-destroy nothing and change no privilege; for a migration, all of them. If this
-guide's gate is meant to be one a person cannot step around, install the
-administrator-owned policy in
-[`examples/approval-policy-guard.yaml`](https://github.com/stokaro/ptah-operator/blob/master/examples/approval-policy-guard.yaml)
-as well; the [security model](../security/#who-may-turn-the-approval-requirement-off)
-says why RBAC alone does not do it.
+destroy nothing and change no privilege; for a migration, all of them. The
+chart's `applyPolicyGuard`, on by default, is what keeps that choice with the
+groups it names; the
+[security model](../security/#who-may-turn-the-approval-requirement-off)
+says why RBAC alone does not do it, and which groups to name.
 
 Start from the minimal approval example in `examples/approval.yaml`. Obtain the
 values only after reviewing the plan:

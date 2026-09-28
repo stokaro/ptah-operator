@@ -181,13 +181,6 @@ cleanup() {
 	fi
 	# A rival left claiming the realm would refuse the next run's migration
 	# before it ran anything, and read as the operator's fault.
-	# The guard is cluster-scoped, and a leftover one would refuse the next
-	# run's author before its own guard was installed.
-	if [ "${GUARD_APPLIED:-0}" -eq 1 ]; then
-		k delete validatingadmissionpolicybinding,validatingadmissionpolicy "$GUARD_POLICY" \
-			--ignore-not-found >/dev/null 2>&1 || true
-		GUARD_APPLIED=0
-	fi
 	# A leftover fault would refuse every later release of that Lease.
 	if [ "${RELEASE_FAULT_APPLIED:-0}" -eq 1 ]; then
 		k delete validatingadmissionpolicybinding,validatingadmissionpolicy "$RELEASE_FAULT_POLICY" \
@@ -349,7 +342,7 @@ select_engine() {
 	GUARD_DB_SECRET="e2e-${ENGINE}-apply-guard-db"
 	GUARD_COORDINATION_KEY="e2e/apply-guard/${ENGINE}"
 	GUARD_DB_URL_FILE="$WORK_DIR/${ENGINE}-apply-guard-db-url"
-	GUARD_POLICY="ptah-apply-policy-guard-e2e-${ENGINE}"
+	GUARD_ADMINISTRATOR="e2e-apply-policy-administrator-${ENGINE}"
 	GUARD_AUTHOR="e2e-author-${ENGINE}"
 	GUARD_AUTHOR_GROUP="e2e:desired-state-authors-${ENGINE}"
 	GUARD_APPROVER="e2e-approver-${ENGINE}"
@@ -2021,27 +2014,31 @@ assert_late_branch_migration_blocks() {
 # roles to show that an author cannot change policy to bypass approval, and
 # PA-05 asks for those identities to be tested against the installed admission
 # and RBAC contract. RBAC on approvals decides who may approve; it does not
-# decide who may select Always. examples/approval-policy-guard.yaml is what
-# does, and its unit test evaluates the CEL. This row installs it.
+# decide who may select Always. The chart's apply-policy guard does
+# (charts/ptah-operator/templates/apply-policy-guard.yaml), on by default, and
+# test/envtest/admissionpolicy holds it to every request it exists for. This
+# row holds the one the release installed to the identities a deployment
+# actually has, and installs nothing of its own.
 #
 # The author has the example's desired-state Role and nothing else; the
-# approver may create approvals and read plans. The guard's exempt group is
-# the one this harness's own identity carries, so the harness stands in for
-# the apply-policy administrator, and its binding is narrowed to the test
-# namespace so no other row's Always resource meets it.
+# approver may create approvals and read plans. The release exempts the groups
+# the harness identity carries -- hack/e2e-kind.sh reads them from the API
+# server into the release values -- so the apply-policy administrator is an
+# impersonated user the cluster has never seen, carrying one of those groups
+# and admitted for it alone.
 #
 # In order: the author creates an OnApproval migration and may neither approve
-# it nor select Always; the approver approves and the plan applies, which is
-# the positive control; the approver may not edit the migration; the
-# administrator selects Always; the author may still edit the resource while
-# Always stays and the operator still converges it; the author may move it
-# back to OnApproval.
+# it nor select Always, by editing it or by creating one with Always already
+# set; the approver approves and the plan applies, which is the positive
+# control; the approver may not edit the migration; the administrator selects
+# Always; the author may still edit the resource while Always stays and the
+# operator still converges it; the author may move it back to OnApproval.
 run_apply_policy_guard_proof() {
-	printf 'e2e migrations: installing the apply-policy guard for the %s author and approver\n' \
+	printf 'e2e migrations: holding the installed apply-policy guard to the %s author, approver and administrator\n' \
 		"$ENGINE_KIND" >&2
 	create_guard_database
 	grant_guard_roles
-	apply_apply_policy_guard
+	read_apply_policy_guard
 
 	create_guard_migration_resource
 	wait_for_guard_migration '.status.phase == "AwaitingApproval" and ((.status.plan.name // "") | length) > 0' \
@@ -2051,7 +2048,6 @@ run_apply_policy_guard_proof() {
 	guard_refused "$GUARD_AUTHOR" "$GUARD_AUTHOR_GROUP" 'forbidden' \
 		"the author approved its own migration" create -f "$RESOURCE_FILE"
 
-	wait_for_guard_in_force
 	guard_refused "$GUARD_AUTHOR" "$GUARD_AUTHOR_GROUP" 'reserves that choice' \
 		"the author selected Always" \
 		-n "$TEST_NAMESPACE" patch ptahmigration "$GUARD_MIGRATION" --type=merge \
@@ -2061,6 +2057,13 @@ run_apply_policy_guard_proof() {
 		fail "$GUARD_MIGRATION left OnApproval although the author's change was refused"
 	[ -z "$(migration_apply_job_uids "$GUARD_MIGRATION")" ] ||
 		fail "$GUARD_MIGRATION ran an Apply before anybody approved it"
+	# A guard that watched only updates is bypassed by creating the resource
+	# with Always already set. A server-side dry run asks the API server the
+	# question and leaves nothing behind when the answer is the refusal.
+	guard_migration_document "${GUARD_MIGRATION}-unattended" Always
+	guard_refused "$GUARD_AUTHOR" "$GUARD_AUTHOR_GROUP" 'reserves that choice' \
+		"the author created a migration with Always already set" \
+		create --dry-run=server -f "$RESOURCE_FILE"
 
 	guard_approval_document "${GUARD_MIGRATION}-by-approver"
 	k_as "$GUARD_APPROVER" "$GUARD_APPROVER_GROUP" create -f "$RESOURCE_FILE" >/dev/null ||
@@ -2079,9 +2082,14 @@ run_apply_policy_guard_proof() {
 		-n "$TEST_NAMESPACE" patch ptahmigration "$GUARD_MIGRATION" --type=merge \
 		--patch '{"spec":{"interval":"2h"}}'
 
-	k -n "$TEST_NAMESPACE" patch ptahmigration "$GUARD_MIGRATION" --type=merge \
-		--patch '{"spec":{"policy":{"apply":"Always"}}}' >/dev/null ||
-		fail "the apply-policy administrator could not select Always"
+	# The administrator is a name the cluster has never seen, carrying the
+	# exempt group and nothing else: what admits the change is the group.
+	k_as "$GUARD_ADMINISTRATOR" "$GUARD_ADMINISTRATOR_GROUP" -n "$TEST_NAMESPACE" patch ptahmigration \
+		"$GUARD_MIGRATION" --type=merge --patch '{"spec":{"policy":{"apply":"Always"}}}' >/dev/null ||
+		fail "the guard refused $GUARD_ADMINISTRATOR, a member of the exempt group $GUARD_ADMINISTRATOR_GROUP, selecting Always"
+	guard_status
+	jq -e '.spec.policy.apply == "Always"' "$STATUS_FILE" >/dev/null ||
+		fail "$GUARD_MIGRATION does not read Always after the administrator selected it"
 	k_as "$GUARD_AUTHOR" "$GUARD_AUTHOR_GROUP" -n "$TEST_NAMESPACE" patch ptahmigration \
 		"$GUARD_MIGRATION" --type=merge --patch '{"spec":{"interval":"2h"}}' >/dev/null ||
 		fail "the guard refused an author's edit that left Always where an administrator put it"
@@ -2102,9 +2110,6 @@ run_apply_policy_guard_proof() {
 	k -n "$TEST_NAMESPACE" delete ptahmigration "$GUARD_MIGRATION" \
 		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "$GUARD_MIGRATION was not removed"
-	k delete validatingadmissionpolicybinding,validatingadmissionpolicy "$GUARD_POLICY" >/dev/null ||
-		fail "the apply-policy guard could not be removed"
-	GUARD_APPLIED=0
 	k -n "$TEST_NAMESPACE" delete rolebinding,role \
 		"e2e-desired-state-author-${ENGINE}" "e2e-migration-approver-${ENGINE}" \
 		--ignore-not-found >/dev/null || true
@@ -2256,62 +2261,44 @@ grant_guard_roles() {
 		fail "the migration approver Role could not be installed"
 }
 
-# The example as published, with only what it tells a reader to replace
-# replaced: the exempt group, here the harness's own, and the namespaces its
-# binding covers, here the test namespace alone.
-apply_apply_policy_guard() {
-	guard_admin_group=$(k auth whoami -o json |
+# The release's own guard, and the group this row's administrator carries.
+# The bootstrap read the harness identity's groups from the API server into
+# the release values; this reads the same answer and then checks that the
+# installed policy names it, so admitting the administrator below is a fact
+# about the value the chart rendered rather than about a group the guard
+# never saw. A policy with no binding, or one bound to Warn, reads exactly
+# like one in force, so the binding is read too.
+read_apply_policy_guard() {
+	GUARD_ADMINISTRATOR_GROUP=$(k auth whoami -o json |
 		jq -er '[.status.userInfo.groups[] | select(. != "system:authenticated")][0]') ||
-		fail "the harness identity carries no group the guard could exempt"
-	k create --dry-run=client -o json -f "$ROOT_DIR/examples/approval-policy-guard.yaml" \
-		>"$WORK_DIR/guard-example.json" ||
-		fail "the apply-policy guard example could not be read"
-	jq -s --arg name "$GUARD_POLICY" --arg group "$guard_admin_group" --arg namespace "$TEST_NAMESPACE" '
-      [.[] | if .kind == "List" then .items[] else . end] |
-      if ([.[].kind] | sort) != ["ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"] then
-        error("the guard example is not a policy and its binding")
-      elif ([.[] | select(.kind == "ValidatingAdmissionPolicy") | .spec.matchConditions[].expression |
-             select(contains("<apply-policy-administrator-group>"))] | length) != 1 then
-        error("the guard example no longer names one exempt group to replace")
-      else . end |
-      {apiVersion: "v1", kind: "List", items: [.[] |
-        .metadata.name = $name |
-        if .kind == "ValidatingAdmissionPolicy" then
-          .spec.matchConditions |= map(.expression |= sub("<apply-policy-administrator-group>"; $group))
-        else
-          .spec.policyName = $name |
-          .spec.matchResources.namespaceSelector = {matchLabels: {"kubernetes.io/metadata.name": $namespace}}
-        end]}
-    ' "$WORK_DIR/guard-example.json" >"$WORK_DIR/guard-applied.json" ||
-		fail "the apply-policy guard example is not the policy this row adapts"
-	GUARD_APPLIED=1
-	k apply -f "$WORK_DIR/guard-applied.json" >/dev/null ||
-		fail "the apply-policy guard could not be installed"
-}
-
-# A policy is compiled and cached after it is written, so the first writes
-# after installing it can pass it by. A server-side dry run of the refused
-# change asks the question without making the change if it is still let in.
-wait_for_guard_in_force() {
-	guard_deadline=$(deadline_from_now)
-	while [ "$(date +%s)" -lt "$guard_deadline" ]; do
-		if ! k_as "$GUARD_AUTHOR" "$GUARD_AUTHOR_GROUP" -n "$TEST_NAMESPACE" patch ptahmigration \
-			"$GUARD_MIGRATION" --type=merge --dry-run=server \
-			--patch '{"spec":{"policy":{"apply":"Always"}}}' >"$ADMISSION_ERROR_FILE" 2>&1 &&
-			grep -qi 'reserves that choice' "$ADMISSION_ERROR_FILE"; then
-			return 0
-		fi
-		sleep 2
-	done
-	cat "$ADMISSION_ERROR_FILE" >&2
-	fail "the apply-policy guard never refused the author's change to Always"
+		fail "the harness identity carries no group the apply-policy guard exempts"
+	k get validatingadmissionpolicies,validatingadmissionpolicybindings \
+		-l app.kubernetes.io/component=apply-policy-guard -o json >"$WORK_DIR/apply-policy-guard.json" ||
+		fail "the installed apply-policy guard could not be read"
+	jq -e --arg group "$GUARD_ADMINISTRATOR_GROUP" '
+      ([.items[] | select(.kind == "ValidatingAdmissionPolicy")] | length) == 1 and
+      ([.items[] | select(.kind == "ValidatingAdmissionPolicyBinding")] | length) == 1 and
+      ([.items[] | select(.kind == "ValidatingAdmissionPolicy") | .spec.variables[] |
+        select(.name == "exemptGroups") | .expression | contains($group | tojson)] == [true]) and
+      ([.items[] | select(.kind == "ValidatingAdmissionPolicyBinding") | .spec.validationActions] == [["Deny"]])
+    ' "$WORK_DIR/apply-policy-guard.json" >/dev/null ||
+		fail "the release does not install one apply-policy guard, bound to Deny, that exempts $GUARD_ADMINISTRATOR_GROUP"
 }
 
 # Created by the author, so the author's Role is what lets it in.
 create_guard_migration_resource() {
+	guard_migration_document "$GUARD_MIGRATION" OnApproval
+	k_as "$GUARD_AUTHOR" "$GUARD_AUTHOR_GROUP" create -f "$RESOURCE_FILE" >/dev/null ||
+		fail "the author could not create $GUARD_MIGRATION with the desired-state Role"
+}
+
+# A migration on the row's own database and artifact, with the apply policy
+# named, written to RESOURCE_FILE for whoever is asked to create it.
+guard_migration_document() {
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
-		--arg name "$GUARD_MIGRATION" \
+		--arg name "$1" \
+		--arg apply "$2" \
 		--arg secret "$GUARD_DB_SECRET" \
 		--arg reference "$MIGRATION_REFERENCE" \
 		--arg coordinationKey "$GUARD_COORDINATION_KEY" \
@@ -2336,15 +2323,13 @@ create_guard_migration_resource() {
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
         },
-        policy: {apply: "OnApproval", lockTimeout: "30s"},
+        policy: {apply: $apply, lockTimeout: "30s"},
         interval: "1h",
         execution: {
           activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
         }
       }
     }' >"$RESOURCE_FILE"
-	k_as "$GUARD_AUTHOR" "$GUARD_AUTHOR_GROUP" create -f "$RESOURCE_FILE" >/dev/null ||
-		fail "the author could not create $GUARD_MIGRATION with the desired-state Role"
 }
 
 # run_branch_out_of_order_proof applies a history with room between its versions

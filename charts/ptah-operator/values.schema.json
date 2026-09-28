@@ -180,6 +180,24 @@
         }
       }
     },
+    "applyPolicyGuard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "exemptGroups"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "exemptGroups": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "leaderElection": {
       "type": "boolean"
     },

@@ -2298,6 +2298,24 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "digest-pinned current-release Helm values",
 		},
 		{
+			name:        "current-release Helm values exempt an assumed group from the apply-policy guard",
+			old:         `"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET" "$APPLY_POLICY_EXEMPT_GROUPS"`,
+			replacement: `"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET" '["system:masters"]'`,
+			wantError:   "digest-pinned current-release Helm values",
+		},
+		{
+			name:        "apply-policy guard exempt groups keep every authenticated identity",
+			old:         `jq -ce '[.status.userInfo.groups[] | select(. != "system:authenticated")] | select(length > 0)') ||`,
+			replacement: `jq -ce '.status.userInfo.groups') ||`,
+			wantError:   "apply-policy guard exempt groups read from the harness identity",
+		},
+		{
+			name:        "apply-policy guard exempt groups tolerate a harness with none",
+			old:         `fail "the harness identity carries no group the apply-policy guard could exempt"`,
+			replacement: `APPLY_POLICY_EXEMPT_GROUPS='[]'`,
+			wantError:   "apply-policy guard exempt groups read from the harness identity",
+		},
+		{
 			name:        "release image-pull namespace bootstrap omitted",
 			old:         `kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$OPERATOR_NAMESPACE" >/dev/null`,
 			replacement: `: # namespace bootstrap omitted`,

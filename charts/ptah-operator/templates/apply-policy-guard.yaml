@@ -1,0 +1,88 @@
+{{- if .Values.applyPolicyGuard.enabled }}
+{{- $guardName := include "ptah-operator.applyPolicyGuardPolicyName" . -}}
+{{- /* The exempt groups become one CEL list literal. Each entry is quoted the
+      JSON way, which CEL reads as a string literal, so a group name carrying a
+      quote or a backslash stays inside its literal. system:authenticated is
+      every authenticated identity; naming it would exempt everyone the guard
+      exists to judge, which is what applyPolicyGuard.enabled=false says
+      openly. */ -}}
+{{- $literals := list -}}
+{{- range $group := .Values.applyPolicyGuard.exemptGroups -}}
+{{- if eq $group "system:authenticated" -}}
+{{- fail "applyPolicyGuard.exemptGroups names system:authenticated, which is every authenticated identity; exempting it turns the guard off, and that is applyPolicyGuard.enabled=false" -}}
+{{- end -}}
+{{- $literals = append $literals (toJson $group) -}}
+{{- end -}}
+{{- $exemptGroups := printf "[%s]" (join ", " $literals) -}}
+{{- /* Who may turn the approval requirement off. spec.policy.apply: Always
+      applies plans with no approval, and it is a field of the desired-state
+      resource, so anyone who may edit a PtahSchema or a PtahMigration may
+      select it; RBAC on approvals does not decide this, because the bypass is
+      not an approval. What is refused is arriving at Always: a create that
+      sets it, an update that moves to it. A write that leaves Always in place
+      is admitted, because the manager patches these resources to add and
+      remove its operation finalizer and its ServiceAccount is not exempt, so a
+      guard that refused every write under Always would stop operations from
+      starting and stop a finished one from releasing its finalizer. Moving
+      back to OnApproval or Never is admitted for the same reason it is safe.
+      test/envtest/admissionpolicy holds the installed policy to each of these
+      requests. */ -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $guardName }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: apply-policy-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    # Equivalent rather than Exact: a request made through another served
+    # version of these kinds is converted to v1alpha1 and judged here, so a
+    # later version cannot become the way around the guard.
+    matchPolicy: Equivalent
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahschemas", "ptahmigrations"]
+        scope: Namespaced
+  variables:
+    - name: exemptGroups
+      expression: {{ $exemptGroups | quote }}
+    - name: requesterIsExempt
+      expression: 'variables.exemptGroups.exists(group, group in request.userInfo.groups)'
+    # An unset policy is not Always: the API defaults the field to OnApproval,
+    # so absence is the safe value rather than a missing one.
+    - name: selectsAlways
+      expression: 'has(object.spec.policy) && has(object.spec.policy.apply) && object.spec.policy.apply == "Always"'
+    - name: alreadyAlways
+      expression: 'oldObject != null && has(oldObject.spec.policy) && has(oldObject.spec.policy.apply) && oldObject.spec.policy.apply == "Always"'
+  validations:
+    - expression: 'variables.requesterIsExempt || !variables.selectsAlways || variables.alreadyAlways'
+      message: "spec.policy.apply: Always applies plans without an approval, and this cluster reserves that choice for the groups that own apply policy. Use OnApproval, or ask an apply-policy administrator to make the change."
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $guardName }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: apply-policy-guard
+spec:
+  policyName: {{ $guardName }}
+  validationActions: [Deny]
+  matchResources:
+    matchPolicy: Equivalent
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahschemas", "ptahmigrations"]
+        scope: Namespaced
+{{- end }}

@@ -9,8 +9,9 @@ rules:
   # rather than discovering later that the starting point covered half of it.
   #
   # These verbs let the holder choose spec.policy.apply. RBAC cannot stop that,
-  # because turning the approval requirement off is not an approval -- see
-  # approval-policy-guard.yaml where the separation has to be enforced.
+  # because turning the approval requirement off is not an approval. The
+  # chart's applyPolicyGuard, on by default, is what refuses Always to every
+  # identity outside the groups it names.
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas", "ptahmigrations"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

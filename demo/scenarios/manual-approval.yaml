@@ -9,8 +9,8 @@ tags: [Safety]
 # the approval object, its bindings and the admission stamp -- not that an
 # author and an approver were two different people. Separation of those two is
 # an RBAC question, and keeping an author from making the approval unnecessary
-# is an admission question: examples/approval-policy-guard.yaml, and the
-# security model's "Who may turn the approval requirement off".
+# is an admission question: the chart's applyPolicyGuard, and the security
+# model's "Who may turn the approval requirement off".
 
 reset:
   - demo/bin/lab reset

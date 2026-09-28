@@ -3360,10 +3360,19 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("all-node registry configuration call", `configure_registry_hosts_on_kind_nodes`),
 		exactSourceLine("runtime fullname release-values argument", `--arg fullnameOverride "$RUNTIME_FULLNAME" \`),
 		exactSourceLine("runtime fullname release-values binding", `fullnameOverride: $fullnameOverride,`),
+		// The apply-policy guard judges the harness identity like anyone else,
+		// so the release values exempt the groups it carries, and those come
+		// from the API server's own answer about the identity, not from a name
+		// the harness assumed.
+		exactSourceLineSequence("apply-policy guard exempt groups read from the harness identity", []string{
+			`APPLY_POLICY_EXEMPT_GROUPS=$(kubectl --kubeconfig "$KUBECONFIG_FILE" auth whoami -o json |`,
+			`jq -ce '[.status.userInfo.groups[] | select(. != "system:authenticated")] | select(length > 0)') ||`,
+			`fail "the harness identity carries no group the apply-policy guard could exempt"`,
+		}),
 		exactSourceLineSequence("digest-pinned current-release Helm values", []string{
 			`render_release_values \`,
 			`"$CANDIDATE_VALUES_FILE" "$CANDIDATE_OPERATOR_REPOSITORY" "$IMAGE_TAG" \`,
-			`"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET"`,
+			`"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET" "$APPLY_POLICY_EXEMPT_GROUPS"`,
 		}),
 		exactSourceLineSequence("release namespace and image-pull bootstrap", []string{
 			`kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$OPERATOR_NAMESPACE" >/dev/null`,
