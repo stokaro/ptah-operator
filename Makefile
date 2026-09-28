@@ -19,7 +19,7 @@ REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
 # for the sake of a demonstration.
-.PHONY: demo demo-up demo-record demo-serve demo-test demo-reproduce demo-down
+.PHONY: demo demo-up demo-record demo-serve demo-test demo-reproduce demo-down verify-demo-recording
 
 all: verify build
 
@@ -134,7 +134,7 @@ lint-workflows:
 
 verify: verify-source test-race
 
-verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release e2e-static vet build test test-envtest
+verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release verify-demo-recording e2e-static vet build test test-envtest
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets \
 		charts/ptah-operator/templates/controller-object-guard.yaml \
 		charts/ptah-operator/templates/controller-write-guard.yaml \
@@ -282,10 +282,19 @@ demo-record:
 demo-serve:
 	cd docs/site && npm ci && npm run dev
 
+# The committed recording carries, for each scenario, a digest of the commands,
+# waits and expectations it ran. This refuses a recording whose scenario has
+# changed since, and needs no cluster to do it: an edit to what a scenario runs
+# owes a re-recording, which is `make demo` or a dispatch of demo.yml, and a
+# reworded note or title owes nothing. verify-source runs it, so the drift
+# stops a pull request instead of reaching the site.
+verify-demo-recording:
+	$(GO) run ./demo/cmd/record -verify demo/recordings/runs.json
+
 # What runs without a cluster: the scenarios parse and state an expectation for
-# every step, the recorder's own units, and the site builds from the recording
-# that is committed.
-demo-test:
+# every step, the recording is still of them, the recorder's own units, and the
+# site builds from the recording that is committed.
+demo-test: verify-demo-recording
 	$(GO) test ./demo/...
 	$(GO) run ./demo/cmd/record -root . -check
 	cd docs/site && npm ci && \

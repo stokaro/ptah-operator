@@ -122,11 +122,22 @@ the way the manual-approval scenario shows, and the operator applies it.
 make demo-record                                  # every scenario
 go run ./demo/cmd/record -root . -only drift      # one, merged into the file
 go run ./demo/cmd/record -root . -check           # parse and validate, run nothing
+make verify-demo-recording                        # is the recording still of the scenarios
 ```
 
 A failed expectation ends the scenario and writes nothing. Recording the rest
 of it would publish a session that continued past the point where the
 demonstration stopped being true.
+
+Each recorded scenario carries a digest of what the scenario file says it runs:
+the reset, and for every step its command, wait, retry, phase, streams and
+expectations. The title, tagline, lesson, tags and notes are left out, since
+rewording them does not change what ran. `make verify-demo-recording` computes
+the digest again from the files and refuses a recording that no longer matches,
+without a cluster. `make verify-source` runs it, so a pull request that changes
+what a scenario runs has to carry a new recording. With no cluster at hand,
+`gh workflow run demo.yml --ref <branch>` records on the branch and uploads
+`demo/recordings/runs.json` as the run's `demonstration-recording` artifact.
 
 `-only` replaces one scenario in an existing recording and keeps the others. It
 refuses when the file was recorded against a different lab: one recording
@@ -167,8 +178,9 @@ exercised on every run: there is no CI job that executes these scenarios, and
 the checks that do run on every push are static. `check-demo.mjs` holds the
 published recording against the scenario definitions -- a changed command, a
 reordered step, an added or removed one all stop the recording from being of
-that scenario -- and that is a statement about the transcript, not evidence
-that the commands still work against the current executor. Running them is
+that scenario -- and `make verify-demo-recording` does the same for the waits
+and expectations. Both are statements about the transcript, not evidence that
+the commands still work against the current executor. Running them is
 `make demo`, on a machine with a cluster.
 
 Windows is not verified and is not expected to work: the harness and these
