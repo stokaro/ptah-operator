@@ -109,6 +109,13 @@ nothing of ours to repeat it. The second is the claim the operator makes: the
 executor's Job is the operator's to create, and a reader who cannot create one
 still gets a converged database.
 
+The resource asks for `apply: OnApproval`. The chart's apply-policy guard
+refuses `apply: Always` to anyone outside its exempt groups, and a
+ServiceAccount is in none of them, so the reproduction is on the path a reader
+with a default install is on: a second ServiceAccount, bound to the chart's
+approver ClusterRole and unable to create a schema or a Job, approves the plan
+the way the manual-approval scenario shows, and the operator applies it.
+
 ## Recording
 
 ```sh
