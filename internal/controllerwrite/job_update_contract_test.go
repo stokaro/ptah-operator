@@ -140,10 +140,12 @@ func TestValidationHandlerAllowsOnlyTheExactCleanupUpdate(t *testing.T) {
 func TestValidationHandlerRefusesCleanupOfJobOutsideTheOperationEnvelope(t *testing.T) {
 	t.Parallel()
 
+	const outsideEnvelope = "does not carry the operation envelope"
 	for _, row := range []struct {
 		name          string
 		operationType operatorv1alpha1.OperationType
 		change        func(annotations map[string]string)
+		want          string
 	}{
 		{
 			name:          "a read-only Job without its admission snapshot digest",
@@ -151,6 +153,7 @@ func TestValidationHandlerRefusesCleanupOfJobOutsideTheOperationEnvelope(t *test
 			change: func(annotations map[string]string) {
 				delete(annotations, workload.AnnotationAdmissionSnapshotDigest)
 			},
+			want: outsideEnvelope,
 		},
 		{
 			name:          "an Apply Job without its plan fingerprint",
@@ -158,6 +161,7 @@ func TestValidationHandlerRefusesCleanupOfJobOutsideTheOperationEnvelope(t *test
 			change: func(annotations map[string]string) {
 				delete(annotations, workload.AnnotationPlanFingerprint)
 			},
+			want: outsideEnvelope,
 		},
 		{
 			name:          "an Apply Job without its controller provenance",
@@ -167,13 +171,27 @@ func TestValidationHandlerRefusesCleanupOfJobOutsideTheOperationEnvelope(t *test
 				delete(annotations, workload.AnnotationControllerRevision)
 				delete(annotations, workload.AnnotationControllerStateVersion)
 			},
+			want: outsideEnvelope,
 		},
 		{
-			name:          "a read-only Job with an annotation the builder never writes",
+			// A reserved key beyond the envelope is a shape no builder writes.
+			name:          "a read-only Job with an operator annotation the builder never writes",
+			operationType: operatorv1alpha1.OperationResolve,
+			change: func(annotations map[string]string) {
+				annotations["operator.ptah.run/added-after-dispatch"] = "true"
+			},
+			want: outsideEnvelope,
+		},
+		{
+			// A key spec.execution.podMetadata could have declared is inside
+			// the envelope's shape, so what refuses it is the claim: the
+			// snapshot pinned a template without it.
+			name:          "a read-only Job with an annotation the resource never declared",
 			operationType: operatorv1alpha1.OperationResolve,
 			change: func(annotations map[string]string) {
 				annotations["example.test/added-after-dispatch"] = "true"
 			},
+			want: "does not match the persisted admission snapshot",
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -202,9 +220,8 @@ func TestValidationHandlerRefusesCleanupOfJobOutsideTheOperationEnvelope(t *test
 			if response.Allowed {
 				t.Fatal("a cleanup update for a Job outside the operation envelope was admitted")
 			}
-			const want = "does not carry the operation envelope"
-			if response.Result == nil || !strings.Contains(response.Result.Message, want) {
-				t.Fatalf("refusal = %#v, want one naming %q", response.Result, want)
+			if response.Result == nil || !strings.Contains(response.Result.Message, row.want) {
+				t.Fatalf("refusal = %#v, want one naming %q", response.Result, row.want)
 			}
 			if reads := reader.planReads.Load(); reads != 0 {
 				t.Fatalf("the refusal read the plan %d times to reach an answer the annotations already gave", reads)

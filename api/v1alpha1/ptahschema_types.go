@@ -414,7 +414,68 @@ type ExecutionSpec struct {
 	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
 	// PriorityClassName is the scheduling priority they run at.
 	PriorityClassName string `json:"priorityClassName,omitempty"`
+	// PodMetadata is what an operation Pod carries for the cluster around it:
+	// a service mesh's opt-out annotation, the label a policy engine
+	// requires, a team's own bookkeeping. Every operation Pod this resource
+	// dispatches carries exactly these labels and annotations beside the
+	// operator's own, and the admission snapshot binds them: a Pod that
+	// arrives with more, fewer or different metadata is refused, so nothing
+	// unplanned runs beside the database credential. Keys under ptah.run,
+	// kubernetes.io and k8s.io are refused, so the operator's own labels, the
+	// Job controller's and the built-in admission plugins' cannot be
+	// redeclared, and nothing here can select an operation Pod into an
+	// object the operator owns. Unset, nothing changes.
+	// +optional
+	PodMetadata *PodMetadataSpec `json:"podMetadata,omitempty"`
 }
+
+const (
+	// MaxPodMetadataEntries bounds each of the two maps in PodMetadataSpec.
+	MaxPodMetadataEntries = 16
+	// MaxPodMetadataKeyLength is a qualified key at its longest: a 253-byte
+	// prefix, the slash, and a 63-byte name.
+	MaxPodMetadataKeyLength = 317
+	// MaxPodLabelValueLength is what Kubernetes accepts for a label value.
+	MaxPodLabelValueLength = 63
+	// MaxPodAnnotationValueLength bounds one declared annotation value. With
+	// MaxPodMetadataEntries and MaxPodMetadataKeyLength it bounds the whole
+	// declaration to under 22 KiB of annotations and 6 KiB of labels.
+	MaxPodAnnotationValueLength = 1024
+)
+
+// PodMetadataSpec is the bounded metadata operation Pods carry for a service
+// mesh or a policy engine. Each map takes at most 16 entries. A key is a
+// Kubernetes qualified name; a label value is what Kubernetes accepts for
+// one, and an annotation value is at most 1024 bytes. Keys whose prefix is
+// ptah.run, kubernetes.io or k8s.io, or a subdomain of one, are refused, and
+// so are the bare controller-uid and job-name keys the Job controller sets.
+type PodMetadataSpec struct {
+	// Labels are added to every operation Pod beside the operator's own.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	// +kubebuilder:validation:XValidation:rule=`self.all(key, key.size() <= 317 && (key.contains('/') ? (key.indexOf('/') <= 253 && key.size() - key.indexOf('/') <= 64) : key.size() <= 63) && key.matches('^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$'))`,message="podMetadata.labels keys must be valid Kubernetes label keys"
+	// +kubebuilder:validation:XValidation:rule=`self.all(key, !(key.startsWith('ptah.run/') || key.contains('.ptah.run/') || key.startsWith('kubernetes.io/') || key.contains('.kubernetes.io/') || key.startsWith('k8s.io/') || key.contains('.k8s.io/') || key == 'controller-uid' || key == 'job-name'))`,message="podMetadata.labels keys under ptah.run, kubernetes.io and k8s.io are reserved, and so are controller-uid and job-name"
+	Labels map[string]PodLabelValue `json:"labels,omitempty"`
+	// Annotations are added to every operation Pod beside the operator's
+	// own.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	// +kubebuilder:validation:XValidation:rule=`self.all(key, key.size() <= 317 && (key.contains('/') ? (key.indexOf('/') <= 253 && key.size() - key.indexOf('/') <= 64) : key.size() <= 63) && key.matches('^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$'))`,message="podMetadata.annotations keys must be valid Kubernetes annotation keys"
+	// +kubebuilder:validation:XValidation:rule=`self.all(key, !(key.startsWith('ptah.run/') || key.contains('.ptah.run/') || key.startsWith('kubernetes.io/') || key.contains('.kubernetes.io/') || key.startsWith('k8s.io/') || key.contains('.k8s.io/') || key == 'controller-uid' || key == 'job-name'))`,message="podMetadata.annotations keys under ptah.run, kubernetes.io and k8s.io are reserved, and so are controller-uid and job-name"
+	Annotations map[string]PodAnnotationValue `json:"annotations,omitempty"`
+}
+
+// PodLabelValue is one declared label value: what Kubernetes accepts for a
+// label value, bounded in the schema so a bad value is refused on the
+// resource rather than on the Job the controller would have built from it.
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`
+type PodLabelValue string
+
+// PodAnnotationValue is one declared annotation value, bounded in length and
+// otherwise free, as Kubernetes leaves it.
+// +kubebuilder:validation:MaxLength=1024
+type PodAnnotationValue string
 
 // PtahSchemaStatus records only credential-free reconciliation evidence.
 type PtahSchemaStatus struct {
@@ -1167,6 +1228,7 @@ const (
 	ReasonPending                      ConditionReason = "Pending"
 	ReasonPlanNoLongerCurrent          ConditionReason = "PlanNoLongerCurrent"
 	ReasonPlanReady                    ConditionReason = "PlanReady"
+	ReasonPodAdmissionRefused          ConditionReason = "PodAdmissionRefused"
 	ReasonPolicyBlocked                ConditionReason = "PolicyBlocked"
 	ReasonPolicyChanged                ConditionReason = "PolicyChanged"
 	ReasonPolicyRefused                ConditionReason = "PolicyRefused"

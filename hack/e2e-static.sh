@@ -1832,6 +1832,28 @@ for lifecycle_marker in \
 	'checkpoint_jobs'; do
 	grep -F "$lifecycle_marker" "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
 done
+# The Pod-metadata row (#447): a policy every supported minor serves refuses
+# a Pod without the declared annotation, the refusal is read off the document
+# the wait matched, and the policy is removed on every exit.
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+for pod_metadata_marker in \
+	'POD_METADATA_ANNOTATION=sidecar.istio.io/inject' \
+	'POD_METADATA_LABEL=acme.example/team' \
+	'kind: "ValidatingAdmissionPolicy"' \
+	'message: "operation Pods in this namespace must opt out of sidecar injection"' \
+	'k create --dry-run=server -f "$pod_metadata_probe_file"' \
+	'.reason == "PodAdmissionRefused" and (.message | contains("must opt out of sidecar injection"))' \
+	'pod_metadata_refused_job=$(printf '"'"'%s\n'"'"' "$wait_object" | jq -er '"'"'.status.activeOperation.jobName'"'"')' \
+	'reason=FailedCreate' \
+	'reason=PodAdmissionRefused' \
+	'.spec.execution.podMetadata == $declared' \
+	'if [ "$POD_METADATA_POLICY_CREATED" -eq 1 ]; then' \
+	'remove_pod_metadata_policy ||'; do
+	grep -F -- "$pod_metadata_marker" "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null || {
+		printf 'e2e static: the Pod-metadata row lacks %s\n' "$pod_metadata_marker" >&2
+		exit 1
+	}
+done
 for reconciliation_cadence_marker in \
 	"RECONCILE_INTERVAL=\${E2E_RECONCILE_INTERVAL:-1m}" \
 	"TAG_MOVE_INTERVAL=\${E2E_TAG_MOVE_INTERVAL:-2m}" \

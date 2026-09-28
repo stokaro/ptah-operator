@@ -3583,6 +3583,12 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 			wantError:   "audited operation evidence",
 		},
 		{
+			name:        "declared Pod metadata evidence omitted",
+			old:         `printf '%s\n' 'e2e data plane: PASS declared Pod metadata reaches every operation Pod under a namespace admission policy, and a Pod the policy refuses is reported as PodAdmissionRefused'`,
+			replacement: `printf '%s\n' 'e2e data plane: Pod metadata row skipped'`,
+			wantError:   "declared Pod metadata evidence",
+		},
+		{
 			name:        "terminal evidence omitted",
 			old:         `printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'`,
 			replacement: `printf '%s\n' 'e2e data plane finished without evidence'`,

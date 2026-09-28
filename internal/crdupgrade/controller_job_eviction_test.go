@@ -78,9 +78,14 @@ func TestControllerJobAnnotationContractRequiresEveryApplyToRefuseEviction(t *te
 		{name: "a schema Apply that allows eviction", object: job("schema-operation", "apply", map[string]any{evict: "true"}), want: false},
 		{name: "a read-only schema Plan that refuses eviction", object: job("schema-operation", "plan", refuses), want: false},
 		{name: "a migration history read that refuses eviction", object: job("migration-operation", "history", refuses), want: false},
-		// The allow-list still refuses a key it does not name.
-		{name: "a schema Apply with a key nothing names", object: job("schema-operation", "apply",
-			map[string]any{evict: "false", "example.com/other": "x"}), want: false},
+		// Beyond the envelope, a key spec.execution.podMetadata may declare is
+		// admitted, and a reserved key nothing names is still refused.
+		{name: "a schema Apply with a key the resource may declare", object: job("schema-operation", "apply",
+			map[string]any{evict: "false", "sidecar.istio.io/inject": "false"}), want: true},
+		{name: "a schema Apply with an operator key nothing names", object: job("schema-operation", "apply",
+			map[string]any{evict: "false", "operator.ptah.run/other": "x"}), want: false},
+		{name: "a schema Apply with a Kubernetes key nothing names", object: job("schema-operation", "apply",
+			map[string]any{evict: "false", "kubernetes.io/limit-ranger": "x"}), want: false},
 	} {
 		for _, operation := range []string{"CREATE", "UPDATE"} {
 			result, _, err := program.Eval(map[string]any{

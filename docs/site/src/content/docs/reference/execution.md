@@ -162,6 +162,74 @@ document every protocol writes and reads the same way. The manager reports the
 refusal as `RunnerProtocolMismatch` rather than as a failed operation. A guard
 that refuses stops the Pod before the fetch that uses the registry credentials.
 
+## Meshes and policy engines
+
+Every operation Pod is held to its Job template: the Pod-intent webhook admits
+a Pod whose labels equal the template's, whose annotations equal the
+template's apart from the one LimitRanger writes, and whose spec is inside the
+admission snapshot. That is the invariant that keeps anything unplanned from
+running beside the database credential, and it is also what a service mesh, a
+policy engine or a managed platform runs into: a mutating webhook that injects
+a sidecar, adds a label or rewrites a resource request produces a Pod the
+webhook refuses, and a validating policy that requires a label or an
+annotation the template does not carry refuses the Pod before it is scheduled.
+Either way the Job controller cannot create the Pod, and until #447 the
+resource said only that an operation was in progress.
+
+The contract is `spec.execution.podMetadata`: the labels and annotations the
+operation Pods carry beside the operator's own. The builder writes them on the
+Job and on its Pod template, the admission snapshot's template digest binds
+them, and the webhook admits exactly the Pod they describe. So the cluster's
+policy and the operator's meet in the declaration:
+
+- A mesh with namespace injection is opted out of, per Pod, by the annotation
+  it reads -- `sidecar.istio.io/inject: "false"` for Istio,
+  `linkerd.io/inject: disabled` for Linkerd. A sidecar cannot run beside the
+  credential; the opt-out is what the mesh offers for exactly that.
+- A policy engine that requires a label or an annotation on every Pod is
+  satisfied by declaring it. One that mutates every Pod to add one is
+  satisfied by declaring the same key with the same value, so the mutation
+  changes nothing and the Pod still equals its template.
+- A platform that mutates the Pod spec -- a sidecar, a changed resource
+  request, an injected volume -- is refused, because what runs beside the
+  credential is not negotiable. Opt the operation Pods out of that mutation
+  with the metadata the platform reads, or exclude them by namespace.
+
+The declaration is bounded. Each map takes at most 16 entries; a key is a
+Kubernetes qualified name, a label value is what Kubernetes accepts for one,
+and an annotation value is at most 1024 bytes. Keys under `ptah.run`,
+`kubernetes.io` and `k8s.io`, and any subdomain of them, are refused: they
+hold the operator's own labels and annotations, the Job controller's tracking
+labels, `app.kubernetes.io`, which every object the chart owns selects on,
+and the annotations the API server translates into a Pod's security context.
+The bare `controller-uid` and `job-name` keys are refused for the same
+reason. The CRD refuses these before the resource is stored, the builder
+refuses them again, and the Job write guard refuses a Job that carries one
+beyond the operator's envelope whoever built it. Unset, nothing changes: a
+resource that declares no metadata dispatches the Pods it always did.
+
+Declaring metadata is a spec change like any other. A read-only operation in
+flight is discarded and claimed again with the new template; an Apply that
+has dispatched runs to its result under the template it was dispatched with,
+because the claim, not the spec, is what a running Job is held to. A plan
+does not retire over it: the metadata says nothing about what the plan does
+to the database, and the plan fingerprint does not read it, so an approval
+stands. Editing the declaration does change what the Job carries, so the Job
+intent the controller-write guard rebuilds and compares carries it too.
+
+When a Pod is refused anyway, the resource says so. The Job controller
+records a `FailedCreate` Event against the Job with the API server's refusal,
+and the operator reads it for a Job that stands with no Pod and reports it as
+the condition `Ready=False` with reason `PodAdmissionRefused` on a
+`PtahSchema`, `Progressing=False` with the same reason on a `PtahMigration`,
+with the refusal in the message and a `PodAdmissionRefused` Event beside it.
+The claim stands and the Job keeps its deadline: the Job controller keeps
+trying, so a policy that stops refusing lets the Pod through and the
+condition goes back to an operation in progress, and a declaration added to
+the spec takes effect on the next claim. The message is the API server's own
+text, bounded and stripped of control characters; it names the policy or the
+webhook and what it wanted, and nothing the operation holds.
+
 ## When a Pod is stopped
 
 A node drain, a preemption, an eviction or a Pod deadline stops an operation

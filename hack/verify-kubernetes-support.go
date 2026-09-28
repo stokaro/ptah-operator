@@ -3848,6 +3848,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fail "the restart and fault-injection phase failed; its reason is above"`,
 		}),
 		exactSourceLine("audited operation evidence", `assert_observed_jobs_audited`),
+		exactSourceLine("declared Pod metadata evidence", `printf '%s\n' 'e2e data plane: PASS declared Pod metadata reaches every operation Pod under a namespace admission policy, and a Pod the policy refuses is reported as PodAdmissionRefused'`),
 		exactSourceLine("terminal data-plane lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'`),
 	}
 	if err := verifyOrderedSourceContract(dataPlane, dataPlaneContents, dataPlaneContract); err != nil {

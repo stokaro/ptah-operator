@@ -1524,22 +1524,35 @@ func expectedJob(
 ) *batchv1.Job {
 	controller := true
 	blockDeletion := true
-	labels := map[string]string{
+	labels := map[string]string{}
+	annotations := map[string]string{}
+	// What spec.execution.podMetadata declares sits under the operator's
+	// own, as the builder writes it.
+	if declared := schema.Spec.Execution.PodMetadata; declared != nil {
+		for key, value := range declared.Labels {
+			labels[key] = string(value)
+		}
+		for key, value := range declared.Annotations {
+			annotations[key] = string(value)
+		}
+	}
+	for key, value := range map[string]string{
 		workload.LabelManagedBy:   "ptah-operator",
 		workload.LabelComponent:   "schema-operation",
 		workload.LabelSchema:      schema.Name,
 		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
 		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+	} {
+		labels[key] = value
 	}
+	annotations[workload.AnnotationOperationID] = operation.ID
 	job := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"},
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: schema.Namespace,
-			Name:      operation.JobName,
-			Labels:    copyStringMap(labels),
-			Annotations: map[string]string{
-				workload.AnnotationOperationID: operation.ID,
-			},
+			Namespace:   schema.Namespace,
+			Name:        operation.JobName,
+			Labels:      copyStringMap(labels),
+			Annotations: copyStringMap(annotations),
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahSchema",
 				Name: schema.Name, UID: schema.UID,
@@ -1548,10 +1561,8 @@ func expectedJob(
 		},
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
-				Labels: copyStringMap(labels),
-				Annotations: map[string]string{
-					workload.AnnotationOperationID: operation.ID,
-				},
+				Labels:      copyStringMap(labels),
+				Annotations: copyStringMap(annotations),
 			},
 			Spec: corev1.PodSpec{
 				ServiceAccountName: schema.Spec.Execution.ServiceAccountName,
@@ -1592,8 +1603,22 @@ func currentCleanupFixture(
 	operationType operatorv1alpha1.OperationType,
 ) (*operatorv1alpha1.PtahSchema, *batchv1.Job, *batchv1.Job, *batchv1.Job) {
 	t.Helper()
+	return currentCleanupFixtureWith(t, operationType, nil)
+}
+
+// currentCleanupFixtureWith is currentCleanupFixture with the schema's spec
+// changed by declare before the Job the claim pins is built from it.
+func currentCleanupFixtureWith(
+	t *testing.T,
+	operationType operatorv1alpha1.OperationType,
+	declare func(*operatorv1alpha1.PtahSchema),
+) (*operatorv1alpha1.PtahSchema, *batchv1.Job, *batchv1.Job, *batchv1.Job) {
+	t.Helper()
 
 	schema := schemaFixture(operationType)
+	if declare != nil {
+		declare(schema)
+	}
 	operation := schema.Status.ActiveOperation
 	operation.Attempt = 1
 	operation.JobUID = ""
@@ -1629,6 +1654,11 @@ func currentCleanupFixture(
 		annotations[workload.AnnotationPlanFingerprint] = schema.Status.Plan.Fingerprint
 		annotations[workload.AnnotationPlanContentDigest] = schema.Status.Plan.ContentDigest
 		workload.MarkMutatingOperation(annotations)
+	}
+	if declared := schema.Spec.Execution.PodMetadata; declared != nil {
+		for key, value := range declared.Annotations {
+			annotations[key] = string(value)
+		}
 	}
 	expected.Annotations = copyStringMap(annotations)
 	expected.Spec.Template.Annotations = copyStringMap(annotations)

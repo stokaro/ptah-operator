@@ -134,6 +134,47 @@ spec:
     serviceAccountName: ptah-execution
 ```
 
+### In a namespace with a service mesh or a policy engine
+
+Every operation Pod is held to exactly what its Job template carries, so a
+sidecar a mesh injects, or a label a policy engine requires, would otherwise
+refuse the Pod before it runs. `podMetadata` is what the Pods carry beside the
+operator's own labels: the annotation that opts them out of injection, and
+the label the policy wants to see. A Pod refused anyway is reported as
+`Ready=False` with reason `PodAdmissionRefused`, with the API server's
+refusal in the message. Keys under `ptah.run`, `kubernetes.io` and `k8s.io`
+are refused, which keeps the operator's own metadata and the chart's
+selectors out of reach. [Execution](../execution/#meshes-and-policy-engines)
+has the contract.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: application
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/application-primary
+    urlFrom:
+      name: application-database
+      key: url
+  desired:
+    ociRef: oci://ghcr.io/example/application-schema:1.4.0
+    verificationPolicyFrom:
+      name: ptah-verification-policy
+      key: policy.yaml
+  execution:
+    podMetadata:
+      labels:
+        # A policy engine that requires every Pod to name its owner.
+        acme.example/team: platform
+      annotations:
+        # Istio's per-Pod opt-out: nothing runs beside the credential.
+        sidecar.istio.io/inject: "false"
+```
+
 ## spec
 
 | Field | Type | What it does |
@@ -266,6 +307,9 @@ spec:
 | `spec.execution.imagePullSecrets` | `[]object` | ImagePullSecrets are the pull Secrets those Pods use. |
 | `spec.execution.imagePullSecrets[].name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.execution.nodeSelector` | `object` | NodeSelector restricts where operation Pods may be scheduled. |
+| `spec.execution.podMetadata` | `object` | PodMetadata is what an operation Pod carries for the cluster around it: a service mesh's opt-out annotation, the label a policy engine requires, a team's own bookkeeping. Every operation Pod this resource dispatches carries exactly these labels and annotations beside the operator's own, and the admission snapshot binds them: a Pod that arrives with more, fewer or different metadata is refused, so nothing unplanned runs beside the database credential. Keys under ptah.run, kubernetes.io and k8s.io are refused, so the operator's own labels, the Job controller's and the built-in admission plugins' cannot be redeclared, and nothing here can select an operation Pod into an object the operator owns. Unset, nothing changes. |
+| `spec.execution.podMetadata.annotations` | `object` | Annotations are added to every operation Pod beside the operator's own. |
+| `spec.execution.podMetadata.labels` | `object` | Labels are added to every operation Pod beside the operator's own. |
 | `spec.execution.priorityClassName` | `string` | PriorityClassName is the scheduling priority they run at. |
 | `spec.execution.resources` | `object` | Resources are the requests and limits of the container that runs SQL. |
 | `spec.execution.resources.claims` | `[]object` | Claims lists the names of resources, defined in spec.resourceClaims, that are used by this container. This field depends on the DynamicResourceAllocation feature gate. This field is immutable. It can only be set for containers. |

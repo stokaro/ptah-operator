@@ -698,7 +698,12 @@ token projection is also rejected because every operation template sets
 `automountServiceAccountToken=false`. Arbitrary mutating-webhook changes remain
 outside the envelope. Priority, RuntimeClass, LimitRange, ServiceAccount image
 pull secrets, DefaultTolerationSeconds, ExtendedResourceToleration, and
-AlwaysPullImages are the explicitly modeled mutations.
+AlwaysPullImages are the explicitly modeled mutations. What a service mesh or
+a policy engine asks a Pod to carry is declared in
+`spec.execution.podMetadata`, and a Pod the API server refuses anyway is
+reported with reason `PodAdmissionRefused`;
+[Execution](../../reference/execution/#meshes-and-policy-engines) has that
+contract.
 
 `PodLevelResources` is enabled by default in the supported Kubernetes window,
 but those releases apply LimitRange `default` and `defaultRequest` only to

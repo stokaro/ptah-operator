@@ -392,6 +392,10 @@ EPHEMERAL_SUBRESOURCE_TESTED=0
 # the switch is global, and every earlier lifecycle in this phase approves its
 # own plans with the same identity that wrote them.
 FOUR_EYES_SWITCH_ON=0
+# Set once the Pod-metadata row has installed its cluster-scoped admission
+# policy, so cleanup removes it on any exit: the namespace goes with the
+# cluster, a ValidatingAdmissionPolicy does not.
+POD_METADATA_POLICY_CREATED=0
 TLS_PROXY_POD_NAME=
 TLS_PROXY_POD_UID=
 TLS_PROXY_POD_IP=
@@ -666,6 +670,12 @@ cleanup() {
 	if [ "$FOUR_EYES_SWITCH_ON" -eq 1 ]; then
 		if ! set_require_distinct_approver false; then
 			printf '%s\n' 'e2e data plane: could not turn approvals.requireDistinctApprover back off' >&2
+			status=1
+		fi
+	fi
+	if [ "$POD_METADATA_POLICY_CREATED" -eq 1 ]; then
+		if ! remove_pod_metadata_policy; then
+			printf '%s\n' 'e2e data plane: could not remove the Pod-metadata admission policy' >&2
 			status=1
 		fi
 	fi
@@ -3991,6 +4001,9 @@ create_schema_resource() {
 	resource_failure_retry=${9:-5s}
 	resource_interval=${10:-$APPROVAL_INTERVAL}
 	resource_apply=${11:-}
+	# A JSON spec.execution.podMetadata, or empty for none: what a mesh or a
+	# policy engine asks the operation Pods to carry.
+	resource_pod_metadata=${12:-}
 	case "$resource_registry_auth_mode" in
 	Environment | DockerConfigJSON) ;;
 	*) fail "unsupported E2E registry authentication mode $resource_registry_auth_mode" ;;
@@ -4012,7 +4025,8 @@ create_schema_resource() {
 		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
 		--arg failureRetry "$resource_failure_retry" \
 		--arg interval "$resource_interval" \
-		--arg apply "$resource_apply" '
+		--arg apply "$resource_apply" \
+		--arg podMetadata "$resource_pod_metadata" '
     {
       apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
       metadata: {namespace: $namespace, name: $name},
@@ -4041,10 +4055,10 @@ create_schema_resource() {
           driftSeverity: "all", lockTimeout: "30s", transactionMode: "file"
         } + if $apply == "" then {} else {apply: $apply} end),
         interval: $interval,
-        execution: {
+        execution: ({
 	          activeDeadlineSeconds: 300, failureRetryInterval: $failureRetry, connectTimeout: "30s",
 	          runtimeClassName: $runtimeClass
-        }
+        } + if $podMetadata == "" then {} else {podMetadata: ($podMetadata | fromjson)} end)
       }
     }' >"$RESOURCE_FILE"
 	k create -f "$RESOURCE_FILE" >/dev/null
@@ -6999,6 +7013,179 @@ four_eyes_table_count=$(printf '%s' "$four_eyes_table_count" | tr -d '[:space:]'
 [ "$four_eyes_table_count" = 1 ] ||
 	fail "$FOUR_EYES_TABLE is not present in the database after the four-eyes-approved plan applied"
 printf '%s\n' 'e2e data plane: PASS the installer-owned four-eyes control refuses a self-approval, admits a distinct one, and the approved plan converges'
+
+timing_next scenario pod-metadata-admission
+printf '%s\n' 'e2e data plane: checking declared Pod metadata against a namespace admission policy'
+
+# A service mesh, a policy engine or a managed platform decides what a Pod
+# carries, and the operator holds every operation Pod to exactly what its Job
+# template declares, so the two meet in spec.execution.podMetadata (#447). The
+# policy stands in for all of them: a ValidatingAdmissionPolicy, which every
+# supported minor serves, that refuses an operation Pod of this row's schemas
+# unless it carries the mesh opt-out annotation. A schema that declares
+# nothing is refused at Pod creation and reports why, and a schema that
+# declares the annotation and a label runs every operation under the policy
+# and converges. The policy is cluster-scoped and removed by cleanup.
+POD_METADATA_SCHEMA=e2e-pod-metadata-postgresql
+POD_METADATA_REFUSED_SCHEMA=e2e-pod-metadata-refused-postgresql
+POD_METADATA_COORDINATION_KEY=e2e/admission/pod-metadata-postgresql
+POD_METADATA_REFUSED_COORDINATION_KEY=e2e/admission/pod-metadata-refused-postgresql
+POD_METADATA_POLICY=e2e-pod-metadata-mesh-opt-out
+POD_METADATA_ANNOTATION=sidecar.istio.io/inject
+POD_METADATA_LABEL=acme.example/team
+POD_METADATA_TABLE=e2e_pod_metadata_widgets
+pod_metadata_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/pod-metadata-postgresql:stable"
+pod_metadata_digest=$(publish_schema pod-metadata-postgresql v1 postgres "$pod_metadata_reference")
+
+remove_pod_metadata_policy() {
+	k delete validatingadmissionpolicybinding "$POD_METADATA_POLICY" --ignore-not-found >/dev/null &&
+		k delete validatingadmissionpolicy "$POD_METADATA_POLICY" --ignore-not-found >/dev/null
+}
+
+# The policy matches only this row's two schemas, by the subject label every
+# operation Pod carries, and its binding only the test namespace.
+jq -n \
+	--arg policy "$POD_METADATA_POLICY" \
+	--arg namespace "$TEST_NAMESPACE" \
+	--arg schema "$POD_METADATA_SCHEMA" \
+	--arg refusedSchema "$POD_METADATA_REFUSED_SCHEMA" \
+	--arg annotation "$POD_METADATA_ANNOTATION" '
+  {apiVersion: "v1", kind: "List", items: [
+    {apiVersion: "admissionregistration.k8s.io/v1", kind: "ValidatingAdmissionPolicy",
+     metadata: {name: $policy},
+     spec: {
+       failurePolicy: "Fail",
+       matchConstraints: {resourceRules: [{
+         apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE"], resources: ["pods"]
+       }]},
+       matchConditions: [{
+         name: "pod-metadata-row-schemas",
+         expression: ("has(object.metadata.labels) && \"operator.ptah.run/schema\" in object.metadata.labels && object.metadata.labels[\"operator.ptah.run/schema\"] in [" + ($schema | tojson) + ", " + ($refusedSchema | tojson) + "]")
+       }],
+       validations: [{
+         expression: ("has(object.metadata.annotations) && " + ($annotation | tojson) + " in object.metadata.annotations && object.metadata.annotations[" + ($annotation | tojson) + "] == \"false\""),
+         message: "operation Pods in this namespace must opt out of sidecar injection"
+       }]
+     }},
+    {apiVersion: "admissionregistration.k8s.io/v1", kind: "ValidatingAdmissionPolicyBinding",
+     metadata: {name: $policy},
+     spec: {
+       policyName: $policy, validationActions: ["Deny"],
+       matchResources: {namespaceSelector: {matchLabels: {"kubernetes.io/metadata.name": $namespace}}}
+     }}
+  ]}' >"$RESOURCE_FILE"
+k apply -f "$RESOURCE_FILE" >/dev/null
+POD_METADATA_POLICY_CREATED=1
+
+# A policy is enforced about a second after it is written. A server dry run
+# of a Pod the policy must refuse -- this row's subject label and no
+# annotation, hardened so nothing else refuses it first -- says when it is,
+# and the refusal has to name the policy: a Pod refused for another reason
+# proves nothing about this one.
+pod_metadata_probe_file="$WORK_DIR/${POD_METADATA_POLICY}-probe.json"
+pod_metadata_probe_error="$WORK_DIR/${POD_METADATA_POLICY}-probe-error.txt"
+jq -n \
+	--arg namespace "$TEST_NAMESPACE" \
+	--arg schema "$POD_METADATA_REFUSED_SCHEMA" \
+	--arg image "$EXECUTOR_IMAGE" '
+  {apiVersion: "v1", kind: "Pod",
+   metadata: {namespace: $namespace, name: "e2e-pod-metadata-probe", labels: {"operator.ptah.run/schema": $schema}},
+   spec: {
+     restartPolicy: "Never", automountServiceAccountToken: false,
+     securityContext: {
+       runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: "RuntimeDefault"}
+     },
+     containers: [{
+       name: "probe", image: $image, command: ["/bin/true"],
+       securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+     }]
+   }}' >"$pod_metadata_probe_file"
+pod_metadata_probe_deadline=$(deadline_from_now)
+until ! k create --dry-run=server -f "$pod_metadata_probe_file" >/dev/null 2>"$pod_metadata_probe_error" &&
+	grep -F "$POD_METADATA_POLICY" "$pod_metadata_probe_error" >/dev/null; do
+	[ "$(date +%s)" -lt "$pod_metadata_probe_deadline" ] ||
+		fail "the $POD_METADATA_POLICY policy did not start refusing a Pod without the declared annotation: $(cat "$pod_metadata_probe_error")"
+	sleep 2
+done
+
+# A schema that declares nothing: its Resolve Job stands, its Pod is refused
+# at creation, and the resource reports the refusal the API server gave.
+create_schema_resource "$POD_METADATA_REFUSED_SCHEMA" PostgreSQL "$PG_SECRET" "$pod_metadata_reference" \
+	"$POD_METADATA_REFUSED_COORDINATION_KEY" e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 5s "$APPROVAL_INTERVAL" Always
+wait_for_schema "$POD_METADATA_REFUSED_SCHEMA" \
+	'.status.activeOperation != null and (.status.conditions | any(.type == "Ready" and .status == "False" and .reason == "PodAdmissionRefused" and (.message | contains("must opt out of sidecar injection")) and (.message | contains("ValidatingAdmissionPolicy"))))' \
+	"the schema declaring no Pod metadata to report the policy refusal as PodAdmissionRefused"
+# The document that matched: the claim it reports on, and the Job the message
+# names, come from it rather than from a later re-read.
+pod_metadata_refused_job=$(printf '%s\n' "$wait_object" | jq -er '.status.activeOperation.jobName')
+printf '%s\n' "$wait_object" | jq -e --arg job "$pod_metadata_refused_job" '
+  [.status.conditions[] | select(.type == "Ready")] | length == 1 and
+  (.[0].message | contains($job))
+' >/dev/null || fail "$POD_METADATA_REFUSED_SCHEMA does not name the Job whose Pod was refused in its Ready condition"
+# Nothing ran beside the credential: the Job has no Pod, active or done, and
+# the namespace holds no Pod of this schema.
+k -n "$TEST_NAMESPACE" get job "$pod_metadata_refused_job" -o json | jq -e '
+  (.status.active // 0) == 0 and (.status.succeeded // 0) == 0 and (.status.failed // 0) == 0 and
+  ((.status.conditions // []) | all(.status != "True"))
+' >/dev/null || fail "the refused Job $pod_metadata_refused_job has a Pod or a verdict, so the refusal proved nothing"
+[ "$(k -n "$TEST_NAMESPACE" get pods -l "operator.ptah.run/schema=$POD_METADATA_REFUSED_SCHEMA" -o json | jq '.items | length')" -eq 0 ] ||
+	fail "an operation Pod of $POD_METADATA_REFUSED_SCHEMA exists under a policy that refuses it"
+# The record the condition was read from, and the Event the resource carries.
+k -n "$TEST_NAMESPACE" get events --field-selector "involvedObject.name=$pod_metadata_refused_job,reason=FailedCreate" -o json |
+	jq -e --arg policy "$POD_METADATA_POLICY" '[.items[] | select(.message | contains($policy))] | length > 0' >/dev/null ||
+	fail "the Job controller recorded no FailedCreate naming $POD_METADATA_POLICY against $pod_metadata_refused_job"
+k -n "$TEST_NAMESPACE" get events --field-selector "involvedObject.name=$POD_METADATA_REFUSED_SCHEMA,reason=PodAdmissionRefused" -o json |
+	jq -e '.items | length > 0' >/dev/null ||
+	fail "$POD_METADATA_REFUSED_SCHEMA carries no PodAdmissionRefused Event"
+k -n "$TEST_NAMESPACE" delete ptahschema "$POD_METADATA_REFUSED_SCHEMA" --wait=true --timeout=180s >/dev/null ||
+	fail "could not delete $POD_METADATA_REFUSED_SCHEMA with its refused Job standing"
+
+# A schema that declares the opt-out and a label of its own runs every
+# operation under the same policy: resolve, verify, observe, plan, apply and
+# the proof after it, each Pod admitted because it carries what was declared.
+pod_metadata_declaration=$(jq -cn --arg label "$POD_METADATA_LABEL" --arg annotation "$POD_METADATA_ANNOTATION" '
+  {labels: {($label): "platform"}, annotations: {($annotation): "false"}}')
+create_schema_resource "$POD_METADATA_SCHEMA" PostgreSQL "$PG_SECRET" "$pod_metadata_reference" \
+	"$POD_METADATA_COORDINATION_KEY" e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 5s "$APPROVAL_INTERVAL" Always \
+	"$pod_metadata_declaration"
+k -n "$TEST_NAMESPACE" get ptahschema "$POD_METADATA_SCHEMA" -o json |
+	jq -e --argjson declared "$pod_metadata_declaration" '.spec.execution.podMetadata == $declared' >/dev/null ||
+	fail "$POD_METADATA_SCHEMA did not persist the declared Pod metadata"
+wait_for_schema "$POD_METADATA_SCHEMA" \
+	".status.phase == \"InSync\" and .status.source.digest == \"$pod_metadata_digest\" and .status.applied.artifactDigest == \"$pod_metadata_digest\" and .status.pendingObservation == null and .status.activeOperation == null and (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))" \
+	"the schema declaring its Pod metadata to apply under the policy and converge"
+# shellcheck disable=SC2016 # Variables expand inside the database container.
+pod_metadata_table_count=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+	sh "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='${POD_METADATA_TABLE}'")
+pod_metadata_table_count=$(printf '%s' "$pod_metadata_table_count" | tr -d '[:space:]')
+[ "$pod_metadata_table_count" = 1 ] ||
+	fail "$POD_METADATA_TABLE is not present in the database after the declared-metadata schema applied"
+# Every Job of the schema carries the declaration on itself and on its
+# template, under the operator's five labels, and the Apply is among them.
+pod_metadata_jobs=$(k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/schema=$POD_METADATA_SCHEMA" -o json)
+pod_metadata_job_count=$(printf '%s\n' "$pod_metadata_jobs" | jq '.items | length')
+[ "$pod_metadata_job_count" -ge 1 ] ||
+	fail "no operation Job of $POD_METADATA_SCHEMA is left to read the declared metadata from"
+printf '%s\n' "$pod_metadata_jobs" | jq -e --arg label "$POD_METADATA_LABEL" --arg annotation "$POD_METADATA_ANNOTATION" '
+  ([.items[] | select(
+    .metadata.labels[$label] == "platform" and .spec.template.metadata.labels[$label] == "platform" and
+    .metadata.annotations[$annotation] == "false" and .spec.template.metadata.annotations[$annotation] == "false" and
+    ([.metadata.labels | keys[] | select(startswith("app.kubernetes.io/") or startswith("operator.ptah.run/"))] | length) == 5
+  )] | length) == (.items | length) and
+  ([.items[] | select(.metadata.labels["operator.ptah.run/operation"] == "apply")] | length) == 1
+' >/dev/null || fail "an operation Job of $POD_METADATA_SCHEMA does not carry the declared metadata beside the operator's own"
+# And the Pods the policy admitted carry it, which is what the policy read.
+pod_metadata_pods=$(k -n "$TEST_NAMESPACE" get pods -l "operator.ptah.run/schema=$POD_METADATA_SCHEMA,$POD_METADATA_LABEL=platform" -o json)
+[ "$(printf '%s\n' "$pod_metadata_pods" | jq '.items | length')" -ge 1 ] ||
+	fail "no operation Pod of $POD_METADATA_SCHEMA carrying the declared label is left to read"
+printf '%s\n' "$pod_metadata_pods" | jq -e --arg annotation "$POD_METADATA_ANNOTATION" '
+  ([.items[] | select(.metadata.annotations[$annotation] == "false")] | length) == (.items | length)
+' >/dev/null || fail "an operation Pod of $POD_METADATA_SCHEMA was admitted without the declared annotation"
+remove_pod_metadata_policy ||
+	fail "could not remove the $POD_METADATA_POLICY policy after the Pod-metadata row"
+POD_METADATA_POLICY_CREATED=0
+printf '%s\n' 'e2e data plane: PASS declared Pod metadata reaches every operation Pod under a namespace admission policy, and a Pod the policy refuses is reported as PodAdmissionRefused'
 
 timing_end pass
 PHASE_COMPLETED=1

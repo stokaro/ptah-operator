@@ -51,6 +51,7 @@ decision.
 | `Pending` | Resolved artifact content has not yet been verified. |
 | `PlanNoLongerCurrent` | An approval's plan binding is no longer current. |
 | `PlanReady` | An exact immutable plan is ready for approval. |
+| `PodAdmissionRefused` | The operation's Job cannot create its Pod because the API server refused it; the message carries the refusal. The operation stays claimed, the Job keeps its deadline, and the Job controller keeps trying, so a policy that stops refusing lets it through. Declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. |
 | `PolicyBlocked` | Destructive-change policy blocks the current plan. |
 | `PolicyChanged` | Verification policy identity or bytes changed. |
 | `PolicyRefused` | Artifact verification policy explicitly refused the artifact. |

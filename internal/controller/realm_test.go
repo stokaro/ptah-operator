@@ -673,6 +673,19 @@ func TestSuspendingAClaimantEndsTheConflict(t *testing.T) {
 // a manager, derived through the same function. A fake client without them
 // fails the census with "no index with name", which is a fixture complaining
 // about itself rather than anything the controller did.
+// withEventIndex gives the fake client the field selector the API server
+// serves on Events, which reportPodAdmission reads a Job's FailedCreate
+// Events through.
+func withEventIndex(builder *fake.ClientBuilder) *fake.ClientBuilder {
+	return builder.WithIndex(&corev1.Event{}, eventInvolvedObjectUIDField, func(object client.Object) []string {
+		event, ok := object.(*corev1.Event)
+		if !ok || event.InvolvedObject.UID == "" {
+			return nil
+		}
+		return []string{string(event.InvolvedObject.UID)}
+	})
+}
+
 func withRealmIndexes(builder *fake.ClientBuilder) *fake.ClientBuilder {
 	return builder.
 		WithIndex(&operatorv1alpha1.PtahSchema{}, RealmDigestIndex, func(object client.Object) []string {

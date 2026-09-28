@@ -1422,6 +1422,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 	}
 	if !jobTerminal(job) {
+		if err := r.reportPodAdmission(ctx, schema, job); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 	current, currentErr := r.operationInputFingerprint(schema, operation.Type)
@@ -5412,4 +5415,39 @@ func retriedSchemaJobReason(cause mutationlifecycle.JobCause) string {
 		return "active Job is not owned by the schema UID"
 	}
 	return "active Job was replaced"
+}
+
+// reportPodAdmission writes the refusal condition for a schema whose Job has
+// no Pod, or restores the in-progress condition once it has one. Ready is the
+// condition it moves: the operation is still claimed and still in flight, and
+// Ready=False with this reason is what tells the reader why nothing happens.
+func (r *SchemaReconciler) reportPodAdmission(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+) error {
+	operation := schema.Status.ActiveOperation
+	if operation == nil {
+		return nil
+	}
+	change, err := judgePodAdmission(ctx, r.directReader(), job, r.now(),
+		meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady))
+	if err != nil || !change.changed {
+		return err
+	}
+	before := schema.DeepCopy()
+	if change.refused {
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonPodAdmissionRefused, change.message)
+	} else {
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operation.Type))
+	}
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return err
+	}
+	if change.refused {
+		r.event(schema, corev1.EventTypeWarning, "PodAdmissionRefused", "%s", change.message)
+	}
+	return nil
 }

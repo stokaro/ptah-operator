@@ -137,3 +137,37 @@ spec:
       name: ptah-migration-verification-policy
       key: policy.yaml
 ```
+
+### In a namespace with a service mesh or a policy engine
+
+A migration's Pods are held to their Job template the way a schema's are, and
+`podMetadata` is the same declaration: the annotation that opts the Pods out
+of sidecar injection, and the label a policy engine requires. A Pod refused
+anyway is reported as `Progressing=False` with reason `PodAdmissionRefused`.
+[Execution](../execution/#meshes-and-policy-engines) has the contract.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/application-primary
+    urlFrom:
+      name: application-database
+      key: url
+  artifact:
+    ociRef: oci://ghcr.io/example/orders-migrations:1.4.0
+    verificationPolicyFrom:
+      name: ptah-migration-verification-policy
+      key: policy.yaml
+  execution:
+    podMetadata:
+      labels:
+        acme.example/team: platform
+      annotations:
+        sidecar.istio.io/inject: "false"
+```
