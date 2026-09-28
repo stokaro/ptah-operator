@@ -534,7 +534,9 @@ restore_webhook_deployment() {
 	[ "$WEBHOOK_DEPLOYMENT_STOPPED" -eq 1 ] || return 0
 	[ -n "$WEBHOOK_ORIGINAL_REPLICAS" ] || return 1
 	if ! k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" >/dev/null 2>&1; then
-		k create -f "$webhook_deployment_file" >/dev/null || return 1
+		[ -s "$webhook_deployment_file.manager" ] || return 1
+		k apply --server-side --field-manager="$(cat "$webhook_deployment_file.manager")" \
+			-f "$webhook_deployment_file" >/dev/null || return 1
 	fi
 	k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" \
 		--timeout=180s >/dev/null || return 1
@@ -579,6 +581,7 @@ cleanup_files() {
 		"$missing_fingerprint_file" "$foreign_plan_file" "$foreign_approval_file" \
 		"$error_file" "$error_file.stdout" "$webhook_scope_job_file" \
 		"$webhook_scope_event_file" "$webhook_deployment_file"
+	rm -f "$webhook_deployment_file.live" "$webhook_deployment_file.manager"
 	exit "$status"
 }
 trap cleanup_files EXIT
@@ -691,8 +694,24 @@ WEBHOOK_ORIGINAL_REPLICAS=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLL
 	-o json | jq -er '.spec.replicas // 1')
 printf '%s\n' "$WEBHOOK_ORIGINAL_REPLICAS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "webhook Deployment does not have a positive replica count"
-k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
-	jq 'del(
+# The snapshot records the field manager that owns the Deployment as well as
+# the object. Helm 4 applies server-side, so restoring the snapshot with
+# kubectl's own manager would leave every field owned by "kubectl-create", and
+# the next helm upgrade in this cluster that changes one of those fields -- the
+# data-plane suite's four-eyes row changes the manager's args -- would fail
+# with a field-manager conflict instead of upgrading. The restore therefore
+# applies as the manager the live object had, and a Deployment with no
+# server-side apply manager, or more than one, is refused rather than guessed.
+# hack/e2e-crd-upgrade.sh restores its runtime Deployments the same way.
+k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+	--show-managed-fields -o json >"$webhook_deployment_file.live"
+webhook_deployment_managers=$(jq -r '
+  [.metadata.managedFields[]? | select(.operation == "Apply") | .manager] | unique
+' "$webhook_deployment_file.live")
+[ "$(printf '%s\n' "$webhook_deployment_managers" | jq -r 'length')" -eq 1 ] ||
+	fail "webhook Deployment $CONTROLLER_NAME has no single server-side apply field manager to restore: $(printf '%s\n' "$webhook_deployment_managers" | jq -c .)"
+printf '%s\n' "$webhook_deployment_managers" | jq -r '.[0]' >"$webhook_deployment_file.manager"
+jq 'del(
       .metadata.creationTimestamp,
       .metadata.generation,
       .metadata.managedFields,
@@ -700,7 +719,8 @@ k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
       .metadata.uid,
       .metadata.annotations."deployment.kubernetes.io/revision",
       .status
-    )' >"$webhook_deployment_file"
+    )' "$webhook_deployment_file.live" >"$webhook_deployment_file"
+rm -f "$webhook_deployment_file.live"
 WEBHOOK_DEPLOYMENT_STOPPED=1
 k -n "$OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_NAME" \
 	--cascade=foreground --wait=true >/dev/null
