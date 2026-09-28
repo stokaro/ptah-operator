@@ -90,6 +90,16 @@ exactly the distinction a message match would lose.
 the width a phone gives it. Two sentences between two commands is a paragraph
 the reader scrolls past, and the scenario is what has to be shorter.
 
+## Changing a recorded scenario
+
+The recording holds a digest of what this file says the scenario runs: the
+`reset`, and each step's `run`, `await`, `retry`, `sync`, `show` and `expect`.
+Edit any of them and `make verify-demo-recording`, which `make verify-source`
+runs, refuses the committed recording until the scenario is recorded again.
+`title`, `tagline`, `learn`, `tags` and `note` are left out, because rewording
+them does not change what ran, and a YAML comment is not part of the
+definition at all.
+
 ## Waiting for something that has not happened yet
 
 A wait for a condition that was already true returns at once and proves

@@ -14,12 +14,16 @@ import (
 // The file is the only place a scenario exists. The shell a reader sees on the
 // page is the shell this ran, the narration is this file's, and the green
 // result is the expectations below having held against a live cluster.
+//
+// A field tagged digest:"-" is how the scenario is described rather than what
+// it runs, and definitionDigest leaves it out. Every other field is in the
+// digest without being listed there.
 type scenario struct {
 	ID      string   `yaml:"id"`
-	Title   string   `yaml:"title"`
-	Tagline string   `yaml:"tagline"`
-	Learn   string   `yaml:"learn"`
-	Tags    []string `yaml:"tags"`
+	Title   string   `yaml:"title" digest:"-"`
+	Tagline string   `yaml:"tagline" digest:"-"`
+	Learn   string   `yaml:"learn" digest:"-"`
+	Tags    []string `yaml:"tags" digest:"-"`
 	// Reset returns the lab to this scenario's starting point. It runs before
 	// the steps and is not recorded: a reader is watching the scenario, not the
 	// preparation.
@@ -31,7 +35,7 @@ type scenario struct {
 type step struct {
 	// Note is the demonstration's own narration, and is rendered differently
 	// from anything a command wrote.
-	Note string `yaml:"note"`
+	Note string `yaml:"note" digest:"-"`
 	// Await holds the step until the cluster reaches a state, before the
 	// command runs. It publishes nothing: it is the reader's own patience, and
 	// it lands the command at the moment a reader's second attempt would. What
