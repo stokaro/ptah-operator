@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -115,7 +116,7 @@ func staleRecordings(record runRecord, current []scenario) []string {
 				recorded.ID))
 		case recorded.DefinitionDigest != want:
 			findings = append(findings, fmt.Sprintf(
-				"%s: the scenario changed under the recording; re-record it or keep the old definition beside it",
+				"%s: the scenario changed under the recording; re-record it",
 				recorded.ID))
 		}
 	}
@@ -126,7 +127,11 @@ func staleRecordings(record runRecord, current []scenario) []string {
 // represents its scenario. It runs nothing and needs no lab, which is the
 // point: the question "is this transcript still true" should not cost a
 // cluster to answer.
-func verifyRecordings(path string, current []scenario, diagnostics io.Writer) error {
+//
+// With only set, current holds that one scenario, so the record is narrowed
+// to it as well: every other recording would otherwise read as naming a
+// scenario the tree no longer declares.
+func verifyRecordings(path string, current []scenario, only string, diagnostics io.Writer) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read the run record: %w", err)
@@ -134,6 +139,12 @@ func verifyRecordings(path string, current []scenario, diagnostics io.Writer) er
 	record := runRecord{}
 	if err := json.Unmarshal(contents, &record); err != nil {
 		return fmt.Errorf("read the run record: %w", err)
+	}
+	if only != "" {
+		record.Scenarios = slices.DeleteFunc(record.Scenarios, func(one recording) bool { return one.ID != only })
+		if len(record.Scenarios) == 0 {
+			return fmt.Errorf("the run record holds no recording of %q, so nothing was verified", only)
+		}
 	}
 	if len(record.Scenarios) == 0 {
 		return fmt.Errorf("the run record holds no recording, so nothing was verified")
