@@ -157,9 +157,10 @@ is not coverage: a phase counts as covered only where a suite lists it under
 `phases`, and the catalog check counts it there and nowhere else.
 
 `hack/e2e-suites-selftest.sh` measures the selection — that a suite runs the
-phases it claims, that it runs no other suite's phase, and that the preparation
-boundary sits before the data plane's own acceptance — and `make e2e-static`
-runs it.
+phases it claims and no other suite's phase — and `make e2e-static` runs it.
+Where preparation stops is declared with the data-plane phase in
+`test/e2e/phases`, a unit test there holds it before the phase's own
+acceptance, and the harness fails a run that stops anywhere else.
 
 The phases are moving from shell to Go under `test/e2e`, one suite at a time.
 A Go phase is one test function in a file built only with the `e2e`
@@ -173,9 +174,10 @@ The binary runs that phase's test and nothing else, fails a run in which the
 test did not reach its end, and writes the completion record the driver passes
 the phase on. `hack/verify-kubernetes-support.go` holds the
 call's bindings to the declared inputs, and `test/e2e/harness` writes each
-scenario into the same timing ledger the shell phases do. The certificates
-suite and the control-plane phase (`assert`) are ported; every other phase is
-still a script under `hack/`.
+scenario into the same timing ledger the shell phases do. The certificates and
+data-plane suites are ported, except the restart and fault injection, which the
+data-plane phase still runs as `hack/e2e-faults.sh` inside one of its
+scenarios; every other phase is still a script under `hack/`.
 
 What that partition covers is a table rather than a paragraph, and
 `make acceptance-coverage` prints it: every supported minor against every

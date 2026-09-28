@@ -45,6 +45,15 @@ type Phase struct {
 	// IsolatesNode says the phase cuts the isolation worker off from the API
 	// server, so only a suite that declares that worker may run it.
 	IsolatesNode bool
+	// Preparation is how many of the leading scenarios make up the phase's
+	// preparation mode: what another suite runs it for, the objects it stands
+	// up, and none of its own acceptance. Zero means the phase has no such
+	// mode. A run that stopped at the boundary proved those scenarios alone.
+	Preparation int
+	// NestedScripts are the shell phases under hack/ that the phase still runs
+	// inside one of its scenarios. Their stopwatch marks are this phase's too,
+	// and they stay here only until those scripts are ported as well.
+	NestedScripts []string
 
 	inputs reflect.Type
 }
@@ -145,10 +154,99 @@ var CertRotation = define[CertRotationInputs](Phase{
 	},
 })
 
+// DataPlaneInputs is what the driver hands the data-plane phase.
+type DataPlaneInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// OperatorNamespace is the release namespace.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// TestNamespace is where the phase stands up its registry endpoint, its
+	// databases and its fixtures, and where the migration suites find them.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// HelmRelease is the installed release.
+	HelmRelease string `env:"E2E_HELM_RELEASE"`
+	// ChartPackage is the packaged chart the release was installed from. The
+	// four-eyes row upgrades the release to it with one value changed.
+	ChartPackage string `env:"E2E_CHART_PACKAGE"`
+	// PtahVersion is the Ptah version bound beside the executor.
+	PtahVersion string `env:"E2E_PTAH_VERSION"`
+	// ExecutorImage is the digest-pinned Ptah executor the release runs.
+	ExecutorImage string `env:"E2E_EXECUTOR_IMAGE"`
+	// RunnerImage is the runner image built beside the manager.
+	RunnerImage string `env:"E2E_RUNNER_IMAGE"`
+	// FixtureImage carries the TLS registry proxy and the fault fixtures.
+	FixtureImage string `env:"E2E_FIXTURE_IMAGE"`
+	// ControllerImage is the candidate manager image, pinned by digest.
+	ControllerImage string `env:"E2E_CONTROLLER_IMAGE"`
+	// ControllerRevision is the commit the candidate was built from.
+	ControllerRevision string `env:"E2E_CONTROLLER_REVISION"`
+	// ControllerStateVersion is the controller-state version the chart was
+	// stamped with.
+	ControllerStateVersion string `env:"E2E_CONTROLLER_STATE_VERSION"`
+	// PostgresImage and MySQLImage are the database servers the phase runs in
+	// the test namespace.
+	PostgresImage string `env:"E2E_POSTGRES_IMAGE"`
+	MySQLImage    string `env:"E2E_MYSQL_IMAGE"`
+	// RegistryIP is the registry container's address on the kind network,
+	// RegistryService the Service that routes to it, and RegistryPort the
+	// host port the driver published it on.
+	RegistryIP      string `env:"E2E_REGISTRY_IP"`
+	RegistryService string `env:"E2E_REGISTRY_SERVICE"`
+	RegistryPort    string `env:"E2E_REGISTRY_PORT"`
+	// RegistryCredentialsFile holds the registry's username and password.
+	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
+	// DockerContext is the remote Docker daemon the registry and the external
+	// PostgreSQL run on, and RegistryContainerID the registry container the
+	// outage row stops.
+	DockerContext       string `env:"E2E_DOCKER_CONTEXT"`
+	RegistryContainerID string `env:"E2E_REGISTRY_CONTAINER_ID"`
+	// The external PostgreSQL: a container outside Kubernetes that a
+	// selectorless Service routes to.
+	ExternalPostgresContainerID     string `env:"E2E_EXTERNAL_POSTGRES_CONTAINER_ID"`
+	ExternalPostgresIP              string `env:"E2E_EXTERNAL_POSTGRES_IP"`
+	ExternalPostgresService         string `env:"E2E_EXTERNAL_POSTGRES_SERVICE"`
+	ExternalPostgresImage           string `env:"E2E_EXTERNAL_POSTGRES_IMAGE"`
+	ExternalPostgresOwner           string `env:"E2E_EXTERNAL_POSTGRES_OWNER"`
+	ExternalPostgresCredentialsFile string `env:"E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE"`
+	// The authenticated HTTPS registry proxy: its Service and the CA,
+	// certificate and key the driver generated for it.
+	TLSProxyService  string `env:"E2E_TLS_PROXY_SERVICE"`
+	TLSProxyCAFile   string `env:"E2E_TLS_PROXY_CA_FILE"`
+	TLSProxyCertFile string `env:"E2E_TLS_PROXY_CERT_FILE"`
+	TLSProxyKeyFile  string `env:"E2E_TLS_PROXY_KEY_FILE"`
+	// Mode is full or prepare. The migration suites run the phase in prepare,
+	// for the namespace it stands up and none of its own acceptance.
+	Mode string `env:"E2E_DATAPLANE_MODE"`
+}
+
+// DataPlane proves both engines end to end: the registry, the databases and
+// the admission fixtures it stands up, the PostgreSQL, external PostgreSQL and
+// MySQL lifecycles, the refusals, the restart and fault injection, and the
+// four-eyes and Pod-metadata rows.
+var DataPlane = define[DataPlaneInputs](Phase{
+	Name:    "dataplane",
+	Test:    "TestDataPlane",
+	Timeout: 150 * time.Minute,
+	Scenarios: []string{
+		"databases-and-fixtures",
+		"postgresql-lifecycle",
+		"external-postgresql-lifecycle",
+		"mysql-lifecycle",
+		"mysql-dsn-refusal",
+		"faults",
+		"closing-audits",
+		"four-eyes-distinct-approver",
+		"pod-metadata-admission",
+	},
+	Preparation:   1,
+	NestedScripts: []string{"hack/e2e-faults.sh"},
+})
+
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
 	ControlPlane.Phase,
 	CertRotation.Phase,
+	DataPlane.Phase,
 }
 
 func init() {
@@ -226,9 +324,10 @@ func Load[T any](p Of[T], lookup func(string) (string, bool)) (T, error) {
 const environmentTag = "env"
 
 var (
-	labelPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
-	testPattern        = regexp.MustCompile(`^Test[A-Z][A-Za-z0-9]*$`)
-	environmentPattern = regexp.MustCompile(`^E2E_[A-Z0-9_]+$`)
+	labelPattern        = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
+	testPattern         = regexp.MustCompile(`^Test[A-Z][A-Za-z0-9]*$`)
+	environmentPattern  = regexp.MustCompile(`^E2E_[A-Z0-9_]+$`)
+	nestedScriptPattern = regexp.MustCompile(`^hack/e2e-[a-z-]+\.sh$`)
 )
 
 // define checks a declaration once, when the package loads, so a malformed
@@ -264,6 +363,15 @@ func (p Phase) validate() error {
 			return fmt.Errorf("phase %s: scenario %s is declared twice", p.Name, scenario)
 		}
 		seen[scenario] = true
+	}
+	if p.Preparation < 0 || p.Preparation >= len(p.Scenarios) {
+		return fmt.Errorf("phase %s: a preparation of %d scenarios leaves none of its own acceptance out of %d",
+			p.Name, p.Preparation, len(p.Scenarios))
+	}
+	for _, script := range p.NestedScripts {
+		if !nestedScriptPattern.MatchString(script) {
+			return fmt.Errorf("phase %s: %q is not a phase script under hack/", p.Name, script)
+		}
 	}
 	if p.inputs.Kind() != reflect.Struct || p.inputs.NumField() == 0 {
 		return fmt.Errorf("phase %s: its inputs must be a struct of environment variables", p.Name)

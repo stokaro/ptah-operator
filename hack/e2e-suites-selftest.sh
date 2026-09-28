@@ -154,27 +154,13 @@ done <"$SUITE_NAMES_FILE"
 	fail "a suite gets the isolation worker the catalog no longer declares for it"
 
 # The data plane is the phase another suite prepares with, and preparation is a
-# mode of that phase rather than a copy of its setup.
+# mode of that phase rather than a copy of its setup. Where the boundary falls
+# is declared in test/e2e/phases, where TestDataPlanePreparesBeforeItsOwnAcceptance
+# holds it before the engine lifecycles and the fault injection, and the
+# harness refuses a run that stops anywhere else.
 # shellcheck disable=SC2016 # Match the literal mode bindings in the harness.
 grep -Fq 'E2E_DATAPLANE_MODE=$DATAPLANE_MODE' "$ROOT_DIR/hack/e2e-kind.sh" ||
 	fail "the driver does not tell the data plane which mode to run in"
-# shellcheck disable=SC2016 # Match the literal boundary in the phase.
-grep -Fq 'if [ "$E2E_DATAPLANE_MODE" = prepare ]; then' "$ROOT_DIR/hack/e2e-dataplane.sh" ||
-	fail "the data plane has no preparation boundary"
-# The boundary stops before the phase's own acceptance: the engine lifecycles
-# and the fault injection are what must not run in preparation mode.
-# shellcheck disable=SC2016 # Match the literal boundary in the phase.
-boundary_line=$(grep -n 'if \[ "\$E2E_DATAPLANE_MODE" = prepare \]; then' \
-	"$ROOT_DIR/hack/e2e-dataplane.sh" | cut -d: -f1)
-for acceptance_call in 'run_engine_lifecycle postgresql' 'run_engine_lifecycle mysql' \
-	'hack/e2e-faults.sh'; do
-	acceptance_line=$(grep -n -F -- "$acceptance_call" "$ROOT_DIR/hack/e2e-dataplane.sh" |
-		tail -1 | cut -d: -f1)
-	[ -n "$acceptance_line" ] ||
-		fail "the data plane no longer runs $acceptance_call"
-	[ "$acceptance_line" -gt "$boundary_line" ] ||
-		fail "$acceptance_call runs before the preparation boundary, so preparation would execute it"
-done
 
 # Two suites run the same two scripts, so the engine is an input rather than a
 # default: a phase that picked one on its own would cover one engine and report

@@ -1,4 +1,4 @@
-package main
+package resultframe
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ func TestParseExactResult(t *testing.T) {
 		t.Fatalf("marshal frame: %v", err)
 	}
 	logs := append([]byte("diagnostic before frame\n"), frame...)
-	parsed, err := parseExactResult(logs, runner.OperationObserve, result.OperationID)
+	parsed, err := Parse(logs, runner.OperationObserve, result.OperationID)
 	if err != nil {
 		t.Fatalf("parse exact result: %v", err)
 	}
@@ -69,8 +69,8 @@ func TestParseExactResultRejectsMultipleFrames(t *testing.T) {
 		t.Fatalf("marshal frame: %v", err)
 	}
 	logs := append(append([]byte(nil), frame...), frame...)
-	if _, err := parseExactResult(logs, runner.OperationObserve, result.OperationID); err == nil {
-		t.Fatal("parseExactResult accepted multiple frames")
+	if _, err := Parse(logs, runner.OperationObserve, result.OperationID); err == nil {
+		t.Fatal("Parse accepted multiple frames")
 	}
 }
 
@@ -180,7 +180,7 @@ func logShapes(t *testing.T) []logShape {
 		},
 		{
 			// A diagnostic ahead of the payload adds no header and no footer,
-			// so the counts this command pre-checks are unmoved and the parser
+			// so the counts Parse pre-checks are unmoved and the parser
 			// reads the frame it can verify. Refusing it sent the transport
 			// wait around its whole window re-reading a log that was complete.
 			name: "a diagnostic line ahead of the payload",
@@ -227,7 +227,7 @@ func TestParseExactResultSeparatesArrivalFromRefusal(t *testing.T) {
 	t.Parallel()
 	for _, shape := range logShapes(t) {
 		t.Run(shape.name, func(t *testing.T) {
-			result, err := parseExactResult(shape.logs, shapeOperation, shapeOperationID)
+			result, err := Parse(shape.logs, shapeOperation, shapeOperationID)
 			if shape.reason == "" {
 				if err != nil {
 					t.Fatalf("refused a complete frame: %v", err)
@@ -264,41 +264,45 @@ func transportRetrySet(t *testing.T, path string) string {
 	return matches[0][1]
 }
 
-// TestRefusalsAgreeWithTheTransportRetrySet binds this command's words to the
-// filter that reads them. read_result_transport waits only for a refusal
-// matching its alternation, so wording that drifts out of that set turns the
-// bounded wait off for the shape it was written for -- silently, and with every
-// other gate still green. That is what stood between #155 and this test: the
-// filter passed its author's intent and measured something else, and only
-// reading it against the refusals the binary actually emits catches it.
+// TestRefusalsAgreeWithTheTransportRetrySet binds Parse's words to the filters
+// that read them: ArrivingPattern, which the Go phases wait on, and the
+// alternation read_result_transport in hack/e2e-faults.sh greps the command's
+// stderr for. A caller waits only for a refusal matching its set, so wording
+// that drifts out of it turns the bounded wait off for the shape it was written
+// for -- silently, and with every other gate still green. That is what stood
+// between #155 and this test: the filter passed its author's intent and
+// measured something else, and only reading it against the refusals the parser
+// actually emits catches it.
 func TestRefusalsAgreeWithTheTransportRetrySet(t *testing.T) {
 	t.Parallel()
-	dataPlaneSet := transportRetrySet(t, "../../../hack/e2e-dataplane.sh")
 	faultsSet := transportRetrySet(t, "../../../hack/e2e-faults.sh")
-	if dataPlaneSet != faultsSet {
-		t.Fatalf("the two result-transport retry filters differ:\n  e2e-dataplane.sh: %s\n  e2e-faults.sh:    %s",
-			dataPlaneSet, faultsSet)
+	if faultsSet != ArrivingPattern {
+		t.Fatalf("the result-transport retry filters differ:\n  ArrivingPattern: %s\n  e2e-faults.sh:   %s",
+			ArrivingPattern, faultsSet)
 	}
-	retrySet, err := regexp.Compile(dataPlaneSet)
+	retrySet, err := regexp.Compile(ArrivingPattern)
 	if err != nil {
-		t.Fatalf("compile the result-transport retry filter %q: %v", dataPlaneSet, err)
+		t.Fatalf("compile the result-transport retry filter %q: %v", ArrivingPattern, err)
 	}
 
 	// Every alternative has to be reached by a shape that is genuinely still
 	// arriving. One nothing reaches is a filter widened to swallow a refusal
 	// that should have been fixed at the source instead.
-	alternatives := strings.Split(dataPlaneSet, "|")
+	alternatives := strings.Split(ArrivingPattern, "|")
 	reached := make(map[string]bool, len(alternatives))
 	for _, alternative := range alternatives {
 		reached[alternative] = false
 	}
 
 	for _, shape := range logShapes(t) {
-		_, err := parseExactResult(shape.logs, shapeOperation, shapeOperationID)
+		_, err := Parse(shape.logs, shapeOperation, shapeOperationID)
 		if err == nil {
 			continue
 		}
 		matched := retrySet.MatchString(err.Error())
+		if matched != StillArriving(err) {
+			t.Errorf("%s: StillArriving disagrees with ArrivingPattern on %q", shape.name, err)
+		}
 		if matched && !shape.arriving {
 			t.Errorf("%s: the retry filter waits on its refusal %q, and reading the log again cannot change it",
 				shape.name, err)

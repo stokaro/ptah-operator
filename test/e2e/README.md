@@ -378,7 +378,9 @@ Job.
 
 The phases are moving from shell scripts under `hack/` to Go tests in this
 directory, one suite at a time. The certificates suite and the data-plane
-suite's control-plane phase, `assert`, are ported. The
+suite are ported: the control-plane phase, `assert`, and the data plane
+itself, `dataplane`, which still runs the restart and fault injection,
+`hack/e2e-faults.sh`, as a shell phase inside its `faults` scenario. The
 driver keeps the bootstrap: the kind cluster, the images, the registry, the
 databases and the chart install. Before it creates the cluster it builds one
 test binary from the snapshot:
@@ -433,3 +435,27 @@ keys. It creates with strict field validation, as `kubectl create` does, so a
 field the API dropped is refused instead of pruned. The plan fingerprint and
 the realm digest are derived here, independently of the operator, and a unit
 test holds both derivations to `internal/fingerprint`.
+
+`TestDataPlane` is the `dataplane` phase: the fixtures the scenarios share,
+both engine lifecycles, the external PostgreSQL rows, the refusals, the fault
+injection, and the four-eyes and Pod-metadata rows, as described above. It
+sends and reads on the same terms as `TestControlPlaneContract`. Its first
+scenario stands up the registry endpoint, the databases, the TLS proxy and the
+admission fixtures; the migration suites run the phase with
+`E2E_DATAPLANE_MODE=prepare`, and it stops there through `Run.Prepared`, which
+fails a run that stops anywhere but the boundary `phases/` declares.
+
+Every wait audits the Jobs that finished since the last reading, before the
+controller's TTL can delete them: their objects, their Pods and every container
+log are scanned for the fixture credentials, and a completed operation Job's
+Job, Pod, settled log and result are kept in memory for the proofs that read
+its history later. Results are read with `resultframe`, the production parser
+behind the `resultassert` command. The phase keeps the three ledgers the fault
+phase shares -- the Jobs it observed, and the Jobs it audited broadly and
+fully -- as files in the formats that phase greps, hands them to
+`hack/e2e-faults.sh` in the `faults` scenario, and reads them back afterwards.
+The filters that were files under `testdata/e2e` are Go predicates in
+`dataplane_filters.go`, each held by a unit test to the readings it accepts and
+the mistakes it refuses, and so is every other predicate the phase decides a
+row by. SQL runs through `kubectl exec` into the database Deployments, as it
+did from the shell.
