@@ -241,6 +241,10 @@ func validatingAdmissionEntries(configuration *admissionregistrationv1.Validatin
 	return entries
 }
 
+func pointer[T any](value T) *T {
+	return &value
+}
+
 func equalPointer[T comparable](value *T, want T) bool {
 	return value != nil && *value == want
 }
