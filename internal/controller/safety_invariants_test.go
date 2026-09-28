@@ -1246,6 +1246,70 @@ func TestOrphanedPendingApplyPodBlocksProofPastTimeHorizon(t *testing.T) {
 	}
 }
 
+// dispatchBuiltProof stands the Job the real builder makes for the stored
+// post-Apply Observe claim, and its Pod, where the claim reads them, and
+// records the Job's name and admission snapshot on the claim as a dispatch
+// does. A pass whose inputs moved holds that Job to the labels and annotations
+// the claim fixes, and the fixture Job carries none of them. The Job is built
+// from the stored claim because the fixture's Lease seeding rebinds its input
+// fingerprint.
+func dispatchBuiltProof(
+	t *testing.T,
+	api client.Client,
+	schema *operatorv1alpha1.PtahSchema,
+	conditionType batchv1.JobConditionType,
+) {
+	t.Helper()
+
+	ctx := context.Background()
+	stored := safetyGetSchema(t, api, schema)
+	operation := stored.Status.ActiveOperation
+	name, err := workload.NameFor(stored, *operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.JobName = name
+	builder := workloadBuilderForMigrations()
+	build := func() *batchv1.Job {
+		t.Helper()
+		job, err := builder.Build(stored, *operation, nil)
+		if err != nil {
+			t.Fatalf("build the proof Job: %v", err)
+		}
+		return job
+	}
+	// The snapshot is resolved from the template built without one, as a
+	// dispatch resolves it, and the Job is built again carrying its digest.
+	operation.AdmissionSnapshot = nil
+	template := build().Spec.Template.DeepCopy()
+	operation.AdmissionSnapshot = testAdmissionSnapshotOf(template)
+	job := build()
+	job.UID = operation.JobUID
+	job.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{batchv1.ControllerUidLabel: string(job.UID)}}
+	job.Spec.Template.Labels[batchv1.ControllerUidLabel] = string(job.UID)
+	job.Spec.Template.Labels[batchv1.JobNameLabel] = job.Name
+	job.Status.Conditions = []batchv1.JobCondition{{Type: conditionType, Status: corev1.ConditionTrue}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: job.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"), GenerateName: job.Name + "-",
+			UID: "pod-uid", Labels: maps.Clone(job.Spec.Template.Labels), Annotations: maps.Clone(job.Spec.Template.Annotations),
+			OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+		},
+		Spec: *job.Spec.Template.Spec.DeepCopy(),
+		Status: corev1.PodStatus{Phase: corev1.PodSucceeded, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: executorContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+		}}},
+	}
+	if err := api.Status().Update(ctx, stored); err != nil {
+		t.Fatalf("record the dispatched proof: %v", err)
+	}
+	for _, object := range []client.Object{job, pod} {
+		if err := api.Create(ctx, object); err != nil {
+			t.Fatalf("create the dispatched proof's %T: %v", object, err)
+		}
+	}
+}
+
 func TestLateApplyPodInvalidatesAlreadyClaimedProof(t *testing.T) {
 	t.Parallel()
 
@@ -1253,7 +1317,6 @@ func TestLateApplyPodInvalidatesAlreadyClaimedProof(t *testing.T) {
 	schema.Status.PendingObservation.ApplyPodUIDs = []types.UID{"initial-apply-pod-uid"}
 	schema.Status.PendingObservation.ApplyPodCount = 1
 	bindActiveInput(t, schema)
-	proofJob, proofPod := terminalWorkload(schema, batchv1.JobComplete)
 	applyJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Namespace: schema.Namespace,
 		Name:      schema.Status.PendingObservation.ApplyJobName,
@@ -1268,7 +1331,8 @@ func TestLateApplyPodInvalidatesAlreadyClaimedProof(t *testing.T) {
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
-	reconciler, api := fakeReconciler(t, staticLogs{}, schema, proofJob, proofPod, lateApplyPod)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, lateApplyPod)
+	dispatchBuiltProof(t, api, schema, batchv1.JobComplete)
 
 	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
 	if err != nil {

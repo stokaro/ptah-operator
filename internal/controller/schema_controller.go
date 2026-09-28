@@ -946,6 +946,15 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job intent changed: %w", intentErr))
 		}
+	} else if envelopeErr := validateJobEnvelope(job, schema, operation); envelopeErr != nil {
+		// The inputs moved, so the claim cannot rebuild its Job, but it still
+		// fixes the Job's epoch, labels, annotations and Pod template. A Job
+		// that fails them is not recorded, and is settled as one that fails
+		// the rebuild is.
+		if schemaOperation(operation).Mutating {
+			return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job is not its claim's: %w", envelopeErr))
+		}
+		return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job is not its claim's: %w", envelopeErr))
 	}
 	if operation.JobUID == "" {
 		before := schema.DeepCopy()
@@ -1817,6 +1826,28 @@ func validateAdoptedJobIntent(
 		return fmt.Errorf("no schema claims the Job")
 	}
 	return jobclaim.Match(actual, builtSchemaJobClaim(schema, operation, expected))
+}
+
+// validateJobEnvelope holds a live Job to its claim where the claim can no
+// longer rebuild it, because the inputs it was made from have moved since
+// dispatch. The Job is held to what the claim fixes without a rebuild: its
+// name, owner and recorded UID, the epoch the claim was made under, the labels
+// and annotations the claim fixes, and the Pod template its admission snapshot
+// recorded. It is the match the controller-write webhook applies when it
+// admits the Job's cleanup TTL. The binding in force is named, as the webhook
+// names it for a claim of the current epoch; reconcileExecutionBinding has
+// already retired a claim of any other.
+func validateJobEnvelope(
+	actual *batchv1.Job,
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+) error {
+	if schema == nil || operation == nil {
+		return fmt.Errorf("no active operation claims the Job")
+	}
+	claim := jobclaim.SchemaOperation(schema, operation)
+	claim.Binding = schema.Status.ExecutionBinding
+	return jobclaim.Match(actual, claim)
 }
 
 func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
