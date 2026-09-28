@@ -12,6 +12,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -558,7 +559,7 @@ func TestOutageBaselineRequiresAFreshSuccess(t *testing.T) {
 	plan := &ptahv1alpha1.PtahSchemaPlan{}
 	plan.UID = "plan-uid"
 	plan.Spec = ptahv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion: 3, Fingerprint: testGateFingerprint, ArtifactDigest: testGateDigest, PtahVersion: "v1.2.3",
+		ContractVersion: fingerprint.CurrentPlanContractVersion, Fingerprint: testGateFingerprint, ArtifactDigest: testGateDigest, PtahVersion: "v1.2.3",
 		ExecutionBindingID: "v1-00000000000000000000000000000000", ControllerImage: gateController.image,
 		ControllerRevision: gateController.revision, ControllerStateVersion: 3,
 	}
@@ -569,7 +570,7 @@ func TestOutageBaselineRequiresAFreshSuccess(t *testing.T) {
 	if err := recoveredPlan(plan, "plan-uid", testGateFingerprint, testGateDigest); err != nil {
 		t.Fatalf("the recovered plan was refused: %v", err)
 	}
-	plan.Spec.ContractVersion = 2
+	plan.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
 	if outageBaselinePlan(plan, "plan-uid", testGateFingerprint, testGateDigest, "v1.2.3", gateController, 3) == nil {
 		t.Fatal("a plan of another contract was accepted")
 	}

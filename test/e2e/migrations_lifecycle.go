@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/migrationplan"
 )
 
 // The readings the main migration's lifecycle is held to: the approval gate
@@ -68,7 +69,7 @@ func planSequence(plan *ptahv1alpha1.PtahMigrationPlan, migration, digest, coord
 		}
 	}
 	switch {
-	case spec.ContractVersion != 1:
+	case spec.ContractVersion != migrationplan.ContractVersion:
 		return fmt.Errorf("it is contract version %d", spec.ContractVersion)
 	case spec.MigrationRef.Name != migration:
 		return fmt.Errorf("it belongs to %s", spec.MigrationRef.Name)

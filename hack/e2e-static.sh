@@ -582,9 +582,9 @@ if [ -z "$runner_protocol_constant" ] ||
 		"$runner_protocol_constant" "$runner_protocol_catalog" "$runner_protocol_record" >&2
 	exit 1
 fi
-grep -F 'TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol' \
+grep -F 'TestParserRejectsSuccessfulVerifyFrameFromAnotherProtocol' \
 	"$ROOT_DIR/internal/runner/protocol_test.go" >/dev/null || {
-	printf '%s\n' 'e2e static: previous runner protocol rejection regression is missing' >&2
+	printf '%s\n' 'e2e static: the other-protocol runner frame rejection regression is missing' >&2
 	exit 1
 }
 grep -F 'RegistryCASHA256SecretKey = "caSHA256"' \
@@ -2504,6 +2504,14 @@ crd_bootstrap_count=$(find "$ROOT_DIR/charts/ptah-operator/crds" -type f -name '
 	printf '%s\n' 'e2e static: the chart renders a pre-delete hook' >&2
 	exit 1
 }
+# The admission contract both configurations carry is the one the CRD manager
+# compiles, read from it rather than restated here.
+admission_contract_version=$(sed -n 's/^[[:space:]]*CurrentAdmissionContractVersion int32 = \([1-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/crdupgrade/runtime.go")
+[ -n "$admission_contract_version" ] || {
+	printf '%s\n' 'e2e static: internal/crdupgrade/runtime.go declares no admission contract version' >&2
+	exit 1
+}
 for singleton_annotation in \
 	'operator.ptah.run/release-name: "ptah-e2e"' \
 	'operator.ptah.run/release-namespace: "ptah-e2e"' \
@@ -2514,7 +2522,7 @@ for singleton_annotation in \
 	'operator.ptah.run/controller-deployment-name: "ptah-e2e-ptah-operator"' \
 	'operator.ptah.run/certificate-deployment-name: "ptah-e2e-ptah-operator-cert-rotator"' \
 	"operator.ptah.run/controller-state-version: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" \
-	'operator.ptah.run/admission-contract-version: "2"'; do
+	"operator.ptah.run/admission-contract-version: \"$admission_contract_version\""; do
 	[ "$(grep -Fc -- "$singleton_annotation" "$ADMISSION_RENDER")" -eq 2 ]
 done
 hook_service_account_name=$(awk '
@@ -2660,7 +2668,14 @@ grep -F -- \
 	"$CONTROLLER_WRITE_GUARD_RENDER" >/dev/null
 # The object guards admit what this release's manager writes: its image and
 # its controller-state version are literals in the policy, where a parameter
-# used to carry them.
+# used to carry them. The plan contract is the one the manager fingerprints,
+# read from the constant rather than restated.
+plan_contract_version=$(sed -n 's/^[[:space:]]*CurrentPlanContractVersion int32 = \([1-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/fingerprint/fingerprint.go")
+[ -n "$plan_contract_version" ] || {
+	printf '%s\n' 'e2e static: internal/fingerprint/fingerprint.go declares no plan contract version' >&2
+	exit 1
+}
 for controller_object_marker in \
 	'- name: releaseControllerImage' \
 	'expression: "\"ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222\""' \
@@ -2680,7 +2695,7 @@ for controller_object_marker in \
 	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
 	'dyn(object).binaryData[\"chunk\"].size() <= 699052' \
 	'dyn(object).spec.data.size() <= 699052' \
-	'dyn(object).spec.contractVersion == 3' \
+	"dyn(object).spec.contractVersion == $plan_contract_version && has(dyn(dyn(object).spec).controllerImage)" \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
 	'Ptah controller chunk write guard rejected an unsafe PtahSchemaPlanChunk shape' \
 	'Ptah controller projection write guard rejected an unsafe ConfigMap shape' \
@@ -2691,12 +2706,16 @@ for controller_object_marker in \
 	}
 done
 # Only the current Job envelope and plan contract are admitted: a Job without
-# controller provenance and a plan older than contract 3 are refused.
+# controller provenance is refused, and each plan kind names exactly one
+# contract, so no second version rides beside the current one.
+[ "$(grep -o 'dyn(object).spec.contractVersion == ' "$CONTROLLER_OBJECT_GUARD_RENDER" | wc -l | tr -d '[:space:]')" -eq 2 ] || {
+	printf '%s\n' 'e2e static: the plan guards do not name exactly one contract per plan kind' >&2
+	exit 1
+}
 for retired_controller_object_marker in \
 	'variables.previousRelease' \
 	'variables.activeRelease' \
-	'params.' \
-	'dyn(object).spec.contractVersion == 2'; do
+	'params.'; do
 	if grep -F -- "$retired_controller_object_marker" "$CONTROLLER_OBJECT_GUARD_RENDER" >/dev/null; then
 		printf 'e2e static: controller object guard still reads %s\n' "$retired_controller_object_marker" >&2
 		exit 1

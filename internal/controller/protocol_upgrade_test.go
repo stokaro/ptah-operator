@@ -17,16 +17,19 @@ import (
 // manager across one runner protocol version, with a read-only operation the
 // previous protocol dispatched still standing. The binding rotates and the
 // operation is fenced before its log is read, because its frame is written in
-// a protocol this manager does not read.
+// a protocol the successor does not read.
+//
+// The fixture is dispatched under this build's protocol, and the successor is
+// a manager one protocol later, so the upgrade is the one the next release
+// makes whatever version this one is.
 func TestTheProtocolFencesAnOperationThePreviousOneDispatched(t *testing.T) {
 	t.Parallel()
 
-	priorProtocolVersion := int32(runner.ProtocolVersion) - 1
+	successorProtocolVersion := int32(runner.ProtocolVersion) + 1
 
 	schema := schemaFixture()
 	schema.Finalizers = []string{activeOperationFinalizer}
 	schema.Status.Phase = operatorv1alpha1.PhaseResolving
-	schema.Status.ExecutionBinding.RunnerProtocolVersion = priorProtocolVersion
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 		Type:      operatorv1alpha1.OperationResolve,
 		ID:        "previous-protocol-resolve",
@@ -43,6 +46,11 @@ func TestTheProtocolFencesAnOperationThePreviousOneDispatched(t *testing.T) {
 
 	logs := &safetyCountingLogs{content: []byte("a previous-protocol result must not be read")}
 	reconciler, api := fakeReconciler(t, logs, schema, job, pod)
+	reconciler.Jobs = executionBindingJobs{
+		ptahVersion:   schema.Status.ExecutionBinding.PtahVersion,
+		executorImage: schema.Status.ExecutionBinding.ExecutorImage,
+		protocol:      successorProtocolVersion,
+	}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("Reconcile() protocol upgrade fence error = %v", err)
@@ -50,7 +58,7 @@ func TestTheProtocolFencesAnOperationThePreviousOneDispatched(t *testing.T) {
 
 	fenced := safetyGetSchema(t, api, schema)
 	if fenced.Status.ExecutionBinding == nil ||
-		fenced.Status.ExecutionBinding.RunnerProtocolVersion != int32(runner.ProtocolVersion) ||
+		fenced.Status.ExecutionBinding.RunnerProtocolVersion != successorProtocolVersion ||
 		fenced.Status.ExecutionBinding.Epoch == oldEpoch {
 		t.Fatalf("protocol upgrade did not rotate the execution binding: %#v", fenced.Status.ExecutionBinding)
 	}

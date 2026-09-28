@@ -121,7 +121,7 @@ func TestDerivationsAreTheOperators(t *testing.T) {
 		}
 	}
 	binding := planBinding{
-		ContractVersion: 3, SchemaUID: "5e6f0a1b-0000-4000-8000-000000000001", PlanContentDigest: contentDigestFixtureForTest,
+		ContractVersion: int(fingerprint.CurrentPlanContractVersion), SchemaUID: "5e6f0a1b-0000-4000-8000-000000000001", PlanContentDigest: contentDigestFixtureForTest,
 		ArtifactDigest: "sha256:" + strings.Repeat("2", 64), CoordinationDigest: "sha256:" + strings.Repeat("3", 64),
 		TargetIdentityDigest: "sha256:" + strings.Repeat("4", 64), ActualStateFingerprint: "sha256:" + strings.Repeat("5", 64),
 		DesiredStateFingerprint: "sha256:" + strings.Repeat("6", 64), PolicyFingerprint: "sha256:" + strings.Repeat("7", 64),
@@ -135,7 +135,7 @@ func TestDerivationsAreTheOperators(t *testing.T) {
 		t.Fatal(err)
 	}
 	want, err := fingerprint.PlanBinding{
-		ContractVersion: 3, SchemaUID: binding.SchemaUID, PlanContentDigest: binding.PlanContentDigest,
+		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaUID: binding.SchemaUID, PlanContentDigest: binding.PlanContentDigest,
 		ArtifactDigest: binding.ArtifactDigest, CoordinationDigest: binding.CoordinationDigest,
 		TargetIdentityDigest: binding.TargetIdentityDigest, ActualStateFingerprint: binding.ActualStateFingerprint,
 		DesiredStateFingerprint: binding.DesiredStateFingerprint, PolicyFingerprint: binding.PolicyFingerprint,

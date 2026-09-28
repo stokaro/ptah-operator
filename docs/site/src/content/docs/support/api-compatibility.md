@@ -63,6 +63,42 @@ version bumped without a change.
 So the annotation is a fact about the bytes rather than a release number, and
 every shipped kind carries the same one.
 
+## Contract counters
+
+The schema version is one of several numbers that version something a release
+stores in a cluster or speaks to another component. Each is written down in
+code and held there by a check:
+
+| Counter | Where it is declared | What it versions |
+| --- | --- | --- |
+| CRD schema version | `CRD_SCHEMA_VERSION` in the `Makefile` and `CurrentCRDSchemaVersion` in `internal/crdupgrade`, stamped on every CRD as `operator.ptah.run/crd-schema-version` | The generated schemas, held to the previous commit as described above. |
+| Controller-state version | `CONTROLLER_STATE_VERSION` in the `Makefile` and `controllerstate.CurrentVersion`, stamped on every CRD and both webhook configurations as `operator.ptah.run/controller-state-version` | The durable status a manager can read; see [the controller-state contract](../releases/#controller-state-contract). |
+| Plan contract | `fingerprint.CurrentPlanContractVersion`, which the `PtahSchemaPlan` `spec.contractVersion` enum and the plan write guard repeat | What a schema plan's fingerprint binds, and so what an approval names. |
+| Migration plan contract | `migrationplan.ContractVersion`, which the `PtahMigrationPlan` `spec.contractVersion` bound repeats | The same for a migration plan. |
+| Realm digest contract | `coordinationContractVersion` in `internal/fingerprint` | How a coordination key or a `PtahRealm` becomes the digest that names a database. |
+| Runner protocol | `runner.ProtocolVersion`, recorded in `support/runner-protocol.json` and in the `edge` row of `support/ptah.json` | What the runner accepts, enforces and returns. `hack/verifyrunnerprotocol` holds it to the runner's source. |
+| Drift vocabulary | `dataplane.DriftFindingVocabularyVersion` | The closed set of drift finding categories. |
+| Admission contract | `CurrentAdmissionContractVersion` in `internal/crdupgrade`, stamped on both webhook configurations as `operator.ptah.run/admission-contract-version` | The admission configuration every release serves. |
+| Certificate staging format | `certrotation.StagingFormat`, the `format` key of the rotator's staging Secret | The record a certificate rotation resumes from after a restart. |
+| Admission snapshot format | `podintent.SnapshotVersion`, which the `admissionSnapshot.version` enum in an operation's status repeats | The Pod admission rules an operation's snapshot was taken under. |
+
+Every counter read 1 at v0.1.0. Before that tag they counted commits, and no
+release could hold version 32 of anything, so they were all reset to 1 in the
+change before the tag. The schema-history check compares each change with the
+commit before it, and would read 32 to 1 as a rollback. That one restart is
+recorded in `hack/crdschemahistory/restart.go`: it leaves only the schemas it
+names, by version and by the digest of every CRD, it arrives at version 1 and
+at nothing else, and it excuses only the stored-object transitions it lists.
+Any other move below the baseline is refused as a rollback, and every change
+after it is held to the rules above.
+
+From v0.1.0 on, a counter moves only when something a tagged release could
+have stored or spoken changes. A change that leaves every stored and spoken
+form as it was keeps its number: the runner protocol records such a change in
+`support/runner-protocol.json` with its reason instead of moving. The CRD
+schema version is the strictest of them, because its check compares every
+change with the commit before it: any change to a generated schema moves it.
+
 ## What the operator refuses at runtime
 
 The durable state and the release order carry versions of their own, and both

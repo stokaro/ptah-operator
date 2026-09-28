@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 )
 
 // The values a plan and the approvals that name it carry. They are the ones on
@@ -80,7 +82,7 @@ func schemaPlanSpec() map[string]any {
 			"index": int64(0), "name": "ptah-plan-71c480df93d6ae2f14efe3c4-000",
 			"size": int64(1832), "digest": contentDigest,
 		}},
-		"contractVersion":          int64(3),
+		"contractVersion":          int64(fingerprint.CurrentPlanContractVersion),
 		"artifactDigest":           artifactDigest,
 		"verificationPolicyUID":    verificationPolicyUID,
 		"verificationPolicyDigest": verificationPolicyDigest,
@@ -232,7 +234,7 @@ func TestPtahSchemaPlanRefusals(t *testing.T) {
 		},
 		refusal{
 			name:   "contractVersion outside its enum",
-			mutate: setting(int64(2), "spec", "contractVersion"),
+			mutate: setting(int64(fingerprint.CurrentPlanContractVersion)+1, "spec", "contractVersion"),
 			want:   []cause{{"spec.contractVersion", "Unsupported value"}},
 		},
 		refusal{

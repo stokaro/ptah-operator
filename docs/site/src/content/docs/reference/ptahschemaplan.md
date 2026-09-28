@@ -62,7 +62,7 @@ spec:
       name: ptah-plan-71c480df93d6ae2f14efe3c4-000
       size: 1832
       digest: sha256:3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea
-  contractVersion: 3
+  contractVersion: 1
   artifactDigest: sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
   verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
@@ -73,9 +73,9 @@ spec:
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
   ptahVersion: v0.9.0-73-gf6e562c5b
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
-  runnerProtocolVersion: 7
+  runnerProtocolVersion: 1
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
-  controllerStateVersion: 2
+  controllerStateVersion: 1
   # The manager that published the plan. Recorded, not bound: none of the
   # three is in the fingerprint, and a later release of the manager applies
   # this plan as it stands.
@@ -112,7 +112,7 @@ spec:
       name: ptah-plan-9c56cc51b374c3ba189210d5-000
       size: 396
       digest: sha256:0c3a2a729409b8995b48a2faf12ab1482177cbf660ea2655729c3ab825be67de
-  contractVersion: 3
+  contractVersion: 1
   artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
   verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
@@ -124,11 +124,11 @@ spec:
   ptahVersion: v0.9.0-73-gf6e562c5b
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
-  runnerProtocolVersion: 7
+  runnerProtocolVersion: 1
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   controllerRevision: a7d0119c0bd0d34e0b73f1d9e0e5c6aa0d9ff2b1
-  controllerStateVersion: 2
+  controllerStateVersion: 1
 ```
 
 ### A plan that changes privileges
@@ -168,7 +168,7 @@ spec:
       name: ptah-plan-3263a9026c3e3f7e368860bd-000
       size: 653
       digest: sha256:e93552f381cd8ee8958d6c097b84b4fc868e8ccacb028fd1acfc54725692a12e
-  contractVersion: 3
+  contractVersion: 1
   artifactDigest: sha256:ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d
   verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
   verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
@@ -180,9 +180,9 @@ spec:
   ptahVersion: v0.9.0-73-gf6e562c5b
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
-  runnerProtocolVersion: 7
+  runnerProtocolVersion: 1
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 2
+  controllerStateVersion: 1
 ```
 
 ## spec
@@ -197,7 +197,7 @@ spec:
 | `spec.chunks[].name` | `string`, required | Name of the PtahSchemaPlanChunk holding this chunk. An Apply projects the chunk into its Pod through an immutable ConfigMap of the same name. |
 | `spec.chunks[].size` | `integer`, required | Size of this chunk in bytes, checked with the digest. |
 | `spec.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes the chunks reconstruct. |
-| `spec.contractVersion` | `integer`, required, one of `3` | ContractVersion versions plan publication and reconstruction separately from the Kubernetes API version. Version 3 is the only one. |
+| `spec.contractVersion` | `integer`, required, one of `1` | ContractVersion versions plan publication and reconstruction separately from the Kubernetes API version. Version 1 is the only one. |
 | `spec.controllerImage` | `string`, required | ControllerImage is the digest-pinned manager that published this plan. It is a record, not a binding: the fingerprint leaves it out, and a later manager may apply the plan. |
 | `spec.controllerRevision` | `string`, required | ControllerRevision is that manager's revision, recorded the same way. |
 | `spec.controllerStateVersion` | `integer`, required | ControllerStateVersion is the state semantics that manager writes, so a plan is never applied by a controller that reads status differently. |

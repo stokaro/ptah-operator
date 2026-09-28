@@ -14,6 +14,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -405,7 +406,7 @@ func appliedExternalPlan() *ptahv1alpha1.PtahSchemaPlan {
 	plan := &ptahv1alpha1.PtahSchemaPlan{}
 	plan.Name, plan.UID = "plan-a", "plan-uid"
 	plan.Spec = ptahv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion: 3, ArtifactDigest: want.digest, Fingerprint: schema.Status.Applied.PlanFingerprint,
+		ContractVersion: fingerprint.CurrentPlanContractVersion, ArtifactDigest: want.digest, Fingerprint: schema.Status.Applied.PlanFingerprint,
 		ContentDigest: externalDigest('7'), CoordinationDigest: want.coordinationDigest,
 		TargetIdentityDigest: schema.Status.Target.IdentityDigest, ActualStateFingerprint: document.FromFingerprint,
 		DesiredStateFingerprint: document.ToFingerprint, StatementCount: int32(len(document.Statements)),
@@ -430,7 +431,9 @@ func TestAutomaticPlanBound(t *testing.T) {
 		name   string
 		mutate func(*ptahv1alpha1.PtahSchemaPlan)
 	}{
-		{"another contract", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ContractVersion = 2 }},
+		{"another contract", func(p *ptahv1alpha1.PtahSchemaPlan) {
+			p.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+		}},
 		{"another fingerprint", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.Fingerprint = externalDigest('9') }},
 		{"another content", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ContentDigest = externalDigest('9') }},
 		{"another realm", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.CoordinationDigest = externalDigest('9') }},

@@ -12,6 +12,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 )
 
 // The guards are ordinary release objects that an upgrade updates in place, so
@@ -257,10 +258,11 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		}
 	}
 	plan := strings.Join(validationExpressions(entries[3].validations), "\n")
+	currentContract := `dyn(object).spec.contractVersion == ` + strconv.Itoa(int(fingerprint.CurrentPlanContractVersion))
 	for _, marker := range []string{
 		`object.metadata.labels.size() == 1`,
 		`dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
-		`dyn(object).spec.contractVersion == 3`,
+		currentContract,
 		`dyn(object).spec.executionBindingID.matches`,
 		`has(dyn(dyn(object).spec).controllerImage)`,
 		`dyn(dyn(object).spec).controllerImage.matches`,
@@ -278,8 +280,8 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 			t.Fatalf("plan structural contract lacks %q", marker)
 		}
 	}
-	if strings.Contains(plan, `contractVersion == 2`) || strings.Contains(plan, `variables.previousRelease`) {
-		t.Fatal("plan structural contract admits a plan contract older than the current one")
+	if strings.Count(plan, `contractVersion ==`) != 1 || strings.Contains(plan, `variables.previousRelease`) {
+		t.Fatal("plan structural contract admits a plan contract other than the current one")
 	}
 	for _, staticReference := range []string{
 		`dyn(object).spec.controllerImage`,
@@ -470,15 +472,17 @@ func TestControllerObjectReleaseIdentityContractsEvaluate(t *testing.T) {
 	}
 
 	planExpression := controllerPlanContractExpression()
+	currentContract := int64(fingerprint.CurrentPlanContractVersion)
 	for _, test := range []struct {
 		name   string
 		object map[string]any
 		want   bool
 	}{
-		{name: "v2 without controller identity", object: controllerObjectPlanCELObject(2, "", 0), want: false},
-		{name: "v3 by this release", object: controllerObjectPlanCELObject(3, releaseImage, int64(ourStateVersion)), want: true},
-		{name: "v3 by another release's manager", object: controllerObjectPlanCELObject(3, otherImage, int64(ourStateVersion)), want: false},
-		{name: "v3 with another controller state", object: controllerObjectPlanCELObject(3, releaseImage, int64(newerStateVersion)), want: false},
+		{name: "the current contract without controller identity", object: controllerObjectPlanCELObject(currentContract, "", 0), want: false},
+		{name: "another contract by this release", object: controllerObjectPlanCELObject(currentContract+1, releaseImage, int64(ourStateVersion)), want: false},
+		{name: "the current contract by this release", object: controllerObjectPlanCELObject(currentContract, releaseImage, int64(ourStateVersion)), want: true},
+		{name: "the current contract by another release's manager", object: controllerObjectPlanCELObject(currentContract, otherImage, int64(ourStateVersion)), want: false},
+		{name: "the current contract with another controller state", object: controllerObjectPlanCELObject(currentContract, releaseImage, int64(newerStateVersion)), want: false},
 	} {
 		t.Run("Plan/"+test.name, func(t *testing.T) {
 			if got := evaluate(planExpression, test.object, "CREATE", release); got != test.want {
@@ -542,7 +546,7 @@ func controllerObjectPlanCELObject(contractVersion int64, image string, state in
 		"statementCount":           int64(1),
 		"size":                     int64(1),
 	}
-	if contractVersion == 3 {
+	if image != "" {
 		spec["controllerImage"] = image
 		spec["controllerRevision"] = "revision"
 		spec["controllerStateVersion"] = state

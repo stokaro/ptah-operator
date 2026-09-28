@@ -109,11 +109,11 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 		flag string
 	}{
 		{mode: "verify", flag: "--release-name=ignored"},
-		{mode: "verify", flag: "--controller-state-version=2"},
+		{mode: "verify", flag: "--controller-state-version=1"},
 		{mode: "reconcile", flag: "--verify-controller-state=true"},
 		{mode: "reconcile", flag: "--hook-service-account-name=ignored"},
 		{mode: "runtime-verify", flag: "--manager-image=ignored"},
-		{mode: "runtime-verify", flag: "--controller-state-version=2"},
+		{mode: "runtime-verify", flag: "--controller-state-version=1"},
 	}
 	for _, test := range tests {
 		t.Run(test.mode+test.flag, func(t *testing.T) {

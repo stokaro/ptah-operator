@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -1644,7 +1645,7 @@ func ftPlanObject() *ptahv1alpha1.PtahSchemaPlan {
 	return &ptahv1alpha1.PtahSchemaPlan{
 		ObjectMeta: metav1.ObjectMeta{Name: "plan-a", UID: "plan-uid"},
 		Spec: ptahv1alpha1.PtahSchemaPlanSpec{
-			ContractVersion: 3, Fingerprint: "fp", ExecutionBindingID: ftEpoch,
+			ContractVersion: fingerprint.CurrentPlanContractVersion, Fingerprint: "fp", ExecutionBindingID: ftEpoch,
 			ControllerImage: ftController.image, ControllerRevision: ftController.revision, ControllerStateVersion: ftStateVersion,
 			RunnerProtocolVersion: 7, ArtifactDigest: ftDigest, CoordinationDigest: ftDigest, StatementCount: 2,
 		},
@@ -1698,7 +1699,9 @@ func TestReadyPlanFromController(t *testing.T) {
 		return readyPlanFromController(p, ftController, ftStateVersion) == nil
 	}
 	ftRefusesEach(t, ftPlanObject, accepts, []ftMutation[*ptahv1alpha1.PtahSchemaPlan]{
-		{"another contract", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ContractVersion = 2 }},
+		{"another contract", func(p *ptahv1alpha1.PtahSchemaPlan) {
+			p.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+		}},
 		{"an invalid binding", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ExecutionBindingID = "bad" }},
 		{"another image", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ControllerImage = "other" }},
 		{"another revision", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ControllerRevision = "other" }},
@@ -1741,7 +1744,9 @@ func TestApprovablePlan(t *testing.T) {
 	t.Parallel()
 	accepts := func(p *ptahv1alpha1.PtahSchemaPlan) bool { return approvablePlan(p, 7, ftController, ftStateVersion) }
 	ftRefusesEach(t, ftPlanObject, accepts, []ftMutation[*ptahv1alpha1.PtahSchemaPlan]{
-		{"another contract", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ContractVersion = 4 }},
+		{"another contract", func(p *ptahv1alpha1.PtahSchemaPlan) {
+			p.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+		}},
 		{"another image", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ControllerImage = "other" }},
 		{"another revision", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ControllerRevision = "other" }},
 		{"another state", func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.ControllerStateVersion = 4 }},

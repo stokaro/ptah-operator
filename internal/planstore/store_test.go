@@ -145,7 +145,7 @@ func TestPrepareAcceptsOnlyTheCurrentPlanContract(t *testing.T) {
 		t.Fatalf("Prepare(current without controller state version) error = %v, want controller state refusal", err)
 	}
 
-	for _, version := range []int32{1, 2, fingerprint.CurrentPlanContractVersion + 1} {
+	for _, version := range []int32{fingerprint.CurrentPlanContractVersion - 1, fingerprint.CurrentPlanContractVersion + 1} {
 		other := current.Spec
 		other.ContractVersion = version
 		if _, _, err := Prepare(schema, other, content); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {

@@ -1,11 +1,13 @@
 package crdupgrade
 
 import (
+	"strconv"
 	"testing"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 )
 
 // Every binding of an execution requires what decides a plan's meaning when it
@@ -72,9 +74,13 @@ func TestGeneratedExecutionIdentityContract(t *testing.T) {
 		assertRequired(t, location.name, location.schema, required...)
 	}
 
+	// The marker cannot name the constant, so the generated enum is held to it
+	// here: a contract that moved in Go alone would publish plans the API
+	// server refuses.
 	contractVersion := schemaProperty(t, planRoot, "spec", "contractVersion")
-	if len(contractVersion.Enum) != 1 || string(contractVersion.Enum[0].Raw) != "3" {
-		t.Fatalf("PtahSchemaPlan spec.contractVersion enum = %v, want exactly [3]", contractVersion.Enum)
+	want := strconv.Itoa(int(fingerprint.CurrentPlanContractVersion))
+	if len(contractVersion.Enum) != 1 || string(contractVersion.Enum[0].Raw) != want {
+		t.Fatalf("PtahSchemaPlan spec.contractVersion enum = %v, want exactly [%s]", contractVersion.Enum, want)
 	}
 }
 

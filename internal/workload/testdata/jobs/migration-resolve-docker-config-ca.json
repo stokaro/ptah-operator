@@ -212,7 +212,7 @@
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
-                "value": "7"
+                "value": "1"
               },
               {
                 "name": "TMPDIR",

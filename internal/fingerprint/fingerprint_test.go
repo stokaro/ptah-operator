@@ -288,7 +288,7 @@ func TestPlanBindingLeavesTheManagerOut(t *testing.T) {
 
 // TestPlanBindingAcceptsOnlyTheCurrentContract pins the one plan contract this
 // manager reads. Every other version is refused before any field is looked at,
-// so an earlier or a future plan is never given an identity under today's
+// so a plan of any other contract is never given an identity under today's
 // approval semantics.
 func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 	t.Parallel()
@@ -304,7 +304,7 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 		t.Fatalf("current fingerprint = %q, want %q", got, currentPlanBindingFingerprint)
 	}
 
-	for _, version := range []int32{0, 1, 2, fingerprint.CurrentPlanContractVersion + 1} {
+	for _, version := range []int32{fingerprint.CurrentPlanContractVersion - 1, fingerprint.CurrentPlanContractVersion + 1} {
 		other := current
 		other.ContractVersion = version
 		if _, err := other.Fingerprint(); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
@@ -342,7 +342,7 @@ func TestPlanBindingAcceptsOnlyTheCurrentContract(t *testing.T) {
 	}
 }
 
-const currentPlanBindingFingerprint = "sha256:70aa6bacc97510cb2a14105915a4f083efbb0dc3379fbc46f405498f63dffa0e"
+const currentPlanBindingFingerprint = "sha256:1a17fdf1e6ce784125fbddb5913fa46164af6bbb35a484cddb1a703e28760cb1"
 
 func TestOperationIDIgnoresMapInsertionOrder(t *testing.T) {
 	t.Parallel()

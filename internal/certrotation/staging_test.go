@@ -405,7 +405,7 @@ func TestStagingSecretContractFailsClosedBeforeCertificateWrites(t *testing.T) {
 			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
 				t.Helper()
 				updateStagingForTest(t, client, config, func(secret *corev1.Secret) {
-					secret.Data = map[string][]byte{stagingFormatKey: []byte(stagingFormat)}
+					secret.Data = map[string][]byte{stagingFormatKey: []byte(StagingFormat)}
 				})
 			},
 		},
@@ -847,7 +847,7 @@ func TestPendingCandidateRecordRejectsTampering(t *testing.T) {
 			},
 		},
 		{
-			name:   "record of the one-pass format",
+			name:   "record of another format",
 			source: pending,
 			mutate: func(data map[string][]byte) {
 				data[stagingFormatKey] = []byte("v2")
@@ -966,7 +966,7 @@ func TestPendingCandidateRecordBindsMaterialAndKeepsTheCursorOutside(t *testing.
 	if len(data) != stagingFieldCount {
 		t.Fatalf("staging field count = %d, want %d", len(data), stagingFieldCount)
 	}
-	if string(data[stagingFormatKey]) != stagingFormat ||
+	if string(data[stagingFormatKey]) != StagingFormat ||
 		string(data[stagingOperationKey]) != string(stagingOperationCA) ||
 		string(data[stagingPhaseKey]) != string(stagingPhasePrepared) ||
 		len(data[stagingExpandedAtKey]) != 0 {

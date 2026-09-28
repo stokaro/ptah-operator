@@ -12,6 +12,7 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -95,7 +96,7 @@ func mtBuiltJobs(t *testing.T) []batchv1.Job {
 	plan := &ptahv1alpha1.PtahMigrationPlan{
 		ObjectMeta: metav1.ObjectMeta{Namespace: migration.Namespace, Name: "ptah-mplan-1", UID: types.UID("migration-plan-uid")},
 		Spec: ptahv1alpha1.PtahMigrationPlanSpec{
-			ContractVersion: 1, MigrationRef: ptahv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
+			ContractVersion: migrationplan.ContractVersion, MigrationRef: ptahv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
 			Fingerprint: builderDigest('4'), HistoryFingerprint: builderDigest('5'),
 			ArtifactDigest: migration.Status.Artifact.Digest, CoordinationDigest: coordination,
 			TargetIdentityDigest: builderDigest('6'),

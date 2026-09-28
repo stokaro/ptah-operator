@@ -27,7 +27,7 @@ const (
 	// revision and the runner image are recorded on the plan but left out of
 	// the fingerprint, so a manager release that changes only them, and reads
 	// the plan the same way, keeps every plan and approval.
-	CurrentPlanContractVersion int32 = 3
+	CurrentPlanContractVersion int32 = 1
 )
 
 var (

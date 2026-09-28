@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -366,13 +367,13 @@ func outageBaseline(schema *ptahv1alpha1.PtahSchema, failureRetry, digest, finge
 }
 
 // outageBaselinePlan is the applied plan the outage must leave in place.
-func outageBaselinePlan(plan *ptahv1alpha1.PtahSchemaPlan, uid, fingerprint, digest, ptahVersion string,
+func outageBaselinePlan(plan *ptahv1alpha1.PtahSchemaPlan, uid, planFingerprint, digest, ptahVersion string,
 	controller controllerIdentity, stateVersion int32,
 ) error {
 	spec := plan.Spec
 	switch {
-	case string(plan.UID) != uid || spec.Fingerprint != fingerprint || spec.ArtifactDigest != digest ||
-		spec.PtahVersion != ptahVersion || spec.ContractVersion != 3:
+	case string(plan.UID) != uid || spec.Fingerprint != planFingerprint || spec.ArtifactDigest != digest ||
+		spec.PtahVersion != ptahVersion || spec.ContractVersion != fingerprint.CurrentPlanContractVersion:
 		return errors.New("the plan is not the applied one")
 	case !executionEpoch.MatchString(spec.ExecutionBindingID) || spec.ControllerImage != controller.image ||
 		spec.ControllerRevision != controller.revision || spec.ControllerStateVersion != stateVersion:

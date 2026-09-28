@@ -32,7 +32,7 @@ const (
 	// CurrentAdmissionContractVersion is the one admission contract every
 	// release serves, whoever issues its certificate. The chart renders the
 	// same number in ptah-operator.admissionContractVersion.
-	CurrentAdmissionContractVersion int32 = 2
+	CurrentAdmissionContractVersion int32 = 1
 
 	mutatingApprovalWebhookName            = "mapproval.operator.ptah.run"
 	validatingApprovalWebhookName          = "vapproval.operator.ptah.run"

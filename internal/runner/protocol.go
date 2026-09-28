@@ -27,9 +27,7 @@ const (
 	// accepts, any check it enforces inside the Pod before or around the
 	// executor, and the result frame it returns. A change to runner
 	// enforcement that keeps this number lets an approval granted under the
-	// old checks run under the new ones. The rule starts with the first
-	// tagged release: until one ships, no installation holds an approval to
-	// carry over, and the contract changes in place.
+	// old checks run under the new ones.
 	//
 	// hack/verifyrunnerprotocol, under make verify-source, holds this number
 	// to the source the runner is built from: it refuses a source change that
@@ -37,11 +35,12 @@ const (
 	// contract stayed the same. Every Job names this number in
 	// EnvRunnerProtocolVersion, and a runner of another protocol refuses it.
 	//
-	// 7 adds the Plan payload seal: a Plan Job now refuses to start its
-	// executor without a well-formed manager public key
-	// (EnvPlanSealPublicKey), and Result.Stdout carries the plan sealed to it
-	// rather than in the clear.
-	ProtocolVersion = 7
+	// Version 1 is the protocol the first tagged release speaks, the Plan
+	// payload seal included: a Plan Job refuses to start its executor without
+	// a well-formed manager public key (EnvPlanSealPublicKey), and
+	// Result.Stdout carries the plan sealed to it. The versions before it
+	// counted commits nobody installed, and were reset to 1 ahead of that tag.
+	ProtocolVersion = 1
 
 	// JSON escaping can expand a bounded plan payload. This shared cap includes
 	// the worst-case expansion plus fixed result-envelope headroom.

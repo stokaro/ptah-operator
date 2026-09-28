@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
@@ -46,7 +47,7 @@ func exactControllerBinding(binding *ptahv1alpha1.ExecutionBindingStatus, stateV
 func readyPlanFromController(plan *ptahv1alpha1.PtahSchemaPlan, controller controllerIdentity, stateVersion int32) error {
 	spec := plan.Spec
 	switch {
-	case spec.ContractVersion != 3:
+	case spec.ContractVersion != fingerprint.CurrentPlanContractVersion:
 		return fmt.Errorf("it is contract version %d", spec.ContractVersion)
 	case !executionEpoch.MatchString(spec.ExecutionBindingID) || spec.ControllerImage != controller.image ||
 		spec.ControllerRevision != controller.revision || spec.ControllerStateVersion != stateVersion:
@@ -77,7 +78,7 @@ func approvalBindsCurrentPlan(schema *ptahv1alpha1.PtahSchema, plan *ptahv1alpha
 // manager, with an artifact and a coordination digest.
 func approvablePlan(plan *ptahv1alpha1.PtahSchemaPlan, runnerProtocol int64, controller controllerIdentity, stateVersion int32) bool {
 	spec := plan.Spec
-	return spec.ContractVersion == 3 && spec.ControllerImage == controller.image &&
+	return spec.ContractVersion == fingerprint.CurrentPlanContractVersion && spec.ControllerImage == controller.image &&
 		spec.ControllerRevision == controller.revision && spec.ControllerStateVersion == stateVersion &&
 		int64(spec.RunnerProtocolVersion) == runnerProtocol &&
 		sha256Pattern.MatchString(spec.ArtifactDigest) && sha256Pattern.MatchString(spec.CoordinationDigest)

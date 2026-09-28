@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/stokaro/ptah-operator/internal/certrotation"
+	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 )
 
 const (
@@ -33,6 +35,10 @@ const (
 	runnerDigest     = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	ptahVersion      = "e2e-explicit-version"
 )
+
+// admissionContractVersion is what the chart renders on both webhook
+// configurations: the contract the manager compiles, not a number restated.
+var admissionContractVersion = strconv.Itoa(int(crdupgrade.CurrentAdmissionContractVersion))
 
 func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	t.Parallel()
@@ -185,8 +191,8 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	mutatingConfiguration := mustObject(t, objects, "MutatingWebhookConfiguration", configurationName)
 	validatingConfiguration := mustObject(t, objects, "ValidatingWebhookConfiguration", configurationName)
 	for _, configuration := range []*unstructured.Unstructured{mutatingConfiguration, validatingConfiguration} {
-		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != "2" {
-			t.Fatalf("%s admission contract version = %q, want 2", configuration.GetKind(), got)
+		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != admissionContractVersion {
+			t.Fatalf("%s admission contract version = %q, want %s", configuration.GetKind(), got, admissionContractVersion)
 		}
 	}
 	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{
@@ -429,8 +435,8 @@ func TestExistingSecretDisablesBuiltInLifecycle(t *testing.T) {
 	// the singleton check would refuse.
 	for _, kind := range []string{"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"} {
 		configuration := mustObject(t, objects, kind, "ptah-operator-admission")
-		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != "2" {
-			t.Fatalf("%s external-certificate admission contract version = %q, want 2", kind, got)
+		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != admissionContractVersion {
+			t.Fatalf("%s external-certificate admission contract version = %q, want %s", kind, got, admissionContractVersion)
 		}
 	}
 	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
