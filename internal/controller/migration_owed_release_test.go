@@ -7,6 +7,7 @@ import (
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
@@ -31,24 +32,52 @@ func (r *leaseReadFaultReader) Get(
 	return r.Reader.Get(ctx, key, object, options...)
 }
 
-// TestARecordOfAnOwedReleaseThatCannotBeWrittenChangesNothing covers the two
-// rollbacks in recordOwedMigrationLockRelease.
+// A migration run retired as uncertain stages the release it owes in the
+// write that drops its claim, and only then tries the release. So a release
+// that fails leaves the record behind rather than a Lease nothing names.
 //
-// Writing down a release that did not happen is best effort on purpose: the
-// evidence of what the run did is already durable, and failing the pass that
-// carries it would lose more than the record is worth. Where the record cannot
-// be written, the Lease expires on its own as it did before.
-//
-// Best effort is not the same as leaving the resource half-written. The caller
-// goes on using this object and patches it afterwards, so a staged release
-// that never reached the API server must not survive in memory -- above all
-// where the staging was refused because another release was already owed.
-// Carrying that overwrite into the caller's own patch would replace one
-// obligation with another and lose the first.
-func TestARecordOfAnOwedReleaseThatCannotBeWrittenChangesNothing(t *testing.T) {
+// Staging is best effort, because the write carries the record of a run
+// nobody accounted for, which must not be lost to bookkeeping. Best effort is
+// not the same as losing an obligation already owed, nor as handing the
+// database back under a claim the API server still holds.
+func TestARetiredRunKeepsTheReleaseItOwes(t *testing.T) {
 	t.Parallel()
 
-	t.Run("another release is already owed", func(t *testing.T) {
+	t.Run("a release that fails stays recorded", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		migration, plan := awaitingApprovalFixture(t)
+		applyClaimFor(t, migration, plan)
+		reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+		reconciler.Locks = targetlock.New(
+			&leaseReadFaultReader{Reader: api, failure: errors.New("etcdserver: request timed out")}, api, nil)
+
+		stored := readMigration(t, api, migration)
+		claim := stored.Status.ActiveOperation.DeepCopy()
+		// Nothing stands under the name the claim reserved and it recorded no
+		// UID, so nothing it dispatched can still write.
+		if _, err := reconciler.finishUncertainMigrationApply(ctx, stored, nil,
+			errors.New("the Apply Job create result is uncertain"), ""); err != nil {
+			t.Fatal(err)
+		}
+
+		actual := readMigration(t, api, migration)
+		if actual.Status.ActiveOperation != nil || actual.Status.UnresolvedRun == nil {
+			t.Fatalf("the run was not retired as unresolved: claim %#v, record %#v",
+				actual.Status.ActiveOperation, actual.Status.UnresolvedRun)
+		}
+		owed := actual.Status.PendingLockRelease
+		if owed == nil {
+			t.Fatal("a release that failed left nothing saying the database is still claimed")
+		}
+		if owed.CoordinationDigest != claim.CoordinationDigest || owed.OperationID != claim.ID ||
+			owed.LeaseEpoch != claim.LeaseEpoch || owed.LeaseDurationSeconds != claim.LeaseDurationSeconds {
+			t.Fatalf("the record does not reproduce the claim that took the Lease: %#v vs %#v", owed, claim)
+		}
+	})
+
+	t.Run("another release already owed is not replaced", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
@@ -67,63 +96,46 @@ func TestARecordOfAnOwedReleaseThatCannotBeWrittenChangesNothing(t *testing.T) {
 		reconciler.Locks = targetlock.New(
 			&leaseReadFaultReader{Reader: api, failure: errors.New("etcdserver: request timed out")}, api, nil)
 
-		reconciler.releaseMigrationApplyLock(ctx, migration, operation)
-
-		if migration.Status.PendingLockRelease == nil ||
-			migration.Status.PendingLockRelease.OperationID != "an-earlier-apply" {
-			t.Fatalf("a refused record replaced the obligation already owed: %#v",
-				migration.Status.PendingLockRelease)
-		}
-	})
-
-	t.Run("the record cannot be persisted", func(t *testing.T) {
-		t.Parallel()
-
-		ctx := context.Background()
-		migration, plan := awaitingApprovalFixture(t)
-		operation := applyClaimFor(t, migration, plan)
-		if migration.Status.PendingLockRelease != nil {
-			t.Fatal("the fixture already owes a release, so this row proves nothing")
-		}
-
-		reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
-		reconciler.Locks = targetlock.New(
-			&leaseReadFaultReader{Reader: api, failure: errors.New("etcdserver: request timed out")}, api, nil)
-		// The resource is gone, so the record has nowhere to land.
-		if err := api.Delete(ctx, migration); err != nil {
+		stored := readMigration(t, api, migration)
+		if _, err := reconciler.finishUncertainMigrationApply(ctx, stored, nil,
+			errors.New("the Apply Job create result is uncertain"), ""); err != nil {
 			t.Fatal(err)
 		}
 
-		reconciler.releaseMigrationApplyLock(ctx, migration, operation)
-
-		if migration.Status.PendingLockRelease != nil {
-			t.Fatalf("a record that never reached the API server survived in memory: %#v",
-				migration.Status.PendingLockRelease)
+		actual := readMigration(t, api, migration)
+		if actual.Status.PendingLockRelease == nil ||
+			actual.Status.PendingLockRelease.OperationID != "an-earlier-apply" {
+			t.Fatalf("a refused staging replaced the obligation already owed: %#v",
+				actual.Status.PendingLockRelease)
 		}
 	})
 
-	t.Run("a record that lands is kept", func(t *testing.T) {
+	t.Run("a write that fails hands nothing back", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
 		migration, plan := awaitingApprovalFixture(t)
-		operation := applyClaimFor(t, migration, plan)
-
+		applyClaimFor(t, migration, plan)
 		reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
-		reconciler.Locks = targetlock.New(
-			&leaseReadFaultReader{Reader: api, failure: errors.New("etcdserver: request timed out")}, api, nil)
-
-		reconciler.releaseMigrationApplyLock(ctx, migration, operation)
-
-		if migration.Status.PendingLockRelease == nil ||
-			migration.Status.PendingLockRelease.OperationID != operation.ID {
-			t.Fatalf("a release that failed left no obligation behind: %#v",
-				migration.Status.PendingLockRelease)
-		}
+		holdMigrationApplyLease(t, reconciler, api, migration)
 		stored := readMigration(t, api, migration)
-		if stored.Status.PendingLockRelease == nil ||
-			stored.Status.PendingLockRelease.OperationID != operation.ID {
-			t.Fatalf("the obligation was never made durable: %#v", stored.Status.PendingLockRelease)
+		// The claim stays in the API server, so the realm stays held by it.
+		reconciler.Client = interceptor.NewClient(api, interceptor.Funcs{
+			SubResourcePatch: func(
+				context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption,
+			) error {
+				return errors.New("etcdserver: request timed out")
+			},
+		})
+
+		if _, err := reconciler.finishUncertainMigrationApply(ctx, stored, nil,
+			errors.New("the Apply Job create result is uncertain"), ""); err == nil {
+			t.Fatal("a retirement whose write failed reported success")
+		}
+
+		assertDatabaseStillHeld(t, reconciler, api)
+		if actual := readMigration(t, api, migration); actual.Status.ActiveOperation == nil {
+			t.Fatal("the claim was dropped although its write failed")
 		}
 	})
 }

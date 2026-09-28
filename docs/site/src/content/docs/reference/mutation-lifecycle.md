@@ -276,34 +276,45 @@ proves the database matches and proves nothing about what changed it.
 
 ## Release coordination
 
-Release always follows the durable status write, never leads it. A crash in
-between leaves a Lease nobody needs, which expires; the other order hands the
+Release always follows the durable status write, never leads it, and the
+write that retires a claim carries the release it owes as
+`status.pendingLockRelease`. A crash between the write and the release leaves
+the record, which the top of the next pass performs; the other order hands the
 database back under a claim that still reads as live.
+
+Each family retires a claim through one function, which clears the claim,
+keeps whatever record the claim leaves and stages the release in one status
+patch, then performs the release. Which release a retirement owes is decided
+once, for both families, by `mutationlifecycle.Retirement`: from the claim as
+it stood and from why it is going -- discarded, accounted for by its own
+result, or a run nobody accounted for.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `stagePendingLockRelease` in the write that settles the proof, through `stageTargetLockRelease`, retried by `completePendingLockRelease` |
-| `PtahMigration` | `stageOwedMigrationRelease` where a result was read, `releaseMigrationApplyLock` where it was not, withheld by `dispatchedApplyMayStillWrite` |
+| `PtahSchema` | `retireClaim`, retried by `completePendingLockRelease` |
+| `PtahMigration` | `retireMigrationClaim`, withheld by `dispatchedApplyMayStillWrite`, retried by `completeMigrationPendingLockRelease` |
 
-The two families release at different points.
+The two families release at different points, and that difference is one input
+to the decision: whether the record a mutating run leaves keeps the realm.
 
 A schema holds the database until the account is settled. Every Apply, read or
 uncertain, leaves `status.pendingObservation` carrying the claim's Lease epoch.
 The pending observation renews the Lease, waits until no Apply Pod can still
 run, and claims the read-only Observe and Plan that settle it. Both run under
-that same Lease, and `mutationlifecycle.RealmHeldBy` makes retiring either of
-them release nothing while the proof is owed. Only the status write that
-settles the proof stages the release. No other claimant can change the database
+that same Lease, and retiring either of them releases nothing while the proof
+is owed. Only the status write that settles the proof stages the release. No other claimant can change the database
 between the Apply and the reading that accounts for it, so an intervening
 mutation cannot be mistaken for this plan's convergence.
 
 A migration holds the database until nothing its claim dispatched can still
 write. A run whose result was read stages the release in the write that retires
-the claim. A run retired as uncertain (`finishUncertainMigrationApply`) releases
-after that write, and only when `dispatchedApplyMayStillWrite` says no: a Job
-that is not terminal, a Pod it owns that has not stopped, and a read that could
-not say all count as "may still be writing", and the Lease is left to expire
-instead. The reading that settles the account comes afterwards and takes no
+the claim. A run retired as uncertain (`finishUncertainMigrationApply`) stages
+it in that write too, and only when `dispatchedApplyMayStillWrite`, asked
+before the write, says no: a Job that is not terminal, a Pod it owns that has
+not stopped, and a read that could not say all count as "may still be writing",
+and the Lease is left to expire instead. Nothing that can still write stops
+being able to, so a release recorded on that answer is safe whenever the next
+pass performs it. The reading that settles the account comes afterwards and takes no
 Lease: the one in `VerifyingHistory` after a run that reported what it did, and
 the one that clears `status.unresolvedRun` (`migrationUnresolvedRunSettledBy`)
 after a run that ended `Partial` or `Unknown`. Another resource that shares the
@@ -328,9 +339,6 @@ no run repeat:
   changes anything when the history moved after the approval. A reading taken
   beside another writer can be stale; a stale reading cannot become a replay.
 
-Deciding the hand-back once, for both families, is
-[#457](https://github.com/stokaro/ptah-operator/issues/457). Until then the
-two orders above are the contract.
 
 ## Retire an execution binding
 
@@ -403,19 +411,14 @@ next pass cannot tell" would be a defect; none of them is.
 | A schema's approval: its `Consumed` condition | The one permitted create | A marker and a spent approval with no Job behind them. The next pass declares the outcome unknown, as in the row above |
 | `jobUID` | An Event and the telemetry | Covered by the marker above: the next pass finds the Job under the reserved name and adopts its UID |
 | The Job's cleanup TTL | The outcome status patch | A Job carrying a TTL under a live claim. The next pass re-reads the same terminal Job and reaches the same verdict |
-| The outcome patch: the claim cleared and the record written together | For a migration, the Lease release. For a schema, the proof, under the same Lease | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
+| The outcome patch: the claim cleared, the record written and the release it owes staged, together | For a migration, the Lease release. For a schema, the proof, under the same Lease | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
 | `pendingLockRelease`, staged in the patch that clears the last record holding the realm | The release itself | The realm still claimed, with a record saying so. The next pass releases it before doing anything else |
 | A schema's `pendingBindingRetirement`, written in the patch that installs a new execution-binding epoch | The retired plan's approvals marked stale; the retired Job's UID adopted and its cleanup TTL set | The new epoch with the record beside it. The next pass works the record off before anything else, a Job's TTL already set counts as met, and no other rotation starts until the record is gone |
 
-The one window that is not closed by a record is a migration run retired as
-uncertain. `finishUncertainMigrationApply` releases after its outcome patch, and
-only when nothing can still write; it records a release that **failed**, so a
-process that stops between that patch and the attempt leaves the Lease to
-expire. A schema stages the obligation inside the patch that settles its proof,
-and a migration whose result was read stages it inside the patch that retires
-the claim. The window costs time, not safety: the Lease it leaves outlives the
-run's own execution deadline. That difference is the first one in the list
-below.
+Every window is closed by a record. A migration run retired as uncertain asks
+whether anything it dispatched can still write before its outcome patch, and
+stages the release in that patch when nothing can; when something can, it
+stages none, and the Lease expires after the executor has stopped.
 
 ## Durable safety state
 
@@ -441,22 +444,12 @@ Every difference below is a place the same obligation is met by different
 machinery, which is what [#225](https://github.com/stokaro/ptah-operator/issues/225)
 exists to remove.
 
-A failed release used to be recoverable for a schema and not for a migration.
-Both families now keep the complete credential-free release request in
-`status.pendingLockRelease` until an idempotent release succeeds, and the top
-of every pass retries it before anything else. What remains different is one
-window. A schema stages the obligation inside the status patch that settles its
-proof, and a migration inside the patch that retires a claim whose result it
-read, so a crash between the patch and the release is covered by the record. A
-migration run retired as uncertain records only a release that failed, and
-leaves a crash at that instant to lease expiry.
-
 The database goes back at a different point. A schema holds it through the
 reading that settles the account; a migration hands it back once nothing its
-claim dispatched can still write, and reads the history without it.
-[Release coordination](#release-coordination) says why both are safe, and
-[#457](https://github.com/stokaro/ptah-operator/issues/457) is where one rule
-decides it for both.
+claim dispatched can still write, and reads the history without it. One rule,
+`mutationlifecycle.Retirement`, decides both, and the families differ in one
+input to it. [Release coordination](#release-coordination) says why both
+orders are safe.
 
 The proof is a prioritized operation for a schema and an ordinary reading for a
 migration. `reconcilePendingObservation` runs before suspension, before the

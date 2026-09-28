@@ -507,7 +507,6 @@ func (r *MigrationReconciler) recordMigrationRun(
 		DispatchedBy:    dispatcherRecord(job),
 		Message:         bounded(message, 1024),
 	}
-	migration.Status.ActiveOperation = nil
 	migration.Status.Plan = nil
 	switch outcome {
 	case operatorv1alpha1.MigrationRunOutcomePartial, operatorv1alpha1.MigrationRunOutcomeUnknown:
@@ -536,13 +535,13 @@ func (r *MigrationReconciler) recordMigrationRun(
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.stageOwedMigrationRelease(ctx, migration, operation)
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+	// The run was read from its one Pod after the Job reached a terminal
+	// condition, so nothing it dispatched can still write.
+	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.event(migration, migrationRunEventType(outcome), "MigrationRunFinished", "%s: %s", outcome, bounded(message, 256))
 	r.observeMigrationRun(operation, outcome)
-	r.settleOwedMigrationRelease(ctx, migration)
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
@@ -740,112 +739,76 @@ func (r *MigrationReconciler) completeMigrationPendingLockRelease(
 		func(ctx context.Context) error { return r.patchMigrationStatus(ctx, before, migration) })
 }
 
-// stageOwedMigrationRelease records the release a claim owes into the same
-// write that drops the claim.
-//
-// The claim is the only stored thing that names the epoch the Lease was taken
-// with, so a pass that persists its removal and releases afterwards can stop
-// in between and leave the database held by an epoch nothing names. Every
-// other claimant on it then waits out the whole lease duration -- sixteen
-// minutes by default -- for a run that has already finished. Staging first
-// turns that into one more pass.
-//
-// Recording is best effort for the reason recordOwedMigrationLockRelease is:
-// the caller's own write carries evidence that must not be lost to a
-// bookkeeping failure, and where the record cannot be staged the Lease expires
-// on its own as it did before.
-func (r *MigrationReconciler) stageOwedMigrationRelease(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	operation *operatorv1alpha1.MigrationOperationStatus,
-) {
-	if err := stageMigrationLockRelease(migration, operation); err != nil {
-		ctrl.LoggerFrom(ctx).Info("could not record the database release the claim owes", "error", err.Error())
+// migrationRealmClaim describes a migration claim to the decision about what
+// retiring it hands back. No migration claim carries out a proof: the History
+// reading that settles a run takes no Lease.
+func migrationRealmClaim(operation *operatorv1alpha1.MigrationOperationStatus) mutationlifecycle.RealmClaim {
+	if operation == nil {
+		return mutationlifecycle.RealmClaim{}
+	}
+	kind := migrationOperation(operation)
+	return mutationlifecycle.RealmClaim{
+		Mutating:    kind.Mutating,
+		ServesProof: kind.ServesProof,
+		Locked:      operation.LeaseEpoch != "",
 	}
 }
 
-// settleOwedMigrationRelease performs a staged release once the claim it
-// belonged to is gone. A failure leaves the record standing, which is what the
-// top of the next pass is for, so it does not fail the pass that carries the
-// run's evidence.
-func (r *MigrationReconciler) settleOwedMigrationRelease(
+// retireMigrationClaim drops the active claim in one status write. The write
+// carries everything the caller recorded on migration since before -- the run,
+// the record of a run nobody accounted for, the phase and the conditions --
+// and the database release the retirement owes, which
+// mutationlifecycle.Retirement decides from the claim as it stood and why it is
+// going. The release itself follows the write.
+//
+// The claim is the only stored thing that names the epoch its Lease was taken
+// with, so the obligation moves into the write that drops the claim. A manager
+// that stops after the write finds the record and hands the realm back on the
+// next pass; one that stops before it finds the claim and reaches the same
+// verdict again. Without that, every other claimant of the database waits out
+// the whole lease duration -- sixteen minutes by default, and as much as a day
+// where the claim asked for one -- for a claim that is already gone.
+//
+// A migration hands the realm back once nothing its claim dispatched can still
+// write, so the caller asks mayStillWrite before the write, not after it: the
+// obligation is recorded only where the release is safe, and a Lease left
+// under a Pod that may still be running expires on its own, which it is sized
+// to do after that Pod has stopped.
+//
+// Staging and releasing are best effort. The write carries the evidence of
+// what a run did, which must not be lost to bookkeeping. Where the obligation
+// cannot be staged the Lease expires as it would have, and a staged release
+// that fails stays recorded for the top of the next pass.
+func (r *MigrationReconciler) retireMigrationClaim(
 	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-) {
+	before, migration *operatorv1alpha1.PtahMigration,
+	disposition mutationlifecycle.Disposition,
+	mayStillWrite bool,
+) error {
+	operation := before.Status.ActiveOperation
+	retirement := mutationlifecycle.Retirement{
+		Claim:         migrationRealmClaim(operation),
+		Disposition:   disposition,
+		MayStillWrite: mayStillWrite,
+	}
+	if retirement.Releases() == mutationlifecycle.OwnerClaim {
+		if err := stageMigrationLockRelease(migration, operation); err != nil {
+			ctrl.LoggerFrom(ctx).Info("could not record the database release the claim owes", "error", err.Error())
+		}
+	}
+	migration.Status.ActiveOperation = nil
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		return err
+	}
 	if migration.Status.PendingLockRelease == nil {
-		return
+		return nil
 	}
 	if err := r.completeMigrationPendingLockRelease(ctx, migration); err != nil {
 		ctrl.LoggerFrom(ctx).Info("could not release the database lock", "error", err.Error())
+		r.event(migration, corev1.EventTypeWarning, "TargetLockReleaseOwed",
+			"the database lock was not released and will be retried: %s", bounded(err.Error(), 256))
 	}
-}
-
-// releaseMigrationApplyLock hands the database back. A failure to release is
-// not a failure of the run: the run's evidence is already durable, and the
-// obligation staged beside it is what brings the realm back on a later pass.
-//
-// The epoch the claim persisted travels with the request, because releasing
-// without one is not a weaker release -- it is no release at all. Release
-// refuses a request that names no epoch, the Lease then runs to its expiry,
-// and every other claimant on that database waits out the full duration for a
-// run that has already finished.
-func (r *MigrationReconciler) releaseMigrationApplyLock(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	operation *operatorv1alpha1.MigrationOperationStatus,
-) {
-	if r.Locks == nil || operation == nil || operation.CoordinationDigest == "" {
-		return
-	}
-	if err := r.Locks.Release(ctx, targetlock.Request{
-		CoordinationNamespace: r.LockNamespace,
-		CoordinationDigest:    operation.CoordinationDigest,
-		Holder:                targetlock.Holder{SchemaUID: migration.UID, OperationID: operation.ID},
-		Duration:              time.Duration(operation.LeaseDurationSeconds) * time.Second,
-		ExpectedEpoch:         operation.LeaseEpoch,
-	}); err != nil {
-		ctrl.LoggerFrom(ctx).Info("could not release the database lock", "error", err.Error())
-		r.recordOwedMigrationLockRelease(ctx, migration, operation, err)
-	}
-}
-
-// recordOwedMigrationLockRelease writes down a release that did not happen, so
-// the next pass performs it instead of leaving the realm claimed until the
-// Lease expires.
-//
-// Without it a single API error at this instant costs every other claimant of
-// that database the whole lease duration -- sixteen minutes by default, and as
-// much as a day where the claim asked for one. The record is what turns that
-// into one more pass.
-//
-// Recording is itself best effort, and deliberately so: the evidence of what
-// the run did is already durable, and a failure to write this must not fail
-// the pass that carries it. Where the record cannot be written either, the
-// Lease expires on its own as before.
-func (r *MigrationReconciler) recordOwedMigrationLockRelease(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	operation *operatorv1alpha1.MigrationOperationStatus,
-	cause error,
-) {
-	log := ctrl.LoggerFrom(ctx)
-	before := migration.DeepCopy()
-	if err := stageMigrationLockRelease(migration, operation); err != nil {
-		migration.Status.PendingLockRelease = before.Status.PendingLockRelease
-		log.Info("could not record the database lock as owed", "error", err.Error())
-		return
-	}
-	if migration.Status.PendingLockRelease == nil {
-		// The claim took no Lease, so there is nothing to hand back.
-		return
-	}
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
-		migration.Status.PendingLockRelease = before.Status.PendingLockRelease
-		log.Info("could not record the database lock as owed", "error", err.Error())
-		return
-	}
-	r.event(migration, corev1.EventTypeWarning, "TargetLockReleaseOwed",
-		"the database lock was not released and will be retried: %s", bounded(cause.Error(), 256))
+	return nil
 }
 
 // dispatchedApplyMayStillWrite reports whether the Apply this claim dispatched
@@ -941,12 +904,30 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 // one of them, and that is the case where naming the planned database instead
 // would be wrong: a clean reading of it would settle a run that never touched
 // it, and a reading of the database that was touched could never match.
+//
+// Whether the database goes back in the same write depends on whether anything
+// the claim dispatched can still write, and that is read here, before the
+// write, so the write records the release only where it is safe.
 func (r *MigrationReconciler) finishUncertainMigrationApply(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	failure error,
 	reportedTarget string,
+) (ctrl.Result, error) {
+	mayStillWrite := r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, job)
+	return r.retireUncertainMigrationApply(ctx, migration, job, failure, reportedTarget, mayStillWrite)
+}
+
+// retireUncertainMigrationApply is finishUncertainMigrationApply for a caller
+// that already knows whether anything the claim dispatched can still write.
+func (r *MigrationReconciler) retireUncertainMigrationApply(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	failure error,
+	reportedTarget string,
+	mayStillWrite bool,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	before := migration.DeepCopy()
@@ -984,7 +965,6 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 	}
 	migration.Status.LastRun = run
 	recordUnresolvedMigrationRun(migration, operation, run, reportedTarget, r.now())
-	migration.Status.ActiveOperation = nil
 	migration.Status.Plan = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
@@ -1011,7 +991,9 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 				operation.Type, job.Name, bounded(err.Error(), 512))
 		}
 	}
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+	if err := r.retireMigrationClaim(
+		ctx, before, migration, mutationlifecycle.DispositionUnaccounted, mayStillWrite,
+	); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeWarning, "MigrationRunUncertain", "%s",
@@ -1021,9 +1003,6 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		r.Telemetry.ObserveFailure(telemetry.FamilyMigration, telemetry.FailureStageApply, telemetry.FailureUncertain)
 	}
 	r.observeMigrationOperation(operation, telemetry.OperationUncertain)
-	if !r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
-		r.releaseMigrationApplyLock(ctx, migration, operation)
-	}
 	// The reading that clears this record is the one this return schedules.
 	//
 	// Nothing else would. A status patch bumps no generation, the primary

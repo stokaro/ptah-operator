@@ -244,14 +244,8 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 	}
 
 	before := schema.DeepCopy()
-	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
 	settleRetirement(schema, retiredJobCleanup)
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil

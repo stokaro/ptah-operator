@@ -290,28 +290,27 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				// writes wakes nothing, and a deleting resource whose Job has
 				// stopped changing gets no other event. Without the requeue the
 				// finalizer would sit until the manager restarted.
-				if _, err := r.finishUncertainMigrationApply(ctx, migration, job,
-					errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"), ""); err != nil {
+				//
+				// The retirement is told what this pass already proved rather
+				// than asking again. A second read that fails answers "may still
+				// be writing" -- the right answer to a question it could not
+				// settle, and the wrong outcome here, because the claim that
+				// names the epoch goes in this write and every other resource on
+				// that database would wait out the full lease for a run this pass
+				// watched stop.
+				if _, err := r.retireUncertainMigrationApply(ctx, migration, job,
+					errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"), "", false); err != nil {
 					return ctrl.Result{}, err
 				}
-				// Released on the proof this pass already has. The uncertain
-				// finish asks the same question again before releasing, and a
-				// transient read error there answers "may still be writing" --
-				// the right answer to a question it could not settle, and the
-				// wrong outcome here, because the claim is gone by then and the
-				// next pass removes the finalizer with no epoch left to release
-				// the Lease with. Every other resource on that database would
-				// wait out the full lease for a run this pass watched stop.
-				r.releaseMigrationApplyLock(ctx, migration, operation)
 				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			// Nothing stands under the name the claim reserved, so nothing can
-			// have written. The database is handed back without a verdict.
-			r.releaseMigrationApplyLock(ctx, migration, operation)
+			// have written. The claim is discarded, and the database goes back
+			// in the same write, without a verdict.
 		}
-		before := migration.DeepCopy()
-		migration.Status.ActiveOperation = nil
-		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		if err := r.retireMigrationClaim(
+			ctx, migration.DeepCopy(), migration, mutationlifecycle.DispositionDiscard, false,
+		); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -431,15 +430,21 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	}
 	before := migration.DeepCopy()
 	migration.Status.ExecutionBinding = binding
-	if migration.Status.ActiveOperation != nil {
-		r.event(migration, corev1.EventTypeWarning, "ExecutionBindingChanged",
-			"Discarding the %s operation claim: an execution component changed", migration.Status.ActiveOperation.Type)
-		migration.Status.ActiveOperation = nil
-		migration.Status.Phase = operatorv1alpha1.MigrationPhasePending
-		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
-			operatorv1alpha1.ReasonExecutionBindingChanged, "The operation was retired because an execution component changed")
+	if migration.Status.ActiveOperation == nil {
+		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+			return ctrl.Result{}, true, err
+		}
+		return ctrl.Result{RequeueAfter: statusPatchRequeue}, true, nil
 	}
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+	r.event(migration, corev1.EventTypeWarning, "ExecutionBindingChanged",
+		"Discarding the %s operation claim: an execution component changed", migration.Status.ActiveOperation.Type)
+	migration.Status.Phase = operatorv1alpha1.MigrationPhasePending
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonExecutionBindingChanged, "The operation was retired because an execution component changed")
+	// Nothing this claim dispatched can be running: a dispatched Apply became
+	// an unresolved run above instead. So an undispatched Apply's Lease goes
+	// back in the same write.
+	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionDiscard, false); err != nil {
 		return ctrl.Result{}, true, err
 	}
 	// The next pass works under the binding this write installed, so it has
@@ -824,7 +829,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	// hour to have it retired would answer a different question than the one
 	// they asked.
 	if migration.Spec.Suspend {
-		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
+		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, errors.New("reconciliation was suspended before dispatch"))
 	}
 	// The inputs are re-read before the deadline is applied, not after it. A
 	// person correcting them -- a target Secret named wrong, an artifact
@@ -861,14 +866,14 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		if currentErr == nil {
 			currentErr = errors.New("the operation inputs changed after the claim")
 		}
-		return r.discardUndispatchedMigrationOperation(ctx, migration, currentErr)
+		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, currentErr)
 	}
 	if operation.Type == operatorv1alpha1.MigrationOperationApply {
 		// An Apply reaches here only before its dispatch boundary: a claim that
 		// already crossed it is retired as uncertain rather than re-examined.
 		// So discarding here cannot abandon a run that is executing SQL.
 		if err := r.claimedApplyPolicyStillBinds(ctx, migration, operation); err != nil {
-			return r.discardUndispatchedMigrationOperation(ctx, migration, err)
+			return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, err)
 		}
 	}
 	if operation.JobUID != "" {
@@ -893,11 +898,11 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	}
 	plan, planErr := r.migrationPlanForJob(ctx, migration, operation)
 	if planErr != nil {
-		return r.discardUndispatchedMigrationOperation(ctx, migration, planErr)
+		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, planErr)
 	}
 	job, err := r.Jobs.BuildMigration(migration, *operation, plan)
 	if err != nil {
-		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("build %s Job: %w", operation.Type, err))
+		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("build %s Job: %w", operation.Type, err))
 	}
 	if job.Namespace != migration.Namespace || job.Name != operation.JobName {
 		return ctrl.Result{}, errors.New("the Job builder returned an object outside the operation claim")
@@ -905,7 +910,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	if operation.AdmissionSnapshot == nil {
 		snapshot, snapshotErr := podintent.Resolve(ctx, r.directReader(), migration.Namespace, &job.Spec.Template, r.AdmissionOptions)
 		if snapshotErr != nil {
-			return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("resolve Pod admission snapshot: %w", snapshotErr))
+			return r.migrationOperationFailure(ctx, migration, fmt.Errorf("resolve Pod admission snapshot: %w", snapshotErr))
 		}
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation.AdmissionSnapshot = snapshot
@@ -917,11 +922,11 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("validate persisted Pod admission snapshot: %w", err))
+		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("validate persisted Pod admission snapshot: %w", err))
 	}
 	templateDigest, digestErr := podintent.DigestTemplate(&job.Spec.Template)
 	if digestErr != nil {
-		return r.failUndispatchedMigrationOperation(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
+		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
 	}
 	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
 		// Nothing was dispatched and the claim's inputs still hold, so what
@@ -932,7 +937,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		// template that moves again comes from a builder that does not build
 		// the same Job twice, and refreshing it would never end.
 		if operation.AdmissionSnapshotRefreshed {
-			return r.failUndispatchedMigrationOperation(ctx, migration, errors.New(
+			return r.migrationOperationFailure(ctx, migration, errors.New(
 				"rebuilt Job Pod template differs from the admission snapshot it was already resolved again for"))
 		}
 		before := migration.DeepCopy()
@@ -1069,7 +1074,6 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	default:
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("unsupported migration operation %q", operation.Type))
 	}
-	migration.Status.ActiveOperation = nil
 	if migration.Status.Phase != operatorv1alpha1.MigrationPhaseVerifying &&
 		migration.Status.Phase != operatorv1alpha1.MigrationPhaseReading {
 		next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
@@ -1078,7 +1082,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
@@ -1606,12 +1610,10 @@ func (r *MigrationReconciler) discardMigrationOperation(
 ) (ctrl.Result, error) {
 	before := migration.DeepCopy()
 	operation := migration.Status.ActiveOperation
-	migration.Status.ActiveOperation = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhasePending
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonInputsChanged, bounded(failure.Error(), 512))
-	r.stageOwedMigrationRelease(ctx, migration, operation)
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionDiscard, false); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.observeMigrationOperation(operation, outcome)
@@ -1622,64 +1624,6 @@ func (r *MigrationReconciler) discardMigrationOperation(
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
-// discardUndispatchedMigrationOperation retires a claim that never became a
-// Job, and hands back the database that claim had already taken.
-//
-// Every discard inside dispatchMigrationJob is pre-dispatch. That function runs
-// only while no Job exists under the name the claim reserved, and an Apply that
-// already crossed its dispatch boundary is retired as uncertain well before
-// reaching it, so nothing is executing SQL and the Lease has no run left to
-// protect. Clearing the claim alone would leave it held anyway: the next Apply
-// carries a new operation ID, so it contends with a holder that will never
-// come back, and so does every other Ptah resource addressing that database --
-// for the whole lease duration, sixteen minutes by default and as much as a
-// day where the claim asked for one.
-//
-// The release follows the status write rather than leading it. A crash in
-// between then leaves a Lease nobody needs, which expires on its own; the other
-// order leaves a database handed back under a claim that still reads as live.
-func (r *MigrationReconciler) discardUndispatchedMigrationOperation(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	failure error,
-) (ctrl.Result, error) {
-	operation := migration.Status.ActiveOperation
-	result, err := r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, failure)
-	if err != nil {
-		return result, err
-	}
-	if migrationOperation(operation).HoldsLock(false) {
-		r.settleOwedMigrationRelease(ctx, migration)
-	}
-	return result, nil
-}
-
-// failUndispatchedMigrationOperation records a dispatch-time failure and hands
-// back the database the claim had already taken.
-//
-// It exists for the same reason discardUndispatchedMigrationOperation does, and
-// covers the other way a claim can leave this function: a Job that cannot be
-// built, an admission snapshot that cannot be resolved, one that no longer
-// matches its own contents, and a rebuilt template that cannot be digested.
-// Each of those retires the claim, and each is pre-dispatch, so the Lease has
-// no run to protect -- and leaving it held makes a configuration error cost
-// every claimant of that database the full lease duration.
-func (r *MigrationReconciler) failUndispatchedMigrationOperation(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	failure error,
-) (ctrl.Result, error) {
-	operation := migration.Status.ActiveOperation
-	result, err := r.migrationOperationFailure(ctx, migration, failure)
-	if err != nil {
-		return result, err
-	}
-	if migrationOperation(operation).HoldsLock(false) {
-		r.settleOwedMigrationRelease(ctx, migration)
-	}
-	return result, nil
-}
-
 // migrationOperationFailure records a configuration or dispatch failure the
 // controller cannot resolve by retrying immediately.
 func (r *MigrationReconciler) migrationOperationFailure(
@@ -1688,18 +1632,21 @@ func (r *MigrationReconciler) migrationOperationFailure(
 	failure error,
 ) (ctrl.Result, error) {
 	before := migration.DeepCopy()
-	operation := migration.Status.ActiveOperation
-	migration.Status.ActiveOperation = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseFailed
 	migration.Status.ObservedGeneration = migration.Generation
 	next := metav1.NewTime(r.now().Add(migrationFailureRetry(migration)))
 	migration.Status.NextReconciliationTime = &next
-	r.stageOwedMigrationRelease(ctx, migration, operation)
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonOperationFailed, bounded(failure.Error(), 512))
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonOperationFailed, bounded(failure.Error(), 512))
-	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+	var err error
+	if before.Status.ActiveOperation != nil {
+		err = r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionDiscard, false)
+	} else {
+		err = r.patchMigrationStatus(ctx, before, migration)
+	}
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeWarning, "OperationFailed", "%s", bounded(failure.Error(), 512))
@@ -1842,6 +1789,12 @@ func (r *MigrationReconciler) removeMigrationFinalizer(
 	if migration.Status.ActiveOperation != nil {
 		return fmt.Errorf("the migration operation finalizer still protects a live %s claim",
 			migration.Status.ActiveOperation.Type)
+	}
+	// A release the resource still owes is the only record of the epoch the
+	// realm is held under, and it would go with the object. The top of the
+	// next pass performs it, and the finalizer comes off after that.
+	if migration.Status.PendingLockRelease != nil {
+		return errors.New("the migration operation finalizer still protects a database release it owes")
 	}
 	before := migration.DeepCopy()
 	controllerutil.RemoveFinalizer(migration, migrationOperationFinalizer)

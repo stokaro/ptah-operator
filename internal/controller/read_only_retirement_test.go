@@ -12,8 +12,9 @@ import (
 )
 
 // An execution-binding change retires the claim it finds and hands back the
-// database that claim took. Only an Apply takes one, and the condition says so
-// by naming Apply rather than by negating isReadOnlyOperation.
+// database that claim took. Only an Apply among the claims it retires holds
+// one, and the retirement decides that from what the claim is -- mutating, or
+// carrying out a proof -- rather than from its not being read-only.
 //
 // The difference is what this measures. isReadOnlyOperation answers false for
 // anything it does not recognize, so `!isReadOnlyOperation` means "an Apply, or

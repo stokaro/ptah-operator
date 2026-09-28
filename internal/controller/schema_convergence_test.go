@@ -61,30 +61,7 @@ func TestConvergenceCreditsOnlyWhatItCanAttribute(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			schema := safetyPostApplyObserveSchema(t)
-			schema.Status.PendingObservation.Outcome = row.outcome
-			schema.Status.PendingObservation.PlanRequired = true
-			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-				Type:      operatorv1alpha1.OperationPlan,
-				ID:        "post-apply-plan",
-				JobName:   "post-apply-plan-job",
-				JobUID:    "job-uid",
-				StartedAt: metav1.Now(),
-				Attempt:   1,
-			}
-			policyConfig := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: schema.Namespace,
-					Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
-					UID:       testPolicyUID,
-				},
-				Immutable: ptr(true),
-				Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "policy"},
-			}
-			policyDigest := fingerprint.DigestBytes([]byte("policy"))
-			schema.Status.Source.VerificationPolicyDigest = policyDigest
-			schema.Status.PendingObservation.Plan.VerificationPolicyDigest = policyDigest
-			bindActiveInput(t, schema)
+			schema, objects := convergedProofPlan(t, row.outcome)
 			wantFingerprint := schema.Status.PendingObservation.Plan.Fingerprint
 			// The harvest recorded who dispatched the Apply; the plan names
 			// who published it. The two are different managers here, and the
@@ -96,7 +73,6 @@ func TestConvergenceCreditsOnlyWhatItCanAttribute(t *testing.T) {
 				t.Fatalf("the fixture's publisher %q does not differ from its dispatcher", publisher)
 			}
 
-			job, pod := terminalWorkload(schema, batchv1.JobComplete)
 			frame := safetyRunnerFrame(t, runner.Result{
 				ProtocolVersion:      runner.ProtocolVersion,
 				Operation:            runner.OperationPlan,
@@ -106,7 +82,7 @@ func TestConvergenceCreditsOnlyWhatItCanAttribute(t *testing.T) {
 				TargetIdentityDigest: schema.Status.PendingObservation.Plan.TargetIdentityDigest,
 				PlanOutcome:          runner.PlanOutcomeNoChanges,
 			})
-			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfig)
+			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, objects...)
 
 			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
@@ -145,4 +121,41 @@ func TestConvergenceCreditsOnlyWhatItCanAttribute(t *testing.T) {
 			}
 		})
 	}
+}
+
+// convergedProofPlan is a post-Apply Plan whose Job finished, with the
+// objects a pass over it reads: the schema, the Job and its Pod, and the
+// verification policy the proof was bound to.
+func convergedProofPlan(
+	t *testing.T,
+	outcome operatorv1alpha1.PendingObservationOutcome,
+) (*operatorv1alpha1.PtahSchema, []client.Object) {
+	t.Helper()
+
+	schema := safetyPostApplyObserveSchema(t)
+	schema.Status.PendingObservation.Outcome = outcome
+	schema.Status.PendingObservation.PlanRequired = true
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type:      operatorv1alpha1.OperationPlan,
+		ID:        "post-apply-plan",
+		JobName:   "post-apply-plan-job",
+		JobUID:    "job-uid",
+		StartedAt: metav1.Now(),
+		Attempt:   1,
+	}
+	policyConfig := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace,
+			Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
+			UID:       testPolicyUID,
+		},
+		Immutable: ptr(true),
+		Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "policy"},
+	}
+	policyDigest := fingerprint.DigestBytes([]byte("policy"))
+	schema.Status.Source.VerificationPolicyDigest = policyDigest
+	schema.Status.PendingObservation.Plan.VerificationPolicyDigest = policyDigest
+	bindActiveInput(t, schema)
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	return schema, []client.Object{schema, job, pod, policyConfig}
 }

@@ -785,20 +785,13 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 				}
 			}
 		}
-		before := schema.DeepCopy()
-		if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-			if err := stageOperationLockRelease(schema, operation); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-		schema.Status.ActiveOperation = nil
-		if err := r.patchStatus(ctx, before, schema); err != nil && !apierrors.IsNotFound(err) {
+		// Nothing the claim dispatched can still be writing here. The Job of a
+		// claim that holds the realm was waited on above until it stopped, and
+		// an Apply whose executor did not provably stop left above as an
+		// outcome nobody established.
+		err = r.retireClaim(ctx, schema.DeepCopy(), schema, mutationlifecycle.DispositionDiscard)
+		if err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
-		}
-		if schema.Status.PendingLockRelease != nil {
-			if err := r.completePendingLockRelease(ctx, schema); err != nil && !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, err
-			}
 		}
 		r.observeOperation(operation, telemetry.OperationCanceled)
 	}
@@ -1412,12 +1405,6 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	}
 
 	before := schema.DeepCopy()
-	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
 	schema.Status.Plan = nil
 	schema.Status.NextReconciliationTime = nil
 	if schema.Status.PendingObservation != nil {
@@ -1430,13 +1417,8 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "The result was discarded because the database lock epoch changed")
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonLeaseContinuityLost, "A fresh observation is required after database lock continuity was lost")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "The operator is restarting read-only observation")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	r.observeOperation(operation, telemetry.OperationStale)
 	if schema.Status.PendingObservation == nil {
@@ -1538,7 +1520,6 @@ func (r *SchemaReconciler) blockVerification(
 	now := metav1.NewTime(r.now())
 	next := metav1.NewTime(r.now().Add(interval(schema)))
 	before := schema.DeepCopy()
-	schema.Status.ActiveOperation = nil
 	schema.Status.ObservedGeneration = schema.Generation
 	schema.Status.LastAttemptTime = &now
 	schema.Status.NextReconciliationTime = &next
@@ -1557,7 +1538,7 @@ func (r *SchemaReconciler) blockVerification(
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonArtifactUnverified, "No plan may be used for an artifact refused by policy")
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyRefused, "In-sync status requires an artifact accepted by the current verification policy")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyRefused, "Artifact verification policy must be satisfied before database access")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionAccounted); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.observeOperation(operation, telemetry.OperationSucceeded)
@@ -1602,12 +1583,6 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	now := metav1.NewTime(r.now())
 	next := metav1.NewTime(r.now().Add(interval(schema)))
 	before := schema.DeepCopy()
-	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
 	schema.Status.Plan = nil
 	schema.Status.LastAttemptTime = &now
 	schema.Status.NextReconciliationTime = &next
@@ -1622,13 +1597,8 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonProtectedTable,
 		"Remove the protectedTables entry to plan the change, or write the rows as a migration")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionAccounted); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	r.observeOperation(operation, telemetry.OperationSucceeded)
 	if schema.Status.PendingObservation == nil {
@@ -1643,12 +1613,6 @@ func (r *SchemaReconciler) refuseProtectedTable(
 func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	before := schema.DeepCopy()
-	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
 	schema.Status.Phase = operatorv1alpha1.PhaseSuspended
 	schema.Status.ObservedGeneration = schema.Generation
 	if operation != nil && operation.Type == operatorv1alpha1.OperationResolve {
@@ -1656,13 +1620,8 @@ func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *o
 	}
 	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, operatorv1alpha1.ReasonRequested, "New database operations are suspended")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSuspended, "Reconciliation is suspended")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	r.observeOperation(operation, telemetry.OperationCanceled)
 	if schema.Status.PendingObservation == nil {
@@ -1687,7 +1646,6 @@ func (r *SchemaReconciler) consumeResult(
 	before := schema.DeepCopy()
 	operation := schema.Status.ActiveOperation
 	var observedDrift *bool
-	var completedPending *operatorv1alpha1.PendingObservationStatus
 	var completedProofPolicyErr error
 	var completedProofExecutionBindingErr error
 	now := metav1.NewTime(r.now())
@@ -1964,7 +1922,6 @@ func (r *SchemaReconciler) consumeResult(
 				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Post-Apply proof completed, but the artifact requires verification against the current policy")
 				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Artifact verification against the current policy is pending")
 			}
-			completedPending = pending.DeepCopy()
 			schema.Status.PendingObservation = nil
 		}
 	case operatorv1alpha1.OperationApply:
@@ -1982,29 +1939,12 @@ func (r *SchemaReconciler) consumeResult(
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonVerifyingConvergence, "Apply completion has not yet been independently observed")
 	}
 
-	if completedPending != nil {
-		if err := stagePendingLockRelease(schema, completedPending); err != nil {
-			return ctrl.Result{}, err
-		}
-		// Not RealmHeldBy. A completed Apply has just handed the realm to the
-		// post-Apply observation above, which inherited its epoch, and the helper
-		// reads a mutating claim with a proof outstanding as the realm's owner --
-		// correct where the Apply is being retired and the proof restarted, wrong
-		// here where the Apply succeeded and the proof is what runs next. This arm
-		// is about a Plan finishing with no proof to complete.
-	} else if operation != nil && operation.Type == operatorv1alpha1.OperationPlan {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	// A completed Apply hands the realm to the pending observation it wrote,
+	// which inherited its epoch, so it releases nothing. A Plan that settled
+	// the proof it was carrying out releases the proof's epoch, and one that
+	// had no proof to settle releases its own.
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionAccounted); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	if r.Telemetry != nil {
 		if observedDrift != nil {
@@ -2459,10 +2399,14 @@ func (r *SchemaReconciler) retryOperationAs(
 	// pinning the new dispatch to the retired attempt's snapshot. Apply never
 	// enters this retry path because its dispatch outcome may be ambiguous.
 	operation.AdmissionSnapshot = nil
-	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
+	// The failed attempt is retired and the claim goes on: what the attempt
+	// held goes back in this write, and the next attempt takes the realm
+	// again under an epoch of its own.
+	released, err := stageRetirementRelease(before, schema, mutationlifecycle.DispositionDiscard)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if released == mutationlifecycle.OwnerClaim {
 		operation.LeaseEpoch = ""
 		operation.LeaseContinuityLost = false
 	}
@@ -2606,7 +2550,6 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	schema.Status.ActiveOperation = nil
 	schema.Status.PendingObservation = pending
 	if replacementBinding != nil {
 		schema.Status.PendingObservation.PlanRequired = false
@@ -2624,7 +2567,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown, "Apply outcome is uncertain; only read-only observation is permitted")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown, "Database state must be observed before any next action")
 	setFailure(schema, operatorv1alpha1.ReasonApplyOutcomeUnknown, failure)
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionUnaccounted); err != nil {
 		return ctrl.Result{}, err
 	}
 	if r.Telemetry != nil {
@@ -2725,12 +2668,6 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 		return ctrl.Result{}, err
 	}
 	before := schema.DeepCopy()
-	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
 	schema.Status.Plan = nil
 	if schema.Status.PendingObservation != nil {
 		schema.Status.PendingObservation.PlanRequired = false
@@ -2740,13 +2677,8 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 	}
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStale, bounded(failure.Error(), 512))
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStalePlan, "The plan became stale before apply")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	if r.Telemetry != nil {
 		stage := telemetry.FailureStagePlan
@@ -2810,28 +2742,22 @@ func (r *SchemaReconciler) executionBindingChanged(
 	// A read-only claim is kept, and goes on holding whatever it took, until
 	// the Job it dispatched has stopped; the record names that Job, and
 	// cleanupRetiredReadOnlyJob retires the claim. Anything else is retired
-	// in this write.
-	//
-	// Apply is the only claim retired here that can owe the database back,
-	// and naming it is what keeps that true. isReadOnlyOperation answers false
-	// for anything it does not recognize, so "not kept" is not "an Apply" --
-	// it is "an Apply, or a type this binary has never heard of", which a
-	// stored object written by a newer operator supplies. Retiring one of
-	// those would hand back a database under an epoch belonging to work this
-	// binary cannot reason about. Nor is this RealmHeldBy: the question is not
-	// who holds the realm but whether the claim retired here owes it back.
+	// in this write: an Apply that never dispatched, since one that may have
+	// became an outcome nobody established above, or a claim of a type this
+	// binary has never heard of, which a stored object written by a newer
+	// operator supplies. The first hands its Lease back in the write; the
+	// second holds nothing this binary can hand back, because a type that is
+	// neither mutating nor serving a proof owns no realm in its own right, and
+	// releasing its epoch would hand back a database under work this binary
+	// cannot reason about.
 	var retainedJob *operatorv1alpha1.RetiredJobStatus
+	retiring := false
 	if isReadOnlyOperation(operation) {
 		retainedJob = &operatorv1alpha1.RetiredJobStatus{
 			Operation: operation.Type, Name: operation.JobName, UID: operation.JobUID,
 		}
 	} else if operation != nil {
-		if operation.Type == operatorv1alpha1.OperationApply && operation.LeaseEpoch != "" {
-			if err := stageOperationLockRelease(schema, operation); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-		schema.Status.ActiveOperation = nil
+		retiring = true
 	} else if pending := schema.Status.PendingObservation; pending != nil &&
 		pending.Outcome == operatorv1alpha1.PendingObservationOutcomeUnknown && pending.ApplyJobName != "" &&
 		schema.Status.ExecutionBinding != nil && pending.Plan.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
@@ -2857,7 +2783,12 @@ func (r *SchemaReconciler) executionBindingChanged(
 	if err := rotateExecutionBinding(schema, binding, retainedJob); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if retiring {
+		err = r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard)
+	} else {
+		err = r.patchStatus(ctx, before, schema)
+	}
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if r.Telemetry != nil {
@@ -3009,14 +2940,8 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	before := schema.DeepCopy()
 	operation := schema.Status.ActiveOperation
-	if mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) == mutationlifecycle.OwnerClaim {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
+	before := schema.DeepCopy()
 	schema.Status.Plan = nil
 	if schema.Status.PendingObservation != nil {
 		schema.Status.PendingObservation.PlanRequired = false
@@ -3026,13 +2951,8 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 	}
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStaleObservation, bounded(failure.Error(), 512))
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStaleObservation, "Database state must be observed again before planning")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStagePlan, telemetry.FailureStaleInput)
@@ -3053,17 +2973,6 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 		return ctrl.Result{}, err
 	}
 	before := schema.DeepCopy()
-	switch mutationlifecycle.RealmHeldBy(schemaRealmClaim(schema)) {
-	case mutationlifecycle.OwnerClaim:
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	case mutationlifecycle.OwnerProof:
-		if err := stagePendingLockRelease(schema, schema.Status.PendingObservation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
 	if operation != nil && operation.Type == operatorv1alpha1.OperationPlan {
 		schema.Status.PendingObservation = nil
 	}
@@ -3076,13 +2985,8 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "The plan is stale because verification policy bytes changed")
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "In-sync status requires verification against the current policy bytes")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Artifact verification must run again")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageVerify, telemetry.FailurePolicyChanged)
@@ -3123,11 +3027,11 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 	before := schema.DeepCopy()
 	operation := schema.Status.ActiveOperation
 	if schemaClaimServesProof(schema) {
-		schema.Status.ActiveOperation = nil
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 		schema.Status.NextReconciliationTime = nil
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonProofInputsChanged, "Post-apply observation will restart from its durable binding")
-		if err := r.patchStatus(ctx, before, schema); err != nil {
+		// The proof keeps the realm it holds.
+		if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 			return ctrl.Result{}, err
 		}
 		if r.Telemetry != nil {
@@ -3142,27 +3046,13 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	// Type-named rather than RealmHeldBy: this site retires one kind of claim,
-	// and the question is whether that claim owes the database back, not who
-	// holds the realm. A claim of another type reaching here is not retired.
-	if operation != nil && operation.Type == operatorv1alpha1.OperationPlan && operation.LeaseEpoch != "" {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	schema.Status.ActiveOperation = nil
 	schema.Status.Plan = nil
 	schema.Status.Source.Verified = false
 	schema.Status.Phase = operatorv1alpha1.PhasePending
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonInputsChanged, "Operation result was discarded because desired inputs changed")
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonInputsChanged, bounded(failure.Error(), 512))
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	if r.Telemetry != nil {
 		stage := telemetry.FailureStageController
@@ -3473,29 +3363,17 @@ func (r *SchemaReconciler) ensureCurrentApproval(
 func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	before := schema.DeepCopy()
-	// Type-named rather than RealmHeldBy: this site retires one kind of claim,
-	// and the question is whether that claim owes the database back, not who
-	// holds the realm. A claim of another type reaching here is not retired.
-	if operation != nil && operation.Type == operatorv1alpha1.OperationApply && operation.LeaseEpoch != "" {
-		if err := stageOperationLockRelease(schema, operation); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
 	if schema.Status.Plan != nil {
 		schema.Status.Plan.Approval = nil
 	}
-	schema.Status.ActiveOperation = nil
 	schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
 	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonApprovalRevoked, "The recorded approval is missing, replaced, or no longer matches the current plan")
 	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonApprovalRevoked, "No Apply Job was started with the invalid approval")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonAwaitingApproval, "The current plan requires a new approval")
-	if err := r.patchStatus(ctx, before, schema); err != nil {
+	// No Apply Job was created under the approval, so an Apply claim hands its
+	// Lease back in the write.
+	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard); err != nil {
 		return ctrl.Result{}, err
-	}
-	if schema.Status.PendingLockRelease != nil {
-		if err := r.completePendingLockRelease(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	if r.Telemetry != nil {
 		if schemaOperation(operation).Mutating {
@@ -4010,6 +3888,60 @@ func schemaRealmClaim(schema *operatorv1alpha1.PtahSchema) mutationlifecycle.Rea
 		Locked:           operation.LeaseEpoch != "",
 		ProofOutstanding: schema.Status.PendingObservation != nil,
 	}
+}
+
+// retireClaim drops the active claim in one status write. The write carries
+// everything the caller recorded on schema since before -- the phase, the
+// conditions, the pending observation an Apply leaves -- and the database
+// release the retirement owes, which mutationlifecycle.Retirement decides from
+// the claim as it stood and why it is going. The release itself follows the
+// write, and one that fails keeps its record for the top of the next pass.
+//
+// A schema keeps the realm with the pending observation an Apply leaves, so a
+// run that may have changed the database hands nothing back here; the write
+// that removes a pending observation ends the proof that held it, and hands
+// back the proof's epoch.
+func (r *SchemaReconciler) retireClaim(
+	ctx context.Context,
+	before, schema *operatorv1alpha1.PtahSchema,
+	disposition mutationlifecycle.Disposition,
+) error {
+	if _, err := stageRetirementRelease(before, schema, disposition); err != nil {
+		return err
+	}
+	schema.Status.ActiveOperation = nil
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return err
+	}
+	if schema.Status.PendingLockRelease == nil {
+		return nil
+	}
+	return r.completePendingLockRelease(ctx, schema)
+}
+
+// stageRetirementRelease records on schema the release that retiring the claim
+// in before owes, and reports whose epoch that was. It is retireClaim's
+// decision on its own, for the one caller that retires an attempt and keeps
+// the claim: a read-only retry, which hands back what the failed attempt held
+// and takes the realm again for the next.
+func stageRetirementRelease(
+	before, schema *operatorv1alpha1.PtahSchema,
+	disposition mutationlifecycle.Disposition,
+) (mutationlifecycle.RealmOwner, error) {
+	retirement := mutationlifecycle.Retirement{
+		Claim:            schemaRealmClaim(before),
+		Disposition:      disposition,
+		RecordHoldsRealm: true,
+		EndsProof:        before.Status.PendingObservation != nil && schema.Status.PendingObservation == nil,
+	}
+	released := retirement.Releases()
+	switch released {
+	case mutationlifecycle.OwnerClaim:
+		return released, stageOperationLockRelease(schema, before.Status.ActiveOperation)
+	case mutationlifecycle.OwnerProof:
+		return released, stagePendingLockRelease(schema, before.Status.PendingObservation)
+	}
+	return released, nil
 }
 
 func stageOperationLockRelease(
