@@ -92,8 +92,8 @@ names a plan of another schema, a plan UID the plan no longer has, or a
 fingerprint the plan does not carry. Creation is also rejected unless the schema is
 currently waiting for exactly one approval and no operation or recorded
 approval already owns that decision. Concurrent duplicates are retired, and
-the accepted approval is consumed only at the persisted Apply dispatch
-boundary. Updates cannot change `spec`; create a new approval for a new plan.
+the accepted approval is consumed only as the Apply crosses its dispatch
+boundary, just before the dispatch marker is written. Updates cannot change `spec`; create a new approval for a new plan.
 
 The chart's optional approver ClusterRole grants read access to schemas,
 migrations, their plans, the chunks a schema plan's SQL is stored in, and

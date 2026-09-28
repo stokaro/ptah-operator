@@ -11,9 +11,12 @@ is settled; a migration hands it back once nothing its claim dispatched can
 still write, and settles the account afterwards without the Lease.
 [Release coordination](#release-coordination) says why each order is safe.
 
-They enforce all of it in two separate implementations, which is why this page
-exists. An obligation stated once and enforced twice drifts, and the way to see
-the drift is to put both enforcement points beside each other.
+The order of the writes that take a claim to its Job is decided once, for
+both families, and so is what retiring a claim owes the database. Each family
+supplies the rest -- how it authorizes a claim, what its Job is, where it keeps
+its status -- and this page puts both families' enforcement points beside each
+other, because an obligation stated once and enforced twice drifts, and that
+is where the drift shows.
 
 Symbols named without a package live in `internal/controller`:
 `schema_controller.go` and `schema_binding_retirement.go` for `PtahSchema`,
@@ -52,6 +55,55 @@ publishes and the operation the runner is told to perform.
 A type this binary does not define, which a resource written by a newer
 operator can carry, answers no to every question, and in particular is not
 read-only: a site that acts on "not mutating" would act on it.
+
+## The dispatch sequence
+
+Both families take a claim whose Job does not exist yet to its one permitted
+create through one sequence of steps, `mutationlifecycle.Dispatch`, and each
+step's durable write is made before the next step starts:
+
+1. Authorize: re-read everything the claim was decided from.
+2. Lease: take the database realm under the claim's own epoch.
+3. Stage: write what the Job reads besides the Job -- a schema Apply's plan
+   projection.
+4. Snapshot: make the Pod admission envelope durable.
+5. Consume: spend the approval that authorized a mutating claim.
+6. Mark: write `dispatchStarted`.
+7. Create the Job, once.
+8. Confirm: read the Job back and hold it to the claim.
+9. Record the Job's UID.
+
+| | Enforcement |
+| --- | --- |
+| `PtahSchema` | `mutationlifecycle.Dispatch` from `reconcileActive` |
+| `PtahMigration` | `mutationlifecycle.Dispatch` from `reconcileActiveMigration` |
+
+Each position has a reason. Authorization comes first, so a claim whose
+authorization moved is retired without waiting for a Lease another claimant
+holds, and without taking the realm for work that will not run. Everything a
+Job depends on -- the realm under the claim's epoch, the plan it mounts, the
+envelope it is judged by, the approval it spends -- is durable before the mark
+that says a Job may exist, so every state in which a Job may exist carries the
+whole account of what authorized it. The mark comes before the one create, so
+the create is always covered by it, and the created Job is read back before
+its UID is recorded.
+
+The approval is spent before the mark. The mark is what turns a missing Job into an outcome nobody established, so
+nothing that can fail may sit between the mark and the create, and spending the
+approval is a write that can fail. A process that stops between the two
+writes leaves a spent approval and no mark: the same claim dispatches on the
+next pass under the approval it already spent, since the claim holds that
+approval by reference and only a claim looking for a new approval skips a
+spent one. A claim retired there instead leaves the approval spent, which asks
+a person to approve again and authorizes nothing. Marking first would leave a
+mark beside an approval not yet spent, which the uncertain path would have to
+find and spend afterwards.
+
+`internal/controller/dispatch_order_test.go` drives each family through every
+step with a fault at that step, reads what the API server holds when the fault
+fires, and runs the passes that recover. Each row is also run against a driver
+with the two steps its boundary is about exchanged, and has to fail there with
+the problem the boundary prevents.
 
 ## Authorize
 
@@ -120,8 +172,8 @@ digest disagrees with the snapshot.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `podintent.Resolve`, digest compared in `reconcileActive` |
-| `PtahMigration` | `podintent.Resolve`, digest compared in `dispatchMigrationJob` |
+| `PtahSchema` | `podintent.Resolve`, digest compared by `mutationlifecycle.Dispatch` |
+| `PtahMigration` | `podintent.Resolve`, digest compared by `mutationlifecycle.Dispatch` |
 
 A crash after the snapshot write cannot leave a Job behind, because the write
 returned before the create.
@@ -144,7 +196,7 @@ retry can clear it.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `planstore.Project` in `reconcileActive`; the controller-write webhook admits a projection only for an Apply that has not crossed the boundary |
+| `PtahSchema` | `planstore.Project`, the stage step of `mutationlifecycle.Dispatch`; the controller-write webhook admits a projection only for an Apply that has not crossed the boundary |
 | `PtahMigration` | Nothing to project: a migration plan carries no SQL, and the Apply reads the files from its verified artifact |
 
 ## Cross the dispatch boundary
@@ -155,29 +207,23 @@ cleared for a mutating claim.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `reconcileActive` writes it; a missing Job reaches `finishUncertainApply` |
-| `PtahMigration` | `dispatchMigrationJob` writes it; a missing Job reaches `finishUncertainMigrationApply` |
+| `PtahSchema` | `mutationlifecycle.Dispatch` writes it; a missing Job reaches `finishUncertainApply` |
+| `PtahMigration` | `mutationlifecycle.Dispatch` writes it; a missing Job reaches `finishUncertainMigrationApply` |
 
 This is the central failure window. A process that dies between the write and
 the create leaves a claim that says a Job may exist. The next pass either finds
 it and adopts its UID, or finds nothing and declares the outcome unknown. It
 never creates the Job a second time.
 
-The approval is consumed in the same stretch, before the create, and the
-families put the two writes in opposite orders. A migration consumes the
-approval and then writes `dispatchStarted`. A schema writes `dispatchStarted`
-and then consumes the approval, so a crash between them leaves a dispatch
-marker beside an approval not yet spent; the next pass finds no Job, declares
-the outcome unknown, and spends the recorded approval before it writes the
-pending observation.
-
-Consumption is evidence that a decision was spent, not permission: a consumed
-approval is skipped when a claim looks for one, so it cannot authorize a second
-dispatch.
+The approval is spent before the marker, in both families, so every marked
+claim's approval is already spent ([The dispatch sequence](#the-dispatch-sequence)
+says why that order). Consumption is evidence that a decision was spent, not
+permission: a consumed approval is skipped when a claim looks for one, so it
+cannot authorize a second dispatch.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `markApprovalConsumed` after the marker, and `consumeRecordedApprovalAtDispatch` on the uncertain path; skipped by `findApproval` |
+| `PtahSchema` | `markApprovalConsumed` through `ensureCurrentApproval`, before the marker; skipped by `findApproval` |
 | `PtahMigration` | `consumeMigrationApproval` before the marker, skipped by `findMigrationApproval` |
 
 ## Create, confirm, record
@@ -192,8 +238,8 @@ comparison of the spec -- before its UID is persisted.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `validateJobIntent`, then the UID written by `reconcileActive` |
-| `PtahMigration` | `validateMigrationJobIntent`, then the UID written by `reconcileActiveMigration` |
+| `PtahSchema` | `validateJobIntent`, then the UID written by `mutationlifecycle.Dispatch` |
+| `PtahMigration` | `validateMigrationJobIntent`, then the UID written by `mutationlifecycle.Dispatch` |
 
 A crash between the create and the UID write is covered by the dispatch marker:
 the next pass adopts the Job found under the reserved name, having checked that
@@ -418,9 +464,8 @@ next pass cannot tell" would be a defect; none of them is.
 | `leaseEpoch`, after the Lease was taken | Nothing external | The Lease held under an epoch the status does not name. The next pass acquires with the stale expectation, which is adopted before dispatch and is continuity loss after |
 | `admissionSnapshot` | Nothing; the pass returns deliberately | No Job can exist yet. The next pass rebuilds the Job and refuses a template whose digest disagrees |
 | A schema plan's projection ConfigMaps | The `dispatchStarted` write | Projections with no Job to mount them. The next pass reads them back, finds them matching and goes on; they are owned by the plan and go with it |
-| A migration's approval: its `Consumed` condition | The `dispatchStarted` write, then the one create | An approval spent with nothing dispatched. Consumption is evidence, not permission, so it authorizes no second attempt |
-| `dispatchStarted` | For a migration, the one permitted create. For a schema, its approval's `Consumed` condition, then the create | A claim that says a Job may exist. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again. A schema's approval may still be unspent here, and the unknown outcome spends it before the pending observation is written |
-| A schema's approval: its `Consumed` condition | The one permitted create | A marker and a spent approval with no Job behind them. The next pass declares the outcome unknown, as in the row above |
+| The approval's `Consumed` condition, for a mutating claim | The `dispatchStarted` write | An approval spent with nothing marked. The same claim dispatches on the next pass under the approval it spent; a claim retired instead leaves the approval spent, which authorizes nothing |
+| `dispatchStarted` | The one permitted create | A claim that says a Job may exist, with its approval already spent. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again |
 | `jobUID` | An Event and the telemetry | Covered by the marker above: the next pass finds the Job under the reserved name and adopts its UID |
 | The Job's cleanup TTL | The outcome status patch | A Job carrying a TTL under a live claim. The next pass re-reads the same terminal Job and reaches the same verdict |
 | The outcome patch: the claim cleared, the record written and the release it owes staged, together | For a migration, the Lease release. For a schema, the proof, under the same Lease | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
