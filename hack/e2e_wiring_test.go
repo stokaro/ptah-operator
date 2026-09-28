@@ -3583,6 +3583,30 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 			wantError:   "audited operation evidence",
 		},
 		{
+			name:        "four-eyes row claims the PostgreSQL lifecycle database",
+			old:         `create_schema_resource "$FOUR_EYES_SCHEMA" PostgreSQL "$FOUR_EYES_PG_SECRET" "$four_eyes_reference" \`,
+			replacement: `create_schema_resource "$FOUR_EYES_SCHEMA" PostgreSQL "$PG_SECRET" "$four_eyes_reference" \`,
+			wantError:   "four-eyes isolated database",
+		},
+		{
+			name:        "four-eyes row skips its isolated database",
+			old:         "create_isolated_postgresql_database \"$FOUR_EYES_PG_DATABASE\" \"$FOUR_EYES_PG_SECRET\" \"$FOUR_EYES_PG_URL_FILE\"\n",
+			replacement: "",
+			wantError:   "four-eyes isolated database",
+		},
+		{
+			name:        "Pod-metadata refused schema claims the PostgreSQL lifecycle database",
+			old:         `create_schema_resource "$POD_METADATA_REFUSED_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \`,
+			replacement: `create_schema_resource "$POD_METADATA_REFUSED_SCHEMA" PostgreSQL "$PG_SECRET" "$pod_metadata_reference" \`,
+			wantError:   "Pod-metadata isolated database",
+		},
+		{
+			name:        "Pod-metadata declared schema claims the PostgreSQL lifecycle database",
+			old:         `create_schema_resource "$POD_METADATA_SCHEMA" PostgreSQL "$POD_METADATA_PG_SECRET" "$pod_metadata_reference" \`,
+			replacement: `create_schema_resource "$POD_METADATA_SCHEMA" PostgreSQL "$PG_SECRET" "$pod_metadata_reference" \`,
+			wantError:   "Pod-metadata declared schema on the isolated database",
+		},
+		{
 			name:        "declared Pod metadata evidence omitted",
 			old:         `printf '%s\n' 'e2e data plane: PASS declared Pod metadata reaches every operation Pod under a namespace admission policy, and a Pod the policy refuses is reported as PodAdmissionRefused'`,
 			replacement: `printf '%s\n' 'e2e data plane: Pod metadata row skipped'`,
