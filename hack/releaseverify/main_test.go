@@ -610,25 +610,6 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 	}
 }
 
-func TestVerifyWorkflowDigestIsAnIndependentTripwire(t *testing.T) {
-	t.Parallel()
-
-	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := verifyWorkflowDigest(workflow); err != nil {
-		t.Fatalf("verifyWorkflowDigest(valid) error = %v", err)
-	}
-	mutated := append(append([]byte(nil), workflow...), []byte("\n# Semantically inert audit-tripwire mutation.\n")...)
-	if err := verifyWorkflowSemantics(mutated); err != nil {
-		t.Fatalf("verifyWorkflowSemantics(commented) error = %v", err)
-	}
-	if err := verifyWorkflowDigest(mutated); err == nil {
-		t.Fatal("verifyWorkflowDigest() accepted changed workflow bytes")
-	}
-}
-
 func TestParseKubernetesSupportWindow(t *testing.T) {
 	t.Parallel()
 

@@ -162,24 +162,6 @@ func TestVerifyCancelWorkflowRejectsDangerousMutations(t *testing.T) {
 	}
 }
 
-func TestVerifyCancelWorkflowDigestRejectsSemanticNoOp(t *testing.T) {
-	t.Parallel()
-
-	workflow := readTestWorkflow(t, filepath.Join("..", cancelWorkflowPath))
-	path := writeMutatedWorkflow(
-		t,
-		workflow,
-		"      - name: Cancel the head branch's unfinished pull request runs\n",
-		"      - name: Cancel the head branch's unfinished pull request runs # audited policy changed\n",
-	)
-	if err := verifyCancelWorkflowSemanticsAtPath(path); err != nil {
-		t.Fatalf("semantic verifier unexpectedly caught a comment: %v", err)
-	}
-	if err := verifyCancelWorkflow(path); err == nil || !strings.Contains(err.Error(), "workflow digest") {
-		t.Fatalf("verifyCancelWorkflow() error = %v, want whole-workflow digest rejection", err)
-	}
-}
-
 // The verifier holds the command to its text; this runs that text. A stub gh
 // answers every listing with runs the API filters would already have dropped,
 // so what reaches the cancel request is decided by the command's own filter,

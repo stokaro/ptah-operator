@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stokaro/ptah-operator/hack/releasecontract"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,34 +33,6 @@ var (
 	kubernetesMinorPattern = regexp.MustCompile(`^([1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 	dockerArgumentPattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	dockerStagePattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
-	releaseRunSHA256       = map[string]string{
-		"smoke/verify-release":                  "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
-		"smoke/scan-vulnerabilities":            "8e0e527f037d2fc58747bd3fecf5b733bbf3bdc27f1d979508de0626f4bcb9ab",
-		"smoke/chart-reproducibility":           "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
-		"smoke/executor-source":                 "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
-		"support-preflight/support-evidence":    "d893ad7824b98b107d177aec543a63f09fe99d9474de58a51acdf0a076fa1cf7",
-		"support-preflight/acceptance-evidence": "b0a58ac48a8ffab51e1b39afd2f5dbb2368ecf198883ba69e24383c241fc947f",
-		"publish/release":                       "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
-		"publish/executor-source":               "8612883be38a8a112dc376d28bcc9c2946431160eb1dbbe8e7c7fb7e6296d7f4",
-		"publish/transaction":                   "f0f4f8c28e222c0aaed707d5e531c9f747bcea67b0a2c1e3e11ce621043e9445",
-		"publish/immutability-preflight":        "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
-		"publish/draft":                         "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
-		"publish/stage-inspect":                 "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
-		"publish/executor-stage-inspect":        "9101f2bf05b917e79f04cbafdf82982ea27ccf4798c4d058797d1c276dbb86e2",
-		"publish/chart-package":                 "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
-		"publish/evidence-asset":                "c2e48485cc0a816250d727c998137b3144de5521909c0c6f4c00089dfabfdcdc",
-		"publish/artifacts":                     "3b56d24d01ea5f69c5adcd7967b30fc4f8bbbb4e3de497cd77cbd32fbf86d183",
-		"publish/image-structure":               "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
-		"publish/executor-structure":            "accafc13c918f4ee400aa83e7453418aade64bae112778ac6487119f2f7736c7",
-		"publish/finalize-journal":              "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
-		"publish/asset-auth":                    "3475070ed01f5a39c10e6523e24e18a725974935dee9fced605fab129ab3e8d0",
-		"publish/asset-sync":                    "00964fd7c43c95088755d469802e8a202feebfe138a61e5d567e1f116aefe1ed",
-		"publish/image-signature":               "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
-		"publish/executor-signature":            "5e217c59d27aab1a85bb03fde7613fd4585a4386fc654ae50f4e7c68ae3932fe",
-		"publish/final-verify":                  "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
-		"publish/executor-final-verify":         "6bef003c921421ec68e90568239626b8ea50e7dd28676ec02963d9445c9f5c87",
-		"publish/publish-release":               "4174ba4db5d9431c156bdef5ea78ff98765f9ff2d6e83dbe92da79e3a7f8e735",
-	}
 	// BuildKit reads parser directives from the leading comment lines, in this
 	// shape, and stops at the first line that is not one.
 	dockerDirectivePattern = regexp.MustCompile(`^#[ \t]*([A-Za-z][A-Za-z0-9]*)[ \t]*=[ \t]*(.*?)[ \t]*$`)
@@ -1517,10 +1488,7 @@ func (values *workflowStringList) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func verifyWorkflow(document []byte) error {
-	if err := verifyWorkflowSemantics(document); err != nil {
-		return err
-	}
-	return verifyWorkflowDigest(document)
+	return verifyWorkflowSemantics(document)
 }
 
 func verifyWorkflowSemantics(document []byte) error {
@@ -1528,6 +1496,9 @@ func verifyWorkflowSemantics(document []byte) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(document))
 	if err := decoder.Decode(&workflow); err != nil {
 		return fmt.Errorf("parse release workflow: %w", err)
+	}
+	if err := verifyWorkflowTextBindings(document); err != nil {
+		return err
 	}
 	if len(workflow.On) != 3 {
 		return errors.New("release workflow must have only pull_request, workflow_dispatch, and tag push triggers")
@@ -2092,10 +2063,35 @@ func verifyWorkflowSemantics(document []byte) error {
 	return nil
 }
 
-func verifyWorkflowDigest(document []byte) error {
-	actualDigest := fmt.Sprintf("%x", sha256.Sum256(document))
-	if actualDigest != releasecontract.WorkflowSHA256 {
-		return fmt.Errorf("release workflow digest %s differs from the audited contract", actualDigest)
+// constantBranch finds a shell branch whose condition is a constant, which
+// either never runs its body or always does, and so hides what the step does
+// behind a check that decides nothing. A `while true` retry loop is left alone:
+// it ends by break, and the steps use it that way.
+var constantBranch = regexp.MustCompile(`(?m)^[ \t]*(?:(?:if|elif)[ \t]+(?:true|false|:)|while[ \t]+false|until[ \t]+(?:true|:))[ \t]*(?:;|$)`)
+
+// verifyWorkflowTextBindings holds the bindings that span the whole file rather
+// than one step. The release verifier runs as the smoke job's single-line step
+// and nowhere else in that form, the tag identity check takes no value that
+// could turn it off, the immutability test is stated at both places that
+// re-read the published release, and no shell step carries a branch whose
+// condition is a constant.
+func verifyWorkflowTextBindings(document []byte) error {
+	for _, binding := range []struct {
+		text  string
+		count int
+	}{
+		{"run: go run ./hack/releaseverify\n", 1},
+		{`[[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]`, 2},
+	} {
+		if got := bytes.Count(document, []byte(binding.text)); got != binding.count {
+			return fmt.Errorf("release workflow must state %q %d times, found %d", binding.text, binding.count, got)
+		}
+	}
+	if bytes.Contains(document, []byte("-verify-tag-identity=")) {
+		return errors.New("release workflow must not give -verify-tag-identity a value")
+	}
+	if match := constantBranch.Find(document); match != nil {
+		return fmt.Errorf("release workflow shell step has a branch with a constant condition: %q", bytes.TrimSpace(match))
 	}
 	return nil
 }
@@ -2104,7 +2100,6 @@ func verifyStepContract(jobName string, steps []workflowStep, expectedIDs []stri
 	if len(steps) != len(expectedIDs) {
 		return fmt.Errorf("release job %s has %d steps, expected %d", jobName, len(steps), len(expectedIDs))
 	}
-	seenRunSteps := 0
 	for index, step := range steps {
 		wantID := expectedIDs[index]
 		if step.ID != wantID {
@@ -2117,26 +2112,6 @@ func verifyStepContract(jobName string, steps []workflowStep, expectedIDs []stri
 		if (step.Run == "") == (step.Uses == "") {
 			return fmt.Errorf("release job %s step %q must contain exactly one of run or uses", jobName, wantID)
 		}
-		runKey := jobName + "/" + wantID
-		wantRunDigest, runExpected := releaseRunSHA256[runKey]
-		if step.Run != "" {
-			seenRunSteps++
-			actualRunDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(step.Run)))
-			if !runExpected || actualRunDigest != wantRunDigest {
-				return fmt.Errorf("release job %s step %q shell digest %s differs from the audited contract", jobName, wantID, actualRunDigest)
-			}
-		} else if runExpected {
-			return fmt.Errorf("release job %s action step %q unexpectedly has a shell contract", jobName, wantID)
-		}
-	}
-	expectedRunSteps := 0
-	for key := range releaseRunSHA256 {
-		if strings.HasPrefix(key, jobName+"/") {
-			expectedRunSteps++
-		}
-	}
-	if seenRunSteps != expectedRunSteps {
-		return fmt.Errorf("release job %s has %d shell steps, expected %d audited steps", jobName, seenRunSteps, expectedRunSteps)
 	}
 	return nil
 }

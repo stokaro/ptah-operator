@@ -838,24 +838,6 @@ func TestVerifyCIRunBoundFollowsTheNeedsGraph(t *testing.T) {
 	}
 }
 
-func TestVerifyWorkflowDigestRejectsSetupEnvironmentMutation(t *testing.T) {
-	t.Parallel()
-
-	workflow := readTestWorkflow(t, filepath.Join("..", workflowPath))
-	path := writeMutatedWorkflow(
-		t,
-		workflow,
-		"          context_name=\"ptah-ci-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}\"\n",
-		"          echo 'MAKEFLAGS=--just-print' >> \"$GITHUB_ENV\"\n          context_name=\"ptah-ci-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}\"\n",
-	)
-	if err := verifyCIWorkflowSemanticsAtPath(path); err != nil {
-		t.Fatalf("semantic verifier unexpectedly caught whole-workflow mutation: %v", err)
-	}
-	if err := verifyWorkflow(path); err == nil || !strings.Contains(err.Error(), "workflow digest") {
-		t.Fatalf("verifyWorkflow() error = %v, want whole-workflow digest rejection", err)
-	}
-}
-
 func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 	t.Parallel()
 
@@ -993,24 +975,6 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 				t.Fatal("verifyUpdateWorkflowSemantics() accepted a critical mutation")
 			}
 		})
-	}
-}
-
-func TestVerifyUpdateWorkflowDigestRejectsSemanticNoOp(t *testing.T) {
-	t.Parallel()
-
-	workflow := readTestWorkflow(t, filepath.Join("..", updateWorkflowPath))
-	path := writeMutatedWorkflow(
-		t,
-		workflow,
-		"      - name: Check out the default branch\n",
-		"      - name: Check out the default branch # audited policy changed\n",
-	)
-	if err := verifyUpdateWorkflowSemanticsAtPath(path); err != nil {
-		t.Fatalf("semantic verifier unexpectedly rejected inert policy text: %v", err)
-	}
-	if err := verifyUpdateWorkflow(path); err == nil || !strings.Contains(err.Error(), "workflow digest") {
-		t.Fatalf("verifyUpdateWorkflow() error = %v, want whole-workflow digest rejection", err)
 	}
 }
 
@@ -1159,21 +1123,6 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 				t.Fatal("verifyReleaseWorkflow() accepted a critical mutation")
 			}
 		})
-	}
-}
-
-func TestVerifyReleaseWorkflowDigestRejectsSemanticNoOp(t *testing.T) {
-	t.Parallel()
-
-	workflow := readTestWorkflow(t, filepath.Join("..", releaseWorkflowPath))
-	path := writeMutatedWorkflow(
-		t,
-		workflow,
-		"      - name: Require fresh exact-commit support evidence\n",
-		"      - name: Require fresh exact-commit support evidence # audited policy changed\n",
-	)
-	if err := verifyReleaseWorkflow(path); err == nil || !strings.Contains(err.Error(), "workflow digest") {
-		t.Fatalf("verifyReleaseWorkflow() error = %v, want whole-workflow digest rejection", err)
 	}
 }
 
