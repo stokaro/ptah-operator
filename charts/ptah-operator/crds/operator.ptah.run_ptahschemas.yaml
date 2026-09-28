@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
     operator.ptah.run/crd-schema-version: "32"
-    operator.ptah.run/crd-schema-digest: "sha256:3f8c418f94c5a07efe1ce98cd1442049af6b2818dd56a857ddf6e2d0eaf44cbc"
+    operator.ptah.run/crd-schema-digest: "sha256:b748c135a91ab9f47252aba72d8b556d301e2cec6d505c3caa4ed6f2eb8736fe"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -85,10 +85,6 @@ spec:
                     required:
                     - name
                     type: object
-                    x-kubernetes-validations:
-                    - message: dockerConfigJSONKey is required in DockerConfigJSON
-                        mode
-                      rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
                   transport:
                     properties:
                       caFrom:
@@ -1174,10 +1170,6 @@ spec:
                         required:
                         - name
                         type: object
-                        x-kubernetes-validations:
-                        - message: dockerConfigJSONKey is required in DockerConfigJSON
-                            mode
-                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
                       resolvedReference:
                         type: string
                       transport:
@@ -1954,10 +1946,6 @@ spec:
                         required:
                         - name
                         type: object
-                        x-kubernetes-validations:
-                        - message: dockerConfigJSONKey is required in DockerConfigJSON
-                            mode
-                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
                       resolvedReference:
                         type: string
                       transport:

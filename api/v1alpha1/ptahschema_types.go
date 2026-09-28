@@ -252,7 +252,6 @@ type OCIArtifactAccessBinding struct {
 // to the runner. That grant is the Secret's `registry` key, holding the
 // authority-only host[:port] the credential is for. The key is fixed so the
 // Secret owner, rather than a resource author, controls the grant.
-// +kubebuilder:validation:XValidation:rule="self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)",message="dockerConfigJSONKey is required in DockerConfigJSON mode"
 type RegistryAuthSource struct {
 	// Name of the Secret the registry credential is read from. The manager
 	// never reads it; the operation Pod does.
