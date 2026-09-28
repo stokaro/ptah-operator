@@ -366,3 +366,81 @@ steps:
 		})
 	}
 }
+
+// -only narrows both sides of -verify. The scenario list holds only the named
+// scenario, so the record has to be narrowed with it: a record of fifteen
+// read against one scenario reported the other fourteen as undeclared. The
+// narrowing must not hide the named scenario's own drift, and a record with no
+// recording of it verified nothing.
+func TestVerifyOnlyChecksTheNamedRecording(t *testing.T) {
+	t.Parallel()
+
+	const declared = `id: ID
+title: A probe
+tagline: One step.
+learn: What -only narrows.
+tags: [Lifecycle]
+steps:
+  - note: Read it.
+    run: kubectl get ptahschema NAME
+    expect:
+      exit: 0
+`
+	directory := t.TempDir()
+	scenarioFor := func(id string) string {
+		return strings.NewReplacer("ID", id, "NAME", id).Replace(declared)
+	}
+	write(t, filepath.Join(directory, "only-first.yaml"), scenarioFor("only-first"))
+	write(t, filepath.Join(directory, "only-second.yaml"), scenarioFor("only-second"))
+	recorded, err := loadScenarios(directory)
+	if err != nil {
+		t.Fatalf("loadScenarios: %v", err)
+	}
+	digests := map[string]string{}
+	for _, one := range recorded {
+		digests[one.ID] = definitionDigest(one)
+	}
+	recordFile := filepath.Join(directory, "runs.json")
+	if err := writeRecord(recordFile, runRecord{Scenarios: []recording{
+		{ID: "only-first", DefinitionDigest: digests["only-first"]},
+		{ID: "only-second", DefinitionDigest: digests["only-second"]},
+	}}); err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+	verify := func(arguments ...string) (string, error) {
+		var diagnostics strings.Builder
+		err := run(append([]string{"-scenarios", directory, "-verify", recordFile}, arguments...), &diagnostics)
+		return diagnostics.String(), err
+	}
+
+	if output, err := verify("-only", "only-first"); err != nil ||
+		!strings.Contains(output, "record: 1 recordings still represent their scenarios") {
+		t.Fatalf("-only only-first against an unchanged record: %v\n%s", err, output)
+	}
+
+	// The second scenario drifts. -only on the first no longer reads it, and
+	// the full check still refuses it.
+	write(t, filepath.Join(directory, "only-second.yaml"),
+		strings.Replace(scenarioFor("only-second"), "get ptahschema", "describe ptahschema", 1))
+	if output, err := verify("-only", "only-first"); err != nil {
+		t.Fatalf("-only only-first read the drifted second scenario: %v\n%s", err, output)
+	}
+	if output, err := verify(); err == nil || !strings.Contains(output, "only-second: the scenario changed under the recording") {
+		t.Fatalf("the full check accepted the drifted second scenario: %v\n%s", err, output)
+	}
+	if output, err := verify("-only", "only-second"); err == nil ||
+		!strings.Contains(output, "only-second: the scenario changed under the recording; re-record it\n") {
+		t.Fatalf("-only only-second hid its own drift: %v\n%s", err, output)
+	}
+
+	// A record with no recording of the named scenario verified nothing.
+	if err := writeRecord(recordFile, runRecord{Scenarios: []recording{
+		{ID: "only-second", DefinitionDigest: digests["only-second"]},
+	}}); err != nil {
+		t.Fatalf("writeRecord: %v", err)
+	}
+	if output, err := verify("-only", "only-first"); err == nil ||
+		!strings.Contains(err.Error(), `holds no recording of "only-first"`) {
+		t.Fatalf("-only only-first against a record without it: %v\n%s", err, output)
+	}
+}

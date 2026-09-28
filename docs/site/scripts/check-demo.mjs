@@ -159,19 +159,10 @@ export function commandsInRun(run) {
   return commands;
 }
 
-// RerecordPending names a scenario whose definition has moved since the
-// recording was made, with the reason it is still published.
-//
-// A recording that no longer matches its scenario is debt, not a lie, as long
-// as it says so. What it may not be is silent: the entry below is what makes
-// the drift reviewable, and it is removed by re-recording rather than by
-// editing it away. A drift nobody entered here fails, which is the point --
-// the previous check matched ids, so replacing a scenario's first command with
-// `false` still reported that every run held.
-export const RerecordPending = {};
-
-// bindingProblemsIn compares the two, per run.
-export function bindingProblemsIn(record, scenarioSources, pending = RerecordPending) {
+// bindingProblemsIn compares the two, per run. A drift has one way out,
+// re-recording: `make verify-demo-recording` refuses it by digest as well,
+// so an allowance here could never let one through.
+export function bindingProblemsIn(record, scenarioSources) {
   const problems = [];
   for (const run of record.scenarios ?? []) {
     const source = scenarioSources[run.id];
@@ -191,42 +182,9 @@ export function bindingProblemsIn(record, scenarioSources, pending = RerecordPen
     }
     for (let step = 0; step < declared.length; step += 1) {
       if (declared[step].trim() === recorded[step].trim()) continue;
-      const allowed = pending[run.id];
-      if (allowed && allowed.step === step + 1 && allowed.recordedAt === run.source?.commit) {
-        continue;
-      }
       problems.push(
         `${run.id} step ${step + 1} was recorded running something the scenario no longer declares`,
       );
-    }
-  }
-  return problems;
-}
-
-// staleAllowanceProblemsIn refuses an allowance that stopped being about
-// anything: a scenario re-recorded, removed, or drifted at a different step
-// leaves an entry that would silently permit the next drift at that step.
-export function staleAllowanceProblemsIn(record, scenarioSources, pending = RerecordPending) {
-  const problems = [];
-  for (const [id, allowed] of Object.entries(pending)) {
-    const run = (record.scenarios ?? []).find((one) => one.id === id);
-    if (!run) {
-      problems.push(`${id} is listed as awaiting a re-recording and has no recorded run`);
-      continue;
-    }
-    if (run.source?.commit !== allowed.recordedAt) {
-      problems.push(`${id} was re-recorded; remove it from the re-recording list`);
-      continue;
-    }
-    const { commands: declared } = commandsInScenario(scenarioSources[id] ?? '', id);
-    const recorded = commandsInRun(run);
-    const step = allowed.step - 1;
-    if (declared[step] === undefined || recorded[step] === undefined) {
-      problems.push(`${id} no longer has a step ${allowed.step} for its allowance to be about`);
-      continue;
-    }
-    if (declared[step].trim() === recorded[step].trim()) {
-      problems.push(`${id} step ${allowed.step} matches again; remove it from the re-recording list`);
     }
   }
   return problems;
@@ -427,7 +385,6 @@ function main() {
   const runPage = pages.find(([name]) => name.endsWith('[run].astro'))[1];
   const problems = problemsIn(record, scenarioIds, TagOrder)
     .concat(bindingProblemsIn(record, scenarioSources))
-    .concat(staleAllowanceProblemsIn(record, scenarioSources))
     .concat(pairingProblemsIn(record.lab?.PTAH_VERSION, supportedPtah, pages))
     .concat(livenessProblemsIn(pages))
     .concat(environmentProblemsIn(runPage, publishedVariablesIn(recorderSource)));
