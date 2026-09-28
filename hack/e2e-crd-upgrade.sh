@@ -272,12 +272,26 @@ controller_kube() {
 # write from any other identity, this harness included. A fixture that stages
 # state the manager would have written writes it as the manager's
 # ServiceAccount, read from the release's own Deployment so it is the identity
-# the guard and the RBAC both name.
+# the guard and the RBAC both name. Most fixtures stage that state with the
+# manager stopped, and stopping it deletes the Deployment, so the account is
+# read from the snapshot stop_controller_deployment took when no controller
+# Deployment stands.
 manager_status_kube() {
-	runtime_deployment_names
-	status_account=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$CONTROLLER_DEPLOYMENT" \
-		-o jsonpath='{.spec.template.spec.serviceAccountName}') ||
-		fail "could not read the ServiceAccount the manager writes status as"
+	status_deployments=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment \
+		-l 'app.kubernetes.io/component=controller' -o json) ||
+		fail "could not list the controller Deployment the manager writes status as"
+	case "$(printf '%s\n' "$status_deployments" | jq '.items | length')" in
+	1)
+		status_account=$(printf '%s\n' "$status_deployments" |
+			jq -r '.items[0].spec.template.spec.serviceAccountName // empty')
+		;;
+	0)
+		[ -n "${CONTROLLER_DEPLOYMENT_SNAPSHOT:-}" ] && [ -s "$CONTROLLER_DEPLOYMENT_SNAPSHOT" ] ||
+			fail "no controller Deployment stands and none was snapshotted to write status as"
+		status_account=$(jq -r '.spec.template.spec.serviceAccountName // empty' "$CONTROLLER_DEPLOYMENT_SNAPSHOT")
+		;;
+	*) fail "more than one controller Deployment could name the ServiceAccount to write status as" ;;
+	esac
 	[ -n "$status_account" ] || fail "the manager Deployment names no ServiceAccount to write status as"
 	kube --as "system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$status_account" "$@"
 }
