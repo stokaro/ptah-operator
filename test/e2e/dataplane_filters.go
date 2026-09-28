@@ -831,7 +831,7 @@ func (in sourceJobIsolationInputs) sourceJobIsolated(job *batchv1.Job) bool {
 	return true
 }
 
-// publisherJobIsolation is testdata/e2e/publisher-job-isolation.jq: the Job
+// publisherJobIsolation is the Job
 // that pushes a schema artifact holds the registry credential and no database
 // credential.
 func publisherJobIsolation(job *batchv1.Job, image, registrySecret string) bool {

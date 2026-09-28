@@ -2903,20 +2903,20 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "PostgreSQL migration lifecycle omitted",
-			old:         `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`,
+			old:         `run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql`,
 			replacement: `true # migration lifecycle omitted`,
 			wantError:   "PostgreSQL migration lifecycle",
 		},
 		{
 			name:        "MySQL migration lifecycle omitted",
-			old:         `run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"`,
+			old:         `run_recorded_phase migrations-mysql run_go_phase migrations-mysql`,
 			replacement: `true # migration lifecycle omitted`,
 			wantError:   "MySQL migration lifecycle",
 		},
 		{
 			name:        "migration lifecycle call separated from its environment",
-			old:         `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`,
-			replacement: "true\n\trun_recorded_phase migrations-postgresql \"$ROOT_DIR/hack/e2e-migrations.sh\"",
+			old:         `run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql`,
+			replacement: "true\n\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql",
 			wantError:   `migrations-postgresql phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
 		},
 		{
@@ -3613,9 +3613,9 @@ func TestVerifySQLStatementSelftestWiringRejectsMutations(t *testing.T) {
 }
 
 // The self-test proves the helpers; this proves the call sites still reach
-// them. Both phases surround their two guarded statements with thirty-odd
-// value queries that differ by one word, so the way the defect comes back is a
-// copy of the neighbor.
+// them. The reference-data phase surrounds its guarded statement with value
+// queries that differ by one word, so the way the defect comes back is a copy
+// of the neighbor.
 func TestVerifySQLStatementGuardsRejectValueHelperCallSites(t *testing.T) {
 	t.Parallel()
 
@@ -3630,16 +3630,6 @@ func TestVerifySQLStatementGuardsRejectValueHelperCallSites(t *testing.T) {
 		replacement string
 	}{
 		{
-			name:    "undone column restored to the value helper",
-			fixture: "e2e-migrations.sh",
-			path:    files.migrations,
-			assign:  func(mutated *e2eWiringFiles, path string) { mutated.migrations = path },
-			old: `	migration_statement "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
-		fail "could not undo the column the $ENGINE partial migration committed"`,
-			replacement: `	migration_query "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
-		fail "could not undo the column the $ENGINE partial migration committed"`,
-		},
-		{
 			name:    "external edit restored to the value helper",
 			fixture: "e2e-reference-data.sh",
 			path:    files.referenceData,
@@ -3648,17 +3638,6 @@ func TestVerifySQLStatementGuardsRejectValueHelperCallSites(t *testing.T) {
 		fail "the external edit could not be made"`,
 			replacement: `	reference_query "UPDATE countries SET name = 'Edited outside the operator' WHERE code = 'US'" >/dev/null ||
 		fail "the external edit could not be made"`,
-		},
-		{
-			name:    "revision row deleted through a continued value call",
-			fixture: "e2e-migrations.sh",
-			path:    files.migrations,
-			assign:  func(mutated *e2eWiringFiles, path string) { mutated.migrations = path },
-			old: `	migration_statement "DELETE FROM schema_migrations WHERE state <> 'applied'" >/dev/null ||
-		fail "could not take the unfinished $ENGINE revision out of the history"`,
-			replacement: `	migration_query \
-		"DELETE FROM schema_migrations WHERE state <> 'applied'" >/dev/null ||
-		fail "could not take the unfinished $ENGINE revision out of the history"`,
 		},
 	}
 	for _, test := range tests {
@@ -4198,7 +4177,7 @@ func TestGoPhaseBindingsCoverTheDeclaredInputs(t *testing.T) {
 	for _, phase := range phases.All() {
 		for _, name := range phase.Inputs() {
 			read[name] = true
-			if _, bound := goPhaseBindings[name]; !bound {
+			if _, bound := goPhaseBinding(phase.Name, name); !bound {
 				t.Errorf("Go phase %s reads %s, and goPhaseBindings does not say which driver variable feeds it", phase.Name, name)
 			}
 		}
@@ -4218,13 +4197,11 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 
 	files := repositoryE2EWiringFiles()
 	harness := readE2ESource(t, files.harness)
-	migrations := readE2ESource(t, files.migrations)
 	referenceData := readE2ESource(t, files.referenceData)
 	// Between the credentials and the engine, in every migration phase's call.
 	isolationBindings := "E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\n"
 	tests := []struct {
 		name          string
-		script        bool
 		referenceData bool
 		old           string
 		replacement   string
@@ -4273,25 +4250,39 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			name:        "undeclared binding added",
 			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \\\nE2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \\\nE2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n" + "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" + isolationBindings + "E2E_ENGINE=postgresql \\\n",
-			wantError:   "migrations-postgresql phase binds E2E_MIGRATION_INTERVAL, which no environment contract declares",
+			wantError:   "migrations-postgresql phase binds E2E_MIGRATION_INTERVAL, which test/e2e/phases does not declare it reads",
 		},
 		{
 			name:        "phase left out",
-			old:         "\trun_recorded_phase migrations-postgresql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			old:         "\trun_recorded_phase migrations-postgresql run_go_phase migrations-postgresql\n",
 			replacement: "\t:\n",
-			wantError:   `lifecycle phase "migrations-postgresql" is never invoked`,
+			wantError:   `Go phase "migrations-postgresql" is never invoked`,
 		},
 		{
-			name:        "phase pointed at another script",
-			old:         "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			name:        "phase pointed at a script",
+			old:         "\trun_recorded_phase migrations-mysql run_go_phase migrations-mysql\n",
 			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-ha.sh\"\n",
-			wantError:   `lifecycle phase "migrations-mysql" must run hack/e2e-migrations.sh, not hack/e2e-ha.sh`,
+			wantError:   "migrations-mysql is a Go phase and must run through run_go_phase migrations-mysql",
 		},
 		{
 			name:        "phase invoked twice",
-			old:         "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
-			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			old:         "\trun_recorded_phase migrations-mysql run_go_phase migrations-mysql\n",
+			replacement: "\trun_recorded_phase migrations-mysql run_go_phase migrations-mysql\n\trun_recorded_phase migrations-mysql run_go_phase migrations-mysql\n",
 			wantError:   `lifecycle phase "migrations-mysql" is invoked more than once`,
+		},
+		{
+			// Each migration phase runs the engine its name ends in, which is
+			// the one binding goPhaseBindings cannot hold for every phase alike.
+			name:        "PostgreSQL phase bound to the other engine",
+			old:         "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql",
+			replacement: "E2E_ENGINE=mysql \\\n\trun_recorded_phase migrations-postgresql",
+			wantError:   `migrations-postgresql phase must bind E2E_ENGINE to "postgresql", and binds "mysql"`,
+		},
+		{
+			name:        "migration phase left without an engine",
+			old:         "E2E_ENGINE=mysql \\\n\trun_recorded_phase migrations-mysql",
+			replacement: "\trun_recorded_phase migrations-mysql",
+			wantError:   `migrations-mysql phase must bind E2E_ENGINE to "mysql", and binds nothing`,
 		},
 		// A Go phase declares what it reads in test/e2e/phases, and the call
 		// is held to exactly that declaration.
@@ -4344,20 +4335,6 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			wantError:   `Go phase "cert-rotation" is never invoked`,
 		},
 		{
-			name:        "script grows an input nobody passes",
-			script:      true,
-			old:         "INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}\n",
-			replacement: "INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}\nSOURCE_AUTHORITY=$E2E_SOURCE_AUTHORITY\n",
-			wantError:   "hack/e2e-migrations.sh reads E2E_SOURCE_AUTHORITY without a default, and the migrations-postgresql phase binds nothing to it",
-		},
-		{
-			name:        "script stops reading what it is passed",
-			script:      true,
-			old:         "REGISTRY_HOST_ADDRESS=${E2E_REGISTRY_HOST_ADDRESS:-}\n",
-			replacement: "REGISTRY_HOST_ADDRESS=\n",
-			wantError:   "migrations-postgresql phase binds E2E_REGISTRY_HOST_ADDRESS, which hack/e2e-migrations.sh never reads",
-		},
-		{
 			name: "bindings reordered",
 			old: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
 				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
@@ -4383,22 +4360,6 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			wantError: `migrations-postgresql phase must bind E2E_DOCKER_CONTEXT to "$DOCKER_CONTEXT", and binds "$SELECTED_DOCKER_CONTEXT"`,
 		},
 		{
-			name:        "script stops reading the cluster it isolates a node of",
-			script:      true,
-			old:         "KIND_CLUSTER_NAME=${E2E_KIND_CLUSTER_NAME:-}\n",
-			replacement: "KIND_CLUSTER_NAME=kind\n",
-			wantError:   "migrations-postgresql phase binds E2E_KIND_CLUSTER_NAME, which hack/e2e-migrations.sh never reads",
-		},
-		{
-			// A phase that isolates a node, in a suite the audit no longer
-			// knows to give one: the declaration is what the suite check reads.
-			name:        "script stops declaring the isolation key",
-			script:      true,
-			old:         "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation\n",
-			replacement: "ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolated\n",
-			wantError:   "the migrations-postgresql phase isolates a node, and hack/e2e-migrations.sh does not declare ISOLATION_NODE_KEY=operator.ptah.run/e2e-isolation",
-		},
-		{
 			name:          "another phase's script declares the isolation key",
 			referenceData: true,
 			old:           "PHASE_ENGINE=${E2E_ENGINE:-}\n",
@@ -4411,9 +4372,6 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 			t.Parallel()
 			mutatedFiles := files
 			switch {
-			case test.script:
-				mutatedFiles.migrations = writeMutatedE2ESource(
-					t, "e2e-migrations.sh", migrations, test.old, test.replacement)
 			case test.referenceData:
 				mutatedFiles.referenceData = writeMutatedE2ESource(
 					t, "e2e-reference-data.sh", referenceData, test.old, test.replacement)
@@ -4446,7 +4404,6 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		staticChecks:               filepath.Join("..", e2eStaticPath),
 		crdUpgrade:                 filepath.Join("..", e2eCRDUpgradePath),
 		highAvailability:           filepath.Join("..", e2eHAPath),
-		migrations:                 filepath.Join("..", e2eMigrationsPath),
 		referenceData:              filepath.Join("..", e2eReferenceDataPath),
 		alerting:                   filepath.Join("..", e2eAlertingPath),
 		failedHookEvidence:         filepath.Join("..", failedHookEvidencePath),

@@ -2854,8 +2854,11 @@ E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 # its own, so the two halves run at once and neither waits for the other's
 # databases.
 #
-# The Docker context and the cluster name reach the isolation worker's node
-# container, which is where the phase cuts that node off from the API server.
+# Both are Go phases: test/e2e/phases declares what each reads, and
+# hack/verify-kubernetes-support.go holds these calls to exactly that, the
+# engine included: each phase runs the engine its name ends in. The Docker
+# context and the cluster name reach the isolation worker's node container,
+# which is where the phase cuts that node off from the API server.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
@@ -2869,7 +2872,7 @@ E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
 E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
 E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=postgresql \
-	run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"
+	run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
@@ -2884,7 +2887,7 @@ E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
 E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
 E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=mysql \
-	run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"
+	run_recorded_phase migrations-mysql run_go_phase migrations-mysql
 
 # Reference data runs after the migration path and inside the same namespace, on
 # a database of its own, because "works on first creation of a database, when

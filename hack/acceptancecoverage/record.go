@@ -58,36 +58,39 @@ var requirements = []requirement{
 		"every binding mutated between planning, approval and dispatch on both engines and families, with database evidence of zero unauthorized statements",
 		"the stale-approval and destructive-gate rows of `test/e2e/dataplane_lifecycle_e2e_test.go` and `test/e2e/dataplane_gates_e2e_test.go` on both engines, " +
 			"the drift-before-dispatch fault in `test/e2e/faults_scenarios_e2e_test.go`, the approval bindings `test/e2e/controlplane_e2e_test.go` refuses, " +
-			"`assert_approval_stamped`, `assert_replaced_plan_approval_refused` and `run_restored_history_proof` for migrations, " +
-			"a migration's target Secret repointed between approval and dispatch in `run_retarget_before_dispatch_proof`, " +
-			"and an author refused Always by the example guard in `run_apply_policy_guard_proof`",
+			"a migration approval stamped and bound to one plan, and one naming a consumed plan refused, in `test/e2e/migrations_lifecycle_e2e_test.go`, " +
+			"a restored history in `test/e2e/migrations_uncertain_e2e_test.go`, " +
+			"a migration's target Secret repointed between approval and dispatch in `test/e2e/migrations_isolation_e2e_test.go`, " +
+			"and an author refused Always by the example guard in `test/e2e/migrations_guard_e2e_test.go`",
 		"a PtahSchema's target Secret, or either family's policy or transaction mode, changed between approval and dispatch; " +
 			"drift before dispatch on MySQL; and a count of the statements the database received"},
 	{"PA-03", "Preserve safety through interrupted Apply",
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
 		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `test/e2e/faults_scenarios_e2e_test.go`, " +
-			"`run_uncertain_apply_proof`, `run_late_dispatch_proof` and `run_deletion_during_apply_proof`, " +
+			"an uncertain Apply and a late dispatch in `test/e2e/migrations_uncertain_e2e_test.go`, " +
 			"an Apply held across an upgrade by `assert_predecessor_apply_remains_exclusive_while_running`, " +
-			"one realm claimed from two listed namespaces in `assert_realm_admits_only_listed_claimants`, " +
-			"a migration suspended inside its Apply in `run_suspension_during_apply_proof`, " +
-			"a refused realm release in `run_lock_release_fault_proof`, " +
-			"and an Apply held across its node's isolation from the API server in `run_isolated_node_proof`",
+			"one realm claimed from two listed namespaces in `test/e2e/migrations_realm_e2e_test.go`, " +
+			"a migration deleted during its Apply, one suspended inside it, and a refused realm release " +
+			"in `test/e2e/migrations_faults_e2e_test.go`, " +
+			"and an Apply held across its node's isolation from the API server in `test/e2e/migrations_isolation_e2e_test.go`",
 		""},
 	{"PA-04", "Make progress and refusal states actionable",
 		"a measured progress target, dependency recovery inside it, and no hot loop on a permanent refusal",
-		"`run_retry_interval_proof`, the bounded refresh count under a standing refusal and the registry outage " +
-			"in `test/e2e/dataplane_gates_e2e_test.go`, `assert_partial_run_blocks_and_recovers`, " +
+		"the retry interval in `test/e2e/migrations_faults_e2e_test.go`, " +
+			"the bounded refresh count under a standing refusal and the registry outage " +
+			"in `test/e2e/dataplane_gates_e2e_test.go`, a partial run that blocks and recovers in `test/e2e/migrations_realm_e2e_test.go`, " +
 			"and the recovery scenarios of `hack/capacity` that the lab profile's progress target is read from",
 		"a result read that hangs"},
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
 		"the CRD schema history gates, the admission rows in `test/e2e/controlplane_e2e_test.go`, " +
 			"`prove_controller_write_guard`, `prove_controller_object_supported_window_guard`, `prove_controller_downgrade_guard`, " +
-			"`run_egress_policy_proof` on a CNI that enforces, and the credential scans in `test/e2e/dataplane_audit_e2e_test.go`, " +
+			"the egress policies in `test/e2e/migrations_isolation_e2e_test.go` on a CNI that enforces, " +
+			"and the credential scans in `test/e2e/dataplane_audit_e2e_test.go`, " +
 			"which reads the manager's metrics as well as its logs, and `scan_for_credentials`, " +
-			"author, approver and administrator identities against RBAC and the example guard in `run_apply_policy_guard_proof`, " +
+			"author, approver and administrator identities against RBAC and the example guard in `test/e2e/migrations_guard_e2e_test.go`, " +
 			"and a realm claim made from a namespace the PtahRealm does not list, by an author the API server will not let write the realm, " +
-			"refused alone while the listed claimant keeps running, in `assert_realm_admits_only_listed_claimants`",
+			"refused alone while the listed claimant keeps running, in `test/e2e/migrations_realm_e2e_test.go`",
 		"accepted values at the size and name limits, and who may read a plan's SQL"},
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",
@@ -97,8 +100,8 @@ var requirements = []requirement{
 			"and a database audit after the lifecycle"},
 	{"PA-07", "Restore operator and database state safely",
 		"a restore drill with a database ahead of the restored Kubernetes state, proving no unapproved replay",
-		"the recovery runbook, its derived inventory check, and `run_rebuild_drill`, " +
-			"which rebuilds a resource against a database ahead of its backup",
+		"the recovery runbook, its derived inventory check, and the rebuild drill in " +
+			"`test/e2e/migrations_isolation_e2e_test.go`, which rebuilds a resource against a database ahead of its backup",
 		"operator state restored from a backup into an isolated cluster, the database restored with it, " +
 			"and a measured recovery time"},
 	{"PA-08", "Establish capacity and failure limits",

@@ -20,7 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-// The fault predicates port jq filters from hack/e2e-faults.sh. Each test
+// The fault predicates port the jq filters of the fault script. Each test
 // below builds the reading a predicate exists to accept, then breaks one
 // clause of the filter at a time and requires the predicate to refuse the
 // result, the way the shell self-tests held a filter to the mistakes it

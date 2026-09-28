@@ -176,7 +176,8 @@ the phase on. `hack/verify-kubernetes-support.go` holds the
 call's bindings to the declared inputs, and `test/e2e/harness` writes each
 scenario into the same timing ledger the shell phases do. The certificates and
 data-plane suites are ported, the data plane's restart and fault injection
-included; every other phase is still a script under `hack/`.
+included, and so are both engines' migration phases. The reference data, the
+alerting phase and the lifecycle suite are still scripts under `hack/`.
 
 What that partition covers is a table rather than a paragraph, and
 `make acceptance-coverage` prints it: every supported minor against every
@@ -217,8 +218,8 @@ every refusal.
 ## Where a run's time went
 
 A lifecycle records one row per stage: the bootstrap steps, each phase, the
-scenarios the migration and reference-data scripts mark, and the scenarios
-every Go phase declares. The rows land in the ledger
+scenarios the reference-data script marks, and the scenarios every Go phase
+declares. The rows land in the ledger
 `E2E_TIMING_LEDGER` names, the run's identity in `E2E_TIMING_CONTEXT`, and
 `hack/e2etiming` joins them into a report and a Markdown summary:
 
@@ -339,10 +340,11 @@ below was paid for that way:
   a proof that cannot race and one that merely usually does not.
 - **A filter has to be shown to refuse something.** Reading it again catches a
   reasoning error and misses the one that matters: a filter that passes its
-  author's intent and measures something else reads correctly. `testdata/e2e/*.jq`
-  hold the ones that earn a file, and `hack/migration-refusal-filter-selftest.sh`
-  runs each against one reading it must accept and several it must refuse, which
-  are the mistakes that were actually made.
+  author's intent and measures something else reads correctly. The filters are
+  Go predicates in `test/e2e`, and a unit test holds each one to a reading it
+  must accept and to the mistakes that were actually made, which it must
+  refuse. Where the operator produced the reading, the test reads that document
+  from `testdata/e2e/readings/` rather than one written by hand.
 - **A fixed clock makes a comparison between two instants vacuous.** The unit
   suites run on one, so a value stamped by the code under test and a value the
   fixture stamped are the same instant, and a check that one is strictly after

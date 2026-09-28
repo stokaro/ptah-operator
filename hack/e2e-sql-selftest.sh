@@ -5,18 +5,17 @@ set -eu
 
 # Prove the statement guard before trusting what it protects.
 #
-# The guarded statements in the migrations and reference-data phases are the
-# phase's own setup: an external edit, a column undone by hand, a revision row
-# taken out of the history. The exit status of a pipeline belongs to its last
+# The guarded statements in the reference-data phase are the phase's own setup,
+# an external edit among them. The exit status of a pipeline belongs to its last
 # stage, so a guard on a helper that ends in `tr` reads tr and never the exec:
 # the statement is skipped in silence and the phase dies ten minutes later
 # accusing the operator of not reaching a phase it was never given. Capturing
 # the value does not help either -- command substitution takes the function's
 # status, and the function still ends in the pipe.
 #
-# So this runs hack/e2e-sql.sh with a kubectl of its own, and then the four
-# wrappers the two phases actually call, read out of the phase scripts rather
-# than copied. It refuses them unless
+# So this runs hack/e2e-sql.sh with a kubectl of its own, and then the two
+# wrappers the phase actually calls, read out of the phase script rather than
+# copied. It refuses them unless
 #
 #   - a statement whose exec failed returns what the exec returned, so the
 #     `|| fail` the call sites write fires, and
@@ -58,8 +57,8 @@ status=0
 	fail "the guard on a statement whose exec failed did not fire: the phase saw status $status"
 
 # The value helper keeps the trim. The two clients pad and terminate a value
-# differently, so every comparison in both phases is written against a value
-# with no whitespace in it.
+# differently, so every comparison in the phase is written against a value with
+# no whitespace in it.
 observed=$(
 	k() {
 		for sql_arg in "$@"; do
@@ -72,9 +71,9 @@ observed=$(
 	sql_value mysql e2e e2e-mysql countries "SELECT count(*) FROM countries"
 )
 [ "$observed" = 42 ] ||
-	fail "the value helper returned \"$observed\", and the phases compare against 42"
+	fail "the value helper returned \"$observed\", and the phase compares against 42"
 
-# The database and the statement are the two arguments a phase chooses per
+# The database and the statement are the two arguments the phase chooses per
 # call. A helper that reached the client with either of them missing would run
 # the right SQL against the wrong database.
 observed_database=$(tail -n 2 "$WORK_DIR/argv.txt" | head -n 1)
@@ -84,9 +83,9 @@ observed_statement=$(tail -n 1 "$WORK_DIR/argv.txt")
 [ "$observed_statement" = "SELECT count(*) FROM countries" ] ||
 	fail "the client was asked to run \"$observed_statement\""
 
-# Neither phase calls the split directly: each wraps it in a helper of its own,
-# and the guarded wrapper differs from the value one it sits among by a single
-# word. So the four wrappers are read out of the phase scripts rather than
+# The phase does not call the split directly: it wraps it in helpers of its
+# own, and the guarded wrapper differs from the value one it sits among by a
+# single word. So the two wrappers are read out of the phase script rather than
 # copied here, and driven with a kubectl of this test's own. A copy would go on
 # passing after the phase stopped matching it, which is the defect this whole
 # file exists for.
@@ -103,41 +102,8 @@ extract_helper() {
 		fail "could not stage $helper_name"
 }
 
-extract_helper "$ROOT_DIR/hack/e2e-migrations.sh" migration_query
-extract_helper "$ROOT_DIR/hack/e2e-migrations.sh" migration_statement
 extract_helper "$ROOT_DIR/hack/e2e-reference-data.sh" reference_query
 extract_helper "$ROOT_DIR/hack/e2e-reference-data.sh" reference_statement
-
-# The migrations phase undoes a half-applied migration by hand, on PostgreSQL
-# here so the branch the statement path takes is the one asserted.
-status=0
-(
-	ENGINE=postgresql
-	TEST_NAMESPACE=e2e
-	DATABASE_SERVICE=e2e-postgresql
-	MIGRATION_DATABASE=widgets
-	k() {
-		for sql_arg in "$@"; do
-			printf '%s\n' "$sql_arg"
-		done >"$WORK_DIR/migration-statement-argv.txt"
-		printf 'error: unable to upgrade connection\n' >&2
-		return 7
-	}
-	# shellcheck source=hack/e2e-sql.sh
-	. "$ROOT_DIR/hack/e2e-sql.sh"
-	# shellcheck source=/dev/null
-	. "$WRAPPERS_FILE"
-	migration_statement "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
-		exit 9
-) 2>/dev/null || status=$?
-[ "$status" -eq 9 ] ||
-	fail "the migrations wrapper did not fail the guard on a failed statement: the phase saw status $status"
-observed_database=$(tail -n 2 "$WORK_DIR/migration-statement-argv.txt" | head -n 1)
-observed_statement=$(tail -n 1 "$WORK_DIR/migration-statement-argv.txt")
-[ "$observed_database" = widgets ] ||
-	fail "the migrations wrapper ran its statement against database \"$observed_database\", want widgets"
-[ "$observed_statement" = "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" ] ||
-	fail "the migrations wrapper asked the client to run \"$observed_statement\""
 
 # The reference-data phase edits a managed row from outside the operator, and a
 # proof of a stale approval that never made the edit proves nothing.
@@ -167,32 +133,7 @@ observed_database=$(tail -n 2 "$WORK_DIR/reference-statement-argv.txt" | head -n
 [ "$observed_database" = countries ] ||
 	fail "the reference-data wrapper ran its statement against database \"$observed_database\", want countries"
 
-# The value wrappers keep the trim their forty-odd callers compare against, and
-# the migrations one still lets a caller name a second database: the adoption
-# and branch proofs read their own.
-observed=$(
-	ENGINE=postgresql
-	TEST_NAMESPACE=e2e
-	DATABASE_SERVICE=e2e-postgresql
-	MIGRATION_DATABASE=widgets
-	k() {
-		for sql_arg in "$@"; do
-			printf '%s\n' "$sql_arg"
-		done >"$WORK_DIR/migration-query-argv.txt"
-		printf ' 3 \n'
-	}
-	# shellcheck source=hack/e2e-sql.sh
-	. "$ROOT_DIR/hack/e2e-sql.sh"
-	# shellcheck source=/dev/null
-	. "$WRAPPERS_FILE"
-	migration_query "SELECT count(*) FROM e2e_migration_widgets" adopted
-)
-[ "$observed" = 3 ] ||
-	fail "the migrations value wrapper returned \"$observed\", and the phase compares against 3"
-observed_database=$(tail -n 2 "$WORK_DIR/migration-query-argv.txt" | head -n 1)
-[ "$observed_database" = adopted ] ||
-	fail "the migrations value wrapper read database \"$observed_database\", want the one the caller named"
-
+# The value wrapper keeps the trim its callers compare against.
 observed=$(
 	ENGINE=mysql
 	TEST_NAMESPACE=e2e

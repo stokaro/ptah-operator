@@ -5,7 +5,6 @@ set -eu
 "$(dirname -- "$0")/failed-hook-evidence-selftest.sh"
 "$(dirname -- "$0")/admission-schema-contract-selftest.sh"
 "$(dirname -- "$0")/controller-object-schema-contract-selftest.sh"
-"$(dirname -- "$0")/migration-refusal-filter-selftest.sh"
 "$(dirname -- "$0")/acceptance-issue-map-selftest.sh"
 
 unset CDPATH
@@ -46,8 +45,6 @@ CRD_GUARD_RUNNING_FIXTURE=$WORK_DIR/crd-guard-running.json
 CRD_GUARD_TERMINATED_FIXTURE=$WORK_DIR/crd-guard-terminated.json
 CRD_GUARD_STATE=$WORK_DIR/crd-guard-state.json
 CANDIDATE_VALUES_FIXTURE=$WORK_DIR/candidate-values.json
-PUBLISHER_JOB_FIXTURE=$WORK_DIR/publisher-job.json
-NEGATIVE_FIXTURE=$WORK_DIR/negative-job.json
 FEATURE_GATE_135_ACTUAL=$WORK_DIR/feature-gate-1.35.yaml
 FEATURE_GATE_135_EXPECTED=$WORK_DIR/feature-gate-1.35.expected.yaml
 FEATURE_GATE_136_ACTUAL=$WORK_DIR/feature-gate-1.36.yaml
@@ -317,25 +314,26 @@ grep -F 'timing_end fail' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 }
 # The longest phases carry scenario marks. Without them the report names a
 # ninety-minute phase and nothing inside it, which is the measurement the
-# critical-path work needs most.
-for timing_phase_script in e2e-migrations e2e-reference-data; do
-	# Indented too: a phase that selects its scenarios by engine marks them
-	# inside the branch that runs them.
-	timing_scenarios=$(grep -cE '^[[:space:]]*timing_next scenario ' \
-		"$ROOT_DIR/hack/$timing_phase_script.sh" || true)
-	[ "$timing_scenarios" -ge 3 ] || {
-		printf 'e2e static: %s marks %s scenarios; the report needs its steps named\n' \
-			"$timing_phase_script.sh" "$timing_scenarios" >&2
-		exit 1
-	}
-	# shellcheck disable=SC2016 # Match the literal source line in each phase.
-	grep -F '. "$ROOT_DIR/hack/e2e-timing.sh"' "$ROOT_DIR/hack/$timing_phase_script.sh" >/dev/null || {
-		printf 'e2e static: %s marks scenarios without sourcing the stopwatch\n' \
-			"$timing_phase_script.sh" >&2
-		exit 1
-	}
-done
-printf 'e2e static: %s measured lifecycle phases, each phase script naming its scenarios\n' \
+# critical-path work needs most. A Go phase declares its scenarios in
+# test/e2e/phases, which refuses a declaration with none; the scripts left mark
+# their own.
+timing_phase_script=e2e-reference-data
+# Indented too: a phase that selects its scenarios by engine marks them
+# inside the branch that runs them.
+timing_scenarios=$(grep -cE '^[[:space:]]*timing_next scenario ' \
+	"$ROOT_DIR/hack/$timing_phase_script.sh" || true)
+[ "$timing_scenarios" -ge 3 ] || {
+	printf 'e2e static: %s marks %s scenarios; the report needs its steps named\n' \
+		"$timing_phase_script.sh" "$timing_scenarios" >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Match the literal source line in the phase.
+grep -F '. "$ROOT_DIR/hack/e2e-timing.sh"' "$ROOT_DIR/hack/$timing_phase_script.sh" >/dev/null || {
+	printf 'e2e static: %s marks scenarios without sourcing the stopwatch\n' \
+		"$timing_phase_script.sh" >&2
+	exit 1
+}
+printf 'e2e static: %s measured lifecycle phases, each naming its scenarios\n' \
 	"$timing_recorded_phases"
 
 # The images a matrix loads are checked against the run that loads them. The
@@ -777,141 +775,6 @@ for ha_marker in \
 		exit 1
 	}
 done
-# The migration phase proves the rows a unit test cannot: a real history read
-# from a real revision table, an approval that authorizes one run, and the
-# credential boundary the Jobs keep. Each marker names one of them, so a proof
-# that quietly stopped running is a failure here rather than a green phase that
-# asserts less than it did.
-# shellcheck disable=SC2016 # These markers match literal script and jq text.
-for migration_marker in \
-	'run_engine_migrations postgresql' \
-	'run_engine_migrations mysql' \
-	'create_migration_database' \
-	'the migration proof must own a database the schema path never touched' \
-	'"migrations", "push", $reference, "--migrations-dir", "/migrations",' \
-	'"--dir-format", "ptah", "--version", $version, "--plain-http"' \
-	'subPath: ., readOnly: true' \
-	'the publisher said:' \
-	'the migration publisher Job did not preserve the no-database-credential boundary' \
-	'wait_for_migration_phase AwaitingApproval' \
-	'did not reach an exact three-migration approval gate' \
-	'[$spec.migrations[].version] == [1, 2, 3]' \
-	'carries SQL text' \
-	'approve_migration "$MIGRATION_APPROVAL"' \
-	'was not stamped and bound to the exact plan' \
-	'wait_for_migration_phase InSync' \
-	'did not settle on a history that matches the artifact' \
-	'assert_database_migrated' \
-	'assert_repeated_reconciliation_runs_nothing' \
-	'create_migration_realm' \
-	'realmRef: {name: $realm}' \
-	'assert_realm_admits_only_listed_claimants' \
-	'grant_rival_author_role' \
-	"the rival's author listed its own namespace in" \
-	"the rival's author created a PtahRealm of its own" \
-	'was never refused for naming a realm that does not list' \
-	'stopped running while a namespace the realm does not list claimed it' \
-	'$status.history.observedAt >= $refusedAt' \
-	'kept managing a database a PtahSchema also claims' \
-	'was allowed to manage a database a PtahMigration also claims' \
-	'a resource that runs nothing claims nothing' \
-	'run_unknown_layer_proof' \
-	'./hack/unknownlayerfixture' \
-	'acted on an artifact carrying a layer its executor cannot read' \
-	'assert_unknown_layer_refusal_is_named' \
-	'never named the step that refused the artifact within' \
-	'was opened for an artifact whose layers were refused' \
-	'run_uncertain_apply_proof' \
-	'wait_for_uncertain_commit' \
-	'did not stop on a run whose evidence it could not read' \
-	'did not leave the rows its first migration inserted' \
-	'after one whose evidence it could not read' \
-	'were doubled, so a run was replayed over what it had already committed' \
-	'run_isolated_node_proof' \
-	'testdata/e2e/isolated-apply-held.jq' \
-	'let go of an Apply whose node is cut off, while its Pod may still be writing' \
-	'while the one it dispatched may still be writing' \
-	'realm Lease left the claim while its Apply may still be writing' \
-	'so a migration ran twice' \
-	'testdata/e2e/isolated-run-unknown.jq' \
-	'realm Lease was handed back while a Pod of the isolated Apply still exists' \
-	'testdata/e2e/isolated-run-settled.jq' \
-	'not migrations 1 to 3 once each' \
-	'run_checkpoint_bootstrap_proof' \
-	'assert_checkpoint_gate' \
-	'did not hold a checkpoint bootstrap at the approval gate' \
-	'[.spec.migrations[].version] == [3, 4]' \
-	'assert_checkpoint_equals_the_long_way' \
-	'and the replayed one is' \
-	'did not run against the rows the checkpoint seeded' \
-	'assert_checkpoint_bootstrap_stays_settled' \
-	'asked for another approval after its bootstrap settled' \
-	'assert_older_artifact_blocks_everything' \
-	'called an artifact older than its database InSync' \
-	'did not report the reading that disagrees with itself' \
-	'for an artifact older than its database' \
-	'assert_partial_run_blocks_and_recovers' \
-	'did not stop on a migration that committed half of itself' \
-	'stopped refusing while a partial migration stood unresolved' \
-	'testdata/e2e/migration-partial-refusal.jq' \
-	'testdata/e2e/migration-dirty-reading.jq' \
-	'testdata/e2e/migration-refused-boundary.jq' \
-	'testdata/e2e/migration-history-ahead.jq' \
-	'testdata/e2e/migration-untouched-database.jq' \
-	'testdata/e2e/migration-partial-run-recorded.jq' \
-	'did not keep the statement the partial migration committed' \
-	'assert_no_new_apply_job' \
-	'after a partial one' \
-	'did not recover on its own reading of a database somebody fixed' \
-	'assert_modified_file_blocks_everything' \
-	'$status.history.modifiedVersions == [1] and' \
-	're-ran an applied migration' \
-	'started new work for a history it already matched' \
-	'did not apply its data-only change' \
-	'seeded rows, not the three migration 1 inserted once' \
-	'left its column nullable' \
-	'migration Jobs did not keep registry access out of the process that runs SQL' \
-	'an approval naming the consumed plan was accepted' \
-	'kubectl ptah migration printed SQL' \
-	'assert_kubectl_ptah_migration AwaitingApproval' \
-	'assert_kubectl_ptah_migration InSync' \
-	'does not publish the plan a reader has to approve' \
-	'printed the order as' \
-	'run_existing_schema_adoption_proof' \
-	'run_stopped_apply_proof' \
-	'run_lost_log_proof' \
-	'migration-stopped-run-recorded.jq' \
-	'migration-lost-log-run-recorded.jq' \
-	'build_adopt_schema_without_the_operator' \
-	'the operator recorded a migration as applied in a database it was never approved to migrate' \
-	'against a database that already carries the schema' \
-	'"migrations", "baseline", "--migrations-dir", "/migrations",' \
-	'"--shadow-db", "$(PTAH_E2E_SHADOW_URL)"' \
-	'the adoption Job did not keep registry access out of the process that runs SQL' \
-	'did not settle on the history a person recorded' \
-	'after a person adopted the database' \
-	'(.status | has("lastRun") | not)' \
-	'run_apply_policy_guard_proof' \
-	'read_apply_policy_guard' \
-	'-l app.kubernetes.io/component=apply-policy-guard -o json' \
-	'select(.name == "exemptGroups") | .expression | contains($group | tojson)' \
-	'"the author selected Always"' \
-	'"the author created a migration with Always already set"' \
-	'create --dry-run=server -f "$RESOURCE_FILE"' \
-	'k_as "$GUARD_ADMINISTRATOR" "$GUARD_ADMINISTRATOR_GROUP" -n "$TEST_NAMESPACE" patch ptahmigration' \
-	'e2e migrations: PASS %s approval gate, applied sequence, matching history, and credential isolation'; do
-	grep -F -- "$migration_marker" "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
-		printf 'e2e static: live migration proof marker is missing: %s\n' "$migration_marker" >&2
-		exit 1
-	}
-done
-# The archived Job inventory is what makes the isolation row provable at all:
-# the controller stamps a TTL on every Job it finished reading, and a lifecycle
-# outlasts it.
-grep -F 'record_migration_jobs' "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
-	printf '%s\n' 'e2e static: the migration phase does not archive Jobs before their TTL removes them' >&2
-	exit 1
-}
 grep -F 'application/vnd.stokaro.ptah.migrations.v1' \
 	"$ROOT_DIR/testdata/e2e/verification-policy-migrations.yaml" >/dev/null || {
 	printf '%s\n' 'e2e static: the migration verification policy does not pin the migration artifact type' >&2
@@ -951,23 +814,22 @@ done
 # turn the row into an ordinary successful pull that asserts nothing, so the
 # refusal the fixture is built to trigger is pinned to the two constants it
 # stands on.
-# The partial row's filter is measured against a document the operator really
-# produced, so the self-test can fail the way CI failed rather than the way its
-# author imagined. That document is an input to the self-test and not a file the
-# phase reads, so a marker in the phase's source can never stand for it.
+# The partial row's predicates are measured against a document the operator
+# really produced, so their unit test can fail the way CI failed rather than the
+# way its author imagined. That document is an input to the test and not a file
+# the phase reads, so nothing in the phase's source can stand for it.
 #
-# What has to hold is that the self-test still reads it. A reading the self-test
-# stopped naming is a file: the self-test keeps passing, on one case fewer, and
-# the case it dropped is the one that came from a real failure. A reading that
-# is gone at all the self-test refuses on its own, and this says so first.
+# What has to hold is that a test still reads it. A reading no test names is a
+# file: the tests keep passing, on one case fewer, and the case they dropped is
+# the one that came from a real failure.
 recorded_reading=partial-run-left-a-dirty-revision.json
 [ -f "$ROOT_DIR/testdata/e2e/readings/$recorded_reading" ] || {
 	printf 'e2e static: the recorded operator reading is gone: testdata/e2e/readings/%s\n' \
 		"$recorded_reading" >&2
 	exit 1
 }
-grep -F -- "$recorded_reading" "$ROOT_DIR/hack/migration-refusal-filter-selftest.sh" >/dev/null || {
-	printf 'e2e static: the filter self-test no longer measures itself against the recorded reading: %s\n' \
+grep -rlF --include='*_test.go' -- "$recorded_reading" "$ROOT_DIR/test/e2e" >/dev/null || {
+	printf 'e2e static: no test under test/e2e measures a predicate against the recorded reading: %s\n' \
 		"$recorded_reading" >&2
 	exit 1
 }
@@ -1090,10 +952,9 @@ if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null; then
 	printf '%s\n' 'e2e static: registry password is handed off through the host environment' >&2
 	exit 1
 fi
-for secret_script in e2e-migrations.sh e2e-reference-data.sh; do
-	grep -F 'grep -F -f' "$ROOT_DIR/hack/$secret_script" >/dev/null
-	grep -F -- '--rawfile' "$ROOT_DIR/hack/$secret_script" >/dev/null
-done
+secret_script=e2e-reference-data.sh
+grep -F 'grep -F -f' "$ROOT_DIR/hack/$secret_script" >/dev/null
+grep -F -- '--rawfile' "$ROOT_DIR/hack/$secret_script" >/dev/null
 
 # The reference-data phase measures a refusal -- no declared row value in
 # status, an Event, or a log -- so the proofs that read for one are pinned here.
@@ -1647,40 +1508,6 @@ grep -F "jq '.immutable = true'" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 	printf '%s\n' 'e2e static: the bootstrap does not create the verification policy as immutable' >&2
 	exit 1
 }
-jq -n '
-  def secretEnv($name; $key):
-    {name: $name, valueFrom: {secretKeyRef: {name: "registry-auth", key: $key}}};
-  {spec: {template: {spec: {containers: [{
-    name: "publisher",
-    image: "e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
-    env: [
-      {name: "HOME", value: "/work"},
-      {name: "TMPDIR", value: "/work"},
-      secretEnv("PTAH_OCI_USERNAME"; "username"),
-      secretEnv("PTAH_OCI_PASSWORD"; "password"),
-      secretEnv("PTAH_OCI_REGISTRY"; "registry")
-    ]
-  }]}}}}
-' >"$PUBLISHER_JOB_FIXTURE"
-jq -e \
-	--arg image e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
-	--arg registrySecret registry-auth \
-	-f "$ROOT_DIR/testdata/e2e/publisher-job-isolation.jq" \
-	"$PUBLISHER_JOB_FIXTURE" >/dev/null
-jq '
-  .spec.template.spec.containers[0].env += [{
-    name: "PTAH_DEV_URL",
-    valueFrom: {secretKeyRef: {name: "database-url", key: "url"}}
-  }]
-' "$PUBLISHER_JOB_FIXTURE" >"$NEGATIVE_FIXTURE"
-if jq -e \
-	--arg image e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
-	--arg registrySecret registry-auth \
-	-f "$ROOT_DIR/testdata/e2e/publisher-job-isolation.jq" \
-	"$NEGATIVE_FIXTURE" >/dev/null; then
-	printf '%s\n' 'e2e static: publisher isolation accepted a development database credential' >&2
-	exit 1
-fi
 
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--namespace ptah-e2e \
