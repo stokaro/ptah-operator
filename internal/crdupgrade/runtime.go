@@ -88,15 +88,15 @@ type ControllerStateListClient interface {
 }
 
 // StoredControllerStateClients contains every resource collection that can
-// persist controller-written state. All six clients are mandatory whenever
-// the downgrade preflight is enabled.
+// persist controller-written state. All four clients are mandatory whenever
+// the downgrade preflight is enabled. An approval is not one of them: it
+// names a plan by UID and fingerprint and stores no controller state of its
+// own, so the plan it names is where the version it was decided under sits.
 type StoredControllerStateClients struct {
-	Schemas            ControllerStateListClient
-	Plans              ControllerStateListClient
-	Approvals          ControllerStateListClient
-	Migrations         ControllerStateListClient
-	MigrationPlans     ControllerStateListClient
-	MigrationApprovals ControllerStateListClient
+	Schemas        ControllerStateListClient
+	Plans          ControllerStateListClient
+	Migrations     ControllerStateListClient
+	MigrationPlans ControllerStateListClient
 }
 
 type controllerStateLocation struct {
@@ -116,8 +116,8 @@ var immutableControllerStateLocation = []controllerStateLocation{
 }
 
 // A migration records its controller-state version only where the run is bound
-// to the components that executed it. Its plan and approval are immutable, so
-// they carry theirs in the spec, like the schema family does.
+// to the components that executed it. Its plan is immutable, so it carries its
+// own in the spec, like the schema family's plan does.
 var migrationControllerStateLocations = []controllerStateLocation{
 	{name: "status.executionBinding", path: []string{"status", "executionBinding", "controllerStateVersion"}},
 }
@@ -148,11 +148,6 @@ var storedControllerStateKinds = []storedControllerStateKind{
 		locations: immutableControllerStateLocation,
 	},
 	{
-		kind: "PtahSchemaApproval", plural: "PtahSchemaApprovals",
-		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.Approvals },
-		locations: immutableControllerStateLocation,
-	},
-	{
 		kind: "PtahMigration", plural: "PtahMigrations",
 		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.Migrations },
 		locations: migrationControllerStateLocations,
@@ -160,13 +155,6 @@ var storedControllerStateKinds = []storedControllerStateKind{
 	{
 		kind: "PtahMigrationPlan", plural: "PtahMigrationPlans",
 		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.MigrationPlans },
-		locations: immutableControllerStateLocation,
-	},
-	{
-		kind: "PtahMigrationApproval", plural: "PtahMigrationApprovals",
-		client: func(clients StoredControllerStateClients) ControllerStateListClient {
-			return clients.MigrationApprovals
-		},
 		locations: immutableControllerStateLocation,
 	},
 }

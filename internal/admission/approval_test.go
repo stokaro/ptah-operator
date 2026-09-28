@@ -260,67 +260,115 @@ func TestApprovalHandlerRefusesAnIncompleteExecution(t *testing.T) {
 	}
 }
 
-func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
+// TestApprovalCreateWritesIdentityAndNothingFromThePlan: the mutating pass
+// writes who approved and when, and nothing else. The plan's bindings stay on
+// the plan; the approval names them through the fingerprint, so there is
+// nothing to copy and nothing a copy could disagree with.
+func TestApprovalCreateWritesIdentityAndNothingFromThePlan(t *testing.T) {
 	t.Parallel()
 
 	handler, approval := readyFixture(t, true, true)
-	approval.Spec.ArtifactDigest = ""
-	approval.Spec.CoordinationDigest = ""
-	approval.Spec.TargetIdentityDigest = ""
-	approval.Spec.ActualStateFingerprint = ""
-	approval.Spec.DesiredStateFingerprint = ""
-	approval.Spec.PolicyFingerprint = ""
-	approval.Spec.VerificationPolicyUID = ""
-	approval.Spec.VerificationPolicyDigest = ""
-	approval.Spec.ExecutionBindingID = ""
-	approval.Spec.ControllerStateVersion = 0
-	approval.Spec.PtahVersion = ""
-	approval.Spec.ExecutorImage = ""
-	approval.Spec.RunnerProtocolVersion = 0
 	request := requestFor(t, approval, admissionv1.Create)
-	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+	request.UserInfo = authenticationv1.UserInfo{Username: "alice", UID: "idp-123"}
 
 	response := handler.Handle(context.Background(), request)
 	if !response.Allowed {
-		t.Fatalf("Handle() denied minimal exact-plan approval: %#v", response.Result)
+		t.Fatalf("Handle() denied an exact-plan approval: %#v", response.Result)
+	}
+	if len(response.Patches) == 0 {
+		t.Fatal("Handle() stamped no identity")
+	}
+	for _, patch := range response.Patches {
+		if !strings.HasPrefix(patch.Path, "/spec/approver") &&
+			patch.Path != "/spec/approvedAt" && patch.Path != "/spec/mutationRequestUID" {
+			t.Fatalf("the mutating pass wrote %s, which is not the approver's identity: %#v", patch.Path, response.Patches)
+		}
 	}
 	patchJSON, err := json.Marshal(response.Patches)
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "team-a", "prod/team-a/app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"sha256:artifact", coordinationDigest, "sha256:target", "sha256:actual", "sha256:desired",
-		"sha256:policy", "policy-v1-uid", "v1-33333333333333333333333333333333",
-		"v0.3.0", "example.invalid/ptah@sha256:executor", "runnerProtocolVersion",
-	} {
+	for _, want := range []string{"alice", "idp-123", "admission-uid", "2026-08-30T12:00:00Z"} {
 		if !containsJSON(patchJSON, want) {
-			t.Fatalf("hydration patch %s does not contain %q", patchJSON, want)
-		}
-	}
-	// The plan records the manager that published it; an approval binds
-	// nothing about that manager, so hydration copies none of it.
-	for _, unwanted := range []string{testControllerImage, "example.invalid/operator@sha256:runner"} {
-		if containsJSON(patchJSON, unwanted) {
-			t.Fatalf("hydration patch %s copies the publishing manager's %q into the approval", patchJSON, unwanted)
+			t.Fatalf("identity patch %s does not carry %q", patchJSON, want)
 		}
 	}
 }
 
-func TestApprovalCreateRejectsConflictingDerivedBinding(t *testing.T) {
+// TestApprovalCreateRefusesADecisionThatNamesAnotherPlan holds the three
+// identifiers to the live plan, in both admission passes. Each row moves one
+// of them off the plan the schema is waiting on and names the refusal.
+func TestApprovalCreateRefusesADecisionThatNamesAnotherPlan(t *testing.T) {
 	t.Parallel()
 
-	handler, approval := readyFixture(t, true, true)
-	approval.Spec.ArtifactDigest = "sha256:different"
-	request := requestFor(t, approval, admissionv1.Create)
-	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
-
-	response := handler.Handle(context.Background(), request)
-	if response.Allowed {
-		t.Fatal("Handle() silently replaced a conflicting approval binding")
+	rows := []struct {
+		name    string
+		want    string
+		arrange func(*testing.T, client.Client, *operatorv1alpha1.PtahSchemaApproval)
+	}{
+		{
+			name: "a fingerprint the plan does not have",
+			want: "approval plan fingerprint does not match the immutable plan",
+			arrange: func(_ *testing.T, _ client.Client, approval *operatorv1alpha1.PtahSchemaApproval) {
+				approval.Spec.PlanFingerprint = "sha256:another-plan"
+			},
+		},
+		{
+			name: "a plan UID the plan does not have",
+			want: "referenced plan UID does not match; the plan was replaced",
+			arrange: func(_ *testing.T, _ client.Client, approval *operatorv1alpha1.PtahSchemaApproval) {
+				approval.Spec.PlanRef.UID = "replaced-plan-uid"
+			},
+		},
+		{
+			// The approval names the schema it means and a plan that exists,
+			// is current-contract and matches the fingerprint it carries; the
+			// plan belongs to another schema.
+			name: "a plan of another schema",
+			want: "approval schema reference does not match the plan",
+			arrange: func(t *testing.T, api client.Client, approval *operatorv1alpha1.PtahSchemaApproval) {
+				t.Helper()
+				other := &operatorv1alpha1.PtahSchemaPlan{}
+				if err := api.Get(context.Background(), client.ObjectKey{Namespace: "team-a", Name: "app-plan"}, other); err != nil {
+					t.Fatal(err)
+				}
+				other.ResourceVersion = ""
+				other.Name = "other-plan"
+				other.UID = "other-plan-uid"
+				other.Spec.SchemaRef = operatorv1alpha1.ImmutableObjectReference{Name: "other", UID: "other-schema-uid"}
+				if err := api.Create(context.Background(), other); err != nil {
+					t.Fatal(err)
+				}
+				approval.Spec.PlanRef = operatorv1alpha1.ImmutableObjectReference{Name: other.Name, UID: other.UID}
+			},
+		},
+	}
+	for _, row := range rows {
+		for _, mutate := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/mutate=%t", row.name, mutate), func(t *testing.T) {
+				t.Parallel()
+				handler, approval := readyFixture(t, true, mutate)
+				api, ok := handler.Reader.(client.Client)
+				if !ok {
+					t.Fatal("approval fixture reader is not mutable")
+				}
+				row.arrange(t, api, approval)
+				if !mutate {
+					approval.Spec.Approver = operatorv1alpha1.ApprovalIdentity{Username: "alice"}
+					approval.Spec.ApprovedAt = metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+					approval.Spec.MutationRequestUID = "mutating-review-uid"
+				}
+				request := requestFor(t, approval, admissionv1.Create)
+				request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+				response := handler.Handle(context.Background(), request)
+				if response.Allowed {
+					t.Fatalf("Handle() admitted an approval naming %s", row.name)
+				}
+				if response.Result == nil || !strings.Contains(response.Result.Message, row.want) {
+					t.Fatalf("Handle() denial = %#v, want message containing %q", response.Result, row.want)
+				}
+			})
+		}
 	}
 }
 
@@ -362,22 +410,9 @@ func TestApprovalCreateDoesNotResolvePlanAcrossNamespaces(t *testing.T) {
 		Name: foreignPlan.Name,
 		UID:  foreignPlan.UID,
 	}
-	lookups := []struct {
-		name string
-		run  func(*operatorv1alpha1.PtahSchemaApproval) error
-	}{
-		{name: "hydrate derived bindings", run: func(candidate *operatorv1alpha1.PtahSchemaApproval) error {
-			return handler.hydrateDerivedBindings(ctx, candidate)
-		}},
-		{name: "validate binding", run: func(candidate *operatorv1alpha1.PtahSchemaApproval) error {
-			return handler.validateBinding(ctx, candidate)
-		}},
-	}
-	for _, lookup := range lookups {
-		err := lookup.run(approval.DeepCopy())
-		if !apierrors.IsNotFound(err) || !strings.Contains(err.Error(), foreignPlan.Name) {
-			t.Fatalf("%s error = %v, want missing namespace-local plan", lookup.name, err)
-		}
+	if err := handler.validateBinding(ctx, approval.DeepCopy()); !apierrors.IsNotFound(err) ||
+		!strings.Contains(err.Error(), foreignPlan.Name) {
+		t.Fatalf("validate binding error = %v, want missing namespace-local plan", err)
 	}
 
 	user := authenticationv1.UserInfo{Username: "alice"}
@@ -600,22 +635,9 @@ func readyFixture(
 	approval := &operatorv1alpha1.PtahSchemaApproval{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "approve-app"},
 		Spec: operatorv1alpha1.PtahSchemaApprovalSpec{
-			SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: "app", UID: "schema-uid"},
-			PlanRef:                  operatorv1alpha1.ImmutableObjectReference{Name: "app-plan", UID: "plan-uid"},
-			PlanFingerprint:          "sha256:plan",
-			ArtifactDigest:           "sha256:artifact",
-			CoordinationDigest:       coordinationDigest,
-			TargetIdentityDigest:     "sha256:target",
-			ActualStateFingerprint:   "sha256:actual",
-			DesiredStateFingerprint:  "sha256:desired",
-			PolicyFingerprint:        "sha256:policy",
-			VerificationPolicyUID:    policyUID,
-			VerificationPolicyDigest: policyDigest,
-			ExecutionBindingID:       "v1-33333333333333333333333333333333",
-			ControllerStateVersion:   1,
-			PtahVersion:              "v0.3.0",
-			ExecutorImage:            "example.invalid/ptah@sha256:executor",
-			RunnerProtocolVersion:    int32(runner.ProtocolVersion),
+			SchemaRef:       operatorv1alpha1.ImmutableObjectReference{Name: "app", UID: "schema-uid"},
+			PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: "app-plan", UID: "plan-uid"},
+			PlanFingerprint: "sha256:plan",
 		},
 	}
 	immutable := true

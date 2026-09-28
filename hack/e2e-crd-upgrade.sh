@@ -2609,19 +2609,6 @@ spec:
   schemaRef: {name: $PROOF_SCHEMA, uid: $schema_uid}
   planRef: {name: $PROOF_PLAN, uid: $plan_uid}
   planFingerprint: plan-fingerprint
-  artifactDigest: sha256:artifact
-  coordinationDigest: sha256:coordination
-  targetIdentityDigest: sha256:target
-  actualStateFingerprint: actual
-  desiredStateFingerprint: desired
-  policyFingerprint: policy
-  verificationPolicyUID: verification-policy-uid
-  verificationPolicyDigest: sha256:verification-policy
-  executionBindingID: v1-00000000000000000000000000000000
-  controllerStateVersion: 1
-  ptahVersion: e2e
-  executorImage: e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000
-  runnerProtocolVersion: 1
   approver: {username: crd-upgrade-proof}
   approvedAt: "2026-01-01T00:00:00Z"
   mutationRequestUID: crd-upgrade-proof

@@ -10,10 +10,12 @@ import (
 
 // Every binding of an execution requires what decides a plan's meaning when it
 // runs, and every record of one also requires the manager that published it.
-// The binding itself and an approval carry nothing about that manager: a
-// manager release that changes only its own build keeps the epoch and every
-// approval. The plan contract has one version, and nothing in the API is
-// optional only so that an earlier shape could still be read.
+// The binding itself carries nothing about that manager: a manager release
+// that changes only its own build keeps the epoch and every approval. An
+// approval carries nothing about the execution at all: it names the plan by
+// UID and fingerprint, and the plan is where the binding is. The plan contract
+// has one version, and nothing in the API is optional only so that an earlier
+// shape could still be read.
 func TestGeneratedExecutionIdentityContract(t *testing.T) {
 	candidates := mustCandidates(t)
 	schemaRoot := candidateVersionSchema(t, candidateByName(candidates, PtahSchemaCRDName))
@@ -29,17 +31,29 @@ func TestGeneratedExecutionIdentityContract(t *testing.T) {
 	for _, location := range []struct {
 		name   string
 		schema apiextensionsv1.JSONSchemaProps
-		epoch  string
 	}{
-		{name: "PtahSchema status.executionBinding", schema: schemaProperty(t, schemaRoot, "status", "executionBinding"), epoch: "epoch"},
-		{name: "PtahMigration status.executionBinding", schema: schemaProperty(t, migrationRoot, "status", "executionBinding"), epoch: "epoch"},
-		{name: "PtahSchemaApproval spec", schema: schemaProperty(t, approvalRoot, "spec"), epoch: "executionBindingID"},
-		{name: "PtahMigrationApproval spec", schema: schemaProperty(t, migrationApprovalRoot, "spec"), epoch: "executionBindingID"},
+		{name: "PtahSchema status.executionBinding", schema: schemaProperty(t, schemaRoot, "status", "executionBinding")},
+		{name: "PtahMigration status.executionBinding", schema: schemaProperty(t, migrationRoot, "status", "executionBinding")},
 	} {
-		assertRequired(t, location.name, location.schema, append([]string{location.epoch}, bound...)...)
+		assertRequired(t, location.name, location.schema, append([]string{"epoch"}, bound...)...)
 		for _, field := range publisher {
 			if _, found := location.schema.Properties[field]; found {
 				t.Errorf("%s carries %s, so a manager release would retire it", location.name, field)
+			}
+		}
+	}
+
+	for _, location := range []struct {
+		name   string
+		schema apiextensionsv1.JSONSchemaProps
+	}{
+		{name: "PtahSchemaApproval spec", schema: schemaProperty(t, approvalRoot, "spec")},
+		{name: "PtahMigrationApproval spec", schema: schemaProperty(t, migrationApprovalRoot, "spec")},
+	} {
+		assertRequired(t, location.name, location.schema, "planRef", "planFingerprint")
+		for _, field := range append(append([]string{"executionBindingID"}, bound...), publisher...) {
+			if _, found := location.schema.Properties[field]; found {
+				t.Errorf("%s carries %s, which the plan fingerprint it names already binds", location.name, field)
 			}
 		}
 	}

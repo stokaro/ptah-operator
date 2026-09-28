@@ -1038,34 +1038,32 @@ approve_migration() {
 	k create -f "$RESOURCE_FILE"
 }
 
-assert_approval_hydrated() {
+# assert_approval_stamped reads the stored approval back: the decision as
+# written -- the migration, the plan by name and UID, and the plan's own
+# fingerprint -- plus who made it and when, and no field copied from the plan.
+# The history, the artifact and the execution binding the decision was made
+# under are on the plan the fingerprint names; assert_plan_sequence reads them
+# there.
+assert_approval_stamped() {
 	k -n "$TEST_NAMESPACE" get ptahmigrationapproval "$MIGRATION_APPROVAL" -o json \
 		>"$WORK_DIR/approval.json"
 	scan_for_credentials "$WORK_DIR/approval.json" "approval $MIGRATION_APPROVAL"
+	k -n "$TEST_NAMESPACE" get ptahmigrationplan "$MIGRATION_PLAN" -o json \
+		>"$WORK_DIR/approval-plan.json" ||
+		fail "migration plan $MIGRATION_PLAN could not be read beside its approval"
 	jq -e \
 		--arg migration "$MIGRATION_NAME" \
-		--arg plan "$MIGRATION_PLAN" \
-		--arg digest "$PUBLISHED_DIGEST" \
-		--arg coordinationDigest "$MIGRATION_COORDINATION_DIGEST" \
-		--arg controllerImage "$CONTROLLER_IMAGE" \
-		--arg controllerRevision "$CONTROLLER_REVISION" \
-		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+		--slurpfile plan "$WORK_DIR/approval-plan.json" '
       .spec as $spec |
-      $spec.migrationRef.name == $migration and $spec.planRef.name == $plan and
-      $spec.artifactDigest == $digest and
-      $spec.coordinationDigest == $coordinationDigest and
-      ($spec.historyFingerprint | test("^sha256:[0-9a-f]{64}$")) and
-      ($spec.targetIdentityDigest | test("^sha256:[0-9a-f]{64}$")) and
-      $spec.policyFingerprint != "" and $spec.verificationPolicyDigest != "" and
-      $spec.ptahVersion != "" and
-      ($spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-      ($spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
-      $spec.controllerStateVersion == $controllerStateVersion and
-      ($spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
+      $spec.migrationRef.name == $migration and
+      $spec.migrationRef.uid == $plan[0].spec.migrationRef.uid and
+      $spec.planRef == {name: $plan[0].metadata.name, uid: $plan[0].metadata.uid} and
+      $spec.planFingerprint == $plan[0].spec.fingerprint and
+      ($spec | keys) == ["approvedAt", "approver", "migrationRef", "mutationRequestUID", "planFingerprint", "planRef"] and
       $spec.approver.username != "" and $spec.approvedAt != null and
       $spec.mutationRequestUID != ""
     ' "$WORK_DIR/approval.json" >/dev/null ||
-		fail "approval $MIGRATION_APPROVAL was not hydrated and bound to the exact plan"
+		fail "approval $MIGRATION_APPROVAL was not stamped and bound to the exact plan"
 }
 
 assert_in_sync() {
@@ -7564,7 +7562,7 @@ run_engine_migrations() {
 
 	approve_migration "$MIGRATION_APPROVAL" "$MIGRATION_PLAN" \
 		"$MIGRATION_PLAN_UID" "$MIGRATION_PLAN_FINGERPRINT" >/dev/null
-	assert_approval_hydrated
+	assert_approval_stamped
 	wait_for_migration_phase InSync
 	assert_in_sync
 	assert_database_migrated

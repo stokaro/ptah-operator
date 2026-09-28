@@ -586,18 +586,11 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 	approval := &operatorv1alpha1.PtahSchemaApproval{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: "approval", UID: "approval-uid"},
 		Spec: operatorv1alpha1.PtahSchemaApprovalSpec{
-			SchemaRef:       plan.Spec.SchemaRef,
-			PlanRef:         operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
-			PlanFingerprint: plan.Spec.Fingerprint, ArtifactDigest: plan.Spec.ArtifactDigest,
-			TargetIdentityDigest: plan.Spec.TargetIdentityDigest, ActualStateFingerprint: plan.Spec.ActualStateFingerprint,
-			DesiredStateFingerprint: plan.Spec.DesiredStateFingerprint, PolicyFingerprint: plan.Spec.PolicyFingerprint,
-			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
-			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
-			ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-			PtahVersion:              plan.Spec.PtahVersion,
-			ControllerStateVersion:   plan.Spec.ControllerStateVersion,
-			ExecutorImage:            plan.Spec.ExecutorImage,
-			RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion, Approver: approver, ApprovedAt: approvedAt,
+			SchemaRef:          plan.Spec.SchemaRef,
+			PlanRef:            operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+			PlanFingerprint:    plan.Spec.Fingerprint,
+			Approver:           approver,
+			ApprovedAt:         approvedAt,
 			MutationRequestUID: "admission-request-uid",
 		},
 	}

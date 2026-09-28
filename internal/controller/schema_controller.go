@@ -4992,6 +4992,13 @@ func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *oper
 	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan))
 }
 
+// approvalMatchesPlanStatus reports whether an approval names exactly this
+// schema's current plan: the schema by name and UID, the plan by name and UID,
+// and the plan by its fingerprint. The fingerprint binds every input the plan
+// was decided from and a plan is immutable, so nothing else about the plan is
+// compared here: a plan computed under another artifact, state, policy or
+// execution binding is another plan, with another fingerprint and another
+// UID, and an approval that named this one does not name it.
 func approvalMatchesPlanStatus(
 	approval *operatorv1alpha1.PtahSchemaApproval,
 	schema *operatorv1alpha1.PtahSchema,
@@ -5000,18 +5007,7 @@ func approvalMatchesPlanStatus(
 	return approval != nil && schema != nil && plan != nil &&
 		approval.Spec.SchemaRef.Name == schema.Name && approval.Spec.SchemaRef.UID == schema.UID &&
 		approval.Spec.PlanRef.Name == plan.Name && approval.Spec.PlanRef.UID == plan.UID &&
-		approval.Spec.PlanFingerprint == plan.Fingerprint && approval.Spec.ArtifactDigest == plan.ArtifactDigest &&
-		approval.Spec.CoordinationDigest == plan.CoordinationDigest &&
-		approval.Spec.TargetIdentityDigest == plan.TargetIdentityDigest &&
-		approval.Spec.ActualStateFingerprint == plan.ActualStateFingerprint &&
-		approval.Spec.DesiredStateFingerprint == plan.DesiredStateFingerprint &&
-		approval.Spec.PolicyFingerprint == plan.PolicyFingerprint &&
-		approval.Spec.VerificationPolicyUID == plan.VerificationPolicyUID &&
-		approval.Spec.VerificationPolicyDigest == plan.VerificationPolicyDigest &&
-		approval.Spec.ExecutionBindingID != "" && approval.Spec.ExecutionBindingID == plan.ExecutionBindingID &&
-		approval.Spec.ControllerStateVersion >= 1 && approval.Spec.ControllerStateVersion == plan.ControllerStateVersion &&
-		approval.Spec.PtahVersion == plan.PtahVersion && approval.Spec.ExecutorImage == plan.ExecutorImage &&
-		approval.Spec.RunnerProtocolVersion == plan.RunnerProtocolVersion &&
+		approval.Spec.PlanFingerprint != "" && approval.Spec.PlanFingerprint == plan.Fingerprint &&
 		!approval.Spec.ApprovedAt.IsZero() && approval.Spec.Approver.Username != "" && approval.Spec.MutationRequestUID != ""
 }
 

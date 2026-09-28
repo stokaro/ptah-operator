@@ -3131,11 +3131,29 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 		rollback.Status.ExecutionBinding.ExecutorImage != "example.invalid/ptah@"+testDigest {
 		t.Fatalf("rollback did not create a distinct durable epoch: %#v", rollback.Status)
 	}
-	if escapedApproval.Spec.ExecutionBindingID == rollback.Status.ExecutionBinding.Epoch {
-		t.Fatal("approval admitted under the retired epoch matched the rollback epoch")
+	// A plan the rollback would publish is a different plan: the epoch is
+	// in the fingerprint, so republishing the retired plan's inputs under the
+	// rollback epoch derives another fingerprint, another name and another
+	// UID. The approval named the retired plan by UID and fingerprint, and
+	// names neither of the new ones.
+	retiredBinding := planBindingFromStatus(schema, retiredPlan)
+	retiredFingerprint, err := retiredBinding.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollbackBinding := retiredBinding
+	rollbackBinding.ExecutionBindingID = rollback.Status.ExecutionBinding.Epoch
+	rollbackFingerprint, err := rollbackBinding.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rollbackFingerprint == retiredFingerprint {
+		t.Fatal("the rollback epoch derived the retired plan's fingerprint, so the approval would carry over")
 	}
 	rollbackPlan := retiredPlan.DeepCopy()
 	rollbackPlan.ExecutionBindingID = rollback.Status.ExecutionBinding.Epoch
+	rollbackPlan.Fingerprint = rollbackFingerprint
+	rollbackPlan.UID = "rollback-plan-uid"
 	if approvalMatchesPlanStatus(escapedApproval, rollback, rollbackPlan) {
 		t.Fatal("late approval became valid after byte-identical component rollback")
 	}
@@ -4304,6 +4322,37 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 	}
 }
 
+// planBindingFromStatus is the fingerprint document a plan's status record
+// stands for, so a test can ask what a plan republished under other inputs
+// would be fingerprinted as.
+func planBindingFromStatus(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.CurrentPlanStatus) fingerprint.PlanBinding {
+	kinds := make([]string, 0, len(plan.PrivilegeChanges))
+	for _, change := range plan.PrivilegeChanges {
+		kinds = append(kinds, string(change))
+	}
+	return fingerprint.PlanBinding{
+		ContractVersion:          fingerprint.CurrentPlanContractVersion,
+		SchemaUID:                string(schema.UID),
+		PlanContentDigest:        plan.ContentDigest,
+		ArtifactDigest:           plan.ArtifactDigest,
+		CoordinationDigest:       plan.CoordinationDigest,
+		TargetIdentityDigest:     plan.TargetIdentityDigest,
+		ActualStateFingerprint:   plan.ActualStateFingerprint,
+		DesiredStateFingerprint:  plan.DesiredStateFingerprint,
+		PolicyFingerprint:        plan.PolicyFingerprint,
+		VerificationPolicyUID:    string(plan.VerificationPolicyUID),
+		VerificationPolicyDigest: plan.VerificationPolicyDigest,
+		ExecutionBindingID:       plan.ExecutionBindingID,
+		ControllerStateVersion:   plan.ControllerStateVersion,
+		PtahVersion:              plan.PtahVersion,
+		ExecutorImage:            plan.ExecutorImage,
+		RunnerProtocolVersion:    plan.RunnerProtocolVersion,
+		Destructive:              plan.Destructive,
+		PrivilegeChanges:         kinds,
+		StatementCount:           plan.StatementCount,
+	}
+}
+
 func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan, *operatorv1alpha1.PtahSchemaApproval, *corev1.ConfigMap) {
 	t.Helper()
 
@@ -4359,25 +4408,12 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 	approval := &operatorv1alpha1.PtahSchemaApproval{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: "approval", UID: "approval-uid"},
 		Spec: operatorv1alpha1.PtahSchemaApprovalSpec{
-			SchemaRef:                plan.Spec.SchemaRef,
-			PlanRef:                  operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
-			PlanFingerprint:          plan.Spec.Fingerprint,
-			ArtifactDigest:           plan.Spec.ArtifactDigest,
-			CoordinationDigest:       plan.Spec.CoordinationDigest,
-			TargetIdentityDigest:     plan.Spec.TargetIdentityDigest,
-			ActualStateFingerprint:   plan.Spec.ActualStateFingerprint,
-			DesiredStateFingerprint:  plan.Spec.DesiredStateFingerprint,
-			PolicyFingerprint:        plan.Spec.PolicyFingerprint,
-			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
-			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
-			ExecutionBindingID:       plan.Spec.ExecutionBindingID,
-			ControllerStateVersion:   plan.Spec.ControllerStateVersion,
-			PtahVersion:              plan.Spec.PtahVersion,
-			ExecutorImage:            plan.Spec.ExecutorImage,
-			RunnerProtocolVersion:    plan.Spec.RunnerProtocolVersion,
-			Approver:                 operatorv1alpha1.ApprovalIdentity{Username: "approver@example.com"},
-			ApprovedAt:               approvedAt,
-			MutationRequestUID:       "approval-request-uid",
+			SchemaRef:          plan.Spec.SchemaRef,
+			PlanRef:            operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+			PlanFingerprint:    plan.Spec.Fingerprint,
+			Approver:           operatorv1alpha1.ApprovalIdentity{Username: "approver@example.com"},
+			ApprovedAt:         approvedAt,
+			MutationRequestUID: "approval-request-uid",
 		},
 	}
 	policyConfig := &corev1.ConfigMap{

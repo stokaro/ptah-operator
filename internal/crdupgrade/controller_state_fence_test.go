@@ -115,7 +115,7 @@ func TestTheStoredStateFenceRefusesAManagerThatPredatesTheBumpedFields(t *testin
 }
 
 // Every location the scan covers has to refuse on its own. A fence that reads
-// one path and reports on six is green over five it never looked at.
+// one path and reports on all of them is green over the ones it never looked at.
 func TestTheStoredStateFenceRefusesAtEveryLocationItClaims(t *testing.T) {
 	t.Parallel()
 	for _, resourceKind := range storedControllerStateKinds {
@@ -131,14 +131,10 @@ func TestTheStoredStateFenceRefusesAtEveryLocationItClaims(t *testing.T) {
 					clients.Schemas = &schemaListClient{pages: []*unstructured.UnstructuredList{page}}
 				case "PtahSchemaPlan":
 					clients.Plans = &schemaListClient{pages: []*unstructured.UnstructuredList{page}}
-				case "PtahSchemaApproval":
-					clients.Approvals = &schemaListClient{pages: []*unstructured.UnstructuredList{page}}
 				case "PtahMigration":
 					clients.Migrations = &schemaListClient{pages: []*unstructured.UnstructuredList{page}}
 				case "PtahMigrationPlan":
 					clients.MigrationPlans = &schemaListClient{pages: []*unstructured.UnstructuredList{page}}
-				case "PtahMigrationApproval":
-					clients.MigrationApprovals = &schemaListClient{pages: []*unstructured.UnstructuredList{page}}
 				default:
 					t.Fatalf("no client is wired for %s, so this proof would pass over nothing", resourceKind.kind)
 				}

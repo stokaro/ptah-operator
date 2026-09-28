@@ -71,8 +71,9 @@ type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now() }
 
-// ApprovalHandler stamps authenticated identity and rejects stale approval
-// tuples against direct, uncached API reads.
+// ApprovalHandler stamps authenticated identity and rejects an approval whose
+// three identifiers -- schema, plan and plan fingerprint -- do not name the
+// live plan, against direct, uncached API reads.
 type ApprovalHandler struct {
 	Reader    client.Reader
 	Decoder   cradmission.Decoder
@@ -119,9 +120,6 @@ func (h *ApprovalHandler) Handle(ctx context.Context, req cradmission.Request) c
 
 	if h.Mutate {
 		h.stampIdentity(approval, req.UserInfo, req.UID)
-		if err := h.hydrateDerivedBindings(ctx, approval); err != nil {
-			return denialFor(err)
-		}
 		if err := h.validateBinding(ctx, approval); err != nil {
 			return denialFor(err)
 		}
@@ -141,81 +139,24 @@ func (h *ApprovalHandler) Handle(ctx context.Context, req cradmission.Request) c
 	return cradmission.Allowed("approval is bound to the current immutable plan")
 }
 
-// hydrateDerivedBindings removes error-prone transcription from an approval
-// without weakening its explicit decision. The approver must name immutable
-// schema and plan UIDs plus the exact plan fingerprint. Every other binding is
-// copied from that plan only when omitted; a conflicting value is refused
-// rather than silently corrected.
-func (h *ApprovalHandler) hydrateDerivedBindings(
-	ctx context.Context,
-	approval *operatorv1alpha1.PtahSchemaApproval,
+// requireExplicitDecision refuses an approval that leaves any part of the
+// decision to be inferred. The approver names the resource, the plan and the
+// plan's fingerprint. Nothing is filled in from the plan: the fingerprint
+// already names everything the plan was decided from.
+func requireExplicitDecision(
+	kind string,
+	ownerRef, planRef operatorv1alpha1.ImmutableObjectReference,
+	planFingerprint string,
 ) error {
-	if strings.TrimSpace(approval.Spec.SchemaRef.Name) == "" || approval.Spec.SchemaRef.UID == "" {
-		return fmt.Errorf("approval must explicitly identify the schema name and UID")
+	if strings.TrimSpace(ownerRef.Name) == "" || ownerRef.UID == "" {
+		return fmt.Errorf("approval must explicitly identify the %s name and UID", kind)
 	}
-	if strings.TrimSpace(approval.Spec.PlanRef.Name) == "" || approval.Spec.PlanRef.UID == "" {
+	if strings.TrimSpace(planRef.Name) == "" || planRef.UID == "" {
 		return fmt.Errorf("approval must explicitly identify the plan name and UID")
 	}
-	if strings.TrimSpace(approval.Spec.PlanFingerprint) == "" {
+	if strings.TrimSpace(planFingerprint) == "" {
 		return fmt.Errorf("approval must explicitly identify the plan fingerprint")
 	}
-
-	plan := &operatorv1alpha1.PtahSchemaPlan{}
-	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}, plan); err != nil {
-		return fmt.Errorf("read referenced plan for approval defaults: %w", err)
-	}
-	if plan.UID != approval.Spec.PlanRef.UID {
-		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
-	}
-	if err := requireCurrentPlanContract(plan.Spec.ContractVersion); err != nil {
-		return err
-	}
-	if err := h.Execution.binds(
-		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
-	); err != nil {
-		return err
-	}
-	if plan.Spec.SchemaRef != approval.Spec.SchemaRef {
-		return fmt.Errorf("approval schema reference does not match the plan")
-	}
-	if approval.Spec.PlanFingerprint != plan.Spec.Fingerprint {
-		return fmt.Errorf("approval plan fingerprint does not match the immutable plan")
-	}
-
-	bindings := []struct {
-		name  string
-		value *string
-		want  string
-	}{
-		{"artifact digest", &approval.Spec.ArtifactDigest, plan.Spec.ArtifactDigest},
-		{"coordination digest", &approval.Spec.CoordinationDigest, plan.Spec.CoordinationDigest},
-		{"target identity digest", &approval.Spec.TargetIdentityDigest, plan.Spec.TargetIdentityDigest},
-		{"actual state fingerprint", &approval.Spec.ActualStateFingerprint, plan.Spec.ActualStateFingerprint},
-		{"desired state fingerprint", &approval.Spec.DesiredStateFingerprint, plan.Spec.DesiredStateFingerprint},
-		{"policy fingerprint", &approval.Spec.PolicyFingerprint, plan.Spec.PolicyFingerprint},
-		{"verification policy digest", &approval.Spec.VerificationPolicyDigest, plan.Spec.VerificationPolicyDigest},
-		{"execution binding ID", &approval.Spec.ExecutionBindingID, plan.Spec.ExecutionBindingID},
-		{"Ptah version", &approval.Spec.PtahVersion, plan.Spec.PtahVersion},
-		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
-	}
-	if approval.Spec.VerificationPolicyUID != "" && approval.Spec.VerificationPolicyUID != plan.Spec.VerificationPolicyUID {
-		return fmt.Errorf("approval verification policy UID conflicts with the immutable plan")
-	}
-	approval.Spec.VerificationPolicyUID = plan.Spec.VerificationPolicyUID
-	for _, binding := range bindings {
-		if *binding.value != "" && *binding.value != binding.want {
-			return fmt.Errorf("approval %s conflicts with the immutable plan", binding.name)
-		}
-		*binding.value = binding.want
-	}
-	if approval.Spec.RunnerProtocolVersion != 0 && approval.Spec.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
-		return fmt.Errorf("approval runner protocol version conflicts with the immutable plan")
-	}
-	approval.Spec.RunnerProtocolVersion = plan.Spec.RunnerProtocolVersion
-	if approval.Spec.ControllerStateVersion != 0 && approval.Spec.ControllerStateVersion != plan.Spec.ControllerStateVersion {
-		return fmt.Errorf("approval controller state version conflicts with the immutable plan")
-	}
-	approval.Spec.ControllerStateVersion = plan.Spec.ControllerStateVersion
 	return nil
 }
 
@@ -279,10 +220,20 @@ func normalizedGroups(groups []string) []string {
 	return normalized
 }
 
+// validateBinding refuses every approval the current evidence cannot support:
+// one that names a plan by a UID or a fingerprint the live plan does not
+// have, a plan of another schema, a plan this manager cannot execute, or a
+// schema that is not waiting for exactly this decision. It reads the plan
+// and the schema directly from the API server, in both admission passes.
 func (h *ApprovalHandler) validateBinding(
 	ctx context.Context,
 	approval *operatorv1alpha1.PtahSchemaApproval,
 ) error {
+	if err := requireExplicitDecision(
+		"schema", approval.Spec.SchemaRef, approval.Spec.PlanRef, approval.Spec.PlanFingerprint,
+	); err != nil {
+		return err
+	}
 	namespace := approval.Namespace
 	plan := &operatorv1alpha1.PtahSchemaPlan{}
 	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: approval.Spec.PlanRef.Name}, plan); err != nil {
@@ -291,6 +242,15 @@ func (h *ApprovalHandler) validateBinding(
 	if plan.DeletionTimestamp != nil {
 		return fmt.Errorf("referenced plan is being deleted")
 	}
+	if plan.UID != approval.Spec.PlanRef.UID {
+		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
+	}
+	if plan.Spec.SchemaRef != approval.Spec.SchemaRef {
+		return fmt.Errorf("approval schema reference does not match the plan")
+	}
+	if approval.Spec.PlanFingerprint != plan.Spec.Fingerprint {
+		return fmt.Errorf("approval plan fingerprint does not match the immutable plan")
+	}
 	if err := requireCurrentPlanContract(plan.Spec.ContractVersion); err != nil {
 		return err
 	}
@@ -298,9 +258,6 @@ func (h *ApprovalHandler) validateBinding(
 		plan.Spec.ControllerStateVersion, plan.Spec.PtahVersion, plan.Spec.ExecutorImage, plan.Spec.RunnerProtocolVersion,
 	); err != nil {
 		return err
-	}
-	if plan.UID != approval.Spec.PlanRef.UID {
-		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
 	}
 	if plan.Status.ObservedGeneration != plan.Generation ||
 		!meta.IsStatusConditionTrue(plan.Status.Conditions, operatorv1alpha1.ConditionPlanStorageReady) {
@@ -345,9 +302,6 @@ func (h *ApprovalHandler) validateBinding(
 		}
 	}
 
-	if err := approvalMatchesPlan(approval.Spec, plan.Spec); err != nil {
-		return err
-	}
 	coordinationDigest, err := coordination.Digest(schema.Namespace, schema.Spec.Target)
 	if err != nil {
 		return fmt.Errorf("derive current database coordination digest: %w", err)
@@ -368,44 +322,6 @@ func (h *ApprovalHandler) validateBinding(
 	}
 	if policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
 		return fmt.Errorf("verification policy changed after the plan was generated")
-	}
-	return nil
-}
-
-func approvalMatchesPlan(
-	approval operatorv1alpha1.PtahSchemaApprovalSpec,
-	plan operatorv1alpha1.PtahSchemaPlanSpec,
-) error {
-	checks := []struct {
-		name string
-		got  string
-		want string
-	}{
-		{"plan fingerprint", approval.PlanFingerprint, plan.Fingerprint},
-		{"artifact digest", approval.ArtifactDigest, plan.ArtifactDigest},
-		{"coordination digest", approval.CoordinationDigest, plan.CoordinationDigest},
-		{"target identity digest", approval.TargetIdentityDigest, plan.TargetIdentityDigest},
-		{"actual state fingerprint", approval.ActualStateFingerprint, plan.ActualStateFingerprint},
-		{"desired state fingerprint", approval.DesiredStateFingerprint, plan.DesiredStateFingerprint},
-		{"policy fingerprint", approval.PolicyFingerprint, plan.PolicyFingerprint},
-		{"verification policy digest", approval.VerificationPolicyDigest, plan.VerificationPolicyDigest},
-		{"execution binding ID", approval.ExecutionBindingID, plan.ExecutionBindingID},
-		{"Ptah version", approval.PtahVersion, plan.PtahVersion},
-		{"executor image", approval.ExecutorImage, plan.ExecutorImage},
-	}
-	if approval.VerificationPolicyUID == "" || approval.VerificationPolicyUID != plan.VerificationPolicyUID {
-		return fmt.Errorf("approval verification policy UID does not match the immutable plan")
-	}
-	for _, check := range checks {
-		if strings.TrimSpace(check.got) == "" || check.got != check.want {
-			return fmt.Errorf("approval %s does not match the immutable plan", check.name)
-		}
-	}
-	if approval.RunnerProtocolVersion != plan.RunnerProtocolVersion {
-		return fmt.Errorf("approval runner protocol version does not match the immutable plan")
-	}
-	if approval.ControllerStateVersion < 1 || approval.ControllerStateVersion != plan.ControllerStateVersion {
-		return fmt.Errorf("approval controller state version does not match the immutable plan")
 	}
 	return nil
 }

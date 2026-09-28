@@ -234,10 +234,12 @@ func TestReconcileRepeatsStatePreflightAfterReleaseCutover(t *testing.T) {
 	}}
 	prepareCalls := 0
 	state := storedStateClientsWithSchemas(schemas)
-	state.Approvals = &schemaListClient{pages: []*unstructured.UnstructuredList{
-		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(ourStateVersion), "spec", "controllerStateVersion")}},
-		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(ourStateVersion), "spec", "controllerStateVersion")}},
-		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "approval-a", int64(newerStateVersion), "spec", "controllerStateVersion")}},
+	// The kind scanned last is the one that refuses, so every kind before it
+	// is listed on all three preflights.
+	state.MigrationPlans = &schemaListClient{pages: []*unstructured.UnstructuredList{
+		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "plan-a", int64(ourStateVersion), "spec", "controllerStateVersion")}},
+		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "plan-a", int64(ourStateVersion), "spec", "controllerStateVersion")}},
+		{Items: []unstructured.Unstructured{schemaWithControllerStateAt("tenant-a", "plan-a", int64(newerStateVersion), "spec", "controllerStateVersion")}},
 	}}
 	err := manager.ReconcileWithStatePreflightAndPrepare(
 		context.Background(),
@@ -249,7 +251,7 @@ func TestReconcileRepeatsStatePreflightAfterReleaseCutover(t *testing.T) {
 		},
 	)
 	if err == nil || !contains(err.Error(), "final stored controller-state preflight after stopping the running release") ||
-		!contains(err.Error(), "controller downgrade refused") || !contains(err.Error(), "PtahSchemaApproval tenant-a/approval-a") {
+		!contains(err.Error(), "controller downgrade refused") || !contains(err.Error(), "PtahMigrationPlan tenant-a/plan-a") {
 		t.Fatalf("ReconcileWithStatePreflightAndPrepare error = %v, want post-cutover downgrade refusal", err)
 	}
 	if prepareCalls != 1 {
@@ -262,8 +264,8 @@ func TestReconcileRepeatsStatePreflightAfterReleaseCutover(t *testing.T) {
 		t.Fatalf("stored-state list calls = %d, want 3", len(schemas.options))
 	}
 	for name, client := range map[string]ControllerStateListClient{
-		"PtahSchemaPlan":     state.Plans,
-		"PtahSchemaApproval": state.Approvals,
+		"PtahSchemaPlan":    state.Plans,
+		"PtahMigrationPlan": state.MigrationPlans,
 	} {
 		if calls := len(client.(*schemaListClient).options); calls != 3 {
 			t.Fatalf("%s stored-state list calls = %d, want 3", name, calls)

@@ -35,8 +35,8 @@ const (
 	mutationRequestUID       = "6f4b2a18-8c3e-4d5a-b1f7-2e0c9d8a7b64"
 )
 
-// executionBinding is what every plan and approval binds: what executes the
-// plan.
+// executionBinding is what every plan binds: what executes the plan. An
+// approval binds it through the plan fingerprint and carries no copy.
 func executionBinding() map[string]any {
 	return map[string]any{
 		"executionBindingID":     executionBindingID,
@@ -124,33 +124,18 @@ func approvalStamp() map[string]any {
 }
 
 func schemaApprovalSpec() map[string]any {
-	return merged(executionBinding(), approvalStamp(), map[string]any{
-		"schemaRef":                map[string]any{"name": "application", "uid": schemaUID},
-		"planRef":                  map[string]any{"name": "ptah-plan-71c480df93d6ae2f14efe3c4", "uid": planUID},
-		"planFingerprint":          planFingerprint,
-		"artifactDigest":           artifactDigest,
-		"verificationPolicyUID":    verificationPolicyUID,
-		"verificationPolicyDigest": verificationPolicyDigest,
-		"desiredStateFingerprint":  desiredStateFingerprint,
-		"actualStateFingerprint":   actualStateFingerprint,
-		"coordinationDigest":       coordinationDigest,
-		"targetIdentityDigest":     targetIdentityDigest,
-		"policyFingerprint":        policyFingerprint,
+	return merged(approvalStamp(), map[string]any{
+		"schemaRef":       map[string]any{"name": "application", "uid": schemaUID},
+		"planRef":         map[string]any{"name": "ptah-plan-71c480df93d6ae2f14efe3c4", "uid": planUID},
+		"planFingerprint": planFingerprint,
 	})
 }
 
 func migrationApprovalSpec() map[string]any {
-	return merged(executionBinding(), approvalStamp(), map[string]any{
-		"migrationRef":             map[string]any{"name": "orders", "uid": migrationUID},
-		"planRef":                  map[string]any{"name": "ptah-mplan-19581e27de7ced00ff1ce50b", "uid": planUID},
-		"planFingerprint":          desiredStateFingerprint,
-		"historyFingerprint":       historyFingerprint,
-		"artifactDigest":           artifactDigest,
-		"verificationPolicyUID":    verificationPolicyUID,
-		"verificationPolicyDigest": verificationPolicyDigest,
-		"coordinationDigest":       coordinationDigest,
-		"targetIdentityDigest":     targetIdentityDigest,
-		"policyFingerprint":        policyFingerprint,
+	return merged(approvalStamp(), map[string]any{
+		"migrationRef":    map[string]any{"name": "orders", "uid": migrationUID},
+		"planRef":         map[string]any{"name": "ptah-mplan-19581e27de7ced00ff1ce50b", "uid": planUID},
+		"planFingerprint": desiredStateFingerprint,
 	})
 }
 
@@ -426,21 +411,24 @@ func approvalRefusals() []refusal {
 	}
 }
 
+// An approval carries no execution binding of its own, so the binding
+// refusals a plan is held to do not apply here: the plan the approval names by
+// UID and fingerprint is where they are enforced.
 func TestPtahSchemaApprovalRefusals(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()
 
 	namespace := newNamespace(t, "schema-approval-refusals")
-	rows := append(append(bindingRefusals(), approvalRefusals()...),
+	rows := append(approvalRefusals(),
 		refusal{
 			name:   "schemaRef is required",
 			mutate: removing("spec", "schemaRef"),
 			want:   []cause{{"spec.schemaRef", "Required value"}},
 		},
 		refusal{
-			name:   "actualStateFingerprint is required",
-			mutate: removing("spec", "actualStateFingerprint"),
-			want:   []cause{{"spec.actualStateFingerprint", "Required value"}},
+			name:   "schemaRef.uid is required",
+			mutate: removing("spec", "schemaRef", "uid"),
+			want:   []cause{{"spec.schemaRef.uid", "Required value"}},
 		},
 	)
 	assertRefusals(t, basedOn("PtahSchemaApproval", namespace, "approve-application-1", schemaApprovalSpec), rows)
@@ -451,21 +439,16 @@ func TestPtahMigrationApprovalRefusals(t *testing.T) {
 	t.Parallel()
 
 	namespace := newNamespace(t, "migration-approval-refusals")
-	rows := append(append(bindingRefusals(), approvalRefusals()...),
+	rows := append(approvalRefusals(),
 		refusal{
 			name:   "migrationRef is required",
 			mutate: removing("spec", "migrationRef"),
 			want:   []cause{{"spec.migrationRef", "Required value"}},
 		},
 		refusal{
-			name:   "historyFingerprint is required",
-			mutate: removing("spec", "historyFingerprint"),
-			want:   []cause{{"spec.historyFingerprint", "Required value"}},
-		},
-		refusal{
-			name:   "runnerProtocolVersion zero",
-			mutate: setting(int64(0), "spec", "runnerProtocolVersion"),
-			want:   []cause{{"spec.runnerProtocolVersion", "greater than or equal to 1"}},
+			name:   "migrationRef.uid is required",
+			mutate: removing("spec", "migrationRef", "uid"),
+			want:   []cause{{"spec.migrationRef.uid", "Required value"}},
 		},
 	)
 	assertRefusals(t, basedOn("PtahMigrationApproval", namespace, "approve-orders-14", migrationApprovalSpec), rows)

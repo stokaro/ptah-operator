@@ -4675,16 +4675,25 @@ create_exact_approval() {
       $current.controllerRevision == $controllerRevision and
       $current.controllerStateVersion == $controllerStateVersion
     ' >/dev/null || fail "$approval_schema current plan is not bound to the exact controller identity"
+	# The plan is where the bindings live. The approval names it by UID and
+	# fingerprint, so what the plan says about its realm, its execution and
+	# the manager that published it is checked here, on the plan.
 	printf '%s\n' "$approval_plan_object" | jq -e \
+		--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 		--arg executionBindingID "$approval_execution_binding_id" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
-		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
+		--arg coordinationDigest "$approval_coordination_digest" '
       .spec.contractVersion == 3 and
       .spec.executionBindingID == $executionBindingID and
       .spec.controllerImage == $controllerImage and
       .spec.controllerRevision == $controllerRevision and
-      .spec.controllerStateVersion == $controllerStateVersion
+      .spec.controllerStateVersion == $controllerStateVersion and
+      .spec.runnerProtocolVersion == $runnerProtocolVersion and
+      .spec.coordinationDigest == $coordinationDigest and
+      (.spec.artifactDigest | test("^sha256:[0-9a-f]{64}$")) and
+      (.spec.executorImage | test("@sha256:[0-9a-f]{64}$"))
     ' >/dev/null || fail "$approval_plan is not a current-contract plan with the exact controller identity"
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
@@ -4704,33 +4713,25 @@ create_exact_approval() {
       }
     }' >"$RESOURCE_FILE"
 	k create -f "$RESOURCE_FILE" >/dev/null
+	# What is stored is the decision as written plus who made it and when:
+	# exactly six keys, none of them copied from the plan, and none of them
+	# the coordination key the plan's digest was derived from.
 	k -n "$TEST_NAMESPACE" get ptahschemaapproval "$approval_name" -o json |
 		jq -e \
-			--argjson runnerProtocolVersion "$RUNNER_PROTOCOL_VERSION" \
 			--arg schema "$approval_schema" \
+			--arg schemaUID "$approval_schema_uid" \
 			--arg plan "$approval_plan" \
+			--arg planUID "$approval_plan_uid" \
 			--arg fingerprint "$approval_fingerprint" \
-			--arg executionBindingID "$approval_execution_binding_id" \
-			--arg controllerImage "$CONTROLLER_IMAGE" \
-			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
-			--arg coordinationKey "$approval_coordination_key" \
-			--arg coordinationDigest "$approval_coordination_digest" '
-      .spec.schemaRef.name == $schema and .spec.planRef.name == $plan and
-      .spec.planFingerprint == $fingerprint and .spec.artifactDigest != "" and
-      .spec.coordinationDigest == $coordinationDigest and
-      .spec.targetIdentityDigest != "" and
-      .spec.actualStateFingerprint != "" and
-      .spec.desiredStateFingerprint != "" and .spec.policyFingerprint != "" and
-      .spec.verificationPolicyDigest != "" and .spec.ptahVersion != "" and
-      .spec.executionBindingID == $executionBindingID and
-      .spec.controllerStateVersion == $controllerStateVersion and
-      (.spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
-      (.spec | has("controllerImage") or has("controllerRevision") or has("runnerImage") | not) and
-      .spec.runnerProtocolVersion == $runnerProtocolVersion and .spec.approver.username != "" and
+			--arg coordinationKey "$approval_coordination_key" '
+      .spec.schemaRef == {name: $schema, uid: $schemaUID} and
+      .spec.planRef == {name: $plan, uid: $planUID} and
+      .spec.planFingerprint == $fingerprint and
+      (.spec | keys) == ["approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"] and
+      .spec.approver.username != "" and
       .spec.approvedAt != null and .spec.mutationRequestUID != "" and
       ([.spec | .. | scalars | select(. == $coordinationKey)] | length == 0)
-    ' >/dev/null || fail "$approval_name was not hydrated and bound to the exact plan"
+    ' >/dev/null || fail "$approval_name was not stamped and bound to the exact plan"
 }
 
 assert_job_isolation() {

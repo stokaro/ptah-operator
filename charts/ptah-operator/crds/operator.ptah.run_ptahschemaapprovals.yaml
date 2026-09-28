@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "27"
-    operator.ptah.run/crd-schema-digest: "sha256:20202bb732e0de41fce37ebec83acb218764301fb32a5be25f8bc89557606240"
+    operator.ptah.run/crd-schema-version: "28"
+    operator.ptah.run/crd-schema-digest: "sha256:269e21ffd731b1eb2d6f0964122f7eead2f1d29ecc6e550df5740e65ae1ef663"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemaapprovals.operator.ptah.run
 spec:
@@ -50,8 +50,6 @@ spec:
             type: object
           spec:
             properties:
-              actualStateFingerprint:
-                type: string
               approvedAt:
                 format: date-time
                 type: string
@@ -69,21 +67,6 @@ spec:
                 required:
                 - username
                 type: object
-              artifactDigest:
-                type: string
-              controllerStateVersion:
-                format: int32
-                minimum: 1
-                type: integer
-              coordinationDigest:
-                type: string
-              desiredStateFingerprint:
-                type: string
-              executionBindingID:
-                pattern: ^v1-[0-9a-f]{32}$
-                type: string
-              executorImage:
-                type: string
               mutationRequestUID:
                 type: string
               planFingerprint:
@@ -98,13 +81,6 @@ spec:
                 - name
                 - uid
                 type: object
-              policyFingerprint:
-                type: string
-              ptahVersion:
-                type: string
-              runnerProtocolVersion:
-                format: int32
-                type: integer
               schemaRef:
                 properties:
                   name:
@@ -115,32 +91,13 @@ spec:
                 - name
                 - uid
                 type: object
-              targetIdentityDigest:
-                type: string
-              verificationPolicyDigest:
-                type: string
-              verificationPolicyUID:
-                type: string
             required:
-            - actualStateFingerprint
             - approvedAt
             - approver
-            - artifactDigest
-            - controllerStateVersion
-            - coordinationDigest
-            - desiredStateFingerprint
-            - executionBindingID
-            - executorImage
             - mutationRequestUID
             - planFingerprint
             - planRef
-            - policyFingerprint
-            - ptahVersion
-            - runnerProtocolVersion
             - schemaRef
-            - targetIdentityDigest
-            - verificationPolicyDigest
-            - verificationPolicyUID
             type: object
             x-kubernetes-validations:
             - message: an approval is immutable; create a new approval instead

@@ -76,11 +76,13 @@ execute. The plan status commits the concrete ConfigMap UIDs only after every
 chunk has been read back and verified, and Apply checks names, UIDs, ordering,
 sizes, per-chunk hashes and the complete hash before dispatching.
 
-An approval repeats the bindings and is stamped by mutating admission with the
-authenticated username, UID, groups, request UID and time — whatever a client
-writes in those fields is replaced. Validating admission then reads the current
-schema, plan and verification policy directly from the API server, and the
-controller performs the same checks again before Apply.
+An approval names the plan by UID and by this fingerprint and repeats none of
+the bindings: the fingerprint already names every one of them, and a plan is
+immutable. Mutating admission stamps it with the authenticated username, UID,
+groups, request UID and time — whatever a client writes in those fields is
+replaced. Validating admission then reads the current schema, plan and
+verification policy directly from the API server, and the controller performs
+the same checks again before Apply.
 
 ## Declarative reference data
 

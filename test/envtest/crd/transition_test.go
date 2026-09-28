@@ -59,9 +59,9 @@ func TestImmutableRecordsRefuseEveryChangeToWhatTheyRecord(t *testing.T) {
 			want:   cause{"spec", "an approval is immutable; create a new approval instead"},
 		},
 		{
-			name:   "PtahMigrationApproval history fingerprint",
+			name:   "PtahMigrationApproval plan reference",
 			object: resource("PtahMigrationApproval", namespace, "approve-orders-14", migrationApprovalSpec()),
-			change: setting(desiredStateFingerprint, "spec", "historyFingerprint"),
+			change: setting("c5e8a7d2-3b41-4f6e-9a08-1d2c3b4a5e6f", "spec", "planRef", "uid"),
 			want:   cause{"spec", "an approval is immutable; create a new approval instead"},
 		},
 		{

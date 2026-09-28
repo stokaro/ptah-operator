@@ -1081,10 +1081,11 @@ and approvals made under the old one.
 
 The audit-visible `status.executionBinding` records those four components plus
 an opaque `epoch`. The epoch changes whenever one of them changes, including a
-rollback to a byte-identical set. A plan and approval carry the epoch as
-`spec.executionBindingID`, so approval is one-shot for that exact transition: it
-cannot become valid again after a later rollout or rollback, even if all four
-components return to their previous values.
+rollback to a byte-identical set. A plan carries the epoch as
+`spec.executionBindingID` and binds it into its fingerprint, and an approval
+names the plan by that fingerprint, so approval is one-shot for that exact
+transition: it cannot become valid again after a later rollout or rollback,
+even if all four components return to their previous values.
 
 A normal chart upgrade has a hard revision boundary: the `Recreate` strategy
 terminates every old manager Pod before any replacement manager Pod starts.

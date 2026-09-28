@@ -575,19 +575,10 @@ func TestVerifyStoredControllerStateRequiresEveryClient(t *testing.T) {
 			want: "PtahSchemaPlan client is required",
 		},
 		{
-			name: "approval",
+			name: "migration",
 			clients: StoredControllerStateClients{
 				Schemas: &schemaListClient{},
 				Plans:   &schemaListClient{},
-			},
-			want: "PtahSchemaApproval client is required",
-		},
-		{
-			name: "migration",
-			clients: StoredControllerStateClients{
-				Schemas:   &schemaListClient{},
-				Plans:     &schemaListClient{},
-				Approvals: &schemaListClient{},
 			},
 			want: "PtahMigration client is required",
 		},
@@ -596,21 +587,9 @@ func TestVerifyStoredControllerStateRequiresEveryClient(t *testing.T) {
 			clients: StoredControllerStateClients{
 				Schemas:    &schemaListClient{},
 				Plans:      &schemaListClient{},
-				Approvals:  &schemaListClient{},
 				Migrations: &schemaListClient{},
 			},
 			want: "PtahMigrationPlan client is required",
-		},
-		{
-			name: "migration approval",
-			clients: StoredControllerStateClients{
-				Schemas:        &schemaListClient{},
-				Plans:          &schemaListClient{},
-				Approvals:      &schemaListClient{},
-				Migrations:     &schemaListClient{},
-				MigrationPlans: &schemaListClient{},
-			},
-			want: "PtahMigrationApproval client is required",
 		},
 	}
 	for _, test := range tests {
@@ -791,7 +770,7 @@ func TestRuntimeVerifierRejectsMalformedStoredControllerState(t *testing.T) {
 	}
 }
 
-func TestVerifyStoredControllerStateScansImmutablePlanAndApprovalSpecs(t *testing.T) {
+func TestVerifyStoredControllerStateScansImmutablePlanSpecs(t *testing.T) {
 	tests := []struct {
 		name      string
 		kind      string
@@ -809,20 +788,20 @@ func TestVerifyStoredControllerStateScansImmutablePlanAndApprovalSpecs(t *testin
 			want: "controller downgrade refused",
 		},
 		{
-			name:    "negative approval state",
-			kind:    "PtahSchemaApproval",
+			name:    "negative migration plan state",
+			kind:    "PtahMigrationPlan",
 			version: int64(-1),
 			configure: func(clients *StoredControllerStateClients, client *schemaListClient) {
-				clients.Approvals = client
+				clients.MigrationPlans = client
 			},
 			want: "invalid stored controller state version -1",
 		},
 		{
-			name:    "malformed approval state",
-			kind:    "PtahSchemaApproval",
+			name:    "malformed migration plan state",
+			kind:    "PtahMigrationPlan",
 			version: "future",
 			configure: func(clients *StoredControllerStateClients, client *schemaListClient) {
-				clients.Approvals = client
+				clients.MigrationPlans = client
 			},
 			want: "malformed stored controller state",
 		},
@@ -851,26 +830,22 @@ func TestVerifyStoredControllerStateListsEveryDurableKind(t *testing.T) {
 		}}}
 	}
 	schemas := page(schemaWithoutControllerState("tenant-a", "unversioned-schema"))
-	plans := page(schemaWithoutControllerState("tenant-a", "unversioned-plan"))
-	approvals := page(schemaWithControllerStateAt("tenant-a", "unversioned-approval", int64(0), "spec", "controllerStateVersion"))
+	plans := page(schemaWithControllerStateAt("tenant-a", "unversioned-plan", int64(0), "spec", "controllerStateVersion"))
 	migrations := page(schemaWithoutControllerState("tenant-a", "unversioned-migration"))
-	migrationPlans := page(schemaWithoutControllerState("tenant-a", "unversioned-migration-plan"))
-	migrationApprovals := page(schemaWithControllerStateAt("tenant-a", "unversioned-migration-approval", int64(0), "spec", "controllerStateVersion"))
+	migrationPlans := page(schemaWithControllerStateAt("tenant-a", "unversioned-migration-plan", int64(0), "spec", "controllerStateVersion"))
 	clients := StoredControllerStateClients{
-		Schemas:            schemas,
-		Plans:              plans,
-		Approvals:          approvals,
-		Migrations:         migrations,
-		MigrationPlans:     migrationPlans,
-		MigrationApprovals: migrationApprovals,
+		Schemas:        schemas,
+		Plans:          plans,
+		Migrations:     migrations,
+		MigrationPlans: migrationPlans,
 	}
 
 	if err := VerifyStoredControllerState(context.Background(), clients, 1); err != nil {
 		t.Fatal(err)
 	}
 	for name, client := range map[string]*schemaListClient{
-		"PtahSchema": schemas, "PtahSchemaPlan": plans, "PtahSchemaApproval": approvals,
-		"PtahMigration": migrations, "PtahMigrationPlan": migrationPlans, "PtahMigrationApproval": migrationApprovals,
+		"PtahSchema": schemas, "PtahSchemaPlan": plans,
+		"PtahMigration": migrations, "PtahMigrationPlan": migrationPlans,
 	} {
 		if len(client.options) != 1 || client.options[0].Limit != storedControllerStatePageSize {
 			t.Fatalf("%s List options = %#v, want one exhaustive paginated scan", name, client.options)
@@ -907,14 +882,10 @@ func setStoredStateClient(clients *StoredControllerStateClients, kind string, cl
 		clients.Schemas = client
 	case "PtahSchemaPlan":
 		clients.Plans = client
-	case "PtahSchemaApproval":
-		clients.Approvals = client
 	case "PtahMigration":
 		clients.Migrations = client
 	case "PtahMigrationPlan":
 		clients.MigrationPlans = client
-	case "PtahMigrationApproval":
-		clients.MigrationApprovals = client
 	default:
 		panic("no stored controller-state client for kind " + kind)
 	}
@@ -965,12 +936,10 @@ func setControllerStateAt(object *unstructured.Unstructured, version any, path .
 
 func emptyStoredStateClients() StoredControllerStateClients {
 	return StoredControllerStateClients{
-		Schemas:            &schemaListClient{},
-		Plans:              &schemaListClient{},
-		Approvals:          &schemaListClient{},
-		Migrations:         &schemaListClient{},
-		MigrationPlans:     &schemaListClient{},
-		MigrationApprovals: &schemaListClient{},
+		Schemas:        &schemaListClient{},
+		Plans:          &schemaListClient{},
+		Migrations:     &schemaListClient{},
+		MigrationPlans: &schemaListClient{},
 	}
 }
 

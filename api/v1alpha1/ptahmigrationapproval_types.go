@@ -2,63 +2,26 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 // PtahMigrationApprovalSpec binds one authenticated decision to one exact
 // migration plan.
 //
-// The binding names the history as well as the plan. A migration plan's
-// premise is the history it was computed against, so an approval that named
-// only the plan would still be valid after somebody else's run moved the
-// database underneath it.
+// The decision is three identifiers: the migration, the plan, and the plan's
+// fingerprint. A migration plan's fingerprint binds the history it was
+// computed against as well as the sequence, the artifact, the policy, the
+// target and the execution binding, so an approval that names the plan by UID
+// and fingerprint is retired by somebody else's run moving the database
+// underneath it, without carrying a copy of the history it was given under.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="an approval is immutable; create a new approval instead"
 type PtahMigrationApprovalSpec struct {
 	// MigrationRef is the resource the approved sequence belongs to.
 	MigrationRef ImmutableObjectReference `json:"migrationRef"`
 	// PlanRef is the exact plan being approved.
 	PlanRef ImmutableObjectReference `json:"planRef"`
-
-	// PlanFingerprint is the plan's complete identity. The fields below are
-	// that identity written out, so the decision can be read without fetching
-	// the plan and checked against the live one before anything runs.
+	// PlanFingerprint is the plan's spec.fingerprint: its complete identity,
+	// checked against the live plan before anything runs.
 	PlanFingerprint string `json:"planFingerprint"`
-	// HistoryFingerprint is the recorded history the plan was computed against.
-	// Somebody else's run moves it, and this is what notices.
-	HistoryFingerprint string `json:"historyFingerprint"`
-	// ArtifactDigest is the OCI migration artifact the sequence comes from.
-	ArtifactDigest string `json:"artifactDigest"`
-	// CoordinationDigest is the database realm the approved run takes its turn
-	// in.
-	CoordinationDigest string `json:"coordinationDigest"`
-	// TargetIdentityDigest is the database it was computed against.
-	TargetIdentityDigest string `json:"targetIdentityDigest"`
-	// PolicyFingerprint is the spec.policy it was computed under.
-	PolicyFingerprint string `json:"policyFingerprint"`
-
-	// VerificationPolicyUID is the policy object that accepted the artifact.
-	VerificationPolicyUID types.UID `json:"verificationPolicyUID"`
-	// VerificationPolicyDigest is that policy's content at the time.
-	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
-
-	// ExecutionBindingID is the execution epoch the approved plan belongs to,
-	// which changes whenever a component that decides what the run means
-	// changes. A manager upgrade that changes none of them keeps it.
-	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID string `json:"executionBindingID"`
-	// ControllerStateVersion is the controller-state semantics the approved
-	// run must be dispatched under.
-	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32 `json:"controllerStateVersion"`
-	// PtahVersion is the Ptah build the approved run must use.
-	PtahVersion string `json:"ptahVersion"`
-	// ExecutorImage is the digest-pinned image it runs in.
-	ExecutorImage string `json:"executorImage"`
-	// RunnerProtocolVersion is the protocol the runner that supervises it must
-	// speak: what the runner enforces inside the Pod and the result frame it
-	// returns.
-	// +kubebuilder:validation:Minimum=1
-	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 
 	// Approver is stamped by the mutating webhook from the authenticated
 	// request; whatever a client writes here is replaced.
