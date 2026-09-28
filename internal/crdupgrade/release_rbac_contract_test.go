@@ -145,7 +145,7 @@ func controllerClusterRoleRules() []rbacv1.PolicyRule {
 		privilegePolicyRule([]string{"node.k8s.io"}, []string{"runtimeclasses"}, nil, []string{"get"}),
 		privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
 		privilegePolicyRule([]string{""}, []string{"configmaps"}, nil, []string{"get", "list", "watch", "create"}),
-		privilegePolicyRule([]string{""}, []string{"events"}, nil, []string{"create", "patch", "update"}),
+		privilegePolicyRule([]string{""}, []string{"events"}, nil, []string{"create", "patch", "update", "list"}),
 	}
 }
 

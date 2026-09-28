@@ -207,6 +207,73 @@ func targetRefusals() []refusal {
 			want:   []cause{{"spec.execution.resources.claims[1]", "Duplicate value"}},
 		},
 		{
+			name:   "execution.podMetadata.labels past 16 entries",
+			mutate: setting(numberedMap("declared.example/label-", 17), "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels", "Too many"}},
+		},
+		{
+			name:   "execution.podMetadata.labels with a key that is not a label key",
+			mutate: setting(map[string]any{"-mesh": "true"}, "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels", "must be valid Kubernetes label keys"}},
+		},
+		{
+			name:   "execution.podMetadata.labels with a name past 63 bytes",
+			mutate: setting(map[string]any{"acme.example/" + strings.Repeat("k", 64): "true"}, "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels", "must be valid Kubernetes label keys"}},
+		},
+		{
+			name:   "execution.podMetadata.labels under the operator's prefix",
+			mutate: setting(map[string]any{"operator.ptah.run/schema": "other"}, "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels", "reserved"}},
+		},
+		{
+			name:   "execution.podMetadata.labels under app.kubernetes.io",
+			mutate: setting(map[string]any{"app.kubernetes.io/name": "ptah-operator"}, "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels", "reserved"}},
+		},
+		{
+			name:   "execution.podMetadata.labels naming job-name",
+			mutate: setting(map[string]any{"job-name": "other"}, "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels", "reserved"}},
+		},
+		// The API server names a map value by its key after a dot, whatever
+		// the key holds, so the field below reads as one more path segment.
+		{
+			name:   "execution.podMetadata.labels with a value outside its pattern",
+			mutate: setting(map[string]any{"acme.example/team": "plat form"}, "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels.acme.example/team", "should match"}},
+		},
+		{
+			name:   "execution.podMetadata.labels with a value past 63 bytes",
+			mutate: setting(map[string]any{"acme.example/team": strings.Repeat("v", 64)}, "spec", "execution", "podMetadata", "labels"),
+			want:   []cause{{"spec.execution.podMetadata.labels.acme.example/team", "Too long"}},
+		},
+		{
+			name:   "execution.podMetadata.annotations past 16 entries",
+			mutate: setting(numberedMap("declared.example/note-", 17), "spec", "execution", "podMetadata", "annotations"),
+			want:   []cause{{"spec.execution.podMetadata.annotations", "Too many"}},
+		},
+		{
+			name:   "execution.podMetadata.annotations with a key that is not an annotation key",
+			mutate: setting(map[string]any{"a/b/c": "true"}, "spec", "execution", "podMetadata", "annotations"),
+			want:   []cause{{"spec.execution.podMetadata.annotations", "must be valid Kubernetes annotation keys"}},
+		},
+		{
+			name:   "execution.podMetadata.annotations naming the LimitRanger annotation",
+			mutate: setting(map[string]any{"kubernetes.io/limit-ranger": "x"}, "spec", "execution", "podMetadata", "annotations"),
+			want:   []cause{{"spec.execution.podMetadata.annotations", "reserved"}},
+		},
+		{
+			name:   "execution.podMetadata.annotations under a ptah.run subdomain",
+			mutate: setting(map[string]any{"mesh.ptah.run/inject": "false"}, "spec", "execution", "podMetadata", "annotations"),
+			want:   []cause{{"spec.execution.podMetadata.annotations", "reserved"}},
+		},
+		{
+			name:   "execution.podMetadata.annotations with a value past 1024 bytes",
+			mutate: setting(map[string]any{"acme.example/note": strings.Repeat("n", 1025)}, "spec", "execution", "podMetadata", "annotations"),
+			want:   []cause{{"spec.execution.podMetadata.annotations.acme.example/note", "Too long"}},
+		},
+		{
 			name:   "policy.apply outside its enum",
 			mutate: setting("Sometimes", "spec", "policy", "apply"),
 			want:   []cause{{"spec.policy.apply", "Unsupported value"}},
@@ -381,4 +448,14 @@ func numbered(prefix string, count int) []any {
 		names[index] = prefix + strconv.Itoa(index)
 	}
 	return names
+}
+
+// numberedMap is count keys under prefix, each with one value: more than a
+// bounded map takes.
+func numberedMap(prefix string, count int) map[string]any {
+	entries := make(map[string]any, count)
+	for index := 0; index < count; index++ {
+		entries[prefix+strconv.Itoa(index)] = "v"
+	}
+	return entries
 }

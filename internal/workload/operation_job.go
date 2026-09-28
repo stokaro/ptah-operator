@@ -113,7 +113,18 @@ func runnerProtocolEnv() corev1.EnvVar {
 }
 
 func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
-	annotations := make(map[string]string, len(spec.annotations)+8)
+	// What spec.execution.podMetadata declares goes under the operator's own
+	// metadata, never over it: the envelope below is written last, and a
+	// declared key in a reserved namespace is refused before that. The
+	// declaration is carried whole on the Job and on its Pod template, so
+	// the Pod-intent webhook, which holds a Pod to its template, admits
+	// exactly the Pod the declaration describes.
+	declaredLabels, declaredAnnotations, err := declaredPodMetadata(spec.execution.PodMetadata)
+	if err != nil {
+		return nil, err
+	}
+	annotations := make(map[string]string, len(declaredAnnotations)+len(spec.annotations)+8)
+	maps.Copy(annotations, declaredAnnotations)
 	maps.Copy(annotations, spec.annotations)
 	annotations[AnnotationOperationID] = spec.operationID
 	annotations[AnnotationInputFingerprint] = spec.inputFingerprint
@@ -131,13 +142,15 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 	if spec.mutating {
 		MarkMutatingOperation(annotations)
 	}
-	labels := map[string]string{
+	labels := make(map[string]string, len(declaredLabels)+5)
+	maps.Copy(labels, declaredLabels)
+	maps.Copy(labels, map[string]string{
 		LabelManagedBy:           "ptah-operator",
 		LabelComponent:           spec.family.component,
 		spec.family.subjectLabel: spec.owner.GetName(),
 		LabelOperation:           strings.ToLower(spec.operationType),
 		LabelOperationID:         shortLabelHash(spec.operationID),
-	}
+	})
 
 	deadline, err := boundedDeadline(
 		activeDeadlineSeconds(spec.execution),

@@ -128,12 +128,14 @@ func controllerRows(t *testing.T, c *catalog) {
 	// Jobs: the builder's own Jobs, one of them made privileged, and the same
 	// Job built by another manager release.
 	const (
-		schemaJobRow       = "manager dispatches the Job the builder builds for a PtahSchema"
-		migrationJobRow    = "manager dispatches the Job the builder builds for a PtahMigration"
-		privilegedJobRow   = "manager dispatches a builder Job made privileged"
-		foreignImageJobRow = "manager dispatches a Job stamped with another manager's image"
-		foreignStateJobRow = "manager dispatches a Job stamped with another controller-state version"
-		userJobRow         = "ordinary user creates a privileged Job"
+		schemaJobRow           = "manager dispatches the Job the builder builds for a PtahSchema"
+		migrationJobRow        = "manager dispatches the Job the builder builds for a PtahMigration"
+		declaredMetadataJobRow = "manager dispatches a builder Job carrying the Pod metadata the schema declares"
+		privilegedJobRow       = "manager dispatches a builder Job made privileged"
+		reservedLabelJobRow    = "manager dispatches a builder Job carrying a label under app.kubernetes.io"
+		foreignImageJobRow     = "manager dispatches a Job stamped with another manager's image"
+		foreignStateJobRow     = "manager dispatches a Job stamped with another controller-state version"
+		userJobRow             = "ordinary user creates a privileged Job"
 	)
 	foreignImage := "ghcr.io/stokaro/ptah-operator@" + digest("9")
 	foreignState := managerBuilder().ControllerStateVersion + 1
@@ -154,11 +156,35 @@ func controllerRows(t *testing.T, c *catalog) {
 		job.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = &allowed
 		return job, nil
 	}
+	// The metadata spec.execution.podMetadata declares, under the operator's
+	// own, and a label the builder refuses to write, put on the Job the way
+	// only a manager of another build could: the guard is the layer that
+	// refuses it without the builder.
+	declared := func() (client.Object, error) {
+		return resolveJobDeclaring(&operatorv1alpha1.PodMetadataSpec{
+			Labels:      map[string]operatorv1alpha1.PodLabelValue{"acme.example/team": "platform"},
+			Annotations: map[string]operatorv1alpha1.PodAnnotationValue{"sidecar.istio.io/inject": "false"},
+		})
+	}
+	reservedLabel := func() (client.Object, error) {
+		job, err := resolveJob()
+		if err != nil {
+			return nil, err
+		}
+		job.Labels["app.kubernetes.io/name"] = "ptah-operator"
+		job.Spec.Template.Labels["app.kubernetes.io/name"] = "ptah-operator"
+		return job, nil
+	}
 	c.row(policyenv.Row{Name: schemaJobRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return resolveJob() }))})
 	c.row(policyenv.Row{Name: migrationJobRow, Do: as(manager, dryRunCreate(func() (client.Object, error) { return migrationResolveJob() }))})
+	c.row(policyenv.Row{Name: declaredMetadataJobRow, Do: as(manager, dryRunCreate(declared))})
 	c.row(policyenv.Row{
 		Name: privilegedJobRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
 		Do: as(manager, dryRunCreate(privileged)),
+	})
+	c.row(policyenv.Row{
+		Name: reservedLabelJobRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
+		Do: as(manager, dryRunCreate(reservedLabel)),
 	})
 	c.row(policyenv.Row{
 		Name: foreignImageJobRow, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
@@ -260,7 +286,7 @@ func controllerRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard binding dropped", Policies: []string{jobGuard},
 		Apply:  policyenv.DropBinding(jobGuard),
-		Breaks: []string{privilegedJobRow, foreignImageJobRow, foreignStateJobRow},
+		Breaks: []string{privilegedJobRow, reservedLabelJobRow, foreignImageJobRow, foreignStateJobRow},
 	})
 	c.mutation(carriesImage("Job write guard carries another manager's image", jobGuard, foreignImageJobRow))
 	c.mutation(carriesState("Job write guard carries another controller-state version", jobGuard, foreignStateJobRow))
@@ -270,7 +296,7 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard refuses what it matches", Policies: []string{jobGuard},
-		Apply: policyenv.RefuseEverything(jobGuard), Breaks: []string{schemaJobRow, migrationJobRow},
+		Apply: policyenv.RefuseEverything(jobGuard), Breaks: []string{schemaJobRow, migrationJobRow, declaredMetadataJobRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "chunk write guard binding dropped", Policies: []string{chunkGuard},

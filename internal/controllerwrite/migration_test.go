@@ -248,6 +248,17 @@ func migrationJobFixture(
 	operationType operatorv1alpha1.MigrationOperationType,
 ) (*operatorv1alpha1.PtahMigration, *batchv1.Job) {
 	t.Helper()
+	return migrationJobFixtureWith(t, operationType, nil)
+}
+
+// migrationJobFixtureWith is migrationJobFixture with the migration's spec
+// changed by declare before the builder builds the Job from it.
+func migrationJobFixtureWith(
+	t *testing.T,
+	operationType operatorv1alpha1.MigrationOperationType,
+	declare func(*operatorv1alpha1.PtahMigration),
+) (*operatorv1alpha1.PtahMigration, *batchv1.Job) {
+	t.Helper()
 
 	migration := &operatorv1alpha1.PtahMigration{
 		TypeMeta: metav1.TypeMeta{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahMigration"},
@@ -295,6 +306,9 @@ func migrationJobFixture(
 		CoordinationDigest: digest('6'),
 	}
 	migration.Status.ActiveOperation = operation
+	if declare != nil {
+		declare(migration)
+	}
 
 	builder := migrationJobBuilder()
 	name, err := workload.NameForMigration(migration, *operation)

@@ -1,0 +1,427 @@
+{
+  "metadata": {
+    "name": "ptah-m-history-orders-9570e393e3e8116a",
+    "namespace": "team-a",
+    "labels": {
+      "acme.example/team": "platform",
+      "app.kubernetes.io/component": "migration-operation",
+      "app.kubernetes.io/managed-by": "ptah-operator",
+      "mesh-opt-out": "true",
+      "operator.ptah.run/migration": "orders",
+      "operator.ptah.run/operation": "history",
+      "operator.ptah.run/operation-id": "5d4cc820b37f3d1f",
+      "policy.example/tag": ""
+    },
+    "annotations": {
+      "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "operator.ptah.run/controller-revision": "controller-test-revision",
+      "operator.ptah.run/controller-state-version": "1",
+      "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+      "operator.ptah.run/input-fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "operator.ptah.run/operation-id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "operator.ptah.run/ptah-version": "v0.3.0",
+      "sidecar.istio.io/inject": "false",
+      "traffic.sidecar.istio.io/excludeOutboundIPRanges": "10.0.0.0/8"
+    },
+    "ownerReferences": [
+      {
+        "apiVersion": "operator.ptah.run/v1alpha1",
+        "kind": "PtahMigration",
+        "name": "orders",
+        "uid": "migration-uid",
+        "controller": true,
+        "blockOwnerDeletion": true
+      }
+    ]
+  },
+  "spec": {
+    "parallelism": 1,
+    "completions": 1,
+    "activeDeadlineSeconds": 600,
+    "backoffLimit": 0,
+    "manualSelector": false,
+    "template": {
+      "metadata": {
+        "labels": {
+          "acme.example/team": "platform",
+          "app.kubernetes.io/component": "migration-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "mesh-opt-out": "true",
+          "operator.ptah.run/migration": "orders",
+          "operator.ptah.run/operation": "history",
+          "operator.ptah.run/operation-id": "5d4cc820b37f3d1f",
+          "policy.example/tag": ""
+        },
+        "annotations": {
+          "operator.ptah.run/controller-image": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "operator.ptah.run/controller-revision": "controller-test-revision",
+          "operator.ptah.run/controller-state-version": "1",
+          "operator.ptah.run/execution-binding-id": "v1-33333333333333333333333333333333",
+          "operator.ptah.run/input-fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "operator.ptah.run/operation-id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "operator.ptah.run/ptah-version": "v0.3.0",
+          "sidecar.istio.io/inject": "false",
+          "traffic.sidecar.istio.io/excludeOutboundIPRanges": "10.0.0.0/8"
+        }
+      },
+      "spec": {
+        "volumes": [
+          {
+            "name": "runner",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "64Mi"
+            }
+          },
+          {
+            "name": "work",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "128Mi"
+            }
+          },
+          {
+            "name": "schema-source",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "64Mi"
+            }
+          },
+          {
+            "name": "fetch-work",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "64Mi"
+            }
+          }
+        ],
+        "initContainers": [
+          {
+            "name": "install-runner",
+            "image": "example.invalid/operator@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "command": [
+              "/ptah-runner"
+            ],
+            "args": [
+              "--install-to",
+              "/runner/ptah-runner"
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "mountPath": "/runner"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          },
+          {
+            "name": "validate-source-authority",
+            "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "command": [
+              "/runner/ptah-runner"
+            ],
+            "args": [
+              "--validate-oci-source",
+              "oci://registry.example/acme/orders-migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ],
+            "env": [
+              {
+                "name": "PTAH_OCI_REGISTRY",
+                "value": "registry.example"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                "value": "Environment"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "registry",
+                    "key": "registry"
+                  }
+                }
+              },
+              {
+                "name": "PTAH_PLAIN_HTTP",
+                "value": "false"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "7"
+              }
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          },
+          {
+            "name": "fetch-migrations",
+            "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "command": [
+              "/usr/local/bin/ptah"
+            ],
+            "args": [
+              "migrations",
+              "pull",
+              "oci://registry.example/acme/orders-migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "--out",
+              "/source/migrations"
+            ],
+            "workingDir": "/fetch-work",
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/fetch-work"
+              },
+              {
+                "name": "PTAH_OCI_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "registry",
+                    "key": "pass",
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "name": "PTAH_OCI_REGISTRY",
+                "value": "registry.example"
+              },
+              {
+                "name": "PTAH_OCI_TOKEN",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "registry",
+                    "key": "identity-token",
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "name": "PTAH_OCI_USERNAME",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "registry",
+                    "key": "user",
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "name": "PTAH_PLAIN_HTTP",
+                "value": "false"
+              },
+              {
+                "name": "TMPDIR",
+                "value": "/fetch-work"
+              }
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "schema-source",
+                "mountPath": "/source"
+              },
+              {
+                "name": "fetch-work",
+                "mountPath": "/fetch-work"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "containers": [
+          {
+            "name": "ptah",
+            "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "command": [
+              "/runner/ptah-runner"
+            ],
+            "args": [
+              "--ptah-binary",
+              "/usr/local/bin/ptah",
+              "--max-result-bytes",
+              "8388608",
+              "--max-plan-bytes",
+              "8388608",
+              "--operation",
+              "migration-history"
+            ],
+            "workingDir": "/work",
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/work"
+              },
+              {
+                "name": "PTAH_CONNECT_TIMEOUT",
+                "value": "7s"
+              },
+              {
+                "name": "PTAH_COORDINATION_DIGEST",
+                "value": "sha256:6f908ebab47c9631d890bee38ff295c50403e1a5e40b3d5760aa754e098d1fc2"
+              },
+              {
+                "name": "PTAH_DB_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "database",
+                    "key": "url"
+                  }
+                }
+              },
+              {
+                "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                "value": "PostgreSQL"
+              },
+              {
+                "name": "PTAH_MIGRATIONS_DIR",
+                "value": "/source/migrations"
+              },
+              {
+                "name": "PTAH_MIGRATION_LOCK_TIMEOUT",
+                "value": "12s"
+              },
+              {
+                "name": "PTAH_OPERATION_ID",
+                "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "7"
+              },
+              {
+                "name": "TMPDIR",
+                "value": "/work"
+              }
+            ],
+            "resources": {},
+            "volumeMounts": [
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              },
+              {
+                "name": "work",
+                "mountPath": "/work"
+              },
+              {
+                "name": "schema-source",
+                "readOnly": true,
+                "mountPath": "/source"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "IfNotPresent",
+            "securityContext": {
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsUser": 65532,
+              "runAsGroup": 65532,
+              "runAsNonRoot": true,
+              "readOnlyRootFilesystem": true,
+              "allowPrivilegeEscalation": false,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            }
+          }
+        ],
+        "restartPolicy": "Never",
+        "terminationGracePeriodSeconds": 30,
+        "activeDeadlineSeconds": 600,
+        "dnsPolicy": "ClusterFirst",
+        "nodeSelector": {
+          "workload": "database"
+        },
+        "serviceAccountName": "migration-jobs",
+        "automountServiceAccountToken": false,
+        "securityContext": {
+          "runAsUser": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "fsGroup": 65532,
+          "fsGroupChangePolicy": "OnRootMismatch",
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "imagePullSecrets": [
+          {
+            "name": "image-pull"
+          }
+        ],
+        "schedulerName": "default-scheduler",
+        "enableServiceLinks": false
+      }
+    },
+    "completionMode": "NonIndexed",
+    "suspend": false,
+    "podReplacementPolicy": "Failed"
+  },
+  "status": {}
+}

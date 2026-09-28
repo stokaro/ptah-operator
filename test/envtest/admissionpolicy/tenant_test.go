@@ -159,6 +159,23 @@ func resolveJobBuiltBy(builder workload.Builder) (*batchv1.Job, error) {
 	return builder.Build(schema, operation, nil)
 }
 
+// resolveJobDeclaring is resolveJob with spec.execution.podMetadata declared
+// on the schema the builder builds from.
+func resolveJobDeclaring(metadata *operatorv1alpha1.PodMetadataSpec) (*batchv1.Job, error) {
+	schema := tenantSchema.DeepCopy()
+	schema.Spec.Execution.PodMetadata = metadata
+	operation := operatorv1alpha1.ActiveOperationStatus{
+		Type:               operatorv1alpha1.OperationResolve,
+		ID:                 "operation-01",
+		InputFingerprint:   digest("a"),
+		ExecutionBindingID: executionBindingID,
+		StartedAt:          metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)),
+		Attempt:            1,
+		AdmissionSnapshot:  &operatorv1alpha1.PodAdmissionSnapshot{Digest: digest("b"), TemplateDigest: digest("c")},
+	}
+	return managerBuilder().Build(schema, operation, nil)
+}
+
 // migrationResolveJob is the migration family's Job for the same step.
 func migrationResolveJob() (*batchv1.Job, error) {
 	migration := tenantMigration.DeepCopy()

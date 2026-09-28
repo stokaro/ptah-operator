@@ -152,6 +152,16 @@ func goldenJobCases() []goldenJobCase {
 			},
 		},
 		{
+			// The declared metadata of #447: a mesh opt-out and a label a
+			// policy engine selects on, under the operator's own.
+			name: "schema-observe-pod-metadata",
+			build: func() (*batchv1.Job, error) {
+				schema := schemaFixture()
+				schema.Spec.Execution.PodMetadata = declaredMetadataFixture()
+				return builder.Build(schema, operationFixture(operatorv1alpha1.OperationObserve), nil)
+			},
+		},
+		{
 			name: "schema-observe-anonymous-ca-unset-policy",
 			build: func() (*batchv1.Job, error) {
 				schema := schemaFixture()
@@ -235,6 +245,14 @@ func goldenJobCases() []goldenJobCase {
 			name: "migration-history",
 			build: func() (*batchv1.Job, error) {
 				return builder.BuildMigration(migrationFixture(), migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
+			},
+		},
+		{
+			name: "migration-history-pod-metadata",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Execution.PodMetadata = declaredMetadataFixture()
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 			},
 		},
 		{

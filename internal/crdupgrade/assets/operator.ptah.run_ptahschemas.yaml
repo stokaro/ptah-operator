@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
-    operator.ptah.run/crd-schema-version: "26"
-    operator.ptah.run/crd-schema-digest: "sha256:c1e7d6a0a6b2aa3e1166e7a18e3de273951f0afe8fb26bd3a6ee02c7a681f41a"
+    operator.ptah.run/crd-schema-version: "27"
+    operator.ptah.run/crd-schema-digest: "sha256:1badb70b5d867fecd8a346a2baf634cf1080ccd70e8464d41bb822129f2cca70"
     controller-gen.kubebuilder.io/version: v0.22.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -622,6 +622,48 @@ spec:
                   nodeSelector:
                     additionalProperties:
                       type: string
+                    type: object
+                  podMetadata:
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          maxLength: 1024
+                          type: string
+                        maxProperties: 16
+                        type: object
+                        x-kubernetes-validations:
+                        - message: podMetadata.annotations keys must be valid Kubernetes
+                            annotation keys
+                          rule: 'self.all(key, key.size() <= 317 && (key.contains(''/'')
+                            ? (key.indexOf(''/'') <= 253 && key.size() - key.indexOf(''/'')
+                            <= 64) : key.size() <= 63) && key.matches(''^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$''))'
+                        - message: podMetadata.annotations keys under ptah.run, kubernetes.io
+                            and k8s.io are reserved, and so are controller-uid and
+                            job-name
+                          rule: self.all(key, !(key.startsWith('ptah.run/') || key.contains('.ptah.run/')
+                            || key.startsWith('kubernetes.io/') || key.contains('.kubernetes.io/')
+                            || key.startsWith('k8s.io/') || key.contains('.k8s.io/')
+                            || key == 'controller-uid' || key == 'job-name'))
+                      labels:
+                        additionalProperties:
+                          maxLength: 63
+                          pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
+                          type: string
+                        maxProperties: 16
+                        type: object
+                        x-kubernetes-validations:
+                        - message: podMetadata.labels keys must be valid Kubernetes
+                            label keys
+                          rule: 'self.all(key, key.size() <= 317 && (key.contains(''/'')
+                            ? (key.indexOf(''/'') <= 253 && key.size() - key.indexOf(''/'')
+                            <= 64) : key.size() <= 63) && key.matches(''^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$''))'
+                        - message: podMetadata.labels keys under ptah.run, kubernetes.io
+                            and k8s.io are reserved, and so are controller-uid and
+                            job-name
+                          rule: self.all(key, !(key.startsWith('ptah.run/') || key.contains('.ptah.run/')
+                            || key.startsWith('kubernetes.io/') || key.contains('.kubernetes.io/')
+                            || key.startsWith('k8s.io/') || key.contains('.k8s.io/')
+                            || key == 'controller-uid' || key == 'job-name'))
                     type: object
                   priorityClassName:
                     type: string

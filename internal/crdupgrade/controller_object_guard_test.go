@@ -142,7 +142,11 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 
 	job := strings.Join(validationExpressions(entries[0].validations), "\n")
 	for _, marker := range []string{
-		`object.metadata.labels.size() == 5`,
+		`object.metadata.labels.size() >= 5 && object.metadata.labels.size() <= 21`,
+		`key.contains(".ptah.run/")`,
+		`key.contains(".kubernetes.io/")`,
+		`key.contains(".k8s.io/")`,
+		`object.metadata.annotations.size() <= 27`,
 		`["resolve", "verify", "observe", "plan", "apply"]`,
 		`object.metadata.ownerReferences.size() == 1`,
 		`dyn(object).spec.template.spec.automountServiceAccountToken`,

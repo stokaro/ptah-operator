@@ -170,8 +170,8 @@ func validateClaimBoundMigrationJobCleanup(
 		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
 		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
 	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
-		return errors.New("Job labels do not match the persisted operation claim")
+	if err := validateClaimedMetadata(job.Labels, wantLabels); err != nil {
+		return fmt.Errorf("Job labels do not match the persisted operation claim: %w", err)
 	}
 	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
 		return err
@@ -189,17 +189,19 @@ func validateClaimBoundMigrationJobCleanup(
 	if operation.Type == operatorv1alpha1.MigrationOperationApply {
 		workload.MarkMutatingOperation(wantAnnotations)
 	}
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
-		return errors.New("Job annotations are not the exact current operation envelope")
+	if err := validateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
+		return fmt.Errorf("Job annotations are not the exact current operation envelope: %w", err)
 	}
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+	// The template carries what the object carries, declared metadata
+	// included, and the digest below pins both to the snapshot.
+	if !reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
 		return errors.New("Job Pod template annotations differ from the current operation envelope")
 	}
 	normalized := job.DeepCopy()
 	if err := normalizeJobForComparison(normalized, true); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
 		return errors.New("Job Pod template labels differ from the persisted operation claim")
 	}
 	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)

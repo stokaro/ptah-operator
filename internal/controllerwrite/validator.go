@@ -307,7 +307,7 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 		// is compared annotation for annotation, so rebuilding this claim's
 		// Job -- a direct read of its plan first -- could only refuse it.
 		return denyf("Job %s does not carry the operation envelope the controller writes on every Job it builds "+
-			"(%d annotations for a read-only operation, %d for an Apply; it has %d)",
+			"(%d annotations for a read-only operation, %d for an Apply, beside what spec.execution.podMetadata declares; it has %d)",
 			oldJob.Name, len(operationEnvelopeAnnotations), len(applyOperationAnnotations()), len(oldJob.Annotations))
 	}
 	if err := validateClaimBoundJobCleanup(schema, operation, oldJob); err != nil {
@@ -375,8 +375,8 @@ func validatePendingApplyJobCleanup(
 		workload.LabelOperation:   "apply",
 		workload.LabelOperationID: workload.OperationIDLabelValue(pending.ApplyOperationID),
 	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
-		return errors.New("Job labels do not match the pending Apply evidence")
+	if err := validateClaimedMetadata(job.Labels, wantLabels); err != nil {
+		return fmt.Errorf("Job labels do not match the pending Apply evidence: %w", err)
 	}
 	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
 		return err
@@ -408,17 +408,19 @@ func validatePendingApplyJobCleanup(
 		workload.AnnotationAdmissionSnapshotDigest: pending.AdmissionSnapshot.Digest,
 	}
 	workload.MarkMutatingOperation(wantAnnotations)
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
-		return errors.New("Job annotations are not the exact pending Apply envelope")
+	if err := validateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
+		return fmt.Errorf("Job annotations are not the exact pending Apply envelope: %w", err)
 	}
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+	// The template carries what the object carries, declared metadata
+	// included, and the digest below pins both to the snapshot.
+	if !reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
 		return errors.New("Job Pod template annotations differ from the pending Apply envelope")
 	}
 	normalized := job.DeepCopy()
 	if err := normalizeJobForComparison(normalized, true); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
 		return errors.New("Job Pod template labels differ from the pending Apply evidence")
 	}
 	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
@@ -480,8 +482,8 @@ func validateClaimBoundJobCleanup(
 		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
 		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
 	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
-		return errors.New("Job labels do not match the persisted operation claim")
+	if err := validateClaimedMetadata(job.Labels, wantLabels); err != nil {
+		return fmt.Errorf("Job labels do not match the persisted operation claim: %w", err)
 	}
 	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
 		return err
@@ -509,17 +511,19 @@ func validateClaimBoundJobCleanup(
 		wantAnnotations[workload.AnnotationPlanContentDigest] = plan.ContentDigest
 		workload.MarkMutatingOperation(wantAnnotations)
 	}
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) {
-		return errors.New("Job annotations are not the exact current operation envelope")
+	if err := validateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
+		return fmt.Errorf("Job annotations are not the exact current operation envelope: %w", err)
 	}
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+	// The template carries what the object carries, declared metadata
+	// included, and the digest below pins both to the snapshot.
+	if !reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
 		return errors.New("Job Pod template annotations differ from the current operation envelope")
 	}
 	normalized := job.DeepCopy()
 	if err := normalizeJobForComparison(normalized, true); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
 		return errors.New("Job Pod template labels differ from the persisted operation claim")
 	}
 	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
@@ -619,17 +623,18 @@ var operationEnvelopeAnnotations = []string{
 	workload.AnnotationAdmissionSnapshotDigest,
 }
 
-// currentOperationAnnotations reports whether a Job carries exactly the keys
-// the builder writes: the envelope alone for a read-only operation, or the
-// Apply set.
+// currentOperationAnnotations reports whether a Job carries the keys the
+// builder writes -- the envelope alone for a read-only operation, or the
+// Apply set -- and beyond them only what spec.execution.podMetadata may
+// declare.
 func currentOperationAnnotations(annotations map[string]string) bool {
-	return hasExactlyKeys(annotations, operationEnvelopeAnnotations) || currentApplyAnnotations(annotations)
+	return carriesEnvelopeKeys(annotations, operationEnvelopeAnnotations) || currentApplyAnnotations(annotations)
 }
 
-// currentApplyAnnotations reports whether a Job carries exactly the keys the
-// builder writes on a schema Apply.
+// currentApplyAnnotations reports whether a Job carries the keys the builder
+// writes on a schema Apply, and beyond them only declared ones.
 func currentApplyAnnotations(annotations map[string]string) bool {
-	return hasExactlyKeys(annotations, applyOperationAnnotations())
+	return carriesEnvelopeKeys(annotations, applyOperationAnnotations())
 }
 
 // applyOperationAnnotations are the keys the builder writes on a schema
@@ -643,20 +648,6 @@ func applyOperationAnnotations() []string {
 		keys = append(keys, key)
 	}
 	return keys
-}
-
-// hasExactlyKeys reports whether annotations hold the distinct keys and
-// nothing else.
-func hasExactlyKeys(annotations map[string]string, keys []string) bool {
-	if len(annotations) != len(keys) {
-		return false
-	}
-	for _, key := range keys {
-		if _, found := annotations[key]; !found {
-			return false
-		}
-	}
-	return true
 }
 
 func isExecutionBindingID(value string) bool {

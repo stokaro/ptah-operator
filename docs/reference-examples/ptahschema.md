@@ -124,3 +124,44 @@ spec:
     # judges it.
     serviceAccountName: ptah-execution
 ```
+
+### In a namespace with a service mesh or a policy engine
+
+Every operation Pod is held to exactly what its Job template carries, so a
+sidecar a mesh injects, or a label a policy engine requires, would otherwise
+refuse the Pod before it runs. `podMetadata` is what the Pods carry beside the
+operator's own labels: the annotation that opts them out of injection, and
+the label the policy wants to see. A Pod refused anyway is reported as
+`Ready=False` with reason `PodAdmissionRefused`, with the API server's
+refusal in the message. Keys under `ptah.run`, `kubernetes.io` and `k8s.io`
+are refused, which keeps the operator's own metadata and the chart's
+selectors out of reach. [Execution](../execution/#meshes-and-policy-engines)
+has the contract.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: application
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/application-primary
+    urlFrom:
+      name: application-database
+      key: url
+  desired:
+    ociRef: oci://ghcr.io/example/application-schema:1.4.0
+    verificationPolicyFrom:
+      name: ptah-verification-policy
+      key: policy.yaml
+  execution:
+    podMetadata:
+      labels:
+        # A policy engine that requires every Pod to name its owner.
+        acme.example/team: platform
+      annotations:
+        # Istio's per-Pod opt-out: nothing runs beside the credential.
+        sidecar.istio.io/inject: "false"
+```

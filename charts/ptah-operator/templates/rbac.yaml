@@ -87,9 +87,13 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create"]
+  # list is how a Job whose Pod the API server refuses is explained: the Job
+  # controller's FailedCreate Event is the only record, and the manager reads
+  # it for the Job it dispatched, by the Job's UID, to report the refusal as a
+  # condition.
   - apiGroups: [""]
     resources: ["events"]
-    verbs: ["create", "patch", "update"]
+    verbs: ["create", "patch", "update", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

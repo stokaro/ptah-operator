@@ -670,6 +670,18 @@ func validationHandlerFixtureForMigration(t *testing.T, jobName string) (*podint
 
 func subjectFixture(t *testing.T, jobName, subjectKind string) (*podintent.ValidationHandler, *corev1.Pod) {
 	t.Helper()
+	return subjectFixtureDeclaring(t, jobName, subjectKind, nil, nil)
+}
+
+// subjectFixtureDeclaring is subjectFixture with the labels and annotations
+// spec.execution.podMetadata declared, carried on the Job template and on the
+// Pod as the builder and the Job controller carry them.
+func subjectFixtureDeclaring(
+	t *testing.T,
+	jobName, subjectKind string,
+	declaredLabels, declaredAnnotations map[string]string,
+) (*podintent.ValidationHandler, *corev1.Pod) {
+	t.Helper()
 
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
@@ -688,14 +700,24 @@ func subjectFixture(t *testing.T, jobName, subjectKind string) (*podintent.Valid
 	if subjectKind == "PtahMigration" {
 		component, subjectLabel, operationLabel = workload.ComponentMigrationOperation, workload.LabelMigration, "history"
 	}
-	labels := map[string]string{
+	labels := map[string]string{}
+	annotations := map[string]string{}
+	for key, value := range declaredLabels {
+		labels[key] = value
+	}
+	for key, value := range declaredAnnotations {
+		annotations[key] = value
+	}
+	for key, value := range map[string]string{
 		workload.LabelManagedBy:   "ptah-operator",
 		workload.LabelComponent:   component,
 		subjectLabel:              "app",
 		workload.LabelOperation:   operationLabel,
 		workload.LabelOperationID: workload.OperationIDLabelValue(operationID),
+	} {
+		labels[key] = value
 	}
-	annotations := map[string]string{workload.AnnotationOperationID: operationID}
+	annotations[workload.AnnotationOperationID] = operationID
 	options := podintent.DefaultOptions()
 	options.ExtendedResourceTolerationEnabled = true
 	options.AlwaysPullImagesEnabled = true

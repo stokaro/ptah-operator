@@ -683,6 +683,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 	}
 	if !jobTerminal(job) {
+		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
@@ -2202,4 +2205,37 @@ func retriedMigrationJobReason(cause mutationlifecycle.JobCause) string {
 		return "the active Job is not owned by this migration"
 	}
 	return "the active Job was replaced"
+}
+
+// reportMigrationPodAdmission is reportPodAdmission for a migration, on the
+// condition that family reports an operation in flight through.
+func (r *MigrationReconciler) reportMigrationPodAdmission(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) error {
+	operation := migration.Status.ActiveOperation
+	if operation == nil {
+		return nil
+	}
+	change, err := judgePodAdmission(ctx, r.directReader(), job, r.now(),
+		meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing))
+	if err != nil || !change.changed {
+		return err
+	}
+	before := migration.DeepCopy()
+	if change.refused {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonPodAdmissionRefused, change.message)
+	} else {
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operation.Type))
+	}
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		return err
+	}
+	if change.refused {
+		r.event(migration, corev1.EventTypeWarning, "PodAdmissionRefused", "%s", change.message)
+	}
+	return nil
 }
