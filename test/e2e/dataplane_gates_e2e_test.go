@@ -94,7 +94,7 @@ func (d *dataPlane) captureBlockedRefreshBoundary(schema string, generationCheck
 				deadline = candidate.Status.NextReconciliationTime
 				break
 			}
-			if candidate.Status.Phase == ptahv1alpha1.PhaseFailed {
+			if failedForCurrentSpec(candidate) {
 				d.fatalf("%s entered Failed before the blocked refresh boundary", schema)
 			}
 		}
