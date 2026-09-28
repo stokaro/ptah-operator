@@ -853,10 +853,6 @@ func serviceEntry(name, service, namespace, path, bundle string) webhookEntry {
 	}}
 }
 
-func pointer[T any](value T) *T {
-	return &value
-}
-
 type authority struct {
 	encoded     []byte
 	certificate *x509.Certificate
