@@ -1,4 +1,4 @@
-package controllerwrite
+package jobclaim
 
 import (
 	"strings"
@@ -20,11 +20,11 @@ func validEnvelope() map[string]string {
 	}
 }
 
-// The controller envelope is how a Job says which controller build produced
-// it. Where the envelope is compared against the binding in force, a value
-// that is merely well-formed still has to be the right one -- but on the
-// retired paths it is compared against a plan instead, and there these rules
-// are the whole of what makes the value unambiguous.
+// The manager record is how a Job says which controller build produced it.
+// Where the envelope is compared against the binding in force, a value that
+// is merely well-formed still has to be the right one -- but on the retired
+// paths it is compared against a plan or nothing, and there these rules are
+// the whole of what makes the value unambiguous.
 //
 // Every one of them could be removed with the package green. The canonical
 // integer rule is the sharpest: "01" and "1" parse to the same number and are
@@ -33,7 +33,7 @@ func validEnvelope() map[string]string {
 func TestAControllerEnvelopeValueIsUnambiguousOrRefused(t *testing.T) {
 	t.Parallel()
 
-	if err := validateControllerEnvelopeValues(validEnvelope()); err != nil {
+	if err := validateManagerRecord(validEnvelope()); err != nil {
 		t.Fatalf("a valid envelope was refused, so nothing below proves anything: %v", err)
 	}
 
@@ -107,41 +107,8 @@ func TestAControllerEnvelopeValueIsUnambiguousOrRefused(t *testing.T) {
 
 			annotations := validEnvelope()
 			annotations[row.key] = row.value
-			if err := validateControllerEnvelopeValues(annotations); err == nil {
+			if err := validateManagerRecord(annotations); err == nil {
 				t.Fatalf("%s = %q was accepted as an unambiguous envelope value", row.key, row.value)
-			}
-		})
-	}
-}
-
-// An execution binding ID names one epoch of the controller's own state, and
-// the format is the whole of its identity: there is nothing else to compare a
-// malformed one against.
-func TestAnExecutionBindingIDIsExactlyItsFormat(t *testing.T) {
-	t.Parallel()
-
-	valid := "v1-" + strings.Repeat("1", 32)
-	if !isExecutionBindingID(valid) {
-		t.Fatalf("a valid execution binding ID was refused, so nothing below proves anything: %q", valid)
-	}
-
-	for _, row := range []struct {
-		name  string
-		value string
-	}{
-		{name: "empty", value: ""},
-		{name: "too short", value: "v1-" + strings.Repeat("1", 31)},
-		{name: "too long", value: "v1-" + strings.Repeat("1", 33)},
-		{name: "another version prefix", value: "v2-" + strings.Repeat("1", 32)},
-		{name: "no prefix at all", value: strings.Repeat("1", 35)},
-		{name: "uppercase hexadecimal", value: "v1-" + strings.Repeat("A", 32)},
-		{name: "not hexadecimal", value: "v1-" + strings.Repeat("g", 32)},
-	} {
-		t.Run(row.name, func(t *testing.T) {
-			t.Parallel()
-
-			if isExecutionBindingID(row.value) {
-				t.Fatalf("%q was accepted as an execution binding ID", row.value)
 			}
 		})
 	}

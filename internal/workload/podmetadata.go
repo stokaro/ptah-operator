@@ -45,8 +45,8 @@ func ReservedPodMetadataKey(key string) bool {
 // the caller pins them through the template digest the claim's admission
 // snapshot recorded.
 //
-// The controller-write validator and the controller judge a dispatched Job by
-// this one rule, so the controller never refuses to recognize a Job the
+// jobclaim.Match applies it for both the controller-write validator and the
+// controller, so the controller never refuses to recognize a Job the
 // validator would let it touch, nor the other way round.
 func ValidateClaimedMetadata(actual, claimed map[string]string) error {
 	for key, value := range claimed {

@@ -98,6 +98,7 @@ func TestASchemaJobIsOnlyItsClaimsWhenEveryPartMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	operation.AdmissionSnapshot = testAdmissionSnapshotOf(&expected.Spec.Template)
 	expected.UID = "job-uid"
 	expected.OwnerReferences = []metav1.OwnerReference{{
 		APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahSchema",
@@ -129,6 +130,7 @@ func TestAMigrationJobIsOnlyItsClaimsWhenEveryPartMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	operation.AdmissionSnapshot = testAdmissionSnapshotOf(&expected.Spec.Template)
 	expected.UID = "job-uid"
 	if err := validateMigrationJobIntent(expected.DeepCopy(), expected, migration); err != nil {
 		t.Fatalf("an exact copy of the claim's Job was refused, so nothing below proves anything: %v", err)

@@ -12,7 +12,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +30,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
@@ -1916,34 +1916,17 @@ func setMigrationCondition(
 	})
 }
 
+// validateMigrationJobIntent holds a Job the controller read back to the Job
+// the migration's active claim builds, by the rule the controller-write
+// webhook applied when the Job was created.
 func validateMigrationJobIntent(actual, expected *batchv1.Job, migration *operatorv1alpha1.PtahMigration) error {
-	if actual == nil || expected == nil || migration == nil || actual.UID == "" {
-		return errors.New("Job identity is incomplete")
+	if migration == nil {
+		return errors.New("no migration claims the Job")
 	}
-	if actual.Namespace != expected.Namespace || actual.Name != expected.Name ||
-		!exactControllerOwner(actual.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID) {
-		return errors.New("Job ownership does not match the migration controller binding")
-	}
-	if !reflect.DeepEqual(actual.Labels, expected.Labels) || !reflect.DeepEqual(actual.Annotations, expected.Annotations) {
-		return errors.New("Job operation metadata does not match the immutable claim")
-	}
-	actualCopy := actual.DeepCopy()
-	expectedCopy := expected.DeepCopy()
-	normalizeSupportedServiceAccountAlias(&actualCopy.Spec.Template.Spec)
-	normalizeSupportedServiceAccountAlias(&expectedCopy.Spec.Template.Spec)
-	if actualCopy.Spec.TTLSecondsAfterFinished != nil && *actualCopy.Spec.TTLSecondsAfterFinished == jobCleanupTTLSeconds {
-		actualCopy.Spec.TTLSecondsAfterFinished = expectedCopy.Spec.TTLSecondsAfterFinished
-	}
-	if err := normalizeGeneratedJobSelector(actualCopy); err != nil {
-		return err
-	}
-	if err := normalizeGeneratedJobSelector(expectedCopy); err != nil {
-		return err
-	}
-	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(actualCopy.Spec, expectedCopy.Spec) {
-		return errors.New("Job workload spec does not match the immutable operation intent")
-	}
-	return nil
+	claim := jobclaim.MigrationOperation(migration, migration.Status.ActiveOperation)
+	claim.Binding = migration.Status.ExecutionBinding
+	claim.Built, claim.Stored = expected, true
+	return jobclaim.Match(actual, claim)
 }
 
 func boundedVersions(versions []int64, limit int) []int64 {

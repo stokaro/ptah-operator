@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strconv"
@@ -16,7 +15,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -2734,8 +2732,7 @@ func ensureTestAdmissionSnapshot(schema *operatorv1alpha1.PtahSchema) {
 func testAdmissionSnapshotFor(
 	operation *operatorv1alpha1.ActiveOperationStatus, key planseal.PublicKey,
 ) *operatorv1alpha1.PodAdmissionSnapshot {
-	policy := corev1.PreemptLowerPriority
-	templateDigest, err := podintent.DigestTemplate(&corev1.PodTemplateSpec{
+	return testAdmissionSnapshotOf(&corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
 				workload.AnnotationExecutionBindingID: operation.ExecutionBindingID,
@@ -2743,6 +2740,13 @@ func testAdmissionSnapshotFor(
 		},
 		Spec: corev1.PodSpec{Containers: testPlanSealKeyContainersFor(operation.Type, key)},
 	})
+}
+
+// testAdmissionSnapshotOf is the admission snapshot a real dispatch would
+// have persisted for template.
+func testAdmissionSnapshotOf(template *corev1.PodTemplateSpec) *operatorv1alpha1.PodAdmissionSnapshot {
+	policy := corev1.PreemptLowerPriority
+	templateDigest, err := podintent.DigestTemplate(template)
 	if err != nil {
 		panic(err)
 	}
@@ -2788,6 +2792,7 @@ func TestTerminalWorkloadFixtureMatchesImmutableIntent(t *testing.T) {
 	schema := schemaFixture()
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 		Type: operatorv1alpha1.OperationResolve, ID: "fixture-operation", JobName: "fixture-job", Attempt: 1,
+		ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
 	}
 	job, pod := terminalWorkload(schema, batchv1.JobComplete)
 	expected, err := (fakeJobs{}).Build(schema, *schema.Status.ActiveOperation, nil)
@@ -2859,55 +2864,6 @@ func TestValidatePodIntentRequiresAPIServerGeneratedName(t *testing.T) {
 				t.Fatalf("validatePodIntent() rejected a valid generated Pod name: %v", err)
 			}
 		})
-	}
-}
-
-func TestValidateJobIntentAcceptsSemanticQuantityRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	schema := schemaFixture()
-	size := *resource.NewQuantity(2<<20, resource.BinarySI)
-	expected := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: schema.Namespace,
-			Name:      "custom-ca-observe",
-			Labels:    map[string]string{"intent": "fixed"},
-			Annotations: map[string]string{
-				"intent": "fixed",
-			},
-			OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
-		},
-		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
-			Name: "registry-ca-snapshot",
-			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-				Medium: corev1.StorageMediumMemory, SizeLimit: &size,
-			}},
-		}}}}},
-	}
-	payload, err := json.Marshal(expected)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual := &batchv1.Job{}
-	if err := json.Unmarshal(payload, actual); err != nil {
-		t.Fatal(err)
-	}
-	actual.UID = "job-uid"
-	if err := validateJobIntent(actual, expected, schema); err != nil {
-		t.Fatalf("validateJobIntent() rejected API-equivalent quantity: %v", err)
-	}
-
-	changed := actual.DeepCopy()
-	changedSize := resource.MustParse("3Mi")
-	changed.Spec.Template.Spec.Volumes[0].EmptyDir.SizeLimit = &changedSize
-	if err := validateJobIntent(changed, expected, schema); err == nil {
-		t.Fatal("validateJobIntent() accepted a changed custom-CA snapshot size")
-	}
-
-	changed = actual.DeepCopy()
-	changed.Spec.Template.Spec.NodeSelector = map[string]string{}
-	if err := validateJobIntent(changed, expected, schema); err == nil {
-		t.Fatal("validateJobIntent() treated an empty map as an absent immutable field")
 	}
 }
 

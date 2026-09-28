@@ -38,6 +38,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planseal"
@@ -59,7 +60,7 @@ const (
 	defaultInterval          = 10 * time.Minute
 	defaultFailureRetry      = 30 * time.Second
 	terminalPodGrace         = 10 * time.Second
-	jobCleanupTTLSeconds     = int32(300)
+	jobCleanupTTLSeconds     = jobclaim.CleanupTTLSeconds
 	maxLockContentionPoll    = 5 * time.Second
 	// statusPatchRequeue ends a pass whose last act was a status write the
 	// next pass has to start from, and asks for that pass at once. Neither
@@ -1783,10 +1784,10 @@ func (r *SchemaReconciler) refreshAdmissionSnapshot(
 //
 // The manager's recorded identity -- the controller image and revision
 // annotations and the runner image -- binds nothing, so the rebuild takes it
-// from the live Pod template and compares everything else exactly. When it
-// took anything, the live Pod template must still be the one the claim's
-// admission snapshot recorded before dispatch, which pins what was taken to
-// the claim rather than to the object being checked.
+// from the live Pod template and compares everything else exactly. The live
+// Pod template must still be the one the claim's admission snapshot recorded
+// before dispatch, as every Job a claim accepts must, which pins what was
+// taken to the claim rather than to the object being checked.
 //
 // A Plan Job's seal key is taken from the live Job the same way, and pinned
 // by the digest the claim recorded at dispatch rather than by the snapshot.
@@ -1808,28 +1809,14 @@ func validateAdoptedJobIntent(
 	if operation == nil {
 		return fmt.Errorf("no active operation claims the Job")
 	}
-	carried := workload.CarryManagerIdentity(expected, actual)
+	workload.CarryManagerIdentity(expected, actual)
 	if err := workload.CarrySealedPlanKey(expected, actual, *operation); err != nil {
 		return fmt.Errorf("adopted Job seal key is invalid: %w", err)
 	}
-	if err := validateJobIntent(actual, expected, schema); err != nil {
-		return err
+	if schema == nil {
+		return fmt.Errorf("no schema claims the Job")
 	}
-	if !carried {
-		return nil
-	}
-	snapshot := operation.AdmissionSnapshot
-	if snapshot == nil {
-		return fmt.Errorf("a Job built by another manager has no persisted admission snapshot to hold it to")
-	}
-	digest, err := podintent.DigestTemplate(&actual.Spec.Template)
-	if err != nil {
-		return fmt.Errorf("digest the adopted Job Pod template: %w", err)
-	}
-	if digest != snapshot.TemplateDigest {
-		return fmt.Errorf("the adopted Job Pod template differs from the persisted admission snapshot")
-	}
-	return nil
+	return jobclaim.Match(actual, builtSchemaJobClaim(schema, operation, expected))
 }
 
 func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -3399,9 +3386,21 @@ func (r *SchemaReconciler) removeActiveFinalizer(ctx context.Context, schema *op
 }
 
 func (r *SchemaReconciler) acquireApplyLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
-	operation := schema.Status.ActiveOperation
-	if operation == nil || !schemaOperation(operation).Mutating || operation.CoordinationDigest == "" || operation.LeaseDurationSeconds == 0 {
+	if !schemaOperation(schema.Status.ActiveOperation).Mutating {
 		return false, 0, fmt.Errorf("apply target lock inputs are incomplete")
+	}
+	return r.acquireClaimLock(ctx, schema)
+}
+
+// acquireClaimLock takes the realm under the active claim's own identity, the
+// way a claim holds it when no proof is outstanding.
+func (r *SchemaReconciler) acquireClaimLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
+	operation := schema.Status.ActiveOperation
+	if operation == nil {
+		return false, 0, fmt.Errorf("active operation is missing")
+	}
+	if operation.CoordinationDigest == "" || operation.LeaseDurationSeconds == 0 {
+		return false, 0, fmt.Errorf("%s target lock inputs are incomplete", strings.ToLower(string(operation.Type)))
 	}
 	return r.acquireActiveLock(ctx, schema, targetlock.Request{
 		CoordinationNamespace: r.LockNamespace, CoordinationDigest: operation.CoordinationDigest,
@@ -3410,28 +3409,19 @@ func (r *SchemaReconciler) acquireApplyLock(ctx context.Context, schema *operato
 	})
 }
 
+// acquireOperationLock takes the realm the way the active claim holds it: on
+// behalf of the proof it carries out, under its own identity, or not at all.
+// The operation type's descriptor answers which, as it does when the claim is
+// retired.
 func (r *SchemaReconciler) acquireOperationLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
 	if schema.Status.ActiveOperation == nil {
 		return false, 0, fmt.Errorf("active operation is missing")
 	}
-	switch schema.Status.ActiveOperation.Type {
-	case operatorv1alpha1.OperationApply:
-		return r.acquireApplyLock(ctx, schema)
-	case operatorv1alpha1.OperationObserve:
+	switch {
+	case schemaClaimServesProof(schema):
 		return r.acquirePendingObservationLock(ctx, schema)
-	case operatorv1alpha1.OperationPlan:
-		if schema.Status.PendingObservation != nil {
-			return r.acquirePendingObservationLock(ctx, schema)
-		}
-		operation := schema.Status.ActiveOperation
-		if operation.CoordinationDigest == "" || operation.LeaseDurationSeconds == 0 {
-			return false, 0, fmt.Errorf("plan target lock inputs are incomplete")
-		}
-		return r.acquireActiveLock(ctx, schema, targetlock.Request{
-			CoordinationNamespace: r.LockNamespace, CoordinationDigest: operation.CoordinationDigest,
-			Holder:   targetlock.Holder{SchemaUID: schema.UID, OperationID: operation.ID},
-			Duration: time.Duration(operation.LeaseDurationSeconds) * time.Second,
-		})
+	case schemaClaimHoldsLock(schema):
+		return r.acquireClaimLock(ctx, schema)
 	default:
 		return true, 0, nil
 	}
@@ -4440,81 +4430,27 @@ func exactControllerOwner(
 		reference.Controller != nil && *reference.Controller && reference.BlockOwnerDeletion != nil && *reference.BlockOwnerDeletion
 }
 
+// validateJobIntent holds a Job the controller read back to the Job the
+// schema's active claim builds, by the rule the controller-write webhook
+// applied when the Job was created.
 func validateJobIntent(actual, expected *batchv1.Job, schema *operatorv1alpha1.PtahSchema) error {
-	if actual == nil || expected == nil || schema == nil || actual.UID == "" {
-		return fmt.Errorf("Job identity is incomplete")
+	if schema == nil {
+		return fmt.Errorf("no schema claims the Job")
 	}
-	if actual.Namespace != expected.Namespace || actual.Name != expected.Name ||
-		!exactControllerOwner(actual.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID) {
-		return fmt.Errorf("Job ownership does not match the schema controller binding")
-	}
-	if !reflect.DeepEqual(actual.Labels, expected.Labels) || !reflect.DeepEqual(actual.Annotations, expected.Annotations) {
-		return fmt.Errorf("Job operation metadata does not match the immutable claim")
-	}
-
-	actualCopy := actual.DeepCopy()
-	expectedCopy := expected.DeepCopy()
-	normalizeSupportedServiceAccountAlias(&actualCopy.Spec.Template.Spec)
-	normalizeSupportedServiceAccountAlias(&expectedCopy.Spec.Template.Spec)
-	if actualCopy.Spec.TTLSecondsAfterFinished != nil && *actualCopy.Spec.TTLSecondsAfterFinished == jobCleanupTTLSeconds {
-		actualCopy.Spec.TTLSecondsAfterFinished = expectedCopy.Spec.TTLSecondsAfterFinished
-	}
-	if err := normalizeGeneratedJobSelector(actualCopy); err != nil {
-		return err
-	}
-	if err := normalizeGeneratedJobSelector(expectedCopy); err != nil {
-		return err
-	}
-	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(actualCopy.Spec, expectedCopy.Spec) {
-		return fmt.Errorf("Job workload spec does not match the immutable operation intent")
-	}
-	return nil
+	return jobclaim.Match(actual, builtSchemaJobClaim(schema, schema.Status.ActiveOperation, expected))
 }
 
-func normalizeSupportedServiceAccountAlias(spec *corev1.PodSpec) {
-	if spec == nil {
-		return
-	}
-	serviceAccountName := spec.ServiceAccountName
-	if serviceAccountName == "" {
-		serviceAccountName = spec.DeprecatedServiceAccount
-	}
-	if spec.DeprecatedServiceAccount == serviceAccountName {
-		spec.DeprecatedServiceAccount = ""
-	}
-}
-
-func normalizeGeneratedJobSelector(job *batchv1.Job) error {
-	if job == nil {
-		return nil
-	}
-	generated := map[string]string{
-		"controller-uid":                     string(job.UID),
-		"batch.kubernetes.io/controller-uid": string(job.UID),
-		"job-name":                           job.Name,
-		"batch.kubernetes.io/job-name":       job.Name,
-	}
-	if job.Spec.Selector != nil {
-		if len(job.Spec.Selector.MatchExpressions) != 0 || len(job.Spec.Selector.MatchLabels) == 0 {
-			return fmt.Errorf("Job selector is not the generated controller selector")
-		}
-		for key, value := range job.Spec.Selector.MatchLabels {
-			expected, ok := generated[key]
-			if !ok || value != expected || !strings.Contains(key, "controller-uid") {
-				return fmt.Errorf("Job selector is not bound to its Kubernetes UID")
-			}
-		}
-		job.Spec.Selector = nil
-	}
-	for key, value := range generated {
-		if actual, ok := job.Spec.Template.Labels[key]; ok {
-			if job.UID == "" || actual != value {
-				return fmt.Errorf("Job Pod template has an invalid generated identity label")
-			}
-			delete(job.Spec.Template.Labels, key)
-		}
-	}
-	return nil
+// builtSchemaJobClaim is the claim operation makes on a Job the controller
+// reads back, held to the Job the claim builds under the binding in force.
+func builtSchemaJobClaim(
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	expected *batchv1.Job,
+) jobclaim.Claim {
+	claim := jobclaim.SchemaOperation(schema, operation)
+	claim.Binding = schema.Status.ExecutionBinding
+	claim.Built, claim.Stored = expected, true
+	return claim
 }
 
 func validatePodIntent(

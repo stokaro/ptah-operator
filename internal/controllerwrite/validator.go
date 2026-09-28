@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"strconv"
 	"strings"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -23,18 +22,18 @@ import (
 	sigsjson "sigs.k8s.io/json"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 	"github.com/stokaro/ptah-operator/internal/planstore"
-	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 const (
-	cleanupTTLSeconds     int32 = 300
-	maxStrictDecodeErrors       = 4
+	cleanupTTLSeconds     = jobclaim.CleanupTTLSeconds
+	maxStrictDecodeErrors = 4
 )
 
 var (
@@ -244,10 +243,13 @@ func (v *Validator) validateJobCreate(ctx context.Context, req admissionv1.Admis
 	if err := workload.CarrySealedPlanKey(expected, job, *operation); err != nil {
 		return denyf("Job seal key is invalid: %v", err)
 	}
-	if err := validateAdmissionSnapshot(operation, expected); err != nil {
-		return denyf("active operation Pod admission snapshot is invalid: %v", err)
-	}
-	if err := validateJobIntent(job, expected, schemaSubject(schema), true); err != nil {
+	// The claim has to have been made under the binding in force, and the Job
+	// has to carry its epoch. The builder refuses a stale binding as well; the
+	// matcher holds it without relying on that.
+	claim := jobclaim.SchemaOperation(schema, operation)
+	claim.Binding = schema.Status.ExecutionBinding
+	claim.Built = expected
+	if err := jobclaim.Match(job, claim); err != nil {
 		return denyf("Job is outside the active operation intent: %v", err)
 	}
 	return nil
@@ -292,7 +294,8 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 	}
 	operation := schema.Status.ActiveOperation
 	if !jobTerminal(oldJob) &&
-		(operation == nil || operation.Type != operatorv1alpha1.OperationApply || !currentApplyAnnotations(oldJob.Annotations)) {
+		(operation == nil || !mutationlifecycle.SchemaOperation(operation.Type).Mutating ||
+			!currentApplyAnnotations(oldJob.Annotations)) {
 		return denyf("Job cleanup TTL cannot be set before terminal status")
 	}
 	if schema.Status.ActiveOperation == nil && currentApplyAnnotations(oldJob.Annotations) {
@@ -352,86 +355,7 @@ func validatePendingApplyJobCleanup(
 	if err := validateRetiredEpoch(schema, pending.Plan.ExecutionBindingID); err != nil {
 		return fmt.Errorf("Apply Job %w", err)
 	}
-	if pending.ApplyOperationID == "" || pending.ApplyJobName == "" || pending.ApplyJobUID == "" ||
-		job.Namespace != schema.Namespace || job.Name != pending.ApplyJobName || job.UID != pending.ApplyJobUID {
-		return errors.New("Job name, namespace, or UID does not match the pending Apply evidence")
-	}
-	if _, err := exactNamedControllerOwner(
-		job.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-		schema.Name,
-		schema.UID,
-	); err != nil {
-		return fmt.Errorf("Job owner does not match the current schema UID: %w", err)
-	}
-	if err := podintent.ValidateSnapshot(pending.AdmissionSnapshot); err != nil {
-		return fmt.Errorf("pending Apply Pod admission snapshot is invalid: %w", err)
-	}
-
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   "apply",
-		workload.LabelOperationID: workload.OperationIDLabelValue(pending.ApplyOperationID),
-	}
-	if err := workload.ValidateClaimedMetadata(job.Labels, wantLabels); err != nil {
-		return fmt.Errorf("Job labels do not match the pending Apply evidence: %w", err)
-	}
-	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
-		return err
-	}
-	// The plan names the manager that published it and the Job the one that
-	// dispatched it, which may be a later release of the same binding. The
-	// Job's own record is taken and pinned by the template digest below.
-	if pending.Plan.Name == "" || pending.Plan.UID == "" || !isSHA256Digest(pending.Plan.Fingerprint) ||
-		!isSHA256Digest(pending.Plan.ContentDigest) ||
-		strconv.FormatInt(int64(pending.Plan.ControllerStateVersion), 10) !=
-			job.Annotations[workload.AnnotationControllerStateVersion] ||
-		pending.Plan.PtahVersion != job.Annotations[workload.AnnotationPtahVersion] {
-		return errors.New("Apply Job does not match the immutable pending plan binding")
-	}
-	inputFingerprint := job.Annotations[workload.AnnotationInputFingerprint]
-	if !isSHA256Digest(inputFingerprint) {
-		return errors.New("Apply Job input fingerprint is invalid")
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             pending.ApplyOperationID,
-		workload.AnnotationInputFingerprint:        inputFingerprint,
-		workload.AnnotationPtahVersion:             pending.Plan.PtahVersion,
-		workload.AnnotationExecutionBindingID:      pending.Plan.ExecutionBindingID,
-		workload.AnnotationControllerImage:         job.Annotations[workload.AnnotationControllerImage],
-		workload.AnnotationControllerRevision:      job.Annotations[workload.AnnotationControllerRevision],
-		workload.AnnotationControllerStateVersion:  strconv.FormatInt(int64(pending.Plan.ControllerStateVersion), 10),
-		workload.AnnotationPlanFingerprint:         pending.Plan.Fingerprint,
-		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
-		workload.AnnotationAdmissionSnapshotDigest: pending.AdmissionSnapshot.Digest,
-	}
-	workload.MarkMutatingOperation(wantAnnotations)
-	if err := workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
-		return fmt.Errorf("Job annotations are not the exact pending Apply envelope: %w", err)
-	}
-	// The template carries what the object carries, declared metadata
-	// included, and the digest below pins both to the snapshot.
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
-		return errors.New("Job Pod template annotations differ from the pending Apply envelope")
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeJobForComparison(normalized, true); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
-		return errors.New("Job Pod template labels differ from the pending Apply evidence")
-	}
-	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
-	if err != nil {
-		return fmt.Errorf("digest pending Apply Job Pod template: %w", err)
-	}
-	if templateDigest != pending.AdmissionSnapshot.TemplateDigest {
-		return errors.New("Job Pod template does not match the pending Apply admission snapshot")
-	}
-	return nil
+	return jobclaim.Match(job, jobclaim.PendingApply(schema, pending))
 }
 
 // validateClaimBoundJobCleanup authorizes only garbage-collection scheduling
@@ -452,128 +376,16 @@ func validateClaimBoundJobCleanup(
 	if err != nil {
 		return fmt.Errorf("derive claimed Job name: %w", err)
 	}
-	if job.Namespace != schema.Namespace || operation.JobName != expectedName || job.Name != expectedName ||
-		operation.JobUID == "" || operation.JobUID != job.UID {
-		return errors.New("Job name, namespace, or UID does not match the persisted operation claim")
+	if operation.JobName != expectedName || operation.JobUID == "" {
+		return errors.New("the persisted operation claim does not name the Job it reserved")
 	}
-	if _, err := exactNamedControllerOwner(
-		job.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-		schema.Name,
-		schema.UID,
-	); err != nil {
-		return fmt.Errorf("Job owner does not match the current schema UID: %w", err)
-	}
+	claim := jobclaim.SchemaOperation(schema, operation)
 	if operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch {
-		if err := validateCurrentExecutionEnvelope(schema.Status.ExecutionBinding, job.Annotations); err != nil {
-			return err
-		}
+		claim.Binding = schema.Status.ExecutionBinding
 	} else if err := validateRetiredReadOnlyStatus(schema, operation); err != nil {
 		return err
 	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return fmt.Errorf("persisted Pod admission snapshot is invalid: %w", err)
-	}
-
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
-		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
-	}
-	if err := workload.ValidateClaimedMetadata(job.Labels, wantLabels); err != nil {
-		return fmt.Errorf("Job labels do not match the persisted operation claim: %w", err)
-	}
-	if err := validateControllerEnvelopeValues(job.Annotations); err != nil {
-		return err
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             operation.ID,
-		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
-		workload.AnnotationPtahVersion:             job.Annotations[workload.AnnotationPtahVersion],
-		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationControllerImage:         job.Annotations[workload.AnnotationControllerImage],
-		workload.AnnotationControllerRevision:      job.Annotations[workload.AnnotationControllerRevision],
-		workload.AnnotationControllerStateVersion:  job.Annotations[workload.AnnotationControllerStateVersion],
-		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
-	}
-	if operation.Type == operatorv1alpha1.OperationApply {
-		plan := schema.Status.Plan
-		if plan == nil || plan.Name == "" || plan.UID == "" || !isSHA256Digest(plan.Fingerprint) ||
-			!isSHA256Digest(plan.ContentDigest) || plan.ExecutionBindingID != operation.ExecutionBindingID ||
-			strconv.FormatInt(int64(plan.ControllerStateVersion), 10) !=
-				wantAnnotations[workload.AnnotationControllerStateVersion] ||
-			plan.PtahVersion != wantAnnotations[workload.AnnotationPtahVersion] {
-			return errors.New("Apply Job does not match the immutable current plan binding")
-		}
-		wantAnnotations[workload.AnnotationPlanFingerprint] = plan.Fingerprint
-		wantAnnotations[workload.AnnotationPlanContentDigest] = plan.ContentDigest
-		workload.MarkMutatingOperation(wantAnnotations)
-	}
-	if err := workload.ValidateClaimedMetadata(job.Annotations, wantAnnotations); err != nil {
-		return fmt.Errorf("Job annotations are not the exact current operation envelope: %w", err)
-	}
-	// The template carries what the object carries, declared metadata
-	// included, and the digest below pins both to the snapshot.
-	if !reflect.DeepEqual(job.Spec.Template.Annotations, job.Annotations) {
-		return errors.New("Job Pod template annotations differ from the current operation envelope")
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeJobForComparison(normalized, true); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(normalized.Spec.Template.Labels, job.Labels) {
-		return errors.New("Job Pod template labels differ from the persisted operation claim")
-	}
-	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
-	if err != nil {
-		return fmt.Errorf("digest claimed Job Pod template: %w", err)
-	}
-	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return errors.New("Job Pod template does not match the persisted admission snapshot")
-	}
-	return nil
-}
-
-func validateCurrentExecutionEnvelope(
-	binding *operatorv1alpha1.ExecutionBindingStatus,
-	annotations map[string]string,
-) error {
-	// The manager image and revision annotations are not compared: they
-	// record which manager of this binding dispatched the Job, and the
-	// caller holds them to the persisted Pod template digest.
-	if binding == nil || !isExecutionBindingID(binding.Epoch) ||
-		annotations[workload.AnnotationExecutionBindingID] != binding.Epoch ||
-		annotations[workload.AnnotationControllerStateVersion] !=
-			strconv.FormatInt(int64(binding.ControllerStateVersion), 10) ||
-		annotations[workload.AnnotationPtahVersion] != binding.PtahVersion {
-		return errors.New("Job annotations do not match the durable current execution binding")
-	}
-	return nil
-}
-
-func validateControllerEnvelopeValues(annotations map[string]string) error {
-	controllerImage := annotations[workload.AnnotationControllerImage]
-	imageName, imageDigest, found := strings.Cut(controllerImage, "@")
-	if !found || imageName == "" || strings.ContainsAny(imageName, "@ \t\r\n\v\f") ||
-		!isSHA256Digest(imageDigest) {
-		return errors.New("Job controller image is not pinned by a lowercase SHA-256 digest")
-	}
-	if err := controllerstate.ValidateRevision(annotations[workload.AnnotationControllerRevision]); err != nil {
-		return fmt.Errorf("Job controller revision is invalid: %w", err)
-	}
-	stateVersion := annotations[workload.AnnotationControllerStateVersion]
-	parsedStateVersion, err := strconv.ParseInt(stateVersion, 10, 32)
-	if err != nil || parsedStateVersion < 1 || strconv.FormatInt(parsedStateVersion, 10) != stateVersion {
-		return errors.New("Job controller state version is not a canonical positive integer")
-	}
-	ptahVersion := annotations[workload.AnnotationPtahVersion]
-	if ptahVersion == "" || strings.TrimSpace(ptahVersion) != ptahVersion || len(ptahVersion) > 128 {
-		return errors.New("Job data-plane version is empty or ambiguous")
-	}
-	return nil
+	return jobclaim.Match(job, claim)
 }
 
 func validateRetiredReadOnlyStatus(
@@ -583,12 +395,7 @@ func validateRetiredReadOnlyStatus(
 	if schema == nil || operation == nil || schema.Status.ExecutionBinding == nil {
 		return errors.New("retired operation status is incomplete")
 	}
-	switch operation.Type {
-	case operatorv1alpha1.OperationResolve,
-		operatorv1alpha1.OperationVerify,
-		operatorv1alpha1.OperationObserve,
-		operatorv1alpha1.OperationPlan:
-	default:
+	if !mutationlifecycle.SchemaOperation(operation.Type).ReadOnly() {
 		return fmt.Errorf("operation %q is not read-only", operation.Type)
 	}
 	retirement := schema.Status.PendingBindingRetirement
@@ -667,26 +474,6 @@ func isExecutionBindingID(value string) bool {
 	return true
 }
 
-func validateAdmissionSnapshot(
-	operation *operatorv1alpha1.ActiveOperationStatus,
-	expected *batchv1.Job,
-) error {
-	if operation == nil || expected == nil {
-		return errors.New("operation or reconstructed Job is missing")
-	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return err
-	}
-	templateDigest, err := podintent.DigestTemplate(&expected.Spec.Template)
-	if err != nil {
-		return err
-	}
-	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return errors.New("snapshot template digest does not match the reconstructed Job")
-	}
-	return nil
-}
-
 func (v *Validator) planForJob(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -716,125 +503,6 @@ func (v *Validator) planForJob(
 		return nil, err
 	}
 	return plan, nil
-}
-
-// subjectIdentity is the resource a managed Job belongs to. Both kinds dispatch
-// the same kind of Job, so the intent comparison differs only in whose name and
-// UID the ownership graph has to carry.
-type subjectIdentity struct {
-	kind string
-	name string
-	uid  types.UID
-}
-
-func schemaSubject(schema *operatorv1alpha1.PtahSchema) subjectIdentity {
-	if schema == nil {
-		return subjectIdentity{}
-	}
-	return subjectIdentity{kind: "PtahSchema", name: schema.Name, uid: schema.UID}
-}
-
-func migrationSubject(migration *operatorv1alpha1.PtahMigration) subjectIdentity {
-	if migration == nil {
-		return subjectIdentity{}
-	}
-	return subjectIdentity{kind: "PtahMigration", name: migration.Name, uid: migration.UID}
-}
-
-func validateJobIntent(
-	actual, expected *batchv1.Job,
-	subject subjectIdentity,
-	allowGeneratedIdentity bool,
-) error {
-	if actual == nil || expected == nil || subject.kind == "" || subject.name == "" || subject.uid == "" {
-		return errors.New("Job intent inputs are incomplete")
-	}
-	if actual.Namespace != expected.Namespace || actual.Name != expected.Name {
-		return errors.New("Job name or namespace differs from the reconstructed intent")
-	}
-	if _, err := exactNamedControllerOwner(
-		actual.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		subject.kind,
-		subject.name,
-		subject.uid,
-	); err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(actual.Labels, expected.Labels) || !reflect.DeepEqual(actual.Annotations, expected.Annotations) {
-		return errors.New("Job labels or annotations differ from the reconstructed intent")
-	}
-
-	actualMeta := actual.ObjectMeta.DeepCopy()
-	expectedMeta := expected.ObjectMeta.DeepCopy()
-	scrubCreateServerMetadata(actualMeta)
-	scrubCreateServerMetadata(expectedMeta)
-	if !reflect.DeepEqual(actualMeta, expectedMeta) {
-		return errors.New("Job metadata differs from the reconstructed intent")
-	}
-
-	actualCopy := actual.DeepCopy()
-	expectedCopy := expected.DeepCopy()
-	if err := normalizeJobForComparison(actualCopy, allowGeneratedIdentity); err != nil {
-		return err
-	}
-	if err := normalizeJobForComparison(expectedCopy, allowGeneratedIdentity); err != nil {
-		return err
-	}
-	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(actualCopy.Spec, expectedCopy.Spec) {
-		return errors.New("Job spec differs from the reconstructed immutable intent")
-	}
-	return nil
-}
-
-func normalizeJobForComparison(job *batchv1.Job, allowGeneratedIdentity bool) error {
-	if job == nil {
-		return nil
-	}
-	normalizeServiceAccountAlias(&job.Spec.Template.Spec)
-	if !allowGeneratedIdentity {
-		return nil
-	}
-	generated := map[string]string{
-		batchv1.ControllerUidLabel: string(job.UID),
-		batchv1.JobNameLabel:       job.Name,
-		"controller-uid":           string(job.UID),
-		"job-name":                 job.Name,
-	}
-	if job.Spec.Selector != nil {
-		if job.UID == "" || len(job.Spec.Selector.MatchExpressions) != 0 || len(job.Spec.Selector.MatchLabels) == 0 {
-			return errors.New("Job selector is not the API-generated UID selector")
-		}
-		for key, value := range job.Spec.Selector.MatchLabels {
-			expected, ok := generated[key]
-			if !ok || value != expected || !strings.Contains(key, "controller-uid") {
-				return errors.New("Job selector is not bound to its API-assigned UID")
-			}
-		}
-		job.Spec.Selector = nil
-	}
-	for key, expected := range generated {
-		if value, ok := job.Spec.Template.Labels[key]; ok {
-			if job.UID == "" || value != expected {
-				return errors.New("Job Pod template has an invalid API-generated identity label")
-			}
-			delete(job.Spec.Template.Labels, key)
-		}
-	}
-	return nil
-}
-
-func normalizeServiceAccountAlias(spec *corev1.PodSpec) {
-	if spec == nil {
-		return
-	}
-	name := spec.ServiceAccountName
-	if name == "" {
-		name = spec.DeprecatedServiceAccount
-	}
-	if spec.DeprecatedServiceAccount == name {
-		spec.DeprecatedServiceAccount = ""
-	}
 }
 
 func validateOnlyCleanupTTLChanged(oldJob, job *batchv1.Job) error {
@@ -1047,25 +715,23 @@ func (v *Validator) validatePlanSourceJob(ctx context.Context, schema *operatorv
 	if err != nil {
 		return denyf("active Plan operation cannot reconstruct its source Job: %v", err)
 	}
-	harvested := job.DeepCopy()
-	harvested.Spec.TTLSecondsAfterFinished = nil
 	// An earlier manager of the same execution binding may have dispatched the
 	// Plan Job. Its recorded identity is taken from the Job, and the snapshot
 	// check that follows holds what was taken to the claim.
-	workload.CarryManagerIdentity(expected, harvested)
+	workload.CarryManagerIdentity(expected, job)
 	// The same manager may have restarted between dispatching this Plan Job
 	// and this validation, generating a new seal key; or a different replica
 	// dispatched it. Either way this process's own key is not what live was
 	// sealed to. Checked against the claim's recorded digest, not trusted
 	// outright, for the same reason CarrySealedPlanKey documents.
-	if err := workload.CarrySealedPlanKey(expected, harvested, *operation); err != nil {
+	if err := workload.CarrySealedPlanKey(expected, job, *operation); err != nil {
 		return denyf("terminal Plan Job seal key is invalid: %v", err)
 	}
-	if err := validateAdmissionSnapshot(operation, expected); err != nil {
-		return denyf("active Plan operation Pod admission snapshot is invalid: %v", err)
-	}
-	if err := validateJobIntent(harvested, expected, schemaSubject(schema), true); err != nil {
-		return denyf("terminal Plan Job is outside its immutable operation intent: %v", err)
+	claim := jobclaim.SchemaOperation(schema, operation)
+	claim.Binding = schema.Status.ExecutionBinding
+	claim.Built, claim.Stored = expected, true
+	if err := jobclaim.Match(job, claim); err != nil {
+		return denyf("terminal Plan Job is outside its active Plan operation intent: %v", err)
 	}
 	return nil
 }
