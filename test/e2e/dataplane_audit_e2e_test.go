@@ -25,6 +25,7 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	"github.com/stokaro/ptah-operator/test/e2e/resultframe"
 )
 
@@ -737,7 +738,7 @@ func (d *dataPlane) auditRuntimeCredentials() {
 	}
 	for index := range live {
 		if !noRestarts(&live[index]) {
-			reportRestartedManagerContainers(live)
+			reportRestartedManagerContainers(d.cluster, live)
 			d.fatalf("a manager container restarted before its complete log history was audited")
 		}
 	}
@@ -828,12 +829,13 @@ func (d *dataPlane) auditUnauditedPod(name string, uid types.UID) {
 }
 
 // reportRestartedManagerContainers names every manager container that
-// restarted, and how its previous run ended. The container's log is withheld
-// because it can carry credentials. Its termination record cannot: a reason,
-// an exit code, a signal and two timestamps, and the free-text message is left
-// out on purpose. Without them a restart reads the same whether the process
-// crashed, was OOM-killed, or lost its lease and exited.
-func reportRestartedManagerContainers(pods []corev1.Pod) {
+// restarted, how its previous run ended, and fixed diagnostic categories from
+// its previous log. Neither the free-text termination message nor the log or
+// API error is printed: each can carry credentials. This does not complete
+// the credential audit, so the caller still fails the phase after reporting.
+func reportRestartedManagerContainers(cluster *harness.Cluster, pods []corev1.Pod) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	for index := range pods {
 		pod := &pods[index]
 		for _, status := range allStatuses(pod) {
@@ -849,6 +851,7 @@ func reportRestartedManagerContainers(pods []corev1.Pod) {
 				}
 			}
 			record["lastTerminated"] = terminated
+			record["previousLog"] = readManagerExit(ctx, cluster.Clientset, pod, status)
 			line, _ := json.Marshal(record)
 			_, _ = fmt.Fprintf(os.Stderr, "e2e data plane: restarted manager container: %s\n", line)
 		}
