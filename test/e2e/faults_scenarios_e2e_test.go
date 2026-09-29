@@ -1159,7 +1159,7 @@ func (f *faultRun) closingHistory() {
 	if operationJobsOverlap(jobs) {
 		f.fatalf("Kubernetes Job watch proves overlapping operation Jobs for one PtahSchema")
 	}
-	f.assertAuditComplete()
+	f.waitForAuditComplete()
 	f.recordJobsForParent()
 	f.logf("PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, " +
 		"uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms")
