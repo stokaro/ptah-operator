@@ -83,19 +83,25 @@ func (m *migrationRun) approvalInputChange(field string) {
 	}
 	database := "ptah_e2e_" + strings.ReplaceAll(suffix, "-", "_")
 	secret := "e2e-" + m.engine.name + "-" + suffix + "-db"
-	m.isolatedDatabase(database, secret)
+	var auditUser string
+	if m.engine.name == "mysql" {
+		auditUser = m.isolatedMySQLApprovalDatabase(database, secret)
+	} else {
+		m.isolatedDatabase(database, secret)
+	}
 	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
 	var beforeRefusal []byte
+	var mysqlBeforeRefusal []mysqlStatementRecord
 	if m.engine.name == "postgresql" {
 		audit.snapshot()
 		beforeRefusal = audit.pgPrefix
+	} else {
+		mysqlBeforeRefusal = audit.mysqlStatementSnapshot()
 	}
 	inventory := &migrationSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}}
 	waitForDecision := func(description string, match func(*ptahv1alpha1.PtahMigration) bool) *ptahv1alpha1.PtahMigration {
 		return m.waitForMigration(name, description, migrationPoll, func(resource *ptahv1alpha1.PtahMigration) bool {
-			if m.engine.name == "postgresql" {
-				m.captureMigrationSQLInventory(name, inventory)
-			}
+			m.captureMigrationSQLInventory(name, inventory)
 			return match(resource)
 		})
 	}
@@ -181,6 +187,8 @@ func (m *migrationRun) approvalInputChange(field string) {
 	beforeApply := audit.snapshot()
 	if m.engine.name == "postgresql" {
 		m.assertPostgresMigrationRefusalSQL(audit, beforeRefusal, database, refused, inventory)
+	} else {
+		m.assertMySQLMigrationRefusalSQL(audit, mysqlBeforeRefusal, database, auditUser, refused, inventory)
 	}
 	m.check(m.approve(name+"-current", name, newPlan.Name, string(newPlan.UID), newPlan.Spec.Fingerprint),
 		"approve the changed input")

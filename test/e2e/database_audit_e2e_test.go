@@ -133,6 +133,28 @@ SELECT JSON_OBJECT('client',user_host,'count',COUNT(*)) FROM mysql.general_log W
 	return sqlAuditCounts{}
 }
 
+// MySQL's general log records Prepare and Execute separately. Preserve both,
+// including exact bound argument bytes, so counts cannot hide unauthorized SQL.
+func (a *databaseSQLAudit) mysqlStatementSnapshot() []mysqlStatementRecord {
+	a.t.Helper()
+	if a.engine != "mysql" {
+		a.t.Fatal("MySQL statement snapshot requested for another engine")
+	}
+	a.start()
+	raw := a.exec("sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -NBr -e "$1"`, "sh",
+		`SELECT IF(@@general_log=1 AND FIND_IN_SET('TABLE',@@log_output)>0,1,0);
+SELECT JSON_OBJECT('time',DATE_FORMAT(event_time,'%Y-%m-%dT%H:%i:%s.%f'),'thread',thread_id,'client',user_host,'type',command_type,'argumentHex',HEX(argument))
+FROM mysql.general_log ORDER BY event_time,thread_id`)
+	if !bytes.HasPrefix(raw, []byte("1\n")) {
+		a.t.Fatal("MySQL statement journal logging is not enabled")
+	}
+	records, err := mysqlStatementJournal(raw[2:])
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	return records
+}
+
 func (a *databaseSQLAudit) assertRecords(before, after sqlAuditCounts, pod *corev1.Pod, positive bool) {
 	a.t.Helper()
 	if pod == nil || pod.Namespace != a.namespace || pod.UID == "" || pod.Status.Phase != corev1.PodSucceeded {
