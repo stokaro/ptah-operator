@@ -287,6 +287,8 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"migration-policy",
 		"postgresql-migrations",
+		"approval-policy-change",
+		"approval-transaction-mode-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -303,6 +305,8 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"migration-policy",
 		"mysql-transaction-mode",
 		"mysql-migrations",
+		"approval-policy-change",
+		"approval-transaction-mode-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.

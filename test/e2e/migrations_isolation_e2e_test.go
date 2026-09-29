@@ -1279,15 +1279,18 @@ func (r *retargetRow) waitForRefusal() {
 // assertUntouched holds a database to no revision table with rows and no
 // table from the artifact's first migration.
 func (r *retargetRow) assertUntouched(database string) {
-	m := r.m
+	r.m.assertDatabaseUnmigrated(r.name, database)
+}
+
+func (m *migrationRun) assertDatabaseUnmigrated(migration, database string) {
 	m.t.Helper()
 	filter := m.engine.currentSchemaFilter()
 	if m.query("SELECT count(*) FROM information_schema.tables WHERE "+filter+" AND table_name='schema_migrations'", database) != "0" &&
 		m.query("SELECT count(*) FROM schema_migrations", database) != "0" {
-		m.fatalf("the %s Apply whose target was repointed recorded migrations in %s", m.engine.name, database)
+		m.fatalf("%s recorded unauthorized migrations in %s", migration, database)
 	}
 	if m.query("SELECT count(*) FROM information_schema.tables WHERE "+filter+" AND table_name='e2e_migration_widgets'", database) != "0" {
-		m.fatalf("the %s Apply whose target was repointed created its first migration's table in %s", m.engine.name, database)
+		m.fatalf("%s created an unauthorized table in %s", migration, database)
 	}
 }
 
