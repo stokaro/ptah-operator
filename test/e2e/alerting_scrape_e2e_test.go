@@ -44,7 +44,7 @@ func (a *alertingRun) lostScrapeTarget() {
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alMonitoringNamespace, Name: "prometheus"}, config),
 		"read the original Prometheus configuration")
 	original := config.Data["prometheus.yml"]
-	if original != alPrometheusConfig(alMonitoringNamespace, a.in.OperatorNamespace, a.metricsService) {
+	if original != alPrometheusConfig(alMonitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...) {
 		a.fatalf("the Prometheus configuration changed before the scrape fault")
 	}
 	restored := false

@@ -49,7 +49,8 @@ import (
 //   - a failed leader scrape does the same while the managers remain healthy
 //     and the follower remains a healthy scrape target.
 //   - a serving certificate approaching expiry alerts before admission fails,
-//     and restoring the certificate clears the alert and restores admission.
+//     the expired certificate triggers the API server admission-failure alert,
+//     and restoring the certificate clears both alerts and restores admission.
 //
 // What the receiver logs is what Alertmanager delivered, which is the claim;
 // Alertmanager's own view of what it meant to send is not.
@@ -71,7 +72,7 @@ func TestAlerting(t *testing.T) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, a failed leader scrape, certificate expiry and a lost view reached the receiver; recoverable faults cleared")
+	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, a failed leader scrape, certificate expiry, failed admission and a lost view reached the receiver; recoverable faults cleared")
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
@@ -89,11 +90,13 @@ type alertingRun struct {
 	// The installed manager: its Deployment, how many replicas it asks for,
 	// the labels its Pods carry, the Service Prometheus discovers them behind,
 	// and the registry its image came from.
-	manager        string
-	replicas       int32
-	managerLabels  map[string]string
-	metricsService string
-	registryHost   string
+	manager           string
+	replicas          int32
+	managerLabels     map[string]string
+	metricsService    string
+	apiServerTargets  []string
+	apiMetricsObjects []client.Object
+	registryHost      string
 	// runbookBase is where the chart's runbook links point.
 	runbookBase string
 
@@ -288,6 +291,7 @@ func (a *alertingRun) monitoringPath() {
 	rules := a.renderRules()
 	a.standUp(rules)
 	a.waitForTargets()
+	a.waitForAPIServerTargets()
 	body, err := a.prometheus(a.ctx, "/api/v1/rules", nil)
 	if err != nil {
 		a.fatalf("Prometheus did not answer for its rules: %v", err)
@@ -387,6 +391,7 @@ func (a *alertingRun) renderRules() string {
 		"--set", fmt.Sprintf("monitoring.prometheusRule.viewUnsyncedFor=%ds", int(alViewUnsyncedFor/time.Second)),
 		"--set", fmt.Sprintf("monitoring.prometheusRule.operationStalledAfterSeconds=%d", int(alStalledAfter/time.Second)),
 		"--set", fmt.Sprintf("monitoring.prometheusRule.certificateExpiresWithinSeconds=%d", int(alCertificateWarning/time.Second)),
+		"--set", fmt.Sprintf("monitoring.prometheusRule.admissionFailingFor=%ds", int(alAdmissionWindow/time.Second)),
 		"--show-only", "templates/prometheusrule.yaml")
 	if err != nil {
 		a.fatalf("the chart did not render its PrometheusRule: %v", err)
@@ -419,13 +424,14 @@ func (a *alertingRun) standUp(rules string) {
 	account := &corev1.ServiceAccount{}
 	account.Namespace, account.Name = alMonitoringNamespace, "prometheus"
 	a.mustCreate(account, "the prometheus ServiceAccount")
+	a.apiServerMetrics()
 	role, binding := alDiscoveryRBAC(a.in.OperatorNamespace, alMonitoringNamespace)
 	a.mustCreate(role, "the discovery Role")
 	a.mustCreate(binding, "the discovery RoleBinding")
 	a.mustCreate(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Namespace: alMonitoringNamespace, Name: "prometheus"},
 		Data: map[string]string{
-			"prometheus.yml": alPrometheusConfig(alMonitoringNamespace, a.in.OperatorNamespace, a.metricsService),
+			"prometheus.yml": alPrometheusConfig(alMonitoringNamespace, a.in.OperatorNamespace, a.metricsService, a.apiServerTargets...),
 			"rules.yaml":     rules,
 		},
 	}, "the prometheus ConfigMap")
@@ -835,6 +841,13 @@ func (a *alertingRun) cleanup() {
 				t.Errorf("e2e alerting: the gate could not be removed: %v", err)
 			}
 			a.gateOpened = false
+		}
+		for i := len(a.apiMetricsObjects) - 1; i >= 0; i-- {
+			object := a.apiMetricsObjects[i]
+			uid := object.GetUID()
+			if err := a.cluster.Client.Delete(ctx, object, client.Preconditions{UID: &uid}); client.IgnoreNotFound(err) != nil {
+				t.Errorf("e2e alerting: remove the API server metrics grant: %v", err)
+			}
 		}
 		// Neither namespace is waited for: nothing after this phase reads them.
 		for _, name := range []string{alStalledNamespace, alMonitoringNamespace} {

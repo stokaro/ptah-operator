@@ -27,6 +27,10 @@ import (
 func (a *alertingRun) certificateExpiry() {
 	a.t.Helper()
 	a.waitForTargets()
+	a.waitForAPIServerTargets()
+	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorAdmissionUnavailable"}`) {
+		a.fatalf("the admission alert was active before the certificate fault")
+	}
 	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorWebhookCertificateExpiring"}`) {
 		a.fatalf("the certificate alert was active before the expiry fault")
 	}
@@ -93,11 +97,12 @@ func (a *alertingRun) certificateExpiry() {
 	// apiserver keys its webhook client by CABundle and client-go keys its
 	// transport by the raw CAData bytes.
 	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 2)), "require a fresh admission TLS connection")
-	a.check(harness.Wait(a.ctx, "approval admission to refuse the expired serving certificate", alDetectionSlack, alDeliveryPoll,
+	a.check(harness.Wait(a.ctx, "approval admission to refuse the expired serving certificate", time.Until(fault.expiry.Add(alDetectionSlack)), alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
 			return alExpiredApprovalError(a.approvalCertificateProbe(ctx)), "no expiry-specific admission refusal yet", nil
 		}), "verify admission refusal after certificate expiry")
 	a.logf("PASS approval admission refused the expired serving certificate")
+	admissionIndex := a.admissionFailureDelivered(from, fault.expiry)
 	restoredAt := time.Now()
 	a.check(fault.writeLeaf(a.ctx, fault.secret.Data["tls.crt"]), "restore the valid serving certificate")
 	a.check(a.waitForCertificateExpiry(podNames, originalLeaf.NotAfter, alCertificateProjection), "observe the restored certificate on every manager")
@@ -111,6 +116,7 @@ func (a *alertingRun) certificateExpiry() {
 	if elapsed := resolved.ReceivedAt.Sub(restoredAt); elapsed < 0 || elapsed > alCertificateProjection+alDetectionSlack {
 		a.fatalf("the certificate alert resolved after %s; want at most %s from restoration", elapsed, alCertificateProjection+alDetectionSlack)
 	}
+	a.admissionRecovered(admissionIndex+1, restoredAt)
 	a.check(fault.writeBundle(a.ctx, fault.bundle), "restore the admission trust bundle")
 	a.check(fault.scaleRotator(a.ctx, *fault.rotator.Spec.Replicas), "restart certificate renewal")
 	a.check(a.cluster.WaitForRollout(a.ctx, a.in.OperatorNamespace, fault.rotator.Name, alTimeout), "wait for certificate renewal to recover")

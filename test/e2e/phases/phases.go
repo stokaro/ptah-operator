@@ -393,7 +393,7 @@ type AlertingInputs struct {
 
 // Alerting proves the path from a manager's metrics to a person: an Apply
 // nobody accounted for, an operation that stops moving, a failed leader
-// scrape, certificate expiry, and every manager gone each reach a receiver.
+// scrape, certificate expiry and admission failure, and every manager gone each reach a receiver.
 // Recoverable faults clear.
 var Alerting = define[AlertingInputs](Phase{
 	Name:    "alerting",

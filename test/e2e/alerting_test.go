@@ -52,6 +52,7 @@ func alRenderedRule(t *testing.T) string {
 		"--set", "monitoring.prometheusRule.viewUnsyncedFor=60s",
 		"--set", "monitoring.prometheusRule.operationStalledAfterSeconds=60",
 		"--set", "monitoring.prometheusRule.certificateExpiresWithinSeconds=60",
+		"--set", "monitoring.prometheusRule.admissionFailingFor=60s",
 		"--show-only", "templates/prometheusrule.yaml")
 }
 
@@ -110,6 +111,9 @@ func TestAlRuleFileRefusals(t *testing.T) {
 		},
 		"no certificate alert": func(r string) string {
 			return strings.Replace(r, "alert: "+alCertificateAlert+"\n", "alert: Renamed\n", 1)
+		},
+		"no admission alert": func(r string) string {
+			return strings.Replace(r, "alert: "+alAdmissionAlert+"\n", "alert: Renamed\n", 1)
 		},
 		// The stalled rule renders only where its threshold is set.
 		"a name only as a prefix": func(r string) string {
@@ -572,15 +576,16 @@ func TestAlRulesLoaded(t *testing.T) {
 		}
 		return []byte(`{"status":"success","data":{"groups":[{"rules":[` + strings.Join(entries, ",") + `]}]}}`)
 	}
-	if !alRulesLoaded(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert)) {
+	if !alRulesLoaded(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert)) {
 		t.Fatal("the chart's rules were not recognized")
 	}
 	for name, answer := range map[string][]byte{
-		"no certificate rule":        body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall),
-		"no view rule":               body("alerting", alUnresolvedApply, "alerting", alOperationStall, "alerting", alCertificateAlert),
-		"no unresolved rule":         body("alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert),
-		"no stalled rule":            body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alCertificateAlert),
-		"the unresolved one records": body("recording", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert),
+		"no admission rule":          body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert),
+		"no certificate rule":        body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alAdmissionAlert),
+		"no view rule":               body("alerting", alUnresolvedApply, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
+		"no unresolved rule":         body("alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
+		"no stalled rule":            body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
+		"the unresolved one records": body("recording", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
 		"no groups":                  []byte(`{"status":"success","data":{"groups":[]}}`),
 		"not JSON":                   []byte(`502 Bad Gateway`),
 	} {
@@ -589,7 +594,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		}
 	}
 	split := []byte(`{"data":{"groups":[{"rules":[{"type":"alerting","name":"` + alUnresolvedApply +
-		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"},{"type":"alerting","name":"` + alCertificateAlert + `"}]}]}}`)
+		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"},{"type":"alerting","name":"` + alCertificateAlert + `"},{"type":"alerting","name":"` + alAdmissionAlert + `"}]}]}}`)
 	if !alRulesLoaded(split) {
 		t.Error("the rules in two groups were not recognized")
 	}
