@@ -111,6 +111,14 @@ every resource a database of its own, so no two share a realm or an advisory
 lock, and walks the workload through a cold start, a steady state, a restart of
 every manager at once, a batch of changes and a registry outage.
 
+The outage must produce a failed Resolve in each loaded resource family.
+The report retains each failure's Pod UID and runner frame digest. Only a Pod
+created after the fault, with a matching operation ID and a read-only
+`child_exit` result, counts. A NetworkPolicy that blocks nothing fails this
+check. Removing the policy starts the recovery clock; every workload resource
+must then converge with a fresh database observation. The policy is also
+removed if measurement fails, with its UID checked before deletion.
+
 Throughout, it reads the cluster rather than estimating it:
 
 | Figure | Read from |

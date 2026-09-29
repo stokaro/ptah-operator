@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
-	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -361,45 +359,4 @@ func (s *scenarios) patchReference(ctx context.Context, resource schema.GroupVer
 func digestOf(reference string) string {
 	_, digest, _ := strings.Cut(reference, "@")
 	return digest
-}
-
-// outage cuts every operation Pod off from the registry for a while, then
-// restores it and times the recovery. A NetworkPolicy does the cutting, so the
-// registry itself keeps running for everything else in the lab.
-func (s *scenarios) outage(ctx context.Context) error {
-	if s.load.Outage.Duration == 0 {
-		return nil
-	}
-	if s.in.registryIP == "" {
-		return errors.New("an outage needs the registry address")
-	}
-	policy := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: outagePolicyName, Namespace: s.in.namespace},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/managed-by": "ptah-operator"}},
-			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-			Egress: []networkingv1.NetworkPolicyEgressRule{{
-				To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{
-					CIDR: "0.0.0.0/0", Except: []string{s.in.registryIP + "/32"},
-				}}},
-			}},
-		},
-	}
-	start := time.Now().UTC()
-	if _, err := s.clientset.NetworkingV1().NetworkPolicies(s.in.namespace).Create(ctx, policy, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("cut the registry off: %w", err)
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(s.load.Outage.Duration):
-	}
-	s.mark("registry outage", start, nil)
-	restored := time.Now().UTC()
-	if err := s.clientset.NetworkingV1().NetworkPolicies(s.in.namespace).Delete(ctx, outagePolicyName, metav1.DeleteOptions{}); err != nil {
-		return fmt.Errorf("restore the registry: %w", err)
-	}
-	converged, err := s.waitConverged(ctx, restored, nil)
-	s.mark("recovery", restored, map[string]string{"converged": converged})
-	return err
 }
