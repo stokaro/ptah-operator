@@ -19,12 +19,17 @@ func (f *faultRun) verificationPolicyChanges() {
 			f.createDatabase(engine, database, secret)
 			f.query(engine, database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'verification-control', 'preserved-policy-row')")
 			beforeDatabase := f.fingerprint(engine, database, "the database before verification policy replacement")
+			sqlWindow := f.startSchemaRefusalWindow(name, engine, database, secret)
+			initialJobs := f.checkpointJobs(name, "")
 			f.createSchema(faultSchema{
 				name: name, engine: kind, reference: reference, secret: secret,
 				coordinationKey: "e2e/verify-policy/" + change + "/" + engine, verificationPolicy: fixture.object.Name,
 			})
-			old := f.schemaPlan(f.waitForPlan(name))
-			before := f.schema(name)
+			before := sqlWindow.waitForSchema("the initial verified approval gate", planAwaitingApproval)
+			old := f.schemaPlan(before.Status.Plan.Name)
+			initialObserve := sqlWindow.resultControl(before, "observe", initialJobs)
+			initialPlan := sqlWindow.resultControl(before, "plan", initialJobs)
+			replacementJobs := f.checkpointJobs(name, "")
 			beforeApply := f.checkpointOperationWatch(name, "apply", 0)
 			f.pauseStatusWrites()
 			f.createApproval(name, name+"-original")
@@ -50,16 +55,18 @@ func (f *faultRun) verificationPolicyChanges() {
 				f.fatalf("%s selected-policy edit did not advance the generation", name)
 			}
 			f.mustResumeStatusWrites("resume after the verification policy changed")
-			current := f.waitForSchema(name, "a fresh plan verified under the current policy", func(schema *ptahv1alpha1.PtahSchema) bool {
+			current := sqlWindow.waitForSchema("a fresh plan verified under the current policy", func(schema *ptahv1alpha1.PtahSchema) bool {
 				return changedSchemaApprovalRefused(schema, string(old.UID), changed.Generation)
 			})
 			fresh := f.schemaPlan(current.Status.Plan.Name)
+			replacementPlan := sqlWindow.resultControl(current, "plan", replacementJobs)
 			f.check(changedVerificationPolicyDecision(schemaVerificationDecision(old), schemaVerificationDecision(fresh),
 				originalPolicy, currentPolicy, mode), "bind the fresh schema plan to the changed verification policy")
 			f.waitForApproval(name+"-original", "the old verification policy's approval to become stale", func(approval *ptahv1alpha1.PtahSchemaApproval) bool {
 				return conditionIs(approval.Status.Conditions, "Stale", "True", "PlanNoLongerCurrent")
 			})
 			f.checkpointOperationWatch(name, "apply", 0)
+			sqlWindow.assert(current, initialObserve, initialPlan, replacementPlan)
 			if f.fingerprint(engine, database, "the database under the obsolete verification approval") != beforeDatabase {
 				f.fatalf("%s changed the database under the old policy approval", name)
 			}

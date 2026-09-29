@@ -332,3 +332,53 @@ func TestSchemaReplacementSQLControlsRequireBothOperationsOfBothUIDs(t *testing.
 		t.Fatal("same UID counted as replacement")
 	}
 }
+
+func TestSchemaSQLResultControlsRequireEachExactJobAndPod(t *testing.T) {
+	t.Parallel()
+	initialObserve := operationSQLClient{resourceUID: "schema", jobUID: "observe", podUID: "observe-pod", operation: "observe"}
+	initialPlan := operationSQLClient{resourceUID: "schema", jobUID: "old-plan", podUID: "old-plan-pod", operation: "plan"}
+	freshPlan := operationSQLClient{resourceUID: "schema", jobUID: "fresh-plan", podUID: "fresh-plan-pod", operation: "plan"}
+	required := []operationSQLClient{initialObserve, initialPlan, freshPlan}
+	clients := map[string]operationSQLClient{"10.0.0.1": initialObserve, "10.0.0.2": initialPlan, "10.0.0.3": freshPlan}
+	counts := map[string]int{"10.0.0.1": 45, "10.0.0.2": 82, "10.0.0.3": 82}
+	if err := schemaRequiredSQLControls(clients, counts, required); err != nil {
+		t.Fatal(err)
+	}
+	for host, count := range counts {
+		counts[host] = 0
+		if schemaRequiredSQLControls(clients, counts, required) == nil {
+			t.Fatal("another Job's SQL substituted for a missing result control")
+		}
+		counts[host] = count
+	}
+	for name, mutate := range map[string]func(*operationSQLClient){
+		"another resource":  func(a *operationSQLClient) { a.resourceUID = "other" },
+		"another Job":       func(a *operationSQLClient) { a.jobUID = "other" },
+		"another Pod":       func(a *operationSQLClient) { a.podUID = "other" },
+		"another operation": func(a *operationSQLClient) { a.operation = "observe" },
+		"missing resource":  func(a *operationSQLClient) { a.resourceUID = "" },
+		"missing Job":       func(a *operationSQLClient) { a.jobUID = "" },
+		"missing Pod":       func(a *operationSQLClient) { a.podUID = "" },
+		"Apply":             func(a *operationSQLClient) { a.operation = "apply" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			broken := slices.Clone(required)
+			mutate(&broken[2])
+			if schemaRequiredSQLControls(clients, counts, broken) == nil {
+				t.Fatal("unrelated or incomplete result control passed")
+			}
+		})
+	}
+	for _, broken := range [][]operationSQLClient{nil, {initialPlan, initialPlan},
+		{initialPlan, {resourceUID: "schema", jobUID: "other", podUID: initialPlan.podUID, operation: "plan"}},
+		{initialPlan, {resourceUID: "schema", jobUID: initialPlan.jobUID, podUID: "other", operation: "plan"}},
+	} {
+		if schemaRequiredSQLControls(clients, counts, broken) == nil {
+			t.Fatal("empty or duplicate controls passed")
+		}
+	}
+	clients["10.0.0.4"], counts["10.0.0.4"] = freshPlan, 82
+	if schemaRequiredSQLControls(clients, counts, required) == nil {
+		t.Fatal("ambiguous client identity passed")
+	}
+}

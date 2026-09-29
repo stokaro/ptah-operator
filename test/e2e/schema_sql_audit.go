@@ -125,3 +125,28 @@ func schemaReplacementSQLControls(clients map[string]operationSQLClient, counts 
 	}
 	return nil
 }
+
+// Each required control names a completed result already bound to the schema's
+// observation or published plan. Other diagnostic SQL cannot substitute for it.
+func schemaRequiredSQLControls(clients map[string]operationSQLClient, counts map[string]int, required []operationSQLClient) error {
+	if len(required) == 0 {
+		return errors.New("schema SQL audit has no required result controls")
+	}
+	jobs, pods := map[string]bool{}, map[string]bool{}
+	for _, control := range required {
+		if !schemaDiagnosticActor(control) || jobs[control.jobUID] || pods[control.podUID] {
+			return errors.New("schema SQL audit has an incomplete or duplicate result control")
+		}
+		jobs[control.jobUID], pods[control.podUID] = true, true
+		matches := 0
+		for host, actor := range clients {
+			if actor == control && counts[host] > 0 {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return errors.New("schema SQL audit did not observe the exact required diagnostic Job and Pod")
+		}
+	}
+	return nil
+}

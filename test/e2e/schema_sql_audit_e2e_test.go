@@ -3,12 +3,15 @@
 package e2e
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"net/url"
+	"slices"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -86,4 +89,107 @@ func (inventory *schemaSQLInventory) clients(schema *ptahv1alpha1.PtahSchema, pr
 		pods = append(pods, pod)
 	}
 	return schemaSQLClients(schema, jobs, pods, predecessors...)
+}
+
+type schemaRefusalWindow struct {
+	f                    *faultRun
+	name, database, user string
+	audit                *databaseSQLAudit
+	policy               *schemaSQLPolicy
+	inventory            *schemaSQLInventory
+	pgBefore             []byte
+	mysqlBefore          []mysqlStatementRecord
+}
+
+// Start after fixture setup but before its resource exists. The dedicated
+// MySQL credential has never connected, so database-less records remain scoped.
+// Database assertions must run after assert closes this uninterrupted window.
+func (f *faultRun) startSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
+	f.t.Helper()
+	if !apierrors.IsNotFound(f.get(name, &ptahv1alpha1.PtahSchema{})) {
+		f.fatalf("schema SQL refusal audit must start before its resource exists")
+	}
+	policy, err := newSchemaSQLPolicy(engine, database)
+	f.check(err, "load the pinned schema diagnostic SQL contract")
+	w := &schemaRefusalWindow{f: f, name: name, database: database, policy: policy,
+		audit:     &databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: engine},
+		inventory: &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}},
+	}
+	if engine == "mysql" {
+		w.user = f.schemaMySQLAuditAccount(w.audit, database, secret)
+		w.mysqlBefore = w.audit.mysqlStatementSnapshot()
+	} else {
+		w.audit.snapshot()
+		w.pgBefore = w.audit.pgPrefix
+	}
+	return w
+}
+
+func (w *schemaRefusalWindow) waitForSchema(description string, match func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
+	w.f.t.Helper()
+	return w.f.waitForSchema(w.name, description, func(resource *ptahv1alpha1.PtahSchema) bool {
+		w.f.captureSchemaSQLInventory(w.name, w.inventory)
+		return match(resource)
+	})
+}
+
+// Read the diagnostic's actual runner result before its Job TTL can remove it.
+// A control carries the exact Job and Pod whose SQL the closing audit requires.
+func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, operation string, before checkpoint) operationSQLClient {
+	w.f.t.Helper()
+	f := w.f
+	previous := f.captured
+	defer func() { f.captured = previous }()
+	if resource == nil || resource.Name != w.name || resource.Namespace != f.in.TestNamespace || resource.UID == "" {
+		f.fatalf("schema SQL result control has no exact resource identity")
+	}
+	result := f.captureOneNewJobResult(w.name, operation, before, nil)
+	switch operation {
+	case "observe":
+		dialect := "postgres"
+		if w.audit.engine == "mysql" {
+			dialect = "mysql"
+		}
+		f.check(observedDriftBound(result, resource.Status.Target, dialect), "bind the SQL control to its observed state")
+	case "plan":
+		if !exactControllerPlan(resource.Status.Plan, resource.Status.ExecutionBinding, f.controller, f.stateVersion()) {
+			f.fatalf("schema SQL plan control lost its controller binding")
+		}
+		f.check(readyPlanFromController(f.schemaPlan(resource.Status.Plan.Name), f.controller, f.stateVersion()), "read the published SQL control plan")
+		f.check(changedPlanBound(result, resource.Status.Plan), "bind the SQL control to its published plan")
+	default:
+		f.fatalf("unsupported schema SQL diagnostic control %s", operation)
+	}
+	w.f.captureSchemaSQLInventory(w.name, w.inventory)
+	return operationSQLClient{resourceUID: string(resource.UID), jobUID: f.captured.jobUID, podUID: f.captured.podUID, operation: operation}
+}
+
+func (w *schemaRefusalWindow) assert(resource *ptahv1alpha1.PtahSchema, controls ...operationSQLClient) {
+	w.f.t.Helper()
+	f := w.f
+	f.captureSchemaSQLInventory(w.name, w.inventory)
+	clients, err := w.inventory.clients(resource)
+	f.check(err, "bind schema refusal SQL to the exact resource Jobs and Pods")
+	var counts map[string]int
+	if w.audit.engine == "postgresql" {
+		w.audit.snapshot()
+		if len(w.pgBefore) == 0 || !bytes.HasPrefix(w.audit.pgPrefix, w.pgBefore) {
+			f.fatalf("schema refusal audit lost its original PostgreSQL journal")
+		}
+		counts, err = postgresStatementRefusalSQL(w.audit.pgPrefix[len(w.pgBefore):], w.database, clients, schemaDiagnosticActor, w.policy.postgres, nil)
+	} else {
+		counts, err = mysqlStatementRefusalSQL(w.mysqlBefore, w.audit.mysqlStatementSnapshot(), w.database, w.user, clients, true, schemaDiagnosticActor, w.policy.mysql)
+	}
+	f.check(err, "refuse SQL outside the exact schema diagnostic contract")
+	f.check(schemaRequiredSQLControls(clients, counts, controls), "observe SQL from every required diagnostic result")
+	hosts := make([]string, 0, len(counts))
+	for host := range counts {
+		hosts = append(hosts, host)
+	}
+	slices.Sort(hosts)
+	for _, host := range hosts {
+		actor := clients[host]
+		f.logf("SQL refusal audit: engine=%s schemaUID=%s jobUID=%s podUID=%s operation=%s client=%s allowedDiagnosticRecords=%d unauthorizedRecords=0", w.audit.engine, actor.resourceUID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
+	}
+	w.audit.close()
 }
