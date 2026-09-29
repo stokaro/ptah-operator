@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-29T18:18:48+00:00",
-  "profileSourceCommit": "8b8508f737b67a319e1e56dc62e805ba69746ea6",
+  "frozenAt": "2026-09-29T19:00:34+00:00",
+  "profileSourceCommit": "0310b5db2a1f8ac9fe158061cc2321f1716c0cd2",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/e2e-suites.json",
-      "sha256": "5da3d03c4eb62b1482208d818506a562574e5cef9f30e4ff2459f85fef9bdf4e"
+      "sha256": "2c616fbb705aeb930a06a5ed30516bd75ec00a001d94287f62f7eadb248a7134"
     },
     {
       "path": "support/ptah.json",
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "a069a169ae24ba3cd31932669673e2d4d0aec8e9591e8a5b1e3d180fd541e94e",
-    "generatedFromCommit": "8b8508f737b67a319e1e56dc62e805ba69746ea6",
+    "sha256": "0b2f8e9630a4a497a19531ce3c7f4e6d3f9175ce98b780fe2a43213b2d4e3b01",
+    "generatedFromCommit": "0310b5db2a1f8ac9fe158061cc2321f1716c0cd2",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -58,7 +58,7 @@
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient."
   },
   "publishedPredecessors": {
-    "checkedAt": "2026-09-29T18:13:15+00:00",
+    "checkedAt": "2026-09-29T19:00:03+00:00",
     "repository": "stokaro/ptah-operator",
     "releaseCount": 0,
     "tagCount": 0,
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 2,
+  "revision": 3,
   "supersedes": {
-    "freezeCommit": "96c4c1a1cd59841edf2734eb6a70310b4a5cdd7a",
-    "sha256": "ddafae6157ca6b349489017b95b65ae2c7a710c0e2b7320526694aeb9c6dae72"
+    "freezeCommit": "90e93fdb805ffacf6a94c9db5e77de38c362a94d",
+    "sha256": "cf701578c25a122837a96bd56afc19fea28e458d671d691bde35b194a5f5b9de"
   },
-  "revisionReason": "Make evidence access, encryption, authorized read-back and disposal controls explicit before qualification. Operating, alert, RPO/RTO and coverage targets are unchanged."
+  "revisionReason": "Repair the PostgreSQL suite preparation after all three master jobs failed because the certificate-expiry probe had no approval fixture. Add the existing control-plane fixture producer and verify full-phase prerequisites before execution. Required scenarios, operating, alert, RPO/RTO and platform targets are unchanged. Preserve the failed runs; affected evidence requires a corrected-source rerun."
 }
