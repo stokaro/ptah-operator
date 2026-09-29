@@ -127,10 +127,10 @@ var requirements = []requirement{
 			"and behavior beyond the admitted limits"},
 	{"PA-09", "Detect and diagnose operational failures",
 		"alerts firing inside a declared detection target and reaching a configured receiver",
-		"`test/e2e/alerting_e2e_test.go` and `test/e2e/alerting_scrape_e2e_test.go`, which deliver the unresolved-Apply and stalled-operation alerts " +
+		"`test/e2e/alerting_e2e_test.go`, `test/e2e/alerting_scrape_e2e_test.go` and `test/e2e/alerting_certificate_e2e_test.go`, with `test/e2e/alerting_admission_e2e_test.go` reading every API server, which deliver the unresolved-Apply, stalled-operation, certificate-expiry and admission-failure alerts " +
 			"and the lost-view alert after all managers disappear or only the leader's scrape fails, " +
 			"from the chart's rules through Alertmanager to a receiver, and the operator metrics on a new leader in `test/e2e/lifecycle_ha_e2e_test.go`",
-		"on a cluster, the certificate, upgrade, overdue, lock-release, plan-store, failure-rate, admission and view-read alerts; " +
+		"on a cluster, the upgrade, overdue, lock-release, plan-store, failure-rate and view-read alerts; " +
 			"and approval waits kept from paging"},
 	{"PA-10", "Make documentation executable and usable",
 		"the documented install and primary examples executed from a fresh environment on the candidate's versions",

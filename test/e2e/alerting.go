@@ -97,7 +97,7 @@ func alRuleFile(rendered string) (string, error) {
 		return "", errors.New("the rendered PrometheusRule has no spec.groups to load")
 	}
 	rules := strings.Join(lines, "\n")
-	for _, alert := range []string{alUnresolvedApply, alViewNotSynced, alOperationStall} {
+	for _, alert := range []string{alUnresolvedApply, alViewNotSynced, alOperationStall, alCertificateAlert, alAdmissionAlert} {
 		if !slices.ContainsFunc(lines, func(line string) bool { return strings.HasSuffix(line, "alert: "+alert) }) {
 			return "", fmt.Errorf("the rendered rules have no %s", alert)
 		}
@@ -128,7 +128,7 @@ func alRunbookBase(values string) (string, error) {
 // behind the metrics Service one by one, as the chart's ServiceMonitor would:
 // a single scrape of the Service address would land on whichever replica
 // answered.
-func alPrometheusConfig(monitoringNamespace, operatorNamespace, metricsService string) string {
+func alPrometheusConfig(monitoringNamespace, operatorNamespace, metricsService string, apiServers ...string) string {
 	seconds := int(alScrapeInterval / time.Second)
 	return fmt.Sprintf(`global:
   scrape_interval: %[1]ds
@@ -140,7 +140,7 @@ alerting:
     - static_configs:
         - targets: ["alertmanager.%[2]s.svc:9093"]
 scrape_configs:
-  - job_name: %[5]s
+%[6]s  - job_name: %[5]s
     kubernetes_sd_configs:
       - role: endpointslice
         namespaces:
@@ -154,7 +154,7 @@ scrape_configs:
         action: keep
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
-`, seconds, monitoringNamespace, operatorNamespace, metricsService, alScrapeJob)
+`, seconds, monitoringNamespace, operatorNamespace, metricsService, alScrapeJob, alAPIServerScrapeConfig(apiServers))
 }
 
 const alMissingMetricsPath = "/e2e-missing-metrics"
@@ -563,7 +563,8 @@ func alRulesLoaded(body []byte) bool {
 			}
 		}
 	}
-	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alViewNotSynced) && slices.Contains(alerting, alOperationStall)
+	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alViewNotSynced) &&
+		slices.Contains(alerting, alOperationStall) && slices.Contains(alerting, alCertificateAlert) && slices.Contains(alerting, alAdmissionAlert)
 }
 
 // alNoActiveAlerts reads an instant query for ALERTS: true when Prometheus

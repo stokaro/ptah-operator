@@ -1,0 +1,31 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "ptah-admission-metrics-proof-control-plane",
+        "labels": {
+          "beta.kubernetes.io/arch": "amd64",
+          "beta.kubernetes.io/os": "linux",
+          "kubernetes.io/arch": "amd64",
+          "kubernetes.io/hostname": "ptah-admission-metrics-proof-control-plane",
+          "kubernetes.io/os": "linux",
+          "node-role.kubernetes.io/control-plane": ""
+        }
+      },
+      "status": {
+        "addresses": [
+          {
+            "address": "172.18.0.2",
+            "type": "InternalIP"
+          },
+          {
+            "address": "ptah-admission-metrics-proof-control-plane",
+            "type": "Hostname"
+          }
+        ]
+      }
+    }
+  ]
+}

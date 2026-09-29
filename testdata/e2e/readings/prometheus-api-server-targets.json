@@ -1,0 +1,17 @@
+{
+  "status": "success",
+  "data": {
+    "activeTargets": [
+      {
+        "labels": {
+          "instance": "172.18.0.2:6443",
+          "job": "kube-apiserver"
+        },
+        "scrapeUrl": "https://172.18.0.2:6443/metrics",
+        "health": "up",
+        "lastError": "",
+        "lastScrape": "2026-09-29T16:00:49.882846468Z"
+      }
+    ]
+  }
+}

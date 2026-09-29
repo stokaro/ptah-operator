@@ -373,6 +373,8 @@ type AlertingInputs struct {
 	Kubeconfig string `env:"E2E_KUBECONFIG"`
 	// OperatorNamespace is the release namespace.
 	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
+	// TestNamespace holds the existing approval used for a dry-run admission probe.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
 	// HelmRelease is the installed release, whose values the rules are
 	// rendered with.
 	HelmRelease string `env:"E2E_HELM_RELEASE"`
@@ -391,7 +393,8 @@ type AlertingInputs struct {
 
 // Alerting proves the path from a manager's metrics to a person: an Apply
 // nobody accounted for, an operation that stops moving, a failed leader
-// scrape, and every manager gone each reach a receiver. Recoverable faults clear.
+// scrape, certificate expiry and admission failure, and every manager gone each reach a receiver.
+// Recoverable faults clear.
 var Alerting = define[AlertingInputs](Phase{
 	Name:    "alerting",
 	Test:    "TestAlerting",
@@ -401,6 +404,7 @@ var Alerting = define[AlertingInputs](Phase{
 		"unresolved-apply",
 		"stalled-operation",
 		"lost-scrape-target",
+		"certificate-expiry",
 		"lost-view",
 	},
 })
