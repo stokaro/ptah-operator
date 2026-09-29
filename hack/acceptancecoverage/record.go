@@ -63,9 +63,9 @@ var requirements = []requirement{
 			"a migration's target Secret repointed between approval and dispatch in `test/e2e/migrations_isolation_e2e_test.go`, " +
 			"policy and transaction-mode edits after approval on both engines in `test/e2e/dataplane_approval_e2e_test.go` " +
 			"and `test/e2e/migrations_approval_e2e_test.go`, each followed by a fresh approval that executes, " +
+			"PtahSchema target-Secret changes on both engines and MySQL drift before dispatch in `test/e2e/faults_target_e2e_test.go`, " +
 			"and an author refused Always by the example guard in `test/e2e/migrations_guard_e2e_test.go`",
-		"a PtahSchema's target Secret changed between approval and dispatch; " +
-			"drift before dispatch on MySQL; and a count of the statements the database received"},
+		"a count of the statements the database received"},
 	{"PA-03", "Preserve safety through interrupted Apply",
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
 		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `test/e2e/faults_scenarios_e2e_test.go`, " +

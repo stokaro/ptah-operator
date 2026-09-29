@@ -230,6 +230,8 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
 		"watches",
+		"approval-target-secret-change",
+		"mysql-drift-before-dispatch",
 		"job-deadline",
 		"manager-restart",
 		"runner-termination",
