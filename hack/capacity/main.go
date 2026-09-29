@@ -116,7 +116,7 @@ func run() error {
 	<-done
 
 	samples, jobs := watch.snapshot()
-	out := report{Workload: load, Environment: environment, Samples: samples, Jobs: jobs}
+	out := report{FormatVersion: 2, Workload: load, Environment: environment, Samples: samples, Jobs: jobs}
 	for _, w := range steps.windows {
 		out.Scenarios = append(out.Scenarios, cost(w, samples, jobs))
 	}

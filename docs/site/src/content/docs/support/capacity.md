@@ -132,6 +132,13 @@ installation. The Capacity workflow runs the same thing on a schedule, on
 request, and on any change to the measurement itself, and publishes the report
 as an artifact of the run.
 
+Report format 2 records failed reads in each sample's `incomplete` list and
+counts them by source in each scenario. Figures affected by a failed read are
+`null` in JSON and `n/a` in the summary, including a maximum that was only
+partly observed. Missing manager process metrics and a window with no samples
+are also missing evidence. A fault may explain a missing reading, but the
+report cannot establish a performance bound for that figure during that window.
+
 ## The first reading {#lab-20}
 
 The Capacity workflow ran the `lab-20` workload on 2026-09-26, run
