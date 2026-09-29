@@ -51,10 +51,12 @@ type faultState struct {
 	deletedPrint      string
 	deletedCheckpoint checkpoint
 
-	manual       faultTarget
-	manualPrint  string
-	manualJobUID string
-	manualPodUID string
+	manual            faultTarget
+	manualPrint       string
+	manualJobUID      string
+	manualPodUID      string
+	manualSQL         *schemaRefusalWindow
+	manualSQLControls []operationSQLClient
 }
 
 func newFaultTargets() faultState {
@@ -899,6 +901,8 @@ func (f *faultRun) manualDrift() {
 	f.assertColumn("postgresql", manual.database, "enabled", 0)
 	f.assertColumn("postgresql", manual.database, "fault_token", 0)
 	s.manualPrint = f.pgFingerprint(manual.database)
+	s.manualSQL = f.startSchemaDriftWindow(manual.schema, manual.database, "",
+		&databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: "postgresql"}, "")
 	f.startReadBarrier()
 	f.mustResumeStatusWrites("could not restore controller status-write RBAC after the manual-drift barrier")
 	f.waitForWatchCountAbove(manual.schema, "apply", 0, "the manual-drift Apply Job to be created behind the scheduling barrier")
@@ -939,6 +943,10 @@ func (f *faultRun) manualDrift() {
 	observe, plan := f.captureUncertainReadProofPair(manual.schema, manual.run, manual.lease,
 		manual.observeBefore, manual.planBefore, false)
 	manual.proofObserveUID, manual.proofPlanUID = observe.uid, plan.uid
+	s.manualSQLControls = []operationSQLClient{
+		{resourceUID: string(schema.UID), jobUID: observe.uid, podUID: observe.result.podUID, operation: "observe"},
+		{resourceUID: string(schema.UID), jobUID: plan.uid, podUID: plan.result.podUID, operation: "plan"},
+	}
 	f.waitForManualDriftContract(manual.schema, manual.approval, operationID, manual.originalPlanUID,
 		old.Spec.ActualStateFingerprint, manual.observeBefore)
 	current := f.schema(manual.schema)
@@ -1212,6 +1220,13 @@ func (f *faultRun) closingHistory() {
 	}
 	f.waitForAuditComplete()
 	f.recordJobsForParent()
+	if s.manualSQL == nil || len(s.manualSQLControls) != 2 {
+		f.fatalf("manual drift lost its SQL window or recovery result controls")
+	}
+	f.retainSchemaSQLWatch(s.manualSQL)
+	s.manualSQL.assertStale(f.schema(manual.schema), operationSQLClient{
+		resourceUID: string(s.manualSQL.resourceUID), jobUID: s.manualJobUID, podUID: s.manualPodUID, operation: "apply",
+	}, s.manualSQLControls...)
 	f.logf("PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, " +
 		"uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms")
 }

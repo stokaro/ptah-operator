@@ -218,8 +218,8 @@ The tests require every declaration to have a witness. They also reject differen
 lock identities/timeouts, broader SQL, these validation queries attributed to
 Observe or Apply, and the fresh Apply's actual DDL attributed to Plan. These CLI
 readings support the audit predicate; they do not prove the Kubernetes approval
-and recovery sequence. The AB-04 runtime refusal windows still need their own
-statement-level audit and final-candidate execution.
+and recovery sequence. The AB-04 runtime refusal windows now use the separate
+`stale-apply` permission below and still need final-candidate execution.
 
 The first capture attempt failed before SQL because a copied plan was unreadable
 by the unprivileged executor. A second completed capture used the CLI's default
@@ -227,3 +227,20 @@ lock timeout. Both remain private diagnostic records; the checked-in readings
 come from the third capture with the operator's explicit timeouts. Every attempt
 removed its own containers, anonymous volumes and network. The executor image
 belongs to the separate active data-plane run and was left intact.
+
+The `stale-apply` declarations cover exactly the queries observed in the two
+stale-plan journals: 40 PostgreSQL statement/parameter combinations and 29 MySQL
+command/statement combinations. Existing inspection and lock declarations gain
+that operation only where the stale-plan reading witnesses them. The only new
+statement is MySQL `SELECT GET_LOCK('ptah_schema_apply', 60)`, matching the
+Apply fixture's explicit lock timeout. It does not widen Plan's timeout.
+
+The runtime audit grants this permission only to the exact resource, Job and Pod
+whose result refused the approved stale plan. It requires received lock, column
+inspection and unlock executions from that Apply. Observe/Plan Jobs retain
+their own permissions and cannot supply the Apply's required evidence. Tests
+remove each execution from the actual journals, substitute each workload UID,
+change SQL/parameters and check the fresh Apply's actual column additions.
+Every permitted operation/statement pair still needs an actual pinned-source
+witness. This is evidence about the audit predicate; the Kubernetes scenarios
+remain unqualified until their final-candidate runs complete.

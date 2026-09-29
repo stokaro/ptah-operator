@@ -286,16 +286,26 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 					readings = append(readings, witness{variant + operation, operation, count})
 				}
 			}
-			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 43, "mysql": 17}[engine]})
+			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 43, "mysql": 17}[engine]},
+				witness{"drift-stale-apply", "stale-apply", map[string]int{"postgresql": 43, "mysql": 17}[engine]})
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)
+				acceptsActor, pg, my := schemaDiagnosticActor, policy.postgres, policy.mysql
+				if reading.operation == "stale-apply" {
+					actor.operation = "apply"
+					stale, err := newSchemaStaleSQL(policy, actor)
+					if err != nil {
+						t.Fatal(err)
+					}
+					acceptsActor, pg, my = stale.acceptsActor, stale.postgres, stale.mysql
+				}
 				clients := map[string]operationSQLClient{mysqlAuditHost: actor}
 				var counts map[string]int
 				if engine == "postgresql" {
-					counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, engine, reading.name), schemaAuditDatabase, clients, schemaDiagnosticActor,
+					counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, engine, reading.name), schemaAuditDatabase, clients, acceptsActor,
 						func(a operationSQLClient, sql, parameters string) bool {
-							seen[schemaSQLKey{a.operation, "query", sql, parameters}] = true
-							return policy.postgres(a, sql, parameters)
+							seen[schemaSQLKey{reading.operation, "query", sql, parameters}] = true
+							return pg(a, sql, parameters)
 						}, nil)
 				} else {
 					rows, parseErr := mysqlStatementJournal(schemaAuditReading(t, engine, reading.name))
@@ -303,10 +313,10 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 						t.Fatal(parseErr)
 					}
 					before := mysqlAuditBaseline()
-					counts, err = mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, true, schemaDiagnosticActor,
+					counts, err = mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, true, acceptsActor,
 						func(a operationSQLClient, command, sql, database string) bool {
-							seen[schemaSQLKey{a.operation, command, sql, ""}] = true
-							return policy.mysql(a, command, sql, database)
+							seen[schemaSQLKey{reading.operation, command, sql, ""}] = true
+							return my(a, command, sql, database)
 						})
 				}
 				if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != reading.count {
@@ -333,7 +343,17 @@ func TestSchemaSQLContractRefusesBroaderStatementsAndActors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		stale, err := newSchemaStaleSQL(policy, schemaAuditActor("apply"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		accepts := func(actor operationSQLClient, key schemaSQLKey) bool {
+			if key.operation == "stale-apply" {
+				if engine == "postgresql" {
+					return stale.postgres(actor, key.statement, key.parameters)
+				}
+				return stale.mysql(actor, key.command, key.statement, schemaAuditDatabase)
+			}
 			if engine == "postgresql" {
 				return policy.postgres(actor, key.statement, key.parameters)
 			}
@@ -341,6 +361,9 @@ func TestSchemaSQLContractRefusesBroaderStatementsAndActors(t *testing.T) {
 		}
 		for key := range policy.allowed {
 			actor := schemaAuditActor(key.operation)
+			if key.operation == "stale-apply" {
+				actor.operation = "apply"
+			}
 			if !accepts(actor, key) {
 				t.Fatal("declared diagnostic control refused")
 			}

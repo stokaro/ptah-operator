@@ -221,12 +221,7 @@ func (f *faultRun) assertColumn(engine, database, column string, expected int) {
 // nullability.
 func (f *faultRun) pgFingerprint(database string) string {
 	f.t.Helper()
-	return f.query("postgresql", database, `
-    SELECT md5(COALESCE(string_agg(
-      table_schema || '.' || table_name || '.' || column_name || ':' || data_type || ':' || is_nullable,
-      ',' ORDER BY table_schema, table_name, ordinal_position), ''))
-    FROM information_schema.columns
-    WHERE table_schema = 'public'`)
+	return f.query("postgresql", database, postgresSchemaFingerprintSQL)
 }
 
 // mysqlFingerprint is an MD5 of every column and index of the database.

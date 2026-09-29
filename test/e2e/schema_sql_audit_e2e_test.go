@@ -169,6 +169,20 @@ func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, o
 }
 
 func (w *schemaRefusalWindow) assert(resource *ptahv1alpha1.PtahSchema, controls ...operationSQLClient) {
+	w.assertSQL(resource, nil, controls...)
+}
+
+func (w *schemaRefusalWindow) assertStale(resource *ptahv1alpha1.PtahSchema, refused operationSQLClient, controls ...operationSQLClient) {
+	w.f.t.Helper()
+	if resource == nil || refused.resourceUID != string(resource.UID) {
+		w.f.fatalf("stale-plan SQL audit changed the refused resource identity")
+	}
+	stale, err := newSchemaStaleSQL(w.policy, refused)
+	w.f.check(err, "bind the stale-plan SQL exception to its refused Apply")
+	w.assertSQL(resource, stale, controls...)
+}
+
+func (w *schemaRefusalWindow) assertSQL(resource *ptahv1alpha1.PtahSchema, stale *schemaStaleSQL, controls ...operationSQLClient) {
 	w.f.t.Helper()
 	f := w.f
 	if resource == nil || resource.Name != w.name || resource.Namespace != f.in.TestNamespace || resource.UID == "" || (w.resourceUID != "" && resource.UID != w.resourceUID) {
@@ -177,17 +191,26 @@ func (w *schemaRefusalWindow) assert(resource *ptahv1alpha1.PtahSchema, controls
 	f.captureSchemaSQLInventory(w.name, w.inventory)
 	clients, err := w.inventory.clients(resource)
 	f.check(err, "bind schema refusal SQL to the exact resource Jobs and Pods")
+	acceptsActor, pg, my := schemaDiagnosticActor, w.policy.postgres, w.policy.mysql
+	var harnessRead func(string, string) bool
+	if stale != nil {
+		acceptsActor, pg, my = stale.acceptsActor, stale.postgres, stale.mysql
+		harnessRead = postgresSchemaDriftHarnessRead
+	}
 	var counts map[string]int
 	if w.audit.engine == "postgresql" {
 		w.audit.snapshot()
 		if len(w.pgBefore) == 0 || !bytes.HasPrefix(w.audit.pgPrefix, w.pgBefore) {
 			f.fatalf("schema refusal audit lost its original PostgreSQL journal")
 		}
-		counts, err = postgresStatementRefusalSQL(w.audit.pgPrefix[len(w.pgBefore):], w.database, clients, schemaDiagnosticActor, w.policy.postgres, nil)
+		counts, err = postgresStatementRefusalSQL(w.audit.pgPrefix[len(w.pgBefore):], w.database, clients, acceptsActor, pg, harnessRead)
 	} else {
-		counts, err = mysqlStatementRefusalSQL(w.mysqlBefore, w.audit.mysqlStatementSnapshot(), w.database, w.user, clients, w.unusedMySQLAccount, schemaDiagnosticActor, w.policy.mysql)
+		counts, err = mysqlStatementRefusalSQL(w.mysqlBefore, w.audit.mysqlStatementSnapshot(), w.database, w.user, clients, w.unusedMySQLAccount, acceptsActor, my)
 	}
 	f.check(err, "refuse SQL outside the exact schema diagnostic contract")
+	if stale != nil {
+		f.check(stale.complete(), "observe the refused Apply's exact lock, column read and unlock")
+	}
 	f.check(schemaRequiredSQLControls(clients, counts, controls), "observe SQL from every required diagnostic result")
 	hosts := make([]string, 0, len(counts))
 	for host := range counts {
@@ -195,9 +218,62 @@ func (w *schemaRefusalWindow) assert(resource *ptahv1alpha1.PtahSchema, controls
 	}
 	slices.Sort(hosts)
 	for _, host := range hosts {
-		actor := clients[host]
+		actor, found := clients[host]
+		if !found {
+			f.logf("SQL refusal audit: engine=%s harnessClient=%s allowedReadRecords=%d unauthorizedRecords=0", w.audit.engine, host, counts[host])
+			continue
+		}
 		f.logf("SQL refusal audit: engine=%s schemaUID=%s jobUID=%s podUID=%s operation=%s client=%s allowedDiagnosticRecords=%d unauthorizedRecords=0", w.audit.engine, actor.resourceUID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
 	}
 	w.audit.close()
 	w.resourceUID = resource.UID
+}
+
+// The harness has already changed the schema; status writes are held and the
+// old Apply either does not exist yet or is stopped by the scheduling barrier.
+// Keep the target credential unchanged across the old and replacement plans.
+func (f *faultRun) startSchemaDriftWindow(name, database, user string, audit *databaseSQLAudit, heldApplyUID string) *schemaRefusalWindow {
+	f.t.Helper()
+	resource := f.schema(name)
+	if audit.started || !f.rbac.paused || resource.UID == "" {
+		f.fatalf("schema drift SQL audit needs an identified resource under the status-write barrier")
+	}
+	active := resource.Status.ActiveOperation
+	if heldApplyUID == "" && active != nil || heldApplyUID != "" && (active == nil || string(active.JobUID) != heldApplyUID || active.Type != ptahv1alpha1.OperationApply) {
+		f.fatalf("schema drift SQL audit lost the held Apply boundary")
+	}
+	policy, err := newSchemaSQLPolicy(audit.engine, database)
+	f.check(err, "load the stale-plan SQL contract")
+	excluded := slices.DeleteFunc(f.checkpointJobs(name, ""), func(uid string) bool { return uid == heldApplyUID })
+	w := &schemaRefusalWindow{f: f.dataPlane, name: name, database: database, user: user, audit: audit, policy: policy,
+		wait: f.waitForSchema, resourceUID: resource.UID,
+		inventory: &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}, excludedJobs: excluded},
+	}
+	if audit.engine == "mysql" {
+		if !mysqlAuditIdentifier.MatchString(user) || user == mysqlUser {
+			f.fatalf("schema drift SQL audit needs its dedicated target account")
+		}
+		w.mysqlBefore = audit.mysqlStatementSnapshot()
+	} else {
+		audit.snapshot()
+		w.pgBefore = audit.pgPrefix
+	}
+	f.captureSchemaSQLInventory(name, w.inventory)
+	return w
+}
+
+// A closed watch retains terminal identities even after Job TTL cleanup.
+// Records from the preceding initial-plan window remain explicitly excluded.
+func (f *faultRun) retainSchemaSQLWatch(w *schemaRefusalWindow) {
+	f.t.Helper()
+	for _, event := range f.jobs.snapshot() {
+		if event.Object.Labels[labelSchema] == w.name {
+			f.check(w.inventory.record([]batchv1.Job{*event.Object}, nil), "retain the schema SQL Job watch")
+		}
+	}
+	for _, event := range f.pods.snapshot() {
+		if event.Object.Labels[labelSchema] == w.name {
+			f.check(w.inventory.record(nil, []corev1.Pod{*event.Object}), "retain the schema SQL Pod watch")
+		}
+	}
 }
