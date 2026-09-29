@@ -1004,6 +1004,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 
 	evidence, err := r.terminalLogs(ctx, schema, job)
 	if err != nil {
+		if errors.Is(err, errResultReadCooling) {
+			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
+		}
 		if errors.Is(err, errTerminalPodPending) {
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}

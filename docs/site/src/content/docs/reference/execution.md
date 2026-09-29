@@ -123,15 +123,23 @@ at the duration the claim recorded -- for the verification after an Apply, the
 one `status.pendingObservation` copied from it -- and `activeDeadlineSeconds` can
 be raised afterwards without lengthening a Lease already held.
 
+A timed-out stream waits sixty seconds after the timeout before another read
+can start. The resource still reconciles every five seconds and renews its
+Lease during that pause. Job events cannot bypass the pause: it belongs to the
+Pod UID, so an independent resource or a replacement Pod can still read its
+own result. This gives independent Jobs time to finish and be harvested between
+blocking attempts. Several stalled Pods can still consume the family's worker;
+the pause bounds repeated attempts by one Pod, not the number of faulty nodes.
+
 A read that fails decides nothing by itself: the claim, the Lease and any
 record of an unresolved run are left exactly as they were, because a log this
 manager could not read says nothing about what the database now holds. A read
-that ran out of time, or failed in any other way that may pass, is requeued at
-a fixed short interval rather than raised as a reconcile error, because the
+that ran out of time, or failed in any other way that may pass, leaves its resource
+requeued at a fixed short interval rather than raising a reconcile error, because the
 queue's own backoff climbs past the headroom the deadline was chosen to leave,
 and a terminal Job produces no further event to bring the resource back with.
-It is reported as an Event -- `ResultReadTimedOut` or `ResultReadFailed` -- so
-it stays visible as the failure it is.
+Each failed attempt is reported as `ResultReadTimedOut` or `ResultReadFailed`.
+Polls that wait for the next attempt do not emit another failure Event.
 
 What ends the wait is the log being gone. Container garbage collection, a
 deleted node and a node that stays away all take the log while the Pod object,

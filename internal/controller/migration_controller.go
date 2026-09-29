@@ -741,6 +741,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	}
 	evidence, err := r.migrationTerminalLogs(ctx, migration, job)
 	if err != nil {
+		if errors.Is(err, errResultReadCooling) {
+			return ctrl.Result{RequeueAfter: resultReadRetryInterval}, nil
+		}
 		if errors.Is(err, errTerminalPodPending) {
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}

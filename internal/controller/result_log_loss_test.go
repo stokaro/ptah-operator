@@ -203,6 +203,58 @@ type failingLogs struct {
 	calls int
 }
 
+func TestATimedOutResultLeavesTimeForOtherJobsBetweenReads(t *testing.T) {
+	t.Parallel()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "apply-pod", UID: "apply-pod-uid"}}
+	start := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	failures := &resultLogFailures{}
+	reader := &failingLogs{err: context.DeadlineExceeded}
+	read := func(at time.Duration) error {
+		_, err := readResultLog(context.Background(), reader, failures, start.Add(at), 0, 0, pod)
+		return err
+	}
+	if err := read(0); !errors.Is(err, errResultReadRetry) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the first timeout was not reported: %v", err)
+	}
+	for _, at := range []time.Duration{5 * time.Second, 30 * time.Second, resultReadCooldown - time.Second} {
+		if err := read(at); !errors.Is(err, errResultReadCooling) || errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("a reconcile at %s did not wait quietly: %v", at, err)
+		}
+	}
+	if reader.calls != 1 {
+		t.Fatalf("the timed-out Pod started %d blocking reads during its pause", reader.calls)
+	}
+	// Pod identity, not a name or a namespace, owns the pause. Independent
+	// work and a replacement with the same name must still be able to read.
+	other := pod.DeepCopy()
+	other.UID = "replacement-pod-uid"
+	if logs, err := readResultLog(context.Background(), staticLogs{content: []byte("other")}, failures,
+		start.Add(5*time.Second), 0, 0, other); err != nil || string(logs) != "other" {
+		t.Fatalf("another Pod inherited the delay: %q %v", logs, err)
+	}
+	if logs, err := readResultLog(context.Background(), staticLogs{content: []byte("recovered")}, failures,
+		start.Add(resultReadCooldown+time.Second), 0, 0, pod); err != nil || string(logs) != "recovered" {
+		t.Fatalf("a recovered result was not read after the pause: %q %v", logs, err)
+	}
+	if len(failures.first) != 0 || len(failures.retryAt) != 0 {
+		t.Fatal("a successful read retained failure or retry state")
+	}
+}
+
+func TestResultReadPauseStartsAfterTheBlockingAttempt(t *testing.T) {
+	t.Parallel()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "apply-pod", UID: "apply-pod-uid"}}
+	start := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	failures := &resultLogFailures{}
+	if _, err := readResultLog(context.Background(), newStalledLogs(), failures, start, 40*time.Millisecond, 0, pod); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the stream did not time out: %v", err)
+	}
+	probe := &failingLogs{err: errors.New("the result was opened before its pause ended")}
+	if _, err := readResultLog(context.Background(), probe, failures, start.Add(resultReadCooldown+20*time.Millisecond), 0, 0, pod); !errors.Is(err, errResultReadCooling) || probe.calls != 0 {
+		t.Fatalf("the pause was dated before the read finished: calls=%d error=%v", probe.calls, err)
+	}
+}
+
 func (l *failingLogs) Read(context.Context, string, string, string) ([]byte, error) {
 	l.calls++
 	return nil, l.err

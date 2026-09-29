@@ -52,6 +52,13 @@ const resultLogLossWindow = 2 * defaultResultReadTimeout
 // resultLogLossWindow. The pass is requeued and nothing is decided.
 var errResultReadRetry = errors.New("the result log could not be read yet")
 
+// A timed-out stream must leave the worker available long enough for another
+// resource to create, finish and harvest its Jobs. Reconcile still runs every
+// five seconds to renew the Lease; only the next blocking read is delayed.
+const resultReadCooldown = defaultResultReadTimeout
+
+var errResultReadCooling = errors.New("the timed-out result read is waiting before its next attempt")
+
 // resultLogLost is a result log this manager will not read again. It is a
 // missing frame, so errors.Is reports runner.ErrFrameNotFound, and it keeps the
 // read error that decided it.
@@ -133,8 +140,9 @@ func classifyResultLogError(err error) resultLogFailure {
 // that Pod's executor log. It is the only clock resultLogLossWindow is measured
 // on, and it is kept in memory on purpose; see resultLogLossWindow.
 type resultLogFailures struct {
-	mu    sync.Mutex
-	first map[types.UID]time.Time
+	mu      sync.Mutex
+	first   map[types.UID]time.Time
+	retryAt map[types.UID]time.Time
 }
 
 // resultLogFailuresMade guards making a reconciler's resultLogFailures on first
@@ -165,6 +173,7 @@ func (f *resultLogFailures) failingFor(pod types.UID, now time.Time) time.Durati
 	for uid, first := range f.first {
 		if now.Sub(first) > 10*resultLogLossWindow {
 			delete(f.first, uid)
+			delete(f.retryAt, uid)
 		}
 	}
 	first, seen := f.first[pod]
@@ -179,6 +188,26 @@ func (f *resultLogFailures) forget(pod types.UID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.first, pod)
+	delete(f.retryAt, pod)
+}
+
+func (f *resultLogFailures) cooling(pod types.UID, now time.Time) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if now.Before(f.retryAt[pod]) {
+		return true
+	}
+	delete(f.retryAt, pod)
+	return false
+}
+
+func (f *resultLogFailures) coolUntil(pod types.UID, until time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.retryAt == nil {
+		f.retryAt = map[types.UID]time.Time{}
+	}
+	f.retryAt[pod] = until
 }
 
 // readResultLog reads a terminal executor's log and decides what a failure to
@@ -196,6 +225,13 @@ func readResultLog(
 	timeout, budget time.Duration,
 	pod *corev1.Pod,
 ) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if failures.cooling(pod.UID, now) {
+		return nil, errResultReadCooling
+	}
+	started := time.Now()
 	logs, err := readOperationResult(ctx, reader, timeout, budget, pod.Namespace, pod.Name, executorContainerName)
 	if err == nil {
 		failures.forget(pod.UID)
@@ -213,6 +249,11 @@ func readResultLog(
 		if elapsed := failures.failingFor(pod.UID, now); elapsed >= resultLogLossWindow {
 			failures.forget(pod.UID)
 			return nil, &resultLogLost{cause: err, failingFor: elapsed}
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			// now belongs to the reconciler's clock and precedes the read. Add
+			// its elapsed duration so the pause starts after the timeout.
+			failures.coolUntil(pod.UID, now.Add(time.Since(started)+resultReadCooldown))
 		}
 		return nil, fmt.Errorf("%w: %w", errResultReadRetry, err)
 	default:
