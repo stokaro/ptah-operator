@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-29T19:39:03+00:00",
-  "profileSourceCommit": "61e02f9fd7e3c633fb4986e849f702fa2c517faa",
+  "frozenAt": "2026-09-29T19:49:49+00:00",
+  "profileSourceCommit": "b36a8bae37960f46038c4b65529b7de3e31bf070",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "dd20c7b23d58987834aa0bd6230aa28675b80e38194b3e0006befbe24f17796f",
-    "generatedFromCommit": "61e02f9fd7e3c633fb4986e849f702fa2c517faa",
+    "sha256": "95f8f9e8e46e3528234c14bc385a24f93c46837cd06c86fe3ee2c5478f18f7ba",
+    "generatedFromCommit": "b36a8bae37960f46038c4b65529b7de3e31bf070",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 5,
+  "revision": 6,
   "supersedes": {
-    "freezeCommit": "5c090926dfaa0a0b8506e0c0694098e2bf8c3dcc",
-    "sha256": "04714ccf8f0e3a3d746ad1aa70c9dbc907ec7245a37e58ef9828fce96365f698"
+    "freezeCommit": "f85cffaa98006997b7b0d01e43b6f11c149cc447",
+    "sha256": "e9893d70daae9109586be5021449a5f18a3a601a47adc2d03eb96faa04b2f778"
   },
-  "revisionReason": "Implement the existing Q-02/AB-06 destructive-permission edit window for both schema engines. The declared data-plane scenario revokes an admitted destructive decision, verifies no Apply and unchanged populated data, then executes a fresh decision with received-SQL and preserved-row controls. Exclusion edits and refusal-side statement auditing remain open. Operating, alert, RPO/RTO and platform targets are unchanged. Preserve prior results; the added scenario requires execution on the updated source."
+  "revisionReason": "Implement the remaining exclusion-edit window in the existing Q-02/AB-06 requirement for both schema engines. The declared data-plane scenario excludes a populated table after admission, requires its DROP to disappear from the native plan while the managed column addition remains, and audits the fresh Apply with both rows preserved. Refusal-side statement auditing and final-identity execution remain required. Operating, alert, RPO/RTO and platform targets are unchanged; preserve prior results."
 }
