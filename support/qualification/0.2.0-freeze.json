@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-29T19:25:06+00:00",
-  "profileSourceCommit": "cf737b4836784c5c0ffd751aaafa32b96b1ddef8",
+  "frozenAt": "2026-09-29T19:39:03+00:00",
+  "profileSourceCommit": "61e02f9fd7e3c633fb4986e849f702fa2c517faa",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "dfc624819e9b46f06691cfe10e7ea5529832c4f0995637ec5eba83b7aea1eaeb",
-    "generatedFromCommit": "cf737b4836784c5c0ffd751aaafa32b96b1ddef8",
+    "sha256": "dd20c7b23d58987834aa0bd6230aa28675b80e38194b3e0006befbe24f17796f",
+    "generatedFromCommit": "61e02f9fd7e3c633fb4986e849f702fa2c517faa",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 4,
+  "revision": 5,
   "supersedes": {
-    "freezeCommit": "2099fc68fad042db27276aec926929785406c50e",
-    "sha256": "775288ee694fc74240da8b686f2f9f9f8259f29fd89e3b13933ea1402cd96a3a"
+    "freezeCommit": "5c090926dfaa0a0b8506e0c0694098e2bf8c3dcc",
+    "sha256": "04714ccf8f0e3a3d746ad1aa70c9dbc907ec7245a37e58ef9828fce96365f698"
   },
-  "revisionReason": "Implement the existing Q-02/AB-02 artifact-replacement proof between admitted approval and dispatch for both migration engines, and add SQL-audited fresh-approval controls for artifact, policy and transaction-mode changes. The generated scenario inventory includes the new artifact row. Operating, alert, RPO/RTO and platform targets are unchanged. Preserve prior results; the added scenarios require execution on the updated source."
+  "revisionReason": "Implement the existing Q-02/AB-06 destructive-permission edit window for both schema engines. The declared data-plane scenario revokes an admitted destructive decision, verifies no Apply and unchanged populated data, then executes a fresh decision with received-SQL and preserved-row controls. Exclusion edits and refusal-side statement auditing remain open. Operating, alert, RPO/RTO and platform targets are unchanged. Preserve prior results; the added scenario requires execution on the updated source."
 }
