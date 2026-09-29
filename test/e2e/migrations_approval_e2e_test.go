@@ -8,6 +8,9 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -81,6 +84,21 @@ func (m *migrationRun) approvalInputChange(field string) {
 	database := "ptah_e2e_" + strings.ReplaceAll(suffix, "-", "_")
 	secret := "e2e-" + m.engine.name + "-" + suffix + "-db"
 	m.isolatedDatabase(database, secret)
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	var beforeRefusal []byte
+	if m.engine.name == "postgresql" {
+		audit.snapshot()
+		beforeRefusal = audit.pgPrefix
+	}
+	inventory := &migrationSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}}
+	waitForDecision := func(description string, match func(*ptahv1alpha1.PtahMigration) bool) *ptahv1alpha1.PtahMigration {
+		return m.waitForMigration(name, description, migrationPoll, func(resource *ptahv1alpha1.PtahMigration) bool {
+			if m.engine.name == "postgresql" {
+				m.captureMigrationSQLInventory(name, inventory)
+			}
+			return match(resource)
+		})
+	}
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: name, secret: secret, reference: reference,
 		coordinationKey: "e2e/" + suffix + "/" + m.engine.name,
@@ -91,7 +109,7 @@ func (m *migrationRun) approvalInputChange(field string) {
 			}
 		},
 	}))
-	before := m.waitForMigration(name, "a plan awaiting approval", migrationPoll,
+	before := waitForDecision("a plan awaiting approval",
 		func(resource *ptahv1alpha1.PtahMigration) bool {
 			return resource.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval &&
 				resource.Status.ActiveOperation == nil && resource.Status.Plan != nil
@@ -125,7 +143,7 @@ func (m *migrationRun) approvalInputChange(field string) {
 		m.fatalf("%s input edit did not change its generation", name)
 	}
 	m.check(barrier.resume(m.ctx), "resume reconciliation with the changed input")
-	refused := m.waitForMigration(name, "the changed input to invalidate the approved plan", migrationPoll,
+	refused := waitForDecision("the changed input to invalidate the approved plan",
 		func(resource *ptahv1alpha1.PtahMigration) bool {
 			return changedMigrationApprovalRefused(resource, oldPlan.UID, changed.Generation, field == "policy")
 		})
@@ -152,7 +170,7 @@ func (m *migrationRun) approvalInputChange(field string) {
 			"apply": "OnApproval", "lockTimeout": "45s",
 		}}})
 		generation := m.migration(name).Generation
-		refused = m.waitForMigration(name, "a fresh plan under the restored approval gate", migrationPoll,
+		refused = waitForDecision("a fresh plan under the restored approval gate",
 			func(resource *ptahv1alpha1.PtahMigration) bool {
 				return changedMigrationApprovalRefused(resource, oldPlan.UID, generation, false)
 			})
@@ -160,8 +178,10 @@ func (m *migrationRun) approvalInputChange(field string) {
 	}
 	m.assertNoNewApplyJob(nil, "before the fresh approval", name)
 	m.assertDatabaseUnmigrated(name, database)
-	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
 	beforeApply := audit.snapshot()
+	if m.engine.name == "postgresql" {
+		m.assertPostgresMigrationRefusalSQL(audit, beforeRefusal, database, refused, inventory)
+	}
 	m.check(m.approve(name+"-current", name, newPlan.Name, string(newPlan.UID), newPlan.Spec.Fingerprint),
 		"approve the changed input")
 	converged := m.waitForGenerationInSync(name)
