@@ -302,6 +302,7 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"migration-policy",
 		"postgresql-migrations",
+		"approval-resource-replacement",
 		"approval-policy-change",
 		"approval-transaction-mode-change",
 		"approval-artifact-change",
@@ -323,6 +324,7 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"migration-policy",
 		"mysql-transaction-mode",
 		"mysql-migrations",
+		"approval-resource-replacement",
 		"approval-policy-change",
 		"approval-transaction-mode-change",
 		"approval-artifact-change",

@@ -60,7 +60,7 @@ func (m *migrationRun) assertPostgresMigrationRefusalSQL(audit *databaseSQLAudit
 	m.reportMigrationRefusalSQL(migration, clients, counts)
 }
 
-func (inventory *migrationSQLInventory) clients(migration *ptahv1alpha1.PtahMigration) (map[string]migrationSQLClient, error) {
+func (inventory *migrationSQLInventory) clients(migration *ptahv1alpha1.PtahMigration, predecessors ...*ptahv1alpha1.PtahMigration) (map[string]migrationSQLClient, error) {
 	jobs, pods := make([]batchv1.Job, 0, len(inventory.jobs)), make([]corev1.Pod, 0, len(inventory.pods))
 	for _, job := range inventory.jobs {
 		jobs = append(jobs, job)
@@ -68,7 +68,7 @@ func (inventory *migrationSQLInventory) clients(migration *ptahv1alpha1.PtahMigr
 	for _, pod := range inventory.pods {
 		pods = append(pods, pod)
 	}
-	return migrationSQLClients(migration, jobs, pods)
+	return migrationSQLClients(migration, jobs, pods, predecessors...)
 }
 
 func (m *migrationRun) assertMySQLMigrationRefusalSQL(audit *databaseSQLAudit, before []mysqlStatementRecord, database, user string, migration *ptahv1alpha1.PtahMigration, inventory *migrationSQLInventory) {
@@ -114,7 +114,7 @@ func (m *migrationRun) reportMigrationRefusalSQL(migration *ptahv1alpha1.PtahMig
 		}
 		actor := clients[host]
 		m.logf("SQL refusal audit: engine=%s migrationUID=%s jobUID=%s podUID=%s operation=%s client=%s allowedDiagnosticRecords=%d unauthorizedRecords=0",
-			m.engine.name, migration.UID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
+			m.engine.name, actor.migrationUID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
 	}
 }
 

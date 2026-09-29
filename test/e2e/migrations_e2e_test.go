@@ -71,6 +71,10 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		struct {
 			name string
 			body func()
+		}{"approval-resource-replacement", m.approvalIdentityReplacement},
+		struct {
+			name string
+			body func()
 		}{"approval-policy-change", func() { m.approvalInputChange("policy") }},
 		struct {
 			name string

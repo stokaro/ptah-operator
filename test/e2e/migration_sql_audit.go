@@ -11,17 +11,28 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
 type migrationSQLClient struct {
 	jobUID, podUID, operation string
+	migrationUID              string
 }
 
-func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.Job, pods []corev1.Pod) (map[string]migrationSQLClient, error) {
+// A replacement proof may retain the terminal workloads of explicitly named
+// predecessors. Names alone never authorize attribution to another UID.
+func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.Job, pods []corev1.Pod, predecessors ...*ptahv1alpha1.PtahMigration) (map[string]migrationSQLClient, error) {
 	if migration == nil || migration.UID == "" || migration.Name == "" || migration.Namespace == "" {
 		return nil, errors.New("SQL audit has no migration identity")
+	}
+	identities := map[string]bool{string(migration.UID): true}
+	for _, previous := range predecessors {
+		if previous == nil || previous.UID == "" || previous.Name != migration.Name || previous.Namespace != migration.Namespace || identities[string(previous.UID)] {
+			return nil, errors.New("SQL audit needs distinct same-name replacement identities")
+		}
+		identities[string(previous.UID)] = true
 	}
 	clients := make(map[string]migrationSQLClient)
 	for _, pod := range pods {
@@ -45,8 +56,18 @@ func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.J
 				owner = job
 			}
 		}
-		if owner == nil || owner.Namespace != migration.Namespace || owner.Labels[labelMigration] != migration.Name ||
-			!ownedExactlyOnce(owner.OwnerReferences, ptahSchemaAPIVersion, "PtahMigration", migration.Name, migration.UID) ||
+		resourceUID := ""
+		if owner != nil {
+			for uid := range identities {
+				if ownedExactlyOnce(owner.OwnerReferences, ptahSchemaAPIVersion, "PtahMigration", migration.Name, types.UID(uid)) {
+					if resourceUID != "" {
+						return nil, errors.New("SQL audit Job has ambiguous migration ownership")
+					}
+					resourceUID = uid
+				}
+			}
+		}
+		if owner == nil || owner.Namespace != migration.Namespace || owner.Labels[labelMigration] != migration.Name || resourceUID == "" ||
 			owner.Labels[labelOperation] == "" || owner.Labels[labelOperation] != pod.Labels[labelOperation] {
 			return nil, errors.New("SQL audit cannot bind the Pod and Job to the exact migration")
 		}
@@ -54,7 +75,7 @@ func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.J
 		if _, exists := clients[host]; exists {
 			return nil, errors.New("SQL audit cannot distinguish Pods that shared an address")
 		}
-		clients[host] = migrationSQLClient{jobUID: string(owner.UID), podUID: string(pod.UID), operation: owner.Labels[labelOperation]}
+		clients[host] = migrationSQLClient{jobUID: string(owner.UID), podUID: string(pod.UID), operation: owner.Labels[labelOperation], migrationUID: resourceUID}
 	}
 	if len(clients) == 0 {
 		return nil, errors.New("SQL audit found no identified operation clients")

@@ -163,7 +163,7 @@ func TestMigrationSQLClientsRequireTheExactOwnershipChain(t *testing.T) {
 		OwnerReferences: []metav1.OwnerReference{owner("batch/v1", "Job", "history", "job-uid")}},
 		Status: corev1.PodStatus{Phase: corev1.PodSucceeded, PodIP: "10.244.3.97"}}
 	clients, err := migrationSQLClients(migration, []batchv1.Job{job}, []corev1.Pod{pod})
-	if err != nil || clients["10.244.3.97"] != (migrationSQLClient{jobUID: "job-uid", podUID: "pod-uid", operation: "history"}) {
+	if err != nil || clients["10.244.3.97"] != (migrationSQLClient{jobUID: "job-uid", podUID: "pod-uid", operation: "history", migrationUID: "resource-uid"}) {
 		t.Fatalf("valid ownership chain: %v %v", clients, err)
 	}
 	for name, mutate := range map[string]func(*batchv1.Job, *corev1.Pod){
