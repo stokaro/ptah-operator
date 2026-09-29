@@ -751,7 +751,7 @@ validation. Ordinary workload creators cannot use missing or copied labels or
 extra owner references to gain operation admission; matching requests enter
 the rule, and the handler rejects foreign or ambiguous ownership.
 
-## Webhook certificate lifecycle
+## Webhook certificate lifecycle {#webhook-certificate-lifecycle}
 
 For a chart-generated webhook Secret, the chart stores `tls.crt`, `tls.key`,
 `ca.crt`, and `ca.key` and schedules a separate certificate rotator. The

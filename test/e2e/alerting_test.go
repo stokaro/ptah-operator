@@ -789,7 +789,7 @@ func TestAlReportLines(t *testing.T) {
 	}
 }
 
-// Both runbook links the phase follows resolve to a heading on the page the
+// The runbook links the phase follows resolve to a heading on the page the
 // chart's base names.
 func TestAlRunbookAnchors(t *testing.T) {
 	t.Parallel()
@@ -797,7 +797,7 @@ func TestAlRunbookAnchors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, anchor := range []string{"unresolved-gauges", "resource-state"} {
+	for _, anchor := range []string{"unresolved-gauges", "resource-state", "webhook-certificate-lifecycle"} {
 		if !alRunbookAnchor(page, anchor) {
 			t.Errorf("the operations page has no {#%s} heading", anchor)
 		}
