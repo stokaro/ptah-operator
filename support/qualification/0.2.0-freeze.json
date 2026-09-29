@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-29T20:07:09+00:00",
-  "profileSourceCommit": "8be66a65fb7643a874f60870afcd61fcaf8b909b",
+  "frozenAt": "2026-09-29T21:27:38+00:00",
+  "profileSourceCommit": "4b0dc0f14e6ed48da33897f215a186149b4fd81d",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "b9c1800a9b3e1f0a5c4152f1aad4e2223a0080c089b94373146ab2eae420cff0",
-    "generatedFromCommit": "8be66a65fb7643a874f60870afcd61fcaf8b909b",
+    "sha256": "5b06f64c8cc4616d01dc738966f6508a2988084f380b24853e24afe42445ca08",
+    "generatedFromCommit": "4b0dc0f14e6ed48da33897f215a186149b4fd81d",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 7,
+  "revision": 8,
   "supersedes": {
-    "freezeCommit": "d9adfae6eb76639569c175a1c95d3598fdce1e36",
-    "sha256": "89a0ca7231772df4b1186e6144a5f9ef35063829acb4ffdafbdb2b825f83a75b"
+    "freezeCommit": "6a0b15c28242684c082398fce3553f520be6f390",
+    "sha256": "22a9924ea9052b19ddbc41bfc5d8600e8860688e08cd01261f61185cb6f0a88f"
   },
-  "revisionReason": "Implement the existing Q-02/AB-08 verification-policy replacement proof for both families and engines. A same-name ConfigMap replacement preserves selected policy bytes but changes its UID without changing the resource generation; a selected-key edit changes policy bytes while preserving the immutable ConfigMap UID. Each scenario refuses the obsolete approval and audits the fresh authorized Apply. Refusal-side statement auditing and final-identity execution remain required. Operating, alert, RPO/RTO and platform targets are unchanged; preserve prior results."
+  "revisionReason": "Implement the existing Q-02/AB-01 migration identity requirement for both engines. The approval-resource-replacement scenario keeps the old admitted approval while replacing a migration under the same name, refuses old resource/plan UID and fingerprint substitutions, audits SQL across both resource lifetimes, and executes a fresh matching approval. The corresponding schema proof and final-identity runtime execution remain required. The 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
 }
