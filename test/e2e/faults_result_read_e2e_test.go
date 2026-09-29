@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -32,6 +33,9 @@ func (f *faultRun) hungResultRead(engine, node string) {
 	name, healthy := "e2e-schema-hung-"+engine, "e2e-schema-progress-"+engine
 	database, healthyDB := "e2e_schema_hung", "e2e_schema_progress"
 	secret, healthySecret := name+"-db", healthy+"-db"
+	// Reaching post-Apply convergence proves the accepted name ceiling also
+	// fits the generated Jobs, Pods, their labels and their result bindings.
+	name += strings.Repeat("x", 63-len(name))
 	f.createDatabase(engine, database, secret)
 	f.createDatabase(engine, healthyDB, healthySecret)
 	kind, reference := "PostgreSQL", f.pgReference
@@ -45,7 +49,7 @@ func (f *faultRun) hungResultRead(engine, node string) {
 	plan := f.schemaPlan(f.waitForPlan(name))
 	f.waitForPlan(healthy)
 	f.startReadBarrier()
-	f.createApproval(name, name+"-approval")
+	f.createApproval(name, "e2e-schema-hung-approval-"+engine)
 	claimed := f.waitForSchema(name, "an Apply held before the result-read fault", applyDispatched)
 	active := claimed.Status.ActiveOperation.DeepCopy()
 	f.assertReadBlocked(string(active.JobUID), "the schema Apply before its log response is replaced")
@@ -125,5 +129,5 @@ func (f *faultRun) hungResultRead(engine, node string) {
 		f.fatalf("schema result recovery replayed the Apply")
 	}
 	f.assertColumn(engine, database, "fault_token", 1)
-	f.logf("PASS %s schema result read canceled in %s; independent convergence within 180s; original claim and Lease retained; recovery without replay", engine, duration)
+	f.logf("PASS %s 63-byte schema name: result read canceled in %s; independent convergence within 180s; original claim and Lease retained; recovery without replay", engine, duration)
 }

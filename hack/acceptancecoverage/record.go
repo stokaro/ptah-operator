@@ -100,8 +100,10 @@ var requirements = []requirement{
 			"and a realm claim made from a namespace the PtahRealm does not list, by an author the API server will not let write the realm, " +
 			"refused alone while the listed claimant keeps running, in `test/e2e/migrations_realm_e2e_test.go`, " +
 			"and the documented diagnostic and plan-reviewer Roles reading real pending and applied SQL " +
-			"in `test/e2e/dataplane_readers_e2e_test.go`",
-		"accepted values at the size and name limits"},
+			"in `test/e2e/dataplane_readers_e2e_test.go`, API storage at the size and name limits " +
+			"in `test/envtest/crd/limits_test.go`, and 63-byte resource names reaching Apply and recovery " +
+			"in both families' hung-result scenarios",
+		""},
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",
 		"the upgrade and uninstall phases in `test/e2e/lifecycle_phases_e2e_test.go`, " +
