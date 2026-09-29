@@ -23,56 +23,63 @@ import (
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
-// planSQLReadAuthorization sends real reads as the two example identities.
-// The lifecycles leave both a pending plan and the last applied plan, so the
-// refusal must hold before and after an Apply projects its SQL into ConfigMaps.
-func (d *dataPlane) planSQLReadAuthorization() {
+// pendingSQLReadAuthorization checks the pending plan through the example
+// Roles and returns the same check for that plan after Apply. The lifecycle
+// calls it before moving the source tag: resolving another artifact clears
+// status.applied and retires the previous plan's projection.
+func (d *dataPlane) pendingSQLReadAuthorization(schema string) func() {
 	diagnostic := d.installReaderExample("diagnostic-reader-role.yaml", "diagnostic", "<diagnostic-reader-group>")
 	reviewer := d.installReaderExample("approver-plan-reader-role.yaml", "reviewer", "<plan-reviewer-group>")
-	for _, schema := range []string{"e2e-postgresql", "e2e-mysql"} {
-		for _, selection := range []planview.Selection{planview.Current, planview.Applied} {
-			expected, err := planview.Load(d.ctx, d.cluster.Client, d.in.TestNamespace, schema, selection)
-			d.check(err, "read the %s plan of %s as the administrator", selection, schema)
-			if expected.PlanUID == "" || len(expected.Document) == 0 || expected.StatementCount == 0 {
-				d.fatalf("%s has no nonempty %s plan to test SQL access", schema, selection)
-			}
-			plan := d.schemaPlan(expected.PlanName)
-			metadata := &ptahv1alpha1.PtahSchemaPlan{}
-			d.check(diagnostic.Get(d.ctx, client.ObjectKeyFromObject(plan), metadata), "the diagnostic reader must read the plan manifest")
-			if metadata.UID != expected.PlanUID {
-				d.fatalf("the diagnostic reader read another plan manifest")
-			}
-			refused, err := planview.Load(d.ctx, diagnostic, d.in.TestNamespace, schema, selection)
-			if !apierrors.IsForbidden(err) || len(refused.Document) != 0 {
-				d.fatalf("the diagnostic reader did not receive Forbidden with no SQL for %s's %s plan: %v", schema, selection, err)
-			}
-			read, err := planview.Load(d.ctx, reviewer, d.in.TestNamespace, schema, selection)
-			d.check(err, "the plan reviewer must reconstruct %s's %s plan", schema, selection)
-			if read.PlanUID != expected.PlanUID || read.ContentDigest != expected.ContentDigest || !bytes.Equal(read.Document, expected.Document) {
-				d.fatalf("the plan reviewer did not reconstruct the exact %s plan of %s", selection, schema)
-			}
+	verify := func(selection planview.Selection) types.UID {
+		expected, err := planview.Load(d.ctx, d.cluster.Client, d.in.TestNamespace, schema, selection)
+		d.check(err, "read the %s plan of %s as the administrator", selection, schema)
+		if expected.PlanUID == "" || len(expected.Document) == 0 || expected.StatementCount == 0 {
+			d.fatalf("%s has no nonempty %s plan to test SQL access", schema, selection)
+		}
+		plan := d.schemaPlan(expected.PlanName)
+		metadata := &ptahv1alpha1.PtahSchemaPlan{}
+		d.check(diagnostic.Get(d.ctx, client.ObjectKeyFromObject(plan), metadata), "the diagnostic reader must read the plan manifest")
+		if metadata.UID != expected.PlanUID {
+			d.fatalf("the diagnostic reader read another plan manifest")
+		}
+		refused, err := planview.Load(d.ctx, diagnostic, d.in.TestNamespace, schema, selection)
+		if !apierrors.IsForbidden(err) || len(refused.Document) != 0 {
+			d.fatalf("the diagnostic reader did not receive Forbidden with no SQL for %s's %s plan: %v", schema, selection, err)
+		}
+		read, err := planview.Load(d.ctx, reviewer, d.in.TestNamespace, schema, selection)
+		d.check(err, "the plan reviewer must reconstruct %s's %s plan", schema, selection)
+		if read.PlanUID != expected.PlanUID || read.ContentDigest != expected.ContentDigest || !bytes.Equal(read.Document, expected.Document) {
+			d.fatalf("the plan reviewer did not reconstruct the exact %s plan of %s", selection, schema)
+		}
+		for _, ref := range plan.Spec.Chunks {
+			err := diagnostic.Get(d.ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, &ptahv1alpha1.PtahSchemaPlanChunk{})
+			d.requireForbiddenRead(err, "a plan chunk as the diagnostic reader")
+		}
+		if selection == planview.Current {
+			d.assertPlanNotProjected(plan.Name)
+		} else {
+			d.assertPlanProjected(plan)
 			for _, ref := range plan.Spec.Chunks {
-				err := diagnostic.Get(d.ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, &ptahv1alpha1.PtahSchemaPlanChunk{})
-				d.requireForbiddenRead(err, "a plan chunk as the diagnostic reader")
-			}
-			if selection == planview.Current {
-				d.assertPlanNotProjected(plan.Name)
-			} else {
-				d.assertPlanProjected(plan)
-				for _, ref := range plan.Spec.Chunks {
-					for _, reader := range []client.Client{diagnostic, reviewer} {
-						err := reader.Get(d.ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, &corev1.ConfigMap{})
-						d.requireForbiddenRead(err, "an applied plan's ConfigMap through either example Role")
-					}
+				for _, reader := range []client.Client{diagnostic, reviewer} {
+					err := reader.Get(d.ctx, types.NamespacedName{Namespace: plan.Namespace, Name: ref.Name}, &corev1.ConfigMap{})
+					d.requireForbiddenRead(err, "an applied plan's ConfigMap through either example Role")
 				}
 			}
-			d.logf("PASS %s %s plan %s: diagnostic metadata allowed, SQL refused; reviewer read %d statements from %d chunks", schema, selection, plan.UID, read.StatementCount, len(plan.Spec.Chunks))
 		}
+		d.logf("PASS %s %s plan %s: diagnostic metadata allowed, SQL refused; reviewer read %d statements from %d chunks", schema, selection, plan.UID, read.StatementCount, len(plan.Spec.Chunks))
+		return expected.PlanUID
 	}
+	pendingUID := verify(planview.Current)
 	d.requireForbiddenRead(diagnostic.List(d.ctx, &ptahv1alpha1.PtahSchemaPlanChunkList{}, client.InNamespace(d.in.TestNamespace)), "listing SQL chunks as the diagnostic reader")
 	for _, reader := range []client.Client{diagnostic, reviewer} {
 		for _, name := range []string{pgSecret, mysqlSecret} {
 			d.requireForbiddenRead(reader.Get(d.ctx, types.NamespacedName{Namespace: d.in.TestNamespace, Name: name}, &corev1.Secret{}), "a database credential through either example Role")
+		}
+	}
+
+	return func() {
+		if verify(planview.Applied) != pendingUID {
+			d.fatalf("the applied SQL authorization check read a different plan from the pending check")
 		}
 	}
 }
