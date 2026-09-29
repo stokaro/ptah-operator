@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "release": "0.2.0",
+  "frozenAt": "2026-09-29T18:13:15+00:00",
+  "profileSourceCommit": "fc0eed62eb9936508bb4fbcfb18c2dfc7e404851",
+  "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
+  "decision": "Not assessed",
+  "sourceFiles": [
+    {
+      "path": "support/qualification/0.2.0.md",
+      "sha256": "2643ab8395f075798ecffede2488da483f391f37b6c8d147325dd8018475f219"
+    },
+    {
+      "path": "support/qualification/0.2.0-coverage.md",
+      "sha256": "e4ef3a564ec6e35e75935ec35351d82bd236cceb67e6e30220292d19e8ca6c33"
+    },
+    {
+      "path": "support/qualification/0.2.0-monitoring.yaml",
+      "sha256": "464b4352a25ecb1ed41379034d056056bb3744ade566f4b1938558b3cbc8ae65"
+    },
+    {
+      "path": "support/acceptance/0.2.0.json",
+      "sha256": "972430c03d9f557c505f4c60511cab4a0ed27e3f8720db023d8167e5e1d069ea"
+    },
+    {
+      "path": "support/kubernetes.json",
+      "sha256": "316c844dad7c04fb372b75fb9b3b9953b678bafaa944d79388cea3ca0bec0c18"
+    },
+    {
+      "path": "support/e2e-suites.json",
+      "sha256": "5da3d03c4eb62b1482208d818506a562574e5cef9f30e4ff2459f85fef9bdf4e"
+    },
+    {
+      "path": "support/ptah.json",
+      "sha256": "c7af39d043cfe038972ebf112225bd7e7be721c68e4cd8b5478aa2b7981472ab"
+    },
+    {
+      "path": "docs/site/src/content/docs/support/databases.md",
+      "sha256": "20d5cff4c9a2f9b0905f08e37ffb18e7abc6e1555addf39359dbd94c832fef56"
+    }
+  ],
+  "functionalMatrix": {
+    "path": "support/qualification/0.2.0-functional-matrix.md",
+    "sha256": "a069a169ae24ba3cd31932669673e2d4d0aec8e9591e8a5b1e3d180fd541e94e",
+    "generatedFromCommit": "fc0eed62eb9936508bb4fbcfb18c2dfc7e404851",
+    "command": "go run ./hack/acceptancecoverage",
+    "kubernetesMinors": [
+      "1.35",
+      "1.36",
+      "1.37"
+    ],
+    "runtimePlatforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "cellsPerPlatform": 15,
+    "requiredCells": 30,
+    "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient."
+  },
+  "publishedPredecessors": {
+    "checkedAt": "2026-09-29T18:13:15+00:00",
+    "repository": "stokaro/ptah-operator",
+    "releaseCount": 0,
+    "tagCount": 0,
+    "evidence": "Authenticated GitHub releases and tags API reads returned empty inventories before this freeze.",
+    "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
+  },
+  "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584."
+}
