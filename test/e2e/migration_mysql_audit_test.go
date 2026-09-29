@@ -31,8 +31,8 @@ func mysqlAuditBaseline() []mysqlStatementRecord {
 		Client: "root[root] @ localhost [127.0.0.1]", Command: "Query", ArgumentHex: hex.EncodeToString([]byte("SELECT 1"))}}
 }
 
-func mysqlAuditClients() map[string]migrationSQLClient {
-	return map[string]migrationSQLClient{mysqlAuditHost: {jobUID: "job", podUID: "pod", operation: "history"}}
+func mysqlAuditClients() map[string]operationSQLClient {
+	return map[string]operationSQLClient{mysqlAuditHost: {jobUID: "job", podUID: "pod", operation: "history"}}
 }
 
 func TestMySQLMigrationSQLAuditAcceptsActualHistory(t *testing.T) {
@@ -149,10 +149,10 @@ func TestMySQLMigrationSQLAuditRequiresCompleteSessions(t *testing.T) {
 			}
 		})
 	}
-	for _, actor := range []migrationSQLClient{
+	for _, actor := range []operationSQLClient{
 		{jobUID: "job", podUID: "pod", operation: "apply"}, {podUID: "pod", operation: "history"}, {jobUID: "job", operation: "history"},
 	} {
-		if _, err := mysqlMigrationRefusalSQL(before, append(slices.Clone(before), rows...), mysqlAuditDatabase, mysqlAuditUser, map[string]migrationSQLClient{mysqlAuditHost: actor}); err == nil {
+		if _, err := mysqlMigrationRefusalSQL(before, append(slices.Clone(before), rows...), mysqlAuditDatabase, mysqlAuditUser, map[string]operationSQLClient{mysqlAuditHost: actor}); err == nil {
 			t.Fatal("incomplete Job/Pod/operation binding passed")
 		}
 	}

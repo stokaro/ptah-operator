@@ -44,17 +44,17 @@ func migrationIdentityApprovalRefusal(err error, reason string) bool {
 
 // Both resource lifetimes must produce observed History SQL. This prevents
 // an empty replacement inventory from making the old resource its control.
-func migrationReplacementSQLControls(clients map[string]migrationSQLClient, counts map[string]int, oldUID, currentUID string) error {
+func migrationReplacementSQLControls(clients map[string]operationSQLClient, counts map[string]int, oldUID, currentUID string) error {
 	if oldUID == "" || currentUID == "" || oldUID == currentUID {
 		return errors.New("SQL controls have no distinct migration identities")
 	}
 	seen := map[string]bool{}
 	for host, actor := range clients {
-		if actor.migrationUID != oldUID && actor.migrationUID != currentUID {
+		if actor.resourceUID != oldUID && actor.resourceUID != currentUID {
 			return errors.New("SQL control belongs to an undeclared migration")
 		}
 		if counts[host] > 0 && actor.operation == "history" && actor.jobUID != "" && actor.podUID != "" {
-			seen[actor.migrationUID] = true
+			seen[actor.resourceUID] = true
 		}
 	}
 	if !seen[oldUID] || !seen[currentUID] {

@@ -29,7 +29,7 @@ func TestPostgresMigrationSQLAuditAcceptsOnlyTheHistoryContract(t *testing.T) {
 	t.Parallel()
 	raw := postgresMigrationAuditReading(t)
 	const database, host = "ptah_e2e_retarget", "10.244.3.97"
-	clients := map[string]migrationSQLClient{host: {jobUID: "job", podUID: "pod", operation: "history"}}
+	clients := map[string]operationSQLClient{host: {jobUID: "job", podUID: "pod", operation: "history"}}
 	counts, err := postgresMigrationRefusalSQL(raw, database, clients)
 	if err != nil || counts[host] != 17 || len(counts) != 1 {
 		t.Fatalf("actual History reading: counts=%v error=%v", counts, err)
@@ -85,7 +85,7 @@ func TestPostgresMigrationSQLAuditRequiresCompleteAttribution(t *testing.T) {
 	t.Parallel()
 	raw := postgresMigrationAuditReading(t)
 	const database, host = "ptah_e2e_retarget", "10.244.3.97"
-	clients := map[string]migrationSQLClient{host: {jobUID: "job", podUID: "pod", operation: "history"}}
+	clients := map[string]operationSQLClient{host: {jobUID: "job", podUID: "pod", operation: "history"}}
 	for name, broken := range map[string][]byte{
 		"empty":                  nil,
 		"truncated":              append(append([]byte{}, raw...), []byte(`{"message":`)...),
@@ -103,13 +103,13 @@ func TestPostgresMigrationSQLAuditRequiresCompleteAttribution(t *testing.T) {
 			}
 		})
 	}
-	for _, actor := range []migrationSQLClient{
+	for _, actor := range []operationSQLClient{
 		{jobUID: "job", podUID: "pod", operation: "apply"},
 		{jobUID: "job", podUID: "pod", operation: "verify"},
 		{jobUID: "", podUID: "pod", operation: "history"},
 		{jobUID: "job", podUID: "", operation: "history"},
 	} {
-		if _, err := postgresMigrationRefusalSQL(raw, database, map[string]migrationSQLClient{host: actor}); err == nil {
+		if _, err := postgresMigrationRefusalSQL(raw, database, map[string]operationSQLClient{host: actor}); err == nil {
 			t.Fatal("unattributed or unauthorized operation SQL passed")
 		}
 	}
@@ -129,7 +129,7 @@ func TestPostgresMigrationSQLAuditRequiresCompleteAttribution(t *testing.T) {
 func TestPostgresMigrationSQLAuditBoundsHarnessReads(t *testing.T) {
 	t.Parallel()
 	raw := postgresMigrationAuditReading(t)
-	clients := map[string]migrationSQLClient{"10.244.3.97": {jobUID: "job", podUID: "pod", operation: "history"}}
+	clients := map[string]operationSQLClient{"10.244.3.97": {jobUID: "job", podUID: "pod", operation: "history"}}
 	const row = `{"dbname":"ptah_e2e_retarget","remote_host":"127.0.0.1","message":"statement: SELECT count(*) FROM schema_migrations"}`
 	counts, err := postgresMigrationRefusalSQL(append(append([]byte{}, raw...), row...), "ptah_e2e_retarget", clients)
 	if err != nil || counts["127.0.0.1"] != 1 || counts["10.244.3.97"] != 17 {
@@ -163,7 +163,7 @@ func TestMigrationSQLClientsRequireTheExactOwnershipChain(t *testing.T) {
 		OwnerReferences: []metav1.OwnerReference{owner("batch/v1", "Job", "history", "job-uid")}},
 		Status: corev1.PodStatus{Phase: corev1.PodSucceeded, PodIP: "10.244.3.97"}}
 	clients, err := migrationSQLClients(migration, []batchv1.Job{job}, []corev1.Pod{pod})
-	if err != nil || clients["10.244.3.97"] != (migrationSQLClient{jobUID: "job-uid", podUID: "pod-uid", operation: "history", migrationUID: "resource-uid"}) {
+	if err != nil || clients["10.244.3.97"] != (operationSQLClient{jobUID: "job-uid", podUID: "pod-uid", operation: "history", resourceUID: "resource-uid"}) {
 		t.Fatalf("valid ownership chain: %v %v", clients, err)
 	}
 	for name, mutate := range map[string]func(*batchv1.Job, *corev1.Pod){

@@ -4,8 +4,6 @@ package e2e
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"slices"
 	"time"
 
@@ -60,7 +58,7 @@ func (m *migrationRun) assertPostgresMigrationRefusalSQL(audit *databaseSQLAudit
 	m.reportMigrationRefusalSQL(migration, clients, counts)
 }
 
-func (inventory *migrationSQLInventory) clients(migration *ptahv1alpha1.PtahMigration, predecessors ...*ptahv1alpha1.PtahMigration) (map[string]migrationSQLClient, error) {
+func (inventory *migrationSQLInventory) clients(migration *ptahv1alpha1.PtahMigration, predecessors ...*ptahv1alpha1.PtahMigration) (map[string]operationSQLClient, error) {
 	jobs, pods := make([]batchv1.Job, 0, len(inventory.jobs)), make([]corev1.Pod, 0, len(inventory.pods))
 	for _, job := range inventory.jobs {
 		jobs = append(jobs, job)
@@ -100,7 +98,7 @@ func (m *migrationRun) assertRestoredHistoryRefusalSQL(audit *databaseSQLAudit, 
 	m.reportMigrationRefusalSQL(migration, clients, counts)
 }
 
-func (m *migrationRun) reportMigrationRefusalSQL(migration *ptahv1alpha1.PtahMigration, clients map[string]migrationSQLClient, counts map[string]int) {
+func (m *migrationRun) reportMigrationRefusalSQL(migration *ptahv1alpha1.PtahMigration, clients map[string]operationSQLClient, counts map[string]int) {
 	m.t.Helper()
 	hosts := make([]string, 0, len(counts))
 	for host := range counts {
@@ -114,7 +112,7 @@ func (m *migrationRun) reportMigrationRefusalSQL(migration *ptahv1alpha1.PtahMig
 		}
 		actor := clients[host]
 		m.logf("SQL refusal audit: engine=%s migrationUID=%s jobUID=%s podUID=%s operation=%s client=%s allowedDiagnosticRecords=%d unauthorizedRecords=0",
-			m.engine.name, actor.migrationUID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
+			m.engine.name, actor.resourceUID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
 	}
 }
 
@@ -127,24 +125,14 @@ func (m *migrationRun) isolatedMySQLAuditDatabase(database, secret string) strin
 	if m.engine.name != "mysql" || !mysqlAuditIdentifier.MatchString(database) || len(database) > 64 {
 		m.fatalf("MySQL approval audit requires a controlled database name")
 	}
-	var identity [8]byte
-	if _, err := rand.Read(identity[:]); err != nil {
-		m.fatalf("could not allocate an isolated MySQL audit account")
-	}
-	user := "audit_" + hex.EncodeToString(identity[:])
 	if m.databaseExists(database) != "0" {
 		m.fatalf("MySQL approval audit database already exists; rerun through the phase cleanup")
 	}
 	if _, err := m.serverStatement("CREATE DATABASE " + database); err != nil {
 		m.fatalf("could not create the isolated MySQL audit database")
 	}
-	script := `credential=$(printf '%s' "$MYSQL_PASSWORD" | sed "s/'/''/g")
-printf "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\nGRANT ALL PRIVILEGES ON %s.* TO '%s'@'%%';\n" "$1" "$credential" "$2" "$1" |
-MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot >/dev/null`
-	if _, _, err := m.kubectl("-n", m.in.TestNamespace, "exec", "deployment/"+m.engine.service, "--",
-		"sh", "-ec", script, "sh", user, database); err != nil {
-		m.fatalf("could not create the isolated MySQL audit account")
-	}
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: "mysql"}
+	user := audit.createMySQLAccount(database)
 	url := m.databaseURL(database, user)
 	m.protect(url)
 	m.check(m.apply(map[string]any{

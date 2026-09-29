@@ -8,7 +8,7 @@ type migrationRefusalSQL struct {
 	lock, selection, unlock bool
 }
 
-func (r *migrationRefusalSQL) acceptsActor(actor migrationSQLClient) bool {
+func (r *migrationRefusalSQL) acceptsActor(actor operationSQLClient) bool {
 	return actor.jobUID != "" && actor.podUID != "" &&
 		(actor.operation == "history" ||
 			(r.applyJobUID != "" && actor.jobUID == r.applyJobUID && actor.operation == "apply"))
@@ -18,7 +18,7 @@ func (r *migrationRefusalSQL) complete() bool {
 	return r.applyJobUID == "" || (r.lock && r.selection && r.unlock)
 }
 
-func (r *migrationRefusalSQL) postgres(actor migrationSQLClient, statement, parameters string) bool {
+func (r *migrationRefusalSQL) postgres(actor operationSQLClient, statement, parameters string) bool {
 	if postgresMigrationHistoryStatement(statement, parameters) {
 		return true
 	}
@@ -38,7 +38,7 @@ func (r *migrationRefusalSQL) postgres(actor migrationSQLClient, statement, para
 	return true
 }
 
-func (r *migrationRefusalSQL) mysql(actor migrationSQLClient, command, statement, database string) bool {
+func (r *migrationRefusalSQL) mysql(actor operationSQLClient, command, statement, database string) bool {
 	if mysqlMigrationHistoryStatement(command, statement, database) {
 		return true
 	}

@@ -16,14 +16,14 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
-type migrationSQLClient struct {
+type operationSQLClient struct {
 	jobUID, podUID, operation string
-	migrationUID              string
+	resourceUID               string
 }
 
 // A replacement proof may retain the terminal workloads of explicitly named
 // predecessors. Names alone never authorize attribution to another UID.
-func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.Job, pods []corev1.Pod, predecessors ...*ptahv1alpha1.PtahMigration) (map[string]migrationSQLClient, error) {
+func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.Job, pods []corev1.Pod, predecessors ...*ptahv1alpha1.PtahMigration) (map[string]operationSQLClient, error) {
 	if migration == nil || migration.UID == "" || migration.Name == "" || migration.Namespace == "" {
 		return nil, errors.New("SQL audit has no migration identity")
 	}
@@ -34,10 +34,14 @@ func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.J
 		}
 		identities[string(previous.UID)] = true
 	}
-	clients := make(map[string]migrationSQLClient)
+	return operationSQLClientsForIdentities(migration.Namespace, migration.Name, "PtahMigration", labelMigration, identities, jobs, pods)
+}
+
+func operationSQLClientsForIdentities(namespace, name, kind, resourceLabel string, identities map[string]bool, jobs []batchv1.Job, pods []corev1.Pod) (map[string]operationSQLClient, error) {
+	clients := make(map[string]operationSQLClient)
 	for _, pod := range pods {
-		if pod.Namespace != migration.Namespace || pod.Labels[labelMigration] != migration.Name || pod.UID == "" {
-			return nil, errors.New("SQL audit Pod belongs to another migration")
+		if pod.Namespace != namespace || pod.Labels[resourceLabel] != name || pod.UID == "" {
+			return nil, errors.New("SQL audit Pod belongs to another resource")
 		}
 		if pod.Status.PodIP == "" {
 			continue // No address to attribute; any received SQL still needs a client below.
@@ -59,23 +63,23 @@ func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.J
 		resourceUID := ""
 		if owner != nil {
 			for uid := range identities {
-				if ownedExactlyOnce(owner.OwnerReferences, ptahSchemaAPIVersion, "PtahMigration", migration.Name, types.UID(uid)) {
+				if ownedExactlyOnce(owner.OwnerReferences, ptahSchemaAPIVersion, kind, name, types.UID(uid)) {
 					if resourceUID != "" {
-						return nil, errors.New("SQL audit Job has ambiguous migration ownership")
+						return nil, errors.New("SQL audit Job has ambiguous resource ownership")
 					}
 					resourceUID = uid
 				}
 			}
 		}
-		if owner == nil || owner.Namespace != migration.Namespace || owner.Labels[labelMigration] != migration.Name || resourceUID == "" ||
+		if owner == nil || owner.Namespace != namespace || owner.Labels[resourceLabel] != name || resourceUID == "" ||
 			owner.Labels[labelOperation] == "" || owner.Labels[labelOperation] != pod.Labels[labelOperation] {
-			return nil, errors.New("SQL audit cannot bind the Pod and Job to the exact migration")
+			return nil, errors.New("SQL audit cannot bind the Pod and Job to the exact resource")
 		}
 		host := address.Unmap().String()
 		if _, exists := clients[host]; exists {
 			return nil, errors.New("SQL audit cannot distinguish Pods that shared an address")
 		}
-		clients[host] = migrationSQLClient{jobUID: string(owner.UID), podUID: string(pod.UID), operation: owner.Labels[labelOperation], migrationUID: resourceUID}
+		clients[host] = operationSQLClient{jobUID: string(owner.UID), podUID: string(pod.UID), operation: owner.Labels[labelOperation], resourceUID: resourceUID}
 	}
 	if len(clients) == 0 {
 		return nil, errors.New("SQL audit found no identified operation clients")
@@ -88,16 +92,35 @@ func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.J
 // SQL from an operation other than History fail even if the database is equal.
 // The caller supplies the complete append-only journal window, bounded before
 // approval and after the replacement plan reaches its approval gate.
-func postgresMigrationRefusalSQL(raw []byte, database string, clients map[string]migrationSQLClient) (map[string]int, error) {
+func postgresMigrationRefusalSQL(raw []byte, database string, clients map[string]operationSQLClient) (map[string]int, error) {
 	return postgresMigrationRefusalSQLForJob(raw, database, clients, "")
 }
 
-func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[string]migrationSQLClient, refusedApplyJobUID string) (map[string]int, error) {
+func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[string]operationSQLClient, refusedApplyJobUID string) (map[string]int, error) {
+	refusal := migrationRefusalSQL{applyJobUID: refusedApplyJobUID}
+	counts, err := postgresStatementRefusalSQL(raw, database, clients, refusal.acceptsActor, refusal.postgres,
+		func(statement, parameters string) bool {
+			return postgresMigrationHarnessRead(statement, parameters) ||
+				(refusedApplyJobUID != "" && postgresMigrationRestoreHarnessRead(statement, parameters))
+		})
+	if err != nil {
+		return nil, err
+	}
+	if !refusal.complete() {
+		return nil, errors.New("PostgreSQL refusal did not record the exact Apply's lock, unresolved-history read and unlock")
+	}
+	return counts, nil
+}
+
+func postgresStatementRefusalSQL(raw []byte, database string, clients map[string]operationSQLClient,
+	acceptsActor func(operationSQLClient) bool,
+	acceptsSQL func(operationSQLClient, string, string) bool,
+	harnessRead func(string, string) bool,
+) (map[string]int, error) {
 	if database == "" || len(clients) == 0 {
-		return nil, errors.New("migration SQL audit needs an isolated database and identified clients")
+		return nil, errors.New("SQL audit needs an isolated database and identified clients")
 	}
 	counts := make(map[string]int)
-	refusal := migrationRefusalSQL{applyJobUID: refusedApplyJobUID}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	records := 0
 	for {
@@ -140,6 +163,11 @@ func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[
 			return nil, errors.New("PostgreSQL statement has no database identity")
 		}
 		if row.Database != database {
+			if address, err := netip.ParseAddr(row.Host); err == nil {
+				if _, identified := clients[address.Unmap().String()]; identified {
+					return nil, errors.New("identified SQL audit client reached an undeclared database")
+				}
+			}
 			continue
 		}
 		address, err := netip.ParseAddr(row.Host)
@@ -147,18 +175,17 @@ func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[
 			return nil, errors.New("isolated-database SQL has no numeric client address")
 		}
 		host := address.Unmap().String()
-		if host == "127.0.0.1" && (postgresMigrationHarnessRead(statement, row.Detail) ||
-			(refusedApplyJobUID != "" && postgresMigrationRestoreHarnessRead(statement, row.Detail))) {
+		if host == "127.0.0.1" && harnessRead != nil && harnessRead(statement, row.Detail) {
 			counts[host]++
 			continue
 		}
 		client, found := clients[host]
-		if !found || !refusal.acceptsActor(client) {
+		if !found || !acceptsActor(client) {
 			return nil, fmt.Errorf("isolated-database SQL record %d has no authorized diagnostic Job and Pod", records)
 		}
-		if !refusal.postgres(client, statement, row.Detail) {
+		if !acceptsSQL(client, statement, row.Detail) {
 			// Do not include SQL or parameters: either can contain credentials.
-			return nil, fmt.Errorf("isolated-database SQL record %d is outside the permitted history diagnostics", records)
+			return nil, fmt.Errorf("isolated-database SQL record %d is outside the permitted diagnostics", records)
 		}
 		counts[host]++
 	}
@@ -173,9 +200,6 @@ func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[
 	}
 	if operatorRecords == 0 {
 		return nil, errors.New("PostgreSQL refusal window did not observe its diagnostic control")
-	}
-	if !refusal.complete() {
-		return nil, errors.New("PostgreSQL refusal did not record the exact Apply's lock, unresolved-history read and unlock")
 	}
 	return counts, nil
 }

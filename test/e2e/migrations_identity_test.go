@@ -115,9 +115,9 @@ func TestMigrationIdentityRefusalNamesTheIntendedAdmissionGuard(t *testing.T) {
 
 func TestReplacementSQLRequiresBothResourceControls(t *testing.T) {
 	t.Parallel()
-	clients := map[string]migrationSQLClient{
-		"10.1.1.1": {migrationUID: "old", jobUID: "job-old", podUID: "pod-old", operation: "history"},
-		"10.1.1.2": {migrationUID: "current", jobUID: "job-current", podUID: "pod-current", operation: "history"},
+	clients := map[string]operationSQLClient{
+		"10.1.1.1": {resourceUID: "old", jobUID: "job-old", podUID: "pod-old", operation: "history"},
+		"10.1.1.2": {resourceUID: "current", jobUID: "job-current", podUID: "pod-current", operation: "history"},
 	}
 	counts := map[string]int{"10.1.1.1": 17, "10.1.1.2": 17}
 	if err := migrationReplacementSQLControls(clients, counts, "old", "current"); err != nil {
@@ -128,11 +128,11 @@ func TestReplacementSQLRequiresBothResourceControls(t *testing.T) {
 			t.Fatal("missing control SQL passed")
 		}
 	}
-	for _, actor := range []migrationSQLClient{
-		{migrationUID: "unknown", jobUID: "job", podUID: "pod", operation: "history"},
-		{migrationUID: "current", podUID: "pod", operation: "history"},
-		{migrationUID: "current", jobUID: "job", operation: "history"},
-		{migrationUID: "current", jobUID: "job", podUID: "pod", operation: "apply"},
+	for _, actor := range []operationSQLClient{
+		{resourceUID: "unknown", jobUID: "job", podUID: "pod", operation: "history"},
+		{resourceUID: "current", podUID: "pod", operation: "history"},
+		{resourceUID: "current", jobUID: "job", operation: "history"},
+		{resourceUID: "current", jobUID: "job", podUID: "pod", operation: "apply"},
 	} {
 		clients["10.1.1.2"] = actor
 		if migrationReplacementSQLControls(clients, counts, "old", "current") == nil {
@@ -156,7 +156,7 @@ func TestReplacementSQLClientsKeepBothExactOwnershipChains(t *testing.T) {
 		jobs, pods = append(jobs, job), append(pods, pod)
 	}
 	clients, err := migrationSQLClients(current, jobs, pods, old)
-	if err != nil || len(clients) != 2 || clients["10.1.1.1"].migrationUID != string(old.UID) || clients["10.1.1.2"].migrationUID != string(current.UID) {
+	if err != nil || len(clients) != 2 || clients["10.1.1.1"].resourceUID != string(old.UID) || clients["10.1.1.2"].resourceUID != string(current.UID) {
 		t.Fatalf("replacement attribution: %v %v", clients, err)
 	}
 	if _, err := migrationSQLClients(current, jobs, pods); err == nil {

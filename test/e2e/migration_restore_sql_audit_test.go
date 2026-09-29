@@ -22,8 +22,8 @@ func restoreAuditReading(t *testing.T, engine string) []byte {
 	return raw
 }
 
-func restoreAuditClients() map[string]migrationSQLClient {
-	return map[string]migrationSQLClient{mysqlAuditHost: {jobUID: "refused-job", podUID: "refused-pod", operation: "apply"}}
+func restoreAuditClients() map[string]operationSQLClient {
+	return map[string]operationSQLClient{mysqlAuditHost: {jobUID: "refused-job", podUID: "refused-pod", operation: "apply"}}
 }
 
 func TestPostgresRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
@@ -39,14 +39,14 @@ func TestPostgresRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
 		}
 	}
 	clients := restoreAuditClients()
-	clients[mysqlAuditHost] = migrationSQLClient{jobUID: "refused-job", podUID: "pod", operation: "history"}
+	clients[mysqlAuditHost] = operationSQLClient{jobUID: "refused-job", podUID: "pod", operation: "history"}
 	if _, err := postgresMigrationRefusalSQLForJob(raw, restoreAuditDatabase, clients, "refused-job"); err == nil {
 		t.Fatal("History inherited the Apply's coordination exception")
 	}
 	// The later History uses the narrower diagnostic contract in the same
 	// refusal window. Its SQL cannot supply the refused Apply's lock evidence.
 	clients = restoreAuditClients()
-	clients["10.244.3.97"] = migrationSQLClient{jobUID: "history", podUID: "history-pod", operation: "history"}
+	clients["10.244.3.97"] = operationSQLClient{jobUID: "history", podUID: "history-pod", operation: "history"}
 	history := bytes.ReplaceAll(postgresMigrationAuditReading(t), []byte("ptah_e2e_retarget"), []byte(restoreAuditDatabase))
 	counts, err = postgresMigrationRefusalSQLForJob(append(bytes.Clone(raw), history...), restoreAuditDatabase, clients, "refused-job")
 	if err != nil || counts[mysqlAuditHost] != 25 || counts["10.244.3.97"] != 17 {
@@ -128,7 +128,7 @@ func TestMySQLRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
 		}
 	}
 	clients := restoreAuditClients()
-	clients[mysqlAuditHost] = migrationSQLClient{jobUID: "refused-job", podUID: "pod", operation: "history"}
+	clients[mysqlAuditHost] = operationSQLClient{jobUID: "refused-job", podUID: "pod", operation: "history"}
 	if _, err := mysqlMigrationRefusalSQLForJob(before, after, restoreAuditDatabase, mysqlAuditUser, clients, "refused-job"); err == nil {
 		t.Fatal("History inherited the Apply's coordination exception")
 	}

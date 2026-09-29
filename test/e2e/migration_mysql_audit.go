@@ -107,11 +107,27 @@ func mysqlStatementIdentity(value string) (login, account, host string, err erro
 	return login, account, host, nil
 }
 
-func mysqlMigrationRefusalSQL(before, after []mysqlStatementRecord, database, user string, clients map[string]migrationSQLClient) (map[string]int, error) {
+func mysqlMigrationRefusalSQL(before, after []mysqlStatementRecord, database, user string, clients map[string]operationSQLClient) (map[string]int, error) {
 	return mysqlMigrationRefusalSQLForJob(before, after, database, user, clients, "")
 }
 
-func mysqlMigrationRefusalSQLForJob(before, after []mysqlStatementRecord, database, user string, clients map[string]migrationSQLClient, refusedApplyJobUID string) (map[string]int, error) {
+func mysqlMigrationRefusalSQLForJob(before, after []mysqlStatementRecord, database, user string, clients map[string]operationSQLClient, refusedApplyJobUID string) (map[string]int, error) {
+	refusal := migrationRefusalSQL{applyJobUID: refusedApplyJobUID}
+	counts, err := mysqlStatementRefusalSQL(before, after, database, user, clients, refusedApplyJobUID == "", refusal.acceptsActor, refusal.mysql)
+	if err != nil {
+		return nil, err
+	}
+	if !refusal.complete() {
+		return nil, errors.New("MySQL refusal did not record the exact Apply's lock, unresolved-history read and unlock")
+	}
+	return counts, nil
+}
+
+func mysqlStatementRefusalSQL(before, after []mysqlStatementRecord, database, user string, clients map[string]operationSQLClient,
+	requireUnusedAccount bool,
+	acceptsActor func(operationSQLClient) bool,
+	acceptsSQL func(operationSQLClient, string, string, string) bool,
+) (map[string]int, error) {
 	if !mysqlAuditIdentifier.MatchString(database) || len(database) > 64 ||
 		!mysqlAuditIdentifier.MatchString(user) || len(user) > 32 || len(clients) == 0 {
 		return nil, errors.New("MySQL refusal audit needs an isolated database, unique account and identified clients")
@@ -130,12 +146,11 @@ func mysqlMigrationRefusalSQLForJob(before, after []mysqlStatementRecord, databa
 		// A previous, unrelated Pod may have used this address before the
 		// window. The initial-decision audit needs an unused account; the
 		// restored-history window follows a deliberately successful seed run.
-		if err != nil || (refusedApplyJobUID == "" && (login == user || account == user)) {
+		if err != nil || (requireUnusedAccount && (login == user || account == user)) {
 			return nil, errors.New("MySQL refusal audit started after the isolated account was used")
 		}
 	}
 	counts := make(map[string]int)
-	refusal := migrationRefusalSQL{applyJobUID: refusedApplyJobUID}
 	connected, latest := make(map[uint64]string), make(map[uint64]string)
 	for index, row := range window {
 		login, account, host, relevant, err := scoped(row)
@@ -146,7 +161,7 @@ func mysqlMigrationRefusalSQLForJob(before, after []mysqlStatementRecord, databa
 			continue
 		}
 		actor, found := clients[host]
-		if !found || !refusal.acceptsActor(actor) || account != user {
+		if !found || !acceptsActor(actor) || account != user {
 			return nil, fmt.Errorf("MySQL SQL record %d has no authorized diagnostic Job, Pod and account", index+1)
 		}
 		if row.Time <= latest[row.Thread] {
@@ -179,27 +194,24 @@ func mysqlMigrationRefusalSQLForJob(before, after []mysqlStatementRecord, databa
 			}
 		case "Init DB":
 			if sql != database {
-				return nil, errors.New("MySQL History changed its selected database")
+				return nil, errors.New("MySQL diagnostic client changed its selected database")
 			}
 		case "Query", "Prepare", "Execute":
-			if !refusal.mysql(actor, row.Command, sql, database) {
-				return nil, fmt.Errorf("MySQL SQL record %d is outside the permitted history diagnostics", index+1)
+			if !acceptsSQL(actor, row.Command, sql, database) {
+				return nil, fmt.Errorf("MySQL SQL record %d is outside the permitted diagnostics", index+1)
 			}
 			if row.Command != "Prepare" {
 				counts[host]++
 			}
 		default:
-			return nil, errors.New("MySQL History sent an undeclared protocol command")
+			return nil, errors.New("MySQL diagnostic client sent an undeclared protocol command")
 		}
 	}
 	if len(counts) == 0 {
 		return nil, errors.New("MySQL refusal window did not observe its diagnostic control")
 	}
 	if len(connected) != 0 {
-		return nil, errors.New("MySQL refusal window ended with an open History connection")
-	}
-	if !refusal.complete() {
-		return nil, errors.New("MySQL refusal did not record the exact Apply's lock, unresolved-history read and unlock")
+		return nil, errors.New("MySQL refusal window ended with an open diagnostic connection")
 	}
 	return counts, nil
 }
