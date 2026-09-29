@@ -7,5 +7,5 @@ func changedSchemaApprovalRefused(resource *ptahv1alpha1.PtahSchema, oldPlan str
 	return oldPlan != "" && generation > 0 && resource.Generation == generation && status.ObservedGeneration == generation &&
 		status.ActiveOperation == nil && status.Plan != nil && status.Plan.Name != "" && status.Plan.UID != "" &&
 		string(status.Plan.UID) != oldPlan && status.Phase == ptahv1alpha1.PhaseAwaitingApproval &&
-		conditionIs(status.Conditions, "ApprovalRequired", "True", "PlanReady")
+		conditionStatus(status.Conditions, "ApprovalRequired", "True")
 }

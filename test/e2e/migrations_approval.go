@@ -18,5 +18,5 @@ func changedMigrationApprovalRefused(resource *ptahv1alpha1.PtahMigration, oldPl
 			conditionIs(status.Conditions, "Progressing", "False", "ApplyDisabled")
 	}
 	return status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval &&
-		conditionIs(status.Conditions, "ApprovalRequired", "True", "AwaitingApproval")
+		conditionStatus(status.Conditions, "ApprovalRequired", "True")
 }

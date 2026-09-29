@@ -1,6 +1,9 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,12 +57,23 @@ func TestChangedMigrationApprovalRequiresFreshEvidence(t *testing.T) {
 
 func TestChangedSchemaApprovalRequiresFreshEvidence(t *testing.T) {
 	t.Parallel()
+	// The policy-change row on Kubernetes 1.36, run 36566324443,
+	// job 109401378346. The controller had already replaced PlanReady with
+	// Waiting while the approval gate remained true.
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", "schema-approval-waiting-conditions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conditions []metav1.Condition
+	if err := json.Unmarshal(raw, &conditions); err != nil {
+		t.Fatal(err)
+	}
 	base := &ptahv1alpha1.PtahSchema{
 		ObjectMeta: metav1.ObjectMeta{Generation: 2},
 		Status: ptahv1alpha1.PtahSchemaStatus{
 			ObservedGeneration: 2, Phase: ptahv1alpha1.PhaseAwaitingApproval,
 			Plan:       &ptahv1alpha1.CurrentPlanStatus{Name: "new", UID: "new-uid"},
-			Conditions: []metav1.Condition{{Type: "ApprovalRequired", Status: metav1.ConditionTrue, Reason: "PlanReady"}},
+			Conditions: conditions,
 		},
 	}
 	if !changedSchemaApprovalRefused(base, "old-uid", 2) {
