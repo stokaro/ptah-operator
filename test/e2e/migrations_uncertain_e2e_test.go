@@ -640,7 +640,7 @@ func (m *migrationRun) assertLateDispatchNeverReachesTheDatabase(name, database,
 // one, whose plan approves [3] alone, and the gate holds the Apply Pod while
 // the database is restored to version 1. Released, the run selects [2 3], and
 // the row asserts that it ran none of it, that the resource says so by name,
-// and that the next plan asks for [2 3].
+// and that only a fresh approval of [2 3] resumes the migration.
 func (m *migrationRun) restoredHistoryProof() {
 	m.t.Helper()
 	name, database := "e2e-restore-"+m.engine.name, "ptah_e2e_restore"
@@ -659,7 +659,11 @@ func (m *migrationRun) restoredHistoryProof() {
 	}))
 	revisions := func() string { return m.query(restoreRevisionsQuery(m.engine.name), database) }
 	// Version 2, applied by the operator itself.
-	m.within(migrationPoll, func() bool { return restoreInSyncApplied(m.migration(name).Status) })
+	initial := m.waitForGenerationInSync(name)
+	if !restoreInSyncApplied(initial.Status) || initial.Status.LastRun.JobUID == "" {
+		m.fatalf("%s did not retain its initial successful Apply identity", name)
+	}
+	initialJobUID := string(initial.Status.LastRun.JobUID)
 	if applied := revisions(); applied != "1,2" {
 		m.reportGatedState(name, false)
 		m.fatalf("%s did not bring its database to version 2; it records [%s]", name, applied)
@@ -706,11 +710,33 @@ func (m *migrationRun) restoredHistoryProof() {
 	}
 	// And the resource asks again, for what the history now needs.
 	next := m.waitForRestorePlan(name, approved)
-	if versions := planVersionList(m.planOf(next)); versions != "2 3" {
+	fresh := m.planOf(next)
+	if versions := planVersionList(fresh); versions != "2 3" {
 		m.fatalf("after the restore %s asks to approve [%s], and the history needs [2 3]", name, versions)
 	}
+	m.assertNoNewApplyJob([]string{initialJobUID, jobUID}, "before fresh approval of the restored history", name)
+	if revisions() != "1" || m.widgetColumnCount("color", database) != "0" {
+		m.fatalf("%s changed the restored database while the fresh plan awaited approval", name)
+	}
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	beforeApply := audit.snapshot()
+	m.check(m.approve(name+"-current", name, fresh.Name, string(fresh.UID), fresh.Spec.Fingerprint),
+		"approve the plan for the restored history")
+	converged := m.waitForMigration(name, "a fresh successful Apply of the restored history", migrationPoll,
+		func(resource *ptahv1alpha1.PtahMigration) bool {
+			return restoredHistoryApplied(resource, initialJobUID, jobUID)
+		})
+	run := converged.Status.LastRun
+	audit.assertRecords(beforeApply, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": run.JobName}, string(run.JobUID)), true)
+	audit.close()
+	m.assertNoNewApplyJob([]string{initialJobUID, jobUID, string(run.JobUID)}, "after the restored history converged", name)
+	if revisions() != "1,2,3" || m.widgetColumnCount("color", database) != "1" ||
+		m.query("SELECT count(*) FROM e2e_migration_widgets", database) != "3" ||
+		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
+		m.fatalf("%s did not establish the approved schema, rows and history after restore", name)
+	}
 	m.closeApplyGate()
-	m.logf("PASS %s refused an approved [3] that a restored history turned into [2 3]", m.engine.kind)
+	m.logf("PASS %s refused the stale [3] decision, then applied [2 3] only after fresh approval of the restored history", m.engine.kind)
 }
 
 // waitForRestorePlan waits until the resource asks for a decision on a plan

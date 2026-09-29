@@ -238,6 +238,24 @@ func restoreInSyncApplied(status ptahv1alpha1.PtahMigrationStatus) bool {
 		status.LastRun.Outcome == ptahv1alpha1.MigrationRunOutcomeApplied
 }
 
+// restoredHistoryApplied cannot be satisfied by the initial [1 2] run or the
+// refused [3] run. The new decision must finish exactly the restored [2 3]
+// selection, with no work or unresolved evidence left in flight.
+func restoredHistoryApplied(resource *ptahv1alpha1.PtahMigration, initialJobUID, refusedJobUID string) bool {
+	if resource == nil || resource.Generation < 1 || initialJobUID == "" || refusedJobUID == "" || initialJobUID == refusedJobUID {
+		return false
+	}
+	status := resource.Status
+	if !restoreInSyncApplied(status) || status.ObservedGeneration != resource.Generation ||
+		status.ActiveOperation != nil || status.UnresolvedRun != nil {
+		return false
+	}
+	run := status.LastRun
+	return run.JobName != "" && run.JobUID != "" && string(run.JobUID) != initialJobUID && string(run.JobUID) != refusedJobUID &&
+		run.FinishedAt != nil && !run.FinishedAt.IsZero() && len(run.AppliedVersions) == 2 &&
+		slices.Contains(run.AppliedVersions, int64(2)) && slices.Contains(run.AppliedVersions, int64(3))
+}
+
 // decisionOnNewPlan is a migration asking for a decision on a plan other than
 // the previous one, and the plan. The condition is what is asserted: the phase
 // moves on every read the resource makes while it waits.

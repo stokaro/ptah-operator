@@ -617,6 +617,70 @@ func TestRestoreRefused(t *testing.T) {
 	}
 }
 
+func TestRestoredHistoryAppliedRequiresANewCompletedSelection(t *testing.T) {
+	t.Parallel()
+	settled := func() *ptahv1alpha1.PtahMigration {
+		return &ptahv1alpha1.PtahMigration{
+			ObjectMeta: metav1.ObjectMeta{Generation: 2},
+			Status: ptahv1alpha1.PtahMigrationStatus{
+				ObservedGeneration: 2,
+				Phase:              ptahv1alpha1.MigrationPhaseInSync,
+				LastRun: &ptahv1alpha1.MigrationRunStatus{
+					Outcome: ptahv1alpha1.MigrationRunOutcomeApplied, JobName: "fresh-apply", JobUID: "u-fresh",
+					AppliedVersions: []int64{2, 3}, FinishedAt: &muInstant,
+				},
+			},
+		}
+	}
+	if !restoredHistoryApplied(settled(), "u-initial", "u-refused") {
+		t.Fatal("the newly approved completed selection was refused")
+	}
+	reordered := settled()
+	reordered.Status.LastRun.AppliedVersions = []int64{3, 2}
+	if !restoredHistoryApplied(reordered, "u-initial", "u-refused") {
+		t.Fatal("the applied-version set was treated as an ordered sequence")
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigration){
+		"no generation":        func(m *ptahv1alpha1.PtahMigration) { m.Generation = 0 },
+		"stale generation":     func(m *ptahv1alpha1.PtahMigration) { m.Status.ObservedGeneration-- },
+		"not converged":        func(m *ptahv1alpha1.PtahMigration) { m.Status.Phase = ptahv1alpha1.MigrationPhaseApplying },
+		"no run":               func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun = nil },
+		"failed run":           func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeFailed },
+		"no Job name":          func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.JobName = "" },
+		"no Job UID":           func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.JobUID = "" },
+		"initial run":          func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.JobUID = "u-initial" },
+		"refused run":          func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.JobUID = "u-refused" },
+		"no completion time":   func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.FinishedAt = nil },
+		"zero completion time": func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.FinishedAt = &metav1.Time{} },
+		"initial selection":    func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = []int64{1, 2} },
+		"stale selection":      func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = []int64{3} },
+		"no applied versions":  func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = nil },
+		"extra version":        func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = []int64{1, 2, 3} },
+		"repeated version":     func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = []int64{2, 2} },
+		"active operation": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{}
+		},
+		"unresolved run": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.UnresolvedRun = &ptahv1alpha1.UnresolvedMigrationRunStatus{}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reading := settled()
+			mutate(reading)
+			if restoredHistoryApplied(reading, "u-initial", "u-refused") {
+				t.Fatal("accepted an invalid restored-history result")
+			}
+		})
+	}
+	if restoredHistoryApplied(nil, "u-initial", "u-refused") ||
+		restoredHistoryApplied(settled(), "", "u-refused") ||
+		restoredHistoryApplied(settled(), "u-initial", "") ||
+		restoredHistoryApplied(settled(), "same", "same") {
+		t.Fatal("accepted incomplete or ambiguous prior-run identities")
+	}
+}
+
 func TestRestoreRevisionsQuery(t *testing.T) {
 	t.Parallel()
 	if query := restoreRevisionsQuery("postgresql"); !strings.Contains(query, "string_agg(version::text, ','") {
