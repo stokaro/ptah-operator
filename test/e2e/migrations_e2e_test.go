@@ -75,7 +75,11 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		struct {
 			name string
 			body func()
-		}{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }})
+		}{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }},
+		struct {
+			name string
+			body func()
+		}{"approval-artifact-change", func() { m.approvalInputChange("artifact") }})
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return

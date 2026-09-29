@@ -43,18 +43,38 @@ func (m *migrationRun) statusBarrier() *controllerStatusBarrier {
 }
 
 // approvalInputChange proves that an admitted approval cannot survive a
-// policy edit before an Apply is dispatched. The status barrier leaves
+// policy or artifact edit before an Apply is dispatched. The status barrier leaves
 // admission available but prevents the controller from persisting a claim.
-// A fresh approval then executes the same artifact on the same database.
+// A fresh approval then executes the current artifact on the same database.
 func (m *migrationRun) approvalInputChange(field string) {
 	m.t.Helper()
+	var edit map[string]any
+	reference := m.reference("")
+	var oldDigest, newDigest string
+	switch field {
+	case "policy":
+		edit = map[string]any{"policy": map[string]any{"apply": "Never"}}
+	case "transaction-mode":
+		edit = map[string]any{"policy": map[string]any{"transactionMode": "none"}}
+	case "artifact":
+		reference = m.reference("-approval-artifact-original")
+		changedReference := m.reference("-approval-artifact-current")
+		oldDigest = m.publish("approval-artifact-original", m.fixtureDir("-older"), reference)
+		newDigest = m.publish("approval-artifact-current", m.fixtureDir(""), changedReference)
+		if oldDigest == newDigest {
+			m.fatalf("the approval artifact fixtures have the same digest")
+		}
+		edit = map[string]any{"artifact": map[string]any{"ociRef": changedReference}}
+	default:
+		m.fatalf("unsupported approval input change %q", field)
+	}
 	suffix := "approval-" + field
 	name := "e2e-" + suffix + "-" + m.engine.name
 	database := "ptah_e2e_" + strings.ReplaceAll(suffix, "-", "_")
 	secret := "e2e-" + m.engine.name + "-" + suffix + "-db"
 	m.isolatedDatabase(database, secret)
 	m.mustCreate(m.migrationDocument(migrationSpec{
-		name: name, secret: secret, reference: m.reference(""),
+		name: name, secret: secret, reference: reference,
 		coordinationKey: "e2e/" + suffix + "/" + m.engine.name,
 		apply:           "OnApproval", interval: "1h",
 	}))
@@ -75,11 +95,7 @@ func (m *migrationRun) approvalInputChange(field string) {
 		m.fatalf("%s claimed an operation before the input changed", name)
 	}
 	m.assertNoNewApplyJob(nil, "before the input changed", name)
-	policy := map[string]any{"transactionMode": "none"}
-	if field == "policy" {
-		policy = map[string]any{"apply": "Never"}
-	}
-	m.patchMigration(name, map[string]any{"spec": map[string]any{"policy": policy}})
+	m.patchMigration(name, map[string]any{"spec": edit})
 	changed := m.migration(name)
 	if changed.Generation <= before.Generation {
 		m.fatalf("%s input edit did not change its generation", name)
@@ -92,6 +108,11 @@ func (m *migrationRun) approvalInputChange(field string) {
 	newPlan := m.planOf(refused.Status.Plan.Name)
 	if newPlan.Spec.Fingerprint == oldPlan.Spec.Fingerprint {
 		m.fatalf("%s reused the fingerprint after changing %s", name, field)
+	}
+	if field == "artifact" {
+		if err := changedMigrationArtifactPlan(oldPlan, newPlan, oldDigest, newDigest); err != nil {
+			m.fatalf("%s did not bind a new decision to the changed artifact: %v", name, err)
+		}
 	}
 	m.assertNoNewApplyJob(nil, "under the obsolete approval", name)
 	m.assertDatabaseUnmigrated(name, database)
@@ -111,11 +132,23 @@ func (m *migrationRun) approvalInputChange(field string) {
 	}
 	m.assertNoNewApplyJob(nil, "before the fresh approval", name)
 	m.assertDatabaseUnmigrated(name, database)
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	beforeApply := audit.snapshot()
 	m.check(m.approve(name+"-current", name, newPlan.Name, string(newPlan.UID), newPlan.Spec.Fingerprint),
 		"approve the changed input")
-	m.waitForGenerationInSync(name)
-	if jobs := m.applyJobUIDs(name); len(jobs) != 1 {
+	converged := m.waitForGenerationInSync(name)
+	jobs := m.applyJobUIDs(name)
+	if len(jobs) != 1 {
 		m.fatalf("%s created %d Apply Jobs, want one after the fresh approval", name, len(jobs))
+	}
+	run := converged.Status.LastRun
+	if run == nil || string(run.JobUID) != jobs[0] || run.Outcome != ptahv1alpha1.MigrationRunOutcomeApplied {
+		m.fatalf("%s did not record its freshly approved Apply as successful", name)
+	}
+	audit.assertRecords(beforeApply, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": run.JobName}, string(run.JobUID)), true)
+	audit.close()
+	if history := m.query(restoreRevisionsQuery(m.engine.name), database); history != "1,2,3" {
+		m.fatalf("%s fresh approval did not record the complete current sequence", name)
 	}
 	if count := m.query("SELECT count(*) FROM e2e_migration_widgets", database); count != "3" {
 		m.fatalf("%s fresh approval did not seed exactly three rows: %s", name, count)
