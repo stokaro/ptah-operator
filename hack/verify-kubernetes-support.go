@@ -5284,7 +5284,9 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 // node is for their declarations in test/e2e/phases to say.
 func verifyE2ESuiteIsolationWorker(catalog e2eSuiteCatalog) error {
 	isolating := map[string]bool{}
+	preparesWithoutFaults := map[string]bool{}
 	for _, phase := range phases.All() {
+		preparesWithoutFaults[phase.Name] = phase.Preparation > 0
 		if phase.IsolatesNode {
 			isolating[phase.Name] = true
 		}
@@ -5294,8 +5296,13 @@ func verifyE2ESuiteIsolationWorker(catalog e2eSuiteCatalog) error {
 	}
 	for _, suite := range catalog.Suites {
 		var needs []string
-		for _, phase := range append(append([]string(nil), suite.Phases...), suite.Prepare...) {
+		for _, phase := range suite.Phases {
 			if isolating[phase] {
+				needs = append(needs, phase)
+			}
+		}
+		for _, phase := range suite.Prepare {
+			if isolating[phase] && !preparesWithoutFaults[phase] {
 				needs = append(needs, phase)
 			}
 		}

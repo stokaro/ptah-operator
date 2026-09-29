@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -19,6 +20,9 @@ func (m *migrationRun) hungResultReadProof() {
 	m.t.Helper()
 	r := &isolatedNodeRow{m: m, name: "e2e-hung-result-" + m.engine.name,
 		database: "ptah_e2e_hung_result", secret: "e2e-" + m.engine.name + "-hung-result-db", node: m.miIsolatedNode()}
+	// The admitted name ceiling must still produce valid Job labels and an
+	// executable path, through the recovery observation as well as Apply.
+	r.name += strings.Repeat("x", 63-len(r.name))
 	r.requireWorker()
 	m.isolatedDatabase(r.database, r.secret)
 	healthy := "e2e-result-progress-" + m.engine.name
@@ -47,7 +51,7 @@ func (m *migrationRun) hungResultReadProof() {
 	}
 	plan, healthyPlan := waitPlan(r.name), waitPlan(healthy)
 	m.closeApplyGate()
-	m.check(m.approve(r.name+"-approval", r.name, plan.Name, string(plan.UID), plan.Spec.Fingerprint), "approve the operation whose result will hang")
+	m.check(m.approve("e2e-migration-hung-approval-"+m.engine.name, r.name, plan.Name, string(plan.UID), plan.Spec.Fingerprint), "approve the operation whose result will hang")
 	r.waitForClaim()
 	r.findLease()
 	m.poll("the Apply Pod held off every node", time.Second, func() bool {
@@ -62,7 +66,8 @@ func (m *migrationRun) hungResultReadProof() {
 		r.pod, r.podUID = pods.Items[0].Name, string(pods.Items[0].UID)
 		return true
 	})
-	fault := m.startLogStall(r.pod)
+	fault := (&logStall{t: m.t, ctx: m.ctx, cluster: m.cluster, dockerContext: m.in.DockerContext,
+		node: m.miIsolatedNode(), workDir: m.workDir, namespace: m.in.TestNamespace, suffix: m.engine.name}).start(r.pod)
 	m.openApplyGate()
 	m.poll("a completed Apply and an unfinished result read", time.Second, func() bool {
 		job := &batchv1.Job{}
@@ -125,5 +130,5 @@ func (m *migrationRun) hungResultReadProof() {
 	if count := m.query("SELECT count(*) FROM e2e_migration_widgets", r.database); count != "3" {
 		m.fatalf("recovery replayed the Apply: %s rows", count)
 	}
-	m.logf("PASS %s unfinished result read canceled in %s; independent work converged within 180s; original Apply recovered without replay", m.engine.kind, duration)
+	m.logf("PASS %s 63-byte migration name: unfinished result read canceled in %s; independent work converged within 180s; original Apply recovered without replay", m.engine.kind, duration)
 }

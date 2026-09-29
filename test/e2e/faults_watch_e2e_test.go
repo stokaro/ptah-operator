@@ -281,6 +281,12 @@ func (f *faultRun) stopWatches() {
 // the exact resourceVersion the API server returned for that write: every
 // event before the write is then in the history a proof reads.
 func establishBarrier[T client.Object](f *faultRun, r *watchRecorder[T], object T, namespace, name string) {
+	establishBarrierWithPoll(f, r, object, namespace, name, f.poll)
+}
+
+// The hung-result row cannot run the credential audit while it waits for a
+// watch barrier: that audit would request the same deliberately stalled log.
+func establishBarrierWithPoll[T client.Object](f *faultRun, r *watchRecorder[T], object T, namespace, name string, poll func(string, func() bool)) {
 	f.t.Helper()
 	marker := fmt.Sprintf("fault-%s-%d-%d-%d", r.name, os.Getpid(), f.barrierSequence, time.Now().Unix())
 	f.barrierSequence++
@@ -288,7 +294,7 @@ func establishBarrier[T client.Object](f *faultRun, r *watchRecorder[T], object 
 	object.SetName(name)
 	f.check(f.annotate(f.ctx, object, annotationWatchBarrier, marker), "annotate %s %s for the %s watch barrier", r.name, name, r.name)
 	uid, resourceVersion := string(object.GetUID()), object.GetResourceVersion()
-	f.poll(fmt.Sprintf("the %s watch to cross its exact API resourceVersion barrier", r.name), func() bool {
+	poll(fmt.Sprintf("the %s watch to cross its exact API resourceVersion barrier", r.name), func() bool {
 		return slices.ContainsFunc(r.snapshot(), func(event watchEvent[T]) bool {
 			return uidIs(event.Object, uid) && event.Object.GetResourceVersion() == resourceVersion &&
 				annotationIs(event.Object, annotationWatchBarrier, marker)

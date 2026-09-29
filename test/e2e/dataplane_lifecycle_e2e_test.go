@@ -62,6 +62,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	d.assertCoordinationBoundary(schema, key, realm)
 	d.changeApprovedSchemaInputs(schema, slug, key, realm)
 	planV1 := d.plan
+	assertAppliedSQLReadAuthorization := d.pendingSQLReadAuthorization(schema)
 	d.assertJobIsolation(schema, secret, false, nil)
 	d.assertNoNewJobs(schema, "apply", v1Apply)
 	v1PostObserve := d.checkpointJobs(schema, "observe")
@@ -70,6 +71,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	d.waitForOneNewJob(schema, "apply", v1Apply)
 	d.waitForInSync(schema, digestV1, v1PostObserve, v1PostPlan)
 	d.assertApprovalConsumed(schema+"-v1", planV1.uid)
+	assertAppliedSQLReadAuthorization()
 	d.assertOneNewJob(schema, "apply", v1Apply)
 	d.assertCoordinationLeaseBoundary(key, leases)
 	d.assertJobIsolation(schema, secret, true, nil)

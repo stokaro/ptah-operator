@@ -42,8 +42,9 @@ type Phase struct {
 	// order it runs them. The harness refuses one out of order and fails a
 	// phase that ends without running all of them.
 	Scenarios []string
-	// IsolatesNode says the phase cuts the isolation worker off from the API
-	// server, so only a suite that declares that worker may run it.
+	// IsolatesNode says the full phase faults the isolation worker's API
+	// connection, so only a suite that declares that worker may run it.
+	// These faults run after the Preparation boundary, when one exists.
 	IsolatesNode bool
 	// Preparation is how many of the leading scenarios make up the phase's
 	// preparation mode: what another suite runs it for, the objects it stands
@@ -220,9 +221,10 @@ type DataPlaneInputs struct {
 // MySQL lifecycles, the refusals, the restart and fault injection, and the
 // four-eyes and Pod-metadata rows.
 var DataPlane = define[DataPlaneInputs](Phase{
-	Name:    "dataplane",
-	Test:    "TestDataPlane",
-	Timeout: 150 * time.Minute,
+	Name:         "dataplane",
+	Test:         "TestDataPlane",
+	Timeout:      150 * time.Minute,
+	IsolatesNode: true,
 	Scenarios: []string{
 		"databases-and-fixtures",
 		"postgresql-lifecycle",
@@ -232,6 +234,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"watches",
 		"approval-target-secret-change",
 		"mysql-drift-before-dispatch",
+		"hung-schema-result-read",
 		"job-deadline",
 		"manager-restart",
 		"runner-termination",
@@ -387,8 +390,8 @@ type AlertingInputs struct {
 }
 
 // Alerting proves the path from a manager's metrics to a person: an Apply
-// nobody accounted for, an operation that stops moving, and every manager
-// gone each reach a receiver, and the two that can clear do.
+// nobody accounted for, an operation that stops moving, a failed leader
+// scrape, and every manager gone each reach a receiver. Recoverable faults clear.
 var Alerting = define[AlertingInputs](Phase{
 	Name:    "alerting",
 	Test:    "TestAlerting",
@@ -397,6 +400,7 @@ var Alerting = define[AlertingInputs](Phase{
 		"monitoring-path",
 		"unresolved-apply",
 		"stalled-operation",
+		"lost-scrape-target",
 		"lost-view",
 	},
 })

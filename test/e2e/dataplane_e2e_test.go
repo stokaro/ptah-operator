@@ -59,6 +59,7 @@ func TestDataPlane(t *testing.T) {
 		{"watches", func() { f = newFaultRun(d); f.watches() }},
 		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
 		{"mysql-drift-before-dispatch", func() { f.mysqlDriftBeforeDispatch() }},
+		{"hung-schema-result-read", func() { f.hungResultReads() }},
 		{"job-deadline", func() { f.jobDeadline() }},
 		{"manager-restart", func() { f.managerRestart() }},
 		{"runner-termination", func() { f.runnerTermination() }},

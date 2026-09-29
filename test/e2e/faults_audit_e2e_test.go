@@ -92,7 +92,7 @@ func (f *faultRun) auditManagerLogs() {
 	}
 	for index := range live {
 		if !noRestarts(&live[index]) {
-			reportRestartedManagerContainers(live)
+			reportRestartedManagerContainers(f.cluster, live)
 			f.fatalf("a manager container restarted before its complete log history was audited")
 		}
 	}

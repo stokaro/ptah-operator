@@ -14,10 +14,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
 const logStallRuleComment = "ptah-e2e-result-read"
@@ -31,22 +34,25 @@ var logStallRules = [][]string{
 }
 
 type logStall struct {
-	m         *migrationRun
-	container string
-	rules     [2]bool
-	path      string
+	t                                               *testing.T
+	ctx                                             context.Context
+	cluster                                         *harness.Cluster
+	dockerContext, node, workDir, namespace, suffix string
+	container                                       string
+	rules                                           [2]bool
+	path                                            string
 }
 
-func (m *migrationRun) docker(ctx context.Context, input io.Reader, args ...string) ([]byte, error) {
-	command := exec.CommandContext(ctx, "docker", append([]string{"--context", m.in.DockerContext}, args...)...) //nolint:gosec // Explicit arguments in the isolated lab.
+func (r *logStall) docker(ctx context.Context, input io.Reader, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, "docker", append([]string{"--context", r.dockerContext}, args...)...) //nolint:gosec // Explicit arguments in the isolated lab.
 	var output bytes.Buffer
 	command.Stdin, command.Stdout, command.Stderr = input, &output, os.Stderr
 	err := command.Run()
 	return output.Bytes(), err
 }
 
-func (m *migrationRun) kubeletFile(path string) ([]byte, error) {
-	archive, err := m.docker(m.ctx, nil, "cp", m.miIsolatedNode()+":"+path, "-")
+func (r *logStall) kubeletFile(path string) ([]byte, error) {
+	archive, err := r.docker(r.ctx, nil, "cp", r.node+":"+path, "-")
 	if err != nil {
 		return nil, fmt.Errorf("read isolated kubelet file %s: %w", path, err)
 	}
@@ -61,10 +67,10 @@ func (m *migrationRun) kubeletFile(path string) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-func (m *migrationRun) startLogStall(pod string) *logStall {
-	m.t.Helper()
-	r := &logStall{m: m, path: "/containerLogs/" + m.in.TestNamespace + "/" + pod + "/ptah"}
-	t := m.t
+func (r *logStall) start(pod string) *logStall {
+	r.t.Helper()
+	r.path = "/containerLogs/" + r.namespace + "/" + pod + "/ptah"
+	t := r.t
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -73,37 +79,37 @@ func (m *migrationRun) startLogStall(pod string) *logStall {
 		}
 	})
 	node := &corev1.Node{}
-	m.check(m.cluster.Client.Get(m.ctx, types.NamespacedName{Name: m.miIsolatedNode()}, node), "read isolation worker")
+	r.check(r.cluster.Client.Get(r.ctx, types.NamespacedName{Name: r.node}, node), "read isolation worker")
 	if !isolationWorkerReady(node) {
-		m.fatalf("result-read fault needs the Ready isolation worker")
+		r.fatalf("result-read fault needs the Ready isolation worker")
 	}
 	arch := node.Status.NodeInfo.Architecture
 	if arch != "amd64" && arch != "arm64" {
-		m.fatalf("unsupported isolation worker architecture %q", arch)
+		r.fatalf("unsupported isolation worker architecture %q", arch)
 	}
-	binary := filepath.Join(m.workDir, "e2e-logstall")
-	build := exec.CommandContext(m.ctx, "go", "build", "-trimpath", "-o", binary, "./test/e2e/logstall") //nolint:gosec // Fixed package, private output directory.
+	binary := filepath.Join(r.workDir, "e2e-logstall")
+	build := exec.CommandContext(r.ctx, "go", "build", "-trimpath", "-o", binary, "./test/e2e/logstall") //nolint:gosec // Fixed package, private output directory.
 	build.Dir = repositoryRoot
 	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+arch, "CGO_ENABLED=0")
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
-	m.check(build.Run(), "build the isolated result-read fault")
+	r.check(build.Run(), "build the isolated result-read fault")
 	program, err := os.ReadFile(binary)
-	m.check(err, "read result-read fixture")
-	cert, err := m.kubeletFile("/var/lib/kubelet/pki/kubelet.crt")
-	m.check(err, "read isolated kubelet serving certificate")
-	key, err := m.kubeletFile("/var/lib/kubelet/pki/kubelet.key")
-	m.check(err, "read isolated kubelet serving key")
-	image, err := m.docker(m.ctx, nil, "inspect", "--format", "{{.Image}}", m.miIsolatedNode())
-	m.check(err, "read the node image already present on the test daemon")
-	created, err := m.docker(m.ctx, nil, "create", "--name", m.in.KindClusterName+"-logstall-"+m.engine.name,
-		"--label", "ptah.run/e2e-purpose=hung-result-read", "--label", "ptah.run/e2e-cluster="+m.in.KindClusterName,
-		"--network", "container:"+m.miIsolatedNode(), "--cap-drop", "ALL",
+	r.check(err, "read result-read fixture")
+	cert, err := r.kubeletFile("/var/lib/kubelet/pki/kubelet.crt")
+	r.check(err, "read isolated kubelet serving certificate")
+	key, err := r.kubeletFile("/var/lib/kubelet/pki/kubelet.key")
+	r.check(err, "read isolated kubelet serving key")
+	image, err := r.docker(r.ctx, nil, "inspect", "--format", "{{.Image}}", r.node)
+	r.check(err, "read the node image already present on the test daemon")
+	created, err := r.docker(r.ctx, nil, "create", "--name", r.node+"-logstall-"+r.suffix,
+		"--label", "ptah.run/e2e-purpose=hung-result-read", "--label", "ptah.run/e2e-node="+r.node,
+		"--network", "container:"+r.node, "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges:true", "--user", "65532:65532", "--memory", "64m", "--pids-limit", "32",
 		"--entrypoint", "/e2e-logstall", strings.TrimSpace(string(image)), "-path", r.path, "-lifetime", "8m")
-	m.check(err, "create the isolated result-read fixture")
+	r.check(err, "create the isolated result-read fixture")
 	r.container = strings.TrimSpace(string(created))
 	if r.container == "" {
-		m.fatalf("result-read fixture has no container identity")
+		r.fatalf("result-read fixture has no container identity")
 	}
 	// Private key bytes stay in memory and in this disposable container. The
 	// archive sets ownership for its unprivileged process without a host file.
@@ -116,32 +122,32 @@ func (m *migrationRun) startLogStall(pod string) *logStall {
 	}{
 		{"e2e-logstall", program, 0500}, {"tls.crt", cert, 0400}, {"tls.key", key, 0400},
 	} {
-		m.check(writer.WriteHeader(&tar.Header{Name: entry.name, Mode: entry.mode, Uid: 65532, Gid: 65532, Size: int64(len(entry.body))}), "write fixture archive header")
+		r.check(writer.WriteHeader(&tar.Header{Name: entry.name, Mode: entry.mode, Uid: 65532, Gid: 65532, Size: int64(len(entry.body))}), "write fixture archive header")
 		_, err := writer.Write(entry.body)
-		m.check(err, "write fixture archive entry")
+		r.check(err, "write fixture archive entry")
 	}
-	m.check(writer.Close(), "finish fixture archive")
-	_, err = m.docker(m.ctx, &archive, "cp", "-a", "-", r.container+":/")
-	m.check(err, "copy result-read fixture into its container")
-	_, err = m.docker(m.ctx, nil, "start", r.container)
-	m.check(err, "start result-read fixture")
-	m.poll("the result-read fixture to listen", time.Second, func() bool {
-		logs, err := m.docker(m.ctx, nil, "logs", r.container)
-		return err == nil && bytes.Contains(logs, []byte(`"state":"listening"`))
-	})
+	r.check(writer.Close(), "finish fixture archive")
+	_, err = r.docker(r.ctx, &archive, "cp", "-a", "-", r.container+":/")
+	r.check(err, "copy result-read fixture into its container")
+	_, err = r.docker(r.ctx, nil, "start", r.container)
+	r.check(err, "start result-read fixture")
+	r.check(harness.Wait(r.ctx, "the result-read fixture to listen", time.Minute, time.Second, func(context.Context) (bool, string, error) {
+		logs, err := r.docker(r.ctx, nil, "logs", r.container)
+		return err == nil && bytes.Contains(logs, []byte(`"state":"listening"`)), "waiting for HTTPS listener", err
+	}), "wait for result-read fixture")
 	for index, rule := range logStallRules {
 		r.rules[index] = true
 		args := append([]string{"iptables", rule[0], rule[1], "-I", rule[2], "1"}, rule[3:]...)
-		_, err := m.miNodeExec(m.ctx, os.Stderr, args...)
-		m.check(err, "route kubelet log requests to the unfinished response")
+		_, err := r.nodeExec(r.ctx, os.Stderr, args...)
+		r.check(err, "route kubelet log requests to the unfinished response")
 	}
 	return r
 }
 
 func (r *logStall) readings() []logStallReading {
-	r.m.t.Helper()
-	logs, err := r.m.docker(r.m.ctx, nil, "logs", "--tail", "100", r.container)
-	r.m.check(err, "read result-stall timings")
+	r.t.Helper()
+	logs, err := r.docker(r.ctx, nil, "logs", "--tail", "100", r.container)
+	r.check(err, "read result-stall timings")
 	decoder := json.NewDecoder(bytes.NewReader(logs))
 	decoder.DisallowUnknownFields()
 	var readings []logStallReading
@@ -151,9 +157,9 @@ func (r *logStall) readings() []logStallReading {
 		if err == io.EOF {
 			break
 		}
-		r.m.check(err, "decode result-stall timing")
+		r.check(err, "decode result-stall timing")
 		if reading.Path != r.path || reading.At.IsZero() {
-			r.m.fatalf("result-stall reading lacks the requested path or timestamp")
+			r.fatalf("result-stall reading lacks the requested path or timestamp")
 		}
 		readings = append(readings, reading)
 	}
@@ -168,18 +174,38 @@ func (r *logStall) stop(ctx context.Context) error {
 		}
 		rule := logStallRules[index]
 		args := append([]string{"iptables", rule[0], rule[1], "-D", rule[2]}, rule[3:]...)
-		if _, err := r.m.miNodeExec(ctx, os.Stderr, args...); err != nil {
+		if _, err := r.nodeExec(ctx, os.Stderr, args...); err != nil {
 			failures = append(failures, fmt.Errorf("remove log-stall rule: %w", err))
 		} else {
 			r.rules[index] = false
 		}
 	}
 	if r.container != "" {
-		if _, err := r.m.docker(ctx, nil, "rm", "-f", r.container); err != nil {
+		if _, err := r.docker(ctx, nil, "rm", "-f", r.container); err != nil {
 			failures = append(failures, fmt.Errorf("remove log-stall container: %w", err))
 		} else {
 			r.container = ""
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func (r *logStall) nodeExec(ctx context.Context, stderr io.Writer, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, "docker", append([]string{"--context", r.dockerContext, "exec", r.node}, args...)...) //nolint:gosec // Explicit arguments in the isolated lab.
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, stderr
+	err := command.Run()
+	return output.Bytes(), err
+}
+
+func (r *logStall) check(err error, what string) {
+	r.t.Helper()
+	if err != nil {
+		r.t.Fatalf("%s: %v", what, err)
+	}
+}
+
+func (r *logStall) fatalf(format string, args ...any) {
+	r.t.Helper()
+	r.t.Fatalf(format, args...)
 }
