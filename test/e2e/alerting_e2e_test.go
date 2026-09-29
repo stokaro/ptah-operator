@@ -46,6 +46,8 @@ import (
 //     passed and not before, and resolves once the operation leaves flight;
 //   - every manager gone fires as a view nobody can read, and resolves once
 //     they are back.
+//   - a failed leader scrape does the same while the managers remain healthy
+//     and the follower remains a healthy scrape target.
 //
 // What the receiver logs is what Alertmanager delivered, which is the claim;
 // Alertmanager's own view of what it meant to send is not.
@@ -59,13 +61,14 @@ func TestAlerting(t *testing.T) {
 		{"monitoring-path", a.monitoringPath},
 		{"unresolved-apply", a.unresolvedApply},
 		{"stalled-operation", a.stalledOperation},
+		{"lost-scrape-target", a.lostScrapeTarget},
 		{"lost-view", a.lostView},
 	} {
 		if !run.Scenario(scenario.name, a.scenario(scenario.body)) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS an unresolved Apply, a stalled operation and a lost view each reached the receiver, and the two that can clear did")
+	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, a failed leader scrape and a lost view reached the receiver; recoverable faults cleared")
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
@@ -242,8 +245,13 @@ func (a *alertingRun) deliveryCount() int {
 // that match selects, and returns it with its position. A log that cannot be
 // read is read again at the next poll, as the script's `|| true` did.
 func (a *alertingRun) waitForDelivery(match alMatch, description string, timeout time.Duration, from int) (alDelivery, int) {
+	return a.waitForDeliveryWithCheck(match, description, timeout, from, func() {})
+}
+
+func (a *alertingRun) waitForDeliveryWithCheck(match alMatch, description string, timeout time.Duration, from int, check func()) (alDelivery, int) {
 	a.t.Helper()
 	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); {
+		check()
 		if log, err := a.deploymentLog(a.ctx, "alert-sink"); err == nil {
 			deliveries, err := alDeliveries(log)
 			if err != nil {
@@ -430,7 +438,7 @@ func (a *alertingRun) standUp(rules string) {
 			args:           []string{"--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/data", "--cluster.listen-address="},
 			serviceAccount: "default", configMap: "alertmanager"},
 		{name: "prometheus", image: a.in.PrometheusImage, port: 9090,
-			args:           []string{"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/data"},
+			args:           []string{"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/data", "--web.enable-lifecycle", "--no-config.auto-reload"},
 			serviceAccount: "prometheus", configMap: "prometheus"},
 	} {
 		workload.namespace, workload.pullSecret = alMonitoringNamespace, alPullSecret

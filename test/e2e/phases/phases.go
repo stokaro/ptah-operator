@@ -391,8 +391,8 @@ type AlertingInputs struct {
 }
 
 // Alerting proves the path from a manager's metrics to a person: an Apply
-// nobody accounted for, an operation that stops moving, and every manager
-// gone each reach a receiver, and the two that can clear do.
+// nobody accounted for, an operation that stops moving, a failed leader
+// scrape, and every manager gone each reach a receiver. Recoverable faults clear.
 var Alerting = define[AlertingInputs](Phase{
 	Name:    "alerting",
 	Test:    "TestAlerting",
@@ -401,6 +401,7 @@ var Alerting = define[AlertingInputs](Phase{
 		"monitoring-path",
 		"unresolved-apply",
 		"stalled-operation",
+		"lost-scrape-target",
 		"lost-view",
 	},
 })

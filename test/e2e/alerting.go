@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -13,13 +15,16 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/yaml"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
 // The alerting phase stands the path from a manager's metrics to a person up
@@ -150,6 +155,63 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
 `, seconds, monitoringNamespace, operatorNamespace, metricsService, alScrapeJob)
+}
+
+const alMissingMetricsPath = "/e2e-missing-metrics"
+
+// Change only the selected Pod's scrape path. Its address and public labels
+// stay the same, so this is a failed target, not a removed discovery result.
+func alScrapeFaultConfig(config, pod string) string {
+	return config + fmt.Sprintf(`      - source_labels: [__meta_kubernetes_pod_name]
+        regex: %q
+        action: replace
+        target_label: __metrics_path__
+        replacement: %s
+`, regexp.QuoteMeta(pod), alMissingMetricsPath)
+}
+
+// Read the running configuration, which may lag the ConfigMap volume. An
+// empty pod asks for the fault to be absent after restoration.
+func alScrapeFaultLoaded(body []byte, pod string) bool {
+	var response struct {
+		Status string `json:"status"`
+		Data   struct {
+			YAML string `json:"yaml"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &response) != nil || response.Status != "success" {
+		return false
+	}
+	var config struct {
+		Scrapes []struct {
+			Job     string `json:"job_name"`
+			Relabel []struct {
+				SourceLabels               []string `json:"source_labels"`
+				Regex, Action, Replacement string
+				TargetLabel                string `json:"target_label"`
+			} `json:"relabel_configs"`
+		} `json:"scrape_configs"`
+	}
+	if yaml.Unmarshal([]byte(response.Data.YAML), &config) != nil {
+		return false
+	}
+	jobs, faults, matched := 0, 0, false
+	for _, scrape := range config.Scrapes {
+		if scrape.Job != alScrapeJob {
+			continue
+		}
+		jobs++
+		for _, rule := range scrape.Relabel {
+			if rule.TargetLabel != "__metrics_path__" {
+				continue
+			}
+			faults++
+			matched = rule.Regex == regexp.QuoteMeta(pod) && rule.Action == "replace" &&
+				rule.Replacement == alMissingMetricsPath &&
+				slices.Equal(rule.SourceLabels, []string{"__meta_kubernetes_pod_name"})
+		}
+	}
+	return jobs == 1 && ((pod == "" && faults == 0) || (pod != "" && faults == 1 && matched))
 }
 
 // alAlertmanagerConfig is alertmanager.yml: every alert to the receiver,
@@ -372,16 +434,91 @@ func alFirstDelivery(deliveries []alDelivery, from int, match alMatch) (alDelive
 
 // alTargets is the part of Prometheus's /api/v1/targets the phase reads.
 type alTargets struct {
-	Data struct {
+	Status string `json:"status"`
+	Data   struct {
 		ActiveTargets []alTarget `json:"activeTargets"`
 	} `json:"data"`
 }
 
 type alTarget struct {
-	Labels    map[string]string `json:"labels"`
-	ScrapeURL string            `json:"scrapeUrl"`
-	Health    string            `json:"health"`
-	LastError string            `json:"lastError"`
+	Labels     map[string]string `json:"labels"`
+	ScrapeURL  string            `json:"scrapeUrl"`
+	Health     string            `json:"health"`
+	LastError  string            `json:"lastError"`
+	LastScrape time.Time         `json:"lastScrape"`
+}
+
+// The selected manager must have failed an actual scrape after the fault was
+// loaded, while each other manager remains a distinct, healthy target.
+func alOneTargetLost(body []byte, replicas int, pod string, loaded time.Time) bool {
+	var targets alTargets
+	if replicas < 2 || pod == "" || loaded.IsZero() || json.Unmarshal(body, &targets) != nil || targets.Status != "success" {
+		return false
+	}
+	seen, lost := make(map[string]bool), false
+	for _, target := range targets.Data.ActiveTargets {
+		if target.Labels["job"] != alScrapeJob {
+			continue
+		}
+		name := target.Labels["pod"]
+		if name == "" || seen[name] {
+			return false
+		}
+		seen[name] = true
+		if name == pod {
+			scrapeURL, err := url.Parse(target.ScrapeURL)
+			if err != nil || scrapeURL.Path != alMissingMetricsPath || target.Health != "down" ||
+				target.LastError == "" || target.LastScrape.Before(loaded) {
+				return false
+			}
+			lost = true
+		} else if target.Health != "up" {
+			return false
+		}
+	}
+	return lost && len(seen) == replicas
+}
+
+// Lease transitions detect a leader that moved away and back between polls;
+// UIDs and per-container restart counts detect replacement or process restart.
+func alSameManagers(lease *coordinationv1.Lease, pods []corev1.Pod, before *coordinationv1.Lease, original []corev1.Pod) bool {
+	if lease.UID == "" || lease.UID != before.UID || haLeaseHolder(lease) == "" ||
+		haLeaseHolder(lease) != haLeaseHolder(before) || haLeaseTransitions(lease) != haLeaseTransitions(before) ||
+		len(pods) < 2 || len(pods) != len(original) {
+		return false
+	}
+	previous := make(map[string]corev1.Pod, len(original))
+	for _, pod := range original {
+		previous[pod.Name] = pod
+	}
+	if len(previous) != len(original) {
+		return false
+	}
+	leader := false
+	for _, pod := range pods {
+		old, ok := previous[pod.Name]
+		if !ok || pod.UID == "" || pod.UID != old.UID || pod.DeletionTimestamp != nil ||
+			pod.Status.Phase != corev1.PodRunning || !harness.PodReady(&pod) ||
+			len(pod.Status.ContainerStatuses) == 0 || len(pod.Status.ContainerStatuses) != len(pod.Spec.Containers) {
+			return false
+		}
+		delete(previous, pod.Name)
+		currentRestarts, oldRestarts := make(map[string]int32), make(map[string]int32)
+		for _, status := range pod.Status.ContainerStatuses {
+			if !status.Ready || status.State.Running == nil {
+				return false
+			}
+			currentRestarts[status.Name] = status.RestartCount
+		}
+		for _, status := range old.Status.ContainerStatuses {
+			oldRestarts[status.Name] = status.RestartCount
+		}
+		if len(currentRestarts) != len(pod.Status.ContainerStatuses) || !maps.Equal(currentRestarts, oldRestarts) {
+			return false
+		}
+		leader = leader || pod.Name == haLeaderPodName(haLeaseHolder(lease))
+	}
+	return leader && len(previous) == 0
 }
 
 // alTargetsReady is every manager replica a target, and every target up. A
@@ -426,7 +563,7 @@ func alRulesLoaded(body []byte) bool {
 			}
 		}
 	}
-	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alOperationStall)
+	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alViewNotSynced) && slices.Contains(alerting, alOperationStall)
 }
 
 // alNoActiveAlerts reads an instant query for ALERTS: true when Prometheus

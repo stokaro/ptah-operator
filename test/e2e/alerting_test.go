@@ -518,6 +518,7 @@ func TestAlFirstDelivery(t *testing.T) {
 func alTargetsBody(t *testing.T, targets ...alTarget) []byte {
 	t.Helper()
 	var body alTargets
+	body.Status = "success"
 	body.Data.ActiveTargets = targets
 	encoded, err := json.Marshal(body)
 	if err != nil {
@@ -571,6 +572,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		t.Fatal("the chart's rules were not recognized")
 	}
 	for name, answer := range map[string][]byte{
+		"no view rule":               body("alerting", alUnresolvedApply, "alerting", alOperationStall),
 		"no unresolved rule":         body("alerting", alOperationStall),
 		"no stalled rule":            body("alerting", alUnresolvedApply),
 		"the unresolved one records": body("recording", alUnresolvedApply, "alerting", alOperationStall),
@@ -582,7 +584,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		}
 	}
 	split := []byte(`{"data":{"groups":[{"rules":[{"type":"alerting","name":"` + alUnresolvedApply +
-		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"}]}]}}`)
+		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"}]}]}}`)
 	if !alRulesLoaded(split) {
 		t.Error("the rules in two groups were not recognized")
 	}
