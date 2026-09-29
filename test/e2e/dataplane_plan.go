@@ -20,10 +20,11 @@ import (
 
 // planDocument is the native plan Ptah writes, as the plan's chunks hold it.
 type planDocument struct {
-	FormatVersion   int    `json:"format_version"`
-	Dialect         string `json:"dialect"`
-	FromFingerprint string `json:"from_fingerprint"`
-	ToFingerprint   string `json:"to_fingerprint"`
+	FormatVersion   int      `json:"format_version"`
+	Dialect         string   `json:"dialect"`
+	FromFingerprint string   `json:"from_fingerprint"`
+	ToFingerprint   string   `json:"to_fingerprint"`
+	Exclude         []string `json:"exclude,omitempty"`
 	// Destructive is nil when the document carries no destructive key,
 	// which a check for false has to refuse as jq's `== false` did.
 	Destructive *bool           `json:"destructive"`
