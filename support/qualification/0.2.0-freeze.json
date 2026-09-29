@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-29T21:56:59+00:00",
-  "profileSourceCommit": "6ab8a49ec4be09ece6d921ddcbcfaf037212b5bd",
+  "frozenAt": "2026-09-29T23:53:53.261540+00:00",
+  "profileSourceCommit": "c9080b7103a2ffaa9f7b9fa936627dfd4e53a9c1",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "d768575c5a901caf82d2bdfad8ba192c4cc4a18046b63e5de0bcf4a79e271ddb",
-    "generatedFromCommit": "6ab8a49ec4be09ece6d921ddcbcfaf037212b5bd",
+    "sha256": "bea5031d073354abfc50fc991164ae425e474a628c3b74db741f621ea41cfef5",
+    "generatedFromCommit": "c9080b7103a2ffaa9f7b9fa936627dfd4e53a9c1",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 9,
+  "revision": 10,
   "supersedes": {
-    "freezeCommit": "83df9ae8c180d620beeb886b556e0e92df892783",
-    "sha256": "3ac64bbd9c0419910ae74f938733a25f5008d0cd13d5235bd1ae5c8e30881ab5"
+    "freezeCommit": "5ee2de8cdeef0b1487d793dbfdb9ce718a85f88c",
+    "sha256": "6203ddfd687dbbf4fd697ad5192eb782317bd7aaa91a14c18efbc9d60d401d15"
   },
-  "revisionReason": "Implement the existing Q-02/AB-01 schema identity requirement for both engines. The data-plane approval-resource-replacement scenario preserves the old admitted approval across same-name PtahSchema replacement, rejects old resource/plan UID and fingerprint substitutions, audits exact diagnostic SQL from Observe and Plan under both resource UIDs, and requires one freshly approved Apply with preserved data. The pinned diagnostic contract is supported by isolated server readings and predicate tests; final-identity Kubernetes execution remains required. The 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
+  "revisionReason": "Implement the existing Q-02/AB-09 schema executor-image transition for both engines. The data-plane approval-executor-image-change scenario holds admitted approvals across an image-only execution-binding change, requires a new epoch and plan, audits exact initial and replacement Observe/Plan SQL, and verifies one freshly approved Apply using the replacement image with preserved data. The synthetic manifest preserves executable and platform identities; version, protocol, state-contract, migration and already-dispatched transition proofs remain required. The same source fixes the MySQL audit fixture network-DSN handling and protects the shared database credential. Final-identity Kubernetes execution remains required. All eight frozen source files, the 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
 }
