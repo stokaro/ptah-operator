@@ -2,9 +2,10 @@ package main
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
+
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 )
 
 // API compatibility tells a reader that an upgrade can require them to edit
@@ -23,8 +24,8 @@ const (
 )
 
 var (
-	releaseNotesVersion = regexp.MustCompile(`(?m)^## ([0-9]+\.[0-9]+\.[0-9]+)$`)
-	chartVersionRecord  = regexp.MustCompile(`(?m)^version: ([0-9]+\.[0-9]+\.[0-9]+)$`)
+	releaseNotesVersion = regexp.MustCompile(`(?m)^## ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$`)
+	chartVersionRecord  = regexp.MustCompile(`(?m)^version: ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$`)
 )
 
 // The version a release publishes is the one the chart declares: the workflow
@@ -124,31 +125,47 @@ func releaseNotesVersions(t *testing.T) []string {
 	return versions
 }
 
-// compareVersions orders two three-part versions numerically, so 0.10.0 sorts
-// above 0.9.0 rather than below it.
+// compareVersions uses semantic precedence, including numeric prerelease parts.
 func compareVersions(t *testing.T, left, right string) int {
 	t.Helper()
-	leftParts, rightParts := versionParts(t, left), versionParts(t, right)
-	for index := range leftParts {
-		if leftParts[index] != rightParts[index] {
-			if leftParts[index] > rightParts[index] {
-				return 1
-			}
-			return -1
-		}
+	version, err := utilversion.ParseSemantic(left)
+	if err != nil {
+		t.Fatalf("invalid release version %q: %v", left, err)
 	}
-	return 0
+	comparison, err := version.Compare(right)
+	if err != nil {
+		t.Fatalf("invalid release version %q: %v", right, err)
+	}
+	return comparison
 }
 
-func versionParts(t *testing.T, version string) [3]int {
-	t.Helper()
-	var parts [3]int
-	for index, field := range strings.SplitN(version, ".", 3) {
-		value, err := strconv.Atoi(field)
-		if err != nil {
-			t.Fatalf("version %q is not three numbers: %v", version, err)
+func TestReleaseNotesRecognizePrereleases(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"0.1.0", "0.1.0-rc.1", "0.1.0-rc.10"} {
+		for _, fixture := range []struct {
+			pattern *regexp.Regexp
+			line    string
+		}{
+			{releaseNotesVersion, "## " + version},
+			{chartVersionRecord, "version: " + version},
+		} {
+			match := fixture.pattern.FindStringSubmatch(fixture.line)
+			if len(match) != 2 || match[1] != version {
+				t.Fatalf("release version was not read from %q: %v", fixture.line, match)
+			}
 		}
-		parts[index] = value
 	}
-	return parts
+	for _, pair := range [][2]string{
+		{"0.1.0", "0.1.0-rc.10"},
+		{"0.1.0-rc.10", "0.1.0-rc.2"},
+		{"0.1.0-rc.1", "0.1.0-beta.1"},
+		{"0.10.0-rc.1", "0.9.0"},
+	} {
+		if compareVersions(t, pair[0], pair[1]) != 1 || compareVersions(t, pair[1], pair[0]) != -1 {
+			t.Errorf("release precedence must order %s after %s", pair[0], pair[1])
+		}
+	}
+	if compareVersions(t, "0.1.0-rc.1", "0.1.0-rc.1") != 0 {
+		t.Error("equal prereleases must compare equally")
+	}
 }

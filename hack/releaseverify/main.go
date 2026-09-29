@@ -1788,9 +1788,28 @@ func verifyWorkflowSemantics(document []byte) error {
 		}
 	}
 	if err := requireRunBindings(steps, "release",
+		`go run ./hack/releaseverify -tag "$GITHUB_REF_NAME"`,
 		"github.event.repository.default_branch", "git fetch --no-tags origin",
-		"git merge-base --is-ancestor \"$GITHUB_SHA\""); err != nil {
+		"git merge-base --is-ancestor \"$GITHUB_SHA\"",
+		`version="${GITHUB_REF_NAME#v}"`, "prerelease=false",
+		"if [[ \"$version\" == *-* ]]; then\n  prerelease=true\nfi",
+		`printf 'prerelease=%s\n' "$prerelease"`); err != nil {
 		return err
+	}
+	// Both fresh publication and recovery must retain the kind of release the
+	// validated tag names. GitHub does not infer prerelease from the tag suffix.
+	const prereleaseCheck = `jq -e --argjson expected "$RELEASE_PRERELEASE" '.prerelease == $expected' <<<"$release_json" >/dev/null`
+	for id, count := range map[string]int{"transaction": 1, "draft": 1, "publish-release": 2} {
+		step := steps[id]
+		if !equalStringMap(step.Env, map[string]string{
+			"GH_TOKEN":           "${{ secrets.GITHUB_TOKEN }}",
+			"RELEASE_PRERELEASE": "${{ steps.release.outputs.prerelease }}",
+		}) {
+			return fmt.Errorf("release step %q must bind the Actions token and validated prerelease output", id)
+		}
+		if strings.Count(step.Run, prereleaseCheck) != count {
+			return fmt.Errorf("release step %q must verify the prerelease flag %d times", id, count)
+		}
 	}
 	chartPackage, err := requireStep(steps, "chart-package")
 	if err != nil {
@@ -1958,6 +1977,7 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 	if err := requireRunBindings(steps, "draft",
 		"gh release create", "--draft", "--latest=false",
+		`--prerelease="$RELEASE_PRERELEASE"`,
 		"--notes-file dist/release-journal.txt", "gh attestation verify dist/release-journal.txt",
 		"-verify-tag-identity", ".assets | length == 0"); err != nil {
 		return err
@@ -2052,6 +2072,7 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "publish-release",
 		"\n  "+acceptanceEvidenceAsset+" \\\n",
 		"if [[ \"$mode\" != published ]]", "gh release edit", "--draft=false", "--latest=false", "-verify-tag-identity",
+		`gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false --prerelease="$RELEASE_PRERELEASE"`,
 		"cmp dist/release-manifest.txt", "gh release download", "gh attestation verify",
 		"-checksums \"$gate_dir/SHA256SUMS\"", ".immutable", "gh release verify",
 		"gh release verify-asset", "delay=$((delay < 30 ? delay * 2 : 30))"); err != nil {

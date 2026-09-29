@@ -447,7 +447,14 @@ jobs:
             "refs/heads/$default_branch:refs/remotes/origin/$default_branch"
           git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$default_branch"
           version="${GITHUB_REF_NAME#v}"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+          {
+            printf 'version=%s\n' "$version"
+            printf 'prerelease=%s\n' "$prerelease"
+          } >> "$GITHUB_OUTPUT"
       # The executor is Ptah, built here from the commit support/ptah.json pins,
       # which is the commit the acceptance suite built its executor from. The
       # source is fetched by that commit and refused if Git resolves anything
@@ -500,6 +507,7 @@ jobs:
         id: transaction
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
@@ -513,6 +521,7 @@ jobs:
             "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>"$error_file")"; then
             jq -e '(.draft | type) == "boolean" and (.immutable | type) == "boolean"' \
               <<<"$release_json" >/dev/null
+            jq -e --argjson expected "$RELEASE_PRERELEASE" '.prerelease == $expected' <<<"$release_json" >/dev/null
             draft="$(jq -r '.draft' <<<"$release_json")"
             immutable="$(jq -r '.immutable' <<<"$release_json")"
             jq -j '.body | strings' <<<"$release_json" > dist/release-state.txt
@@ -608,6 +617,7 @@ jobs:
         if: steps.transaction.outputs.mode == 'fresh'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
@@ -632,11 +642,13 @@ jobs:
           done
           gh release create "$GITHUB_REF_NAME" \
             --draft \
+            --prerelease="$RELEASE_PRERELEASE" \
             --verify-tag \
             --latest=false \
             --notes-file dist/release-journal.txt \
             --title "Ptah Operator ${{ steps.release.outputs.version }}"
           release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          jq -e --argjson expected "$RELEASE_PRERELEASE" '.prerelease == $expected' <<<"$release_json" >/dev/null
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
           jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-release-body.txt"
@@ -1343,6 +1355,7 @@ jobs:
         id: publish-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1362,6 +1375,7 @@ jobs:
           release_json="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          jq -e --argjson expected "$RELEASE_PRERELEASE" '.prerelease == $expected' <<<"$release_json" >/dev/null
           if [[ "$mode" == published ]]; then
             [[ "$(jq -r '.draft' <<<"$release_json")" == false ]]
             [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]
@@ -1402,7 +1416,7 @@ jobs:
             -checksums "$gate_dir/SHA256SUMS" \
             -chart "$gate_dir/ptah-operator-${{ steps.release.outputs.version }}.tgz"
           if [[ "$mode" != published ]]; then
-            gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false --prerelease="$RELEASE_PRERELEASE"
             go run ./hack/releaseverify \
               -tag "$GITHUB_REF_NAME" \
               -verify-tag-identity
@@ -1410,6 +1424,7 @@ jobs:
           release_json="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          jq -e --argjson expected "$RELEASE_PRERELEASE" '.prerelease == $expected' <<<"$release_json" >/dev/null
           [[ "$(jq -r '.draft' <<<"$release_json")" == false ]]
           [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]
           jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/published-body.txt"

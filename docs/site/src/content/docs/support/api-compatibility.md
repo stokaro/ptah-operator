@@ -82,18 +82,18 @@ code and held there by a check:
 | Certificate staging format | `certrotation.StagingFormat`, the `format` key of the rotator's staging Secret | The record a certificate rotation resumes from after a restart. |
 | Admission snapshot format | `podintent.SnapshotVersion`, which the `admissionSnapshot.version` enum in an operation's status repeats | The Pod admission rules an operation's snapshot was taken under. |
 
-Every counter read 1 at v0.1.0. Before that tag they counted commits, and no
-release could hold version 32 of anything, so they were all reset to 1 in the
-change before the tag. The schema-history check compares each change with the
-commit before it, and would read 32 to 1 as a rollback. That one restart is
+Every counter starts at 1 for the first release candidate. Before that
+release they counted commits, and no release could hold version 32 of
+anything, so they were all reset to 1 during release preparation. The
+schema-history check compares each change with the commit before it, and would read 32 to 1 as a rollback. That one restart is
 recorded in `hack/crdschemahistory/restart.go`: it leaves only the schemas it
 names, by version and by the digest of every CRD, it arrives at version 1 and
 at nothing else, and it excuses only the stored-object transitions it lists.
 Any other move below the baseline is refused as a rollback, and every change
 after it is held to the rules above.
 
-From v0.1.0 on, a counter moves only when something a tagged release could
-have stored or spoken changes. A change that leaves every stored and spoken
+From the first release candidate on, a counter moves only when something a
+tagged release could have stored or spoken changes. A change that leaves every stored and spoken
 form as it was keeps its number: the runner protocol records such a change in
 `support/runner-protocol.json` with its reason instead of moving. The CRD
 schema version is the strictest of them, because its check compares every

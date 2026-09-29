@@ -24,6 +24,11 @@ input, unpinned action, incomplete publish permission set, or manager image tag
 that differs from the chart version. It publishes no version or `latest` image
 alias.
 
+A semantic prerelease suffix, such as `v0.1.0-rc.1`, sets GitHub's prerelease
+flag on both the draft and the published release. A stable tag clears that
+flag. Neither kind becomes the latest release automatically. Recovery refuses
+an existing release whose prerelease flag disagrees with its tag.
+
 A release candidate is eligible only after the same commit passes the complete
 real-cluster lifecycle on every minor in the generated Kubernetes support
 window. Advancing that sliding window adds the new minor and removes the oldest
@@ -58,6 +63,47 @@ below. The installed charts expire after 90 days and the lifecycle timings after
 30, so a candidate has to be released within 30 days of its CI run. If no
 complete unexpired exact-source evidence set remains, release or recovery
 preflight fails closed and requires a new release commit.
+
+## Prepare a release candidate
+
+Preparation does not create a tag or publish artifacts. Before creating
+`v0.1.0-rc.1`:
+
+1. Merge the candidate through a pull request, then wait for the complete CI
+   run on that exact `master` commit. Record the commit and run URL. The pull
+   request run alone cannot authorize publication.
+2. Run `go run ./hack/releaseverify -tag v0.1.0-rc.1` at that commit. The chart
+   version, `appVersion`, default image tag, and release notes must name the
+   candidate. Keep the installed-chart and lifecycle artifacts from its CI
+   run; preflight checks their bytes and expiration.
+3. Confirm immutable releases are enabled. The `release` environment must
+   require a reviewer, accept only `v*` tags, and contain the fine-grained
+   `IMMUTABLE_RELEASES_READ_TOKEN` described below. A repository secret is not
+   a substitute for the environment secret. Protect version tag creation and
+   refuse updates and deletion.
+4. Read the generated acceptance record with
+   `go run ./hack/acceptancecoverage -record -profile support/acceptance/lab-20.json`.
+   This RC is for isolated evaluation with disposable databases. The profile
+   remains **Not assessed** and excludes database restore/RTO and production
+   capacity/soak qualification. Publishing an RC does not close
+   [production qualification](https://github.com/stokaro/ptah-operator/issues/242).
+
+Creating the tag is a separate release action. Before approving its `release`
+environment, check that the tag points to the recorded successful commit.
+On the first publication, GHCR packages may not exist until the workflow
+pushes them. If either anonymous image check fails because its package is
+private, make that package public and rerun the same transaction as described
+below. Do not move the tag or replace a published artifact.
+
+After publication, verify the immutable release and its assets, confirm
+`prerelease: true`, and run the documented installation and critical lifecycle
+checks using the published image digests and chart. Those checks require the
+published bytes; preparation and source CI cannot stand in for them. Once the
+tag exists, add its compatibility row to `support/ptah.json` with the executor
+pin and measured scope from that tag. Set `documentation.published` to `true`
+and `documentation.source` to `v0.1.0-rc.1` to build its guide from the tag. Do
+not declare a published guide before the tag exists. The documentation picker
+lists prereleases, but only stable releases become its default or latest.
 
 ## Acceptance evidence
 
@@ -140,8 +186,8 @@ executed it, and never clears it. A record a resource can only hold after it
 has dispatched, as both of the last two are, needs no location of its own:
 dispatching is what writes `status.executionBinding.controllerStateVersion`.
 
-The version counted commits until v0.1.0 and was reset to 1 just before that
-tag, with the other [contract counters](../api-compatibility/#contract-counters).
+Before the first release candidate, the version was reset to 1 with the other
+[contract counters](../api-compatibility/#contract-counters).
 From the first release on, it moves only when a manager writes state that a
 manager of an earlier release could not read.
 
@@ -323,7 +369,7 @@ Choose the tag independently, resolve its commit, and authenticate the release
 and its assets before reading the manifest or trusting its checksums:
 
 ```sh
-tag=v0.1.0
+tag=v0.1.0-rc.1
 version=${tag#v}
 repository=stokaro/ptah-operator
 source_sha="$(gh api "repos/$repository/commits/$tag" --jq .sha)"
