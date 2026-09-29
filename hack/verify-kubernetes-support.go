@@ -5239,8 +5239,10 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 		return fmt.Errorf("read %s: %w", driverPath, err)
 	}
 	driverPhases := map[string]bool{}
-	for _, match := range e2eDriverPhase.FindAllSubmatch(contents, -1) {
+	driverOrder := map[string]int{}
+	for index, match := range e2eDriverPhase.FindAllSubmatch(contents, -1) {
 		driverPhases[string(match[1])] = true
+		driverOrder[string(match[1])] = index
 	}
 	if len(driverPhases) == 0 {
 		return fmt.Errorf("%s: no lifecycle phase invocation was found, so coverage cannot be checked", driverPath)
@@ -5272,6 +5274,42 @@ func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
 		return fmt.Errorf("%s: claims phases the driver does not run: %s", e2eSuitesPath, strings.Join(unknown, ", "))
+	}
+	return verifyE2ESuitePrerequisites(catalog, phases.All(), driverOrder)
+}
+
+// A phase can be selected while its fixtures are absent. Require each full
+// phase's declared prerequisites to run in full and earlier in the driver,
+// including phases borrowed for preparation that have no shorter mode.
+func verifyE2ESuitePrerequisites(catalog e2eSuiteCatalog, declared []phases.Phase, order map[string]int) error {
+	definitions := map[string]phases.Phase{}
+	for _, phase := range declared {
+		definitions[phase.Name] = phase
+	}
+	for _, suite := range catalog.Suites {
+		full := map[string]bool{}
+		for _, phase := range suite.Phases {
+			full[phase] = true
+		}
+		for _, name := range suite.Prepare {
+			phase, found := definitions[name]
+			if found && phase.Preparation == 0 {
+				full[name] = true
+			}
+		}
+		for name := range full {
+			phase, found := definitions[name]
+			if !found {
+				return fmt.Errorf("suite %q runs undeclared phase %q", suite.Name, name)
+			}
+			for _, required := range phase.RequiresFull {
+				before, predecessorFound := order[required]
+				after, consumerFound := order[name]
+				if !full[required] || !predecessorFound || !consumerFound || before >= after {
+					return fmt.Errorf("suite %q phase %q requires full phase %q earlier in the driver", suite.Name, name, required)
+				}
+			}
+		}
 	}
 	return nil
 }

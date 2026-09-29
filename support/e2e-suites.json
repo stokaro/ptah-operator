@@ -32,7 +32,9 @@
     "phase's acceptance leaves behind -- the certificate rotation reaches the",
     "approval the control-plane contract creates, and repeating that phase for",
     "forty seconds is cheaper than either copying its fixtures or tying the two",
-    "suites together. The migration and reference-data phases run in the",
+    "suites together. The PostgreSQL suite also borrows assert for the approval",
+    "that the alerting certificate-expiry probe updates. The migration and",
+    "reference-data phases run in the",
     "namespace the data plane stands up -- its registry Service, its databases",
     "and its admission fixtures -- so that phase runs in preparation mode there,",
     "which creates those prerequisites and executes no operation under test.",
@@ -76,7 +78,7 @@
       "slug": "migrations-postgresql",
       "summary": "The versioned migration rows, the declared reference data, and the alerting path, on PostgreSQL",
       "phases": ["migrations-postgresql", "reference-data-postgresql", "alerting"],
-      "prepare": ["dataplane"],
+      "prepare": ["assert", "dataplane"],
       "isolationWorker": true
     },
     {

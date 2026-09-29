@@ -51,6 +51,11 @@ type Phase struct {
 	// up, and none of its own acceptance. Zero means the phase has no such
 	// mode. A run that stopped at the boundary proved those scenarios alone.
 	Preparation int
+	// RequiresFull names earlier phases whose completed acceptance leaves
+	// fixtures this phase uses. These dependencies apply when this phase runs
+	// in full; its preparation prefix must stand on its own. Running a required
+	// phase only through its own preparation boundary is insufficient.
+	RequiresFull []string
 
 	inputs reflect.Type
 }
@@ -140,9 +145,10 @@ type CertRotationInputs struct {
 // CertRotation proves certificate rotation: the exact recovery guard, Helm's
 // live lookup, recovery from a corrupt CA and recreation of a deleted Secret.
 var CertRotation = define[CertRotationInputs](Phase{
-	Name:    "cert-rotation",
-	Test:    "TestCertRotation",
-	Timeout: 100 * time.Minute,
+	Name:         "cert-rotation",
+	Test:         "TestCertRotation",
+	Timeout:      100 * time.Minute,
+	RequiresFull: []string{"assert"},
 	Scenarios: []string{
 		"recovery-guard",
 		"live-helm-lookup",
@@ -225,6 +231,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 	Test:         "TestDataPlane",
 	Timeout:      150 * time.Minute,
 	IsolatesNode: true,
+	RequiresFull: []string{"assert"},
 	Scenarios: []string{
 		"databases-and-fixtures",
 		"postgresql-lifecycle",
@@ -396,9 +403,10 @@ type AlertingInputs struct {
 // scrape, certificate expiry and admission failure, and every manager gone each reach a receiver.
 // Recoverable faults clear.
 var Alerting = define[AlertingInputs](Phase{
-	Name:    "alerting",
-	Test:    "TestAlerting",
-	Timeout: 80 * time.Minute,
+	Name:         "alerting",
+	Test:         "TestAlerting",
+	Timeout:      80 * time.Minute,
+	RequiresFull: []string{"assert"},
 	Scenarios: []string{
 		"monitoring-path",
 		"unresolved-apply",
@@ -679,6 +687,13 @@ func (p Phase) validate() error {
 	if p.Preparation < 0 || p.Preparation >= len(p.Scenarios) {
 		return fmt.Errorf("phase %s: a preparation of %d scenarios leaves none of its own acceptance out of %d",
 			p.Name, p.Preparation, len(p.Scenarios))
+	}
+	required := map[string]bool{}
+	for _, phase := range p.RequiresFull {
+		if !labelPattern.MatchString(phase) || phase == p.Name || required[phase] {
+			return fmt.Errorf("phase %s: invalid or repeated prerequisite %q", p.Name, phase)
+		}
+		required[phase] = true
 	}
 	if p.inputs.Kind() != reflect.Struct || p.inputs.NumField() == 0 {
 		return fmt.Errorf("phase %s: its inputs must be a struct of environment variables", p.Name)
