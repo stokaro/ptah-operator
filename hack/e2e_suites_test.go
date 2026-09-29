@@ -274,3 +274,14 @@ func TestTheIsolationWorkerFollowsThePhasesThatIsolateANode(t *testing.T) {
 		})
 	}
 }
+
+func TestDataPlanePreparationDoesNotRequireTheFaultWorker(t *testing.T) {
+	t.Parallel()
+	catalog, err := loadE2ESuites(writeSuiteCatalog(t, `"prepare": ["assert"]`, `"prepare": ["assert", "dataplane"]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyE2ESuiteIsolationWorker(catalog); err != nil {
+		t.Fatalf("preparing the databases without running the fault scenarios required a fault worker: %v", err)
+	}
+}

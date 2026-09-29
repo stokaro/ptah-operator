@@ -1,6 +1,10 @@
 package e2e
 
-import "time"
+import (
+	"time"
+
+	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+)
 
 type logStallReading struct {
 	State string    `json:"state"`
@@ -22,4 +26,13 @@ func logReadDuration(readings []logStallReading) (time.Duration, bool) {
 		}
 	}
 	return 0, false
+}
+
+// schemaReadProgress dates convergence by the persisted observation, with
+// the independent approval as its lower bound. A reading from before the
+// fault or after the progress deadline cannot satisfy the row.
+func schemaReadProgress(schema *ptahv1alpha1.PtahSchema, approvedAt, deadline time.Time) bool {
+	return freshApprovalConverged(schema) && schema.Status.Applied != nil &&
+		!schema.Status.Applied.CompletedAt.Time.Before(approvedAt) &&
+		!schema.Status.Applied.CompletedAt.Time.After(deadline)
 }

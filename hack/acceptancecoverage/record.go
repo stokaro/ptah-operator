@@ -83,9 +83,10 @@ var requirements = []requirement{
 			"the bounded refresh count under a standing refusal and the registry outage " +
 			"in `test/e2e/dataplane_gates_e2e_test.go`, a partial run that blocks and recovers in `test/e2e/migrations_realm_e2e_test.go`, " +
 			"the recovery scenarios of `hack/capacity` that the lab profile's progress target is read from, " +
-			"and a hung migration result stream on both engines in `test/e2e/migrations_result_read_e2e_test.go`, " +
+			"and hung schema and migration result streams on both engines in `test/e2e/faults_result_read_e2e_test.go` " +
+			"and `test/e2e/migrations_result_read_e2e_test.go`, " +
 			"with a measured cancellation, independent work, a retained claim and Lease, and recovery without replay",
-		"a hung PtahSchema result read"},
+		""},
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
 		"the CRD schema history gates, the admission rows in `test/e2e/controlplane_e2e_test.go`, " +
@@ -97,8 +98,10 @@ var requirements = []requirement{
 			"in `test/e2e/referencedata_e2e_test.go`, " +
 			"author, approver and administrator identities against RBAC and the example guard in `test/e2e/migrations_guard_e2e_test.go`, " +
 			"and a realm claim made from a namespace the PtahRealm does not list, by an author the API server will not let write the realm, " +
-			"refused alone while the listed claimant keeps running, in `test/e2e/migrations_realm_e2e_test.go`",
-		"accepted values at the size and name limits, and who may read a plan's SQL"},
+			"refused alone while the listed claimant keeps running, in `test/e2e/migrations_realm_e2e_test.go`, " +
+			"and the documented diagnostic and plan-reviewer Roles reading real pending and applied SQL " +
+			"in `test/e2e/dataplane_readers_e2e_test.go`",
+		"accepted values at the size and name limits"},
 	{"PA-06", "Exercise installation and release transitions",
 		"a real cluster reaching the documented state on every supported minor, including interrupted upgrade recovery and uninstall",
 		"the upgrade and uninstall phases in `test/e2e/lifecycle_phases_e2e_test.go`, " +

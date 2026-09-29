@@ -41,11 +41,12 @@
     "",
     "isolationWorker gives a suite's cluster a second worker node, labelled and",
     "tainted so that only the Pods a proof places there run on it. The migration",
-    "phases cut that node off from the API server in the middle of an Apply, and",
-    "cutting off the worker everything else runs on would take the manager, the",
+    "phases cut that node off from the API server in the middle of an Apply;",
+    "both resource families hold its log responses unfinished. Cutting off",
+    "the worker everything else runs on would take the manager, the",
     "databases and the registry down with it. A suite declares it exactly when",
-    "it runs a phase that isolates a node, and make e2e with no suite named gets",
-    "it whenever any suite does."
+    "it runs a phase that isolates a node beyond its preparation boundary, and",
+    "make e2e with no suite named gets it whenever any suite does."
   ],
   "suites": [
     {
@@ -67,7 +68,8 @@
       "slug": "data-plane",
       "summary": "The control-plane contract, both engines end to end, restart identity, and fault injection",
       "phases": ["assert", "dataplane"],
-      "prepare": []
+      "prepare": [],
+      "isolationWorker": true
     },
     {
       "name": "migrations-postgresql",

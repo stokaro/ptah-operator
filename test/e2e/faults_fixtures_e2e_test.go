@@ -497,6 +497,8 @@ type faultSchema struct {
 	// sharedRealm is the declaration the shared-alias proof makes. A
 	// database only one resource claims needs none.
 	sharedRealm bool
+	// isolatedNode places this row's operations on the dedicated fault worker.
+	isolatedNode string
 }
 
 // createSchema creates the schema under approval, every hour, against the
@@ -508,6 +510,14 @@ func (f *faultRun) createSchema(schema faultSchema) {
 	activeDeadline := schema.activeDeadline
 	if activeDeadline == 0 {
 		activeDeadline = faultActiveDeadlineSeconds
+	}
+	execution := map[string]any{
+		"activeDeadlineSeconds": activeDeadline, "failureRetryInterval": failureRetry, "connectTimeout": "30s",
+		"imagePullSecrets": []any{map[string]any{"name": registryPullSecret}},
+	}
+	if schema.isolatedNode != "" {
+		execution["nodeSelector"] = map[string]any{"kubernetes.io/hostname": schema.isolatedNode, isolationNodeKey: "true"}
+		execution["tolerations"] = []any{map[string]any{"key": isolationNodeKey, "operator": "Equal", "value": "true", "effect": "NoSchedule"}}
 	}
 	f.check(f.create(map[string]any{
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
@@ -531,11 +541,8 @@ func (f *faultRun) createSchema(schema faultSchema) {
 				"apply": "OnApproval", "allowDestructive": false, "driftSeverity": "all",
 				"lockTimeout": lockTimeout, "transactionMode": "file",
 			},
-			"interval": "1h",
-			"execution": map[string]any{
-				"activeDeadlineSeconds": activeDeadline, "failureRetryInterval": failureRetry, "connectTimeout": "30s",
-				"imagePullSecrets": []any{map[string]any{"name": registryPullSecret}},
-			},
+			"interval":  "1h",
+			"execution": execution,
 		},
 	}), "create PtahSchema %s", schema.name)
 }

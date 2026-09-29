@@ -42,8 +42,9 @@ type Phase struct {
 	// order it runs them. The harness refuses one out of order and fails a
 	// phase that ends without running all of them.
 	Scenarios []string
-	// IsolatesNode says the phase cuts the isolation worker off from the API
-	// server, so only a suite that declares that worker may run it.
+	// IsolatesNode says the full phase faults the isolation worker's API
+	// connection, so only a suite that declares that worker may run it.
+	// These faults run after the Preparation boundary, when one exists.
 	IsolatesNode bool
 	// Preparation is how many of the leading scenarios make up the phase's
 	// preparation mode: what another suite runs it for, the objects it stands
@@ -220,18 +221,21 @@ type DataPlaneInputs struct {
 // MySQL lifecycles, the refusals, the restart and fault injection, and the
 // four-eyes and Pod-metadata rows.
 var DataPlane = define[DataPlaneInputs](Phase{
-	Name:    "dataplane",
-	Test:    "TestDataPlane",
-	Timeout: 150 * time.Minute,
+	Name:         "dataplane",
+	Test:         "TestDataPlane",
+	Timeout:      150 * time.Minute,
+	IsolatesNode: true,
 	Scenarios: []string{
 		"databases-and-fixtures",
 		"postgresql-lifecycle",
 		"external-postgresql-lifecycle",
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
+		"plan-sql-read-authorization",
 		"watches",
 		"approval-target-secret-change",
 		"mysql-drift-before-dispatch",
+		"hung-schema-result-read",
 		"job-deadline",
 		"manager-restart",
 		"runner-termination",

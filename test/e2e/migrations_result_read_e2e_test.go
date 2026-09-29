@@ -62,7 +62,8 @@ func (m *migrationRun) hungResultReadProof() {
 		r.pod, r.podUID = pods.Items[0].Name, string(pods.Items[0].UID)
 		return true
 	})
-	fault := m.startLogStall(r.pod)
+	fault := (&logStall{t: m.t, ctx: m.ctx, cluster: m.cluster, dockerContext: m.in.DockerContext,
+		node: m.miIsolatedNode(), workDir: m.workDir, namespace: m.in.TestNamespace, suffix: m.engine.name}).start(r.pod)
 	m.openApplyGate()
 	m.poll("a completed Apply and an unfinished result read", time.Second, func() bool {
 		job := &batchv1.Job{}
