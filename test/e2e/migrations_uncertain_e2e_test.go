@@ -272,7 +272,19 @@ func (m *migrationRun) assertUnresolvedRunAcknowledgedByAPerson() {
 	if current.Status.UnresolvedRun == nil {
 		m.fatalf("%s carries no unresolved run to acknowledge", name)
 	}
-	operation := current.Status.UnresolvedRun.OperationID
+	m.acknowledgeUnresolvedRun(name, current.Status.UnresolvedRun.OperationID)
+}
+
+// acknowledgeUnresolvedRun uses the installed approver role to account for
+// one exact run, then verifies a fresh database reading. The caller must
+// establish that the run can no longer write and inspect its database effects
+// before asking a person to settle it.
+func (m *migrationRun) acknowledgeUnresolvedRun(name, operation string) {
+	m.t.Helper()
+	current := m.migration(name)
+	if operation == "" || current.Status.UnresolvedRun == nil || current.Status.UnresolvedRun.OperationID != operation {
+		m.fatalf("%s no longer carries the exact unresolved run to acknowledge", name)
+	}
 	if current.UID == "" {
 		m.fatalf("%s carries no UID", name)
 	}
@@ -512,6 +524,8 @@ func (m *migrationRun) lateDispatchProof() {
 	m.t.Helper()
 	name, database := "e2e-late-dispatch-"+m.engine.name, "ptah_e2e_late_dispatch"
 	m.isolatedDatabase(database, "e2e-"+m.engine.name+"-late-dispatch-db")
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	initial := audit.snapshot()
 	// Open first. The selector reaches the Resolve, Verify and History Jobs as
 	// well, so a gate that is closed here strands the first of them.
 	m.openApplyGate()
@@ -535,6 +549,7 @@ func (m *migrationRun) lateDispatchProof() {
 		m.reportGatedState(name, true)
 		m.fatalf("%s did not publish a plan to approve within %s", name, waitTimeout)
 	}
+	audit.assertRecords(initial, audit.snapshot(), audit.terminalPod(map[string]string{labelMigration: name, labelOperation: "history"}, ""), true)
 	m.logf("closing the gate before approving the %s plan", m.engine.kind)
 	m.closeApplyGate()
 	// Approving is what claims the Apply, and the gate is already closed, so
@@ -582,10 +597,13 @@ func (m *migrationRun) lateDispatchProof() {
 		m.fatalf("the %s Apply Job had already ended when its window closed, so it does not outlive the window by workload.JobDeadlineGrace", m.engine.name)
 	}
 	m.logf("opening the gate on the %s Apply Pod after its window closed", m.engine.kind)
+	beforeRefusal := audit.snapshot()
 	m.openApplyGate()
 	m.assertLateDispatchNeverReachesTheDatabase(name, database, claim.jobUID)
 	m.closeApplyGate()
+	audit.assertRecords(beforeRefusal, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": claim.jobName}, claim.jobUID), false)
 	m.logf("PASS %s refused an Apply Pod that started after its window closed", m.engine.kind)
+	audit.close()
 }
 
 func (m *migrationRun) assertLateDispatchNeverReachesTheDatabase(name, database, jobUID string) {

@@ -872,6 +872,46 @@ func retargetRefused(status ptahv1alpha1.PtahMigrationStatus, jobUID string) boo
 		})
 }
 
+// retargetRecoveryPlan is the fresh decision after a person accounted for
+// the refused run. The target changes; the resource and selected artifact do
+// not. A plan from the old target, a stale history, or a different resource
+// cannot serve as the allowed control for this refusal.
+func retargetRecoveryPlan(resource *ptahv1alpha1.PtahMigration, plan, original *ptahv1alpha1.PtahMigrationPlan, operation string) error {
+	if resource == nil || plan == nil || original == nil || resource.UID == "" ||
+		!changedMigrationApprovalRefused(resource, original.UID, resource.Generation, false) {
+		return errors.New("the recovered migration is not waiting for a fresh approval")
+	}
+	status := resource.Status
+	if plan.UID != status.Plan.UID || plan.Name != status.Plan.Name || plan.Namespace != resource.Namespace ||
+		plan.Spec.MigrationRef.Name != resource.Name || plan.Spec.MigrationRef.UID != resource.UID ||
+		original.Spec.MigrationRef != plan.Spec.MigrationRef ||
+		plan.Spec.Fingerprint == "" || plan.Spec.Fingerprint == original.Spec.Fingerprint {
+		return errors.New("the recovery plan has no new binding to this migration")
+	}
+	resolved := status.ResolvedRun
+	if operation == "" || resolved == nil || resolved.OperationID != operation ||
+		resolved.Resolution != ptahv1alpha1.MigrationRunResolvedByAcknowledgment ||
+		resolved.AcknowledgmentRef == nil || resolved.AcknowledgmentRef.UID == "" ||
+		resolved.AcknowledgedBy == nil || resolved.AcknowledgedBy.Username == "" || resolved.ResolvedAt.IsZero() ||
+		resource.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] != "" {
+		return errors.New("the refused run was not accounted for by its acknowledgment")
+	}
+	history := status.History
+	if history == nil || !history.ObservedAt.After(resolved.ResolvedAt.Time) ||
+		!sha256Pattern.MatchString(history.Fingerprint) || plan.Spec.HistoryFingerprint != history.Fingerprint ||
+		!sha256Pattern.MatchString(plan.Spec.TargetIdentityDigest) ||
+		plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest ||
+		plan.Spec.TargetIdentityDigest == original.Spec.TargetIdentityDigest {
+		return errors.New("the recovery plan does not name fresh history from the changed target")
+	}
+	if status.Artifact == nil || !sha256Pattern.MatchString(plan.Spec.ArtifactDigest) ||
+		plan.Spec.ArtifactDigest != original.Spec.ArtifactDigest || plan.Spec.ArtifactDigest != status.Artifact.Digest ||
+		len(plan.Spec.Migrations) == 0 || !reflect.DeepEqual(plan.Spec.Migrations, original.Spec.Migrations) {
+		return errors.New("the recovery plan changed the selected artifact or sequence")
+	}
+	return nil
+}
+
 // drillConverged is a database that holds every migration the artifact
 // carries. The condition is asserted rather than the phase, which moves on
 // every read.

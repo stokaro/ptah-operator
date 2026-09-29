@@ -1139,6 +1139,7 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 		},
 	}))
 	r.waitForPlan()
+	originalPlan := m.planOf(r.plan)
 	planned := audit.snapshot()
 	audit.assertRecords(initial, planned, audit.terminalPod(map[string]string{labelMigration: r.name, labelOperation: "history"}, ""), true)
 	m.logf("closing the gate before approving the %s plan", m.engine.kind)
@@ -1172,7 +1173,60 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 	r.assertUntouched(r.database)
 	r.assertUntouched(r.other)
 	m.logf("PASS %s refused an Apply whose target was repointed after approval", m.engine.kind)
+	r.recoverWithFreshApproval(audit, originalPlan)
 	audit.close()
+}
+
+// recoverWithFreshApproval proves the matching allowed path, using the same
+// resource, artifact, executor and repointed Secret. The completed refused Pod
+// and both database inventories were checked before this acknowledgment. The
+// original approval cannot authorize the new target; only a fresh decision can.
+func (r *retargetRow) recoverWithFreshApproval(audit *databaseSQLAudit, originalPlan *ptahv1alpha1.PtahMigrationPlan) {
+	m := r.m
+	m.t.Helper()
+	refused := m.migration(r.name)
+	unresolved := refused.Status.UnresolvedRun
+	if unresolved == nil || string(unresolved.JobUID) != r.jobUID || unresolved.PlanRef.UID != originalPlan.UID ||
+		!sha256Pattern.MatchString(unresolved.OperationID) {
+		m.fatalf("%s lost the refused run before recovery", r.name)
+	}
+	operation := unresolved.OperationID
+	m.openApplyGate()
+	m.acknowledgeUnresolvedRun(r.name, operation)
+	fresh := m.waitForMigration(r.name, "a new approval gate for the repointed target after acknowledgment", migrationPoll,
+		func(resource *ptahv1alpha1.PtahMigration) bool {
+			return changedMigrationApprovalRefused(resource, originalPlan.UID, refused.Generation, false)
+		})
+	plan := m.planOf(fresh.Status.Plan.Name)
+	if err := retargetRecoveryPlan(fresh, plan, originalPlan, operation); err != nil {
+		m.fatalf("%s did not bind its recovery plan to the changed target: %v", r.name, err)
+	}
+	m.assertNoNewApplyJob([]string{r.jobUID}, "before fresh authorization of the repointed target", r.name)
+	r.assertUntouched(r.database)
+	r.assertUntouched(r.other)
+	beforeApply := audit.snapshot()
+	m.check(m.approve(r.name+"-current", r.name, plan.Name, string(plan.UID), plan.Spec.Fingerprint),
+		"approve the recovered target")
+	converged := m.waitForGenerationInSync(r.name)
+	if converged.Status.LastRun == nil || converged.Status.LastRun.JobUID == "" ||
+		string(converged.Status.LastRun.JobUID) == r.jobUID ||
+		converged.Status.LastRun.Outcome != ptahv1alpha1.MigrationRunOutcomeApplied {
+		m.fatalf("%s did not record a fresh successful Apply after recovery", r.name)
+	}
+	run := converged.Status.LastRun
+	audit.assertRecords(beforeApply, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": run.JobName}, string(run.JobUID)), true)
+	m.assertNoNewApplyJob([]string{r.jobUID, string(run.JobUID)}, "after the recovered target converged", r.name)
+	if revisions := m.query(restoreRevisionsQuery(m.engine.name), r.other); revisions != "1,2,3" {
+		m.fatalf("%s did not apply the approved versions to the recovered target", r.name)
+	}
+	if rows := m.query("SELECT count(*) FROM e2e_migration_widgets", r.other); rows != "3" {
+		m.fatalf("%s recovered target does not have the three approved rows", r.name)
+	}
+	if color := m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", r.other); color != "blue" {
+		m.fatalf("%s recovered target does not carry the final approved migration", r.name)
+	}
+	r.assertUntouched(r.database)
+	m.logf("PASS %s target recovery: fresh approval migrated the changed target after acknowledgment; the original database stayed unmigrated", m.engine.kind)
 }
 
 // retargetRow is what the retarget row reads once.
