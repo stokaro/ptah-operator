@@ -6,6 +6,33 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
+// approvedSchemaSQLControl starts before approval and returns the check to run
+// after convergence. The existing lifecycle assertions verify database effects;
+// this binds the received SQL and successful runner result to that exact plan.
+func (d *dataPlane) approvedSchemaSQLControl(schema, engine string, selected currentPlan, beforeApply checkpoint) func() {
+	d.t.Helper()
+	plan := d.schemaPlan(selected.name)
+	if selected.uid == "" || selected.fingerprint == "" || string(plan.UID) != selected.uid || plan.Spec.Fingerprint != selected.fingerprint {
+		d.fatalf("%s SQL control did not read the selected approval plan", schema)
+	}
+	audit := &databaseSQLAudit{t: d.t, ctx: d.ctx, cluster: d.cluster, namespace: d.in.TestNamespace, engine: engine}
+	beforeSQL := audit.snapshot()
+	return func() {
+		d.t.Helper()
+		// Later lifecycle checks still use the captured Plan workload identity.
+		previous := d.captured
+		defer func() { d.captured = previous }()
+		result := d.captureOneNewJobResult(schema, "apply", beforeApply, nil)
+		if err := automaticApplyResult(result, plan.Spec.ContentDigest, plan.Spec.CoordinationDigest, plan.Spec.TargetIdentityDigest); err != nil {
+			d.fatalf("%s SQL control did not execute the selected plan: %v", schema, err)
+		}
+		completed := d.captured
+		audit.assertRecords(beforeSQL, audit.snapshot(),
+			audit.terminalPod(map[string]string{"job-name": completed.jobName}, completed.jobUID), true)
+		audit.close()
+	}
+}
+
 // changeApprovedSchemaInputs runs before the first allowed Apply. Each edit
 // follows an admitted approval while status writes cannot persist an Apply
 // claim. The lifecycle then approves the final plan and proves it executes.
