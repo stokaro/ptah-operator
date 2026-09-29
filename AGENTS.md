@@ -276,7 +276,7 @@ was given. `hack/e2e-timing-selftest.sh` is what keeps that true, and
 - Move a contract counter only when something a tagged release could have
   stored or spoken changes. The counters -- the CRD schema version, the
   controller-state version, the plan contracts, the runner protocol and the
-  rest -- all read 1 at v0.1.0, and
+  rest -- all read 1 in the 0.2.0 development tree, and
   [the API compatibility page](docs/site/src/content/docs/support/api-compatibility.md#contract-counters)
   lists where each is declared and what holds it.
 

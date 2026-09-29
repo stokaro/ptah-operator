@@ -16,10 +16,20 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
-## 0.1.0
+## 0.2.0
 
-**Before you upgrade.** Nothing. This is the first version, so there is no
-earlier release to move a cluster from.
+**Before you upgrade.** There is no earlier published release to upgrade from.
+This version is under development. The build is being stabilized before
+publication.
+
+The source acceptance matrix covers Kubernetes 1.35, 1.36, and 1.37. Publication
+still has to prove the signed image and chart digests, anonymous image access,
+and the immutable release transaction against the shipped bytes. The
+[production qualification record](https://github.com/stokaro/ptah-operator/issues/242)
+remains open: the `lab-20` profile is not assessed, and it excludes database
+restore/RTO and production capacity/soak qualification. Follow the
+[release preparation checks](../releases/#prepare-a-release) before
+creating the tag.
 
 Installing it is [Install](../../start/install/), and the database privileges
 it needs before the first schema converges are

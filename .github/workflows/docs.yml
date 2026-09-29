@@ -144,6 +144,20 @@ jobs:
           npm run check:build-info
           npm run check:demo-page
           npm run check:version-picker
+      # Check version-prefixed links before a tag exists. An edge-only build
+      # cannot catch a page that hard-codes /edge/ into a release guide.
+      - name: Build and check the guide under the chart version
+        working-directory: docs/site
+        env:
+          ASTRO_TELEMETRY_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version: //p' ../../charts/ptah-operator/Chart.yaml)"
+          [[ -n "$version" ]]
+          export DOCS_VERSION="v$version"
+          export DOCS_SOURCE_REF="$GITHUB_SHA"
+          npm run build
+          npm run check:links
       # A release's pages are built from that release's own revision, so the
       # pull request proves that path too rather than only the one master
       # happens to take. It runs only when a release is declared: until then

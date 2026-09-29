@@ -9,7 +9,7 @@ image:
   # Repository the manager image is pulled from.
   repository: ghcr.io/stokaro/ptah-operator
   # Recorded for a reader. The digest below is what is actually pulled.
-  tag: "0.1.0"
+  tag: "0.2.0"
   # Required registry manifest digest, including for local development.
   # A Docker image ID is not a registry manifest digest.
   digest: ""

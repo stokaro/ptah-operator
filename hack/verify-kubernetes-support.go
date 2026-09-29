@@ -1363,6 +1363,11 @@ func verifyUpdateWorkflow(path string) error {
 
 func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
 	required := []string{
+		"' M " + docsPath + "'",
+		"'M  " + docsPath + "'",
+		"$'M\\t" + docsPath + "'",
+		docsPath + " > \"$patch_file\"",
+		"git add \\\n            " + manifestPath + " \\\n            " + chartPath + " \\\n            " + docsPath + "\n",
 		"permissions:\n  contents: read",
 		"needs: [prepare]",
 		"needs: [prepare, propose]",
