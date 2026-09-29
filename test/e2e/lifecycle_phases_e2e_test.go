@@ -355,7 +355,8 @@ func (l *lifecycleRun) reinstallOverRetainedCRDs() {
 }
 
 // installTheExportedChart: the exact exported current-release chart bytes
-// install fresh over retained drifted CRDs and uninstall with no residue.
+// recover from quota refusal under restricted Pod Security over retained
+// drifted CRDs, then uninstall with no residue.
 func (l *lifecycleRun) installTheExportedChart() {
 	l.t.Helper()
 	l.logf("fresh-installing the exact exported current-release chart bytes")
@@ -364,8 +365,7 @@ func (l *lifecycleRun) installTheExportedChart() {
 	// and Helm 4 refuses to change a field another manager owns. This install
 	// carries the force for the same reason the one before it does, and proves
 	// the same thing: that the install converges a retained CRD.
-	l.mustHelm("", "install", l.in.helmRelease, l.in.chartPackage, "--namespace", l.in.operatorNamespace,
-		"--values", l.in.candidateValuesFile, "--force-conflicts", "--wait", "--timeout", "5m")
+	l.installWithQuotaAndPodSecurity()
 	l.waitRuntimeReady()
 	if l.crdDescription("ptahschemas.operator.ptah.run") == "exact released-chart install drift" {
 		l.fatalf("the exact released-chart install did not reconcile a retained CRD another manager drifted")
