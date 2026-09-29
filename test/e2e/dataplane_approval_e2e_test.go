@@ -36,8 +36,9 @@ func (d *dataPlane) approvedSchemaSQLControl(schema, engine string, selected cur
 // changeApprovedSchemaInputs runs before the first allowed Apply. Each edit
 // follows an admitted approval while status writes cannot persist an Apply
 // claim. The lifecycle then approves the final plan and proves it executes.
-func (d *dataPlane) changeApprovedSchemaInputs(schema, slug, key, realm string) {
+func (d *dataPlane) changeApprovedSchemaInputs(schema, key, realm string, window *schemaRefusalWindow) []operationSQLClient {
 	d.t.Helper()
+	var controls []operationSQLClient
 	for _, field := range []string{"policy", "transaction-mode"} {
 		before := d.schema(schema)
 		oldPlan := d.plan
@@ -58,11 +59,12 @@ func (d *dataPlane) changeApprovedSchemaInputs(schema, slug, key, realm string) 
 			d.fatalf("%s did not change generation after its %s edit", schema, field)
 		}
 		d.mustResumeStatusWrites("resume after changing an approved schema input")
-		current := d.waitForSchema(schema, "a new approval gate after changing "+field,
+		current := window.waitForSchema("a new approval gate after changing "+field,
 			func(resource *ptahv1alpha1.PtahSchema) bool {
 				return changedSchemaApprovalRefused(resource, oldPlan.uid, generation)
 			})
 		plan := d.schemaPlan(current.Status.Plan.Name)
+		controls = append(controls, window.resultControl(current, "plan", jobs))
 		if plan.Spec.Fingerprint == oldPlan.fingerprint {
 			d.fatalf("%s reused its approved fingerprint after changing %s", schema, field)
 		}
@@ -72,7 +74,7 @@ func (d *dataPlane) changeApprovedSchemaInputs(schema, slug, key, realm string) 
 				return conditionIs(resource.Status.Conditions, "Stale", "True", "PlanNoLongerCurrent")
 			})
 		d.assertNoNewJobs(schema, "apply", jobs)
-		d.assertDatabaseColumn(slug, "name", 0)
 		d.logf("PASS %s %s changed after approval: a new plan requires a fresh decision", schema, field)
 	}
+	return controls
 }

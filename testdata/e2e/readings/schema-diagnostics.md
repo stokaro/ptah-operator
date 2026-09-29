@@ -138,3 +138,30 @@ The destructive and exclusion runtime scenarios audit one uninterrupted window
 from resource creation through all refused decisions. Actual diagnostic results
 bind each required control to its resource, Job, Pod, and published plan. The
 final database equality check follows this audit, before fresh authorization.
+
+## Initial planning and mutable-tag readings
+
+The [lifecycle capture manifest](schema-lifecycle-diagnostics.json) records six
+isolated runs at 22:30–22:33 UTC on September 29, 2026, with the same source pin,
+images, account setup, and cleanup procedure. It includes every command's
+identity and exit status and the hashes of twelve diagnostic journals.
+`initial-v1` starts with no tables and plans v1. `tag-v2` and `tag-v3` start from
+v1 with one `(701, 'identity-control')` row and plan the corresponding revision.
+The empty case remains empty; the populated cases preserve the row and do not
+add `note`. All Observe commands returned 1 and all Plan commands returned 0.
+
+The empty PostgreSQL case has 39 Observe and 75 Plan SQL records; populated
+cases have 45 and 82. All MySQL cases have 36/69 protocol records containing
+14/27 received Query/Execute records. Every statement already belongs to the
+69-entry diagnostic contract; these fixtures add witnesses, not permissions.
+
+The schema lifecycle audits its initial decision, approved lock-policy edit,
+and approved transaction-mode edit before the first allowed Apply. A separate
+continuous window covers v2 planning and the admitted approval invalidated by
+the v3 tag move. This later window preserves the target credential and records
+its starting Job UIDs under the existing status-write barrier. Earlier Jobs
+cannot provide a new SQL control, and any traffic from an unidentified client
+fails. Every required Observe/Plan control names its actual result Job and Pod.
+An earlier complete MySQL session is permitted before the window; missing
+Connect/Quit records inside the new window still fail. These are implemented
+proofs awaiting cluster execution on the final identities.

@@ -9,9 +9,93 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 const schemaAuditDatabase = "ptah_audit_schema"
+
+func TestSchemaSQLInventorySeparatesWindowsByJobUID(t *testing.T) {
+	t.Parallel()
+	_, resource, _, _ := schemaReplacementFixture()
+	owner := func(version, kind, name string, uid types.UID) metav1.OwnerReference {
+		return metav1.OwnerReference{APIVersion: version, Kind: kind, Name: name, UID: uid, Controller: ptr.To(true)}
+	}
+	oldJob := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "same-job-name", Namespace: resource.Namespace, UID: "old-job",
+		Labels:          map[string]string{labelSchema: resource.Name, labelOperation: "observe"},
+		OwnerReferences: []metav1.OwnerReference{owner(ptahSchemaAPIVersion, "PtahSchema", resource.Name, resource.UID)}}}
+	newJob := *oldJob.DeepCopy()
+	newJob.UID = "new-job"
+	oldPod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old-pod", Namespace: resource.Namespace, UID: "old-pod",
+		Labels:          map[string]string{labelSchema: resource.Name, labelOperation: "observe"},
+		OwnerReferences: []metav1.OwnerReference{owner("batch/v1", "Job", oldJob.Name, oldJob.UID)}},
+		Status: corev1.PodStatus{Phase: corev1.PodSucceeded, PodIP: "10.0.0.1"}}
+	newPod := *oldPod.DeepCopy()
+	newPod.UID, newPod.Name, newPod.OwnerReferences[0].UID, newPod.Status.PodIP = "new-pod", "new-pod", newJob.UID, mysqlAuditHost
+	inventory := &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}, excludedJobs: checkpoint{string(oldJob.UID)}}
+	if err := inventory.record([]batchv1.Job{oldJob, newJob}, []corev1.Pod{oldPod, newPod}); err != nil {
+		t.Fatal(err)
+	}
+	// A later empty API reading after TTL cleanup must preserve the controls.
+	if err := inventory.record(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	clients, err := inventory.clients(resource)
+	if err != nil || len(clients) != 1 || clients[mysqlAuditHost].jobUID != string(newJob.UID) || clients[mysqlAuditHost].podUID != string(newPod.UID) {
+		t.Fatalf("the new window lost its exact new workload: clients=%v error=%v", clients, err)
+	}
+	policy, err := newSchemaSQLPolicy("postgresql", schemaAuditDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := schemaAuditReading(t, "postgresql", "observe")
+	if _, err := postgresStatementRefusalSQL(raw, schemaAuditDatabase, clients, schemaDiagnosticActor, policy.postgres, nil); err != nil {
+		t.Fatal(err)
+	}
+	oldTraffic := []byte(strings.ReplaceAll(string(raw), mysqlAuditHost, oldPod.Status.PodIP))
+	if _, err := postgresStatementRefusalSQL(oldTraffic, schemaAuditDatabase, clients, schemaDiagnosticActor, policy.postgres, nil); err == nil {
+		t.Fatal("an earlier Job supplied the new window's SQL control")
+	}
+	if inventory.record([]batchv1.Job{{}}, nil) == nil || inventory.record(nil, []corev1.Pod{{}}) == nil {
+		t.Fatal("an anonymous workload entered the retained evidence")
+	}
+}
+
+func TestSchemaMySQLAuditAfterACompletedEarlierWindow(t *testing.T) {
+	t.Parallel()
+	read := func(variant string) []mysqlStatementRecord {
+		t.Helper()
+		rows, err := mysqlStatementJournal(schemaAuditReading(t, "mysql", variant+"-plan"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	before := append(mysqlAuditBaseline(), read("initial-v1")...)
+	window := read("tag-v2")
+	policy, err := newSchemaSQLPolicy("mysql", schemaAuditDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients := map[string]operationSQLClient{mysqlAuditHost: schemaAuditActor("plan")}
+	check := func(rows []mysqlStatementRecord, unused bool) error {
+		counts, err := mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, unused, schemaDiagnosticActor, policy.mysql)
+		if err == nil && counts[mysqlAuditHost] != 27 {
+			t.Fatal("prior SQL was counted as a new diagnostic control")
+		}
+		return err
+	}
+	if err := check(window, false); err != nil {
+		t.Fatal(err)
+	}
+	if check(window, true) == nil || check(window[1:], false) == nil || check(window[:len(window)-1], false) == nil {
+		t.Fatal("the later window lost its account-use or complete-session boundary")
+	}
+}
 
 func schemaAuditReading(t *testing.T, engine, operation string) []byte {
 	t.Helper()
@@ -70,7 +154,7 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			seen := map[schemaSQLKey]bool{}
-			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-"} {
+			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-"} {
 				for _, operation := range []string{"observe", "plan"} {
 					actor := schemaAuditActor(operation)
 					clients := map[string]operationSQLClient{mysqlAuditHost: actor}
@@ -94,6 +178,9 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 							})
 					}
 					want := map[string]map[string]int{"postgresql": {"observe": 45, "plan": 82}, "mysql": {"observe": 14, "plan": 27}}[engine][operation]
+					if engine == "postgresql" && variant == "initial-v1-" {
+						want = map[string]int{"observe": 39, "plan": 75}[operation]
+					}
 					if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
 						t.Fatalf("%s %s%s received SQL: counts=%v, error=%v", engine, variant, operation, counts, err)
 					}

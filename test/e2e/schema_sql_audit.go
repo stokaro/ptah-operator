@@ -9,6 +9,8 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -149,4 +151,43 @@ func schemaRequiredSQLControls(clients map[string]operationSQLClient, counts map
 		}
 	}
 	return nil
+}
+
+type schemaSQLInventory struct {
+	jobs         map[types.UID]batchv1.Job
+	pods         map[types.UID]corev1.Pod
+	excludedJobs checkpoint
+}
+
+func (inventory *schemaSQLInventory) record(jobs []batchv1.Job, pods []corev1.Pod) error {
+	for _, job := range jobs {
+		if inventory.excludedJobs.holds(string(job.UID)) {
+			continue
+		}
+		if job.UID == "" {
+			return errors.New("schema SQL audit Job has no UID")
+		}
+		inventory.jobs[job.UID] = job
+	}
+	for _, pod := range pods {
+		if owner := metav1.GetControllerOf(&pod); owner != nil && owner.Kind == "Job" && owner.APIVersion == "batch/v1" && inventory.excludedJobs.holds(string(owner.UID)) {
+			continue
+		}
+		if pod.UID == "" {
+			return errors.New("schema SQL audit Pod has no UID")
+		}
+		inventory.pods[pod.UID] = pod
+	}
+	return nil
+}
+
+func (inventory *schemaSQLInventory) clients(schema *ptahv1alpha1.PtahSchema, predecessors ...*ptahv1alpha1.PtahSchema) (map[string]operationSQLClient, error) {
+	jobs, pods := make([]batchv1.Job, 0, len(inventory.jobs)), make([]corev1.Pod, 0, len(inventory.pods))
+	for _, job := range inventory.jobs {
+		jobs = append(jobs, job)
+	}
+	for _, pod := range inventory.pods {
+		pods = append(pods, pod)
+	}
+	return schemaSQLClients(schema, jobs, pods, predecessors...)
 }

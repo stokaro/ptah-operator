@@ -1,0 +1,224 @@
+[
+  {
+    "recordedAt": "2026-09-29T22:30:32.675460+00:00",
+    "engine": "postgresql",
+    "serverVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "serverImage": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+    "executorImageID": "sha256:cc4fabbc0ad0d4dc6d1138df08456222232c0f38d7ef0eba4a7b40bd03946fd1",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "serverContainerID": "e593b824e4ddfee912f03003f710f6139c0e768ad832ff95f10a314267d420b6",
+    "database": "ptah_audit_schema",
+    "account": "ptah_audit",
+    "variant": "initial-v1",
+    "scope": "Isolated CLI schema lifecycle diagnostic readings; not Kubernetes acceptance.",
+    "operations": {
+      "observe": {
+        "containerID": "00fc10b78622092ad64ecfbca4270fc42d3dce9afd0b58b95af4a2d4d7db5318",
+        "exitCode": 1,
+        "clientAddress": "172.19.0.3",
+        "records": 39
+      },
+      "plan": {
+        "containerID": "15a6f8a9645f081c59109b696e9c1da99d7d5cfcbfb649f3fee62172106b5709",
+        "exitCode": 0,
+        "clientAddress": "172.19.0.3",
+        "records": 75
+      }
+    },
+    "plan": {
+      "dialect": "postgres",
+      "destructive": false,
+      "exclude": null,
+      "statementCount": 1
+    },
+    "files": {
+      "postgresql-schema-initial-v1-observe.jsonl": "048c83205bdd9457c71b56300c8ecfa5fa69cde4b615630f3f5f42cc803ebcb0",
+      "postgresql-schema-initial-v1-plan.jsonl": "1ba4a906aa6223ad171eacdfd0fb5676ab24fbf705d061ccc7b37fa90a6a6447"
+    }
+  },
+  {
+    "recordedAt": "2026-09-29T22:31:06.042835+00:00",
+    "engine": "postgresql",
+    "serverVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "serverImage": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+    "executorImageID": "sha256:cc4fabbc0ad0d4dc6d1138df08456222232c0f38d7ef0eba4a7b40bd03946fd1",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "serverContainerID": "6231aa39e163f04bd8e54a0957216421d7cdf59e9c0fa9a10d25fe3d4335ad96",
+    "database": "ptah_audit_schema",
+    "account": "ptah_audit",
+    "variant": "tag-v2",
+    "scope": "Isolated CLI schema lifecycle diagnostic readings; not Kubernetes acceptance.",
+    "operations": {
+      "observe": {
+        "containerID": "6bf4ad271f94b6042fc08e82c012128d24e38a5227fa49dd865c9a86f5e4f8eb",
+        "exitCode": 1,
+        "clientAddress": "172.19.0.3",
+        "records": 45
+      },
+      "plan": {
+        "containerID": "cad1168d2c81dbda092228796c38b04c8201142cd0f94acf0e9437f4b37c0a32",
+        "exitCode": 0,
+        "clientAddress": "172.19.0.3",
+        "records": 82
+      }
+    },
+    "plan": {
+      "dialect": "postgres",
+      "destructive": false,
+      "exclude": null,
+      "statementCount": 1
+    },
+    "files": {
+      "postgresql-schema-tag-v2-observe.jsonl": "d565e63a0ea789c20f9ba7a3201491a285cef0d0b8a95c4d2fda6b709ef2c423",
+      "postgresql-schema-tag-v2-plan.jsonl": "1aa9684c676b5df483008b55e593b12c990b426b4c45c45f59e6006b94a55f9b"
+    }
+  },
+  {
+    "recordedAt": "2026-09-29T22:31:38.830024+00:00",
+    "engine": "postgresql",
+    "serverVersion": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "serverImage": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+    "executorImageID": "sha256:cc4fabbc0ad0d4dc6d1138df08456222232c0f38d7ef0eba4a7b40bd03946fd1",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "serverContainerID": "53269e954b410038a592a3831723b78d70d1ae4c4e48a0d2878ca276d8c05064",
+    "database": "ptah_audit_schema",
+    "account": "ptah_audit",
+    "variant": "tag-v3",
+    "scope": "Isolated CLI schema lifecycle diagnostic readings; not Kubernetes acceptance.",
+    "operations": {
+      "observe": {
+        "containerID": "64600d100039f1bc0f5bd77a2b6d198a8c6c1db8a02371cc10c7cb669270db8a",
+        "exitCode": 1,
+        "clientAddress": "172.19.0.3",
+        "records": 45
+      },
+      "plan": {
+        "containerID": "9f3fb4085c35ad013c7ac5db64063617e8f3fc596a27964c23c0dab88f32c990",
+        "exitCode": 0,
+        "clientAddress": "172.19.0.3",
+        "records": 82
+      }
+    },
+    "plan": {
+      "dialect": "postgres",
+      "destructive": false,
+      "exclude": null,
+      "statementCount": 2
+    },
+    "files": {
+      "postgresql-schema-tag-v3-observe.jsonl": "d565e63a0ea789c20f9ba7a3201491a285cef0d0b8a95c4d2fda6b709ef2c423",
+      "postgresql-schema-tag-v3-plan.jsonl": "1aa9684c676b5df483008b55e593b12c990b426b4c45c45f59e6006b94a55f9b"
+    }
+  },
+  {
+    "recordedAt": "2026-09-29T22:32:13.815363+00:00",
+    "engine": "mysql",
+    "serverVersion": "8.4.11",
+    "serverImage": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+    "executorImageID": "sha256:cc4fabbc0ad0d4dc6d1138df08456222232c0f38d7ef0eba4a7b40bd03946fd1",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "serverContainerID": "5894f22aec80a48464341e0f9c029d0defcb28eeb457da22b27a4b17fbbcbe09",
+    "database": "ptah_audit_schema",
+    "account": "ptah_audit",
+    "variant": "initial-v1",
+    "scope": "Isolated CLI schema lifecycle diagnostic readings; not Kubernetes acceptance.",
+    "operations": {
+      "observe": {
+        "containerID": "6484ddaa31c4afc6176ad562f8aa0a5dd5237eb8645514b83fe206c46fce0b1c",
+        "exitCode": 1,
+        "clientAddress": "172.19.0.3",
+        "records": 36
+      },
+      "plan": {
+        "containerID": "54369c9b47bc0bf69d9078974122eb957cc1166c8927487783e07a8185a3fe7f",
+        "exitCode": 0,
+        "clientAddress": "172.19.0.3",
+        "records": 69
+      }
+    },
+    "plan": {
+      "dialect": "mysql",
+      "destructive": false,
+      "exclude": null,
+      "statementCount": 5
+    },
+    "files": {
+      "mysql-schema-initial-v1-observe.jsonl": "e248cb61b37c58b67decd52a70402507f4f6f9673155285e45ea63b9b4d5ac54",
+      "mysql-schema-initial-v1-plan.jsonl": "ae9813a03c954da99d326c142cb4e19238cd0cd686a4f2bb7faeb17256c2b078"
+    }
+  },
+  {
+    "recordedAt": "2026-09-29T22:32:47.204509+00:00",
+    "engine": "mysql",
+    "serverVersion": "8.4.11",
+    "serverImage": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+    "executorImageID": "sha256:cc4fabbc0ad0d4dc6d1138df08456222232c0f38d7ef0eba4a7b40bd03946fd1",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "serverContainerID": "0bc3d21e63e3539bfe6aa38f8a5f6d05198775137c4049f78bec27d04f3fd7d4",
+    "database": "ptah_audit_schema",
+    "account": "ptah_audit",
+    "variant": "tag-v2",
+    "scope": "Isolated CLI schema lifecycle diagnostic readings; not Kubernetes acceptance.",
+    "operations": {
+      "observe": {
+        "containerID": "675d6cb2b07007e8dca644ff31a28f68b284f3463f96f2c5cc9fd1e6be29b7c1",
+        "exitCode": 1,
+        "clientAddress": "172.19.0.3",
+        "records": 36
+      },
+      "plan": {
+        "containerID": "91400d724dce9fba195b9fc19c3a93c0dae0fcf4f54968f78c8ce15d0cc088c2",
+        "exitCode": 0,
+        "clientAddress": "172.19.0.3",
+        "records": 69
+      }
+    },
+    "plan": {
+      "dialect": "mysql",
+      "destructive": false,
+      "exclude": null,
+      "statementCount": 1
+    },
+    "files": {
+      "mysql-schema-tag-v2-observe.jsonl": "f8b96d86ffc291b6664309804f3343289abe48650849383a7d392b911b8daf7a",
+      "mysql-schema-tag-v2-plan.jsonl": "050f847cb164368f99f4a03a4bdf81c1c0fd6902ccc7a4a69f6f4263ccfd27cf"
+    }
+  },
+  {
+    "recordedAt": "2026-09-29T22:33:20.497819+00:00",
+    "engine": "mysql",
+    "serverVersion": "8.4.11",
+    "serverImage": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+    "executorImageID": "sha256:cc4fabbc0ad0d4dc6d1138df08456222232c0f38d7ef0eba4a7b40bd03946fd1",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "serverContainerID": "43f8d8234d0b3a282ed86e715d33a40fd0df3e8624e5a84cd9224e092c18a8f9",
+    "database": "ptah_audit_schema",
+    "account": "ptah_audit",
+    "variant": "tag-v3",
+    "scope": "Isolated CLI schema lifecycle diagnostic readings; not Kubernetes acceptance.",
+    "operations": {
+      "observe": {
+        "containerID": "64f9c4d2abd1c00314e1daa4da420b0380f89cbdf5c8156c2a48bdbbbcd75596",
+        "exitCode": 1,
+        "clientAddress": "172.19.0.3",
+        "records": 36
+      },
+      "plan": {
+        "containerID": "e2191f5b2fa3b9debf5bd55c3e79fbd7ce6220938d8aa04cfe086488b3ffd5c9",
+        "exitCode": 0,
+        "clientAddress": "172.19.0.3",
+        "records": 69
+      }
+    },
+    "plan": {
+      "dialect": "mysql",
+      "destructive": false,
+      "exclude": null,
+      "statementCount": 4
+    },
+    "files": {
+      "mysql-schema-tag-v3-observe.jsonl": "87ed927bc0a7cbbe3d0826b656a5a2c9a0058976f9a10e37b281fe77bf631467",
+      "mysql-schema-tag-v3-plan.jsonl": "0de0bbe7f7b8ffe63cdd72dfd495b22d333665914afe5c0ef6899ff21e2007f1"
+    }
+  }
+]

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
-  "scope": "Exact schema diagnostics for the populated v3, v4, fault-v1, and excluded-table fixtures; no generic SQL classification.",
+  "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification.",
   "statements": [
     {
       "engine": "postgresql",

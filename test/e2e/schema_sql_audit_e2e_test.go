@@ -37,7 +37,7 @@ MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot >/dev/
 	return user
 }
 
-func (f *faultRun) schemaMySQLAuditAccount(audit *databaseSQLAudit, database, secretName string) string {
+func (f *dataPlane) schemaMySQLAuditAccount(audit *databaseSQLAudit, database, secretName string) string {
 	f.t.Helper()
 	user := audit.createMySQLAccount(database)
 	secret := &corev1.Secret{}
@@ -56,62 +56,46 @@ func (f *faultRun) schemaMySQLAuditAccount(audit *databaseSQLAudit, database, se
 	return user
 }
 
-type schemaSQLInventory struct {
-	jobs map[types.UID]batchv1.Job
-	pods map[types.UID]corev1.Pod
-}
-
-func (f *faultRun) captureSchemaSQLInventory(name string, inventory *schemaSQLInventory) {
+func (f *dataPlane) captureSchemaSQLInventory(name string, inventory *schemaSQLInventory) {
 	f.t.Helper()
 	jobs, pods := &batchv1.JobList{}, &corev1.PodList{}
 	f.check(f.list(jobs, client.MatchingLabels{labelSchema: name}), "read schema SQL audit Jobs")
 	f.check(f.list(pods, client.MatchingLabels{labelSchema: name}), "read schema SQL audit Pods")
-	for _, job := range jobs.Items {
-		if job.UID == "" {
-			f.fatalf("schema SQL audit Job has no UID")
-		}
-		inventory.jobs[job.UID] = job
-	}
-	for _, pod := range pods.Items {
-		if pod.UID == "" {
-			f.fatalf("schema SQL audit Pod has no UID")
-		}
-		inventory.pods[pod.UID] = pod
-	}
-}
-
-func (inventory *schemaSQLInventory) clients(schema *ptahv1alpha1.PtahSchema, predecessors ...*ptahv1alpha1.PtahSchema) (map[string]operationSQLClient, error) {
-	jobs, pods := make([]batchv1.Job, 0, len(inventory.jobs)), make([]corev1.Pod, 0, len(inventory.pods))
-	for _, job := range inventory.jobs {
-		jobs = append(jobs, job)
-	}
-	for _, pod := range inventory.pods {
-		pods = append(pods, pod)
-	}
-	return schemaSQLClients(schema, jobs, pods, predecessors...)
+	f.check(inventory.record(jobs.Items, pods.Items), "retain schema SQL audit identities")
 }
 
 type schemaRefusalWindow struct {
-	f                    *faultRun
+	f                    *dataPlane
 	name, database, user string
 	audit                *databaseSQLAudit
 	policy               *schemaSQLPolicy
 	inventory            *schemaSQLInventory
 	pgBefore             []byte
 	mysqlBefore          []mysqlStatementRecord
+	wait                 func(string, string, func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema
+	resourceUID          types.UID
+	unusedMySQLAccount   bool
+}
+
+// Fault waits allow the refusal under test to enter Failed and retain their
+// periodic credential audit. Lifecycle waits keep their own failure behavior.
+func (f *faultRun) startSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
+	w := f.dataPlane.startSchemaRefusalWindow(name, engine, database, secret)
+	w.wait = f.waitForSchema
+	return w
 }
 
 // Start after fixture setup but before its resource exists. The dedicated
 // MySQL credential has never connected, so database-less records remain scoped.
 // Database assertions must run after assert closes this uninterrupted window.
-func (f *faultRun) startSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
+func (f *dataPlane) startSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
 	f.t.Helper()
 	if !apierrors.IsNotFound(f.get(name, &ptahv1alpha1.PtahSchema{})) {
 		f.fatalf("schema SQL refusal audit must start before its resource exists")
 	}
 	policy, err := newSchemaSQLPolicy(engine, database)
 	f.check(err, "load the pinned schema diagnostic SQL contract")
-	w := &schemaRefusalWindow{f: f, name: name, database: database, policy: policy,
+	w := &schemaRefusalWindow{f: f, name: name, database: database, policy: policy, wait: f.waitForSchema, unusedMySQLAccount: true,
 		audit:     &databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: engine},
 		inventory: &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}},
 	}
@@ -125,9 +109,28 @@ func (f *faultRun) startSchemaRefusalWindow(name, engine, database, secret strin
 	return w
 }
 
+// Reopen only after a completed audit and while status writes hold a quiescent
+// resource. The target credential is unchanged. Old Jobs are not new controls;
+// any SQL they send in this new window is rejected as unidentified traffic.
+func (w *schemaRefusalWindow) reopen() {
+	w.f.t.Helper()
+	resource := w.f.schema(w.name)
+	if w.audit.started || w.resourceUID == "" || resource.UID != w.resourceUID || resource.Status.ActiveOperation != nil || !w.f.rbac.paused {
+		w.f.fatalf("schema SQL refusal audit needs the same quiescent resource under a status-write barrier")
+	}
+	w.inventory = &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}, excludedJobs: w.f.checkpointJobs(w.name, "")}
+	w.unusedMySQLAccount = false
+	if w.audit.engine == "mysql" {
+		w.mysqlBefore = w.audit.mysqlStatementSnapshot()
+	} else {
+		w.audit.snapshot()
+		w.pgBefore = w.audit.pgPrefix
+	}
+}
+
 func (w *schemaRefusalWindow) waitForSchema(description string, match func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
 	w.f.t.Helper()
-	return w.f.waitForSchema(w.name, description, func(resource *ptahv1alpha1.PtahSchema) bool {
+	return w.wait(w.name, description, func(resource *ptahv1alpha1.PtahSchema) bool {
 		w.f.captureSchemaSQLInventory(w.name, w.inventory)
 		return match(resource)
 	})
@@ -168,6 +171,9 @@ func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, o
 func (w *schemaRefusalWindow) assert(resource *ptahv1alpha1.PtahSchema, controls ...operationSQLClient) {
 	w.f.t.Helper()
 	f := w.f
+	if resource == nil || resource.Name != w.name || resource.Namespace != f.in.TestNamespace || resource.UID == "" || (w.resourceUID != "" && resource.UID != w.resourceUID) {
+		f.fatalf("schema SQL refusal audit changed resource identity")
+	}
 	f.captureSchemaSQLInventory(w.name, w.inventory)
 	clients, err := w.inventory.clients(resource)
 	f.check(err, "bind schema refusal SQL to the exact resource Jobs and Pods")
@@ -179,7 +185,7 @@ func (w *schemaRefusalWindow) assert(resource *ptahv1alpha1.PtahSchema, controls
 		}
 		counts, err = postgresStatementRefusalSQL(w.audit.pgPrefix[len(w.pgBefore):], w.database, clients, schemaDiagnosticActor, w.policy.postgres, nil)
 	} else {
-		counts, err = mysqlStatementRefusalSQL(w.mysqlBefore, w.audit.mysqlStatementSnapshot(), w.database, w.user, clients, true, schemaDiagnosticActor, w.policy.mysql)
+		counts, err = mysqlStatementRefusalSQL(w.mysqlBefore, w.audit.mysqlStatementSnapshot(), w.database, w.user, clients, w.unusedMySQLAccount, schemaDiagnosticActor, w.policy.mysql)
 	}
 	f.check(err, "refuse SQL outside the exact schema diagnostic contract")
 	f.check(schemaRequiredSQLControls(clients, counts, controls), "observe SQL from every required diagnostic result")
@@ -193,4 +199,5 @@ func (w *schemaRefusalWindow) assert(resource *ptahv1alpha1.PtahSchema, controls
 		f.logf("SQL refusal audit: engine=%s schemaUID=%s jobUID=%s podUID=%s operation=%s client=%s allowedDiagnosticRecords=%d unauthorizedRecords=0", w.audit.engine, actor.resourceUID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
 	}
 	w.audit.close()
+	w.resourceUID = resource.UID
 }
