@@ -16,8 +16,10 @@ Captured on September 29, 2026, at 21:31–21:32 UTC, using Ptah commit
 | PostgreSQL | 17.11 | `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73` |
 | MySQL | 8.4.11 | `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb` |
 
-Each engine used a new database `ptah_audit_schema`, an isolated database-scoped
-account `ptah_audit`, and its `testdata/e2e/<engine>-v3.sql` seed. The control row
+Each engine used a new database `ptah_audit_schema`, the account `ptah_audit`,
+and its `testdata/e2e/<engine>-v3.sql` seed. PostgreSQL used the container's
+bootstrap account (`POSTGRES_USER`); MySQL used the database-scoped account
+created through `MYSQL_USER`. The control row
 was `(701, 'identity-control', 'preserved-identity-row')` in `e2e_widgets`.
 The desired schema was `<engine>-fault-v1.sql`, which adds `fault_token`.
 Credentials were passed in a private environment file and removed after capture.
