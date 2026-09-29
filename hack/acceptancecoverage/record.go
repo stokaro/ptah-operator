@@ -81,8 +81,10 @@ var requirements = []requirement{
 		"the retry interval in `test/e2e/migrations_faults_e2e_test.go`, " +
 			"the bounded refresh count under a standing refusal and the registry outage " +
 			"in `test/e2e/dataplane_gates_e2e_test.go`, a partial run that blocks and recovers in `test/e2e/migrations_realm_e2e_test.go`, " +
-			"and the recovery scenarios of `hack/capacity` that the lab profile's progress target is read from",
-		"a result read that hangs"},
+			"the recovery scenarios of `hack/capacity` that the lab profile's progress target is read from, " +
+			"and a hung migration result stream on both engines in `test/e2e/migrations_result_read_e2e_test.go`, " +
+			"with a measured cancellation, independent work, a retained claim and Lease, and recovery without replay",
+		"a hung PtahSchema result read"},
 	{"PA-05", "Enforce the API and authority boundaries",
 		"boundary-value API cases, impersonated forbidden writes, and network policies on a cluster with a CNI that enforces",
 		"the CRD schema history gates, the admission rows in `test/e2e/controlplane_e2e_test.go`, " +
