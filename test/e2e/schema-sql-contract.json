@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
-  "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification.",
+  "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read.",
   "statements": [
     {
       "engine": "postgresql",
@@ -690,6 +690,69 @@
       ],
       "command": "Query",
       "statement": "SELECT user\n\t\tFROM mysql.user\n\t\tWHERE account_locked = 'Y' AND password_expired = 'Y' AND authentication_string = ''\n\t\t  AND user NOT LIKE 'mysql.%'\n\t\tORDER BY user",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "plan"
+      ],
+      "command": "query",
+      "statement": "SELECT pg_try_advisory_lock($1)",
+      "parameters": "Parameters: $1 = '1237737229'"
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "plan"
+      ],
+      "command": "query",
+      "statement": "SELECT pg_advisory_unlock($1)",
+      "parameters": "Parameters: $1 = '1237737229'"
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "plan"
+      ],
+      "command": "Query",
+      "statement": "SELECT @@SESSION.restrict_fk_on_non_standard_key",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "plan"
+      ],
+      "command": "Prepare",
+      "statement": "SELECT GET_LOCK(?, ?)",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "plan"
+      ],
+      "command": "Execute",
+      "statement": "SELECT GET_LOCK('ptah_schema_apply', 30)",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "plan"
+      ],
+      "command": "Prepare",
+      "statement": "SELECT RELEASE_LOCK(?)",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "plan"
+      ],
+      "command": "Execute",
+      "statement": "SELECT RELEASE_LOCK('ptah_schema_apply')",
       "parameters": ""
     }
   ]

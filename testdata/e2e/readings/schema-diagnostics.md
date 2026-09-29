@@ -60,8 +60,8 @@ the complete journal window and fails on unidentified scoped traffic.
 
 ## Permitted work and source review
 
-The [contract](../../../test/e2e/schema-sql-contract.json) carries 45 distinct
-PostgreSQL statements/parameter sets and 24 MySQL command/statement pairs.
+The [contract](../../../test/e2e/schema-sql-contract.json) carries 47 distinct
+PostgreSQL statements/parameter sets and 29 MySQL command/statement pairs.
 Both operations have witnesses for each applicable declaration; PostgreSQL's
 additional schema-list query belongs to Plan only. The predicate compares SQL,
 comments, whitespace, parameters, and MySQL protocol commands byte for byte.
@@ -153,7 +153,8 @@ add `note`. All Observe commands returned 1 and all Plan commands returned 0.
 The empty PostgreSQL case has 39 Observe and 75 Plan SQL records; populated
 cases have 45 and 82. All MySQL cases have 36/69 protocol records containing
 14/27 received Query/Execute records. Every statement already belongs to the
-69-entry diagnostic contract; these fixtures add witnesses, not permissions.
+then-current 69-entry diagnostic contract; these fixtures added witnesses, not
+permissions. The native Plan validation correction below adds seven declarations.
 
 The schema lifecycle audits its initial decision, approved lock-policy edit,
 and approved transaction-mode edit before the first allowed Apply. A separate
@@ -165,3 +166,64 @@ fails. Every required Observe/Plan control names its actual result Job and Pod.
 An earlier complete MySQL session is permitted before the window; missing
 Connect/Quit records inside the new window still fail. These are implemented
 proofs awaiting cluster execution on the final identities.
+
+## Native Plan validation and stale-plan readings
+
+The runner validates a saved plan with `schema apply --dry-run` before publishing
+it. The original diagnostic captures invoked only `schema plan`, so their SQL
+contract omitted the validation command's lock queries and MySQL session check.
+`TestSchemaSQLPlanValidation` fails against that original contract on both engines
+using the actual validation journals below.
+
+[Capture metadata](schema-drift-diagnostics.json) records all twelve journals,
+SHA-256 values, commands, fixture/plan hashes, container identities, and outcomes.
+The executor is still the pinned Ptah source above; this capture used executor
+image `sha256:7170574df0a11770b9bf9b32adc43e83d34bdb233fbe53a17df3540c10052ca5`,
+PostgreSQL 17.11 and MySQL 8.4.11. Each engine began at its `*-v3.sql` fixture with
+one preserved row. The `*-fault-v1.sql` desired schema added `fault_token`.
+
+The sequence saved the initial plan, dropped `enabled` as a separate harness
+fault, refused the old plan with `stale-plan`, observed and planned the changed
+database, validated that fresh plan, and applied it. Only the final Apply restored
+`enabled` and added `fault_token`; all diagnostic/refusal steps left both columns
+absent, and the row survived the whole sequence. The account and database stayed
+unchanged. Plan validation used `PTAH_LOCK_TIMEOUT=30s`, matching the workload's
+observation timeout; the two Apply commands used the fault fixture's `60s`.
+
+| Command | PostgreSQL received SQL | MySQL received Query/Execute | Expected result |
+| --- | ---: | ---: | --- |
+| Initial Plan | 82 | 27 | Saved plan, exit 0 |
+| Stale Apply | 43 | 17 | `refused` / `stale-plan`, exit 2 |
+| Observe | 45 | 14 | Drift, exit 1 |
+| Replacement Plan | 82 | 27 | Saved plan, exit 0 |
+| Saved-plan validation | 43 | 17 | `dry-run`, exit 0 |
+| Fresh Apply | 47 | 21 | `applied`, exit 0 |
+
+The added Plan declarations permit only:
+
+- PostgreSQL `pg_try_advisory_lock` and `pg_advisory_unlock`, both with the exact
+  key `1237737229` derived from `ptah_schema_apply`.
+- MySQL Prepare/Execute pairs for `GET_LOCK('ptah_schema_apply', 30)` and
+  `RELEASE_LOCK('ptah_schema_apply')`.
+- MySQL's exact `SELECT @@SESSION.restrict_fk_on_non_standard_key` capability
+  read on the pinned session.
+
+The pinned source's [lock implementation](https://github.com/stokaro/ptah/blob/f6e562c5b0986cd29a53a5cc01938827336b780a/internal/dblock/dblock.go)
+acquires, verifies and releases the named advisory lock; PostgreSQL hashes the
+name with FNV-1a. Its [session setup](https://github.com/stokaro/ptah/blob/f6e562c5b0986cd29a53a5cc01938827336b780a/dbschema/connection.go)
+reads MySQL's foreign-key capability before it inspects the target. None of
+these declarations permits permanent schema or row changes.
+
+The tests require every declaration to have a witness. They also reject different
+lock identities/timeouts, broader SQL, these validation queries attributed to
+Observe or Apply, and the fresh Apply's actual DDL attributed to Plan. These CLI
+readings support the audit predicate; they do not prove the Kubernetes approval
+and recovery sequence. The AB-04 runtime refusal windows still need their own
+statement-level audit and final-candidate execution.
+
+The first capture attempt failed before SQL because a copied plan was unreadable
+by the unprivileged executor. A second completed capture used the CLI's default
+lock timeout. Both remain private diagnostic records; the checked-in readings
+come from the third capture with the operator's explicit timeouts. Every attempt
+removed its own containers, anonymous volumes and network. The executor image
+belongs to the separate active data-plane run and was left intact.

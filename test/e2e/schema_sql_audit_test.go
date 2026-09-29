@@ -110,6 +110,124 @@ func schemaAuditActor(operation string) operationSQLClient {
 	return operationSQLClient{resourceUID: "schema", jobUID: "job", podUID: "pod", operation: operation}
 }
 
+// A runner Plan executes the saved plan with --dry-run before publishing it.
+// These are the actual validation journals, not another schema plan invocation.
+func TestSchemaSQLPlanValidation(t *testing.T) {
+	t.Parallel()
+	for _, engine := range []string{"postgresql", "mysql"} {
+		t.Run(engine, func(t *testing.T) {
+			policy, err := newSchemaSQLPolicy(engine, schemaAuditDatabase)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func(raw []byte, operation string) (map[string]int, error) {
+				clients := map[string]operationSQLClient{mysqlAuditHost: schemaAuditActor(operation)}
+				if engine == "postgresql" {
+					return postgresStatementRefusalSQL(raw, schemaAuditDatabase, clients, schemaDiagnosticActor, policy.postgres, nil)
+				}
+				rows, err := mysqlStatementJournal(raw)
+				if err != nil {
+					return nil, err
+				}
+				before := mysqlAuditBaseline()
+				return mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, true, schemaDiagnosticActor, policy.mysql)
+			}
+			raw := schemaAuditReading(t, engine, "drift-validate-plan")
+			counts, err := check(raw, "plan")
+			want := map[string]int{"postgresql": 43, "mysql": 17}[engine]
+			if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
+				t.Fatalf("native Plan validation: counts=%v, error=%v", counts, err)
+			}
+			for _, operation := range []string{"observe", "apply", "history"} {
+				if _, err := check(raw, operation); err == nil {
+					t.Fatalf("Plan validation SQL was allowed for %s", operation)
+				}
+			}
+			applied := schemaAuditReading(t, engine, "drift-apply-current")
+			if _, err := check(applied, "plan"); err == nil {
+				t.Fatal("the successful Apply journal was allowed as Plan validation")
+			}
+			// Test the actual DDL directly as well: another earlier difference
+			// in Apply (such as its 60s lock timeout) must not supply this refusal.
+			ddl := 0
+			for _, line := range strings.Split(strings.TrimSpace(string(applied)), "\n") {
+				var fields struct {
+					Message     string `json:"message"`
+					Detail      string `json:"detail"`
+					Command     string `json:"type"`
+					ArgumentHex string `json:"argumentHex"`
+				}
+				if err := json.Unmarshal([]byte(line), &fields); err != nil {
+					t.Fatal(err)
+				}
+				statement := strings.TrimPrefix(fields.Message, "statement: ")
+				if engine == "mysql" {
+					decoded, err := hex.DecodeString(fields.ArgumentHex)
+					if err != nil {
+						t.Fatal(err)
+					}
+					statement = string(decoded)
+				}
+				if !strings.HasPrefix(statement, "ALTER TABLE ") {
+					continue
+				}
+				ddl++
+				if engine == "postgresql" {
+					if policy.postgres(schemaAuditActor("plan"), statement, fields.Detail) {
+						t.Fatal("actual Apply DDL was allowed as Plan validation")
+					}
+				} else if policy.mysql(schemaAuditActor("plan"), fields.Command, statement, schemaAuditDatabase) {
+					t.Fatal("actual Apply DDL was allowed as Plan validation")
+				}
+			}
+			if ddl != 2 {
+				t.Fatalf("examined %d actual Apply statements, expected both approved column additions", ddl)
+			}
+		})
+	}
+}
+
+func TestSchemaPlanValidationLocksHaveExactScope(t *testing.T) {
+	t.Parallel()
+	pg, err := newSchemaSQLPolicy("postgresql", schemaAuditDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	my, err := newSchemaSQLPolicy("mysql", schemaAuditDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := schemaAuditActor("plan")
+	for _, statement := range []string{"SELECT pg_try_advisory_lock($1)", "SELECT pg_advisory_unlock($1)"} {
+		if !pg.postgres(actor, statement, "Parameters: $1 = '1237737229'") {
+			t.Fatal("the schema validation lock was refused")
+		}
+		for _, parameters := range []string{"", "Parameters: $1 = '1237737228'", "Parameters: $1 = '1237737229', $2 = 'other'"} {
+			if pg.postgres(actor, statement, parameters) {
+				t.Fatal("changed schema lock parameters were permitted")
+			}
+		}
+	}
+	for _, statement := range []string{"SELECT GET_LOCK('ptah_schema_apply', 30)", "SELECT RELEASE_LOCK('ptah_schema_apply')"} {
+		if !my.mysql(actor, "Execute", statement, schemaAuditDatabase) {
+			t.Fatal("the schema validation lock was refused")
+		}
+		for _, changed := range []string{
+			strings.ReplaceAll(statement, "ptah_schema_apply", "ptah_migrate"),
+			statement + "; DELETE FROM e2e_widgets",
+		} {
+			if my.mysql(actor, "Execute", changed, schemaAuditDatabase) {
+				t.Fatal("a changed schema validation lock was permitted")
+			}
+		}
+	}
+	for _, timeout := range []string{"-1", "0", "45", "60"} {
+		if my.mysql(actor, "Execute", "SELECT GET_LOCK('ptah_schema_apply', "+timeout+")", schemaAuditDatabase) {
+			t.Fatal("the schema validation lock timeout changed")
+		}
+	}
+}
+
 func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 	t.Parallel()
 	var contract struct {
@@ -154,38 +272,48 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			seen := map[schemaSQLKey]bool{}
-			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-"} {
+			type witness struct {
+				name, operation string
+				count           int
+			}
+			var readings []witness
+			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-"} {
 				for _, operation := range []string{"observe", "plan"} {
-					actor := schemaAuditActor(operation)
-					clients := map[string]operationSQLClient{mysqlAuditHost: actor}
-					var counts map[string]int
-					if engine == "postgresql" {
-						counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, engine, variant+operation), schemaAuditDatabase, clients, schemaDiagnosticActor,
-							func(a operationSQLClient, sql, parameters string) bool {
-								seen[schemaSQLKey{a.operation, "query", sql, parameters}] = true
-								return policy.postgres(a, sql, parameters)
-							}, nil)
-					} else {
-						rows, parseErr := mysqlStatementJournal(schemaAuditReading(t, engine, variant+operation))
-						if parseErr != nil {
-							t.Fatal(parseErr)
-						}
-						before := mysqlAuditBaseline()
-						counts, err = mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, true, schemaDiagnosticActor,
-							func(a operationSQLClient, command, sql, database string) bool {
-								seen[schemaSQLKey{a.operation, command, sql, ""}] = true
-								return policy.mysql(a, command, sql, database)
-							})
-					}
-					want := map[string]map[string]int{"postgresql": {"observe": 45, "plan": 82}, "mysql": {"observe": 14, "plan": 27}}[engine][operation]
+					count := map[string]map[string]int{"postgresql": {"observe": 45, "plan": 82}, "mysql": {"observe": 14, "plan": 27}}[engine][operation]
 					if engine == "postgresql" && variant == "initial-v1-" {
-						want = map[string]int{"observe": 39, "plan": 75}[operation]
+						count = map[string]int{"observe": 39, "plan": 75}[operation]
 					}
-					if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
-						t.Fatalf("%s %s%s received SQL: counts=%v, error=%v", engine, variant, operation, counts, err)
-					}
+					readings = append(readings, witness{variant + operation, operation, count})
 				}
 			}
+			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 43, "mysql": 17}[engine]})
+			for _, reading := range readings {
+				actor := schemaAuditActor(reading.operation)
+				clients := map[string]operationSQLClient{mysqlAuditHost: actor}
+				var counts map[string]int
+				if engine == "postgresql" {
+					counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, engine, reading.name), schemaAuditDatabase, clients, schemaDiagnosticActor,
+						func(a operationSQLClient, sql, parameters string) bool {
+							seen[schemaSQLKey{a.operation, "query", sql, parameters}] = true
+							return policy.postgres(a, sql, parameters)
+						}, nil)
+				} else {
+					rows, parseErr := mysqlStatementJournal(schemaAuditReading(t, engine, reading.name))
+					if parseErr != nil {
+						t.Fatal(parseErr)
+					}
+					before := mysqlAuditBaseline()
+					counts, err = mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, true, schemaDiagnosticActor,
+						func(a operationSQLClient, command, sql, database string) bool {
+							seen[schemaSQLKey{a.operation, command, sql, ""}] = true
+							return policy.mysql(a, command, sql, database)
+						})
+				}
+				if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != reading.count {
+					t.Fatalf("%s %s received SQL: counts=%v, error=%v", engine, reading.name, counts, err)
+				}
+			}
+
 			if len(seen) != len(policy.allowed) || len(seen) == 0 {
 				t.Fatalf("witnessed %d of %d declarations", len(seen), len(policy.allowed))
 			}
