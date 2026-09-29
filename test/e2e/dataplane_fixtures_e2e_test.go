@@ -98,6 +98,7 @@ func databaseDeployment(namespace, name, container, image, port string, portNumb
 					"containers": []any{map[string]any{
 						"name": container, "image": image, "imagePullPolicy": "IfNotPresent",
 						"env":   env,
+						"args":  databaseAuditArgs(container),
 						"ports": []any{map[string]any{"name": port, "containerPort": portNumber}},
 						"readinessProbe": map[string]any{
 							"tcpSocket":           map[string]any{"port": port},

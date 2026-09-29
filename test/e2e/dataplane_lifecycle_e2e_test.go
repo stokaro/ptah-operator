@@ -60,6 +60,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	d.createSchemaResource(resource)
 	d.assertPlan(schema, reference, digestV1, dialect, false, v1Observe, v1Plan, false)
 	d.assertCoordinationBoundary(schema, key, realm)
+	d.changeApprovedSchemaInputs(schema, slug, key, realm)
 	planV1 := d.plan
 	d.assertJobIsolation(schema, secret, false, nil)
 	d.assertNoNewJobs(schema, "apply", v1Apply)

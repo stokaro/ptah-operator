@@ -57,6 +57,8 @@ func TestDataPlane(t *testing.T) {
 		{"mysql-lifecycle", d.mysqlLifecycle},
 		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
 		{"watches", func() { f = newFaultRun(d); f.watches() }},
+		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
+		{"mysql-drift-before-dispatch", func() { f.mysqlDriftBeforeDispatch() }},
 		{"job-deadline", func() { f.jobDeadline() }},
 		{"manager-restart", func() { f.managerRestart() }},
 		{"runner-termination", func() { f.runnerTermination() }},
@@ -106,7 +108,7 @@ type dataPlane struct {
 	fullyAudited *uidLedger
 	evidence     map[string]*jobEvidence
 
-	rbac                     rbacPause
+	rbac                     controllerStatusBarrier
 	ephemeralTested          bool
 	fourEyesSwitchOn         bool
 	podMetadataPolicyCreated bool

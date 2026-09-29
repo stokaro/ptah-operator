@@ -67,6 +67,15 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 			body func()
 		}{"postgresql-migrations", m.engineMigrations})
 	}
+	scenarios = append(scenarios,
+		struct {
+			name string
+			body func()
+		}{"approval-policy-change", func() { m.approvalInputChange("policy") }},
+		struct {
+			name string
+			body func()
+		}{"approval-transaction-mode-change", func() { m.approvalInputChange("transaction-mode") }})
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return

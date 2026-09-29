@@ -1050,6 +1050,15 @@ replacement plan; do not recreate an approval against the old UID or
 fingerprint. A dispatched Apply is never recreated under the new binding; its
 outcome is handled conservatively and requires post-Apply observation.
 
+The same proof is required when an Apply runner refuses a target Secret that
+changed after approval. The refusal describes one Pod attempt; it cannot account
+for every attempt Kubernetes might have started for that Job. The operator keeps
+`status.pendingObservation` bound to the originally approved database. Reading
+the substituted database cannot settle it. Restore the original connection in
+the Secret and let the read-only proof finish. To move the resource afterward,
+change `spec.target.urlFrom` to a Secret for the new database, inspect its new
+plan, and approve that plan.
+
 What the old binding left behind is listed in a `PtahSchema`'s
 `status.pendingBindingRetirement` until it is tidied: the retired epoch, the
 plan whose approvals are being marked stale, and the Job the retired claim

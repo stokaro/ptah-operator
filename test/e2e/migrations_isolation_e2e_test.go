@@ -1124,6 +1124,8 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 		secret: "e2e-" + m.engine.name + "-retarget-db",
 	}
 	r.createDatabases()
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	initial := audit.snapshot()
 	m.openApplyGate()
 	// OnApproval so the approval chooses when the Apply is claimed, the gate in
 	// the nodeSelector of every operation, and an hour's interval so no refresh
@@ -1137,6 +1139,8 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 		},
 	}))
 	r.waitForPlan()
+	planned := audit.snapshot()
+	audit.assertRecords(initial, planned, audit.terminalPod(map[string]string{labelMigration: r.name, labelOperation: "history"}, ""), true)
 	m.logf("closing the gate before approving the %s plan", m.engine.kind)
 	m.closeApplyGate()
 	r.approve()
@@ -1148,9 +1152,11 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 	if err := m.mergePatch(secret, map[string]any{"stringData": map[string]any{"url": r.otherURL, "database": r.other}}); err != nil {
 		m.fatalf("the %s retarget Secret could not be rewritten", m.engine.name)
 	}
+	beforeRefusal := audit.snapshot()
 	m.openApplyGate()
 	r.waitForRefusal()
 	m.closeApplyGate()
+	audit.assertRecords(beforeRefusal, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": r.job}, r.jobUID), false)
 
 	r.assertUntouched(r.database)
 	r.assertUntouched(r.other)
@@ -1166,6 +1172,7 @@ func (m *migrationRun) retargetBeforeDispatchProof() {
 	r.assertUntouched(r.database)
 	r.assertUntouched(r.other)
 	m.logf("PASS %s refused an Apply whose target was repointed after approval", m.engine.kind)
+	audit.close()
 }
 
 // retargetRow is what the retarget row reads once.
@@ -1279,15 +1286,18 @@ func (r *retargetRow) waitForRefusal() {
 // assertUntouched holds a database to no revision table with rows and no
 // table from the artifact's first migration.
 func (r *retargetRow) assertUntouched(database string) {
-	m := r.m
+	r.m.assertDatabaseUnmigrated(r.name, database)
+}
+
+func (m *migrationRun) assertDatabaseUnmigrated(migration, database string) {
 	m.t.Helper()
 	filter := m.engine.currentSchemaFilter()
 	if m.query("SELECT count(*) FROM information_schema.tables WHERE "+filter+" AND table_name='schema_migrations'", database) != "0" &&
 		m.query("SELECT count(*) FROM schema_migrations", database) != "0" {
-		m.fatalf("the %s Apply whose target was repointed recorded migrations in %s", m.engine.name, database)
+		m.fatalf("%s recorded unauthorized migrations in %s", migration, database)
 	}
 	if m.query("SELECT count(*) FROM information_schema.tables WHERE "+filter+" AND table_name='e2e_migration_widgets'", database) != "0" {
-		m.fatalf("the %s Apply whose target was repointed created its first migration's table in %s", m.engine.name, database)
+		m.fatalf("%s created an unauthorized table in %s", migration, database)
 	}
 }
 

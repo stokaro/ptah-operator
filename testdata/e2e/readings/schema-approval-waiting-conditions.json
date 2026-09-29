@@ -1,0 +1,68 @@
+[
+  {
+    "type": "EngineSupported",
+    "status": "True",
+    "reason": "SupportedEngine",
+    "message": "Database engine \"PostgreSQL\" is supported"
+  },
+  {
+    "type": "Ready",
+    "status": "False",
+    "reason": "AwaitingApproval",
+    "message": "Plan is waiting for approval"
+  },
+  {
+    "type": "ReconciliationFailed",
+    "status": "False",
+    "reason": "Succeeded",
+    "message": "The latest operation completed"
+  },
+  {
+    "type": "ArtifactResolved",
+    "status": "True",
+    "reason": "DigestPinned",
+    "message": "Desired OCI reference resolved to immutable content"
+  },
+  {
+    "type": "ArtifactVerified",
+    "status": "True",
+    "reason": "PolicySatisfied",
+    "message": "Artifact type and verification policy were satisfied"
+  },
+  {
+    "type": "DatabaseReachable",
+    "status": "True",
+    "reason": "Observed",
+    "message": "Database schema was observed"
+  },
+  {
+    "type": "DriftDetected",
+    "status": "True",
+    "reason": "ScopedChanges",
+    "message": "Managed scope requires 1 schema statements; highest severity safe"
+  },
+  {
+    "type": "InSync",
+    "status": "False",
+    "reason": "ScopedChanges",
+    "message": "The authoritative managed scope differs from the verified artifact"
+  },
+  {
+    "type": "ApprovalRequired",
+    "status": "True",
+    "reason": "Waiting",
+    "message": "Create an approval bound to the current plan fingerprint"
+  },
+  {
+    "type": "PlanReady",
+    "status": "True",
+    "reason": "Published",
+    "message": "Exact plan bytes are stored in immutable chunks"
+  },
+  {
+    "type": "Suspended",
+    "status": "False",
+    "reason": "Active",
+    "message": "Reconciliation is active"
+  }
+]

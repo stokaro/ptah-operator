@@ -59,6 +59,7 @@ func (m *migrationRun) engineMigrations() {
 	m.waitForPhase(ptahv1alpha1.MigrationPhaseInSync)
 	m.assertKubectlPtahMigration(ptahv1alpha1.MigrationPhaseInSync)
 
+	m.hungResultReadProof()
 	m.realmAdmitsOnlyListedClaimants()
 	m.partialRunBlocksAndRecovers()
 	m.olderArtifactBlocksEverything()
@@ -458,7 +459,8 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 	for _, secret := range []string{
 		m.migrationSecret(), "branch", "adopt", "checkpoint", "txmode", "uncertain", "unknown-layer",
 		"egress", "late-dispatch", "isolated-node", "stopped", "lost-log", "apply-guard", "release-fault",
-		"restore", "deletion", "drill", "suspend", "retry", "retarget",
+		"restore", "deletion", "drill", "suspend", "retry", "retarget", "approval-policy", "approval-transaction-mode",
+		"hung-result", "result-progress",
 	} {
 		name := secret
 		if !strings.HasPrefix(name, "e2e-") {
@@ -491,6 +493,8 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 		"ptah_e2e_late_dispatch", "ptah_e2e_isolated_node", "ptah_e2e_stopped", "ptah_e2e_lost_log",
 		"ptah_e2e_apply_guard", "ptah_e2e_release_fault", "ptah_e2e_restore", "ptah_e2e_deletion",
 		"ptah_e2e_drill", "ptah_e2e_suspend", "ptah_e2e_retarget", "ptah_e2e_retarget_other",
+		"ptah_e2e_approval_policy", "ptah_e2e_approval_transaction_mode",
+		"ptah_e2e_hung_result", "ptah_e2e_result_progress",
 	} {
 		m.dropDatabase(database)
 	}
