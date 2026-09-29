@@ -20,18 +20,22 @@ func (f *faultRun) destructivePolicyChanges() {
 		f.createDatabase(engine, database, secret)
 		f.query(engine, database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'policy-control', 'preserve-before-approval')")
 		beforeDatabase := f.fingerprint(engine, database, "the populated database before destructive-policy changes")
+		sqlWindow := f.startSchemaRefusalWindow(name, engine, database, secret)
+		initialJobs := f.checkpointJobs(name, "")
 		digest := f.schema("e2e-" + engine).Status.Source.Digest
 		f.createSchema(faultSchema{
 			name: name, engine: kind, reference: f.registryReference(engine), secret: secret,
-			coordinationKey: "e2e/destructive-policy/" + engine,
+			coordinationKey: "e2e/destructive-policy/" + engine, allowDestructive: true,
 		})
-		f.patchSchema(name, map[string]any{"spec": map[string]any{"policy": map[string]any{"allowDestructive": true}}})
 		generation := f.schema(name).Generation
-		approved := f.waitForSchema(name, "a destructive plan awaiting approval", func(schema *ptahv1alpha1.PtahSchema) bool {
+		approved := sqlWindow.waitForSchema("a destructive plan awaiting approval", func(schema *ptahv1alpha1.PtahSchema) bool {
 			return destructivePolicyGate(schema, generation, true)
 		})
 		old := f.schemaPlan(approved.Status.Plan.Name)
 		f.check(committedPlan(old, name, digest, dialect, true, f.controller, f.stateVersion()), "read the original destructive plan")
+		initialObserve := sqlWindow.resultControl(approved, "observe", initialJobs)
+		initialPlan := sqlWindow.resultControl(approved, "plan", initialJobs)
+		revokedJobs := f.checkpointJobs(name, "")
 		beforeApply := f.checkpointOperationWatch(name, "apply", 0)
 		f.pauseStatusWrites()
 		f.createApproval(name, name+"-original")
@@ -45,10 +49,11 @@ func (f *faultRun) destructivePolicyChanges() {
 			f.fatalf("%s revocation did not advance the generation", name)
 		}
 		f.mustResumeStatusWrites("resume after revoking destructive permission")
-		refused := f.waitForSchema(name, "the revoked destructive permission to refuse the admitted decision", func(schema *ptahv1alpha1.PtahSchema) bool {
+		refused := sqlWindow.waitForSchema("the revoked destructive permission to refuse the admitted decision", func(schema *ptahv1alpha1.PtahSchema) bool {
 			return destructivePolicyGate(schema, revokedGeneration, false) && schema.Status.Plan.UID != old.UID
 		})
 		blocked := f.schemaPlan(refused.Status.Plan.Name)
+		revokedPlan := sqlWindow.resultControl(refused, "plan", revokedJobs)
 		f.check(changedDestructivePolicyPlan(old, blocked), "bind the destructive refusal to the policy edit")
 		unconsumed := &ptahv1alpha1.PtahSchemaApproval{}
 		f.check(f.get(name+"-original", unconsumed), "read the refused destructive approval")
@@ -56,7 +61,10 @@ func (f *faultRun) destructivePolicyChanges() {
 			f.fatalf("%s consumed approval after destructive permission was revoked", name)
 		}
 		f.checkpointOperationWatch(name, "apply", 0)
-		f.assertDestructivePolicyDatabaseUnchanged(engine, database, beforeDatabase)
+		// Keep one uninterrupted SQL window across refusal and restoration.
+		// The final database assertions run after every received statement has
+		// been checked; attempted or rolled-back writes cannot hide in between.
+		restoredJobs := f.checkpointJobs(name, "")
 
 		// Do not restore the exact originally approved policy: this control
 		// requires a new decision, with a different lock timeout.
@@ -67,10 +75,11 @@ func (f *faultRun) destructivePolicyChanges() {
 		if freshGeneration <= revokedGeneration {
 			f.fatalf("%s restoration did not advance the generation", name)
 		}
-		current := f.waitForSchema(name, "a fresh destructive approval gate", func(schema *ptahv1alpha1.PtahSchema) bool {
+		current := sqlWindow.waitForSchema("a fresh destructive approval gate", func(schema *ptahv1alpha1.PtahSchema) bool {
 			return destructivePolicyGate(schema, freshGeneration, true) && schema.Status.Plan.UID != old.UID && schema.Status.Plan.UID != blocked.UID
 		})
 		fresh := f.schemaPlan(current.Status.Plan.Name)
+		restoredPlan := sqlWindow.resultControl(current, "plan", restoredJobs)
 		f.check(committedPlan(fresh, name, digest, dialect, true, f.controller, f.stateVersion()), "read the fresh destructive plan")
 		f.check(changedDestructivePolicyPlan(old, fresh), "bind the fresh decision to the changed destructive policy")
 		// The disabled policy stops before approval lookup. Stale cleanup is
@@ -79,6 +88,7 @@ func (f *faultRun) destructivePolicyChanges() {
 			return conditionIs(approval.Status.Conditions, "Stale", "True", "PlanNoLongerCurrent")
 		})
 		f.checkpointOperationWatch(name, "apply", 0)
+		sqlWindow.assert(current, initialObserve, initialPlan, revokedPlan, restoredPlan)
 		f.assertDestructivePolicyDatabaseUnchanged(engine, database, beforeDatabase)
 		assertSQL := f.approvedSchemaSQLControl(name, engine,
 			currentPlan{name: fresh.Name, uid: string(fresh.UID), fingerprint: fresh.Spec.Fingerprint}, beforeApply)

@@ -46,7 +46,7 @@ func newSchemaSQLPolicy(engine, database string) (*schemaSQLPolicy, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(schemaSQLContract))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&contract); err != nil || contract.SchemaVersion != 1 || len(contract.PtahCommit) != 40 || len(contract.Statements) != 68 {
+	if err := decoder.Decode(&contract); err != nil || contract.SchemaVersion != 1 || len(contract.PtahCommit) != 40 || len(contract.Statements) != 69 {
 		return nil, errors.New("schema SQL audit contract is incomplete")
 	}
 	policy := &schemaSQLPolicy{engine: engine, database: database, allowed: map[schemaSQLKey]bool{}}

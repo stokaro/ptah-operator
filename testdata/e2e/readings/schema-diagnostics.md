@@ -60,7 +60,7 @@ the complete journal window and fails on unidentified scoped traffic.
 
 ## Permitted work and source review
 
-The [contract](../../../test/e2e/schema-sql-contract.json) carries 44 distinct
+The [contract](../../../test/e2e/schema-sql-contract.json) carries 45 distinct
 PostgreSQL statements/parameter sets and 24 MySQL command/statement pairs.
 Both operations have witnesses for each applicable declaration; PostgreSQL's
 additional schema-list query belongs to Plan only. The predicate compares SQL,
@@ -77,8 +77,8 @@ The reviewed source is the pinned commit above:
   `pg_get_expr` return definitions; the fixture queries do not execute those
   definitions. The fixed `WITH` queries also read catalogs.
 - PostgreSQL's [column spelling probe](https://github.com/stokaro/ptah/blob/f6e562c5b0986cd29a53a5cc01938827336b780a/internal/dbexprprobe/column_spellings.go)
-  creates exactly `pg_temp.ptah_column_probe_0` with `id bigint` and
-  `enabled boolean`, reads its type definitions, and rolls back to its savepoint.
+  creates exactly `pg_temp.ptah_column_probe_0` with `id bigint`, with or without
+  `enabled boolean` in the declared fixture variants, reads its type definitions, and rolls back to its savepoint.
   The [transaction wrapper](https://github.com/stokaro/ptah/blob/f6e562c5b0986cd29a53a5cc01938827336b780a/dbschema/probe_session.go)
   rolls back and discards its session. This exact temporary probe is permitted;
   permanent DDL, changed columns/defaults, arbitrary functions, and COMMIT are not.
@@ -101,3 +101,40 @@ The runtime row requires exact Pod-to-Job-to-resource ownership and positive
 Observe and Plan SQL from both the old and new resource UIDs. No application
 SQL is permitted before fresh approval. The fresh approval must execute once,
 produce received SQL, add the requested column, and preserve the populated row.
+
+## Destructive and exclusion policy readings
+
+The [policy capture manifest](schema-policy-diagnostics.json) records six further
+isolated runs on September 29, 2026, at 22:09–22:12 UTC. It includes the server
+and executor identities, each command's container identity and exit status, and
+a SHA-256 for every selected journal and native exclusion plan. The source pin,
+server images, account setup, and journal selection follow the procedure above.
+These readings validate predicates; they are not Kubernetes acceptance.
+
+Each run started from the v3 seed and the same populated control row. The
+`destructive` variant planned v4. The exclusion variants also created
+`e2e_excluded_policy_keep` with a primary key and one preserved row, and planned
+fault-v1. Only the narrowed Plan command received
+`--exclude=e2e_excluded_policy_keep`; Observe received no exclusion, matching
+the runner. No planned SQL was applied, and both control rows remained intact.
+All task-owned containers, anonymous volumes, networks, and credential files
+were removed after capture.
+
+Every variant produced 45/82 PostgreSQL Observe/Plan records, or 36/69 MySQL
+protocol records containing 14/27 Query/Execute records. The v4 PostgreSQL
+fixture adds one exact diagnostic declaration: the temporary column-spelling
+probe with only `id bigint`. Both operations witnessed it. The transaction and
+savepoint rollback contract remains unchanged; no permanent mutation is allowed.
+
+The native PostgreSQL exclusion plan first adds the managed column, then drops
+the excluded table's primary-key constraint, then drops that table. MySQL has
+only the addition and table drop. Both narrowed plans contain only the same
+column addition. The document predicate accepts their leading line comments
+and the exact PostgreSQL constraint removal, and refuses unrelated or appended
+statements. Received SQL auditing still compares every byte without removing
+comments or normalizing statements.
+
+The destructive and exclusion runtime scenarios audit one uninterrupted window
+from resource creation through all refused decisions. Actual diagnostic results
+bind each required control to its resource, Job, Pod, and published plan. The
+final database equality check follows this audit, before fresh authorization.

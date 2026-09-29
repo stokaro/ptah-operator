@@ -1,6 +1,9 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,6 +12,72 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestExcludedPolicyDocumentsFromNativePlans(t *testing.T) {
+	t.Parallel()
+	for _, engine := range []string{"postgresql", "mysql"} {
+		t.Run(engine, func(t *testing.T) {
+			t.Parallel()
+			read := func(scope string) planDocument {
+				t.Helper()
+				raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", engine+"-schema-exclusion-"+scope+"-plan.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var plan planDocument
+				if err := json.Unmarshal(raw, &plan); err != nil {
+					t.Fatal(err)
+				}
+				return plan
+			}
+			if err := excludedPolicyDocuments(read("wide"), read("narrow")); err != nil {
+				t.Fatalf("refused the actual executor plans: %v", err)
+			}
+			for name, edit := range map[string]func(*planDocument, *planDocument){
+				"comment only": func(o, _ *planDocument) {
+					o.Statements[0].SQL = "-- ALTER TABLE e2e_widgets ADD COLUMN fault_token text"
+				},
+				"executable comment": func(_, n *planDocument) {
+					n.Statements[0].SQL = "/*! DROP TABLE e2e_widgets */\n" + n.Statements[0].SQL
+				},
+				"statement before addition": func(_, n *planDocument) { n.Statements[0].SQL = "DELETE FROM e2e_widgets;\n" + n.Statements[0].SQL },
+				"statement after addition":  func(_, n *planDocument) { n.Statements[0].SQL += "; DROP TABLE e2e_widgets" },
+				"commented drop": func(o, _ *planDocument) {
+					o.Statements[len(o.Statements)-1].SQL = "-- DROP TABLE e2e_excluded_policy_keep\nSELECT 1"
+				},
+				"extra constraint": func(o, _ *planDocument) {
+					o.Statements = append(o.Statements, planStatement{SQL: `ALTER TABLE "e2e_excluded_policy_keep" DROP CONSTRAINT "another_constraint"`})
+				},
+				"PostgreSQL constraint on MySQL": func(o, n *planDocument) {
+					o.Dialect, n.Dialect = "mysql", "mysql"
+					if engine == "mysql" {
+						o.Statements = append(o.Statements, planStatement{SQL: `ALTER TABLE "e2e_excluded_policy_keep" DROP CONSTRAINT "e2e_excluded_policy_keep_pkey"`})
+					}
+				},
+			} {
+				old, current := read("wide"), read("narrow")
+				edit(&old, &current)
+				if excludedPolicyDocuments(old, current) == nil {
+					t.Errorf("accepted %s", name)
+				}
+			}
+			if engine == "postgresql" {
+				for _, from := range []string{"e2e_excluded_policy_keep_pkey", `"e2e_excluded_policy_keep"`} {
+					old, current := read("wide"), read("narrow")
+					old.Statements[1].SQL = strings.ReplaceAll(old.Statements[1].SQL, from, "unrelated")
+					if excludedPolicyDocuments(old, current) == nil {
+						t.Errorf("accepted changed primary-key removal: %s", from)
+					}
+				}
+				old, current := read("wide"), read("narrow")
+				old.Statements[0] = old.Statements[1]
+				if excludedPolicyDocuments(old, current) == nil {
+					t.Error("accepted duplicate constraint removal without the retained addition")
+				}
+			}
+		})
+	}
+}
 
 func TestExcludedPolicyDocumentsRemoveOnlyTheExcludedDrop(t *testing.T) {
 	t.Parallel()
@@ -78,6 +147,18 @@ func TestExclusionEditNeedsANewPlanForTheSameResourceAndArtifact(t *testing.T) {
 	current.Spec.ActualStateFingerprint = "sha256:" + strings.Repeat("b", 64)
 	if err := changedExcludedPolicyPlan(old, current); err != nil {
 		t.Fatalf("refused a narrowed scope, which may have its own state fingerprint: %v", err)
+	}
+	withConstraint := old.DeepCopy()
+	withConstraint.Spec.StatementCount = 3
+	if err := changedExcludedPolicyPlan(withConstraint, current); err != nil {
+		t.Fatalf("refused the PostgreSQL plan's separate primary-key removal: %v", err)
+	}
+	for _, count := range []int32{0, 1} {
+		incomplete := old.DeepCopy()
+		incomplete.Spec.StatementCount = count
+		if changedExcludedPolicyPlan(incomplete, current) == nil {
+			t.Errorf("accepted an original selection with only %d statements", count)
+		}
 	}
 	for name, edit := range map[string]func(*ptahv1alpha1.PtahSchemaPlan){
 		"same plan":        func(p *ptahv1alpha1.PtahSchemaPlan) { p.UID = old.UID },

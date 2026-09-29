@@ -17,16 +17,20 @@ func (f *faultRun) exclusionPolicyChanges() {
 		f.query(engine, database, "CREATE TABLE "+excludedPolicyTable+" (id bigint NOT NULL PRIMARY KEY, note varchar(255)); INSERT INTO "+excludedPolicyTable+" VALUES (701, 'outside-managed-scope')")
 		f.query(engine, database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'scope-control', 'preserved-managed-row')")
 		beforeDatabase := f.fingerprint(engine, database, "the database before narrowing the managed scope")
-		f.createSchema(faultSchema{name: name, engine: kind, reference: reference, secret: secret, coordinationKey: "e2e/exclusion-policy/" + engine})
-		f.patchSchema(name, map[string]any{"spec": map[string]any{"policy": map[string]any{"allowDestructive": true}}})
+		sqlWindow := f.startSchemaRefusalWindow(name, engine, database, secret)
+		initialJobs := f.checkpointJobs(name, "")
+		f.createSchema(faultSchema{name: name, engine: kind, reference: reference, secret: secret, coordinationKey: "e2e/exclusion-policy/" + engine, allowDestructive: true})
 		generation := f.schema(name).Generation
-		approved := f.waitForSchema(name, "a destructive plan including the table later excluded", func(schema *ptahv1alpha1.PtahSchema) bool {
+		approved := sqlWindow.waitForSchema("a destructive plan including the table later excluded", func(schema *ptahv1alpha1.PtahSchema) bool {
 			return destructivePolicyGate(schema, generation, true)
 		})
 		old := f.schemaPlan(approved.Status.Plan.Name)
 		digest := approved.Status.Source.Digest
 		f.check(committedPlan(old, name, digest, dialect, true, f.controller, f.stateVersion()), "read the original scope's plan")
 		oldDocument := f.exclusionPlanDocument(old)
+		initialObserve := sqlWindow.resultControl(approved, "observe", initialJobs)
+		initialPlan := sqlWindow.resultControl(approved, "plan", initialJobs)
+		replacementJobs := f.checkpointJobs(name, "")
 		beforeApply := f.checkpointOperationWatch(name, "apply", 0)
 		f.pauseStatusWrites()
 		f.createApproval(name, name+"-original")
@@ -40,10 +44,11 @@ func (f *faultRun) exclusionPolicyChanges() {
 			f.fatalf("%s exclusion edit did not advance the generation", name)
 		}
 		f.mustResumeStatusWrites("resume after narrowing the approved managed scope")
-		current := f.waitForSchema(name, "a fresh decision for the narrowed scope", func(schema *ptahv1alpha1.PtahSchema) bool {
+		current := sqlWindow.waitForSchema("a fresh decision for the narrowed scope", func(schema *ptahv1alpha1.PtahSchema) bool {
 			return changedSchemaApprovalRefused(schema, string(old.UID), changedGeneration) && !schema.Status.Plan.Destructive
 		})
 		fresh := f.schemaPlan(current.Status.Plan.Name)
+		replacementPlan := sqlWindow.resultControl(current, "plan", replacementJobs)
 		f.check(committedPlan(fresh, name, digest, dialect, false, f.controller, f.stateVersion()), "read the narrowed scope's plan")
 		f.check(changedExcludedPolicyPlan(old, fresh), "bind the new approval to the changed scope")
 		f.check(excludedPolicyDocuments(oldDocument, f.exclusionPlanDocument(fresh)), "verify the excluded table's DROP was removed")
@@ -51,6 +56,7 @@ func (f *faultRun) exclusionPolicyChanges() {
 			return conditionIs(approval.Status.Conditions, "Stale", "True", "PlanNoLongerCurrent")
 		})
 		f.checkpointOperationWatch(name, "apply", 0)
+		sqlWindow.assert(current, initialObserve, initialPlan, replacementPlan)
 		if f.fingerprint(engine, database, "the unchanged database under the obsolete scope approval") != beforeDatabase {
 			f.fatalf("%s changed the database before approval of the narrowed scope", name)
 		}

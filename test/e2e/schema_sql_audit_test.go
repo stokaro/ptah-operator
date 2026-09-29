@@ -70,31 +70,33 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			seen := map[schemaSQLKey]bool{}
-			for _, operation := range []string{"observe", "plan"} {
-				actor := schemaAuditActor(operation)
-				clients := map[string]operationSQLClient{mysqlAuditHost: actor}
-				var counts map[string]int
-				if engine == "postgresql" {
-					counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, engine, operation), schemaAuditDatabase, clients, schemaDiagnosticActor,
-						func(a operationSQLClient, sql, parameters string) bool {
-							seen[schemaSQLKey{a.operation, "query", sql, parameters}] = true
-							return policy.postgres(a, sql, parameters)
-						}, nil)
-				} else {
-					rows, parseErr := mysqlStatementJournal(schemaAuditReading(t, engine, operation))
-					if parseErr != nil {
-						t.Fatal(parseErr)
+			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-"} {
+				for _, operation := range []string{"observe", "plan"} {
+					actor := schemaAuditActor(operation)
+					clients := map[string]operationSQLClient{mysqlAuditHost: actor}
+					var counts map[string]int
+					if engine == "postgresql" {
+						counts, err = postgresStatementRefusalSQL(schemaAuditReading(t, engine, variant+operation), schemaAuditDatabase, clients, schemaDiagnosticActor,
+							func(a operationSQLClient, sql, parameters string) bool {
+								seen[schemaSQLKey{a.operation, "query", sql, parameters}] = true
+								return policy.postgres(a, sql, parameters)
+							}, nil)
+					} else {
+						rows, parseErr := mysqlStatementJournal(schemaAuditReading(t, engine, variant+operation))
+						if parseErr != nil {
+							t.Fatal(parseErr)
+						}
+						before := mysqlAuditBaseline()
+						counts, err = mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, true, schemaDiagnosticActor,
+							func(a operationSQLClient, command, sql, database string) bool {
+								seen[schemaSQLKey{a.operation, command, sql, ""}] = true
+								return policy.mysql(a, command, sql, database)
+							})
 					}
-					before := mysqlAuditBaseline()
-					counts, err = mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, true, schemaDiagnosticActor,
-						func(a operationSQLClient, command, sql, database string) bool {
-							seen[schemaSQLKey{a.operation, command, sql, ""}] = true
-							return policy.mysql(a, command, sql, database)
-						})
-				}
-				want := map[string]map[string]int{"postgresql": {"observe": 45, "plan": 82}, "mysql": {"observe": 14, "plan": 27}}[engine][operation]
-				if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
-					t.Fatalf("%s %s received SQL: counts=%v, error=%v", engine, operation, counts, err)
+					want := map[string]map[string]int{"postgresql": {"observe": 45, "plan": 82}, "mysql": {"observe": 14, "plan": 27}}[engine][operation]
+					if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
+						t.Fatalf("%s %s%s received SQL: counts=%v, error=%v", engine, variant, operation, counts, err)
+					}
 				}
 			}
 			if len(seen) != len(policy.allowed) || len(seen) == 0 {

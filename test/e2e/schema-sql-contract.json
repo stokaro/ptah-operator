@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a",
-  "scope": "Exact schema diagnostics for the populated v3 and fault-v1 fixtures; no generic SQL classification.",
+  "scope": "Exact schema diagnostics for the populated v3, v4, fault-v1, and excluded-table fixtures; no generic SQL classification.",
   "statements": [
     {
       "engine": "postgresql",
@@ -440,6 +440,16 @@
       ],
       "command": "query",
       "statement": "\n\t\tSELECT n.nspname\n\t\tFROM pg_namespace n\n\t\tWHERE n.nspname <> 'information_schema'\n\t\t\t  AND n.nspname NOT LIKE 'pg\\_%' ESCAPE '\\'\n\t\t\t  AND NOT EXISTS (\n\t\t\t        SELECT 1\n\t\t\t        FROM pg_depend d\n\t\t\t        WHERE d.classid = 'pg_namespace'::regclass\n\t\t\t          AND d.objid = n.oid\n\t\t\t          AND d.deptype = 'e')",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan"
+      ],
+      "command": "query",
+      "statement": "-- POSTGRES TABLE: pg_temp.ptah_column_probe_0 --\nCREATE TABLE \"pg_temp\".\"ptah_column_probe_0\" (\n  \"id\" bigint\n);\n\n",
       "parameters": ""
     },
     {

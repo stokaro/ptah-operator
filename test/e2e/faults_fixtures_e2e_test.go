@@ -490,6 +490,7 @@ func (f *faultRun) assertReadBlocked(jobUID, description string) {
 type faultSchema struct {
 	name, engine, secret, reference, coordinationKey string
 	verificationPolicy                               string
+	allowDestructive                                 bool
 	// failureRetry is 5s, activeDeadline faultActiveDeadlineSeconds and
 	// lockTimeout 60s when unset.
 	failureRetry   string
@@ -539,7 +540,7 @@ func (f *faultRun) createSchema(schema faultSchema) {
 				"transport":              map[string]any{"plainHTTP": true},
 			},
 			"policy": map[string]any{
-				"apply": "OnApproval", "allowDestructive": false, "driftSeverity": "all",
+				"apply": "OnApproval", "allowDestructive": schema.allowDestructive, "driftSeverity": "all",
 				"lockTimeout": lockTimeout, "transactionMode": "file",
 			},
 			"interval":  "1h",

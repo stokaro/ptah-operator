@@ -144,18 +144,19 @@ func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, o
 		f.fatalf("schema SQL result control has no exact resource identity")
 	}
 	result := f.captureOneNewJobResult(w.name, operation, before, nil)
+	dialect := "postgres"
+	if w.audit.engine == "mysql" {
+		dialect = "mysql"
+	}
 	switch operation {
 	case "observe":
-		dialect := "postgres"
-		if w.audit.engine == "mysql" {
-			dialect = "mysql"
-		}
 		f.check(observedDriftBound(result, resource.Status.Target, dialect), "bind the SQL control to its observed state")
 	case "plan":
 		if !exactControllerPlan(resource.Status.Plan, resource.Status.ExecutionBinding, f.controller, f.stateVersion()) {
 			f.fatalf("schema SQL plan control lost its controller binding")
 		}
-		f.check(readyPlanFromController(f.schemaPlan(resource.Status.Plan.Name), f.controller, f.stateVersion()), "read the published SQL control plan")
+		f.check(committedPlan(f.schemaPlan(resource.Status.Plan.Name), w.name, resource.Status.Source.Digest, dialect,
+			resource.Status.Plan.Destructive, f.controller, f.stateVersion()), "read the published SQL control plan")
 		f.check(changedPlanBound(result, resource.Status.Plan), "bind the SQL control to its published plan")
 	default:
 		f.fatalf("unsupported schema SQL diagnostic control %s", operation)

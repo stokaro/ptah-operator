@@ -11,7 +11,7 @@ import (
 
 const excludedPolicyTable = "e2e_excluded_policy_keep"
 
-// These patterns describe the two statements of this controlled fixture, not
+// These patterns describe the work in this controlled fixture, not
 // an allowlist for arbitrary SQL received by the database.
 var (
 	exclusionQualifier = `(?:(?:public|"public"|` + "`public`" + `|e2e_exclusion_policy|"e2e_exclusion_policy"|` + "`e2e_exclusion_policy`" + `)\.)?`
@@ -20,6 +20,9 @@ var (
 	exclusionAdd = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+` + exclusionQualifier +
 		`(?:e2e_widgets|"e2e_widgets"|` + "`e2e_widgets`" + `)\s+ADD\s+(?:COLUMN\s+)?` +
 		`(?:fault_token|"fault_token"|` + "`fault_token`" + `)\s+(?:text|varchar\s*\(255\))(?:\s+NULL)?\s*;?\s*$`)
+	exclusionPrimaryKeyDrop = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+` + exclusionQualifier +
+		`(?:e2e_excluded_policy_keep|"e2e_excluded_policy_keep")\s+DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?` +
+		`(?:e2e_excluded_policy_keep_pkey|"e2e_excluded_policy_keep_pkey")\s*;?\s*$`)
 )
 
 func changedExcludedPolicyPlan(old, current *ptahv1alpha1.PtahSchemaPlan) error {
@@ -40,8 +43,8 @@ func changedExcludedPolicyPlan(old, current *ptahv1alpha1.PtahSchemaPlan) error 
 	}
 	// A scope edit can change the native state fingerprint. Database equality
 	// is checked directly around the edit, independently of that fingerprint.
-	if !a.Destructive || b.Destructive || a.StatementCount != 2 || b.StatementCount != 1 {
-		return errors.New("the exclusion edit did not remove exactly the destructive statement")
+	if !a.Destructive || b.Destructive || a.StatementCount <= 1 || b.StatementCount != 1 {
+		return errors.New("the exclusion edit did not leave only the managed column addition")
 	}
 	return nil
 }
@@ -50,24 +53,43 @@ func excludedPolicyDocuments(old, current planDocument) error {
 	if old.FormatVersion != 1 || current.FormatVersion != 1 || old.Dialect != current.Dialect ||
 		(old.Dialect != "postgres" && old.Dialect != "mysql") ||
 		len(old.Exclude) != 0 || !slices.Equal(current.Exclude, []string{excludedPolicyTable}) ||
-		!isTrue(old.Destructive) || !isFalse(current.Destructive) || len(old.Statements) != 2 || len(current.Statements) != 1 {
+		!isTrue(old.Destructive) || !isFalse(current.Destructive) || len(old.Statements) < 2 || len(old.Statements) > 3 || len(current.Statements) != 1 {
 		return errors.New("the native plans do not carry the original and narrowed scopes")
 	}
-	kept := strings.TrimSpace(current.Statements[0].SQL)
+	kept := exclusionPlanSQL(current.Statements[0].SQL)
 	if !exclusionAdd.MatchString(kept) {
 		return errors.New("the narrowed plan does not only add the fixture column")
 	}
-	drops, retained := 0, 0
+	drops, retained, constraintDrops := 0, 0, 0
 	for _, statement := range old.Statements {
+		sql := exclusionPlanSQL(statement.SQL)
 		switch {
-		case exclusionDrop.MatchString(statement.SQL):
+		case exclusionDrop.MatchString(sql):
 			drops++
-		case strings.TrimSpace(statement.SQL) == kept:
+		case sql == kept:
 			retained++
+		case old.Dialect == "postgres" && exclusionPrimaryKeyDrop.MatchString(sql):
+			constraintDrops++
+		default:
+			return errors.New("the original plan contains work outside the excluded table and retained column")
 		}
 	}
-	if drops != 1 || retained != 1 {
+	if drops != 1 || retained != 1 || constraintDrops > 1 {
 		return errors.New("the original plan did not drop the excluded table and add the same fixture column")
 	}
 	return nil
+}
+
+// Native plans carry leading line comments. Remove only those comments, not
+// literals, inline comments, executable MySQL comments, or any statement text.
+func exclusionPlanSQL(sql string) string {
+	sql = strings.TrimSpace(sql)
+	for strings.HasPrefix(sql, "-- ") || strings.HasPrefix(sql, "--\t") || strings.HasPrefix(sql, "--\n") || sql == "--" {
+		_, rest, found := strings.Cut(sql, "\n")
+		if !found {
+			return ""
+		}
+		sql = strings.TrimSpace(rest)
+	}
+	return sql
 }
