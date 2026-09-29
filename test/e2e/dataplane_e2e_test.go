@@ -106,7 +106,7 @@ type dataPlane struct {
 	fullyAudited *uidLedger
 	evidence     map[string]*jobEvidence
 
-	rbac                     rbacPause
+	rbac                     controllerStatusBarrier
 	ephemeralTested          bool
 	fourEyesSwitchOn         bool
 	podMetadataPolicyCreated bool
