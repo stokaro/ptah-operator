@@ -20,16 +20,18 @@ type window struct {
 
 // report is the whole measurement: what ran, where, and what it cost.
 type report struct {
-	Workload    workload       `json:"workload"`
-	Environment map[string]any `json:"environment"`
-	Scenarios   []scenarioCost `json:"scenarios"`
-	Jobs        []jobRecord    `json:"jobs"`
-	Samples     []sample       `json:"samples"`
+	FormatVersion int            `json:"formatVersion"`
+	Workload      workload       `json:"workload"`
+	Environment   map[string]any `json:"environment"`
+	Scenarios     []scenarioCost `json:"scenarios"`
+	Jobs          []jobRecord    `json:"jobs"`
+	Samples       []sample       `json:"samples"`
 }
 
 // scenarioCost is one window reduced to the figures the capacity page names.
 type scenarioCost struct {
 	window
+	Incomplete            map[string]int     `json:"incomplete,omitempty"`
 	Samples               int                `json:"samples"`
 	JobsCreated           int                `json:"jobsCreated"`
 	JobsFailed            int                `json:"jobsFailed"`
@@ -86,7 +88,7 @@ func histogramQuantiles(h histogram) quantiles {
 
 // cost reduces the samples and Jobs inside one window.
 func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
-	out := scenarioCost{window: w, WorkqueueDepthMax: map[string]float64{}}
+	out := scenarioCost{window: w, WorkqueueDepthMax: map[string]float64{}, Incomplete: map[string]int{}}
 	var inside []sample
 	for _, reading := range samples {
 		if !reading.At.Before(w.Start) && !reading.At.After(w.End) {
@@ -95,6 +97,9 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 	}
 	out.Samples = len(inside)
 	for _, reading := range inside {
+		for _, source := range reading.Incomplete {
+			out.Incomplete[source]++
+		}
 		out.PodsPendingMax = max(out.PodsPendingMax, reading.PodsPending)
 		out.PodsRunningMax = max(out.PodsRunningMax, reading.PodsRunning)
 		out.ObservationAgeMax = math.Max(out.ObservationAgeMax, reading.ObservationAgeMax.Seconds())
@@ -218,12 +223,31 @@ func writeSummary(out io.Writer, r report) error {
 		for key, value := range s.Outcome {
 			outcome = append(outcome, key+"="+value)
 		}
+		for source, count := range s.Incomplete {
+			outcome = append(outcome, fmt.Sprintf("missing %s=%d", source, count))
+		}
+		if s.Samples == 0 {
+			outcome = append(outcome, "no samples")
+		}
 		sort.Strings(outcome)
-		fmt.Fprintf(&b, "| %s | %.0f | %.1f (%d) | %.0f / %.0f | %d | %.0f | %.0f | %.0f | %.2f | %s | %.1f | %s | %s |\n",
-			s.Name, s.End.Sub(s.Start).Seconds(), s.JobsPerMinuteAverage, s.JobsPerMinutePeak,
-			s.JobCompletionSeconds.P50, s.JobCompletionSeconds.P95, s.PodsPendingMax,
-			s.ObservationAgeMax, s.OverdueMax, s.ManagerRSSMaxBytes/(1<<20), s.ManagerCPUCores,
-			atMost(s.QueueWaitSeconds), s.ClientThrottleSeconds, atMost(s.AdmissionSeconds), strings.Join(outcome, ", "))
+		figure := func(source, format string, values ...any) string {
+			if s.missing(source) {
+				return "n/a"
+			}
+			return fmt.Sprintf(format, values...)
+		}
+		completion := "n/a"
+		if s.JobCompletionSeconds.Count > 0 {
+			completion = figure(sourceJobs, "%.0f / %.0f", s.JobCompletionSeconds.P50, s.JobCompletionSeconds.P95)
+		}
+		fmt.Fprintf(&b, "| %s | %.0f | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+			s.Name, s.End.Sub(s.Start).Seconds(),
+			figure(sourceJobs, "%.1f (%d)", s.JobsPerMinuteAverage, s.JobsPerMinutePeak), completion,
+			figure(sourcePods, "%d", s.PodsPendingMax),
+			figure(sourceResources, "%.0f", s.ObservationAgeMax), figure(sourceResources, "%.0f", s.OverdueMax),
+			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagers, "%.2f", s.ManagerCPUCores),
+			figure(sourceManagers, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagers, "%.1f", s.ClientThrottleSeconds),
+			figure(sourceAPI, "%s", atMost(s.AdmissionSeconds)), strings.Join(outcome, ", "))
 	}
 	_, err := io.WriteString(out, b.String())
 	return err

@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -28,6 +30,7 @@ var (
 
 // sample is one reading of everything the report is built from.
 type sample struct {
+	Incomplete        []string                  `json:"incomplete,omitempty"`
 	At                time.Time                 `json:"at"`
 	PodsPending       int                       `json:"podsPending"`
 	PodsRunning       int                       `json:"podsRunning"`
@@ -98,31 +101,35 @@ func (s *sampler) run(ctx context.Context) {
 	}
 }
 
-// take reads everything once. A reading that fails is logged and left out of
-// that sample rather than recorded as zero: a zero would read as a quiet
-// cluster in the report.
+// take preserves failed reads as missing evidence. A partly collected reading
+// cannot establish a zero count or a low maximum for the failed source.
 func (s *sampler) take(ctx context.Context) {
 	now := time.Now().UTC()
 	reading := sample{At: now, Managers: map[string]managerReading{}}
-	if err := s.readPods(ctx, &reading); err != nil {
-		slog.Warn("pods", "error", err)
+	for _, source := range []struct {
+		name string
+		read func() error
+	}{
+		{sourcePods, func() error { return s.readPods(ctx, &reading) }},
+		{sourceResources, func() error { return s.readResources(ctx, now, &reading) }},
+		{sourceRetained, func() error { return s.readRetained(ctx, &reading) }},
+		{sourceManagers, func() error { return s.readManagers(ctx, &reading) }},
+		{sourceAPI, func() error {
+			var err error
+			reading.APIServer, err = s.readAPIServer(ctx)
+			return err
+		}},
+		{sourceJobs, func() error { return s.readJobs(ctx) }},
+	} {
+		if err := source.read(); err != nil {
+			reading.Incomplete = append(reading.Incomplete, source.name)
+			slog.Warn("incomplete sample", "source", source.name, "error", err)
+		}
 	}
-	if err := s.readResources(ctx, now, &reading); err != nil {
-		slog.Warn("resources", "error", err)
-	}
-	if err := s.readRetained(ctx, &reading); err != nil {
-		slog.Warn("retained objects", "error", err)
-	}
-	if err := s.readManagers(ctx, &reading); err != nil {
-		slog.Warn("manager metrics", "error", err)
-	}
-	if api, err := s.readAPIServer(ctx); err != nil {
-		slog.Warn("API server metrics", "error", err)
-	} else {
-		reading.APIServer = api
-	}
-	if err := s.readJobs(ctx); err != nil {
-		slog.Warn("jobs", "error", err)
+	// Stopping the sampler can cancel an in-flight collection. It is outside
+	// the completed measurement, so discard that partial final reading.
+	if ctx.Err() != nil {
+		return
 	}
 	s.mu.Lock()
 	s.samples = append(s.samples, reading)
@@ -221,17 +228,22 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 	if err != nil {
 		return err
 	}
+	var problems []error
 	for _, pod := range pods.Items {
 		if pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
 		reading, err := scrapePod(ctx, s.clientset, s.operatorNamespace, pod.Name, s.metricsPort)
 		if err != nil {
-			slog.Warn("manager scrape", "pod", pod.Name, "error", err)
+			problems = append(problems, fmt.Errorf("manager %s: %w", pod.Name, err))
 			continue
 		}
-		rss, _ := reading.value("process_resident_memory_bytes", nil)
-		cpu, _ := reading.value("process_cpu_seconds_total", nil)
+		rss, hasRSS := reading.value("process_resident_memory_bytes", nil)
+		cpu, hasCPU := reading.value("process_cpu_seconds_total", nil)
+		if !hasRSS || !hasCPU || rss <= 0 || cpu < 0 || math.IsNaN(rss) || math.IsNaN(cpu) || math.IsInf(rss, 0) || math.IsInf(cpu, 0) {
+			problems = append(problems, fmt.Errorf("manager %s has no valid process memory or CPU reading", pod.Name))
+			continue
+		}
 		throttle, _ := reading.value("rest_client_rate_limiter_duration_seconds_sum", nil)
 		if throttle == 0 {
 			throttle = reading.histogram("rest_client_rate_limiter_duration_seconds", nil).sum
@@ -246,7 +258,10 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 			queueWait:       reading.histogram("workqueue_queue_duration_seconds", nil),
 		}
 	}
-	return nil
+	if len(into.Managers) == 0 {
+		problems = append(problems, errors.New("no running manager produced process metrics"))
+	}
+	return errors.Join(problems...)
 }
 
 func (s *sampler) readAPIServer(ctx context.Context) (*apiReading, error) {
