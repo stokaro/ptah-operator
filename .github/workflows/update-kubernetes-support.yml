@@ -72,7 +72,7 @@ jobs:
           for status_line in "${status_lines[@]}"; do
             case "$status_line" in
               ' M charts/ptah-operator/Chart.yaml' | \
-              ' M docs/kubernetes-support.md' | \
+              ' M docs/site/src/content/docs/support/kubernetes.md' | \
               ' M support/kubernetes.json') ;;
               *)
                 echo "support discovery changed an unauthorized path or file mode: $status_line" >&2
@@ -94,7 +94,7 @@ jobs:
           git diff --binary --full-index -- \
             support/kubernetes.json \
             charts/ptah-operator/Chart.yaml \
-            docs/kubernetes-support.md > "$patch_file"
+            docs/site/src/content/docs/support/kubernetes.md > "$patch_file"
           [[ -s "$patch_file" ]]
           patch_size="$(wc -c < "$patch_file")"
           (( patch_size <= 262144 ))
@@ -162,7 +162,7 @@ jobs:
           for status_line in "${status_lines[@]}"; do
             case "$status_line" in
               'M  charts/ptah-operator/Chart.yaml' | \
-              'M  docs/kubernetes-support.md' | \
+              'M  docs/site/src/content/docs/support/kubernetes.md' | \
               'M  support/kubernetes.json') ;;
               *)
                 echo "prepared patch changed an unauthorized path or file mode: $status_line" >&2
@@ -200,7 +200,7 @@ jobs:
           git add \
             support/kubernetes.json \
             charts/ptah-operator/Chart.yaml \
-            docs/kubernetes-support.md
+            docs/site/src/content/docs/support/kubernetes.md
           git commit --message "$title"
 
           remote_oid="$(git ls-remote --heads origin "refs/heads/$support_branch" | awk '{print $1}')"
@@ -232,7 +232,7 @@ jobs:
               for prior_status_line in "${prior_status_lines[@]}"; do
                 case "$prior_status_line" in
                   $'M\tcharts/ptah-operator/Chart.yaml' | \
-                  $'M\tdocs/kubernetes-support.md' | \
+                  $'M\tdocs/site/src/content/docs/support/kubernetes.md' | \
                   $'M\tsupport/kubernetes.json') ;;
                   *)
                     echo "existing support branch is not an untouched automation commit: $prior_status_line" >&2

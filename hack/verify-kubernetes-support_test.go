@@ -854,6 +854,26 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 			old: "  prepare:\n    name: Discover and validate maintained Kubernetes minors\n",
 			new: "  prepare:\n    name: Discover and validate maintained Kubernetes minors\n    if: ${{ false }}\n",
 		},
+		"stale discovery documentation path": {
+			old: "' M " + docsPath + "'",
+			new: "' M docs/kubernetes-support.md'",
+		},
+		"stale patch documentation path": {
+			old: docsPath + " > \"$patch_file\"",
+			new: "docs/kubernetes-support.md > \"$patch_file\"",
+		},
+		"stale staged documentation path": {
+			old: "'M  " + docsPath + "'",
+			new: "'M  docs/kubernetes-support.md'",
+		},
+		"stale commit documentation path": {
+			old: "            " + docsPath + "\n",
+			new: "            docs/kubernetes-support.md\n",
+		},
+		"stale prior branch documentation path": {
+			old: "$'M\\t" + docsPath + "'",
+			new: "$'M\\tdocs/kubernetes-support.md'",
+		},
 		"skipped delivery job": {
 			old: "    if: needs.prepare.outputs.changed == 'true'\n",
 			new: "    if: ${{ false }}\n",
@@ -975,6 +995,44 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 				t.Fatal("verifyUpdateWorkflowSemantics() accepted a critical mutation")
 			}
 		})
+	}
+}
+
+func TestSupportUpdaterStagesTheGeneratedFiles(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", updateWorkflowPath)
+	workflow, _, err := readWorkflow(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := requireWorkflowStep(path, "propose", workflow.Jobs["propose"], "support-window-pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(step.Run, "git add \\\n")
+	end := strings.Index(step.Run, "git commit --message")
+	if start < 0 || end <= start {
+		t.Fatal("support proposal has no staging command before its commit")
+	}
+	dir := t.TempDir()
+	for _, name := range []string{manifestPath, chartPath, docsPath} {
+		file := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("generated content\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command("bash", "-c", "set -euo pipefail\ngit init --quiet\n"+step.Run[start:end]+"git diff --cached --name-only\n")
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("stage the updater's generated files: %v\n%s", err, output)
+	}
+	want := chartPath + "\n" + docsPath + "\n" + manifestPath + "\n"
+	if string(output) != want {
+		t.Fatalf("staged files = %q, want %q", output, want)
 	}
 }
 
