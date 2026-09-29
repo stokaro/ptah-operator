@@ -205,6 +205,9 @@ func TestAStalledResultReadKeepsTheApplyClaimAndItsLease(t *testing.T) {
 		t, newStalledLogs(), migration, plan, job, pod, verificationPolicyConfigMap(),
 	)
 	reconciler.ResultReadTimeout = 250 * time.Millisecond
+	clock := &fixedClock{now: reconciler.now()}
+	reconciler.Clock = clock.Now
+	reconciler.Locks = targetlock.New(api, api, clock)
 	holdMigrationApplyLease(t, reconciler, api, migration)
 
 	leaseName, err := targetlock.LeaseName(operation.CoordinationDigest)
@@ -218,6 +221,15 @@ func TestAStalledResultReadKeepsTheApplyClaimAndItsLease(t *testing.T) {
 	}
 
 	reconcileWithin(t, reconciler, migration, 30*time.Second)
+	// A Job watch or the normal five-second poll still reaches the claim's
+	// Lease renewal, but cannot start another blocking log read immediately.
+	probe := &failingLogs{err: errors.New("the paused result stream was opened")}
+	reconciler.Logs = probe
+	clock.now = clock.now.Add(20 * time.Second)
+	reconcileWithin(t, reconciler, migration, 30*time.Second)
+	if probe.calls != 0 {
+		t.Fatal("a poll during the result-read pause opened the log again")
+	}
 
 	actual := readMigration(t, api, migration)
 	claim := actual.Status.ActiveOperation
@@ -241,6 +253,9 @@ func TestAStalledResultReadKeepsTheApplyClaimAndItsLease(t *testing.T) {
 	if after.Spec.HolderIdentity == nil || before.Spec.HolderIdentity == nil ||
 		*after.Spec.HolderIdentity != *before.Spec.HolderIdentity {
 		t.Fatalf("the Lease holder changed: before=%v after=%v", before.Spec.HolderIdentity, after.Spec.HolderIdentity)
+	}
+	if before.Spec.RenewTime == nil || after.Spec.RenewTime == nil || !after.Spec.RenewTime.After(before.Spec.RenewTime.Time) {
+		t.Fatal("the result-read pause stopped the Apply Lease from being renewed")
 	}
 }
 
