@@ -85,7 +85,7 @@ func (m *migrationRun) approvalInputChange(field string) {
 	secret := "e2e-" + m.engine.name + "-" + suffix + "-db"
 	var auditUser string
 	if m.engine.name == "mysql" {
-		auditUser = m.isolatedMySQLApprovalDatabase(database, secret)
+		auditUser = m.isolatedMySQLAuditDatabase(database, secret)
 	} else {
 		m.isolatedDatabase(database, secret)
 	}

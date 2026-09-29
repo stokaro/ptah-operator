@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"slices"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -79,6 +80,26 @@ func (m *migrationRun) assertMySQLMigrationRefusalSQL(audit *databaseSQLAudit, b
 	m.reportMigrationRefusalSQL(migration, clients, counts)
 }
 
+func (m *migrationRun) assertRestoredHistoryRefusalSQL(audit *databaseSQLAudit, pgBefore []byte, mysqlBefore []mysqlStatementRecord, database, user, jobUID string, migration *ptahv1alpha1.PtahMigration, inventory *migrationSQLInventory) {
+	m.t.Helper()
+	if jobUID == "" || migration.Spec.Policy.LockTimeout.Duration != 30*time.Second {
+		m.fatalf("restored-history audit needs the exact refused Job and declared lock timeout")
+	}
+	clients, err := inventory.clients(migration)
+	m.check(err, "bind restored-history SQL to its migration Jobs and Pods")
+	var counts map[string]int
+	if m.engine.name == "postgresql" {
+		if len(pgBefore) == 0 || !bytes.HasPrefix(audit.pgPrefix, pgBefore) {
+			m.fatalf("restored-history audit has no complete PostgreSQL journal window")
+		}
+		counts, err = postgresMigrationRefusalSQLForJob(audit.pgPrefix[len(pgBefore):], database, clients, jobUID)
+	} else {
+		counts, err = mysqlMigrationRefusalSQLForJob(mysqlBefore, audit.mysqlStatementSnapshot(), database, user, clients, jobUID)
+	}
+	m.check(err, "refuse unauthorized SQL after history changed")
+	m.reportMigrationRefusalSQL(migration, clients, counts)
+}
+
 func (m *migrationRun) reportMigrationRefusalSQL(migration *ptahv1alpha1.PtahMigration, clients map[string]migrationSQLClient, counts map[string]int) {
 	m.t.Helper()
 	hosts := make([]string, 0, len(counts))
@@ -92,8 +113,8 @@ func (m *migrationRun) reportMigrationRefusalSQL(migration *ptahv1alpha1.PtahMig
 			continue
 		}
 		actor := clients[host]
-		m.logf("SQL refusal audit: engine=%s migrationUID=%s jobUID=%s podUID=%s client=%s allowedHistoryRecords=%d unauthorizedRecords=0",
-			m.engine.name, migration.UID, actor.jobUID, actor.podUID, host, counts[host])
+		m.logf("SQL refusal audit: engine=%s migrationUID=%s jobUID=%s podUID=%s operation=%s client=%s allowedDiagnosticRecords=%d unauthorizedRecords=0",
+			m.engine.name, migration.UID, actor.jobUID, actor.podUID, actor.operation, host, counts[host])
 	}
 }
 
@@ -101,7 +122,7 @@ func (m *migrationRun) reportMigrationRefusalSQL(migration *ptahv1alpha1.PtahMig
 // changes its selected database. Create it before logging, never reuse it, and
 // keep its grants until the fixture cluster is removed: the migration can still
 // reconcile after this scenario. The password stays inside the server container.
-func (m *migrationRun) isolatedMySQLApprovalDatabase(database, secret string) string {
+func (m *migrationRun) isolatedMySQLAuditDatabase(database, secret string) string {
 	m.t.Helper()
 	if m.engine.name != "mysql" || !mysqlAuditIdentifier.MatchString(database) || len(database) > 64 {
 		m.fatalf("MySQL approval audit requires a controlled database name")

@@ -108,6 +108,10 @@ func mysqlStatementIdentity(value string) (login, account, host string, err erro
 }
 
 func mysqlMigrationRefusalSQL(before, after []mysqlStatementRecord, database, user string, clients map[string]migrationSQLClient) (map[string]int, error) {
+	return mysqlMigrationRefusalSQLForJob(before, after, database, user, clients, "")
+}
+
+func mysqlMigrationRefusalSQLForJob(before, after []mysqlStatementRecord, database, user string, clients map[string]migrationSQLClient, refusedApplyJobUID string) (map[string]int, error) {
 	if !mysqlAuditIdentifier.MatchString(database) || len(database) > 64 ||
 		!mysqlAuditIdentifier.MatchString(user) || len(user) > 32 || len(clients) == 0 {
 		return nil, errors.New("MySQL refusal audit needs an isolated database, unique account and identified clients")
@@ -124,12 +128,14 @@ func mysqlMigrationRefusalSQL(before, after []mysqlStatementRecord, database, us
 	for _, row := range before {
 		login, account, _, err := mysqlStatementIdentity(row.Client)
 		// A previous, unrelated Pod may have used this address before the
-		// window. Only the unique account must have no earlier traffic.
-		if err != nil || login == user || account == user {
+		// window. The initial-decision audit needs an unused account; the
+		// restored-history window follows a deliberately successful seed run.
+		if err != nil || (refusedApplyJobUID == "" && (login == user || account == user)) {
 			return nil, errors.New("MySQL refusal audit started after the isolated account was used")
 		}
 	}
 	counts := make(map[string]int)
+	refusal := migrationRefusalSQL{applyJobUID: refusedApplyJobUID}
 	connected, latest := make(map[uint64]string), make(map[uint64]string)
 	for index, row := range window {
 		login, account, host, relevant, err := scoped(row)
@@ -140,8 +146,8 @@ func mysqlMigrationRefusalSQL(before, after []mysqlStatementRecord, database, us
 			continue
 		}
 		actor, found := clients[host]
-		if !found || actor.jobUID == "" || actor.podUID == "" || actor.operation != "history" || account != user {
-			return nil, fmt.Errorf("MySQL SQL record %d has no identified History Job, Pod and account", index+1)
+		if !found || !refusal.acceptsActor(actor) || account != user {
+			return nil, fmt.Errorf("MySQL SQL record %d has no authorized diagnostic Job, Pod and account", index+1)
 		}
 		if row.Time <= latest[row.Thread] {
 			return nil, errors.New("MySQL SQL audit has ambiguous or reversed session ordering")
@@ -176,7 +182,7 @@ func mysqlMigrationRefusalSQL(before, after []mysqlStatementRecord, database, us
 				return nil, errors.New("MySQL History changed its selected database")
 			}
 		case "Query", "Prepare", "Execute":
-			if !mysqlMigrationHistoryStatement(row.Command, sql, database) {
+			if !refusal.mysql(actor, row.Command, sql, database) {
 				return nil, fmt.Errorf("MySQL SQL record %d is outside the permitted history diagnostics", index+1)
 			}
 			if row.Command != "Prepare" {
@@ -187,10 +193,13 @@ func mysqlMigrationRefusalSQL(before, after []mysqlStatementRecord, database, us
 		}
 	}
 	if len(counts) == 0 {
-		return nil, errors.New("MySQL refusal window did not observe its initial History control")
+		return nil, errors.New("MySQL refusal window did not observe its diagnostic control")
 	}
 	if len(connected) != 0 {
 		return nil, errors.New("MySQL refusal window ended with an open History connection")
+	}
+	if !refusal.complete() {
+		return nil, errors.New("MySQL refusal did not record the exact Apply's lock, unresolved-history read and unlock")
 	}
 	return counts, nil
 }

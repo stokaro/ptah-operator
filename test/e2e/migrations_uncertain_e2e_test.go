@@ -645,7 +645,12 @@ func (m *migrationRun) restoredHistoryProof() {
 	m.t.Helper()
 	name, database := "e2e-restore-"+m.engine.name, "ptah_e2e_restore"
 	secret := "e2e-" + m.engine.name + "-restore-db"
-	m.isolatedDatabase(database, secret)
+	var auditUser string
+	if m.engine.name == "mysql" {
+		auditUser = m.isolatedMySQLAuditDatabase(database, secret)
+	} else {
+		m.isolatedDatabase(database, secret)
+	}
 	m.publish("restore-older", m.fixtureDir("-older"), m.reference("-restore-older"))
 	m.publish("restore", m.fixtureDir(""), m.reference("-restore"))
 	m.openApplyGate()
@@ -674,7 +679,7 @@ func (m *migrationRun) restoredHistoryProof() {
 	m.patchMigration(name, map[string]any{"spec": map[string]any{
 		"artifact": map[string]any{"ociRef": m.reference("-restore")}, "policy": map[string]any{"apply": "OnApproval"},
 	}})
-	approved := m.waitForRestorePlan(name, "")
+	approved := m.waitForRestorePlan(name, "", nil)
 	if versions := planVersionList(m.planOf(approved)); versions != "3" {
 		m.fatalf("the plan %s published approves [%s], and this row needs [3]", name, versions)
 	}
@@ -694,10 +699,27 @@ func (m *migrationRun) restoredHistoryProof() {
 	if restored := revisions(); restored != "1" {
 		m.fatalf("the restore left the %s database recording [%s], and this row needs [1]", m.engine.name, restored)
 	}
+	// The destructive restore is a harness action, completed while the Apply
+	// is unscheduled. Audit every statement after it, before opening that gate.
+	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
+	var pgBefore []byte
+	var mysqlBefore []mysqlStatementRecord
+	if m.engine.name == "postgresql" {
+		audit.snapshot()
+		pgBefore = audit.pgPrefix
+	} else {
+		mysqlBefore = audit.mysqlStatementSnapshot()
+	}
+	inventory := &migrationSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}}
+	m.captureMigrationSQLInventory(name, inventory)
 	m.openApplyGate()
 	// The refusal is read from the run the approval claimed, by its Job UID,
 	// and by the message that names both lists.
-	if !m.within(migrationPoll, func() bool { return restoreRefused(m.migration(name).Status, jobUID) }) {
+	if !m.within(migrationPoll, func() bool {
+		resource := m.migration(name)
+		m.captureMigrationSQLInventory(name, inventory)
+		return restoreRefused(resource.Status, jobUID)
+	}) {
 		m.reportGatedState(name, false)
 		m.fatalf("%s never recorded that its approved [3] was refused for a selection of [2 3]", name)
 	}
@@ -709,7 +731,7 @@ func (m *migrationRun) restoredHistoryProof() {
 		m.fatalf("after the refused run the %s database has migration 2's column again; the selection ran", m.engine.name)
 	}
 	// And the resource asks again, for what the history now needs.
-	next := m.waitForRestorePlan(name, approved)
+	next := m.waitForRestorePlan(name, approved, inventory)
 	fresh := m.planOf(next)
 	if versions := planVersionList(fresh); versions != "2 3" {
 		m.fatalf("after the restore %s asks to approve [%s], and the history needs [2 3]", name, versions)
@@ -718,8 +740,8 @@ func (m *migrationRun) restoredHistoryProof() {
 	if revisions() != "1" || m.widgetColumnCount("color", database) != "0" {
 		m.fatalf("%s changed the restored database while the fresh plan awaited approval", name)
 	}
-	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
 	beforeApply := audit.snapshot()
+	m.assertRestoredHistoryRefusalSQL(audit, pgBefore, mysqlBefore, database, auditUser, jobUID, m.migration(name), inventory)
 	m.check(m.approve(name+"-current", name, fresh.Name, string(fresh.UID), fresh.Spec.Fingerprint),
 		"approve the plan for the restored history")
 	converged := m.waitForMigration(name, "a fresh successful Apply of the restored history", migrationPoll,
@@ -741,12 +763,15 @@ func (m *migrationRun) restoredHistoryProof() {
 
 // waitForRestorePlan waits until the resource asks for a decision on a plan
 // other than the previous one, and returns it.
-func (m *migrationRun) waitForRestorePlan(name, previous string) string {
+func (m *migrationRun) waitForRestorePlan(name, previous string, inventory *migrationSQLInventory) string {
 	m.t.Helper()
 	var plan string
 	if !m.within(migrationPoll, func() bool {
 		var ok bool
 		plan, ok = decisionOnNewPlan(m.migration(name).Status, previous)
+		if inventory != nil {
+			m.captureMigrationSQLInventory(name, inventory)
+		}
 		return ok
 	}) {
 		m.reportGatedState(name, false)

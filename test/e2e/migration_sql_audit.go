@@ -68,10 +68,15 @@ func migrationSQLClients(migration *ptahv1alpha1.PtahMigration, jobs []batchv1.J
 // The caller supplies the complete append-only journal window, bounded before
 // approval and after the replacement plan reaches its approval gate.
 func postgresMigrationRefusalSQL(raw []byte, database string, clients map[string]migrationSQLClient) (map[string]int, error) {
+	return postgresMigrationRefusalSQLForJob(raw, database, clients, "")
+}
+
+func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[string]migrationSQLClient, refusedApplyJobUID string) (map[string]int, error) {
 	if database == "" || len(clients) == 0 {
 		return nil, errors.New("migration SQL audit needs an isolated database and identified clients")
 	}
 	counts := make(map[string]int)
+	refusal := migrationRefusalSQL{applyJobUID: refusedApplyJobUID}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	records := 0
 	for {
@@ -121,15 +126,16 @@ func postgresMigrationRefusalSQL(raw []byte, database string, clients map[string
 			return nil, errors.New("isolated-database SQL has no numeric client address")
 		}
 		host := address.Unmap().String()
-		if host == "127.0.0.1" && postgresMigrationHarnessRead(statement, row.Detail) {
+		if host == "127.0.0.1" && (postgresMigrationHarnessRead(statement, row.Detail) ||
+			(refusedApplyJobUID != "" && postgresMigrationRestoreHarnessRead(statement, row.Detail))) {
 			counts[host]++
 			continue
 		}
 		client, found := clients[host]
-		if !found || client.jobUID == "" || client.podUID == "" || client.operation != "history" {
-			return nil, fmt.Errorf("isolated-database SQL record %d has no identified History Job and Pod", records)
+		if !found || !refusal.acceptsActor(client) {
+			return nil, fmt.Errorf("isolated-database SQL record %d has no authorized diagnostic Job and Pod", records)
 		}
-		if !postgresMigrationHistoryStatement(statement, row.Detail) {
+		if !refusal.postgres(client, statement, row.Detail) {
 			// Do not include SQL or parameters: either can contain credentials.
 			return nil, fmt.Errorf("isolated-database SQL record %d is outside the permitted history diagnostics", records)
 		}
@@ -145,7 +151,10 @@ func postgresMigrationRefusalSQL(raw []byte, database string, clients map[string
 		}
 	}
 	if operatorRecords == 0 {
-		return nil, errors.New("PostgreSQL refusal window did not observe its initial History control")
+		return nil, errors.New("PostgreSQL refusal window did not observe its diagnostic control")
+	}
+	if !refusal.complete() {
+		return nil, errors.New("PostgreSQL refusal did not record the exact Apply's lock, unresolved-history read and unlock")
 	}
 	return counts, nil
 }
