@@ -1669,6 +1669,7 @@ cleanup() {
 		trap - EXIT
 		printf 'e2e: E2E_KEEP_ON_FAILURE=1: retaining cluster %s (kubeconfig %s), registry %s, database %s and %s\n' \
 			"$CLUSTER_NAME" "$KUBECONFIG_FILE" "$REGISTRY_CONTAINER" "$EXTERNAL_PG_CONTAINER" "$WORK_DIR" >&2
+		timing_abandon retained
 		exit "$status"
 	fi
 	cleanup_failed=0
@@ -1869,8 +1870,12 @@ cleanup() {
 	if [ "$cleanup_failed" -ne 0 ]; then
 		printf '%s\n' 'e2e: cleanup is incomplete; remove only the named resources reported above' >&2
 		[ "$status" -ne 0 ] || status=1
+		timing_abandon fail
 	elif [ "$status" -ne 0 ]; then
 		printf 'e2e: failed; task-created resources were cleaned up\n' >&2
+		timing_abandon pass
+	else
+		timing_abandon pass
 	fi
 	exit "$status"
 }
