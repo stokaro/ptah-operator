@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
-	"net/url"
 	"slices"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -39,19 +38,15 @@ MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot >/dev/
 
 func (f *dataPlane) schemaMySQLAuditAccount(audit *databaseSQLAudit, database, secretName string) string {
 	f.t.Helper()
+	if secretName == mysqlSecret {
+		f.fatalf("a schema audit must not replace the shared MySQL fixture credential")
+	}
 	user := audit.createMySQLAccount(database)
 	secret := &corev1.Secret{}
 	f.check(f.get(secretName, secret), "read the isolated schema target Secret")
-	parsed, err := url.Parse(string(secret.Data["url"]))
-	if err != nil || parsed.User == nil {
-		f.fatalf("could not read the isolated schema URL")
-	}
-	password, ok := parsed.User.Password()
-	if !ok || password == "" {
-		f.fatalf("the schema target URL has no credential")
-	}
-	parsed.User = url.UserPassword(user, password)
-	secret.Data["url"] = []byte(parsed.String())
+	updated, err := replaceSchemaMySQLAuditUser(string(secret.Data["url"]), f.credentials.mysqlPassword, user)
+	f.check(err, "scope the MySQL schema fixture credential")
+	secret.Data["url"] = []byte(updated)
 	f.check(f.cluster.Client.Update(f.ctx, secret), "scope the schema target to its audit account")
 	return user
 }

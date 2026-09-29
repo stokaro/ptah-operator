@@ -253,6 +253,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"closing-audits",
 		"four-eyes-distinct-approver",
 		"pod-metadata-admission",
+		"approval-executor-image-change",
 	},
 	Preparation: 1,
 })

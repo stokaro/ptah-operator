@@ -86,6 +86,8 @@ func run(args []string) error {
 			return runTLSProxy(args[1:])
 		case "verify-certificate":
 			return runVerifyCertificate(args[1:])
+		case "executor-variant":
+			return runExecutorVariant(args[1:])
 		}
 	}
 	if len(args) != 2 {

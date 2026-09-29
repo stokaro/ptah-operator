@@ -71,6 +71,7 @@ func TestDataPlane(t *testing.T) {
 		{"closing-audits", d.closingAudits},
 		{"four-eyes-distinct-approver", d.fourEyesDistinctApprover},
 		{"pod-metadata-admission", d.podMetadataAdmission},
+		{"approval-executor-image-change", func() { f.executorImageChanges() }},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {
 			return

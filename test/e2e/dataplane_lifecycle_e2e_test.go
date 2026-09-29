@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
@@ -15,7 +18,14 @@ func (d *dataPlane) postgresqlLifecycle() {
 }
 
 func (d *dataPlane) mysqlLifecycle() {
-	d.runEngineLifecycle("mysql", "MySQL", "mysql", mysqlSecret)
+	// The audit account can access only this lifecycle's database. Keep the
+	// shared fixture credential intact for later isolated database scenarios.
+	const secret = "e2e-mysql-lifecycle-db"
+	d.check(d.cluster.Client.Create(d.ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secret, Namespace: d.in.TestNamespace},
+		Data:       map[string][]byte{"url": []byte(d.credentials.mysqlURL)},
+	}), "create the isolated MySQL lifecycle target Secret")
+	d.runEngineLifecycle("mysql", "MySQL", "mysql", secret)
 }
 
 var dropIndexStatement = regexp.MustCompile(`(?i)\bDROP[[:space:]]+INDEX\b`)
