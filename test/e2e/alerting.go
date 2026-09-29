@@ -97,7 +97,7 @@ func alRuleFile(rendered string) (string, error) {
 		return "", errors.New("the rendered PrometheusRule has no spec.groups to load")
 	}
 	rules := strings.Join(lines, "\n")
-	for _, alert := range []string{alUnresolvedApply, alViewNotSynced, alOperationStall} {
+	for _, alert := range []string{alUnresolvedApply, alViewNotSynced, alOperationStall, alCertificateAlert} {
 		if !slices.ContainsFunc(lines, func(line string) bool { return strings.HasSuffix(line, "alert: "+alert) }) {
 			return "", fmt.Errorf("the rendered rules have no %s", alert)
 		}
@@ -563,7 +563,8 @@ func alRulesLoaded(body []byte) bool {
 			}
 		}
 	}
-	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alViewNotSynced) && slices.Contains(alerting, alOperationStall)
+	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alViewNotSynced) &&
+		slices.Contains(alerting, alOperationStall) && slices.Contains(alerting, alCertificateAlert)
 }
 
 // alNoActiveAlerts reads an instant query for ALERTS: true when Prometheus

@@ -48,6 +48,8 @@ import (
 //     they are back.
 //   - a failed leader scrape does the same while the managers remain healthy
 //     and the follower remains a healthy scrape target.
+//   - a serving certificate approaching expiry alerts before admission fails,
+//     and restoring the certificate clears the alert and restores admission.
 //
 // What the receiver logs is what Alertmanager delivered, which is the claim;
 // Alertmanager's own view of what it meant to send is not.
@@ -62,13 +64,14 @@ func TestAlerting(t *testing.T) {
 		{"unresolved-apply", a.unresolvedApply},
 		{"stalled-operation", a.stalledOperation},
 		{"lost-scrape-target", a.lostScrapeTarget},
+		{"certificate-expiry", a.certificateExpiry},
 		{"lost-view", a.lostView},
 	} {
 		if !run.Scenario(scenario.name, a.scenario(scenario.body)) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, a failed leader scrape and a lost view reached the receiver; recoverable faults cleared")
+	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, a failed leader scrape, certificate expiry and a lost view reached the receiver; recoverable faults cleared")
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
@@ -383,6 +386,7 @@ func (a *alertingRun) renderRules() string {
 		"--set", "monitoring.prometheusRule.enabled=true",
 		"--set", fmt.Sprintf("monitoring.prometheusRule.viewUnsyncedFor=%ds", int(alViewUnsyncedFor/time.Second)),
 		"--set", fmt.Sprintf("monitoring.prometheusRule.operationStalledAfterSeconds=%d", int(alStalledAfter/time.Second)),
+		"--set", fmt.Sprintf("monitoring.prometheusRule.certificateExpiresWithinSeconds=%d", int(alCertificateWarning/time.Second)),
 		"--show-only", "templates/prometheusrule.yaml")
 	if err != nil {
 		a.fatalf("the chart did not render its PrometheusRule: %v", err)
