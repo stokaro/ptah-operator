@@ -64,8 +64,9 @@ var requirements = []requirement{
 			"policy and transaction-mode edits after approval on both engines in `test/e2e/dataplane_approval_e2e_test.go` " +
 			"and `test/e2e/migrations_approval_e2e_test.go`, each followed by a fresh approval that executes, " +
 			"PtahSchema target-Secret changes on both engines and MySQL drift before dispatch in `test/e2e/faults_target_e2e_test.go`, " +
+			"server-side SQL counts for target-Secret refusals on both engines and families in `test/e2e/database_audit_e2e_test.go`, with a positive control for each refusal, " +
 			"and an author refused Always by the example guard in `test/e2e/migrations_guard_e2e_test.go`",
-		"a count of the statements the database received"},
+		"server-side statement counts for the other approval-binding and drift refusals"},
 	{"PA-03", "Preserve safety through interrupted Apply",
 		"faults injected before Job creation, after dispatch, during SQL, after SQL before persistence, and during lock release, observed against the database and the Pod lifecycle",
 		"the job-deadline, manager-restart, runner-termination and shared-alias faults in `test/e2e/faults_scenarios_e2e_test.go`, " +

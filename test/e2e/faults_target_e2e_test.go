@@ -28,8 +28,12 @@ func (f *faultRun) targetSecretChanges() {
 		}
 		before := f.fingerprint(engine, database, "the originally approved database")
 		otherBefore := f.fingerprint(engine, other, "the database substituted after approval")
+		audit := &databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: engine}
+		initial := audit.snapshot()
 		f.createSchema(faultSchema{name: name, engine: kind, reference: reference, secret: secret, coordinationKey: "e2e/target-secret/" + engine})
 		old := f.schemaPlan(f.waitForPlan(name))
+		planned := audit.snapshot()
+		audit.assertRecords(initial, planned, audit.terminalPod(map[string]string{labelSchema: name, labelOperation: "plan"}, ""), true)
 		f.startReadBarrier()
 		f.createApproval(name, name+"-original")
 		active := f.waitForSchema(name, "the Apply claimed behind the scheduling barrier", applyDispatched).Status.ActiveOperation
@@ -44,11 +48,13 @@ func (f *faultRun) targetSecretChanges() {
 			f.fatalf("could not rewrite the isolated %s target Secret", engine)
 		}
 		f.pauseStatusWrites()
+		beforeRefusal := audit.snapshot()
 		f.stopReadBarrier()
 		refused := f.captureExactJobResult(jobName, jobUID, "apply")
 		if refused.operationID != operationID || !schemaRetargetRefused(refused.result, old.Spec.TargetIdentityDigest) {
 			f.fatalf("%s did not return the target-binding refusal before invoking the executor", name)
 		}
+		audit.assertRecords(beforeRefusal, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": jobName}, jobUID), false)
 		if f.fingerprint(engine, database, "original database after refusal") != before ||
 			f.fingerprint(engine, other, "substituted database after refusal") != otherBefore {
 			f.fatalf("%s changed a database under the obsolete approval", name)
@@ -66,9 +72,14 @@ func (f *faultRun) targetSecretChanges() {
 		if f.addedJobCount(name, "apply") != 1 {
 			f.fatalf("%s replayed the obsolete approval", name)
 		}
+		beforeFresh := audit.snapshot()
+		applyBefore := f.checkpointOperationWatch(name, "apply", 1)
 		f.createApproval(name, name+"-current")
 		f.waitForSchema(name, "a fresh approval of the substituted target to converge", freshApprovalConverged)
 		f.waitForWatchCountAbove(name, "apply", 1, "the freshly approved target's Apply to enter the retained watch")
+		freshUID := f.waitForOneNewWatchedJob(name, "apply", applyBefore, "the freshly approved target's Apply")
+		freshName := f.liveJobName(freshUID, "the freshly approved target's Apply", operationJobs(name, "apply"))
+		audit.assertRecords(beforeFresh, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": freshName}, freshUID), true)
 		f.assertColumn(engine, database, "fault_token", 0)
 		f.assertColumn(engine, other, "fault_token", 1)
 		if f.fingerprint(engine, database, "original database after the fresh approval") != before {
@@ -78,6 +89,7 @@ func (f *faultRun) targetSecretChanges() {
 			f.fatalf("%s did not execute exactly the refused and freshly approved Jobs", name)
 		}
 		f.logf("PASS %s target Secret changed after approval: runner refused; both databases unchanged; fresh approval changed only its named target", engine)
+		audit.close()
 	}
 }
 
