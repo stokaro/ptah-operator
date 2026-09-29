@@ -52,6 +52,13 @@ func decodeManifests(content []byte) ([]map[string]any, error) {
 	}
 }
 
+// guardAuthorGrantPending names only the authorizer's refusal of the exact
+// initial write. Admission and other failures must not become RBAC retries.
+func guardAuthorGrantPending(message, user, namespace string) bool {
+	denial := fmt.Sprintf(`ptahmigrations.operator.ptah.run is forbidden: User %q cannot create resource "ptahmigrations" in API group "operator.ptah.run" in the namespace %q`, user, namespace)
+	return strings.HasSuffix(strings.TrimSpace(message), denial)
+}
+
 // guardAuthorRole is the example desired-state author Role and RoleBinding,
 // moved into the namespace, renamed for the engine, and bound to the group
 // given: the starting point a reader copies rather than a Role written for

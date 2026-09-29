@@ -1,0 +1,1 @@
+Error from server (Forbidden): error when creating "/tmp/ptah-operator-migrations-e2e.1399000838/guard-e2e-apply-guard-mysql.json": ptahmigrations.operator.ptah.run is forbidden: User "e2e-author-mysql" cannot create resource "ptahmigrations" in API group "operator.ptah.run" in the namespace "ptah-test-a-1-36-4-ci-36591988252-1-1-36-migrations-aeab874906"

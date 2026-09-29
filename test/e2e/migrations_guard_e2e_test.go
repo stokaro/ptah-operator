@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,10 +17,14 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
 // guardRow is the names the apply-policy guard row uses for one engine: its
@@ -61,9 +66,7 @@ func (m *migrationRun) applyPolicyGuardProof() {
 	administratorGroup := m.readApplyPolicyGuard()
 
 	// Created by the author, so the author's Role is what lets it in.
-	m.guardAs(g.author, g.authorGroup,
-		fmt.Sprintf("the author could not create %s with the desired-state Role", g.migration),
-		"create", "-f", m.guardDocumentFile(g.migration, m.guardMigrationDocument(g, g.migration, "OnApproval")))
+	m.guardAuthorCreate(g)
 	awaiting := m.waitForGuard(g.migration, "a plan awaiting approval", guardPlanAwaiting)
 	plan := awaiting.Status.Plan.Name
 	m.guardRefused(g.author, g.authorGroup, "forbidden", "the author approved its own migration",
@@ -140,6 +143,32 @@ func (m *migrationRun) applyPolicyGuardProof() {
 		}
 	}
 	m.logf("PASS %s author refused Always and approval, approver applied, administrator chose Always", m.engine.kind)
+}
+
+// guardAuthorCreate retries the first authorized write while the API server's
+// RBAC cache observes the new grant. Retry only a definite RBAC refusal: an
+// admission refusal, transport error, or ambiguous write result ends the row.
+// A separate access review could reach a different API server from the write.
+func (m *migrationRun) guardAuthorCreate(g guardRow) {
+	m.t.Helper()
+	author, err := m.cluster.As(rest.ImpersonationConfig{UserName: g.author, Groups: []string{g.authorGroup}})
+	m.check(err, "build the desired-state author's client")
+	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	defer cancel()
+	err = harness.Wait(ctx, "the author's first migration creation after its RoleBinding", 30*time.Second, time.Second,
+		func(ctx context.Context) (bool, string, error) {
+			object := &unstructured.Unstructured{Object: m.guardMigrationDocument(g, g.migration, "OnApproval")}
+			err := author.Create(ctx, object, client.FieldOwner(harness.FieldOwner))
+			if err == nil {
+				return true, "", nil
+			}
+			m.scan([]byte(err.Error()), "the author's first migration creation")
+			if apierrors.IsForbidden(err) && guardAuthorGrantPending(err.Error(), g.author, m.in.TestNamespace) {
+				return false, "the desired-state author's grant is not effective yet", nil
+			}
+			return false, "", err
+		})
+	m.check(err, "the author could not create %s with the desired-state Role", g.migration)
 }
 
 // guardAs runs kubectl as an identity and ends the scenario with the failure
