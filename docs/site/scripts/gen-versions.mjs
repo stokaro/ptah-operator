@@ -20,18 +20,15 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = join(scriptDir, '..', '..', '..');
 
 export const EDGE = 'edge';
-const VERSION_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const VERSION_RE = /^v(\d+)\.(\d+)\.(\d+)$/;
 
 export function isVersionFolder(name) {
-  return name === EDGE || parseSemver(name) !== null;
+  return name === EDGE || VERSION_RE.test(name);
 }
 
 export function parseSemver(name) {
   const match = VERSION_RE.exec(name);
-  if (!match) return null;
-  const prerelease = match[4]?.split('.') ?? [];
-  if (prerelease.some((part) => /^0[0-9]+$/.test(part))) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3]), prerelease];
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
 // order lists the development state first and then releases, newest first.
@@ -44,21 +41,6 @@ export function order(names) {
     for (let index = 0; index < 3; index += 1) {
       if (a[index] !== b[index]) return b[index] - a[index];
     }
-    const preA = a[3];
-    const preB = b[3];
-    if (preA.length === 0 || preB.length === 0) {
-      return preA.length === preB.length ? 0 : preA.length === 0 ? -1 : 1;
-    }
-    for (let index = 0; index < Math.max(preA.length, preB.length); index += 1) {
-      if (preA[index] === preB[index]) continue;
-      if (preA[index] === undefined) return 1;
-      if (preB[index] === undefined) return -1;
-      const numericA = /^[0-9]+$/.test(preA[index]);
-      const numericB = /^[0-9]+$/.test(preB[index]);
-      if (numericA !== numericB) return numericA ? 1 : -1;
-      if (numericA) return BigInt(preA[index]) > BigInt(preB[index]) ? -1 : 1;
-      return preA[index] > preB[index] ? -1 : 1;
-    }
     return 0;
   });
   return names.includes(EDGE) ? [EDGE, ...releases] : releases;
@@ -66,17 +48,19 @@ export function order(names) {
 
 // computeDefault names the version the apex serves.
 //
-// The newest stable release, once one exists. Until then the development
-// guide stays the default; publishing an RC must not silently switch it.
+// The newest release, once one exists. Until then the development state, which
+// is the only guide there is -- and calling a prerelease state a release is the
+// one thing this must not do.
 export function computeDefault(names) {
-  const release = latestRelease(names);
+  const ordered = order(names);
+  const release = ordered.find((name) => parseSemver(name) !== null);
   return release ?? (names.includes(EDGE) ? EDGE : null);
 }
 
-// latestRelease names the newest stable release, or undefined before one exists.
+// latestRelease names the newest release, or undefined before the first one.
 // The version picker badges it, and a page from an older release links to it.
 export function latestRelease(names) {
-  return order(names).find((name) => parseSemver(name)?.[3].length === 0);
+  return order(names).find((name) => parseSemver(name) !== null);
 }
 
 // releaseDates reads the day each release tag was made, as YYYY-MM-DD. The
@@ -283,17 +267,6 @@ function selftest() {
     throw new Error(`the index dates the versions as ${JSON.stringify(dated.versions)}`);
   }
   if ('latest' in buildIndex([EDGE])) throw new Error('the index names a latest release before the first one');
-  const candidates = ['v0.1.0-rc.2', 'v0.1.0-rc.10', 'v0.1.0', 'v0.1.0-alpha.1', 'v0.1.0-alpha', 'v0.1.0-1', EDGE];
-  const wanted = 'edge,v0.1.0,v0.1.0-rc.10,v0.1.0-rc.2,v0.1.0-alpha.1,v0.1.0-alpha,v0.1.0-1';
-  if (order(candidates).join(',') !== wanted) throw new Error('prereleases do not follow semantic precedence');
-  const rcIndex = buildIndex([EDGE, 'v0.1.0-rc.1'], new Map([['v0.1.0-rc.1', '2030-01-01']]));
-  if (rcIndex.default !== EDGE || 'latest' in rcIndex) throw new Error('an RC became the default or latest');
-  if (rcIndex.versions[1]?.released !== '2030-01-01') throw new Error('the RC lost its version entry or release date');
-  if (computeDefault([EDGE, 'v0.2.0-rc.1', 'v0.1.0']) !== 'v0.1.0') throw new Error('an RC replaced a stable default');
-  for (const name of ['v0.1.0-rc.01', 'v0.1.0-', 'v0.1.0-rc..1', 'v01.2.3']) {
-    if (isVersionFolder(name)) throw new Error(`invalid prerelease folder ${name} was accepted`);
-  }
-
   for (const name of ROOT_ASSETS) {
     if (!existsSync(join(publicDir, name))) throw new Error(`public/${name} is missing, so the root would not carry the picker`);
   }

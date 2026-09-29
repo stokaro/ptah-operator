@@ -68,7 +68,7 @@ const (
 
 var (
 	commitPattern   = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	releasePattern  = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+	releasePattern  = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 	datePattern     = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 	describePattern = regexp.MustCompile(`-g([0-9a-f]{7,40})$`)
 	// looseCommit finds a bare commit anywhere in a file. The cross-file checks
@@ -294,7 +294,7 @@ func validateRelease(entry release, evidenceByName map[string]evidence) []error 
 			problems = append(problems, fmt.Errorf("%s has stage %q; a tagged version is released", name, entry.Stage))
 		}
 	default:
-		problems = append(problems, fmt.Errorf("operator version %q is neither %s nor vMAJOR.MINOR.PATCH with an optional prerelease suffix", name, edgeVersion))
+		problems = append(problems, fmt.Errorf("operator version %q is neither %s nor vMAJOR.MINOR.PATCH", name, edgeVersion))
 	}
 
 	problems = append(problems, validateDocumentation(name, entry.Documentation)...)

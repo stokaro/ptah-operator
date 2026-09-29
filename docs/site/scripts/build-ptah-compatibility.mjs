@@ -125,8 +125,7 @@ function measurement(row) {
 
 function section(entry) {
   const lines = [`### ${prose(entry.operator)}`, ''];
-  const stage = entry.stage === 'development' ? 'The development state.'
-    : entry.operator.includes('-') ? 'A prerelease version.' : 'A released version.';
+  const stage = entry.stage === 'development' ? 'The development state.' : 'A released version.';
   const url = guideURL(entry);
   lines.push(url ? `${stage} Its guide is at [${url}](${url}).` : `${stage} It publishes no guide.`, '');
 
@@ -274,13 +273,6 @@ function selftest() {
   // A guide is linked only where one is published.
   if (!edge.includes('(https://operator.ptah.run/edge/)')) throw new Error('a published guide got no link');
   if (block.includes('operator.ptah.run/v0.1.0/')) throw new Error('an unpublished guide was linked anyway');
-  const candidate = structuredClone(catalog.releases[1]);
-  candidate.operator = 'v0.1.0-rc.1';
-  candidate.documentation.source = candidate.operator;
-  const candidateSection = section(candidate).join('\n');
-  if (!candidateSection.includes('A prerelease version.') || !candidateSection.includes('/v0.1.0-rc.1/')) {
-    throw new Error('a prerelease lost its label or versioned guide');
-  }
   // Prose stays on one line and keeps its Markdown.
   if (!block.includes('- run `ptah migrations up` with the flag')) throw new Error('a limitation broke across lines');
   if (!block.includes('- `kubernetes-e2e`: the suite one declaration')) throw new Error('the evidence is not described');

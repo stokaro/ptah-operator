@@ -382,7 +382,7 @@ func TestReleaseWorkflowJQProgramsCompile(t *testing.T) {
 	}
 	for index, program := range programs {
 		arguments := []string{"-n"}
-		for _, variable := range []string{"digest", "os", "architecture", "source", "revision", "version", "name", "branch", "sha", "expected"} {
+		for _, variable := range []string{"digest", "os", "architecture", "source", "revision", "version", "name", "branch", "sha"} {
 			arguments = append(arguments, "--arg", variable, "")
 		}
 		arguments = append(arguments, "def __release_filter: ("+program+"); null")
@@ -450,15 +450,6 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		new string
 		all bool
 	}{
-		"stable tag marked prerelease":       {`prerelease=false`, `prerelease=true`, false},
-		"prerelease tag marked stable":       {`if [[ "$version" == *-* ]]; then`, `if [[ "$version" == *+* ]]; then`, false},
-		"prerelease output removed":          {`printf 'prerelease=%s\n' "$prerelease"`, `printf 'ignored=%s\n' "$prerelease"`, false},
-		"prerelease binding replaced":        {`RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}`, `RELEASE_PRERELEASE: "false"`, false},
-		"draft prerelease flag removed":      {`--prerelease="$RELEASE_PRERELEASE"`, `--prerelease=false`, false},
-		"published prerelease flag removed":  {`--draft=false --latest=false --prerelease="$RELEASE_PRERELEASE"`, `--draft=false --latest=false`, false},
-		"recovery prerelease check reversed": {`'.prerelease == $expected'`, `'.prerelease != $expected'`, false},
-		"all prerelease checks removed":      {`jq -e --argjson expected "$RELEASE_PRERELEASE" '.prerelease == $expected' <<<"$release_json" >/dev/null`, `true`, true},
-
 		"cancel active publication": {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: true`, false},
 		"retain superseded PR":      {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: false`, false},
 		"cancel tag validation":     {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}`, false},

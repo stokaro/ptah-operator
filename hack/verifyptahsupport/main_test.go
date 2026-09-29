@@ -82,32 +82,6 @@ func TestValidateAcceptsTheCatalogShape(t *testing.T) {
 	}
 }
 
-func TestValidatePrereleaseGuide(t *testing.T) {
-	t.Parallel()
-	for _, tag := range []string{"v0.1.0-rc.1", "v0.1.0-rc.10", "v0.1.0-beta"} {
-		t.Run(tag, func(t *testing.T) {
-			loaded := validCatalog()
-			candidate := loaded.Releases[0]
-			candidate.Operator = tag
-			candidate.Stage = "released"
-			candidate.Documentation = documentation{Published: true, Source: tag}
-			loaded.Releases = append(loaded.Releases, candidate)
-			if err := validate(loaded, testToday(t)); err != nil {
-				t.Fatalf("prerelease guide from its own tag was refused: %v", err)
-			}
-			loaded.Releases[1].Documentation.Source = "master"
-			if err := validate(loaded, testToday(t)); err == nil || !strings.Contains(err.Error(), "a release builds from its own tag") {
-				t.Fatalf("prerelease guide from master: %v", err)
-			}
-		})
-	}
-	for _, tag := range []string{"v0.1.0-", "v0.1.0-rc..1", "v0.1.0-rc/1"} {
-		if releasePattern.MatchString(tag) {
-			t.Errorf("accepted malformed prerelease tag %q", tag)
-		}
-	}
-}
-
 // TestValidateRefusesTheShapesThatBlurAClaim drives one rule per row. Every
 // case starts from the accepted catalog above, so a row that stops failing is
 // a rule that stopped being in effect rather than a fixture that drifted.
