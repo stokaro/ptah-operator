@@ -333,26 +333,29 @@ func (f *faultRun) auditProtectedTerminalJob(name, jobUID, podUID string) {
 	f.audited.add(jobUID)
 }
 
-// assertAuditComplete holds every Job and Pod either watch saw added to
-// having been audited.
-func (f *faultRun) assertAuditComplete() {
+// waitForAuditComplete drains the audit of the closed watch history. A
+// periodic read can start just before the watches close, so its Job and Pod
+// can still be running when the final audit first reaches them. Keep auditing
+// until every recorded UID is covered; stopping the watch is not evidence
+// that the workloads it recorded have finished.
+func (f *faultRun) waitForAuditComplete() {
 	f.t.Helper()
-	jobs, err := watchedUIDs(f.jobs.snapshot())
-	f.check(err, "could not validate the fault-test jobs watch before the audit assertion")
-	pods, err := watchedUIDs(f.pods.snapshot())
-	f.check(err, "could not validate the fault-test pods watch before the audit assertion")
-	if len(jobs) == 0 || len(pods) == 0 {
-		f.fatalf("the audit assertion read %d watched Jobs and %d watched Pods; it has to read some of each", len(jobs), len(pods))
-	}
-	for _, uid := range jobs {
-		if !f.auditedJobs[uid] {
-			f.fatalf("fault-test jobs UID %s was never credential-audited", uid)
+	jobs, pods := f.jobs.snapshot(), f.pods.snapshot()
+	deadline := time.Now().Add(waitTimeout)
+	for {
+		f.auditRuntime()
+		missingJobs, err := missingWatchedAudits(jobs, f.auditedJobs)
+		f.check(err, "could not validate the closed fault-test jobs watch")
+		missingPods, err := missingWatchedAudits(pods, f.auditedPods)
+		f.check(err, "could not validate the closed fault-test pods watch")
+		if len(missingJobs) == 0 && len(missingPods) == 0 {
+			return
 		}
-	}
-	for _, uid := range pods {
-		if !f.auditedPods[uid] {
-			f.fatalf("fault-test pods UID %s was never credential-audited", uid)
+		if !time.Now().Before(deadline) {
+			f.fatalf("timed out after %s waiting for credential audits of watched Job UIDs %v and Pod UIDs %v",
+				waitTimeout, missingJobs, missingPods)
 		}
+		f.sleep(time.Second)
 	}
 }
 

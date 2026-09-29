@@ -753,6 +753,26 @@ func watchedUIDs[T client.Object](events []watchEvent[T]) ([]string, error) {
 	return slices.Compact(uids), nil
 }
 
+// missingWatchedAudits keeps every added UID in the audit obligation, even
+// when the watch ended before the object finished or saw it deleted. Only
+// the credential audit can discharge that obligation.
+func missingWatchedAudits[T client.Object](events []watchEvent[T], audited map[string]bool) ([]string, error) {
+	uids, err := watchedUIDs(events)
+	if err != nil {
+		return nil, err
+	}
+	if len(uids) == 0 {
+		return nil, errors.New("audit watch contains no added objects")
+	}
+	var missing []string
+	for _, uid := range uids {
+		if !audited[uid] {
+			missing = append(missing, uid)
+		}
+	}
+	return missing, nil
+}
+
 // addedJobs is every Job the watch saw added, once each, in the order it
 // first saw them.
 func addedJobs(jobs []watchEvent[*batchv1.Job]) []batchv1.Job {
