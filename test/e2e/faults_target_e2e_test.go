@@ -62,8 +62,35 @@ func (f *faultRun) targetSecretChanges() {
 		f.assertColumn(engine, database, "fault_token", 0)
 		f.assertColumn(engine, other, "fault_token", 0)
 		f.mustResumeStatusWrites("restore status writes after the target-binding refusal")
+		f.waitForSchema(name, "the substituted target to be refused as post-Apply proof", func(resource *ptahv1alpha1.PtahSchema) bool {
+			return retargetProofRefused(resource, operationID, jobUID, old.Spec.TargetIdentityDigest)
+		})
+		if f.addedJobCount(name, "apply") != 1 {
+			f.fatalf("%s replayed its Apply while the original target was unavailable", name)
+		}
+		// A runner's refusal describes one Pod attempt, not every attempt a
+		// dispatched Job could have made. Restore the original database so the
+		// controller can finish the read-only proof it still owes that target.
+		patch = f.jsonBytes(map[string]any{"stringData": map[string]any{"url": f.databaseURLFor(engine, database)}})
+		if err := f.cluster.Client.Patch(f.ctx, object, client.RawPatch(types.MergePatchType, patch)); err != nil {
+			f.fatalf("could not restore the isolated %s target Secret for post-Apply proof", engine)
+		}
+		f.waitForSchema(name, "read-only proof of the originally approved target to finish", func(resource *ptahv1alpha1.PtahSchema) bool {
+			return targetPlanAwaitingApproval(resource, old.Spec.TargetIdentityDigest)
+		})
+		if f.fingerprint(engine, database, "original database after post-Apply proof") != before ||
+			f.fingerprint(engine, other, "substituted database after post-Apply proof") != otherBefore {
+			f.fatalf("%s changed a database while recovering its refused Apply", name)
+		}
+		// Move the declared target only after the old proof has settled. A new
+		// Secret reference advances the generation and requests a new plan
+		// immediately instead of waiting for the periodic read of Secret data.
+		f.patchSchema(name, map[string]any{"spec": map[string]any{"target": map[string]any{
+			"urlFrom": map[string]any{"name": name + "-other-db"},
+		}}})
 		current := f.waitForSchema(name, "a fresh plan for the changed target", func(resource *ptahv1alpha1.PtahSchema) bool {
-			return planAwaitingApproval(resource) && resource.Status.Plan.UID != old.UID && resource.Status.ActiveOperation == nil
+			return targetPlanAwaitingApproval(resource, refused.result.TargetIdentityDigest) && resource.Status.Plan.UID != old.UID &&
+				resource.Status.ObservedGeneration == resource.Generation
 		})
 		fresh := f.schemaPlan(current.Status.Plan.Name)
 		if fresh.Spec.TargetIdentityDigest == old.Spec.TargetIdentityDigest {
@@ -88,7 +115,7 @@ func (f *faultRun) targetSecretChanges() {
 		if f.addedJobCount(name, "apply") != 2 {
 			f.fatalf("%s did not execute exactly the refused and freshly approved Jobs", name)
 		}
-		f.logf("PASS %s target Secret changed after approval: runner refused; both databases unchanged; fresh approval changed only its named target", engine)
+		f.logf("PASS %s target Secret changed after approval: runner refused; original target proved unchanged; fresh approval changed only its newly declared target", engine)
 		audit.close()
 	}
 }
