@@ -58,6 +58,7 @@ func TestDataPlane(t *testing.T) {
 		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
 		{"watches", func() { f = newFaultRun(d); f.watches() }},
 		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
+		{"approval-destructive-policy-change", func() { f.destructivePolicyChanges() }},
 		{"mysql-drift-before-dispatch", func() { f.mysqlDriftBeforeDispatch() }},
 		{"hung-schema-result-read", func() { f.hungResultReads() }},
 		{"job-deadline", func() { f.jobDeadline() }},
