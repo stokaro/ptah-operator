@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-29T19:00:34+00:00",
-  "profileSourceCommit": "0310b5db2a1f8ac9fe158061cc2321f1716c0cd2",
+  "frozenAt": "2026-09-29T19:25:06+00:00",
+  "profileSourceCommit": "cf737b4836784c5c0ffd751aaafa32b96b1ddef8",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "0b2f8e9630a4a497a19531ce3c7f4e6d3f9175ce98b780fe2a43213b2d4e3b01",
-    "generatedFromCommit": "0310b5db2a1f8ac9fe158061cc2321f1716c0cd2",
+    "sha256": "dfc624819e9b46f06691cfe10e7ea5529832c4f0995637ec5eba83b7aea1eaeb",
+    "generatedFromCommit": "cf737b4836784c5c0ffd751aaafa32b96b1ddef8",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 3,
+  "revision": 4,
   "supersedes": {
-    "freezeCommit": "90e93fdb805ffacf6a94c9db5e77de38c362a94d",
-    "sha256": "cf701578c25a122837a96bd56afc19fea28e458d671d691bde35b194a5f5b9de"
+    "freezeCommit": "2099fc68fad042db27276aec926929785406c50e",
+    "sha256": "775288ee694fc74240da8b686f2f9f9f8259f29fd89e3b13933ea1402cd96a3a"
   },
-  "revisionReason": "Repair the PostgreSQL suite preparation after all three master jobs failed because the certificate-expiry probe had no approval fixture. Add the existing control-plane fixture producer and verify full-phase prerequisites before execution. Required scenarios, operating, alert, RPO/RTO and platform targets are unchanged. Preserve the failed runs; affected evidence requires a corrected-source rerun."
+  "revisionReason": "Implement the existing Q-02/AB-02 artifact-replacement proof between admitted approval and dispatch for both migration engines, and add SQL-audited fresh-approval controls for artifact, policy and transaction-mode changes. The generated scenario inventory includes the new artifact row. Operating, alert, RPO/RTO and platform targets are unchanged. Preserve prior results; the added scenarios require execution on the updated source."
 }
