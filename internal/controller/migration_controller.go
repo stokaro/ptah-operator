@@ -825,10 +825,13 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 // pass that supervises one. The Job the claim builds now is held to the live
 // one by jobclaim.Match, with the manager's recorded identity taken from the
 // live Pod template (validateAdoptedMigrationJobIntent says why that is safe).
-// It is asked while the inputs the claim was made from still hold. Once they
-// have moved, the claim cannot rebuild its Job, and the Job is never harvested
-// either: the terminal branch reads the same inputs and settles the claim as
-// stale or as outcome unknown without reading a result.
+// That is asked while the inputs the claim was made from still hold. Once they
+// have moved, the claim cannot rebuild its Job, so the Job is held to what the
+// claim fixes without a rebuild (validateMigrationJobEnvelope): its epoch, its
+// labels and annotations, and the Pod template its admission snapshot
+// recorded. Such a Job is never harvested either: the terminal branch reads
+// the same inputs and settles the claim as stale or as outcome unknown
+// without reading a result.
 //
 // A Job the claim cannot confirm is settled by the asymmetry every lost Job
 // is. A mutating claim's Job may already be running SQL, so the run is
@@ -847,11 +850,21 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 	job *batchv1.Job,
 ) (ctrl.Result, bool, error) {
 	operation := migration.Status.ActiveOperation
+	mutating := migrationOperation(operation).Mutating
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
 	if currentErr != nil || current != operation.InputFingerprint {
+		if err := validateMigrationJobEnvelope(job, migration); err != nil {
+			if mutating {
+				result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
+					fmt.Errorf("dispatched Apply Job is not its claim's: %w", err), "")
+				return result, true, settleErr
+			}
+			result, settleErr := r.retryMigrationOperation(ctx, migration, nil,
+				fmt.Errorf("active Job is not its claim's: %w", err))
+			return result, true, settleErr
+		}
 		return ctrl.Result{}, false, nil
 	}
-	mutating := migrationOperation(operation).Mutating
 	expected, err := r.expectedMigrationJob(ctx, migration, operation)
 	if err != nil {
 		if mutating {
@@ -2029,6 +2042,22 @@ func validateMigrationJobIntent(actual, expected *batchv1.Job, migration *operat
 func validateAdoptedMigrationJobIntent(actual, expected *batchv1.Job, migration *operatorv1alpha1.PtahMigration) error {
 	workload.CarryManagerIdentity(expected, actual)
 	return validateMigrationJobIntent(actual, expected, migration)
+}
+
+// validateMigrationJobEnvelope holds a live Job to the migration's active
+// claim where the claim can no longer rebuild it, because the inputs it was
+// made from have moved since dispatch. The Job is held to what the claim fixes
+// without a rebuild: its name, owner and recorded UID, the epoch the claim was
+// made under, the labels and annotations the claim fixes, and the Pod template
+// its admission snapshot recorded. It is the match the controller-write
+// webhook applies when it admits the Job's cleanup TTL.
+func validateMigrationJobEnvelope(actual *batchv1.Job, migration *operatorv1alpha1.PtahMigration) error {
+	if migration == nil {
+		return errors.New("no migration claims the Job")
+	}
+	claim := jobclaim.MigrationOperation(migration, migration.Status.ActiveOperation)
+	claim.Binding = migration.Status.ExecutionBinding
+	return jobclaim.Match(actual, claim)
 }
 
 func boundedVersions(versions []int64, limit int) []int64 {

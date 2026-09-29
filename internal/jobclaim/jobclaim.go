@@ -4,12 +4,12 @@
 // operation, its identity, the execution epoch it runs under, the admission
 // snapshot of its Pod template. Two processes ask whether a Job they hold is
 // that Job. The controller asks when it reads back a Job it has just created,
-// when it adopts one a stopped pass created, and when it cleans up after a
-// claim a binding rotation retired. The controller-write webhook asks when the
-// manager creates a Job, schedules its cleanup, or publishes a plan from it.
-// Both ask Match, so the controller never touches a Job the webhook would
-// refuse it, and the webhook never admits a Job the controller would not
-// recognize.
+// on every pass that adopts or supervises the Job under a claim's reserved
+// name, and when it cleans up after a claim a binding rotation retired. The
+// controller-write webhook asks when the manager creates a Job, schedules its
+// cleanup, or publishes a plan from it. Both ask Match, so the controller
+// never touches a Job the webhook would refuse it, and the webhook never
+// admits a Job the controller would not recognize.
 package jobclaim
 
 import (

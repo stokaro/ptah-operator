@@ -273,14 +273,18 @@ nothing and the snapshot pins it. A Job that fails the match, or a claim that
 cannot rebuild its Job, is settled the way a lost Job is: a mutating claim's
 run is recorded `Unknown` and never gets a second executor, and a read-only
 claim runs again under a new attempt, leaving the old Job to its own deadline.
-Once the inputs have moved the claim cannot rebuild its Job, and the Job is
-not harvested either: the terminal pass settles the claim as stale or
-`Unknown` without reading its result.
+Once the inputs have moved the claim cannot rebuild its Job. The pass then
+holds the Job to what the claim fixes without a rebuild: the epoch, the labels
+and annotations, and the Pod template against the admission snapshot. That is
+the match the controller-write webhook applies to the Job's cleanup TTL. A Job
+that fails it is settled as one that fails the rebuild is, and the claim never
+records its UID. A Job that passes is not harvested either: the terminal pass
+settles the claim as stale or `Unknown` without reading its result.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `reconcileActive`, `validateAdoptedJobIntent` and `jobclaim.Match` on every pass |
-| `PtahMigration` | `reconcileActiveMigration`, `holdMigrationJobToItsClaim` and `jobclaim.Match` on every pass |
+| `PtahSchema` | `reconcileActive`, `validateAdoptedJobIntent` or `validateJobEnvelope`, and `jobclaim.Match` on every pass |
+| `PtahMigration` | `reconcileActiveMigration`, `holdMigrationJobToItsClaim` (`validateAdoptedMigrationJobIntent` or `validateMigrationJobEnvelope`) and `jobclaim.Match` on every pass |
 
 This decides what an operator upgrade does to work in flight. A release that
 keeps the execution binding and changes only the manager identity adopts every

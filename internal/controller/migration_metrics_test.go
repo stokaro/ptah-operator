@@ -8,6 +8,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -493,26 +494,28 @@ func TestARetiredMigrationClaimSaysWhyItWasRetired(t *testing.T) {
 		},
 	}
 
+	current := workloadBuilderForMigrations()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			migration := migrationFixture()
-			migration.Status.ExecutionBinding = migrationExecutionBinding()
-			migration.Status.Artifact = resolvedMigrationArtifact()
-			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
-			migration.Finalizers = []string{migrationOperationFinalizer}
-			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
-			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			// The claim's own Job, as its dispatch built it, now finished. A
+			// pass whose inputs moved holds the Job to the labels and
+			// annotations its claim fixes before it reads anything else, and
+			// the fixture Job carries none of them.
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{
+				dispatcher: current, recorded: true,
+			})
+			run.job.Status.Active = 0
+			run.job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+			run.pod.Status.Phase = corev1.PodSucceeded
+			migration := run.migration
 			if test.suspend {
 				migration.Spec.Suspend = true
 			} else {
-				// The fingerprint the claim was decided from no longer matches
-				// what the resource now says.
-				operation.InputFingerprint = "sha256:" + strings.Repeat("d", 64)
+				// The resource was edited after the claim was decided.
+				moveMigrationInputs(migration)
 			}
-			reconciler, api := fakeMigrationReconciler(
-				t, staticLogs{}, migration, job, pod, verificationPolicyConfigMap(),
-			)
+			reconciler, api := run.reconciler(t, current)
 			observed := &telemetryObservation{}
 			reconciler.Telemetry = observed
 

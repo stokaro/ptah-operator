@@ -429,24 +429,54 @@ func TestAMigrationClaimThatCannotRebuildItsJobDoesNotAdoptIt(t *testing.T) {
 // asymmetry exists for. An Apply claim that cannot confirm the Job under its
 // name may be looking at an executor that is running SQL, so the run goes to
 // the uncertain path: it is recorded as outcome unknown, the database stays
-// held while the Job can still write, and no pass creates a second Job.
+// held while the Job can still write, and no pass creates a second Job. That
+// holds whether the claim refused the Job against its rebuild or, once its
+// inputs moved, against what it fixes without one.
 func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 	t.Parallel()
 
 	current := workloadBuilderForMigrations()
-	for _, recorded := range []bool{false, true} {
-		name := "adopting"
-		if recorded {
-			name = "supervising"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		shape runShape
+		moved bool
+		want  string
+	}{
+		{
+			name:  "adopting a Job another release built",
+			shape: runShape{dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting},
+			want:  "dispatched Apply Job intent changed",
+		},
+		{
+			name:  "supervising a Job another release built",
+			shape: runShape{dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting, recorded: true},
+			want:  "dispatched Apply Job intent changed",
+		},
+		{
+			name:  "adopting a Job under another epoch after the inputs moved",
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch},
+			moved: true,
+			want:  "dispatched Apply Job is not its claim's",
+		},
+		{
+			name:  "supervising a Job under another epoch after the inputs moved",
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			moved: true,
+			want:  "dispatched Apply Job is not its claim's",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, runShape{
-				dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting, recorded: recorded,
-			})
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, row.shape)
+			if row.moved {
+				moveMigrationInputs(run.migration)
+			}
 			reconciler, api := run.reconciler(t, current)
-			var creates atomic.Int64
+			if row.moved {
+				requireMigrationInputsMoved(t, reconciler, run.migration)
+			}
+			var creates, applyCreates atomic.Int64
 			reconciler.Client = interceptor.NewClient(api, interceptor.Funcs{
 				Create: func(
 					ctx context.Context,
@@ -454,28 +484,51 @@ func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 					object client.Object,
 					options ...client.CreateOption,
 				) error {
-					if _, ok := object.(*batchv1.Job); ok {
+					if job, ok := object.(*batchv1.Job); ok {
 						creates.Add(1)
+						if job.Labels[workload.LabelOperation] == "apply" {
+							applyCreates.Add(1)
+						}
 					}
 					return writer.Create(ctx, object, options...)
 				},
 			})
 
+			// The first pass refuses the Job, and the rest must not dispatch
+			// beside it. An edit is a new generation, which the resource
+			// resolves again, so a moved row may create that read-only Job and
+			// nothing else.
 			for pass := range 4 {
 				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(run.migration)); err != nil {
 					t.Fatalf("Reconcile() pass %d error = %v", pass, err)
 				}
+				if pass == 0 {
+					assertRefused(t, api, run, row.want)
+				}
 			}
-			assertRefused(t, api, run, "dispatched Apply Job intent changed")
-			if created := creates.Load(); created != 0 {
+			if unresolved := readMigration(t, api, run.migration).Status.UnresolvedRun; unresolved == nil ||
+				unresolved.OperationID != run.migration.Status.ActiveOperation.ID {
+				t.Fatalf("unresolved run = %#v, want the refused Apply's run to stand", unresolved)
+			}
+			if created := applyCreates.Load(); created != 0 {
+				t.Fatalf("%d Apply Job creates were attempted after the claim could not confirm its Job, want none", created)
+			}
+			if created := creates.Load(); !row.moved && created != 0 {
 				t.Fatalf("%d Job creates were attempted after the claim could not confirm its Job, want none", created)
 			}
 			jobs := &batchv1.JobList{}
 			if err := api.List(context.Background(), jobs, client.InNamespace(run.migration.Namespace)); err != nil {
 				t.Fatal(err)
 			}
-			if len(jobs.Items) != 1 || jobs.Items[0].UID != run.job.UID {
-				t.Fatalf("the namespace holds %d Jobs, want only the one the claim could not confirm", len(jobs.Items))
+			var applies []types.UID
+			for index := range jobs.Items {
+				if jobs.Items[index].Labels[workload.LabelOperation] == "apply" {
+					applies = append(applies, jobs.Items[index].UID)
+				}
+			}
+			if len(applies) != 1 || applies[0] != run.job.UID || (!row.moved && len(jobs.Items) != 1) {
+				t.Fatalf("the namespace holds %d Jobs (Apply Jobs %v), want only the one the claim could not confirm, %q",
+					len(jobs.Items), applies, run.job.UID)
 			}
 			// The Job is still running, so the database is not handed back.
 			assertDatabaseStillHeld(t, reconciler, api)
