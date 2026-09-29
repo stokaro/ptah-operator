@@ -60,6 +60,7 @@ func TestDataPlane(t *testing.T) {
 		{"approval-target-secret-change", func() { f.targetSecretChanges() }},
 		{"approval-destructive-policy-change", func() { f.destructivePolicyChanges() }},
 		{"approval-exclusion-policy-change", func() { f.exclusionPolicyChanges() }},
+		{"approval-verification-policy-change", func() { f.verificationPolicyChanges() }},
 		{"mysql-drift-before-dispatch", func() { f.mysqlDriftBeforeDispatch() }},
 		{"hung-schema-result-read", func() { f.hungResultReads() }},
 		{"job-deadline", func() { f.jobDeadline() }},

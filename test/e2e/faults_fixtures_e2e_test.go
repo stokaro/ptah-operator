@@ -489,6 +489,7 @@ func (f *faultRun) assertReadBlocked(jobUID, description string) {
 // ones most proofs use.
 type faultSchema struct {
 	name, engine, secret, reference, coordinationKey string
+	verificationPolicy                               string
 	// failureRetry is 5s, activeDeadline faultActiveDeadlineSeconds and
 	// lockTimeout 60s when unset.
 	failureRetry   string
@@ -534,7 +535,7 @@ func (f *faultRun) createSchema(schema faultSchema) {
 					"name": registryAuthSecret, "mode": "Environment",
 					"usernameKey": "username", "passwordKey": "password",
 				},
-				"verificationPolicyFrom": map[string]any{"name": "e2e-verification-policy", "key": "policy.yaml"},
+				"verificationPolicyFrom": map[string]any{"name": cmp.Or(schema.verificationPolicy, verificationPolicyName), "key": verificationPolicyKey},
 				"transport":              map[string]any{"plainHTTP": true},
 			},
 			"policy": map[string]any{

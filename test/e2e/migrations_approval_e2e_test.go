@@ -48,7 +48,11 @@ func (m *migrationRun) statusBarrier() *controllerStatusBarrier {
 // A fresh approval then executes the current artifact on the same database.
 func (m *migrationRun) approvalInputChange(field string) {
 	m.t.Helper()
+	suffix := "approval-" + field
+	name := "e2e-" + suffix + "-" + m.engine.name
 	var edit map[string]any
+	var verification *verificationPolicyFixture
+	var originalPolicy, currentPolicy verificationPolicyIdentity
 	reference := m.reference("")
 	var oldDigest, newDigest string
 	switch field {
@@ -56,6 +60,12 @@ func (m *migrationRun) approvalInputChange(field string) {
 		edit = map[string]any{"policy": map[string]any{"apply": "Never"}}
 	case "transaction-mode":
 		edit = map[string]any{"policy": map[string]any{"transactionMode": "none"}}
+	case "verification-policy-uid", "verification-policy-content":
+		verification = newVerificationPolicyFixture(m.t, m.ctx, m.cluster, m.in.TestNamespace, name+"-policy", migrationArtifactType)
+		originalPolicy = verification.identity(verificationPolicyKey)
+		if field == "verification-policy-content" {
+			edit = map[string]any{"artifact": map[string]any{"verificationPolicyFrom": map[string]any{"key": narrowedPolicyKey}}}
+		}
 	case "artifact":
 		reference = m.reference("-approval-artifact-original")
 		changedReference := m.reference("-approval-artifact-current")
@@ -68,8 +78,6 @@ func (m *migrationRun) approvalInputChange(field string) {
 	default:
 		m.fatalf("unsupported approval input change %q", field)
 	}
-	suffix := "approval-" + field
-	name := "e2e-" + suffix + "-" + m.engine.name
 	database := "ptah_e2e_" + strings.ReplaceAll(suffix, "-", "_")
 	secret := "e2e-" + m.engine.name + "-" + suffix + "-db"
 	m.isolatedDatabase(database, secret)
@@ -77,6 +85,11 @@ func (m *migrationRun) approvalInputChange(field string) {
 		name: name, secret: secret, reference: reference,
 		coordinationKey: "e2e/" + suffix + "/" + m.engine.name,
 		apply:           "OnApproval", interval: "1h",
+		edit: func(spec map[string]any) {
+			if verification != nil {
+				spec["artifact"].(map[string]any)["verificationPolicyFrom"] = map[string]any{"name": verification.object.Name, "key": verificationPolicyKey}
+			}
+		},
 	}))
 	before := m.waitForMigration(name, "a plan awaiting approval", migrationPoll,
 		func(resource *ptahv1alpha1.PtahMigration) bool {
@@ -95,9 +108,20 @@ func (m *migrationRun) approvalInputChange(field string) {
 		m.fatalf("%s claimed an operation before the input changed", name)
 	}
 	m.assertNoNewApplyJob(nil, "before the input changed", name)
-	m.patchMigration(name, map[string]any{"spec": edit})
+	if field == "verification-policy-uid" {
+		verification.replaceIdentity()
+		currentPolicy = verification.identity(verificationPolicyKey)
+	} else {
+		m.patchMigration(name, map[string]any{"spec": edit})
+		if field == "verification-policy-content" {
+			currentPolicy = verification.identity(narrowedPolicyKey)
+		}
+	}
 	changed := m.migration(name)
-	if changed.Generation <= before.Generation {
+	if field == "verification-policy-uid" && changed.Generation != before.Generation {
+		m.fatalf("%s verification policy replacement depended on a resource generation change", name)
+	}
+	if field != "verification-policy-uid" && changed.Generation <= before.Generation {
 		m.fatalf("%s input edit did not change its generation", name)
 	}
 	m.check(barrier.resume(m.ctx), "resume reconciliation with the changed input")
@@ -113,6 +137,10 @@ func (m *migrationRun) approvalInputChange(field string) {
 		if err := changedMigrationArtifactPlan(oldPlan, newPlan, oldDigest, newDigest); err != nil {
 			m.fatalf("%s did not bind a new decision to the changed artifact: %v", name, err)
 		}
+	}
+	if verification != nil {
+		m.check(changedVerificationPolicyDecision(migrationVerificationDecision(oldPlan), migrationVerificationDecision(newPlan),
+			originalPolicy, currentPolicy, field), "bind a fresh migration decision to the changed verification policy")
 	}
 	m.assertNoNewApplyJob(nil, "under the obsolete approval", name)
 	m.assertDatabaseUnmigrated(name, database)

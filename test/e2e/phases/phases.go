@@ -242,6 +242,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"approval-target-secret-change",
 		"approval-destructive-policy-change",
 		"approval-exclusion-policy-change",
+		"approval-verification-policy-change",
 		"mysql-drift-before-dispatch",
 		"hung-schema-result-read",
 		"job-deadline",
@@ -304,6 +305,8 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 		"approval-policy-change",
 		"approval-transaction-mode-change",
 		"approval-artifact-change",
+		"approval-verification-policy-uid-change",
+		"approval-verification-policy-content-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -323,6 +326,8 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"approval-policy-change",
 		"approval-transaction-mode-change",
 		"approval-artifact-change",
+		"approval-verification-policy-uid-change",
+		"approval-verification-policy-content-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
