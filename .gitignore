@@ -20,3 +20,6 @@
 
 # The link checker writes its self-test fixture here.
 /docs/site/.selftest-links/
+
+# Python bytecode from the isolated qualification procedures.
+/support/qualification/probes/__pycache__/
