@@ -51,6 +51,7 @@ func alRenderedRule(t *testing.T) string {
 		"--set", "monitoring.prometheusRule.enabled=true",
 		"--set", "monitoring.prometheusRule.viewUnsyncedFor=60s",
 		"--set", "monitoring.prometheusRule.operationStalledAfterSeconds=60",
+		"--set", "monitoring.prometheusRule.overdueAfterSeconds=60",
 		"--set", "monitoring.prometheusRule.certificateExpiresWithinSeconds=86400",
 		"--set", "monitoring.prometheusRule.admissionFailingFor=300s",
 		"--show-only", "templates/prometheusrule.yaml")
@@ -115,6 +116,7 @@ func TestAlRuleFileRefusals(t *testing.T) {
 		"no read-failure alert": func(r string) string {
 			return strings.Replace(r, "alert: "+alViewReadAlert+"\n", "alert: Renamed\n", 1)
 		},
+		"no overdue alert": func(r string) string { return strings.Replace(r, "alert: "+alOverdueAlert+"\n", "alert: Renamed\n", 1) },
 		"no admission alert": func(r string) string {
 			return strings.Replace(r, "alert: "+alAdmissionAlert+"\n", "alert: Renamed\n", 1)
 		},
@@ -576,7 +578,7 @@ func TestAlTargetsReady(t *testing.T) {
 func TestAlRulesLoaded(t *testing.T) {
 	t.Parallel()
 	body := func(rules ...string) []byte {
-		entries := []string{`{"type":"alerting","name":"` + alViewReadAlert + `"}`}
+		entries := []string{`{"type":"alerting","name":"` + alViewReadAlert + `"}`, `{"type":"alerting","name":"` + alOverdueAlert + `"}`}
 		for index := 0; index+1 < len(rules); index += 2 {
 			entries = append(entries, `{"type":"`+rules[index]+`","name":"`+rules[index+1]+`"}`)
 		}
@@ -586,6 +588,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		t.Fatal("the chart's rules were not recognized")
 	}
 	for name, answer := range map[string][]byte{
+		"no overdue rule":            []byte(strings.ReplaceAll(string(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert)), alOverdueAlert, "Renamed")),
 		"no read-failure rule":       []byte(strings.ReplaceAll(string(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert)), alViewReadAlert, "Renamed")),
 		"no admission rule":          body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert),
 		"no certificate rule":        body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alAdmissionAlert),
@@ -601,7 +604,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		}
 	}
 	split := []byte(`{"data":{"groups":[{"rules":[{"type":"alerting","name":"` + alUnresolvedApply +
-		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"},{"type":"alerting","name":"` + alCertificateAlert + `"},{"type":"alerting","name":"` + alAdmissionAlert + `"},{"type":"alerting","name":"` + alViewReadAlert + `"}]}]}}`)
+		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"},{"type":"alerting","name":"` + alCertificateAlert + `"},{"type":"alerting","name":"` + alAdmissionAlert + `"},{"type":"alerting","name":"` + alViewReadAlert + `"},{"type":"alerting","name":"` + alOverdueAlert + `"}]}]}}`)
 	if !alRulesLoaded(split) {
 		t.Error("the rules in two groups were not recognized")
 	}

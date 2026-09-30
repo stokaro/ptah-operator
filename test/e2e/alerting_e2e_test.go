@@ -63,6 +63,7 @@ func TestAlerting(t *testing.T) {
 		{"monitoring-path", a.monitoringPath},
 		{"unresolved-apply", a.unresolvedApply},
 		{"stalled-operation", a.stalledOperation},
+		{"resource-overdue", a.resourceOverdue},
 		{"unresolved-view-read-failures", a.viewReadFailures},
 		{"lost-scrape-target", a.lostScrapeTarget},
 		{"certificate-expiry", a.certificateExpiry},
@@ -72,7 +73,7 @@ func TestAlerting(t *testing.T) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, failed state reads, a failed leader scrape, certificate expiry, failed admission and a lost view reached the receiver; recoverable faults cleared")
+	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, an overdue resource, failed state reads, a failed leader scrape, certificate expiry, failed admission and a lost view reached the receiver; recoverable faults cleared")
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
@@ -390,6 +391,7 @@ func (a *alertingRun) renderRules() string {
 		"--set", "monitoring.prometheusRule.enabled=true",
 		"--set", fmt.Sprintf("monitoring.prometheusRule.viewUnsyncedFor=%ds", int(alViewUnsyncedFor/time.Second)),
 		"--set", fmt.Sprintf("monitoring.prometheusRule.operationStalledAfterSeconds=%d", int(alStalledAfter/time.Second)),
+		"--set", fmt.Sprintf("monitoring.prometheusRule.overdueAfterSeconds=%d", int(alOverdueAfter/time.Second)),
 		"--set", fmt.Sprintf("monitoring.prometheusRule.certificateExpiresWithinSeconds=%d", int(alCertificateWarning/time.Second)),
 		"--set", fmt.Sprintf("monitoring.prometheusRule.admissionFailingFor=%ds", int(alAdmissionWindow/time.Second)),
 		"--show-only", "templates/prometheusrule.yaml")

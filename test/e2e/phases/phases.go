@@ -443,6 +443,7 @@ var Alerting = define[AlertingInputs](Phase{
 		"monitoring-path",
 		"unresolved-apply",
 		"stalled-operation",
+		"resource-overdue",
 		"unresolved-view-read-failures",
 		"lost-scrape-target",
 		"certificate-expiry",
