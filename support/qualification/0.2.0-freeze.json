@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T15:38:21.055293+00:00",
-  "profileSourceCommit": "3b32470cedbe03dbde7c06c6a04467e512ba5c19",
+  "frozenAt": "2026-09-30T21:27:04.224823+00:00",
+  "profileSourceCommit": "65c0d3ab72c4e9f24be925defcc810ff3f6c60fe",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "7c1555add16f7e0822fe81a55d961d9a1a588f78e11b4572302b2ed2f8bfe6e5",
-    "generatedFromCommit": "3b32470cedbe03dbde7c06c6a04467e512ba5c19",
+    "sha256": "6e175737bbd6ee7b0770a1690c72bfa52508352cef42ff4691398a852b400def",
+    "generatedFromCommit": "65c0d3ab72c4e9f24be925defcc810ff3f6c60fe",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 18,
+  "revision": 19,
   "supersedes": {
-    "freezeCommit": "cfc4943262b1d4ab4020ee3223f6949baeab0840",
-    "sha256": "201b18ffaa1e573aa2c6e45e55f94b31135c2e5325e5ef4e11a59e459fac5aa2"
+    "freezeCommit": "34ff0c103a185667c0d9da2924b650b643a4414a",
+    "sha256": "f6813b6f5c4abc8828416fb3eae91db98d9f57c96870f8bb89653fc092645bbd"
   },
-  "revisionReason": "Add the unsupported-runner refusal and authorized-recovery scenario for both resource families and both engines. Correct the status-policy denial matcher with native API-server controls, distinguish reused PostgreSQL addresses using Pod lifetimes and server session starts, retain late-session SQL refusals, detect replay despite missing or misleading workload labels, and resolve the exact native platform from an OCI index. Full local source verification, race checks, native PostgreSQL readings and private-registry runner execution passed. These checks do not establish Kubernetes or final-artifact acceptance. CI run 36710792065 remains failed evidence; its nine failing data-plane/migration cells require fresh execution. All eight source hashes, operating limits, alert targets, RPO/RTO, platform coverage and 30 required cells remain unchanged. The scenario inventory adds the runner-refusal row; no qualification requirement is removed. Acceptance stays Not assessed; lifecycle and the remaining qualification issues stay open."
+  "revisionReason": "Add the live unresolved-view-read-failures scenario for both resource families, with exact grant restoration, installation-scoped receiver notifications and native scrape histories. The manager now reads current API state within one bounded leader scrape; a warm-cache API-server control proves why cached reads concealed access failures. Source verification, API-server controls, rule/configuration checks, negative history controls, race checks and tagged vet passed. Native receiver execution remains pending. All eight source hashes, operating limits, alert targets, RPO/RTO, platform coverage, 30 required functional cells and 36 recovery combinations remain unchanged. No qualification requirement was removed; acceptance remains Not assessed."
 }
