@@ -41,6 +41,9 @@ func (f *faultRun) executorApplyBackend(engine, database string) string {
 // manager is replaced with one configured to use the new executor image.
 func (previous *faultRun) runningExecutorImageChanges() {
 	f := newFaultRun(previous.dataPlane)
+	// The earlier fault run created the principal Secret. This independent
+	// watch window must rebuild its scanner before any polling or audit.
+	f.buildScanner()
 	f.pgReference, f.mysqlReference = previous.pgReference, previous.mysqlReference
 	f.auditedJobs, f.auditedPods = maps.Clone(previous.auditedJobs), maps.Clone(previous.auditedPods)
 	f.fullyAuditedPods = maps.Clone(previous.fullyAuditedPods)

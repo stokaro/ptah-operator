@@ -56,6 +56,7 @@ func TestDataPlane(t *testing.T) {
 		{"external-postgresql-lifecycle", d.externalPostgresqlLifecycle},
 		{"mysql-lifecycle", d.mysqlLifecycle},
 		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
+		{"native-plan-size-boundary", d.planSizeBoundaries},
 		{"watches", func() { f = newFaultRun(d); f.watches() }},
 		{"approval-resource-replacement", func() { f.schemaIdentityReplacement() }},
 		{"approval-target-secret-change", func() { f.targetSecretChanges() }},

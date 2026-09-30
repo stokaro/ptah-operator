@@ -1,0 +1,510 @@
+{
+  "format_version": 1,
+  "name": "plan_a2badfd1bee3",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:5db7c29815ca881a0ad3b266c9c477ceec1b2a6ad88a8b10bb7f2305784ee333",
+  "to_fingerprint": "sha256:becbf6145ff5b417ab82b73a724e9ee9b88470c15d2fdd2faf141b1bcdca069a",
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_000 --\nCREATE TABLE `e2e_plan_size_limit_000` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_001 --\nCREATE TABLE `e2e_plan_size_limit_001` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_002 --\nCREATE TABLE `e2e_plan_size_limit_002` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_003 --\nCREATE TABLE `e2e_plan_size_limit_003` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_004 --\nCREATE TABLE `e2e_plan_size_limit_004` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_005 --\nCREATE TABLE `e2e_plan_size_limit_005` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_006 --\nCREATE TABLE `e2e_plan_size_limit_006` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_007 --\nCREATE TABLE `e2e_plan_size_limit_007` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_008 --\nCREATE TABLE `e2e_plan_size_limit_008` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_009 --\nCREATE TABLE `e2e_plan_size_limit_009` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_010 --\nCREATE TABLE `e2e_plan_size_limit_010` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_011 --\nCREATE TABLE `e2e_plan_size_limit_011` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_012 --\nCREATE TABLE `e2e_plan_size_limit_012` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_013 --\nCREATE TABLE `e2e_plan_size_limit_013` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_014 --\nCREATE TABLE `e2e_plan_size_limit_014` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_015 --\nCREATE TABLE `e2e_plan_size_limit_015` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_016 --\nCREATE TABLE `e2e_plan_size_limit_016` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_017 --\nCREATE TABLE `e2e_plan_size_limit_017` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_018 --\nCREATE TABLE `e2e_plan_size_limit_018` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_019 --\nCREATE TABLE `e2e_plan_size_limit_019` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_020 --\nCREATE TABLE `e2e_plan_size_limit_020` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_021 --\nCREATE TABLE `e2e_plan_size_limit_021` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_022 --\nCREATE TABLE `e2e_plan_size_limit_022` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_023 --\nCREATE TABLE `e2e_plan_size_limit_023` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_024 --\nCREATE TABLE `e2e_plan_size_limit_024` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_025 --\nCREATE TABLE `e2e_plan_size_limit_025` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_026 --\nCREATE TABLE `e2e_plan_size_limit_026` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_027 --\nCREATE TABLE `e2e_plan_size_limit_027` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_028 --\nCREATE TABLE `e2e_plan_size_limit_028` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_029 --\nCREATE TABLE `e2e_plan_size_limit_029` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_030 --\nCREATE TABLE `e2e_plan_size_limit_030` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_031 --\nCREATE TABLE `e2e_plan_size_limit_031` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT '\u003c'\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_032 --\nCREATE TABLE `e2e_plan_size_limit_032` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_033 --\nCREATE TABLE `e2e_plan_size_limit_033` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_034 --\nCREATE TABLE `e2e_plan_size_limit_034` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_035 --\nCREATE TABLE `e2e_plan_size_limit_035` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_036 --\nCREATE TABLE `e2e_plan_size_limit_036` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_037 --\nCREATE TABLE `e2e_plan_size_limit_037` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_038 --\nCREATE TABLE `e2e_plan_size_limit_038` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_039 --\nCREATE TABLE `e2e_plan_size_limit_039` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_040 --\nCREATE TABLE `e2e_plan_size_limit_040` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_041 --\nCREATE TABLE `e2e_plan_size_limit_041` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_042 --\nCREATE TABLE `e2e_plan_size_limit_042` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_043 --\nCREATE TABLE `e2e_plan_size_limit_043` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_044 --\nCREATE TABLE `e2e_plan_size_limit_044` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_045 --\nCREATE TABLE `e2e_plan_size_limit_045` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_046 --\nCREATE TABLE `e2e_plan_size_limit_046` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_047 --\nCREATE TABLE `e2e_plan_size_limit_047` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_048 --\nCREATE TABLE `e2e_plan_size_limit_048` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_049 --\nCREATE TABLE `e2e_plan_size_limit_049` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_050 --\nCREATE TABLE `e2e_plan_size_limit_050` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_051 --\nCREATE TABLE `e2e_plan_size_limit_051` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_052 --\nCREATE TABLE `e2e_plan_size_limit_052` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_053 --\nCREATE TABLE `e2e_plan_size_limit_053` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_054 --\nCREATE TABLE `e2e_plan_size_limit_054` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_055 --\nCREATE TABLE `e2e_plan_size_limit_055` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_056 --\nCREATE TABLE `e2e_plan_size_limit_056` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_057 --\nCREATE TABLE `e2e_plan_size_limit_057` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_058 --\nCREATE TABLE `e2e_plan_size_limit_058` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_059 --\nCREATE TABLE `e2e_plan_size_limit_059` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_060 --\nCREATE TABLE `e2e_plan_size_limit_060` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_061 --\nCREATE TABLE `e2e_plan_size_limit_061` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_062 --\nCREATE TABLE `e2e_plan_size_limit_062` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_063 --\nCREATE TABLE `e2e_plan_size_limit_063` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_064 --\nCREATE TABLE `e2e_plan_size_limit_064` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_065 --\nCREATE TABLE `e2e_plan_size_limit_065` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_066 --\nCREATE TABLE `e2e_plan_size_limit_066` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_067 --\nCREATE TABLE `e2e_plan_size_limit_067` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_068 --\nCREATE TABLE `e2e_plan_size_limit_068` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_069 --\nCREATE TABLE `e2e_plan_size_limit_069` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_070 --\nCREATE TABLE `e2e_plan_size_limit_070` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_071 --\nCREATE TABLE `e2e_plan_size_limit_071` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_072 --\nCREATE TABLE `e2e_plan_size_limit_072` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_073 --\nCREATE TABLE `e2e_plan_size_limit_073` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_074 --\nCREATE TABLE `e2e_plan_size_limit_074` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_075 --\nCREATE TABLE `e2e_plan_size_limit_075` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_076 --\nCREATE TABLE `e2e_plan_size_limit_076` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_077 --\nCREATE TABLE `e2e_plan_size_limit_077` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_078 --\nCREATE TABLE `e2e_plan_size_limit_078` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_079 --\nCREATE TABLE `e2e_plan_size_limit_079` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_080 --\nCREATE TABLE `e2e_plan_size_limit_080` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_081 --\nCREATE TABLE `e2e_plan_size_limit_081` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_082 --\nCREATE TABLE `e2e_plan_size_limit_082` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_083 --\nCREATE TABLE `e2e_plan_size_limit_083` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_084 --\nCREATE TABLE `e2e_plan_size_limit_084` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_085 --\nCREATE TABLE `e2e_plan_size_limit_085` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_086 --\nCREATE TABLE `e2e_plan_size_limit_086` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_087 --\nCREATE TABLE `e2e_plan_size_limit_087` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_088 --\nCREATE TABLE `e2e_plan_size_limit_088` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_089 --\nCREATE TABLE `e2e_plan_size_limit_089` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_090 --\nCREATE TABLE `e2e_plan_size_limit_090` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_091 --\nCREATE TABLE `e2e_plan_size_limit_091` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_092 --\nCREATE TABLE `e2e_plan_size_limit_092` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_093 --\nCREATE TABLE `e2e_plan_size_limit_093` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_094 --\nCREATE TABLE `e2e_plan_size_limit_094` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_095 --\nCREATE TABLE `e2e_plan_size_limit_095` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_096 --\nCREATE TABLE `e2e_plan_size_limit_096` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_097 --\nCREATE TABLE `e2e_plan_size_limit_097` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_098 --\nCREATE TABLE `e2e_plan_size_limit_098` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "-- MYSQL TABLE: e2e_plan_size_limit_099 --\nCREATE TABLE `e2e_plan_size_limit_099` (\n  `id` BIGINT PRIMARY KEY,\n  `payload` VARCHAR(16000) DEFAULT ''\n)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

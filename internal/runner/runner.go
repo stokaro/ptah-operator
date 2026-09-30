@@ -844,14 +844,14 @@ func readSavedPlan(path string, limit int64) ([]byte, error) {
 		return nil, errors.New("the saved plan is not a regular file")
 	}
 	if info.Size() > limit {
-		return nil, errors.New("plan output exceeds the configured plan limit")
+		return nil, fmt.Errorf("plan output exceeds the configured plan limit: saved file has %d bytes; limit is %d", info.Size(), limit)
 	}
 	document, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, errors.New("the saved plan could not be read")
 	}
 	if int64(len(document)) > limit {
-		return nil, errors.New("plan output exceeds the configured plan limit")
+		return nil, fmt.Errorf("plan output exceeds the configured plan limit: read at least %d bytes; limit is %d", len(document), limit)
 	}
 	return document, nil
 }

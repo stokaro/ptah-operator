@@ -238,6 +238,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"external-postgresql-lifecycle",
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
+		"native-plan-size-boundary",
 		"watches",
 		"approval-resource-replacement",
 		"approval-target-secret-change",

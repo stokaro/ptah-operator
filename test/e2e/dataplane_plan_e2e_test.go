@@ -156,6 +156,9 @@ type schemaResource struct {
 	// podMetadata is spec.execution.podMetadata, or nil for none: what a mesh
 	// or a policy engine asks the operation Pods to carry.
 	podMetadata map[string]any
+	// resources is an explicit task budget for operational boundary rows.
+	resources       *corev1.ResourceRequirements
+	transactionMode string
 }
 
 // createSchemaResource creates the schema through both admission webhooks, and
@@ -182,7 +185,7 @@ func (d *dataPlane) createSchemaResource(resource schemaResource) {
 	default:
 		d.fatalf("unsupported explicit E2E apply policy %s", resource.apply)
 	}
-	schemaPolicy := map[string]any{"driftSeverity": "all", "lockTimeout": "30s", "transactionMode": "file"}
+	schemaPolicy := map[string]any{"driftSeverity": "all", "lockTimeout": "30s", "transactionMode": cmp.Or(resource.transactionMode, "file")}
 	if resource.apply != "" {
 		schemaPolicy["apply"] = resource.apply
 	}
@@ -192,6 +195,9 @@ func (d *dataPlane) createSchemaResource(resource schemaResource) {
 	}
 	if resource.podMetadata != nil {
 		execution["podMetadata"] = resource.podMetadata
+	}
+	if resource.resources != nil {
+		execution["resources"] = resource.resources
 	}
 	d.mustCreate(map[string]any{
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
