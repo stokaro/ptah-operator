@@ -112,6 +112,9 @@ func TestAlRuleFileRefusals(t *testing.T) {
 		"no certificate alert": func(r string) string {
 			return strings.Replace(r, "alert: "+alCertificateAlert+"\n", "alert: Renamed\n", 1)
 		},
+		"no read-failure alert": func(r string) string {
+			return strings.Replace(r, "alert: "+alViewReadAlert+"\n", "alert: Renamed\n", 1)
+		},
 		"no admission alert": func(r string) string {
 			return strings.Replace(r, "alert: "+alAdmissionAlert+"\n", "alert: Renamed\n", 1)
 		},
@@ -179,9 +182,10 @@ func TestAlPrometheusConfig(t *testing.T) {
 	t.Parallel()
 	var config struct {
 		Global struct {
-			ScrapeInterval     string `json:"scrape_interval"`
-			ScrapeTimeout      string `json:"scrape_timeout"`
-			EvaluationInterval string `json:"evaluation_interval"`
+			ScrapeInterval     string            `json:"scrape_interval"`
+			ScrapeTimeout      string            `json:"scrape_timeout"`
+			EvaluationInterval string            `json:"evaluation_interval"`
+			ExternalLabels     map[string]string `json:"external_labels"`
 		} `json:"global"`
 		RuleFiles []string `json:"rule_files"`
 		Alerting  struct {
@@ -210,7 +214,8 @@ func TestAlPrometheusConfig(t *testing.T) {
 	if err := yaml.UnmarshalStrict([]byte(alPrometheusConfig("monitoring", "operator", "ptah-metrics")), &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Global.ScrapeInterval != "5s" || config.Global.ScrapeTimeout != "4s" || config.Global.EvaluationInterval != "5s" {
+	if config.Global.ScrapeInterval != "5s" || config.Global.ScrapeTimeout != "4s" || config.Global.EvaluationInterval != "5s" ||
+		!reflect.DeepEqual(config.Global.ExternalLabels, map[string]string{"operator_namespace": "operator", "operator_metrics_service": "ptah-metrics"}) {
 		t.Errorf("global = %+v", config.Global)
 	}
 	if !reflect.DeepEqual(config.RuleFiles, []string{"/etc/prometheus/rules.yaml"}) {
@@ -266,7 +271,7 @@ func TestAlAlertmanagerConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	route := config.Route
-	if route.Receiver != "sink" || !reflect.DeepEqual(route.GroupBy, []string{"alertname", "family", "operation"}) ||
+	if route.Receiver != "sink" || !reflect.DeepEqual(route.GroupBy, []string{"operator_namespace", "operator_metrics_service", "alertname", "family", "operation"}) ||
 		route.GroupWait != "5s" || route.GroupInterval != "10s" || route.RepeatInterval != "1h" {
 		t.Errorf("route = %+v", route)
 	}
@@ -571,7 +576,7 @@ func TestAlTargetsReady(t *testing.T) {
 func TestAlRulesLoaded(t *testing.T) {
 	t.Parallel()
 	body := func(rules ...string) []byte {
-		var entries []string
+		entries := []string{`{"type":"alerting","name":"` + alViewReadAlert + `"}`}
 		for index := 0; index+1 < len(rules); index += 2 {
 			entries = append(entries, `{"type":"`+rules[index]+`","name":"`+rules[index+1]+`"}`)
 		}
@@ -581,6 +586,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		t.Fatal("the chart's rules were not recognized")
 	}
 	for name, answer := range map[string][]byte{
+		"no read-failure rule":       []byte(strings.ReplaceAll(string(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert)), alViewReadAlert, "Renamed")),
 		"no admission rule":          body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert),
 		"no certificate rule":        body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alAdmissionAlert),
 		"no view rule":               body("alerting", alUnresolvedApply, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
@@ -595,7 +601,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		}
 	}
 	split := []byte(`{"data":{"groups":[{"rules":[{"type":"alerting","name":"` + alUnresolvedApply +
-		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"},{"type":"alerting","name":"` + alCertificateAlert + `"},{"type":"alerting","name":"` + alAdmissionAlert + `"}]}]}}`)
+		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"},{"type":"alerting","name":"` + alCertificateAlert + `"},{"type":"alerting","name":"` + alAdmissionAlert + `"},{"type":"alerting","name":"` + alViewReadAlert + `"}]}]}}`)
 	if !alRulesLoaded(split) {
 		t.Error("the rules in two groups were not recognized")
 	}

@@ -98,7 +98,7 @@ func alRuleFile(rendered string) (string, error) {
 		return "", errors.New("the rendered PrometheusRule has no spec.groups to load")
 	}
 	rules := strings.Join(lines, "\n")
-	for _, alert := range []string{alUnresolvedApply, alViewNotSynced, alOperationStall, alCertificateAlert, alAdmissionAlert} {
+	for _, alert := range []string{alUnresolvedApply, alViewNotSynced, alOperationStall, alCertificateAlert, alAdmissionAlert, alViewReadAlert} {
 		if !slices.ContainsFunc(lines, func(line string) bool { return strings.HasSuffix(line, "alert: "+alert) }) {
 			return "", fmt.Errorf("the rendered rules have no %s", alert)
 		}
@@ -135,6 +135,9 @@ func alPrometheusConfig(monitoringNamespace, operatorNamespace, metricsService s
   scrape_interval: %[1]ds
   scrape_timeout: 4s
   evaluation_interval: %[1]ds
+  external_labels:
+    operator_namespace: "%[3]s"
+    operator_metrics_service: "%[4]s"
 rule_files:
   - /etc/prometheus/rules.yaml
 alerting:
@@ -221,7 +224,7 @@ func alScrapeFaultLoaded(body []byte, pod string) bool {
 func alAlertmanagerConfig(monitoringNamespace string) string {
 	return fmt.Sprintf(`route:
   receiver: sink
-  group_by: [alertname, family, operation]
+  group_by: [operator_namespace, operator_metrics_service, alertname, family, operation]
   group_wait: %ds
   group_interval: 10s
   repeat_interval: 1h
@@ -566,7 +569,7 @@ func alRulesLoaded(body []byte) bool {
 		}
 	}
 	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alViewNotSynced) &&
-		slices.Contains(alerting, alOperationStall) && slices.Contains(alerting, alCertificateAlert) && slices.Contains(alerting, alAdmissionAlert)
+		slices.Contains(alerting, alOperationStall) && slices.Contains(alerting, alCertificateAlert) && slices.Contains(alerting, alAdmissionAlert) && slices.Contains(alerting, alViewReadAlert)
 }
 
 // alNoActiveAlerts reads an instant query for ALERTS: true when Prometheus

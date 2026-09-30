@@ -64,6 +64,7 @@ func TestAlerting(t *testing.T) {
 		{"monitoring-path", a.monitoringPath},
 		{"unresolved-apply", a.unresolvedApply},
 		{"stalled-operation", a.stalledOperation},
+		{"unresolved-view-read-failures", a.viewReadFailures},
 		{"lost-scrape-target", a.lostScrapeTarget},
 		{"certificate-expiry", a.certificateExpiry},
 		{"lost-view", a.lostView},
@@ -72,7 +73,7 @@ func TestAlerting(t *testing.T) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, a failed leader scrape, certificate expiry, failed admission and a lost view reached the receiver; recoverable faults cleared")
+	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, failed state reads, a failed leader scrape, certificate expiry, failed admission and a lost view reached the receiver; recoverable faults cleared")
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
