@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +19,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
@@ -161,94 +158,35 @@ func waitRunnerApply(t *testing.T, ctx context.Context, cluster *harness.Cluster
 	return pair
 }
 
-func assertRunnerGuardLog(t *testing.T, ctx context.Context, cluster *harness.Cluster, pair runnerProtocolApply, scan func([]byte, string)) {
-	t.Helper()
-	if !migrationRunnerGuardRefused(pair.job, pair.pod) {
-		t.Fatal("the unsupported migration runner did not stop at its OCI guard before fetch and Ptah")
-	}
-	assertUnsupportedGuardDiagnostic(t, ctx, cluster, pair.pod, scan)
-}
-
-func assertUnsupportedGuardDiagnostic(t *testing.T, ctx context.Context, cluster *harness.Cluster, pod *corev1.Pod, scan func([]byte, string)) {
-	t.Helper()
-	logs, err := cluster.ContainerLog(ctx, pod.Namespace, pod.Name, "validate-source-authority")
-	storedStateCheck(t, err, "read the exact unsupported runner guard's log")
-	scan(logs, "unsupported runner guard diagnostic")
-	want := fmt.Sprintf("ptah-runner: runner_protocol_mismatch: the Job expects runner protocol %d; this runner speaks protocol %d\n", runner.ProtocolVersion, runner.ProtocolVersion+1)
-	if string(logs) != want {
-		t.Fatal("the actual OCI guard did not return the exact unsupported-runner diagnostic")
-	}
-}
-
-// Successful diagnostics still use the common SQL attribution contract.
-// An exact failed init is a separate, fully inspected client, and its actual
-// operation is retained. Callers refuse all SQL from the returned Job set.
-func runnerRefusalSQLClients(t *testing.T, ctx context.Context, cluster *harness.Cluster, resource metav1.Object, kind string,
-	binding *ptahv1alpha1.ExecutionBindingStatus, controller controllerIdentity, image string,
-	jobs map[types.UID]batchv1.Job, pods map[types.UID]corev1.Pod, scan func([]byte, string),
-) (map[string]operationSQLClient, map[types.UID]bool, error) {
-	t.Helper()
-	label, fetch := labelSchema, "fetch-schema"
-	if kind == "PtahMigration" {
-		label, fetch = labelMigration, "fetch-migrations"
-	} else if kind != "PtahSchema" {
-		return nil, nil, fmt.Errorf("unsupported runner SQL audit has no resource family")
-	}
-	if resource == nil || binding == nil || binding.RunnerProtocolVersion != int32(runner.ProtocolVersion) || !digestSuffix.MatchString(image) {
-		return nil, nil, fmt.Errorf("unsupported runner SQL audit has no supported binding or exact refused image")
-	}
-	var successful []corev1.Pod
-	var refused []runnerProtocolApply
-	for _, pod := range pods {
+// Capture every failed client during inventory polling, including read-only
+// guards. A missing archive fails attribution even if Kubernetes already GC'd
+// that client's Pod; absence is never treated as a successful log audit.
+func retainRunnerRefusalLogs(ctx context.Context, cluster *harness.Cluster, pods map[types.UID]corev1.Pod,
+	retained map[types.UID]runnerRefusalLogs, scan func([]byte, string),
+) error {
+	for uid, pod := range pods {
 		if pod.Status.Phase != corev1.PodFailed {
-			successful = append(successful, pod)
 			continue
 		}
-		owner := metav1.GetControllerOf(&pod)
-		if owner == nil {
-			return nil, nil, fmt.Errorf("the refused runner SQL client has no controller owner")
-		}
-		job, exists := jobs[owner.UID]
-		if !exists || !runnerGuardRefused(&job, &pod, fetch) || !executionIdentityOnJob(&job, controller) ||
-			!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, kind, resource.GetName(), resource.GetUID()) ||
-			job.Annotations[annotationBindingID] != binding.Epoch || job.Spec.Template.Spec.InitContainers[0].Image != image ||
-			!jobUsesExecutor(&job, binding.ExecutorImage) ||
-			!exactLiteralEnv(viewContainers(job.Spec.Template.Spec.Containers)[0], runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion)) ||
-			!exactLiteralEnv(viewContainers(job.Spec.Template.Spec.InitContainers)[1], runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion)) {
-			return nil, nil, fmt.Errorf("a failed Pod was not the exact unsupported runner's pre-fetch refusal")
-		}
-		assertUnsupportedGuardDiagnostic(t, ctx, cluster, &pod, scan)
-		for _, container := range startedContainers(&pod) {
-			logs, err := cluster.ContainerLog(ctx, pod.Namespace, pod.Name, container)
-			if err != nil {
-				return nil, nil, fmt.Errorf("read the refused runner's complete started log: %w", err)
+		if evidence, found := retained[uid]; found {
+			if err := evidence.matches(&pod); err != nil {
+				return err
 			}
-			scan(logs, "complete failed runner guard log")
+			continue
 		}
-		retained := &corev1.Pod{}
-		if err := cluster.Client.Get(ctx, client.ObjectKeyFromObject(&pod), retained); err != nil || retained.UID != pod.UID {
-			return nil, nil, fmt.Errorf("the refused runner SQL client disappeared or changed UID during audit")
-		}
-		refused = append(refused, runnerProtocolApply{job.DeepCopy(), pod.DeepCopy()})
-	}
-	var jobList []batchv1.Job
-	for _, job := range jobs {
-		jobList = append(jobList, job)
-	}
-	clients, err := operationSQLClientsForIdentities(resource.GetNamespace(), resource.GetName(), kind, label,
-		map[string]bool{string(resource.GetUID()): true}, jobList, successful)
-	if err != nil {
-		return nil, nil, err
-	}
-	refusedJobs := map[types.UID]bool{}
-	for _, pair := range refused {
-		clients, err = addRefusedRunnerSQLClient(clients, resource.GetUID(), pair.job, pair.pod, fetch)
+		evidence, err := captureRunnerRefusalLogs(&pod, func() (*corev1.Pod, error) {
+			current := &corev1.Pod{}
+			err := cluster.Client.Get(ctx, client.ObjectKeyFromObject(&pod), current)
+			return current, err
+		}, func(container string) ([]byte, error) {
+			return cluster.ContainerLog(ctx, pod.Namespace, pod.Name, container)
+		}, scan)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
-		refusedJobs[pair.job.UID] = true
+		retained[uid] = evidence
 	}
-	return clients, refusedJobs, nil
+	return nil
 }
 
 func closeRunnerWatches(t *testing.T, recorders []recorder, scan func([]byte, string)) {

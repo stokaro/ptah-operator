@@ -73,6 +73,7 @@ type schemaRefusalWindow struct {
 	// Only the runner-refusal case sets this exact task image. Failed init
 	// Pods keep their own client identities and are allowed to send no SQL.
 	refusedRunnerImage string
+	refusalLogs        map[types.UID]runnerRefusalLogs
 }
 
 // Fault waits allow the refusal under test to enter Failed and retain their
@@ -126,10 +127,21 @@ func (w *schemaRefusalWindow) reopen() {
 	}
 }
 
+func (w *schemaRefusalWindow) captureInventory() {
+	w.f.t.Helper()
+	w.f.captureSchemaSQLInventory(w.name, w.inventory)
+	if w.refusedRunnerImage != "" {
+		if w.refusalLogs == nil {
+			w.refusalLogs = map[types.UID]runnerRefusalLogs{}
+		}
+		w.f.check(retainRunnerRefusalLogs(w.f.ctx, w.f.cluster, w.inventory.pods, w.refusalLogs, w.f.scan), "retain complete refused schema runner logs before Job TTL cleanup")
+	}
+}
+
 func (w *schemaRefusalWindow) waitForSchema(description string, match func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
 	w.f.t.Helper()
 	return w.wait(w.name, description, func(resource *ptahv1alpha1.PtahSchema) bool {
-		w.f.captureSchemaSQLInventory(w.name, w.inventory)
+		w.captureInventory()
 		return match(resource)
 	})
 }
@@ -162,7 +174,7 @@ func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, o
 	default:
 		f.fatalf("unsupported schema SQL diagnostic control %s", operation)
 	}
-	w.f.captureSchemaSQLInventory(w.name, w.inventory)
+	w.captureInventory()
 	return operationSQLClient{resourceUID: string(resource.UID), jobUID: f.captured.jobUID, podUID: f.captured.podUID, operation: operation}
 }
 
@@ -186,12 +198,12 @@ func (w *schemaRefusalWindow) assertSQL(resource *ptahv1alpha1.PtahSchema, stale
 	if resource == nil || resource.Name != w.name || resource.Namespace != f.in.TestNamespace || resource.UID == "" || (w.resourceUID != "" && resource.UID != w.resourceUID) {
 		f.fatalf("schema SQL refusal audit changed resource identity")
 	}
-	f.captureSchemaSQLInventory(w.name, w.inventory)
+	w.captureInventory()
 	clients, err := w.inventory.clients(resource)
 	var refusedJobs map[types.UID]bool
 	if w.refusedRunnerImage != "" {
-		clients, refusedJobs, err = runnerRefusalSQLClients(f.t, f.ctx, f.cluster, resource, "PtahSchema", resource.Status.ExecutionBinding,
-			f.controller, w.refusedRunnerImage, w.inventory.jobs, w.inventory.pods, f.scan)
+		clients, refusedJobs, err = runnerRefusalSQLClients(resource, "PtahSchema", resource.Status.ExecutionBinding,
+			f.controller, w.refusedRunnerImage, w.inventory.jobs, w.inventory.pods, w.refusalLogs)
 	}
 	f.check(err, "bind schema refusal SQL to the exact resource Jobs and Pods")
 	acceptsActor, pg, my := schemaDiagnosticActor, w.policy.postgres, w.policy.mysql

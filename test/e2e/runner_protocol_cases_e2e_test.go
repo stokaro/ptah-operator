@@ -231,9 +231,14 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 		mysqlBefore = audit.mysqlStatementSnapshot()
 	}
 	inventory := &migrationSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}}
+	refusalLogs := map[types.UID]runnerRefusalLogs{}
+	capture := func() {
+		m.captureMigrationSQLInventory(name, inventory)
+		m.check(retainRunnerRefusalLogs(m.ctx, m.cluster, inventory.pods, refusalLogs, m.scan), "retain complete refused runner logs before Job TTL cleanup")
+	}
 	wait := func(description string, match func(*ptahv1alpha1.PtahMigration) bool) *ptahv1alpha1.PtahMigration {
 		return m.waitForMigration(name, description, migrationPoll, func(resource *ptahv1alpha1.PtahMigration) bool {
-			m.captureMigrationSQLInventory(name, inventory)
+			capture()
 			return match(resource)
 		})
 	}
@@ -259,7 +264,11 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 	m.check(runnerProtocolApplyInputs(refused.job, "PtahMigration", before, before.Status.ExecutionBinding, replacement, old.Spec.Fingerprint, m.controller),
 		"retain protocol 1 and the exact approved owner in the refused Job")
 	m.check(migrationExecutorApplyInputs(refused.job, old), "retain the approved target, history and checksum sequence before the protocol refusal")
-	assertRunnerGuardLog(m.t, m.ctx, m.cluster, refused, m.scan)
+	if !migrationRunnerGuardRefused(refused.job, refused.pod) {
+		m.fatalf("the unsupported migration runner did not stop at its OCI guard before fetch and Ptah")
+	}
+	capture()
+	m.check(refusalLogs[refused.pod.UID].matches(refused.pod), "retain the exact unsupported runner diagnostic")
 	unknown := wait("the exact refused migration run recorded as Unknown", func(resource *ptahv1alpha1.PtahMigration) bool {
 		return resource.Status.UnresolvedRun != nil && resource.Status.UnresolvedRun.JobUID == refused.job.UID &&
 			resource.Status.UnresolvedRun.OperationID == refused.job.Annotations[annotationOperationID] && resource.Status.UnresolvedRun.Outcome == ptahv1alpha1.MigrationRunOutcomeUnknown &&
@@ -281,9 +290,9 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 		m.fatalf("runner restoration changed the migration's work or supported execution binding")
 	}
 	freshHistory := m.runnerRecoveryHistoryControl(current, old, inventory, unknown.Status.LastRun.FinishedAt.Time)
-	m.captureMigrationSQLInventory(name, inventory)
-	clients, refusedJobs, err := runnerRefusalSQLClients(m.t, m.ctx, m.cluster, current, "PtahMigration", current.Status.ExecutionBinding,
-		m.controller, replacement, inventory.jobs, inventory.pods, m.scan)
+	capture()
+	clients, refusedJobs, err := runnerRefusalSQLClients(current, "PtahMigration", current.Status.ExecutionBinding,
+		m.controller, replacement, inventory.jobs, inventory.pods, refusalLogs)
 	m.check(err, "attribute the refused guard and both actual History controls")
 	acceptsActor := func(actor operationSQLClient) bool {
 		return actor.operation == "history" && !refusedJobs[types.UID(actor.jobUID)]

@@ -359,3 +359,64 @@ func runnerProtocolNoReplay(jobs []batchv1.Job, pods []corev1.Pod, kind, name, n
 	}
 	return nil
 }
+
+// Successful diagnostics still use the common SQL attribution contract.
+// An exact failed init is a separate, fully inspected client, and its actual
+// operation is retained. Callers refuse all SQL from the returned Job set.
+func runnerRefusalSQLClients(resource metav1.Object, kind string,
+	binding *ptahv1alpha1.ExecutionBindingStatus, controller controllerIdentity, image string,
+	jobs map[types.UID]batchv1.Job, pods map[types.UID]corev1.Pod, logs map[types.UID]runnerRefusalLogs,
+) (map[string]operationSQLClient, map[types.UID]bool, error) {
+	label, fetch := labelSchema, "fetch-schema"
+	if kind == "PtahMigration" {
+		label, fetch = labelMigration, "fetch-migrations"
+	} else if kind != "PtahSchema" {
+		return nil, nil, fmt.Errorf("unsupported runner SQL audit has no resource family")
+	}
+	if resource == nil || binding == nil || binding.RunnerProtocolVersion != int32(runner.ProtocolVersion) || !digestSuffix.MatchString(image) {
+		return nil, nil, fmt.Errorf("unsupported runner SQL audit has no supported binding or exact refused image")
+	}
+	var successful []corev1.Pod
+	var refused []runnerProtocolApply
+	for _, pod := range pods {
+		if pod.Status.Phase != corev1.PodFailed {
+			successful = append(successful, pod)
+			continue
+		}
+		owner := metav1.GetControllerOf(&pod)
+		if owner == nil {
+			return nil, nil, fmt.Errorf("the refused runner SQL client has no controller owner")
+		}
+		job, exists := jobs[owner.UID]
+		if !exists || !runnerGuardRefused(&job, &pod, fetch) || !executionIdentityOnJob(&job, controller) ||
+			!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, kind, resource.GetName(), resource.GetUID()) ||
+			job.Annotations[annotationBindingID] != binding.Epoch || job.Spec.Template.Spec.InitContainers[0].Image != image ||
+			!jobUsesExecutor(&job, binding.ExecutorImage) ||
+			!exactLiteralEnv(viewContainers(job.Spec.Template.Spec.Containers)[0], runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion)) ||
+			!exactLiteralEnv(viewContainers(job.Spec.Template.Spec.InitContainers)[1], runner.EnvRunnerProtocolVersion, strconv.Itoa(runner.ProtocolVersion)) {
+			return nil, nil, fmt.Errorf("a failed Pod was not the exact unsupported runner's pre-fetch refusal")
+		}
+		if err := logs[pod.UID].matches(&pod); err != nil {
+			return nil, nil, err
+		}
+		refused = append(refused, runnerProtocolApply{job.DeepCopy(), pod.DeepCopy()})
+	}
+	var jobList []batchv1.Job
+	for _, job := range jobs {
+		jobList = append(jobList, job)
+	}
+	clients, err := operationSQLClientsForIdentities(resource.GetNamespace(), resource.GetName(), kind, label,
+		map[string]bool{string(resource.GetUID()): true}, jobList, successful)
+	if err != nil {
+		return nil, nil, err
+	}
+	refusedJobs := map[types.UID]bool{}
+	for _, pair := range refused {
+		clients, err = addRefusedRunnerSQLClient(clients, resource.GetUID(), pair.job, pair.pod, fetch)
+		if err != nil {
+			return nil, nil, err
+		}
+		refusedJobs[pair.job.UID] = true
+	}
+	return clients, refusedJobs, nil
+}
