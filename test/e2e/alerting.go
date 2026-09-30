@@ -656,24 +656,6 @@ func alUnresolvedMigrations(migrations []ptahv1alpha1.PtahMigration) int {
 	return count
 }
 
-// alResolveClaim is when the held schema claimed its Resolve, if it has.
-func alResolveClaim(schema *ptahv1alpha1.PtahSchema) (time.Time, bool) {
-	active := schema.Status.ActiveOperation
-	if active == nil || active.Type != ptahv1alpha1.OperationResolve || active.StartedAt.IsZero() {
-		return time.Time{}, false
-	}
-	return active.StartedAt.Time, true
-}
-
-// alLeftFlight is the released Resolve out of flight. A schema keeps a failed
-// attempt's claim in status.activeOperation until its retry, with the
-// resource in Failed, and the gauges count that as ended; this reads it the
-// same way.
-func alLeftFlight(schema *ptahv1alpha1.PtahSchema) bool {
-	active := schema.Status.ActiveOperation
-	return active == nil || active.Type != ptahv1alpha1.OperationResolve || schema.Status.Phase == ptahv1alpha1.PhaseFailed
-}
-
 // alSecondsBetween is the second instant minus the first in whole seconds,
 // each taken to the second it falls in, as `date +%s` read the script's
 // instants with their fractions dropped.

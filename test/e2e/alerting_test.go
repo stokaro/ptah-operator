@@ -707,48 +707,6 @@ func TestAlUnresolvedMigrations(t *testing.T) {
 	}
 }
 
-func TestAlResolveClaimAndLeftFlight(t *testing.T) {
-	t.Parallel()
-	started := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
-	held := func() *ptahv1alpha1.PtahSchema {
-		schema := &ptahv1alpha1.PtahSchema{}
-		schema.Status.Phase = ptahv1alpha1.PhaseResolving
-		schema.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{
-			Type: ptahv1alpha1.OperationResolve, StartedAt: metav1.NewTime(started),
-		}
-		return schema
-	}
-	if at, ok := alResolveClaim(held()); !ok || !at.Equal(started) {
-		t.Fatalf("the claim read as %v, %t", at, ok)
-	}
-	if alLeftFlight(held()) {
-		t.Fatal("a Resolve in flight read as having left it")
-	}
-	for name, mutate := range map[string]func(*ptahv1alpha1.PtahSchema){
-		"no operation": func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation = nil },
-		"a Verify":     func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation.Type = ptahv1alpha1.OperationVerify },
-		"no start":     func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation.StartedAt = metav1.Time{} },
-	} {
-		schema := held()
-		mutate(schema)
-		if at, ok := alResolveClaim(schema); ok {
-			t.Errorf("%s: claimed at %v", name, at)
-		}
-	}
-	for name, mutate := range map[string]func(*ptahv1alpha1.PtahSchema){
-		"no operation": func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation = nil },
-		"a Verify":     func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation.Type = ptahv1alpha1.OperationVerify },
-		// A failed attempt keeps its claim until the retry.
-		"a failed Resolve": func(s *ptahv1alpha1.PtahSchema) { s.Status.Phase = ptahv1alpha1.PhaseFailed },
-	} {
-		schema := held()
-		mutate(schema)
-		if !alLeftFlight(schema) {
-			t.Errorf("%s: still in flight", name)
-		}
-	}
-}
-
 func TestAlSecondsBetween(t *testing.T) {
 	t.Parallel()
 	at := func(value string) time.Time {

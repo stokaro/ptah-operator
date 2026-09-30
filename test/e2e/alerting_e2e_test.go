@@ -20,7 +20,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -511,96 +510,8 @@ func (a *alertingRun) unresolvedApply() {
 	a.logf("PASS the receiver got PtahOperatorUnresolvedApply for %d migration(s), and the runbook lists them", listed)
 }
 
-// stalledOperation holds a schema's Resolve off every node, and requires the
-// stalled alert once its threshold has passed and not before, and its
-// resolution once the operation leaves flight. Nothing else in the cluster
-// runs a schema Resolve for this long, which the row checks rather than
-// assumes.
-func (a *alertingRun) stalledOperation() {
-	a.t.Helper()
-	if !a.noActiveAlerts(`ALERTS{alertname="PtahOperatorOperationStalled",family="schema",operation="Resolve"}`) {
-		a.fatalf("a schema Resolve was already stalled before this row held one, so the row could not tell them apart")
-	}
-	from := a.deliveryCount()
-	a.createHeldSchema()
-
-	var started time.Time
-	for deadline := time.Now().Add(alTimeout); time.Now().Before(deadline); {
-		schema := &ptahv1alpha1.PtahSchema{}
-		if err := a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alStalledNamespace, Name: alStalledSchema}, schema); err == nil {
-			if at, ok := alResolveClaim(schema); ok {
-				started = at
-				break
-			}
-		}
-		a.sleep(alClaimPoll)
-	}
-	if started.IsZero() {
-		a.fatalf("%s never claimed its Resolve", alStalledSchema)
-	}
-	a.logf("%s claimed a Resolve at %s that no node will run", alStalledSchema, started.UTC().Format(time.RFC3339))
-
-	stallMatch := map[string]string{"family": "schema", "operation": "Resolve"}
-	stalled, stalledAt := a.waitForDelivery(alMatch{status: "firing", alertName: alOperationStall, labels: stallMatch},
-		"PtahOperatorOperationStalled for the held schema Resolve", alStalledAfter+alTimeout, from)
-	threshold, slack := int64(alStalledAfter/time.Second), int64(alDetectionSlack/time.Second)
-	after := alSecondsBetween(started, stalled.ReceivedAt)
-	if after < threshold {
-		a.fatalf("the stalled alert arrived %ds after the operation started, before its %ds threshold", after, threshold)
-	}
-	if after > threshold+slack {
-		a.fatalf("the stalled alert arrived %ds after the operation started; the declared target is %ds plus %ds",
-			after, threshold, slack)
-	}
-	if stalled.Annotations["runbook_url"] != a.runbookBase+"#resource-state" {
-		a.fatalf("the stalled alert arrived without the runbook link the chart gives it: %s", stalled.raw)
-	}
-	if !alRunbookAnchor(a.operationsPage(), "resource-state") {
-		a.fatalf("the stalled alert links to #resource-state, and the operations page has no such heading")
-	}
-	a.logf("PASS the receiver got PtahOperatorOperationStalled %ds after the Resolve started", after)
-
-	// Released, the Resolve runs, fails against the unreachable registry and
-	// leaves flight, and the alert has to clear on its own.
-	a.gateOpened = true
-	if err := a.setGate(a.ctx, "open"); err != nil {
-		a.fatalf("the gate could not be opened: %v", err)
-	}
-	var left time.Time
-	for deadline := time.Now().Add(alTimeout); time.Now().Before(deadline); {
-		schema := &ptahv1alpha1.PtahSchema{}
-		if err := a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: alStalledNamespace, Name: alStalledSchema}, schema); err == nil &&
-			alLeftFlight(schema) {
-			left = time.Now()
-			break
-		}
-		a.sleep(alClaimPoll)
-	}
-	if left.IsZero() {
-		a.fatalf("the released Resolve never left flight")
-	}
-	resolved, _ := a.waitForDelivery(alMatch{status: "resolved", alertName: alOperationStall, labels: stallMatch},
-		"the resolution of PtahOperatorOperationStalled once the Resolve left flight", alDetectionSlack+60*time.Second, stalledAt+1)
-	cleared := alSecondsBetween(left, resolved.ReceivedAt)
-	if cleared > slack {
-		a.fatalf("the stalled alert cleared %ds after the operation left flight; the declared target is %ds", cleared, slack)
-	}
-	// Suspended before the gate closes again, so its next Resolve is not held
-	// and does not fire the alert a second time.
-	schema := &ptahv1alpha1.PtahSchema{}
-	schema.Namespace, schema.Name = alStalledNamespace, alStalledSchema
-	a.check(a.cluster.Client.Patch(a.ctx, schema, client.RawPatch(types.MergePatchType, []byte(`{"spec":{"suspend":true}}`)),
-		client.FieldOwner(harness.FieldOwner)), "suspend %s", alStalledSchema)
-	if err := a.setGate(a.ctx, ""); err != nil {
-		a.fatalf("the gate could not be closed: %v", err)
-	}
-	a.gateOpened = false
-	a.logf("PASS the stalled alert cleared %ds after the Resolve left flight", cleared)
-}
-
-// createHeldSchema stands up the stalled namespace: the verification policy,
-// a database URL nothing will dial, the pull credential, and the held schema.
-func (a *alertingRun) createHeldSchema() {
+// createHeldNamespace prepares both families' held Resolve fixtures.
+func (a *alertingRun) createHeldNamespace() {
 	a.t.Helper()
 	namespace := &corev1.Namespace{}
 	namespace.Name = alStalledNamespace
@@ -623,8 +534,6 @@ func (a *alertingRun) createHeldSchema() {
 		ObjectMeta: metav1.ObjectMeta{Namespace: alStalledNamespace, Name: pull.Name},
 		Type:       pull.Type, Data: pull.Data,
 	}, "the held schema's pull Secret")
-	a.check(a.cluster.Client.Create(a.ctx, &unstructured.Unstructured{Object: alHeldSchema(alStalledNamespace)},
-		client.FieldOwner(harness.FieldOwner), client.FieldValidation("Strict")), "create PtahSchema %s", alStalledSchema)
 }
 
 // lostView removes every manager with every node cordoned. Nothing scrapes a
