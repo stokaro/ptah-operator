@@ -138,7 +138,7 @@ lint-workflows:
 
 verify: verify-source test-race
 
-verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release verify-demo-recording verify-go-mod e2e-static vet build test test-envtest test-qualification-probes
+verify-source: fmt-check lint-workflows generate manifests chart-policies verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-runner-protocol verify-release verify-demo-recording verify-go-mod test-qualification-probes e2e-static vet build test test-envtest
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets \
 		charts/ptah-operator/templates/controller-object-guard.yaml \
 		charts/ptah-operator/templates/controller-write-guard.yaml \
