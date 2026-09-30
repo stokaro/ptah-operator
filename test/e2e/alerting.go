@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,11 +98,31 @@ func alRuleFile(rendered string) (string, error) {
 		return "", errors.New("the rendered PrometheusRule has no spec.groups to load")
 	}
 	rules := strings.Join(lines, "\n")
-	for _, alert := range []string{alUnresolvedApply, alViewNotSynced, alOperationStall, alCertificateAlert, alAdmissionAlert, alViewReadAlert, alOverdueAlert} {
-		if !slices.ContainsFunc(lines, func(line string) bool { return strings.HasSuffix(line, "alert: "+alert) }) {
-			return "", fmt.Errorf("the rendered rules have no %s", alert)
+	var document struct {
+		Groups []struct {
+			Rules []alProfileRule `json:"rules"`
+		} `json:"groups"`
+	}
+	if err := yaml.Unmarshal([]byte(rules), &document); err != nil {
+		return "", fmt.Errorf("read rendered alert rules: %w", err)
+	}
+	foundRules := map[string]int{}
+	expected := alProfileRuleTargets()
+	for _, group := range document.Groups {
+		for _, rule := range group.Rules {
+			foundRules[rule.Alert]++
+			target, ok := expected[rule.Alert]
+			if !ok || !alProfileExpressionEqual(rule.Expr, target.Expr) || rule.For != target.For || rule.KeepFiringFor != "" {
+				return "", fmt.Errorf("rule %s does not match the frozen alert threshold or timing", rule.Alert)
+			}
 		}
 	}
+	for alert := range expected {
+		if foundRules[alert] != 1 {
+			return "", fmt.Errorf("the rendered rules contain %d copies of %s, want one", foundRules[alert], alert)
+		}
+	}
+
 	return rules, nil
 }
 
@@ -544,31 +565,85 @@ func alTargetsReady(body []byte, replicas int) bool {
 	return count == replicas && up
 }
 
-// alRulesLoaded is Prometheus answering with the chart's alerting rules.
+// The alerting phase loads every chart rule in the frozen profile. These
+// expressions make changed thresholds a refusal instead of a different test.
+// The external upgrade route remains a separate qualification requirement.
+type alProfileRule struct {
+	Alert         string `json:"alert"`
+	Expr          string `json:"expr"`
+	For           string `json:"for"`
+	KeepFiringFor string `json:"keep_firing_for"`
+}
+
+// Helm emits YAML numbers in scientific notation for large thresholds.
+// Accept that spelling only when the expression and numeric value agree.
+func alProfileExpressionEqual(actual, expected string) bool {
+	if actual == expected {
+		return true
+	}
+	for _, comparison := range []string{" > ", " < "} {
+		left, target, ok := strings.Cut(expected, comparison)
+		if !ok || !strings.HasPrefix(actual, left+comparison) {
+			continue
+		}
+		got, err := strconv.ParseFloat(strings.TrimPrefix(actual, left+comparison), 64)
+		want, targetErr := strconv.ParseFloat(target, 64)
+		return err == nil && targetErr == nil && got == want
+	}
+	return false
+}
+
+func alProfileRuleTargets() map[string]alProfileRule {
+	return map[string]alProfileRule{
+		alUnresolvedApply:               {Expr: "max by (family) (ptah_operator_unresolved_attempts) > 0"},
+		alViewNotSynced:                 {Expr: "max(ptah_operator_unresolved_view_synced) == 0 or absent(ptah_operator_unresolved_view_synced)", For: "60s"},
+		alViewReadAlert:                 {Expr: "max(increase(ptah_operator_unresolved_view_read_failures_total[60s])) > 0"},
+		alOverdueAlert:                  {Expr: "max by (family) (ptah_operator_overdue_seconds) > 60"},
+		alOperationStall:                {Expr: "max by (family, operation) (ptah_operator_active_operation_seconds) > 60"},
+		"PtahOperatorLockReleaseOwed":   {Expr: "max by (family) (ptah_operator_pending_lock_releases) > 0", For: "60s"},
+		alCertificateAlert:              {Expr: "min(ptah_operator_webhook_certificate_expiry_timestamp_seconds) - time() < 86400"},
+		"PtahOperatorPlanStoreLarge":    {Expr: "max(ptah_operator_stored_plan_bytes) > 134217728"},
+		"PtahOperatorOperationsFailing": {Expr: "sum by (family, stage) (increase(ptah_operator_failures_total[5m])) > 3"},
+		alAdmissionAlert:                {Expr: `sum(increase(apiserver_admission_webhook_rejection_count{name=~".*operator\\.ptah\\.run", error_type="calling_webhook_error"}[5m])) > 0`},
+	}
+}
+
+// alRulesLoaded requires every profile rule to have evaluated successfully.
+// A missing or unhealthy rule cannot establish a negative-control result.
 func alRulesLoaded(body []byte) bool {
 	var rules struct {
-		Data struct {
+		Status string `json:"status"`
+		Data   struct {
 			Groups []struct {
 				Rules []struct {
-					Type string `json:"type"`
-					Name string `json:"name"`
+					Type      string `json:"type"`
+					Name      string `json:"name"`
+					Health    string `json:"health"`
+					LastError string `json:"lastError"`
 				} `json:"rules"`
 			} `json:"groups"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &rules); err != nil {
+	if json.Unmarshal(body, &rules) != nil || rules.Status != "success" {
 		return false
 	}
-	var alerting []string
+	found := map[string]int{}
 	for _, group := range rules.Data.Groups {
 		for _, rule := range group.Rules {
 			if rule.Type == "alerting" {
-				alerting = append(alerting, rule.Name)
+				if rule.Health != "ok" || rule.LastError != "" {
+					return false
+				}
+				found[rule.Name]++
 			}
 		}
 	}
-	return slices.Contains(alerting, alUnresolvedApply) && slices.Contains(alerting, alViewNotSynced) &&
-		slices.Contains(alerting, alOperationStall) && slices.Contains(alerting, alCertificateAlert) && slices.Contains(alerting, alAdmissionAlert) && slices.Contains(alerting, alViewReadAlert) && slices.Contains(alerting, alOverdueAlert)
+	for name := range alProfileRuleTargets() {
+		if found[name] != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // alNoActiveAlerts reads an instant query for ALERTS: true when Prometheus

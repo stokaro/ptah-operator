@@ -48,12 +48,7 @@ func alRenderedRule(t *testing.T) string {
 		"--set-string", "execution.runnerImage=ghcr.io/stokaro/ptah-operator@sha256:"+strings.Repeat("a", 64),
 		"--set-string", "execution.executorImage=ghcr.io/stokaro/ptah@sha256:"+strings.Repeat("b", 64),
 		"--set-string", "execution.ptahVersion=v0.7.0",
-		"--set", "monitoring.prometheusRule.enabled=true",
-		"--set", "monitoring.prometheusRule.viewUnsyncedFor=60s",
-		"--set", "monitoring.prometheusRule.operationStalledAfterSeconds=60",
-		"--set", "monitoring.prometheusRule.overdueAfterSeconds=60",
-		"--set", "monitoring.prometheusRule.certificateExpiresWithinSeconds=86400",
-		"--set", "monitoring.prometheusRule.admissionFailingFor=300s",
+		"-f", filepath.Join("..", "..", "support", "qualification", "0.2.0-monitoring.yaml"),
 		"--show-only", "templates/prometheusrule.yaml")
 }
 
@@ -135,6 +130,94 @@ func TestAlRuleFileRefusals(t *testing.T) {
 				t.Fatal("the rendering was accepted")
 			}
 		})
+	}
+}
+
+// Mutate every enabled rule independently. A full rule set with a weakened
+// threshold is as invalid for qualification as an omitted rule.
+func TestAlProfileRulesRejectMissingOrChangedThresholds(t *testing.T) {
+	t.Parallel()
+	rendered := alRenderedRule(t)
+	if _, err := alRuleFile(rendered); err != nil {
+		t.Fatalf("unmodified profile refused: %v", err)
+	}
+	var original map[string]any
+	if err := yaml.Unmarshal([]byte(rendered), &original); err != nil {
+		t.Fatal(err)
+	}
+	groups := original["spec"].(map[string]any)["groups"].([]any)
+	examined := 0
+	for gi, group := range groups {
+		rules := group.(map[string]any)["rules"].([]any)
+		for ri, value := range rules {
+			examined++
+			name := value.(map[string]any)["alert"].(string)
+			for _, mutation := range []string{"missing", "expression", "delay", "keep firing", "duplicate"} {
+				t.Run(name+"/"+mutation, func(t *testing.T) {
+					var document map[string]any
+					if err := yaml.Unmarshal([]byte(rendered), &document); err != nil {
+						t.Fatal(err)
+					}
+					spec := document["spec"].(map[string]any)
+					g := spec["groups"].([]any)[gi].(map[string]any)
+					list := g["rules"].([]any)
+					rule := list[ri].(map[string]any)
+					renderSpec := func() string {
+						raw, err := yaml.Marshal(spec)
+						if err != nil {
+							t.Fatal(err)
+						}
+						result := "spec:\n"
+						for line := range strings.SplitSeq(strings.TrimSuffix(string(raw), "\n"), "\n") {
+							result += "  " + line + "\n"
+						}
+						return result
+					}
+					if _, err := alRuleFile(renderSpec()); err != nil {
+						t.Fatalf("serialized positive control refused: %v", err)
+					}
+
+					switch mutation {
+					case "missing":
+						g["rules"] = append(list[:ri], list[ri+1:]...)
+					case "expression":
+						rule["expr"] = rule["expr"].(string) + " + 1"
+					case "delay":
+						rule["for"] = "10m"
+					case "keep firing":
+						rule["keep_firing_for"] = "10m"
+					case "duplicate":
+						g["rules"] = append(list, rule)
+					}
+					changed := renderSpec()
+					if _, err := alRuleFile(changed); err == nil {
+						t.Fatal("changed qualification rule accepted")
+					}
+				})
+			}
+		}
+	}
+	if examined != 10 {
+		t.Fatalf("examined %d rules, want all ten chart rules", examined)
+	}
+}
+
+func TestAlProfileNumericThresholdSpelling(t *testing.T) {
+	t.Parallel()
+	expected := "max(ptah_operator_stored_plan_bytes) > 134217728"
+	if !alProfileExpressionEqual("max(ptah_operator_stored_plan_bytes) > 1.34217728e+08", expected) {
+		t.Fatal("Helm number spelling rejected")
+	}
+	for _, actual := range []string{
+		"max(ptah_operator_stored_plan_bytes) > 1.34217729e+08",
+		"max(ptah_operator_stored_plan_bytes) >= 134217728",
+		"max(ptah_operator_stored_plan_bytes) > NaN",
+		"max(ptah_operator_stored_plan_bytes) > +Inf",
+		"max(other_metric) > 134217728",
+	} {
+		if alProfileExpressionEqual(actual, expected) {
+			t.Fatalf("changed threshold accepted: %s", actual)
+		}
 	}
 }
 
@@ -577,36 +660,58 @@ func TestAlTargetsReady(t *testing.T) {
 
 func TestAlRulesLoaded(t *testing.T) {
 	t.Parallel()
-	body := func(rules ...string) []byte {
-		entries := []string{`{"type":"alerting","name":"` + alViewReadAlert + `"}`, `{"type":"alerting","name":"` + alOverdueAlert + `"}`}
-		for index := 0; index+1 < len(rules); index += 2 {
-			entries = append(entries, `{"type":"`+rules[index]+`","name":"`+rules[index+1]+`"}`)
+	names := []string{
+		"PtahOperatorUnresolvedApply", "PtahOperatorUnresolvedViewNotSynced",
+		"PtahOperatorUnresolvedViewReadFailures", "PtahOperatorResourceOverdue",
+		"PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
+		"PtahOperatorWebhookCertificateExpiring", "PtahOperatorPlanStoreLarge",
+		"PtahOperatorOperationsFailing", "PtahOperatorAdmissionUnavailable",
+	}
+	type rule struct {
+		Type      string `json:"type"`
+		Name      string `json:"name"`
+		Health    string `json:"health"`
+		LastError string `json:"lastError"`
+	}
+	original := make([]rule, 0, len(names))
+	for _, name := range names {
+		original = append(original, rule{Type: "alerting", Name: name, Health: "ok"})
+	}
+	body := func(rules []rule, status string) []byte {
+		// Multiple groups are normal; membership must span all of them.
+		split := len(rules) / 2
+		raw, err := json.Marshal(map[string]any{"status": status, "data": map[string]any{"groups": []any{
+			map[string]any{"rules": rules[:split]}, map[string]any{"rules": rules[split:]},
+		}}})
+		if err != nil {
+			t.Fatal(err)
 		}
-		return []byte(`{"status":"success","data":{"groups":[{"rules":[` + strings.Join(entries, ",") + `]}]}}`)
+		return raw
 	}
-	if !alRulesLoaded(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert)) {
-		t.Fatal("the chart's rules were not recognized")
+	if !alRulesLoaded(body(original, "success")) {
+		t.Fatal("complete healthy rules rejected")
 	}
-	for name, answer := range map[string][]byte{
-		"no overdue rule":            []byte(strings.ReplaceAll(string(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert)), alOverdueAlert, "Renamed")),
-		"no read-failure rule":       []byte(strings.ReplaceAll(string(body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert)), alViewReadAlert, "Renamed")),
-		"no admission rule":          body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert),
-		"no certificate rule":        body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alAdmissionAlert),
-		"no view rule":               body("alerting", alUnresolvedApply, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
-		"no unresolved rule":         body("alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
-		"no stalled rule":            body("alerting", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
-		"the unresolved one records": body("recording", alUnresolvedApply, "alerting", alViewNotSynced, "alerting", alOperationStall, "alerting", alCertificateAlert, "alerting", alAdmissionAlert),
-		"no groups":                  []byte(`{"status":"success","data":{"groups":[]}}`),
-		"not JSON":                   []byte(`502 Bad Gateway`),
-	} {
-		if alRulesLoaded(answer) {
-			t.Errorf("%s: loaded", name)
+	for index, name := range names {
+		t.Run(name, func(t *testing.T) {
+			for mutation, apply := range map[string]func([]rule) []rule{
+				"missing":            func(r []rule) []rule { return append(r[:index], r[index+1:]...) },
+				"recording":          func(r []rule) []rule { r[index].Type = "recording"; return r },
+				"unknown health":     func(r []rule) []rule { r[index].Health = "unknown"; return r },
+				"evaluation failure": func(r []rule) []rule { r[index].Health = "err"; return r },
+				"last error":         func(r []rule) []rule { r[index].LastError = "query failed"; return r },
+				"duplicate":          func(r []rule) []rule { return append(r, r[index]) },
+			} {
+				changed := apply(append([]rule(nil), original...))
+				if alRulesLoaded(body(changed, "success")) {
+					t.Errorf("%s rule passed", mutation)
+				}
+			}
+		})
+	}
+	for _, raw := range [][]byte{body(original, "error"), body(original, ""), body(nil, "success"), []byte("not JSON")} {
+		if alRulesLoaded(raw) {
+			t.Fatal("missing or failed API result passed")
 		}
-	}
-	split := []byte(`{"data":{"groups":[{"rules":[{"type":"alerting","name":"` + alUnresolvedApply +
-		`"}]},{"rules":[{"type":"alerting","name":"` + alOperationStall + `"},{"type":"alerting","name":"` + alViewNotSynced + `"},{"type":"alerting","name":"` + alCertificateAlert + `"},{"type":"alerting","name":"` + alAdmissionAlert + `"},{"type":"alerting","name":"` + alViewReadAlert + `"},{"type":"alerting","name":"` + alOverdueAlert + `"}]}]}}`)
-	if !alRulesLoaded(split) {
-		t.Error("the rules in two groups were not recognized")
 	}
 }
 

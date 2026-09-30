@@ -293,13 +293,15 @@ func (a *alertingRun) monitoringPath() {
 	a.standUp(rules)
 	a.waitForTargets()
 	a.waitForAPIServerTargets()
-	body, err := a.prometheus(a.ctx, "/api/v1/rules", nil)
-	if err != nil {
-		a.fatalf("Prometheus did not answer for its rules: %v", err)
-	}
-	if !alRulesLoaded(body) {
-		a.fatalf("Prometheus did not load the chart's rules")
-	}
+	a.check(harness.Wait(a.ctx, "every frozen chart rule to evaluate successfully", alDetectionSlack, alDeliveryPoll,
+		func(ctx context.Context) (bool, string, error) {
+			body, err := a.prometheus(ctx, "/api/v1/rules", nil)
+			if err != nil {
+				return false, "", err
+			}
+			return alRulesLoaded(body), "a frozen rule is missing, duplicated, unevaluated or failing", nil
+		}), "verify the complete loaded alert rules")
+
 	a.logf("Prometheus scrapes all %d manager replicas and loaded the chart rules", a.replicas)
 }
 
@@ -388,12 +390,7 @@ func (a *alertingRun) renderRules() string {
 	rendered, err := a.cluster.Helm(a.ctx, "template", a.in.HelmRelease, a.in.ChartPackage,
 		"--namespace", a.in.OperatorNamespace,
 		"-f", valuesFile,
-		"--set", "monitoring.prometheusRule.enabled=true",
-		"--set", fmt.Sprintf("monitoring.prometheusRule.viewUnsyncedFor=%ds", int(alViewUnsyncedFor/time.Second)),
-		"--set", fmt.Sprintf("monitoring.prometheusRule.operationStalledAfterSeconds=%d", int(alStalledAfter/time.Second)),
-		"--set", fmt.Sprintf("monitoring.prometheusRule.overdueAfterSeconds=%d", int(alOverdueAfter/time.Second)),
-		"--set", fmt.Sprintf("monitoring.prometheusRule.certificateExpiresWithinSeconds=%d", int(alCertificateWarning/time.Second)),
-		"--set", fmt.Sprintf("monitoring.prometheusRule.admissionFailingFor=%ds", int(alAdmissionWindow/time.Second)),
+		"-f", filepath.Join(repositoryRoot, "support", "qualification", "0.2.0-monitoring.yaml"),
 		"--show-only", "templates/prometheusrule.yaml")
 	if err != nil {
 		a.fatalf("the chart did not render its PrometheusRule: %v", err)
