@@ -99,9 +99,9 @@ SELECT JSON_OBJECT('client',user_host,'count',COUNT(*)) FROM mysql.general_log W
 	ready := false
 	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
 		raw = a.exec("sh", "-ec", `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -Atq -c "$1" -c "$2"`, "sh",
-			`SELECT current_setting('logging_collector'),current_setting('log_destination'),current_setting('log_statement'),current_setting('log_min_error_statement'),current_setting('log_rotation_age'),current_setting('log_rotation_size')`,
+			`SELECT current_setting('logging_collector'),current_setting('log_destination'),current_setting('log_statement'),current_setting('log_min_error_statement'),current_setting('log_rotation_age'),current_setting('log_rotation_size'),current_setting('log_timezone')`,
 			"SELECT '"+marker+"'")
-		if string(raw) == "on|jsonlog|all|error|0|0\n"+marker+"\n" {
+		if string(raw) == "on|jsonlog|all|error|0|0|UTC\n"+marker+"\n" {
 			ready = true
 			break
 		}

@@ -288,7 +288,9 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 		if len(pgBefore) == 0 || !bytes.HasPrefix(audit.pgPrefix, pgBefore) {
 			m.fatalf("unsupported runner proof lost its complete PostgreSQL journal")
 		}
-		counts, err = postgresStatementRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients, acceptsActor, policy.postgres, postgresMigrationHarnessRead)
+		lifetimes, lifetimeErr := operationSQLLifetimes(clients, inventory.pods)
+		m.check(lifetimeErr, "retain exact runner-refusal PostgreSQL client lifetimes")
+		counts, err = postgresStatementRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients, acceptsActor, policy.postgres, postgresMigrationHarnessRead, lifetimes)
 	} else {
 		counts, err = mysqlStatementRefusalSQL(mysqlBefore, audit.mysqlStatementSnapshot(), database, user, clients, true, acceptsActor, policy.mysql)
 	}

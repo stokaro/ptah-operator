@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/netip"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -19,6 +20,51 @@ import (
 type operationSQLClient struct {
 	jobUID, podUID, operation string
 	resourceUID               string
+}
+
+type operationSQLLifetime struct {
+	created, endedBefore time.Time
+}
+
+// Pod addresses can be reused after a terminal Pod is removed. Keep the API
+// creation boundary and the actual container termination boundary beside the
+// retained UID. Kubernetes container timestamps have whole-second precision;
+// the exclusive upper bound covers that last second, not another polling cycle.
+func operationSQLLifetimes(clients map[string]operationSQLClient, pods map[types.UID]corev1.Pod) (map[string]operationSQLLifetime, error) {
+	if len(clients) == 0 {
+		return nil, errors.New("SQL lifetimes need identified clients")
+	}
+	lifetimes := make(map[string]operationSQLLifetime, len(clients))
+	for host, actor := range clients {
+		pod, found := pods[types.UID(actor.podUID)]
+		address, err := netip.ParseAddr(pod.Status.PodIP)
+		if !found || actor.podUID == "" || pod.UID != types.UID(actor.podUID) || err != nil || address.Unmap().String() != host ||
+			pod.CreationTimestamp.IsZero() || !terminalPodLogsComplete(&pod) {
+			return nil, errors.New("SQL lifetime lost its exact terminal Pod identity or creation time")
+		}
+		var finished time.Time
+		for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+			for _, status := range statuses {
+				if status.RestartCount != 0 || status.LastTerminationState.Terminated != nil || status.State.Running != nil {
+					return nil, errors.New("SQL lifetime contains a running or restarted container")
+				}
+				if terminated := status.State.Terminated; terminated != nil {
+					if terminated.FinishedAt.IsZero() || terminated.StartedAt.IsZero() || terminated.FinishedAt.Before(&terminated.StartedAt) ||
+						terminated.StartedAt.Before(&pod.CreationTimestamp) {
+						return nil, errors.New("SQL lifetime contains incomplete or reversed container dates")
+					}
+					if terminated.FinishedAt.After(finished) {
+						finished = terminated.FinishedAt.Time
+					}
+				}
+			}
+		}
+		if finished.IsZero() || finished.Before(pod.CreationTimestamp.Time) || len(pod.Status.EphemeralContainerStatuses) != 0 {
+			return nil, errors.New("SQL lifetime has no complete terminal boundary")
+		}
+		lifetimes[host] = operationSQLLifetime{created: pod.CreationTimestamp.Time, endedBefore: finished.Truncate(time.Second).Add(time.Second)}
+	}
+	return lifetimes, nil
 }
 
 // A replacement proof may retain the terminal workloads of explicitly named
@@ -92,17 +138,17 @@ func operationSQLClientsForIdentities(namespace, name, kind, resourceLabel strin
 // SQL from an operation other than History fail even if the database is equal.
 // The caller supplies the complete append-only journal window, bounded before
 // approval and after the replacement plan reaches its approval gate.
-func postgresMigrationRefusalSQL(raw []byte, database string, clients map[string]operationSQLClient) (map[string]int, error) {
-	return postgresMigrationRefusalSQLForJob(raw, database, clients, "")
+func postgresMigrationRefusalSQL(raw []byte, database string, clients map[string]operationSQLClient, lifetimes ...map[string]operationSQLLifetime) (map[string]int, error) {
+	return postgresMigrationRefusalSQLForJob(raw, database, clients, "", lifetimes...)
 }
 
-func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[string]operationSQLClient, refusedApplyJobUID string) (map[string]int, error) {
+func postgresMigrationRefusalSQLForJob(raw []byte, database string, clients map[string]operationSQLClient, refusedApplyJobUID string, lifetimes ...map[string]operationSQLLifetime) (map[string]int, error) {
 	refusal := migrationRefusalSQL{applyJobUID: refusedApplyJobUID}
 	counts, err := postgresStatementRefusalSQL(raw, database, clients, refusal.acceptsActor, refusal.postgres,
 		func(statement, parameters string) bool {
 			return postgresMigrationHarnessRead(statement, parameters) ||
 				(refusedApplyJobUID != "" && postgresMigrationRestoreHarnessRead(statement, parameters))
-		})
+		}, lifetimes...)
 	if err != nil {
 		return nil, err
 	}
@@ -116,20 +162,39 @@ func postgresStatementRefusalSQL(raw []byte, database string, clients map[string
 	acceptsActor func(operationSQLClient) bool,
 	acceptsSQL func(operationSQLClient, string, string) bool,
 	harnessRead func(string, string) bool,
+	spans ...map[string]operationSQLLifetime,
 ) (map[string]int, error) {
 	if database == "" || len(clients) == 0 {
 		return nil, errors.New("SQL audit needs an isolated database and identified clients")
+	}
+	var lifetimes map[string]operationSQLLifetime
+	if len(spans) > 1 {
+		return nil, errors.New("SQL audit needs one exact lifetime inventory")
+	}
+	if len(spans) == 1 {
+		lifetimes = spans[0]
+		if len(lifetimes) != len(clients) {
+			return nil, errors.New("SQL audit lost an identified client's lifetime")
+		}
+		for host := range clients {
+			life, found := lifetimes[host]
+			if !found || life.created.IsZero() || !life.endedBefore.After(life.created) {
+				return nil, errors.New("SQL audit has an incomplete or reversed client lifetime")
+			}
+		}
 	}
 	counts := make(map[string]int)
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	records := 0
 	for {
 		var row struct {
-			Host      string `json:"remote_host"`
-			Database  string `json:"dbname"`
-			Message   string `json:"message"`
-			Statement string `json:"statement"`
-			Detail    string `json:"detail"`
+			Timestamp    string `json:"timestamp"`
+			SessionStart string `json:"session_start"`
+			Host         string `json:"remote_host"`
+			Database     string `json:"dbname"`
+			Message      string `json:"message"`
+			Statement    string `json:"statement"`
+			Detail       string `json:"detail"`
 		}
 		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
 			break
@@ -161,6 +226,35 @@ func postgresStatementRefusalSQL(raw []byte, database string, clients map[string
 		records++
 		if row.Database == "" {
 			return nil, errors.New("PostgreSQL statement has no database identity")
+		}
+		// Kind's nodes and database share the host clock. Disambiguate an
+		// address only when both the statement and its server-side connection
+		// start are outside this Pod's lifetime. A late error on a connection
+		// opened by the Pod remains attributable after its containers exit.
+		if len(lifetimes) != 0 {
+			if address, err := netip.ParseAddr(row.Host); err == nil {
+				if life, found := lifetimes[address.Unmap().String()]; found {
+					instant, err := time.Parse("2006-01-02 15:04:05.999999999 UTC", row.Timestamp)
+					if err != nil {
+						return nil, errors.New("identified SQL audit client lost its server timestamp")
+					}
+					sessionStart, err := time.Parse("2006-01-02 15:04:05 UTC", row.SessionStart)
+					if err != nil || sessionStart.After(instant) {
+						return nil, errors.New("identified SQL audit client lost its server session start")
+					}
+					if instant.Before(life.created) || !instant.Before(life.endedBefore) {
+						if row.Database == database {
+							return nil, errors.New("target SQL occurred outside its identified Pod's lifetime")
+						}
+						// session_start is rounded down to a whole second. An
+						// overlapping second cannot establish a different owner.
+						if (instant.Before(life.created) && !sessionStart.Add(time.Second).After(life.created)) ||
+							(!instant.Before(life.endedBefore) && !sessionStart.Before(life.endedBefore)) {
+							continue
+						}
+					}
+				}
+			}
 		}
 		if row.Database != database {
 			if address, err := netip.ParseAddr(row.Host); err == nil {

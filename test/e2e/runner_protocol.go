@@ -244,6 +244,32 @@ type runnerProtocolApply struct {
 	pod *corev1.Pod
 }
 
+func runnerHistoryReadOnly(spec corev1.PodSpec, operation, kind string) bool {
+	allowed := map[string]string{"resolve": "resolve", "verify": "verify"}
+	if kind == "PtahMigration" {
+		allowed["history"] = "migration-history"
+	} else {
+		allowed["observe"], allowed["plan"] = "observe", "plan"
+	}
+	want := allowed[operation]
+	if want == "" || len(spec.Containers) != 1 || !slices.Equal(spec.Containers[0].Command, []string{"/runner/ptah-runner"}) {
+		return false
+	}
+	args, matches := spec.Containers[0].Args, 0
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "--operation=") {
+			return false
+		}
+		if arg == "--operation" {
+			if i+1 == len(args) || args[i+1] != want {
+				return false
+			}
+			matches++
+		}
+	}
+	return matches == 1
+}
+
 // The complete closed watch history must contain each expected workload and
 // no replacement, replay or overlapping second Apply. Repeated events are
 // checked too, so a later correct object cannot hide an earlier changed one.
@@ -267,8 +293,16 @@ func runnerProtocolNoReplay(jobs []batchv1.Job, pods []corev1.Pod, kind, name, n
 		return errors.New("runner history has no bounded nonempty Apply set")
 	}
 	seenJobs, seenPods := map[types.UID]bool{}, map[types.UID]bool{}
+	ownedJobs := map[types.UID]bool{}
 	for i := range jobs {
 		job := &jobs[i]
+		owned := job.Namespace == namespace && ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, kind, name, resourceUID)
+		if owned {
+			ownedJobs[job.UID] = true
+			if job.Labels[label] != name || (job.Labels[labelOperation] != "apply" && !runnerHistoryReadOnly(job.Spec.Template.Spec, job.Labels[labelOperation], kind)) {
+				return errors.New("runner history lost an owned Job's declared operation")
+			}
+		}
 		if allowed[job.UID].job == nil && (job.Labels[label] != name || job.Labels[labelOperation] != "apply") {
 			continue
 		}
@@ -283,6 +317,10 @@ func runnerProtocolNoReplay(jobs []batchv1.Job, pods []corev1.Pod, kind, name, n
 		pod := &pods[i]
 		owner := metav1.GetControllerOf(pod)
 		ownedApply := owner != nil && allowed[owner.UID].job != nil
+		if owner != nil && ownedJobs[owner.UID] &&
+			(pod.Labels[label] != name || (pod.Labels[labelOperation] != "apply" && !runnerHistoryReadOnly(pod.Spec, pod.Labels[labelOperation], kind))) {
+			return errors.New("runner history lost an owned Pod's declared operation")
+		}
 		if !ownedApply && (pod.Labels[label] != name || pod.Labels[labelOperation] != "apply") {
 			continue
 		}

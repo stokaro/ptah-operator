@@ -1,0 +1,10 @@
+{
+  "source": "PostgreSQL 17 native Docker IP-reuse probe; transport and server timestamp evidence only; no Kubernetes acceptance",
+  "address": "172.19.0.10",
+  "previousID": "599cd70d031d94fae90615c358e5ac5f1dd3c915b17c4af7eacdb9ad390aff72",
+  "currentID": "70aa3ce18587541f402717ef709b3368b276882f625a32c75d92743019baaa06",
+  "created": "2026-09-30T15:13:17.142666427Z",
+  "started": "2026-09-30T15:13:18.013326286Z",
+  "finished": "2026-09-30T15:13:18.13421616Z",
+  "database": "ptah_lifetime_probe"
+}

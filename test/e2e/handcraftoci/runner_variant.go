@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
@@ -48,7 +49,9 @@ func runRunnerVariant(arguments []string) error {
 	if err != nil || validateRunnerFixtureRecord(record) != nil {
 		return errors.New("the incompatible runner has no exact source provenance")
 	}
-	probe := exec.CommandContext(context.Background(), fixtureRunnerPath, "--operation", "apply")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	probe := exec.CommandContext(ctx, fixtureRunnerPath, "--operation", "apply")
 	probe.Env = []string{runner.EnvOperationID + "=fixture-protocol-selftest", runner.EnvRunnerProtocolVersion + "=" + strconv.Itoa(runner.ProtocolVersion)}
 	logs, err := probe.Output()
 	if err != nil {
@@ -60,7 +63,7 @@ func runRunnerVariant(arguments []string) error {
 		mismatch.Message != fmt.Sprintf("the Job expects runner protocol %d; this runner speaks protocol %d", runner.ProtocolVersion, runner.ProtocolVersion+1) {
 		return errors.New("the actual runner fixture did not return the pinned foreign refusal")
 	}
-	updated, err := publishRunnerVariant(context.Background(), newRegistryClient(nil), ref, credential, source, binary, record, runtime.GOARCH)
+	updated, err := publishRunnerVariant(ctx, newRegistryClient(nil), ref, credential, source, binary, record, runtime.GOARCH)
 	if err != nil {
 		return err
 	}
@@ -225,6 +228,16 @@ func publishRunnerVariant(ctx context.Context, registry *http.Client, ref regist
 	if err != nil {
 		return "", err
 	}
+	selected, err := runnerPlatformManifest(raw, architecture)
+	if err != nil {
+		return "", err
+	}
+	if selected.Digest != "" {
+		raw, err = readExecutorManifest(ctx, registry, ref, credential, selected.Digest)
+		if err != nil || len(raw) != selected.Size {
+			return "", errors.New("runner platform manifest changed its digest or size")
+		}
+	}
 	var original manifest
 	if json.Unmarshal(raw, &original) != nil || original.Config.Size > maxSchemaBytes {
 		return "", errors.New("the runner source configuration is absent or over its bound")
@@ -260,4 +273,45 @@ func publishRunnerVariant(ctx context.Context, registry *http.Client, ref regist
 		return "", errors.New("unsupported runner manifest read-back did not match")
 	}
 	return result, nil
+}
+
+// A single-platform build can still produce an OCI index with attestations.
+// Select one native Linux image by its verified descriptor; never select an
+// attestation, another architecture or the first entry by position.
+func runnerPlatformManifest(raw []byte, architecture string) (descriptor, error) {
+	var source struct {
+		SchemaVersion int    `json:"schemaVersion"`
+		MediaType     string `json:"mediaType"`
+		ArtifactType  string `json:"artifactType"`
+		Manifests     []struct {
+			descriptor
+			Platform struct{ OS, Architecture, Variant string } `json:"platform"`
+		} `json:"manifests"`
+	}
+	if json.Unmarshal(raw, &source) != nil || source.SchemaVersion != 2 || source.ArtifactType != "" || (architecture != "amd64" && architecture != "arm64") {
+		return descriptor{}, errors.New("runner source has no supported image contract")
+	}
+	switch source.MediaType {
+	case manifestType, "application/vnd.docker.distribution.manifest.v2+json":
+		return descriptor{}, nil
+	case "application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json":
+	default:
+		return descriptor{}, errors.New("runner source has an unsupported manifest type")
+	}
+	var selected descriptor
+	for _, candidate := range source.Manifests {
+		if candidate.Platform.OS != "linux" || candidate.Platform.Architecture != architecture {
+			continue
+		}
+		if selected.Digest != "" || !imageDigestPattern.MatchString(candidate.Digest) || candidate.Size < 1 || candidate.Size > maxSchemaBytes ||
+			(candidate.MediaType != manifestType && candidate.MediaType != "application/vnd.docker.distribution.manifest.v2+json") ||
+			(candidate.Platform.Variant != "" && !(architecture == "arm64" && candidate.Platform.Variant == "v8")) {
+			return descriptor{}, errors.New("runner index has an ambiguous or unsupported native platform")
+		}
+		selected = candidate.descriptor
+	}
+	if selected.Digest == "" {
+		return descriptor{}, errors.New("runner index has no native Linux image")
+	}
+	return selected, nil
 }

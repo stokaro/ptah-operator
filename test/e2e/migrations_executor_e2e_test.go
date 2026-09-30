@@ -188,7 +188,7 @@ func (m *migrationRun) executionComponentChange(change executionComponentChange)
 		if len(pgBefore) == 0 || !bytes.HasPrefix(audit.pgPrefix, pgBefore) {
 			m.fatalf("executor transition lost its original PostgreSQL journal")
 		}
-		counts, err = postgresMigrationRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients)
+		counts, err = inventory.postgresRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients, "")
 	} else {
 		counts, err = mysqlMigrationRefusalSQL(mysqlBefore, audit.mysqlStatementSnapshot(), database, user, clients)
 	}

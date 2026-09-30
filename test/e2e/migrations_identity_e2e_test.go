@@ -119,7 +119,7 @@ func (m *migrationRun) approvalIdentityReplacement() {
 		if len(pgBefore) == 0 || !bytes.HasPrefix(audit.pgPrefix, pgBefore) {
 			m.fatalf("replacement SQL audit lost its original journal window")
 		}
-		counts, err = postgresMigrationRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients)
+		counts, err = inventory.postgresRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients, "")
 	} else {
 		counts, err = mysqlMigrationRefusalSQL(mysqlBefore, audit.mysqlStatementSnapshot(), database, user, clients)
 	}

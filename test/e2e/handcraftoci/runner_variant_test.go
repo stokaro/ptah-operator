@@ -119,10 +119,22 @@ func TestRunnerVariantRefusesWrongPlatformsAndSourceContracts(t *testing.T) {
 
 func TestRunnerVariantReadsEveryPublishedByteBackByDigest(t *testing.T) {
 	t.Parallel()
-	for _, fault := range []string{"", "source manifest", "source config", "unsafe upload", "upload refused", "blob read-back", "manifest refused", "manifest read-back"} {
+	for _, fault := range []string{"", "index", "index child digest", "index child size", "source manifest", "source config", "unsafe upload", "upload refused", "blob read-back", "manifest refused", "manifest read-back"} {
 		t.Run(fault, func(t *testing.T) {
 			source, config, record := runnerSourceFixture(t)
 			sourceDigest := digest(source)
+			root, rootDigest := source, sourceDigest
+			if strings.HasPrefix(fault, "index") {
+				size := len(source)
+				if fault == "index child size" {
+					size++
+				}
+				root, _ = json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": []any{
+					map[string]any{"mediaType": manifestType, "size": 1, "digest": "sha256:" + strings.Repeat("a", 64), "platform": map[string]string{"os": "unknown", "architecture": "unknown"}},
+					map[string]any{"mediaType": manifestType, "size": size, "digest": sourceDigest, "platform": map[string]string{"os": "linux", "architecture": "amd64"}},
+				}})
+				rootDigest = digest(root)
+			}
 			var stored []byte
 			blobs := map[string][]byte{digest(config): config}
 			credential := credentials{username: "fixture-user", password: "private-value"}
@@ -137,8 +149,11 @@ func TestRunnerVariantReadsEveryPublishedByteBackByDigest(t *testing.T) {
 				switch {
 				case req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/manifests/"):
 					body = source
-					if strings.HasSuffix(req.URL.Path, sourceDigest) {
-						if fault == "source manifest" {
+					if strings.HasPrefix(fault, "index") && strings.HasSuffix(req.URL.Path, rootDigest) {
+						body = root
+						header.Set("Docker-Content-Digest", rootDigest)
+					} else if strings.HasSuffix(req.URL.Path, sourceDigest) {
+						if fault == "source manifest" || fault == "index child digest" {
 							body = []byte("corrupt")
 						}
 						header.Set("Docker-Content-Digest", sourceDigest)
@@ -195,8 +210,8 @@ func TestRunnerVariantReadsEveryPublishedByteBackByDigest(t *testing.T) {
 				return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(bytes.NewReader(body))}, nil
 			}))
 			got, err := publishRunnerVariant(context.Background(), registry, registryReference{host: "registry.test:5000", repository: "runner", tag: "proof"},
-				credential, sourceDigest, runnerELFFixture("amd64"), record, "amd64")
-			if fault == "" {
+				credential, rootDigest, runnerELFFixture("amd64"), record, "amd64")
+			if fault == "" || fault == "index" {
 				if err != nil || uploads != 2 || blobChecks != 2 || manifests != 1 || got != digest(stored) || got == sourceDigest {
 					t.Fatalf("the complete source, upload and read-back controls failed: uploads=%d checks=%d manifests=%d result=%s error=%v", uploads, blobChecks, manifests, got, err)
 				}
@@ -204,5 +219,29 @@ func TestRunnerVariantReadsEveryPublishedByteBackByDigest(t *testing.T) {
 				t.Fatal("a corrupt or failed publication supplied an image identity or leaked its credential")
 			}
 		})
+	}
+}
+
+func TestRunnerIndexRequiresOneExactNativePlatform(t *testing.T) {
+	t.Parallel()
+	for _, architecture := range []string{"amd64", "arm64"} {
+		entry := map[string]any{"mediaType": manifestType, "size": 42, "digest": "sha256:" + strings.Repeat("a", 64), "platform": map[string]string{"os": "linux", "architecture": architecture}}
+		encode := func(entries []any) []byte {
+			raw, err := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": entries})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return raw
+		}
+		if result, err := runnerPlatformManifest(encode([]any{entry}), architecture); err != nil || result.Digest != entry["digest"] {
+			t.Fatal("native image was not selected", result, err)
+		}
+		for name, entries := range map[string][]any{"empty": {}, "ambiguous": {entry, entry}, "wrong platform": {map[string]any{"platform": map[string]string{"os": "windows", "architecture": architecture}}}} {
+			t.Run(architecture+"/"+name, func(t *testing.T) {
+				if _, err := runnerPlatformManifest(encode(entries), architecture); err == nil {
+					t.Fatal("an ambiguous or missing native image passed")
+				}
+			})
+		}
 	}
 }

@@ -17,7 +17,7 @@ func databaseAuditArgs(engine string) []any {
 		return []any{"-c", "logging_collector=on", "-c", "log_destination=jsonlog",
 			"-c", "log_directory=/tmp/ptah-sql-audit", "-c", "log_filename=statements.log",
 			"-c", "log_rotation_age=0", "-c", "log_rotation_size=0",
-			"-c", "log_min_error_statement=error", "-c", "log_hostname=off"}
+			"-c", "log_min_error_statement=error", "-c", "log_hostname=off", "-c", "log_timezone=UTC"}
 	case "mysql":
 		// log-raw also records statements the password rewriter cannot parse.
 		return []any{"--log-output=TABLE", "--log-raw"}

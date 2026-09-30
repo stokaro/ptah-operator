@@ -53,7 +53,7 @@ func (m *migrationRun) assertPostgresMigrationRefusalSQL(audit *databaseSQLAudit
 	}
 	clients, err := inventory.clients(migration)
 	m.check(err, "bind SQL audit clients to the migration")
-	counts, err := postgresMigrationRefusalSQL(audit.pgPrefix[len(before):], database, clients)
+	counts, err := inventory.postgresRefusalSQL(audit.pgPrefix[len(before):], database, clients, "")
 	m.check(err, "refuse every SQL statement outside the declared history diagnostics")
 	m.reportMigrationRefusalSQL(migration, clients, counts)
 }
@@ -67,6 +67,14 @@ func (inventory *migrationSQLInventory) clients(migration *ptahv1alpha1.PtahMigr
 		pods = append(pods, pod)
 	}
 	return migrationSQLClients(migration, jobs, pods, predecessors...)
+}
+
+func (inventory *migrationSQLInventory) postgresRefusalSQL(raw []byte, database string, clients map[string]operationSQLClient, refusedJobUID string) (map[string]int, error) {
+	lifetimes, err := operationSQLLifetimes(clients, inventory.pods)
+	if err != nil {
+		return nil, err
+	}
+	return postgresMigrationRefusalSQLForJob(raw, database, clients, refusedJobUID, lifetimes)
 }
 
 func (m *migrationRun) assertMySQLMigrationRefusalSQL(audit *databaseSQLAudit, before []mysqlStatementRecord, database, user string, migration *ptahv1alpha1.PtahMigration, inventory *migrationSQLInventory) {
@@ -90,7 +98,7 @@ func (m *migrationRun) assertRestoredHistoryRefusalSQL(audit *databaseSQLAudit, 
 		if len(pgBefore) == 0 || !bytes.HasPrefix(audit.pgPrefix, pgBefore) {
 			m.fatalf("restored-history audit has no complete PostgreSQL journal window")
 		}
-		counts, err = postgresMigrationRefusalSQLForJob(audit.pgPrefix[len(pgBefore):], database, clients, jobUID)
+		counts, err = inventory.postgresRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients, jobUID)
 	} else {
 		counts, err = mysqlMigrationRefusalSQLForJob(mysqlBefore, audit.mysqlStatementSnapshot(), database, user, clients, jobUID)
 	}

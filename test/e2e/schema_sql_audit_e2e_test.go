@@ -207,11 +207,13 @@ func (w *schemaRefusalWindow) assertSQL(resource *ptahv1alpha1.PtahSchema, stale
 	}
 	var counts map[string]int
 	if w.audit.engine == "postgresql" {
+		lifetimes, lifetimeErr := operationSQLLifetimes(clients, w.inventory.pods)
+		f.check(lifetimeErr, "bind PostgreSQL statement times to the exact terminal Pod lifetimes")
 		w.audit.snapshot()
 		if len(w.pgBefore) == 0 || !bytes.HasPrefix(w.audit.pgPrefix, w.pgBefore) {
 			f.fatalf("schema refusal audit lost its original PostgreSQL journal")
 		}
-		counts, err = postgresStatementRefusalSQL(w.audit.pgPrefix[len(w.pgBefore):], w.database, clients, acceptsActor, pg, harnessRead)
+		counts, err = postgresStatementRefusalSQL(w.audit.pgPrefix[len(w.pgBefore):], w.database, clients, acceptsActor, pg, harnessRead, lifetimes)
 	} else {
 		counts, err = mysqlStatementRefusalSQL(w.mysqlBefore, w.audit.mysqlStatementSnapshot(), w.database, w.user, clients, w.unusedMySQLAccount, acceptsActor, my)
 	}

@@ -124,7 +124,7 @@ func (m *migrationRun) unsupportedControllerState() {
 				if len(pgBefore) == 0 || !bytes.HasPrefix(audit.pgPrefix, pgBefore) {
 					m.fatalf("the unsupported-state audit lost its PostgreSQL journal")
 				}
-				counts, err = postgresMigrationRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients)
+				counts, err = inventory.postgresRefusalSQL(audit.pgPrefix[len(pgBefore):], database, clients, "")
 			} else {
 				counts, err = mysqlMigrationRefusalSQL(mysqlBefore, audit.mysqlStatementSnapshot(), database, user, clients)
 			}

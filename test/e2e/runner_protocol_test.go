@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"maps"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +18,37 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
+
+func TestUnsupportedRunnerFrameReadsTheNativePrivateImage(t *testing.T) {
+	t.Parallel()
+	read := func(name string) []byte {
+		t.Helper()
+		data, err := os.ReadFile("../../testdata/e2e/readings/unsupported-runner-native-" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	supported := read("supported.jsonl")
+	result, err := runner.ParseResultFor(supported, runner.OperationApply, "native-supported")
+	if err != nil || result.ProtocolVersion != runner.ProtocolVersion || result.ChildExitCode != -1 ||
+		result.Error == nil || result.Error.Code != "missing_coordination_binding" {
+		t.Fatal("the shipping binary's actual protocol-1 transport control was lost", err)
+	}
+	foreign := read("refused.jsonl")
+	if err := unsupportedRunnerFrame(foreign, runner.OperationApply, "native-refused"); err != nil {
+		t.Fatal(err)
+	}
+	if unsupportedRunnerFrame(supported, runner.OperationApply, "native-supported") == nil ||
+		unsupportedRunnerFrame(foreign, runner.OperationApply, "another-operation") == nil ||
+		unsupportedRunnerFrame(foreign, runner.OperationMigrationApply, "native-refused") == nil ||
+		unsupportedRunnerFrame(foreign[:len(foreign)/2], runner.OperationApply, "native-refused") == nil {
+		t.Fatal("a supported, unbound or incomplete native reading substituted for the exact foreign refusal")
+	}
+	if string(read("guard.txt")) != "ptah-runner: runner_protocol_mismatch: the Job expects runner protocol 1; this runner speaks protocol 2\n" {
+		t.Fatal("the native pre-fetch guard did not return its exact protocol refusal")
+	}
+}
 
 func runnerApplyFixture(kind string) (*batchv1.Job, *corev1.Pod, *ptahv1alpha1.PtahSchema, *ptahv1alpha1.ExecutionBindingStatus, controllerIdentity, string) {
 	image := "registry.test/runner@sha256:" + strings.Repeat("b", 64)
@@ -167,10 +199,20 @@ func TestRunnerWatchHistoryRefusesReplayReplacementMissingEvidenceAndOverlap(t *
 	replacementPod := pod.DeepCopy()
 	replacementPod.UID = types.UID("replacement-pod")
 	for name, verify := range map[string]func() error{
-		"empty history":        func() error { return check(nil, nil, expected) },
-		"missing Job":          func() error { return check(jobs[:1], pods, expected) },
-		"missing Pod":          func() error { return check(jobs, pods[:1], expected) },
-		"replay":               func() error { return check(append(jobs, *extra), pods, expected) },
+		"empty history": func() error { return check(nil, nil, expected) },
+		"missing Job":   func() error { return check(jobs[:1], pods, expected) },
+		"missing Pod":   func() error { return check(jobs, pods[:1], expected) },
+		"replay":        func() error { return check(append(jobs, *extra), pods, expected) },
+		"replay without labels": func() error {
+			copy := extra.DeepCopy()
+			copy.Labels = nil
+			return check(append(jobs, *copy), pods, expected)
+		},
+		"replay labeled as History": func() error {
+			copy := extra.DeepCopy()
+			copy.Labels[labelOperation] = "history"
+			return check(append(jobs, *copy), pods, expected)
+		},
 		"Pod replacement":      func() error { return check(jobs, append(pods, *replacementPod), expected) },
 		"earlier image change": func() error { return check(jobs, append([]corev1.Pod{*changedPod}, pods...), expected) },
 		"empty expected set":   func() error { return check(jobs, pods, nil) },
@@ -190,6 +232,12 @@ func TestRunnerWatchHistoryRefusesReplayReplacementMissingEvidenceAndOverlap(t *
 				t.Fatal("a replay, replacement or incomplete runner history passed")
 			}
 		})
+	}
+	history := extra.DeepCopy()
+	history.Labels[labelOperation] = "history"
+	history.Spec.Template.Spec.Containers[0].Args[len(history.Spec.Template.Spec.Containers[0].Args)-1] = "migration-history"
+	if err := check(append(jobs, *history), pods, expected); err != nil {
+		t.Fatal("a declared read-only History was counted as replay", err)
 	}
 	freshJob.CreationTimestamp = metav1.NewTime(time.Unix(103, 0))
 	jobs[1] = *freshJob

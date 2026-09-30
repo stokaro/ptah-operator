@@ -1,0 +1,3 @@
+PTAH_RUNNER_RESULT_V1 224 9b257e345334c46ce6b102064989839fdfec207a8494baa3c29ae2de77a844fa
+{"protocolVersion":2,"operation":"apply","operationId":"native-refused","childExitCode":-1,"stdout":"","error":{"code":"runner_protocol_mismatch","message":"the Job expects runner protocol 1; this runner speaks protocol 2"}}
+PTAH_RUNNER_RESULT_END_V1
