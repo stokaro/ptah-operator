@@ -72,12 +72,16 @@ func (d *dataPlane) executorVariant(name string) string {
 // The installed Deployment uses Recreate. Holding status writes during this
 // rollout prevents either manager from claiming the already admitted decision.
 func setControllerExecutor(ctx context.Context, cluster *harness.Cluster, namespace, name, expected, replacement string) error {
+	return setControllerExecutionComponent(ctx, cluster, types.NamespacedName{Namespace: namespace, Name: name}, executionComponentChange{"executor-image", expected, replacement})
+}
+
+func setControllerExecutionComponent(ctx context.Context, cluster *harness.Cluster, key types.NamespacedName, change executionComponentChange) error {
 	deployment := &appsv1.Deployment{}
-	if err := cluster.Client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, deployment); err != nil {
+	if err := cluster.Client.Get(ctx, key, deployment); err != nil {
 		return err
 	}
 	before := deployment.DeepCopy()
-	if err := replaceControllerExecutor(deployment, expected, replacement); err != nil {
+	if err := replaceControllerExecutionComponent(deployment, change); err != nil {
 		return err
 	}
 	if err := cluster.Client.Patch(ctx, deployment, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -102,9 +106,13 @@ func setControllerExecutor(ctx context.Context, cluster *harness.Cluster, namesp
 // A successful rollout must replace every ready Pod and end each log stream
 // naturally; a canceled stream cannot supply the credential-audit evidence.
 func (f *faultRun) rolloutExecutor(expected, replacement string) {
+	f.rolloutExecutionComponent(executionComponentChange{"executor-image", expected, replacement})
+}
+
+func (f *faultRun) rolloutExecutionComponent(change executionComponentChange) {
 	f.t.Helper()
 	f.auditRuntime()
-	rolloutExecutorManagers(f.t, f.ctx, f.cluster, f.operatorKey(f.controllerName), expected, replacement, f.scan)
+	rolloutExecutionManagers(f.t, f.ctx, f.cluster, f.operatorKey(f.controllerName), change, f.scan)
 	f.loadReadyManagerLeader("")
 	f.auditRuntime()
 }
@@ -112,14 +120,25 @@ func (f *faultRun) rolloutExecutor(expected, replacement string) {
 func (f *faultRun) executorImageChanges() {
 	f.t.Helper()
 	replacement := f.executorVariant("e2e-executor-variant")
-	original := f.in.ExecutorImage
+	f.executionComponentChanges(executionComponentChange{"executor-image", f.in.ExecutorImage, replacement})
+}
+
+func (f *faultRun) ptahVersionChanges() {
+	f.t.Helper()
+	replacement, err := ptahVersionAlias(f.in.PtahVersion)
+	f.check(err, "derive the same pinned Ptah build's alternate version declaration")
+	f.executionComponentChanges(executionComponentChange{"ptah-version", f.in.PtahVersion, replacement})
+}
+
+func (f *faultRun) executionComponentChanges(change executionComponentChange) {
+	f.t.Helper()
 	// Register recovery before changing the live Deployment. It also runs if
 	// the rollout or a later proof fails; the task cluster remains inspectable.
 	scenario := f.t
 	scenario.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 		defer cancel()
-		if err := setControllerExecutor(ctx, f.cluster, f.in.OperatorNamespace, f.controllerName, replacement, original); err != nil {
+		if err := setControllerExecutionComponent(ctx, f.cluster, f.operatorKey(f.controllerName), change.reverse()); err != nil {
 			scenario.Errorf("restore the installed executor identity: %v", err)
 		}
 	})
@@ -133,7 +152,8 @@ func (f *faultRun) executorImageChanges() {
 	}
 	var cases []proof
 	for _, engine := range []string{"postgresql", "mysql"} {
-		name, database := "e2e-executor-change-"+engine, "e2e_executor_change"
+		name := "e2e-" + change.argument + "-change-" + engine
+		database := "e2e_" + strings.ReplaceAll(change.argument, "-", "_") + "_change"
 		secret := name + "-db"
 		kind, reference := "PostgreSQL", f.pgReference
 		if engine == "mysql" {
@@ -143,7 +163,7 @@ func (f *faultRun) executorImageChanges() {
 		f.query(engine, database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'executor-control', 'preserve-this-row')")
 		window := f.startSchemaRefusalWindow(name, engine, database, secret)
 		before := f.checkpointJobs(name, "")
-		f.createSchema(faultSchema{name: name, engine: kind, reference: reference, secret: secret, coordinationKey: "e2e/executor-change/" + engine})
+		f.createSchema(faultSchema{name: name, engine: kind, reference: reference, secret: secret, coordinationKey: "e2e/" + change.argument + "/" + engine})
 		resource := window.waitForSchema("the original executor's plan", planAwaitingApproval)
 		plan := f.schemaPlan(resource.Status.Plan.Name)
 		controls := []operationSQLClient{window.resultControl(resource, "observe", before), window.resultControl(resource, "plan", before)}
@@ -157,14 +177,14 @@ func (f *faultRun) executorImageChanges() {
 		}
 		f.assertNoNewJobs(row.name, "apply", row.before)
 	}
-	f.rolloutExecutor(original, replacement)
+	f.rolloutExecutionComponent(change)
 	f.mustResumeStatusWrites("allow reconciliation under the changed executor")
 	for _, row := range cases {
 		current := row.window.waitForSchema("a new executor-bound approval gate", func(resource *ptahv1alpha1.PtahSchema) bool {
 			return planAwaitingApproval(resource) && resource.Status.Plan.UID != row.plan.UID
 		})
 		fresh := f.schemaPlan(current.Status.Plan.Name)
-		f.check(changedSchemaExecutorDecision(row.resource, current, row.plan, fresh, original, replacement), "bind the replacement decision to the changed executor only")
+		f.check(changedSchemaExecutionDecision(row.resource, current, row.plan, fresh, change), "bind the replacement decision to the changed execution component only")
 		f.waitForApproval(row.name+"-old", "the old executor approval to become stale", func(approval *ptahv1alpha1.PtahSchemaApproval) bool {
 			return conditionIs(approval.Status.Conditions, "Stale", "True", "ExecutionBindingChanged") && !conditionStatus(approval.Status.Conditions, "Consumed", "True")
 		})
@@ -180,8 +200,9 @@ func (f *faultRun) executorImageChanges() {
 		f.check(automaticApplyResult(result, fresh.Spec.ContentDigest, fresh.Spec.CoordinationDigest, fresh.Spec.TargetIdentityDigest), "verify the replacement executor's exact plan")
 		job := &batchv1.Job{}
 		f.check(f.get(f.captured.jobName, job), "read the replacement executor's Apply Job")
-		if job.UID != types.UID(f.captured.jobUID) || !jobUsesExecutor(job, replacement) {
-			f.fatalf("the fresh Apply did not run the replacement executor image")
+		if job.UID != types.UID(f.captured.jobUID) || !jobUsesExecutor(job, fresh.Spec.ExecutorImage) ||
+			job.Annotations["operator.ptah.run/ptah-version"] != fresh.Spec.PtahVersion || job.Annotations[annotationBindingID] != fresh.Spec.ExecutionBindingID {
+			f.fatalf("the fresh Apply did not carry its exact execution components")
 		}
 		row.window.audit.assertRecords(beforeSQL, row.window.audit.snapshot(), row.window.audit.terminalPod(map[string]string{"job-name": job.Name}, string(job.UID)), true)
 		row.window.audit.close()
@@ -192,9 +213,9 @@ func (f *faultRun) executorImageChanges() {
 			f.query(row.engine, row.database, "SELECT count(*) FROM e2e_widgets") != "1" {
 			f.fatalf("executor transition changed the preserved row")
 		}
-		f.logf("PASS %s executor identity changed after approval: old epoch refused, new approval applied", row.engine)
+		f.logf("PASS %s %s changed after approval: old epoch refused, new approval applied", row.engine, change.argument)
 	}
-	f.rolloutExecutor(replacement, original)
+	f.rolloutExecutionComponent(change.reverse())
 	f.auditRuntimeCredentials()
 	f.assertObservedJobsAudited()
 }

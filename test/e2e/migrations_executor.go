@@ -27,6 +27,12 @@ func executorVariantReference(original, output string) (string, error) {
 func changedMigrationExecutorDecision(before, current *ptahv1alpha1.PtahMigration, old, fresh *ptahv1alpha1.PtahMigrationPlan,
 	original, replacement string,
 ) error {
+	return changedMigrationExecutionDecision(before, current, old, fresh, executionComponentChange{"executor-image", original, replacement})
+}
+
+func changedMigrationExecutionDecision(before, current *ptahv1alpha1.PtahMigration, old, fresh *ptahv1alpha1.PtahMigrationPlan,
+	change executionComponentChange,
+) error {
 	if before == nil || current == nil || old == nil || fresh == nil || before.UID == "" || before.UID != current.UID ||
 		before.Name != current.Name || before.Namespace != current.Namespace || !equality.Semantic.DeepEqual(before.Spec, current.Spec) ||
 		before.Status.ObservedGeneration != before.Generation || before.Status.UnresolvedRun != nil ||
@@ -37,15 +43,19 @@ func changedMigrationExecutorDecision(before, current *ptahv1alpha1.PtahMigratio
 		return errors.New("executor transition changed the migration or did not reach its fresh approval gate")
 	}
 	previous, next := before.Status.ExecutionBinding, current.Status.ExecutionBinding
-	if previous == nil || next == nil || !executionEpoch.MatchString(previous.Epoch) || !executionEpoch.MatchString(next.Epoch) ||
-		previous.Epoch == next.Epoch || previous.ExecutorImage != original || next.ExecutorImage != replacement ||
-		original == replacement || !digestSuffix.MatchString(original) || !digestSuffix.MatchString(replacement) ||
-		previous.PtahVersion != next.PtahVersion || previous.RunnerProtocolVersion != next.RunnerProtocolVersion || previous.ControllerStateVersion != next.ControllerStateVersion {
-		return errors.New("migration executor transition did not rotate exactly the image-bound epoch")
+	if !change.binding(previous, next) {
+		return errors.New("migration execution transition did not rotate exactly the changed component's epoch")
+	}
+	imageMatches := old.Spec.ExecutorImage == fresh.Spec.ExecutorImage
+	versionMatches := old.Spec.PtahVersion == fresh.Spec.PtahVersion
+	if change.argument == "executor-image" {
+		imageMatches = old.Spec.ExecutorImage == change.original && fresh.Spec.ExecutorImage == change.replacement
+	} else {
+		versionMatches = old.Spec.PtahVersion == change.original && fresh.Spec.PtahVersion == change.replacement
 	}
 	if old.Spec.MigrationRef.Name != before.Name || old.Spec.MigrationRef.UID != before.UID ||
 		old.Spec.ExecutionBindingID != previous.Epoch || fresh.Spec.ExecutionBindingID != next.Epoch ||
-		old.Spec.ExecutorImage != original || fresh.Spec.ExecutorImage != replacement ||
+		!imageMatches || !versionMatches ||
 		old.Spec.Fingerprint == "" || fresh.Spec.Fingerprint == "" || old.Spec.Fingerprint == fresh.Spec.Fingerprint ||
 		old.Spec.HistoryFingerprint == "" || planVersionList(old) != "1 2 3" {
 		return errors.New("migration plans do not bind the original and replacement execution identities")
@@ -54,6 +64,7 @@ func changedMigrationExecutorDecision(before, current *ptahv1alpha1.PtahMigratio
 	// and every target, source, policy and execution contract must be unchanged.
 	normalized := fresh.DeepCopy()
 	normalized.Spec.ExecutorImage = old.Spec.ExecutorImage
+	normalized.Spec.PtahVersion = old.Spec.PtahVersion
 	normalized.Spec.ExecutionBindingID = old.Spec.ExecutionBindingID
 	normalized.Spec.Fingerprint = old.Spec.Fingerprint
 	normalized.Spec.CreatedAt = old.Spec.CreatedAt

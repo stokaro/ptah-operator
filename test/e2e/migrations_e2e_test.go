@@ -99,6 +99,10 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		struct {
 			name string
 			body func()
+		}{"approval-ptah-version-change", m.ptahVersionChange},
+		struct {
+			name string
+			body func()
 		}{"running-apply-executor-image-change", m.runningExecutorImageChange})
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {

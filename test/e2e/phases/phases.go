@@ -255,6 +255,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"four-eyes-distinct-approver",
 		"pod-metadata-admission",
 		"approval-executor-image-change",
+		"approval-ptah-version-change",
 		"running-apply-executor-image-change",
 	},
 	Preparation: 1,
@@ -272,6 +273,8 @@ type MigrationsInputs struct {
 	// ExecutorImage publishes the migration artifacts, with the command a
 	// person would use.
 	ExecutorImage string `env:"E2E_EXECUTOR_IMAGE"`
+	// PtahVersion is the driver's declaration of the pinned executor build.
+	PtahVersion string `env:"E2E_PTAH_VERSION"`
 	// RunnerImage is the runner image the migration Jobs carry.
 	RunnerImage string `env:"E2E_RUNNER_IMAGE"`
 	// ControllerImage is the candidate manager image, pinned by digest.
@@ -313,6 +316,7 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 		"approval-verification-policy-uid-change",
 		"approval-verification-policy-content-change",
 		"approval-executor-image-change",
+		"approval-ptah-version-change",
 		"running-apply-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
@@ -337,6 +341,7 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"approval-verification-policy-uid-change",
 		"approval-verification-policy-content-change",
 		"approval-executor-image-change",
+		"approval-ptah-version-change",
 		"running-apply-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API

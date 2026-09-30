@@ -65,7 +65,8 @@ func (m *migrationRun) executorHistoryControl(resource *ptahv1alpha1.PtahMigrati
 	m.captureMigrationSQLInventory(resource.Name, inventory)
 	var selected []*batchv1.Job
 	for _, job := range inventory.jobs {
-		if job.Labels[labelOperation] == "history" && job.Annotations[annotationBindingID] == plan.Spec.ExecutionBindingID && jobUsesExecutor(&job, plan.Spec.ExecutorImage) {
+		if job.Labels[labelOperation] == "history" && job.Annotations[annotationBindingID] == plan.Spec.ExecutionBindingID &&
+			job.Annotations["operator.ptah.run/ptah-version"] == plan.Spec.PtahVersion && jobUsesExecutor(&job, plan.Spec.ExecutorImage) {
 			selected = append(selected, job.DeepCopy())
 		}
 	}
@@ -100,9 +101,20 @@ func (m *migrationRun) executorHistoryControl(resource *ptahv1alpha1.PtahMigrati
 
 func (m *migrationRun) executorImageChange() {
 	m.t.Helper()
-	name := "e2e-executor-change-" + m.engine.name
-	database, secret := "ptah_e2e_executor_change", name+"-db"
-	replacement, original := m.executorVariant(), m.in.ExecutorImage
+	m.executionComponentChange(executionComponentChange{"executor-image", m.in.ExecutorImage, m.executorVariant()})
+}
+
+func (m *migrationRun) ptahVersionChange() {
+	m.t.Helper()
+	replacement, err := ptahVersionAlias(m.in.PtahVersion)
+	m.check(err, "derive the same pinned Ptah build's alternate version declaration")
+	m.executionComponentChange(executionComponentChange{"ptah-version", m.in.PtahVersion, replacement})
+}
+
+func (m *migrationRun) executionComponentChange(change executionComponentChange) {
+	m.t.Helper()
+	name := "e2e-" + change.argument + "-change-" + m.engine.name
+	database, secret := "ptah_e2e_"+strings.ReplaceAll(change.argument, "-", "_")+"_change", name+"-db"
 	deployments := &appsv1.DeploymentList{}
 	m.check(m.cluster.Client.List(m.ctx, deployments, client.MatchingLabels{"app.kubernetes.io/component": "controller"}), "find the executor rollout Deployment")
 	if len(deployments.Items) != 1 {
@@ -114,7 +126,7 @@ func (m *migrationRun) executorImageChange() {
 	scenario.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 		defer cancel()
-		if err := setControllerExecutor(ctx, m.cluster, key.Namespace, key.Name, replacement, original); err != nil {
+		if err := setControllerExecutionComponent(ctx, m.cluster, key, change.reverse()); err != nil {
 			scenario.Errorf("restore the migration executor identity: %v", err)
 		}
 	})
@@ -141,7 +153,7 @@ func (m *migrationRun) executorImageChange() {
 		})
 	}
 	m.mustCreate(m.migrationDocument(migrationSpec{name: name, secret: secret, reference: m.reference(""),
-		coordinationKey: "e2e/executor-change/" + m.engine.name, apply: "OnApproval", interval: "1h"}))
+		coordinationKey: "e2e/" + change.argument + "/" + m.engine.name, apply: "OnApproval", interval: "1h"}))
 	before := wait("the original executor's approval gate", func(resource *ptahv1alpha1.PtahMigration) bool {
 		return resource.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval && resource.Status.Plan != nil && resource.Status.ActiveOperation == nil
 	})
@@ -153,13 +165,13 @@ func (m *migrationRun) executorImageChange() {
 		m.fatalf("executor transition lost the undispatched migration boundary")
 	}
 	m.assertNoNewApplyJob(nil, "before the executor changed", name)
-	rolloutExecutorManagers(m.t, m.ctx, m.cluster, key, original, replacement, m.scan)
+	rolloutExecutionManagers(m.t, m.ctx, m.cluster, key, change, m.scan)
 	m.check(barrier.resume(m.ctx), "resume reconciliation under the replacement executor")
 	current := wait("the replacement executor's approval gate", func(resource *ptahv1alpha1.PtahMigration) bool {
 		return changedMigrationApprovalRefused(resource, old.UID, before.Generation, false)
 	})
 	fresh := m.planOf(current.Status.Plan.Name)
-	m.check(changedMigrationExecutorDecision(before, current, old, fresh, original, replacement), "bind the replacement migration decision")
+	m.check(changedMigrationExecutionDecision(before, current, old, fresh, change), "bind the replacement migration decision")
 	currentHistory := m.executorHistoryControl(current, fresh, inventory)
 	m.assertNoNewApplyJob(nil, "under the original executor's approval", name)
 	stale := &ptahv1alpha1.PtahMigrationApproval{}
@@ -192,7 +204,8 @@ func (m *migrationRun) executorImageChange() {
 	}
 	job := &batchv1.Job{}
 	m.check(m.get(run.JobName, job), "read the replacement executor's Apply Job")
-	if job.UID != run.JobUID || !jobUsesExecutor(job, replacement) || job.Annotations[annotationBindingID] != fresh.Spec.ExecutionBindingID ||
+	if job.UID != run.JobUID || !jobUsesExecutor(job, fresh.Spec.ExecutorImage) || job.Annotations[annotationBindingID] != fresh.Spec.ExecutionBindingID ||
+		job.Annotations["operator.ptah.run/ptah-version"] != fresh.Spec.PtahVersion ||
 		!ownedExactlyOnce(job.OwnerReferences, ptahSchemaAPIVersion, "PtahMigration", current.Name, current.UID) {
 		m.fatalf("the fresh migration Apply lost its resource, image or execution epoch")
 	}
@@ -211,6 +224,6 @@ func (m *migrationRun) executorImageChange() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id = 1", database) != "blue" {
 		m.fatalf("the freshly approved executor did not converge from the database")
 	}
-	rolloutExecutorManagers(m.t, m.ctx, m.cluster, key, replacement, original, m.scan)
-	m.logf("PASS %s executor image changed after migration approval: old decision refused; fresh decision applied once", m.engine.kind)
+	rolloutExecutionManagers(m.t, m.ctx, m.cluster, key, change.reverse(), m.scan)
+	m.logf("PASS %s %s changed after migration approval: old decision refused; fresh decision applied once", m.engine.kind, change.argument)
 }

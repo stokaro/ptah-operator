@@ -22,6 +22,12 @@ import (
 func rolloutExecutorManagers(t *testing.T, ctx context.Context, cluster *harness.Cluster, key types.NamespacedName,
 	expected, replacement string, scan func([]byte, string),
 ) {
+	rolloutExecutionManagers(t, ctx, cluster, key, executionComponentChange{"executor-image", expected, replacement}, scan)
+}
+
+func rolloutExecutionManagers(t *testing.T, ctx context.Context, cluster *harness.Cluster, key types.NamespacedName,
+	change executionComponentChange, scan func([]byte, string),
+) {
 	t.Helper()
 	deployment := &appsv1.Deployment{}
 	if err := cluster.Client.Get(ctx, key, deployment); err != nil {
@@ -78,7 +84,7 @@ func rolloutExecutorManagers(t *testing.T, ctx context.Context, cluster *harness
 			t.Fatal("executor rollout lost a manager log before the destructive window")
 		}
 	}
-	if err := setControllerExecutor(ctx, cluster, key.Namespace, key.Name, expected, replacement); err != nil {
+	if err := setControllerExecutionComponent(ctx, cluster, key, change); err != nil {
 		t.Fatal("roll out executor identity:", err)
 	}
 	timer := time.NewTimer(time.Minute)
