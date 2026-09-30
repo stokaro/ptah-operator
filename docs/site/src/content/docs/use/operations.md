@@ -1686,7 +1686,7 @@ while `ptah_operator_unresolved_view_synced` reads 0.
 | `ptah_operator_overdue_resources{family}` | Resources, not suspended, past their own `status.nextReconciliationTime` |
 | `ptah_operator_overdue_seconds{family}` | How far past it the latest one is. Absent where none is overdue |
 | `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type. A failed attempt waiting for its retry is not in flight |
-| `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been in flight |
+| `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been eligible to run, excluding a declared retry delay |
 | `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
 | `ptah_operator_stored_plans{family}` | Plans retained in the cluster. The operator prunes none; [pruning stored plans](#prune-plans) is the procedure |
 | `ptah_operator_stored_plan_bytes{}` | Bytes the retained schema plans hold in their chunks, from each plan's `spec.size`. A migration plan stores no chunk |

@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
@@ -127,7 +129,7 @@ func (a *alertingRun) stalledFamily(family string) {
 	a.gateOpened = true
 	a.check(a.setGate(a.ctx, "open"), "release the original held %s executor", family)
 	var finished time.Time
-	a.check(harness.Wait(a.ctx, "the original Resolve's native terminal failure", alTimeout, alClaimPoll,
+	a.check(harness.Wait(a.ctx, "the original Resolve's terminal transport and deferred retry", alTimeout, alClaimPoll,
 		func(context.Context) (bool, string, error) {
 			job, pod, _ := a.heldWorkload(claim, podUID)
 			object, err := a.heldResource(family)
@@ -138,12 +140,27 @@ func (a *alertingRun) stalledFamily(family string) {
 			if !claim.sameResource(reading) {
 				return false, "", fmt.Errorf("the %s resource changed during the held operation", family)
 			}
-			if pod.Status.Phase != corev1.PodFailed || job.Status.Failed == 0 || reading.phase != "Failed" {
-				return false, "the original Pod, Job or resource has not recorded failure", nil
+			if pod.Status.Phase != corev1.PodSucceeded || !jobComplete(job) {
+				return false, "the original Pod or Job has not completed its result transport", nil
 			}
 			finished, err = alStalledFinished(pod, claim, podUID)
-			return err == nil, "", err
-		}), "observe the original %s Resolve failure", family)
+			return err == nil && alStalledAccounted(object, claim, finished), "the original attempt has not been accounted for with its next retry deferred", err
+		}), "observe the original %s Resolve outcome", family)
+	_, terminalPod, _ := a.heldWorkload(claim, podUID)
+	logs, err := a.cluster.ContainerLog(a.ctx, claim.namespace, terminalPod.Name, "ptah")
+	a.check(err, "read the exact held Resolve result")
+	if a.credentials.Password != "" && bytes.Contains(logs, []byte(a.credentials.Password)) {
+		a.fatalf("the held Resolve result exposed a registry credential")
+	}
+	result, err := runner.ParseResultFor(logs, runner.OperationResolve, claim.id)
+	a.check(err, "bind the held Resolve result to its original operation")
+	if result.Error == nil || result.Error.Code != "child_exit" || result.ChildExitCode <= 0 || result.Uncertain || result.Truncation != nil {
+		a.fatalf("the released Resolve did not report the expected failed OCI child through successful transport")
+	}
+	_, retainedPod, _ := a.heldWorkload(claim, podUID)
+	if retainedPod.UID != terminalPod.UID {
+		a.fatalf("the held Resolve Pod changed while its result was read")
+	}
 	resolved, _ := a.waitForDelivery(alMatch{status: "resolved", alertName: alOperationStall, labels: labels},
 		"the original "+family+" stalled incident resolution", time.Until(finished.Add(alStalledResolution)), index+1)
 	if !alStalledCleared(firing, resolved, finished) || !a.noActiveAlerts(query) {

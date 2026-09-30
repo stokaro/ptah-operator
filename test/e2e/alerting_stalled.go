@@ -122,12 +122,11 @@ func alStalledPodHeld(pod *corev1.Pod) bool {
 // Date resolution against the original executor's own terminal timestamps.
 // A later status poll must not extend the receiver's recovery deadline.
 func alStalledFinished(pod *corev1.Pod, claim alStalledClaim, uid types.UID) (time.Time, error) {
-	if !alStalledPodMatches(pod, claim, uid) || pod.Status.Phase != corev1.PodFailed ||
+	if !alStalledPodMatches(pod, claim, uid) || pod.Status.Phase != corev1.PodSucceeded ||
 		len(pod.Spec.Containers) == 0 || len(pod.Spec.EphemeralContainers) != 0 {
-		return time.Time{}, errors.New("the original held executor has no terminal failure")
+		return time.Time{}, errors.New("the original held executor has no complete result transport")
 	}
 	var finished time.Time
-	failed := false
 	for _, group := range []struct {
 		containers []corev1.Container
 		statuses   []corev1.ContainerStatus
@@ -146,19 +145,40 @@ func alStalledFinished(pod *corev1.Pod, claim alStalledClaim, uid types.UID) (ti
 			terminal := status.State.Terminated
 			if !wanted[status.Name] || status.RestartCount != 0 || terminal == nil || status.State.Running != nil || status.State.Waiting != nil ||
 				status.LastTerminationState.Terminated != nil || terminal.StartedAt.IsZero() ||
-				terminal.FinishedAt.IsZero() || terminal.StartedAt.Before(&metav1.Time{Time: claim.started}) ||
+				terminal.FinishedAt.IsZero() || terminal.ExitCode != 0 || terminal.StartedAt.Before(&metav1.Time{Time: claim.started}) ||
 				terminal.FinishedAt.Before(&terminal.StartedAt) {
 				return time.Time{}, errors.New("the held executor has incomplete or replaced execution evidence")
 			}
 			delete(wanted, status.Name)
-			failed = failed || terminal.ExitCode != 0
 			if terminal.FinishedAt.After(finished) {
 				finished = terminal.FinishedAt.Time
 			}
 		}
 	}
-	if !failed || finished.IsZero() {
-		return time.Time{}, errors.New("the held executor did not record a failed execution")
+	if finished.IsZero() {
+		return time.Time{}, errors.New("the held executor did not finish its result transport")
 	}
 	return finished, nil
+}
+
+// Both controllers retain a failed read-only attempt for retry, but they
+// encode the wait differently. Require the original attempt to be accounted
+// for and the next one deferred; neither family needs another transient phase.
+func alStalledAccounted(object client.Object, claim alStalledClaim, finished time.Time) bool {
+	reading := alStalledReading(object)
+	if !claim.sameResource(reading) || finished.IsZero() || reading.id != claim.id || reading.operation != claim.operation ||
+		reading.jobUID != "" || reading.jobName == "" || reading.jobName == claim.jobName {
+		return false
+	}
+	switch r := object.(type) {
+	case *ptahv1.PtahSchema:
+		return r.Status.Phase == ptahv1.PhaseFailed && r.Status.NextReconciliationTime != nil &&
+			r.Spec.Execution.FailureRetryInterval.Duration == time.Hour && !r.Status.NextReconciliationTime.Time.Before(finished.Add(time.Hour))
+	case *ptahv1.PtahMigration:
+		active := r.Status.ActiveOperation
+		return active != nil && r.Status.Phase == ptahv1.MigrationPhaseResolving && active.RetryNotBefore != nil &&
+			r.Spec.Execution.FailureRetryInterval.Duration == time.Hour && !active.RetryNotBefore.Time.Before(finished.Add(time.Hour)) &&
+			!active.StartedAt.Time.Before(finished)
+	}
+	return false
 }

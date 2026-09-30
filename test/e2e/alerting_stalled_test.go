@@ -27,8 +27,8 @@ func alStalledFixture() (alStalledClaim, *batchv1.Job, *corev1.Pod) {
 		Annotations:       map[string]string{workload.AnnotationOperationID: claim.id}, Labels: map[string]string{workload.LabelOperation: "resolve"},
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: claim.jobName, UID: claim.jobUID, Controller: ptr.To(true)}}},
 		Spec: corev1.PodSpec{NodeSelector: map[string]string{alGateLabel: "open"}, Containers: []corev1.Container{{Name: "runner"}}},
-		Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "runner", State: corev1.ContainerState{
-			Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, StartedAt: metav1.NewTime(started.Add(70 * time.Second)), FinishedAt: metav1.NewTime(started.Add(75 * time.Second))}}}}}}
+		Status: corev1.PodStatus{Phase: corev1.PodSucceeded, ContainerStatuses: []corev1.ContainerStatus{{Name: "runner", State: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, StartedAt: metav1.NewTime(started.Add(70 * time.Second)), FinishedAt: metav1.NewTime(started.Add(75 * time.Second))}}}}}}
 	return claim, job, pod
 }
 
@@ -137,7 +137,7 @@ func TestAlStalledWorkloadIdentityAndTerminalEvidence(t *testing.T) {
 		"before claim": func(p *corev1.Pod) {
 			p.Status.ContainerStatuses[0].State.Terminated.StartedAt = metav1.NewTime(claim.started.Add(-time.Second))
 		},
-		"success": func(p *corev1.Pod) { p.Status.ContainerStatuses[0].State.Terminated.ExitCode = 0 },
+		"failed transport": func(p *corev1.Pod) { p.Status.ContainerStatuses[0].State.Terminated.ExitCode = 1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := pod.DeepCopy()
@@ -187,5 +187,94 @@ func TestAlStalledDeliveryBoundsKeepSubsecondAndIncidentIdentity(t *testing.T) {
 		if alStalledCleared(firing, bad, finished) {
 			t.Fatal("late, different-incident or premature resolution passed")
 		}
+	}
+}
+
+func TestAlStalledAccountedRequiresTheOriginalAttemptAndDeferredRetry(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			claim, _, _ := alStalledFixture()
+			claim.family = family
+			finished := claim.started.Add(75 * time.Second)
+			body, err := json.Marshal(alHeldResource(claim.namespace, family))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var object client.Object = &ptahv1.PtahSchema{}
+			if family == "migration" {
+				object = &ptahv1.PtahMigration{}
+			}
+			if err := json.Unmarshal(body, object); err != nil {
+				t.Fatal(err)
+			}
+			object.SetName(claim.name)
+			object.SetUID(claim.uid)
+			object.SetGeneration(claim.generation)
+			deadline := metav1.NewTime(finished.Add(time.Hour + time.Second))
+			switch r := object.(type) {
+			case *ptahv1.PtahSchema:
+				r.Status.Phase = ptahv1.PhaseFailed
+				r.Status.NextReconciliationTime = &deadline
+				r.Status.ActiveOperation = &ptahv1.ActiveOperationStatus{ID: claim.id, Type: ptahv1.OperationResolve, JobName: "retry-job", StartedAt: metav1.NewTime(claim.started)}
+			case *ptahv1.PtahMigration:
+				r.Status.Phase = ptahv1.MigrationPhaseResolving
+				r.Status.ActiveOperation = &ptahv1.MigrationOperationStatus{ID: claim.id, Type: ptahv1.MigrationOperationResolve, JobName: "retry-job", StartedAt: metav1.NewTime(finished.Add(time.Second)), RetryNotBefore: &deadline}
+			}
+			if !alStalledAccounted(object, claim, finished) {
+				t.Fatal("accounted failed operation with deferred retry rejected")
+			}
+			for _, field := range []string{"uid", "generation", "id", "jobName", "jobUID", "deadline", "phase", "interval", "active"} {
+				t.Run(field, func(t *testing.T) {
+					bad := object.DeepCopyObject().(client.Object)
+					switch field {
+					case "uid":
+						bad.SetUID("replacement")
+					case "generation":
+						bad.SetGeneration(claim.generation + 1)
+					}
+					early := metav1.NewTime(finished.Add(time.Hour - time.Second))
+					switch r := bad.(type) {
+					case *ptahv1.PtahSchema:
+						switch field {
+						case "id":
+							r.Status.ActiveOperation.ID = "different"
+						case "jobName":
+							r.Status.ActiveOperation.JobName = claim.jobName
+						case "jobUID":
+							r.Status.ActiveOperation.JobUID = "dispatched"
+						case "deadline":
+							r.Status.NextReconciliationTime = &early
+						case "phase":
+							r.Status.Phase = ptahv1.PhaseResolving
+						case "interval":
+							r.Spec.Execution.FailureRetryInterval.Duration = time.Minute
+						case "active":
+							r.Status.ActiveOperation = nil
+						}
+					case *ptahv1.PtahMigration:
+						switch field {
+						case "id":
+							r.Status.ActiveOperation.ID = "different"
+						case "jobName":
+							r.Status.ActiveOperation.JobName = claim.jobName
+						case "jobUID":
+							r.Status.ActiveOperation.JobUID = "dispatched"
+						case "deadline":
+							r.Status.ActiveOperation.RetryNotBefore = &early
+						case "phase":
+							r.Status.Phase = ptahv1.MigrationPhaseFailed
+						case "interval":
+							r.Spec.Execution.FailureRetryInterval.Duration = time.Minute
+						case "active":
+							r.Status.ActiveOperation = nil
+						}
+					}
+					if alStalledAccounted(bad, claim, finished) {
+						t.Fatal("changed identity or missing retry evidence accepted")
+					}
+				})
+			}
+		})
 	}
 }
