@@ -1539,6 +1539,36 @@ func TestFaultApprovalConsumed(t *testing.T) {
 			}},
 		}}, planUID: "plan-uid"}
 	}
+	// A dispatched approval can still authorize the current immutable plan
+	// while an unknown Apply waits for read-only recovery. Retirement is later.
+	current := fresh()
+	current.stored.Object["status"].(map[string]any)["conditions"] = []any{
+		ftApprovalCondition("Consumed", "True", "DispatchCommitted"),
+		ftApprovalCondition("Accepted", "True", "CurrentPlan"),
+		ftApprovalCondition("Stale", "False", "CurrentPlan"),
+	}
+	if _, err := faultApprovalCommitted(current.stored, current.planUID); err != nil {
+		t.Fatal(err)
+	}
+	if faultApprovalConsumed(current.stored, current.planUID) == nil {
+		t.Fatal("a current plan passed as retired")
+	}
+	for _, change := range []string{"no dispatch", "wrong reason", "wrong plan", "missing identity stamp"} {
+		bad := current.stored.DeepCopy()
+		switch change {
+		case "no dispatch":
+			bad.Object["status"].(map[string]any)["conditions"] = []any{ftApprovalCondition("Consumed", "False", "Pending")}
+		case "wrong reason":
+			bad.Object["status"].(map[string]any)["conditions"] = []any{ftApprovalCondition("Consumed", "True", "Other")}
+		case "wrong plan":
+			bad.Object["spec"].(map[string]any)["planRef"].(map[string]any)["uid"] = "another-plan"
+		case "missing identity stamp":
+			delete(bad.Object["spec"].(map[string]any), "mutationRequestUID")
+		}
+		if _, err := faultApprovalCommitted(bad, current.planUID); err == nil {
+			t.Fatalf("%s passed as committed dispatch", change)
+		}
+	}
 	accepts := func(a *ftStoredApproval) bool { return faultApprovalConsumed(a.stored, a.planUID) == nil }
 	spec := func(a *ftStoredApproval) map[string]any { return a.stored.Object["spec"].(map[string]any) }
 	conditions := func(a *ftStoredApproval) []any {

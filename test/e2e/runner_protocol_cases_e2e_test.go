@@ -94,7 +94,8 @@ func (f *faultRun) unsupportedRunnerProtocols() {
 			pending := resource.Status.PendingObservation
 			return pending != nil && pending.ApplyJobUID == r.refused.job.UID && pending.Outcome == ptahv1alpha1.PendingObservationOutcomeUnknown
 		})
-		f.assertApprovalConsumed(r.name+"-old", string(r.plan.UID))
+		_, err = faultApprovalCommitted(f.unstructuredApproval(r.name+"-old"), string(r.plan.UID))
+		f.check(err, "retain the committed approval while the refused Apply awaits read-only recovery")
 	}
 	// Every started container, including a refused read-only authority guard,
 	// is audited before the manager that used the fixture is removed.
@@ -129,6 +130,9 @@ func (f *faultRun) unsupportedRunnerProtocols() {
 		f.check(runnerProtocolApplyInputs(freshJob, "PtahSchema", current, current.Status.ExecutionBinding, change.original, plan.Spec.Fingerprint, f.controller), "bind the restored runner's actual Apply")
 		r.window.audit.assertRecords(beforeSQL, r.window.audit.snapshot(), r.window.audit.terminalPod(map[string]string{"job-name": freshJob.Name}, string(freshJob.UID)), true)
 		r.window.audit.close()
+		// Successful recovery retires both plans. Before recovery the original
+		// decision was already consumed, but its plan could legitimately be current.
+		f.assertApprovalConsumed(r.name+"-old", string(r.plan.UID))
 		f.assertApprovalConsumed(r.name+"-current", string(plan.UID))
 		f.assertOneNewJob(r.name, "apply", beforeApply)
 		storedStateWatchBarrier(f.t, f.ctx, f.cluster, schemas, f.schema(r.name))

@@ -895,28 +895,41 @@ func executionIdentityOnJob(job *batchv1.Job, controller controllerIdentity) boo
 		template[annotationBindingID] == binding && controller.stampedOn(template)
 }
 
-// faultApprovalConsumed is an approval, as stored, that dispatched the plan
-// named and was retired with it: nothing in its spec but what a person wrote
-// and admission stamped, and the history of both kept.
-func faultApprovalConsumed(stored *unstructured.Unstructured, planUID string) error {
+// faultApprovalCommitted proves dispatch, independently of later plan retirement.
+// An unknown result may retain a current plan while read-only recovery is pending.
+func faultApprovalCommitted(stored *unstructured.Unstructured, planUID string) (*ptahv1alpha1.PtahSchemaApproval, error) {
+	if stored == nil {
+		return nil, errors.New("it has no stored approval")
+	}
 	spec, found, err := unstructured.NestedMap(stored.Object, "spec")
 	if err != nil || !found {
-		return errors.New("it has no spec")
+		return nil, errors.New("it has no spec")
 	}
 	if keys := slices.Sorted(maps.Keys(spec)); !slices.Equal(keys,
 		[]string{"approvedAt", "approver", "mutationRequestUID", "planFingerprint", "planRef", "schemaRef"}) {
-		return fmt.Errorf("its spec carries %v", keys)
+		return nil, fmt.Errorf("its spec carries %v", keys)
 	}
 	approval := &ptahv1alpha1.PtahSchemaApproval{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(stored.Object, approval); err != nil {
-		return fmt.Errorf("it does not decode: %w", err)
+		return nil, fmt.Errorf("it does not decode: %w", err)
+	}
+	if planUID == "" || string(approval.Spec.PlanRef.UID) != planUID {
+		return nil, fmt.Errorf("it approves plan UID %s", approval.Spec.PlanRef.UID)
+	}
+	if !conditionIs(approval.Status.Conditions, "Consumed", metav1.ConditionTrue, "DispatchCommitted") {
+		return nil, errors.New("it is not Consumed by a committed dispatch")
+	}
+	return approval, nil
+}
+
+// faultApprovalConsumed additionally requires the dispatched plan to have retired.
+func faultApprovalConsumed(stored *unstructured.Unstructured, planUID string) error {
+	approval, err := faultApprovalCommitted(stored, planUID)
+	if err != nil {
+		return err
 	}
 	conditions := approval.Status.Conditions
 	switch {
-	case planUID == "" || string(approval.Spec.PlanRef.UID) != planUID:
-		return fmt.Errorf("it approves plan UID %s", approval.Spec.PlanRef.UID)
-	case !conditionIs(conditions, "Consumed", metav1.ConditionTrue, "DispatchCommitted"):
-		return errors.New("it is not Consumed by a committed dispatch")
 	case !conditionIs(conditions, "Accepted", metav1.ConditionFalse, "PlanNoLongerCurrent"):
 		return errors.New("it is still Accepted")
 	case !conditionIs(conditions, "Stale", metav1.ConditionTrue, "PlanNoLongerCurrent"):
