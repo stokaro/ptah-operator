@@ -12,12 +12,33 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+const storedStateStatusDenial = "Ptah status is written only by the operator's manager; settle an unresolved migration run with a PtahMigrationRunAcknowledgment"
+
+// The installed policy leaves reason unset. Its API-server denial is Invalid
+// (422), even though the message retains the admission plugin's "forbidden"
+// wording. Attribute the refusal to the exact policy, binding and resource;
+// an authorization or schema error cannot substitute for this control.
+func storedStateStatusRefused(err error, object client.Object, policy string) bool {
+	var response apierrors.APIStatus
+	_, resource, _ := storedStateFamily(object)
+	if resource == "" || policy == "" || object.GetName() == "" || !apierrors.IsInvalid(err) || !errors.As(err, &response) {
+		return false
+	}
+	status := response.Status()
+	denial := fmt.Sprintf("ValidatingAdmissionPolicy '%s' with binding '%s' denied request: %s", policy, policy, storedStateStatusDenial)
+	return status.Status == metav1.StatusFailure && status.Code == 422 && status.Reason == metav1.StatusReasonInvalid &&
+		status.Details != nil && status.Details.Group == "operator.ptah.run" && status.Details.Kind == resource &&
+		status.Details.Name == object.GetName() && strings.HasSuffix(status.Message, denial) &&
+		len(status.Details.Causes) == 1 && status.Details.Causes[0].Message == denial
+}
 
 func storedStateVersion(object client.Object) (int32, error) {
 	switch resource := object.(type) {
@@ -246,10 +267,16 @@ func storedStateCreatedNoWork(jobs []watchEvent[*batchv1.Job], pods []watchEvent
 }
 
 func storedStateFamily(object client.Object) (kind, resource, familyLabel string) {
-	switch object.(type) {
+	switch object := object.(type) {
 	case *ptahv1alpha1.PtahSchema:
+		if object == nil {
+			return "", "", ""
+		}
 		return "PtahSchema", "ptahschemas", labelSchema
 	case *ptahv1alpha1.PtahMigration:
+		if object == nil {
+			return "", "", ""
+		}
 		return "PtahMigration", "ptahmigrations", labelMigration
 	default:
 		return "", "", ""

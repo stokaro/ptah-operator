@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
@@ -278,14 +279,24 @@ func holdUnsupportedStoredState(t *testing.T, ctx context.Context, cluster *harn
 	storedStateCheck(t, err, "retain installed status admission while impersonating the manager")
 	ordinary, err := cluster.As(rest.ImpersonationConfig{UserName: name, Groups: []string{group}})
 	storedStateCheck(t, err, "build the ordinary writer denial control")
+	managerLogs, err := storedStateManagerLogs(ctx, cluster, barrier.user, scan)
+	storedStateCheck(t, err, "capture the installed managers before unsupported state arrives")
+	release := managerLogs[0].pod.Labels["app.kubernetes.io/instance"]
+	if release == "" || slices.ContainsFunc(managerLogs, func(witness storedStateManagerLog) bool {
+		return witness.pod.Labels["app.kubernetes.io/instance"] != release
+	}) {
+		t.Fatal("the manager witnesses do not name one installed release")
+	}
+	policy := crdupgrade.StatusWriteGuardPolicyName(parts[2], release)
 	patch, err := storedStatePatch(live, supported, future)
 	storedStateCheck(t, err, "bind the injection to the held API version")
 	err = ordinary.Status().Patch(ctx, live.DeepCopyObject().(client.Object), client.RawPatch(types.JSONPatchType, patch), &client.SubResourcePatchOptions{PatchOptions: client.PatchOptions{DryRun: []string{metav1.DryRunAll}}})
-	if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "Ptah status is written only by the operator's manager") {
-		t.Fatal("installed status admission did not refuse the otherwise authorized ordinary writer")
+	if err != nil {
+		scan([]byte(err.Error()), "the ordinary status writer's API refusal")
 	}
-	managerLogs, err := storedStateManagerLogs(ctx, cluster, barrier.user, scan)
-	storedStateCheck(t, err, "capture the installed managers before unsupported state arrives")
+	if !storedStateStatusRefused(err, initial, policy) {
+		t.Fatalf("installed status admission did not refuse the otherwise authorized ordinary writer: reason=%s", apierrors.ReasonForError(err))
+	}
 	storedStateCheck(t, writer.Status().Patch(ctx, live, client.RawPatch(types.JSONPatchType, patch)), "introduce exactly one unsupported controller-state field")
 	injected = true
 	start := live.GetResourceVersion()

@@ -2,6 +2,9 @@ package e2e
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -9,12 +12,83 @@ import (
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestStoredStateStatusRefusalUsesActualPolicyResponses(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../testdata/e2e/readings/unsupported-state-status-refusals.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readings struct {
+		Rows []struct {
+			Resource string        `json:"resource"`
+			Name     string        `json:"name"`
+			Policy   string        `json:"policy"`
+			Status   metav1.Status `json:"status"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &readings); err != nil || len(readings.Rows) != 2 {
+		t.Fatal("both native API response controls are required", err)
+	}
+	seen := map[string]bool{}
+	for _, reading := range readings.Rows {
+		var object client.Object
+		switch reading.Resource {
+		case "ptahschemas":
+			object = &ptahv1alpha1.PtahSchema{}
+		case "ptahmigrations":
+			object = &ptahv1alpha1.PtahMigration{}
+		default:
+			t.Fatal("the API response fixture has an unknown family")
+		}
+		if seen[reading.Resource] {
+			t.Fatal("the response fixture repeats a family instead of covering both")
+		}
+		seen[reading.Resource] = true
+		object.SetName(reading.Name)
+		response := &apierrors.StatusError{ErrStatus: reading.Status}
+		if !storedStateStatusRefused(response, object, reading.Policy) || !storedStateStatusRefused(fmt.Errorf("ordinary writer: %w", response), object, reading.Policy) {
+			t.Fatal("the real installed status policy's 422 refusal was rejected")
+		}
+		for name, mutate := range map[string]func(*metav1.Status){
+			"RBAC forbidden": func(s *metav1.Status) { s.Code, s.Reason = 403, metav1.StatusReasonForbidden },
+			"success":        func(s *metav1.Status) { s.Status = metav1.StatusSuccess },
+			"wrong code":     func(s *metav1.Status) { s.Code = 403 },
+			"wrong group":    func(s *metav1.Status) { s.Details.Group = "another.ptah.run" },
+			"wrong resource": func(s *metav1.Status) { s.Details.Kind = "ptahschemaplans" },
+			"wrong name":     func(s *metav1.Status) { s.Details.Name += "-other" },
+			"missing cause":  func(s *metav1.Status) { s.Details.Causes = nil },
+			"schema rejection": func(s *metav1.Status) {
+				s.Message, s.Details.Causes[0].Message = "controllerStateVersion: invalid value", "controllerStateVersion: invalid value"
+			},
+			"wrong cause": func(s *metav1.Status) { s.Details.Causes[0].Message = "another policy denied the request" },
+			"wrong binding": func(s *metav1.Status) {
+				s.Message = strings.ReplaceAll(s.Message, "with binding '"+reading.Policy+"'", "with binding 'another-binding'")
+				s.Details.Causes[0].Message = strings.ReplaceAll(s.Details.Causes[0].Message, "with binding '"+reading.Policy+"'", "with binding 'another-binding'")
+			},
+		} {
+			t.Run(reading.Resource+"/"+name, func(t *testing.T) {
+				bad := reading.Status.DeepCopy()
+				mutate(bad)
+				if storedStateStatusRefused(&apierrors.StatusError{ErrStatus: *bad}, object, reading.Policy) {
+					t.Fatal("an unrelated error substituted for the exact status policy refusal")
+				}
+			})
+		}
+		if storedStateStatusRefused(nil, object, reading.Policy) || storedStateStatusRefused(errors.New(response.Error()), object, reading.Policy) ||
+			storedStateStatusRefused(response, object, "another-policy") || storedStateStatusRefused(response, nil, reading.Policy) ||
+			storedStateStatusRefused(response, (*ptahv1alpha1.PtahSchema)(nil), reading.Policy) || storedStateStatusRefused(response, (*ptahv1alpha1.PtahMigration)(nil), reading.Policy) {
+			t.Fatal("an admitted request, untyped error, other policy or missing resource passed")
+		}
+	}
+}
 
 func storedStateFixtures() []client.Object {
 	schema, _, _, _ := schemaReplacementFixture()
