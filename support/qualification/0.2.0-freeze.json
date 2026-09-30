@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T00:46:55.245865+00:00",
-  "profileSourceCommit": "a37235210576cd3c552da4e717dda71ed3ca85f1",
+  "frozenAt": "2026-09-30T01:41:00.235975+00:00",
+  "profileSourceCommit": "0f7633e6f39b025d0db8c0054d66a7739f229d47",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "9e9189f41e0bee3aad545b0e4a29fc301fed1c0560676afc7fd1e63961fb2844",
-    "generatedFromCommit": "a37235210576cd3c552da4e717dda71ed3ca85f1",
+    "sha256": "ccbb4dc972af3dbd31aefdce4074934988ff29852e3b0439d8712202a90ebae6",
+    "generatedFromCommit": "0f7633e6f39b025d0db8c0054d66a7739f229d47",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 12,
+  "revision": 13,
   "supersedes": {
-    "freezeCommit": "9b9bbc8eaf400c40338feaca5451cab578958689",
-    "sha256": "52f291c1f366def6d159e847b07bbe2cf05dc85fff5761033f9f0dce68923838"
+    "freezeCommit": "bb9a6d498982cc92f252fa60a3239e44510be560",
+    "sha256": "e52d79f8949a5e587420837678295288f4c56d42567f9da332d8356316289fb2"
   },
-  "revisionReason": "Implement the existing Q-02/AB-09 running schema Apply executor-image change on both engines. The scenario retains the exact blocked database clients across manager replacement, preserves the original Apply evidence, Lease and immutable horizon, and requires read-only convergence under the new executor without replay. Fix the MySQL schema diagnostic SQL contract to permit the explicit 45- and 60-second Plan validation lock timeouts, with complete runner/server witnesses captured after the failed 49a50423 run. That run remains failed. Migration running-Apply and the remaining Ptah-version, runner-protocol and controller-state transition proofs still require implementation/execution. Final-identity Kubernetes execution remains required. All eight frozen source files, the 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
+  "revisionReason": "Implement the existing Q-02/AB-09 running migration Apply executor-image change on both engines. Fix the premature claim retirement reproduced on the earlier source: Unknown must preserve the original claim, finalizer and renewable Lease until the exact workload can no longer write, including deletion, suspension and failed workload reads. Preserve the first Unknown record; a successful old executor result is not reattributed to the replacement components. The new scenarios identify the same blocked database PID and Pod across manager replacement, let the exact original Apply finish, and require fresh History under the replacement image to settle Unknown without replay. Local controller, predicate, static and envtest checks are not final-identity cluster acceptance. Ptah-version, runner-protocol and controller-state transition proofs still require implementation/execution. All eight frozen source files, the 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
 }
