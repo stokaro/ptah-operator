@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "qualificationDecision": "Not assessed",
+  "scope": "Disposable database backup/encryption/fresh-instance restore preflight; operator not executed. No full recovery RPO/RTO or production storage acceptance.",
+  "procedure": "support/qualification/probes/database_restore.py",
+  "privateEvidenceRetention": "Local restricted temporary directories only; durable archive and named key custody are pending.",
+  "runs": [
+    {
+      "runID": "ptah-020-restore-e7239c3931",
+      "sourceCommit": "236e53131d1adeb656cad676a7ef64f129637596",
+      "procedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "engine": "postgresql",
+      "image": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "actualImage": "sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73 amd64",
+      "status": "PASS",
+      "startedAt": "2026-09-30T18:07:35.031623+00:00",
+      "backupStartedAt": "2026-09-30T18:07:46.948489+00:00",
+      "backupCompletedAt": "2026-09-30T18:07:49.034647+00:00",
+      "lateCommitAcknowledgedAt": "2026-09-30T18:07:49.995461+00:00",
+      "lossInjectedAt": "2026-09-30T18:07:51.936313+00:00",
+      "restoreCompletedAt": "2026-09-30T18:08:03.177703+00:00",
+      "databaseValidationCompletedAt": "2026-09-30T18:08:11.100981+00:00",
+      "databasePreflightRecoverySeconds": 19.164,
+      "expectedLostRowIDs": [
+        3
+      ],
+      "observedLostRowIDs": [
+        3
+      ],
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "d26e8674f4983a43f8090aa4d61c5e95a33860f60eeb6fcac0d1d27e0327e7b4",
+          "afterSHA256": "d26e8674f4983a43f8090aa4d61c5e95a33860f60eeb6fcac0d1d27e0327e7b4"
+        },
+        "schema": {
+          "beforeSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415",
+          "afterSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415"
+        },
+        "access": {
+          "beforeSHA256": "0320caade4350867f05c5ff5741507568439a94fb7bb451b35c1809004230cc8",
+          "afterSHA256": "0320caade4350867f05c5ff5741507568439a94fb7bb451b35c1809004230cc8"
+        }
+      },
+      "checks": {
+        "source fixture has both expected rows": true,
+        "source reader can read": true,
+        "roles wrong identity refused": true,
+        "roles decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late commit exists before loss": true,
+        "source container no longer exists": true,
+        "source volume no longer exists": true,
+        "fresh target has no fixture database or reader": true,
+        "observed loss is exactly the declared post-backup row": true,
+        "restored rows matches recovery point": true,
+        "restored schema matches recovery point": true,
+        "restored access matches recovery point": true,
+        "restored reader credential and SELECT work": true,
+        "restored read-only identity refuses DDL for permission reason": true,
+        "fresh authorized change works after restore": true
+      },
+      "backups": {
+        "roles": {
+          "plaintextSHA256": "8edb27b4690c55d4340bffd235c00ec85cd314f225da79cbbbacb8ddb5658312",
+          "ciphertextSHA256": "63042213cd49acec60352cc4c5ad465092d86898c8be0e400a86f35f0410affe",
+          "plaintextBytes": 954,
+          "ciphertextBytes": 1154
+        },
+        "database": {
+          "plaintextSHA256": "6cbd7565e5c3fcd09cdf3194071481fe99a924deefa9e38500e43c6bc42ab31f",
+          "ciphertextSHA256": "5f2d0d17c4396f2834811ff617ad71e585e52200d5b7d1b319c74875e1745541",
+          "plaintextBytes": 2324,
+          "ciphertextBytes": 2524
+        }
+      },
+      "cleanupSucceeded": true,
+      "completedAt": "2026-09-30T18:08:12.657524+00:00",
+      "privateResultSHA256": "0d6e41173108b1a266d221817de8784a4c1fcfdef8c12067306e61f96dbd17cd"
+    },
+    {
+      "runID": "ptah-020-restore-0f73347233",
+      "sourceCommit": "236e53131d1adeb656cad676a7ef64f129637596",
+      "procedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "engine": "mysql",
+      "image": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+      "actualImage": "sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb amd64",
+      "status": "PASS",
+      "startedAt": "2026-09-30T18:06:37.739444+00:00",
+      "backupStartedAt": "2026-09-30T18:06:55.933372+00:00",
+      "backupCompletedAt": "2026-09-30T18:06:57.760496+00:00",
+      "lateCommitAcknowledgedAt": "2026-09-30T18:06:58.764986+00:00",
+      "lossInjectedAt": "2026-09-30T18:07:00.846372+00:00",
+      "restoreCompletedAt": "2026-09-30T18:07:15.768061+00:00",
+      "databaseValidationCompletedAt": "2026-09-30T18:07:23.745873+00:00",
+      "databasePreflightRecoverySeconds": 22.899,
+      "expectedLostRowIDs": [
+        3
+      ],
+      "observedLostRowIDs": [
+        3
+      ],
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "e13c8badea16d269b56c120cd96d81538f73f292c3834b01648f116efe49ca6f",
+          "afterSHA256": "e13c8badea16d269b56c120cd96d81538f73f292c3834b01648f116efe49ca6f"
+        },
+        "schema": {
+          "beforeSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862",
+          "afterSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862"
+        },
+        "access": {
+          "beforeSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356",
+          "afterSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356"
+        }
+      },
+      "checks": {
+        "source fixture has both expected rows": true,
+        "source reader can read": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late commit exists before loss": true,
+        "source container no longer exists": true,
+        "source volume no longer exists": true,
+        "fresh target has no fixture database or reader": true,
+        "observed loss is exactly the declared post-backup row": true,
+        "restored rows matches recovery point": true,
+        "restored schema matches recovery point": true,
+        "restored access matches recovery point": true,
+        "restored reader credential and SELECT work": true,
+        "restored read-only identity refuses DDL for permission reason": true,
+        "fresh authorized change works after restore": true
+      },
+      "backups": {
+        "database": {
+          "plaintextSHA256": "42b94551b442bb72cd2b4c344669e85939054e0cfada766934eefae6b18c8dc8",
+          "ciphertextSHA256": "68648001c1b536c4930bfd186f01e48556d0e42008e2945470bf69559377509b",
+          "plaintextBytes": 3782255,
+          "ciphertextBytes": 3783367
+        }
+      },
+      "cleanupSucceeded": true,
+      "completedAt": "2026-09-30T18:07:25.354633+00:00",
+      "privateResultSHA256": "3b6eb643abeefcda3c2eab85bb2c52a7d3e350e1a6c513bcf117bca572e503a1"
+    }
+  ],
+  "failedAttempts": [
+    {
+      "engine": "mysql",
+      "runID": "ptah-020-restore-66579aef21",
+      "procedureSHA256": "8d31cdc4a29651ba4cd993eddd2fb98d42febba92fbd5afd6d14adff5e273113",
+      "privateResultSHA256": "b50a71a121609b87e4d91652abd386678a3ce4c18689e8057818ca169d5c4f2c",
+      "status": "FAIL",
+      "reason": "MYSQL_PWD in the server environment made the initial root bootstrap connection fail. Corrected by supplying it only to client commands.",
+      "cleanupSucceeded": true
+    }
+  ]
+}

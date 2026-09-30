@@ -79,8 +79,13 @@ The backup is older than the database, or there is no backup and you are
 reapplying the specs. Assume nothing about what ran. The database is the only
 witness, and the operator will read it before it plans anything.
 
-This mode is safe by construction, and the reason is worth stating: nothing
-that authorized work survives it. See [what does not
+Old approvals cannot authorize a rebuilt resource because their UID bindings
+no longer match. That does not disable automatic application: a resource with
+`spec.policy.apply: Always` may execute a new plan without a new approval.
+For a controlled rebuild, create the resources with `spec.suspend: true` and
+`spec.policy.apply: OnApproval`, account for any old execution, and then resume
+them for read-only observation and planning. Keep the original backup unchanged
+and record these edits in the recovery log. See [what does not
 survive](#what-does-not-survive).
 
 The migrations acceptance suite rehearses this mode on PostgreSQL and MySQL. It
@@ -125,10 +130,15 @@ holder that no longer exists and makes it wait out an interval for nothing.
 
 ## Order
 
-1. **Quiesce first.** Scale the manager and the certificate rotator to zero, or
-   confirm the old cluster is unreachable. A restore performed while an old
-   manager can still reach the database is the one way this procedure can cause
-   the harm it exists to prevent.
+1. **Quiesce first.** Stop the old managers and prevent their replacement.
+   Account for every executor that may still reach the database. Scaling a
+   manager to zero does not stop an existing Apply Job; an unreachable
+   Kubernetes API does not prove that its Pods or database sessions stopped.
+   Before enabling replacement execution, confirm the old executors and their
+   database sessions have ended, or fence their database access and verify that
+   the fence also stops existing sessions. Rotating credentials alone does not
+   establish that. Preserve the old operation identities and uncertain results
+   before removing anything, and keep the fence in place through recovery.
 2. Restore or reinstall the release: CRDs, the chart, the admission singleton,
    the certificate Secret.
 3. Restore the Secrets and the verification-policy ConfigMaps.
@@ -152,8 +162,9 @@ limitation to work around:
 - An execution binding names the components that ran. A rebuilt resource gets a
   new epoch, and an operation claimed under the old one cannot be resumed.
 
-So a rebuilt resource waits for a fresh decision. An approval written before
-the loss does not carry over, and an operator who wants the work to proceed
+With `spec.policy.apply: OnApproval`, a rebuilt resource waits for a fresh
+decision. An approval written before the loss does not carry over, and an
+operator who wants the work to proceed
 approves the plan the rebuilt resource publishes — against the database as it
 is now, rather than as it was when the old plan was made.
 
