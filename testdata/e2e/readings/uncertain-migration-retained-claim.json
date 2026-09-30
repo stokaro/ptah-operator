@@ -1,0 +1,312 @@
+{
+  "mysql": {
+    "metadata": {
+      "name": "e2e-uncertain-mysql"
+    },
+    "status": {
+      "phase": "Blocked",
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:43Z",
+          "reason": "ApplyOutcomeUnknown",
+          "message": "The dispatched run's outcome is unknown and may not be retried"
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:27Z",
+          "reason": "PolicySatisfied",
+          "message": "The resolved artifact satisfied its verification policy"
+        },
+        {
+          "type": "Blocked",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:43Z",
+          "reason": "ApplyOutcomeUnknown",
+          "message": "the dispatched Apply Job is missing and will not be recreated"
+        },
+        {
+          "type": "Ready",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:36Z",
+          "reason": "ApplyOutcomeUnknown",
+          "message": "What the dispatched run did is unknown until the database is read"
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:36Z",
+          "reason": "Satisfied",
+          "message": "The plan's approval requirements are satisfied"
+        }
+      ],
+      "activeOperation": {
+        "type": "Apply",
+        "id": "sha256:9d8a95ebef8319572f9c4f38853a5a4815316e07f83f56865f9f7cab742dcded",
+        "inputFingerprint": "sha256:5d39567bae74b60594d06075419b1543f14dc025ec82dac9e94bd4dbdd5d3e42",
+        "jobName": "ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c",
+        "jobUID": "2cde010b-1e46-46af-a3fb-35a75edacc7f",
+        "startedAt": "2026-09-30T06:30:36Z",
+        "attempt": 1,
+        "executionBindingID": "v1-a7c6eeecdf93bc61af569ae6ef745a6a",
+        "source": {
+          "resolvedReference": "oci://e2e-registry.ptah-test-a-1-35-8-ci-36675116019-1-1-35-migrations-0ca5550263.svc.cluster.local:5000/migrations/mysql-uncertain@sha256:9c6e49335382553a5138f498d39ec2251c205520d9475341c778245fca7d4e4f",
+          "digest": "sha256:9c6e49335382553a5138f498d39ec2251c205520d9475341c778245fca7d4e4f",
+          "registryAuthFrom": {
+            "name": "e2e-registry-auth",
+            "mode": "Environment",
+            "usernameKey": "username",
+            "passwordKey": "password",
+            "tokenKey": "token",
+            "dockerConfigJSONKey": ".dockerconfigjson"
+          },
+          "transport": {
+            "plainHTTP": true
+          }
+        },
+        "target": {
+          "engine": "MySQL",
+          "urlFrom": {
+            "name": "e2e-mysql-uncertain-db",
+            "key": "url"
+          }
+        },
+        "coordinationDigest": "sha256:745c940873c3d2de40358f048eae67837c40981566426980310c2098dbe9d3ba",
+        "planRef": {
+          "name": "ptah-mplan-8f517ba4f0200f2a4e095b65",
+          "uid": "04800e23-c41a-40ff-9745-c77de45237b1"
+        },
+        "dispatchStarted": true,
+        "dispatchNotAfter": "2026-09-30T06:35:36Z",
+        "executionNotAfter": "2026-09-30T06:35:36Z",
+        "leaseEpoch": "v1-5f6d9f221b1746aba04bb35ccf1fe3dd",
+        "leaseDurationSeconds": 420,
+        "admissionSnapshot": {
+          "version": "v1",
+          "digest": "sha256:6549fd3fe8270d1a72e01f92ed0cbd153022bb7a6236528313b7f22ae4e746a7",
+          "templateDigest": "sha256:0d3a75aab60d608a41a758abb901048924f5be8d2f03dcb38637f995cc216adb",
+          "serviceAccount": {
+            "object": {
+              "name": "default",
+              "uid": "92f8c9c9-529c-4b05-9226-d359085abf82",
+              "resourceVersion": "1526"
+            },
+            "imagePullSecrets": [
+              {
+                "name": "e2e-registry-pull"
+              }
+            ]
+          },
+          "limitRanges": [
+            {
+              "object": {
+                "name": "ptah-operation-defaults",
+                "uid": "6f5902c6-5d4b-4312-90aa-dcd1832bbdd0",
+                "resourceVersion": "1524"
+              },
+              "defaultRequests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              },
+              "defaultLimits": {
+                "cpu": "100m",
+                "memory": "64Mi"
+              }
+            }
+          ],
+          "priorityClass": {
+            "value": 0,
+            "preemptionPolicy": "PreemptLowerPriority"
+          },
+          "defaultTolerationsEnabled": true,
+          "defaultNotReadyTolerationSeconds": 300,
+          "defaultUnreachableTolerationSeconds": 300,
+          "extendedResourceTolerationEnabled": false,
+          "alwaysPullImagesEnabled": false
+        }
+      },
+      "lastRun": {
+        "outcome": "Unknown",
+        "jobName": "ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c",
+        "jobUID": "2cde010b-1e46-46af-a3fb-35a75edacc7f",
+        "startedAt": "2026-09-30T06:30:36Z",
+        "finishedAt": "2026-09-30T06:30:43Z",
+        "message": "the dispatched Apply Job is missing and will not be recreated"
+      },
+      "unresolvedRun": {
+        "outcome": "Unknown",
+        "operationID": "sha256:9d8a95ebef8319572f9c4f38853a5a4815316e07f83f56865f9f7cab742dcded",
+        "jobName": "ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c",
+        "jobUID": "2cde010b-1e46-46af-a3fb-35a75edacc7f",
+        "planRef": {
+          "name": "ptah-mplan-8f517ba4f0200f2a4e095b65",
+          "uid": "04800e23-c41a-40ff-9745-c77de45237b1"
+        },
+        "targetIdentityDigest": "sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd",
+        "recordedAt": "2026-09-30T06:30:43Z"
+      }
+    }
+  },
+  "postgresql": {
+    "metadata": {
+      "name": "e2e-uncertain-postgresql"
+    },
+    "status": {
+      "phase": "Blocked",
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:56Z",
+          "reason": "ApplyOutcomeUnknown",
+          "message": "The dispatched run's outcome is unknown and may not be retried"
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:38Z",
+          "reason": "PolicySatisfied",
+          "message": "The resolved artifact satisfied its verification policy"
+        },
+        {
+          "type": "Blocked",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:56Z",
+          "reason": "ApplyOutcomeUnknown",
+          "message": "the dispatched Apply Job is missing and will not be recreated"
+        },
+        {
+          "type": "Ready",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:48Z",
+          "reason": "ApplyOutcomeUnknown",
+          "message": "What the dispatched run did is unknown until the database is read"
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-09-30T06:30:48Z",
+          "reason": "Satisfied",
+          "message": "The plan's approval requirements are satisfied"
+        }
+      ],
+      "activeOperation": {
+        "type": "Apply",
+        "id": "sha256:503c240dfe36ed98988ebe3c64de83bdb9b518b8a8069725654ac2874313cfb7",
+        "inputFingerprint": "sha256:2fc45defdde4f403bcd31f8aeb631d3b853b8185101b747ce2581dd764288c96",
+        "jobName": "ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb",
+        "jobUID": "dc1d113d-8bde-4744-92a9-dab7f3f31d0e",
+        "startedAt": "2026-09-30T06:30:48Z",
+        "attempt": 1,
+        "executionBindingID": "v1-2378fe76629347da25ca3a9be5a9dcca",
+        "source": {
+          "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-ci-36675116019-1-1-37-migrations-56d60f3073.svc.cluster.local:5000/migrations/postgresql-uncertain@sha256:55a5de0d16a7be13825a5628797d7e26d209c41c0726c49dbeddb7030b39c65e",
+          "digest": "sha256:55a5de0d16a7be13825a5628797d7e26d209c41c0726c49dbeddb7030b39c65e",
+          "registryAuthFrom": {
+            "name": "e2e-registry-auth",
+            "mode": "Environment",
+            "usernameKey": "username",
+            "passwordKey": "password",
+            "tokenKey": "token",
+            "dockerConfigJSONKey": ".dockerconfigjson"
+          },
+          "transport": {
+            "plainHTTP": true
+          }
+        },
+        "target": {
+          "engine": "PostgreSQL",
+          "urlFrom": {
+            "name": "e2e-postgresql-uncertain-db",
+            "key": "url"
+          }
+        },
+        "coordinationDigest": "sha256:738c34fbc6396582445d3ca92baffe3f17ce25c8088a258549983406d8a11c7d",
+        "planRef": {
+          "name": "ptah-mplan-f116e9cc757f94e9f6fef4f0",
+          "uid": "ffcbeac0-d6ca-4bdf-8d34-d5706fb40915"
+        },
+        "dispatchStarted": true,
+        "dispatchNotAfter": "2026-09-30T06:35:48Z",
+        "executionNotAfter": "2026-09-30T06:35:48Z",
+        "leaseEpoch": "v1-0a2670c577ba5ee809e8a79d0fb585d2",
+        "leaseDurationSeconds": 420,
+        "admissionSnapshot": {
+          "version": "v1",
+          "digest": "sha256:8607ce6a41fefdc6f8e1cc6ac43a308eaab44bbfefb19865ae66077aba4083ce",
+          "templateDigest": "sha256:61c01f27290d120b8fd9e8adef010e5f1543bdaf4239b4a35b1c379da3a0bd10",
+          "serviceAccount": {
+            "object": {
+              "name": "default",
+              "uid": "71b40e92-23b2-42d7-b0f4-e6628a0073ca",
+              "resourceVersion": "1875"
+            },
+            "imagePullSecrets": [
+              {
+                "name": "e2e-registry-pull"
+              }
+            ]
+          },
+          "limitRanges": [
+            {
+              "object": {
+                "name": "ptah-operation-defaults",
+                "uid": "55087b5c-9afa-4176-b727-42a6c89218f7",
+                "resourceVersion": "1873"
+              },
+              "defaultRequests": {
+                "cpu": "10m",
+                "memory": "16Mi"
+              },
+              "defaultLimits": {
+                "cpu": "100m",
+                "memory": "64Mi"
+              }
+            }
+          ],
+          "priorityClass": {
+            "value": 0,
+            "preemptionPolicy": "PreemptLowerPriority"
+          },
+          "defaultTolerationsEnabled": true,
+          "defaultNotReadyTolerationSeconds": 300,
+          "defaultUnreachableTolerationSeconds": 300,
+          "extendedResourceTolerationEnabled": false,
+          "alwaysPullImagesEnabled": false
+        }
+      },
+      "lastRun": {
+        "outcome": "Unknown",
+        "jobName": "ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb",
+        "jobUID": "dc1d113d-8bde-4744-92a9-dab7f3f31d0e",
+        "startedAt": "2026-09-30T06:30:48Z",
+        "finishedAt": "2026-09-30T06:30:56Z",
+        "message": "the dispatched Apply Job is missing and will not be recreated"
+      },
+      "unresolvedRun": {
+        "outcome": "Unknown",
+        "operationID": "sha256:503c240dfe36ed98988ebe3c64de83bdb9b518b8a8069725654ac2874313cfb7",
+        "jobName": "ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb",
+        "jobUID": "dc1d113d-8bde-4744-92a9-dab7f3f31d0e",
+        "planRef": {
+          "name": "ptah-mplan-f116e9cc757f94e9f6fef4f0",
+          "uid": "ffcbeac0-d6ca-4bdf-8d34-d5706fb40915"
+        },
+        "targetIdentityDigest": "sha256:7a3b9def066c0191aeb5cd1dd6542edb3803e898961e35b8acb1afd593438b08",
+        "recordedAt": "2026-09-30T06:30:56Z"
+      }
+    }
+  }
+}

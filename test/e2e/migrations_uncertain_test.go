@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,112 @@ func TestUncertainRunRefused(t *testing.T) {
 			mutate(&migration.Status)
 			if uncertainRunRefused(migration.Status) == nil {
 				t.Fatalf("a refusal with %s was accepted", name)
+			}
+		})
+	}
+}
+
+// The failing CI statuses retained the original Apply while its Job's
+// background garbage collection was still stopping the Pod. Their native
+// claim, deadlines, realm and Unknown records are preserved in the fixture.
+func TestUncertainApplySettled(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile("../../testdata/e2e/readings/uncertain-migration-retained-claim.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readings map[string]*ptahv1alpha1.PtahMigration
+	if err := json.Unmarshal(content, &readings); err != nil {
+		t.Fatal(err)
+	}
+	if len(readings) != 2 || readings["postgresql"] == nil || readings["mysql"] == nil {
+		t.Fatal("both native engine readings are required")
+	}
+	for engine, reading := range readings {
+		t.Run(engine, func(t *testing.T) {
+			t.Parallel()
+			original := reading.Status.ActiveOperation.DeepCopy()
+			if original == nil {
+				t.Fatal("the native failing status lost its retained Apply")
+			}
+			controller := true
+			running := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{UID: "original-pod", OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: "batch/v1", Kind: "Job", Name: original.JobName, UID: original.JobUID, Controller: &controller,
+				}}},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			}
+			if settled, err := uncertainApplySettled(reading.Status, original, []corev1.Pod{running}); err != nil || settled {
+				t.Fatalf("the protected native claim did not wait for its owned Pod: settled=%t err=%v", settled, err)
+			}
+			if uncertainRunRefused(reading.Status) == nil {
+				t.Fatal("the native failure no longer exercises the old immediate-retirement assertion")
+			}
+			stopped := running.DeepCopy()
+			stopped.Status.Phase = corev1.PodFailed
+			retired := reading.Status.DeepCopy()
+			retired.ActiveOperation = nil
+			for name, pods := range map[string][]corev1.Pod{"terminal Pod": {*stopped}, "collected Pod": nil} {
+				t.Run(name, func(t *testing.T) {
+					if settled, err := uncertainApplySettled(*retired, original, pods); err != nil || !settled {
+						t.Fatalf("the retired refusal did not settle: settled=%t err=%v", settled, err)
+					}
+				})
+			}
+			for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigrationStatus){
+				"lost live claim": func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation = nil },
+				"reading under live Pod": func(s *ptahv1alpha1.PtahMigrationStatus) {
+					s.ActiveOperation.Type = ptahv1alpha1.MigrationOperationHistory
+				},
+				"another operation": func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation.ID = muDigest },
+				"another Job UID":   func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation.JobUID = "replacement" },
+				"shortened execution horizon": func(s *ptahv1alpha1.PtahMigrationStatus) {
+					s.ActiveOperation.ExecutionNotAfter.Time = s.ActiveOperation.ExecutionNotAfter.Add(-time.Minute)
+				},
+				"another realm epoch": func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation.LeaseEpoch = "replacement" },
+				"early realm release": func(s *ptahv1alpha1.PtahMigrationStatus) {
+					s.PendingLockRelease = &ptahv1alpha1.TargetLockReleaseStatus{}
+				},
+				"lost unresolved record":       func(s *ptahv1alpha1.PtahMigrationStatus) { s.UnresolvedRun = nil },
+				"another unresolved operation": func(s *ptahv1alpha1.PtahMigrationStatus) { s.UnresolvedRun.OperationID = muDigest },
+				"another unresolved Job":       func(s *ptahv1alpha1.PtahMigrationStatus) { s.UnresolvedRun.JobUID = "replacement" },
+				"another unresolved plan":      func(s *ptahv1alpha1.PtahMigrationStatus) { s.UnresolvedRun.PlanRef.UID = "replacement" },
+				"another last run":             func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.JobUID = "replacement" },
+				"lost refusal":                 func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions = nil },
+				"published plan":               func(s *ptahv1alpha1.PtahMigrationStatus) { s.Plan = original.PlanRef.DeepCopy() },
+			} {
+				t.Run(name, func(t *testing.T) {
+					current := reading.Status.DeepCopy()
+					mutate(current)
+					if settled, err := uncertainApplySettled(*current, original, []corev1.Pod{running}); err == nil || settled {
+						t.Fatalf("an unsafe %s was accepted: settled=%t err=%v", name, settled, err)
+					}
+				})
+			}
+			// An unrelated terminal Pod must never hide the original owner,
+			// even if admission or a fault changes the original Pod's labels.
+			unrelated := stopped.DeepCopy()
+			unrelated.OwnerReferences[0].UID = "replacement-job"
+			if settled, err := uncertainApplySettled(*retired, original, []corev1.Pod{*unrelated, running}); err == nil || settled {
+				t.Fatalf("the unrelated terminal Pod excused losing a live claim: settled=%t err=%v", settled, err)
+			}
+			for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigrationStatus){
+				"claim waiting for retirement": func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation = original.DeepCopy() },
+				"release still owed": func(s *ptahv1alpha1.PtahMigrationStatus) {
+					s.PendingLockRelease = &ptahv1alpha1.TargetLockReleaseStatus{}
+				},
+				"between history cycles": func(s *ptahv1alpha1.PtahMigrationStatus) {
+					s.Phase = ptahv1alpha1.MigrationPhaseReading
+					s.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{Type: ptahv1alpha1.MigrationOperationHistory}
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					current := retired.DeepCopy()
+					mutate(current)
+					if settled, err := uncertainApplySettled(*current, original, []corev1.Pod{*stopped}); err != nil || settled {
+						t.Fatalf("the legitimate %s did not wait: settled=%t err=%v", name, settled, err)
+					}
+				})
 			}
 		})
 	}

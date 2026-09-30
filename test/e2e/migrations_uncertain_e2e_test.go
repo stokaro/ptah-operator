@@ -50,6 +50,10 @@ func (m *migrationRun) uncertainApplyProof() {
 	m.t.Helper()
 	m.isolatedDatabase(m.uncertainDatabase(), m.uncertainSecret())
 	m.publish("uncertain", m.fixtureDir("-uncertain"), m.reference("-uncertain"))
+	watcher, err := client.NewWithWatch(m.cluster.Config, client.Options{Scheme: m.cluster.Scheme})
+	m.check(err, "open direct API watches before the uncertain migration exists")
+	jobs := migrationExecutorRecorder[*batchv1.Job](m, watcher, "uncertain-jobs", m.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })
+	pods := migrationExecutorRecorder[*corev1.Pod](m, watcher, "uncertain-pods", m.in.TestNamespace, func() client.ObjectList { return &corev1.PodList{} })
 	// Always, because the row is about a run that started and not about the
 	// gate that authorizes one. An approval here would only add a step between
 	// the publish and the interruption.
@@ -84,14 +88,46 @@ func (m *migrationRun) uncertainApplyProof() {
 	if err := m.get(jobName, live); err != nil || string(live.UID) != jobUID {
 		m.fatalf("the %s Apply Job under that name is not the one the resource dispatched", m.engine.name)
 	}
+	original := m.migration(m.uncertainMigration()).Status.ActiveOperation.DeepCopy()
+	if original == nil || original.JobName != jobName || string(original.JobUID) != jobUID {
+		m.fatalf("the interrupted %s Apply no longer holds its original claim", m.engine.name)
+	}
+	allPods := &corev1.PodList{}
+	m.check(m.list(allPods), "read the original Apply's ownership before deletion")
+	owned := ownedPods(allPods.Items, live.UID)
+	if len(owned) != 1 || owned[0].UID == "" || owned[0].Status.Phase != corev1.PodRunning {
+		m.fatalf("the interrupted %s Apply does not own exactly one running Pod", m.engine.name)
+	}
+	originalPodUID := string(owned[0].UID)
+	migrationExecutorWatchBarrier(m, jobs, live)
+	migrationExecutorWatchBarrier(m, pods, &owned[0])
 	m.deleteAndWait(live, "the "+m.engine.name+" Apply Job")
-	m.assertUncertainApplyBlocksWithoutReplaying()
+	m.assertUncertainApplyBlocksWithoutReplaying(original)
 	m.assertUnresolvedRunSurvivesAnotherRefusal(jobName, jobUID)
+	// Close both watches before a person's acknowledgment can authorize any
+	// later work. Their histories include the original ADDED events because
+	// the resource did not exist when the watches began.
+	for _, recorder := range []recorder{jobs, pods} {
+		m.check(recorder.alive(), "the uncertain Apply %s watch stopped", recorder.stem())
+		recorder.requestStop()
+	}
+	watchDeadline := time.Now().Add(35 * time.Second)
+	for _, recorder := range []recorder{jobs, pods} {
+		m.check(recorder.await(time.Until(watchDeadline)), "close the uncertain Apply %s watch at natural EOF", recorder.stem())
+		history, count, err := recorder.history()
+		m.check(err, "encode the uncertain Apply %s history", recorder.stem())
+		if count == 0 {
+			m.fatalf("the uncertain Apply %s watch recorded nothing", recorder.stem())
+		}
+		m.scan(history, recorder.stem()+" closed history")
+	}
+	if !migrationExecutorNoReplay(jobs.snapshot(), pods.snapshot(), m.uncertainMigration(), jobUID, originalPodUID) {
+		m.fatalf("the interrupted %s Apply was replayed or overlapped another run in the complete Job/Pod history", m.engine.name)
+	}
 	m.assertUnresolvedRunAcknowledgedByAPerson()
 	m.logf("PASS %s stopped on a run it could not read, and replayed nothing", m.engine.kind)
 }
 
-// waitForUncertainPhase waits for the uncertain migration to reach a phase.
 // waitForUncertainPhase waits for the uncertain migration to reach a phase
 // and returns the document that showed it: a resource that stopped still
 // reads its history at its interval, so a later read can land mid-cycle.
@@ -122,12 +158,19 @@ func (m *migrationRun) uncertainWidgetRows() string {
 	return m.query("SELECT count(*) FROM e2e_migration_widgets", m.uncertainDatabase())
 }
 
-func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying() {
+func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptahv1alpha1.MigrationOperationStatus) {
 	m.t.Helper()
 	name := m.uncertainMigration()
-	blocked := m.waitForUncertainPhase(ptahv1alpha1.MigrationPhaseBlocked)
-	if err := uncertainRunRefused(blocked.Status); err != nil {
-		m.fatalf("%s did not stop on a run whose evidence it could not read: %v", name, err)
+	if !m.within(2*time.Second, func() bool {
+		current := m.migration(name)
+		pods := &corev1.PodList{}
+		m.check(m.list(pods), "read all Pods while the interrupted Apply settles")
+		settled, err := uncertainApplySettled(current.Status, original, pods.Items)
+		m.check(err, "%s violated its interrupted Apply boundary", name)
+		m.assertNoNewApplyJob([]string{string(original.JobUID)}, "while its interrupted workload was settling", name)
+		return settled
+	}) {
+		m.fatalf("%s did not stop its owned Pods, retire its original claim and preserve Unknown within %s", name, waitTimeout)
 	}
 	// The run is over and the database keeps what it committed. Both halves
 	// matter: without the first the refusal is about nothing, and without the

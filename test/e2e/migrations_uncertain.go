@@ -12,6 +12,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -32,9 +33,9 @@ func uncertainApplyClaimed(migration *ptahv1alpha1.PtahMigration) (jobName, jobU
 	return active.JobName, string(active.JobUID), true
 }
 
-// uncertainRunRefused is the refusal a run whose evidence nobody could read
-// leaves: Blocked on an Unknown last run, with no operation and no plan, the
-// Blocked condition naming ApplyOutcomeUnknown, and nothing Ready.
+// uncertainRunRefused is the settled refusal after the original workload
+// stopped and its claim was retired. An Unknown outcome alone does not say
+// whether the Pod can still write.
 func uncertainRunRefused(status ptahv1alpha1.PtahMigrationStatus) error {
 	switch {
 	case status.Phase != ptahv1alpha1.MigrationPhaseBlocked:
@@ -53,6 +54,64 @@ func uncertainRunRefused(status ptahv1alpha1.PtahMigrationStatus) error {
 		return errors.New("it is Ready")
 	}
 	return nil
+}
+
+// uncertainApplySettled waits through asynchronous Job garbage collection.
+// Until its Pods stop, the original Apply must retain its complete identity,
+// deadlines and renewable realm. Afterward, the controller must retire it
+// without losing the refusal or the record of what remains unknown. The
+// caller reads status before listing Pods, so retirement cannot be excused
+// by a Pod reading taken before that status was written.
+func uncertainApplySettled(status ptahv1alpha1.PtahMigrationStatus, original *ptahv1alpha1.MigrationOperationStatus, pods []corev1.Pod) (bool, error) {
+	if original == nil || original.Type != ptahv1alpha1.MigrationOperationApply || !original.DispatchStarted ||
+		!sha256Pattern.MatchString(original.ID) || original.JobName == "" || original.JobUID == "" ||
+		original.PlanRef == nil || original.LeaseEpoch == "" || original.LeaseDurationSeconds < 1 ||
+		original.DispatchNotAfter == nil || original.ExecutionNotAfter == nil ||
+		!original.DispatchNotAfter.After(original.StartedAt.Time) || !original.ExecutionNotAfter.After(original.StartedAt.Time) {
+		return false, errors.New("the interrupted Apply has no complete dispatched claim")
+	}
+	active := status.ActiveOperation
+	if status.UnresolvedRun == nil && (status.LastRun == nil || status.LastRun.Outcome != ptahv1alpha1.MigrationRunOutcomeUnknown) {
+		if !equality.Semantic.DeepEqual(active, original) {
+			return false, errors.New("the interrupted Apply was retired or replaced before recording Unknown")
+		}
+		return false, nil
+	}
+	if err := unresolvedRunRecorded(status, original.JobName, string(original.JobUID)); err != nil {
+		return false, err
+	}
+	last, unresolved := status.LastRun, status.UnresolvedRun
+	if last == nil || last.Outcome != ptahv1alpha1.MigrationRunOutcomeUnknown || last.JobName != original.JobName ||
+		last.JobUID != original.JobUID || !last.StartedAt.Equal(&original.StartedAt) ||
+		unresolved.OperationID != original.ID || !equality.Semantic.DeepEqual(unresolved.PlanRef, *original.PlanRef) {
+		return false, errors.New("the unknown record no longer names the original Apply")
+	}
+	if !blockedRefusalHeld(status) || !conditionIs(status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "ApplyOutcomeUnknown") {
+		return false, errors.New("the interrupted Apply lost its refusal while still unaccounted for")
+	}
+	if active != nil && active.Type == ptahv1alpha1.MigrationOperationApply {
+		if !equality.Semantic.DeepEqual(active, original) || status.PendingLockRelease != nil {
+			return false, errors.New("the unknown Apply changed its protected claim or started releasing its realm")
+		}
+		return false, nil
+	}
+	for _, pod := range ownedPods(pods, original.JobUID) {
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			return false, errors.New("the interrupted Apply released its claim while an owned Pod could still write")
+		}
+	}
+	if active != nil {
+		switch active.Type {
+		case ptahv1alpha1.MigrationOperationResolve, ptahv1alpha1.MigrationOperationVerify, ptahv1alpha1.MigrationOperationHistory:
+			return false, nil
+		default:
+			return false, errors.New("the interrupted Apply was replaced by an unexpected operation")
+		}
+	}
+	if status.PendingLockRelease != nil || status.Phase != ptahv1alpha1.MigrationPhaseBlocked {
+		return false, nil
+	}
+	return true, uncertainRunRefused(status)
 }
 
 // unresolvedRunRecorded is the record of the run nobody established the
