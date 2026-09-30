@@ -14,10 +14,10 @@ from operator_restore import OperatorProbe, REPO, db
 
 
 class ClusterRestoreProbe(OperatorProbe):
-    def __init__(self, engine, family, environment, root, loss):
+    def __init__(self, engine, family, environment, root, loss, timing='idle'):
         if loss not in ('operator', 'combined'):
             raise ValueError('Cold cluster recovery requires operator or combined loss')
-        super().__init__(engine, family, environment, root, loss)
+        super().__init__(engine, family, environment, root, loss, timing)
         if not self.envs['E2E_KIND_CLUSTER_NAME'].startswith('ptah-e2e-'):
             raise ValueError('Only the explicitly recorded disposable e2e cluster may be destroyed')
         if self.report['sourceCommit'] != self.envs['E2E_CONTROLLER_REVISION']:
@@ -27,7 +27,7 @@ class ClusterRestoreProbe(OperatorProbe):
         self.target_environment = root / 'target-environment'
         self.archived_workloads = {'jobs': [], 'pods': []}
         self.target_active = False
-        self.report.update(scope='Development-image idle cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile, in-flight, lag and final-artifact acceptance remain required.',
+        self.report.update(scope='Development-image cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile, in-flight and final-artifact acceptance remain required.',
                            procedureSHA256=db.digest(Path(__file__).read_bytes()),
                            operatorProcedureSHA256=db.digest((REPO / 'support/qualification/probes/operator_restore.py').read_bytes()))
 
@@ -252,7 +252,8 @@ if __name__ == '__main__':
     parser.add_argument('environment', type=Path, help='Environment of the disposable source cluster that will be destroyed')
     parser.add_argument('output', type=Path)
     parser.add_argument('--loss', choices=['operator', 'combined'], required=True)
+    parser.add_argument('--timing', choices=['idle', 'operator-lag'], default='idle')
     args = parser.parse_args()
-    probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss)
+    probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing)
     probe.run()
     print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'lossType', 'status', 'recoverySeconds', 'cleanupSucceeded')}))

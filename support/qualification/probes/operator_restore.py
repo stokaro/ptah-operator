@@ -20,10 +20,15 @@ spec.loader.exec_module(db)
 
 
 class OperatorProbe(db.Probe):
-    def __init__(self, engine, family, environment, root, loss="database"):
+    def __init__(self, engine, family, environment, root, loss="database", timing="idle"):
+        if timing not in ('idle', 'operator-lag'):
+            raise ValueError('Unknown recovery timing')
+        if timing == 'operator-lag' and loss == 'database':
+            raise ValueError('The operator-lag procedure must restore the older operator backup')
         super().__init__(engine, root)
         self.family = family
         self.loss = loss
+        self.timing = timing
         self.envs = dict(line.split('=', 1) for line in environment.read_text().splitlines() if '=' in line)
         endpoint = self.command('verify the explicit database Docker endpoint', db.DOCKER + ['context', 'inspect', db.DOCKER[-1], '--format', '{{.Endpoints.docker.Host}}']).stdout.decode().strip()
         if self.envs.get('E2E_DOCKER_ENDPOINT') != endpoint:
@@ -36,7 +41,7 @@ class OperatorProbe(db.Probe):
         self.name = 'restore-case'
         self.api = 'operator.ptah.run/v1alpha1'
         self.created_namespace = False
-        self.report.update(scope='Native idle recovery pilot; operator loss means a namespaced-state rebuild with new UIDs. CRDs and the installed release survive. No in-flight, five-minute lag, final-artifact or full-matrix acceptance', family=family, lossType=loss,
+        self.report.update(scope='Native recovery pilot; operator loss means a namespaced-state rebuild with new UIDs. CRDs and the installed release survive. No in-flight, final-artifact or full-matrix acceptance', family=family, lossType=loss, timing=timing,
             operatorRevision=self.envs['E2E_CONTROLLER_REVISION'], operatorImage=self.envs['E2E_CONTROLLER_IMAGE'], executorImage=self.envs['E2E_EXECUTOR_IMAGE'],
             procedureSHA256=db.digest(Path(__file__).read_bytes()), databaseProcedureSHA256=db.digest((REPO / 'support/qualification/probes/database_restore.py').read_bytes()))
         self.watches = {}
@@ -124,17 +129,29 @@ class OperatorProbe(db.Probe):
         policy_type = 'schema' if self.family == 'schema' else 'migrations'
         self.create(self.obj('ConfigMap', 'restore-policy', immutable=True, data={'policy.yaml': 'version: 1\nartifact_types:\n  - application/vnd.stokaro.ptah.' + policy_type + '.v1\n'}))
 
-    def publish(self, revision):
+    @staticmethod
+    def artifact_files(family, revision):
+        if family not in ('schema', 'migration') or revision not in (1, 2, 3):
+            raise ValueError('The recovery fixture requires a declared family and revision')
         table = 'CREATE TABLE recovery_canary (id INTEGER PRIMARY KEY, value TEXT NOT NULL'
+        if family == 'schema':
+            columns = ''.join(', ' + column + ' INTEGER NOT NULL DEFAULT 1'
+                              for number, column in ((2, 'recovered'), (3, 'resumed')) if revision >= number)
+            return {'schema.sql': table + columns + ');\n'}
+        files = {'0000000001_create_canary.up.sql': table + "); INSERT INTO recovery_canary VALUES (1,'before-backup'),(2,'preserve-this-row');\n", '0000000001_create_canary.down.sql': 'DROP TABLE recovery_canary;\n'}
+        for number, name, column in ((2, 'recover', 'recovered'), (3, 'resume', 'resumed')):
+            if revision >= number:
+                prefix = f'{number:010d}_{name}'
+                files[prefix + '.up.sql'] = 'ALTER TABLE recovery_canary ADD COLUMN ' + column + ' INTEGER NOT NULL DEFAULT 1;\n'
+                files[prefix + '.down.sql'] = 'ALTER TABLE recovery_canary DROP COLUMN ' + column + ';\n'
+        return files
+
+    def publish(self, revision):
+        files = self.artifact_files(self.family, revision)
         if self.family == 'schema':
-            sql = table + (', recovered INTEGER NOT NULL DEFAULT 1' if revision == 2 else '') + ');\n'
-            files = {'schema.sql': sql}
             path = '/input/schema.sql'
             args = ['schema', 'push', '--schema-file', path, '--dialect', 'postgres' if self.engine == 'postgresql' else 'mysql']
         else:
-            files = {'0000000001_create_canary.up.sql': table + "); INSERT INTO recovery_canary VALUES (1,'before-backup'),(2,'preserve-this-row');\n", '0000000001_create_canary.down.sql': 'DROP TABLE recovery_canary;\n'}
-            if revision == 2:
-                files.update({'0000000002_recover.up.sql': 'ALTER TABLE recovery_canary ADD COLUMN recovered INTEGER NOT NULL DEFAULT 1;\n', '0000000002_recover.down.sql': 'ALTER TABLE recovery_canary DROP COLUMN recovered;\n'})
             args = ['migrations', 'push', '--migrations-dir', '/input', '--dir-format', 'ptah']
         name = 'restore-publish-' + str(revision)
         self.create(self.obj('ConfigMap', name, data=files))
@@ -402,6 +419,95 @@ class OperatorProbe(db.Probe):
             self.check('real migration history is populated', bool(result['history'].strip()))
         return result
 
+    @staticmethod
+    def wait_for_backup_lag(completed, monotonic=time.monotonic, sleep=time.sleep):
+        # Date the gap from completed backup bytes, not from the poll that
+        # noticed a later Apply. A wall-clock jump cannot shorten this wait.
+        while (remaining := completed + 300 - monotonic()) > 0:
+            sleep(min(remaining, 30))
+
+    def advance_lagged_database(self, source, source_field, original_jobs, recipient, key, wrong):
+        reference = self.publish(2)
+        self.patch({'spec': {source_field: self.source_spec(reference), 'suspend': False}})
+        ready = self.settled('AwaitingApproval')
+        plan = self.read(self.kind.lower() + 'plans', ready['status']['plan']['name'])
+        self.check('the lagged backup has not authorized the intervening change',
+                   self.watched_apply_jobs(self.barrier('lag-unapproved-boundary')) == set(original_jobs))
+        self.wait_for_backup_lag(self.operator_backup_completed)
+        approval = json.loads(self.approve(ready, plan, 'restore-intervening').stdout)
+        applied = self.settled('InSync')
+        self.patch({'spec': {'suspend': True}})
+        suspended = self.settled('Suspended')
+        jobs = self.apply_jobs()
+        added = set(jobs) - set(original_jobs)
+        self.check('one approved Apply committed after the older operator backup',
+                   len(added) == 1 and set(original_jobs) <= set(jobs) and
+                   all(j.get('status', {}).get('succeeded') == 1 for j in jobs.values()))
+        pods = self.stopped_apply_pods(set(jobs))
+        self.check('the intervening Apply added its actual database column',
+                   self.sql(source, 'SELECT count(*) FROM recovery_canary WHERE recovered=1;').stdout.strip() == b'2')
+        if self.family == 'migration':
+            self.check('the intervening migration is in actual database history',
+                       self.sql(source, 'SELECT version FROM schema_migrations ORDER BY version;').stdout.strip() == b'1\n2')
+        self.check('the complete watch accounts for both pre-loss Applies',
+                   self.watched_apply_jobs(self.barrier('lag-committed-boundary')) == set(jobs))
+        evidence = {'sourceField': source_field, 'reference': reference, 'plan': plan,
+                    'approval': self.read(self.kind.lower() + 'approvals', 'restore-intervening'),
+                    'applied': applied, 'suspended': suspended, 'jobs': list(jobs.values()), 'pods': pods}
+        if self.family == 'schema':
+            expected = {(ref['name'], ref['uid']) for ref in plan.get('status', {}).get('publishedChunks', [])}
+            chunks = self.read('ptahschemaplanchunks', False)['items']
+            evidence['chunks'] = [chunk for chunk in chunks
+                                  if (chunk['metadata']['name'], chunk['metadata']['uid']) in expected]
+            self.check('intervening execution evidence includes every exact schema SQL chunk',
+                       bool(expected) and len(evidence['chunks']) == len(expected) and
+                       {(chunk['metadata']['name'], chunk['metadata']['uid']) for chunk in evidence['chunks']} == expected)
+        self.encrypted('intervening-execution', json.dumps(evidence).encode(), recipient, key, wrong)
+        self.report['interveningExecution'] = {'artifactDigest': self.report['artifacts']['2']['digest'],
+            'planUID': plan['metadata']['uid'], 'approvalUID': approval['metadata']['uid'],
+            'jobUIDs': sorted(added), 'completedAt': db.now()}
+        self.report['consistencyAssumptions'] = ('The immutable operator checkpoint predates a separately approved, '
+            'completed change by at least five minutes. Database backup starts only after that executor has '
+            'stopped and the resource is suspended again. Recovery retains the old operator source while '
+            'suspended, diagnoses the newer database, then explicitly selects the already-committed artifact '
+            'from separate encrypted execution evidence. No active DDL is included in the backup.')
+        self.persist()
+        return self.inventories(source), jobs, pods
+
+    def select_diagnosed_source(self, checkpoint_path, key, source_field):
+        # Do not silently reconstruct the newer desired state from memory.
+        # Read both immutable archives and record the controlled recovery edit.
+        archives = {}
+        for name, path in (('operator-checkpoint', checkpoint_path),
+                           ('intervening-execution', self.root / 'intervening-execution.age')):
+            payload = self.command('read the original ' + name + ' during lag diagnosis',
+                                   ['age', '-d', '-i', str(key), str(path)]).stdout
+            self.check(name + ' still matches its recorded recovery bytes',
+                       db.digest(payload) == self.report['backups'][name]['plaintextSHA256'])
+            archives[name] = json.loads(payload)
+        old, later = archives['operator-checkpoint'], archives['intervening-execution']
+        live = self.settled('Suspended')
+        self.check('the restored operator really retains the older source while suspended',
+                   live['spec']['suspend'] is True and live['spec']['policy']['apply'] == 'OnApproval' and
+                   live['spec'][source_field] == old['resource']['spec'][source_field] and
+                   later['sourceField'] == source_field and
+                   old['resource']['spec'][source_field]['ociRef'] != later['reference'])
+        self.check('diagnosis has not replayed an old Apply',
+                   self.watched_apply_jobs(self.barrier('lag-diagnosis-boundary')) ==
+                   {job['metadata']['uid'] for job in later['jobs']})
+        self.patch({'spec': {source_field: self.source_spec(later['reference'])}})
+        selected = self.settled('Suspended')
+        self.check('the diagnosed source is selected without enabling execution',
+                   selected['spec']['suspend'] is True and selected['spec']['policy']['apply'] == 'OnApproval' and
+                   selected['spec'][source_field] == later['suspended']['spec'][source_field])
+        self.report['lagDiagnosis'] = {'completedAt': db.now(),
+            'operatorCheckpointSHA256': self.report['backups']['operator-checkpoint']['plaintextSHA256'],
+            'interveningEvidenceSHA256': self.report['backups']['intervening-execution']['plaintextSHA256'],
+            'controlledSourceChange': {'from': old['resource']['spec'][source_field]['ociRef'], 'to': later['reference']},
+            'decision': 'The restored database matches the newer completed execution. Select that immutable artifact while suspended; retain OnApproval and do not replay the older source.'}
+        self.lag_execution = later
+        self.persist()
+
     def run(self):
         try:
             self.prepare_namespace()
@@ -457,6 +563,18 @@ class OperatorProbe(db.Probe):
             if self.loss != 'database':
                 checkpoint['namespaceState'] = self.namespace_backup()
             checkpoint_path = self.encrypted('operator-checkpoint', json.dumps(checkpoint).encode(), recipient, key, wrong)
+            self.report['operatorBackupCompletedAt'] = db.now()
+            self.operator_backup_completed = time.monotonic()
+            if self.timing == 'operator-lag':
+                before, original_jobs, original_pods = self.advance_lagged_database(
+                    source, source_field, original_jobs, recipient, key, wrong)
+            self.report['databaseBackupStartedAt'] = db.now()
+            if self.timing == 'operator-lag':
+                lag = (db.dt.datetime.fromisoformat(self.report['databaseBackupStartedAt']) -
+                       db.dt.datetime.fromisoformat(self.report['operatorBackupCompletedAt'])).total_seconds()
+                self.check('the operator backup is at least five minutes older than the database backup',
+                           lag >= 300 and time.monotonic() - self.operator_backup_completed >= 300)
+                self.report['operatorBackupLagSeconds'] = lag
             if self.engine == 'postgresql':
                 roles = self.command('back up roles', db.DOCKER + ['exec', source, 'pg_dumpall', '-h', '127.0.0.1', '--roles-only']).stdout
                 archive = self.command('back up database including actual history', db.DOCKER + ['exec', source, 'pg_dump', '-h', '127.0.0.1', '-Fc', '-d', 'drill']).stdout
@@ -467,7 +585,7 @@ class OperatorProbe(db.Probe):
                 paths = [('database', self.encrypted('database', archive, recipient, key, wrong))]
                 del archive
             self.report['backupCompletedAt'] = db.now()
-            self.sql(source, "INSERT INTO recovery_canary VALUES(3,'after-backup-expected-loss');")
+            self.sql(source, "INSERT INTO recovery_canary(id,value) VALUES(3,'after-backup-expected-loss');")
             old_ids = set(self.sql(source, 'SELECT id FROM recovery_canary ORDER BY id;').stdout.decode().splitlines())
             self.check('late write committed before loss', old_ids == {'1', '2', '3'})
             if self.loss == 'operator':
@@ -509,6 +627,8 @@ class OperatorProbe(db.Probe):
             self.check('restored reader cannot mutate schema', denied.returncode != 0 and (b'permission denied for schema public' if self.engine == 'postgresql' else b'ERROR 1142') in denied.stderr)
             if self.loss != 'operator':
                 self.connect_database(restored, True)
+            if self.timing == 'operator-lag':
+                self.select_diagnosed_source(checkpoint_path, key, source_field)
             self.patch({'spec': {'suspend': False}})
             recovered = self.settled('InSync')
             if self.loss == 'database':
@@ -522,7 +642,8 @@ class OperatorProbe(db.Probe):
                 self.check('the target Secret was restored with a new identity',
                            self.read('secrets', 'restore-target')['metadata']['uid'] != target_secret['metadata']['uid'])
             self.check('old approval did not replay after database restoration', self.watched_apply_jobs(self.barrier('restored-watch-boundary')) == set(original_jobs))
-            fresh_ref = self.publish(2)
+            final_revision = 3 if self.timing == 'operator-lag' else 2
+            fresh_ref = self.publish(final_revision)
             self.patch({'spec': {source_field: self.source_spec(fresh_ref)}})
             ready = self.settled('AwaitingApproval')
             fresh_plan = self.read(self.kind.lower() + 'plans', ready['status']['plan']['name'])
@@ -538,6 +659,16 @@ class OperatorProbe(db.Probe):
                 denied_uid = self.approve(resource, fresh_plan, 'restore-old-resource', required=False)
                 self.check('admission refuses the old resource UID against the fresh plan',
                            denied_uid.returncode != 0 and ('approval ' + self.family + ' reference does not match the plan').encode() in denied_uid.stderr)
+                if self.timing == 'operator-lag':
+                    later_plan = self.lag_execution['plan']
+                    denied_later = self.approve(ready, later_plan, 'restore-intervening-replay', required=False)
+                    self.check('admission also refuses replay of the intervening completed plan',
+                               denied_later.returncode != 0 and expected in denied_later.stderr and
+                               b'not found' in denied_later.stderr and later_plan['metadata']['name'].encode() in denied_later.stderr)
+                    absent = self.kubectl('confirm intervening authorization was not recreated',
+                                          ['get', self.kind.lower() + 'approvals', 'restore-intervening'], required=False)
+                    self.check('the rebuilt namespace contains no recreated intervening approval',
+                               absent.returncode != 0 and b'NotFound' in absent.stderr and b'restore-intervening' in absent.stderr)
             self.check('no Apply before fresh authorization', self.watched_apply_jobs(self.barrier('fresh-approval-watch-boundary')) == set(original_jobs))
             fresh_approval = json.loads(self.approve(ready, fresh_plan, 'restore-fresh').stdout)
             final = self.settled('InSync')
@@ -556,14 +687,25 @@ class OperatorProbe(db.Probe):
                                       ['get', self.kind.lower() + 'approvals', 'restore-original'], required=False)
                 self.check('the rebuilt namespace contains no recreated old approval',
                            absent.returncode != 0 and b'NotFound' in absent.stderr and b'restore-original' in absent.stderr)
-            self.check('approved change reached the restored database', self.sql(restored, 'SELECT count(*) FROM recovery_canary WHERE recovered=1;').stdout.strip() == str(len(new_ids)).encode())
+            final_column = 'resumed' if self.timing == 'operator-lag' else 'recovered'
+            self.check('approved change reached the restored database', self.sql(restored, 'SELECT count(*) FROM recovery_canary WHERE ' + final_column + '=1;').stdout.strip() == str(len(new_ids)).encode())
             final_jobs = self.watched_apply_jobs(self.barrier('final-watch-boundary'))
             self.check('exactly one fresh Apply followed restoration', len(final_jobs - set(original_jobs)) == 1 and set(original_jobs) <= final_jobs)
             if self.family == 'migration':
-                self.check('fresh approved migration is recorded in actual history', self.sql(restored, 'SELECT version FROM schema_migrations ORDER BY version;').stdout.strip() == b'1\n2')
+                self.check('fresh approved migration is recorded in actual history', self.sql(restored, 'SELECT version FROM schema_migrations ORDER BY version;').stdout.strip() == '\n'.join(str(v) for v in range(1, final_revision + 1)).encode())
             recovery_seconds = round(time.monotonic()-clock, 3)
-            rpo_seconds = (db.dt.datetime.fromisoformat(self.report['lossInjectedAt']) - db.dt.datetime.fromisoformat(self.report['backupStartedAt'])).total_seconds()
+            rpo_seconds = (db.dt.datetime.fromisoformat(self.report['lossInjectedAt']) - db.dt.datetime.fromisoformat(self.report['databaseBackupStartedAt'])).total_seconds()
             self.check('database recovery point is within five minutes of loss', 0 <= rpo_seconds <= 300)
+            operator_age = (db.dt.datetime.fromisoformat(self.report['lossInjectedAt']) - db.dt.datetime.fromisoformat(self.report['backupStartedAt'])).total_seconds()
+            self.report['operatorBaseBackupAgeUpperBoundSeconds'] = operator_age
+            self.report['profileRPO'] = {'database': 'PASS', 'operatorBase': 'PASS' if 0 <= operator_age <= 300 else 'FAIL'}
+            if self.timing == 'idle':
+                self.check('the idle operator checkpoint is within five minutes of loss', 0 <= operator_age <= 300)
+            else:
+                self.report['profileRPO']['combinedOperatorRecoveryKit'] = 'Not assessed'
+                self.report['profileRPO']['reason'] = ('The older full operator checkpoint exceeds the five-minute backup-age bound. '
+                    'Supplemental execution evidence is retained, but it has not been accepted as an incremental operator backup. '
+                    'A successful functional restore does not establish this profile RPO.')
             rto_bound = 900 if self.loss == 'operator' else 1800
             self.check('verified recovery meets the declared loss-type bound', 0 < recovery_seconds <= rto_bound)
             self.report.update(status='PASS', expectedLostRowIDs=sorted(int(v) for v in expected_loss), observedLostRowIDs=sorted(int(v) for v in old_ids - new_ids), serviceRestoredAt=db.now(), recoverySeconds=recovery_seconds,
@@ -607,7 +749,8 @@ if __name__ == '__main__':
     parser.add_argument('environment', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--loss', choices=['database', 'operator', 'combined'], default='database')
+    parser.add_argument('--timing', choices=['idle', 'operator-lag'], default='idle')
     args = parser.parse_args()
-    probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss)
+    probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing)
     probe.run()
     print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'status', 'recoverySeconds', 'cleanupSucceeded')}))
