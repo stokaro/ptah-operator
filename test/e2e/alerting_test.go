@@ -51,7 +51,7 @@ func alRenderedRule(t *testing.T) string {
 		"--set", "monitoring.prometheusRule.enabled=true",
 		"--set", "monitoring.prometheusRule.viewUnsyncedFor=60s",
 		"--set", "monitoring.prometheusRule.operationStalledAfterSeconds=60",
-		"--set", "monitoring.prometheusRule.certificateExpiresWithinSeconds=60",
+		"--set", "monitoring.prometheusRule.certificateExpiresWithinSeconds=86400",
 		"--set", "monitoring.prometheusRule.admissionFailingFor=60s",
 		"--show-only", "templates/prometheusrule.yaml")
 }

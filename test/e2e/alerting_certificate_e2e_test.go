@@ -21,9 +21,9 @@ import (
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
-// certificateExpiry lets a real serving certificate expire while its rotator
-// is stopped. The certificate keeps its CA, key and DNS names, so the API
-// refusal must name expiry rather than an unrelated trust or identity fault.
+// certificateExpiry crosses the frozen 24-hour warning, then lets a second
+// leaf expire while its rotator is stopped. Both keep the installed CA, key
+// and DNS names, so the admission refusal must identify expiry.
 func (a *alertingRun) certificateExpiry() {
 	a.t.Helper()
 	a.waitForTargets()
@@ -56,26 +56,24 @@ func (a *alertingRun) certificateExpiry() {
 	}
 	fault.secret = stoppedSecret
 	var err error
-	fault.shortLeaf, fault.expiry, err = alShortServingCertificate(fault.secret.Data, time.Now())
-	a.check(err, "prepare the serving certificate expiry")
+	var warningExpiry time.Time
+	fault.warningLeaf, warningExpiry, err = alServingCertificate(fault.secret.Data, time.Now(), alCertificateWarning+alCertificateLifetime)
+	a.check(err, "prepare the serving certificate's 24-hour warning")
 	originalLeaf, err := firstCertificate(fault.secret.Data["tls.crt"])
 	a.check(err, "read the original serving certificate expiry")
 	_, managerPods := a.managerSnapshot()
-	podNames := make([]string, 0, len(managerPods))
-	for _, pod := range managerPods {
-		podNames = append(podNames, pod.Name)
-	}
 	from := a.deliveryCount()
-	a.check(fault.writeLeaf(a.ctx, fault.shortLeaf), "install the short-lived serving certificate")
-	a.check(a.waitForCertificateExpiry(podNames, fault.expiry, alCertificateProjection), "observe the short-lived certificate on every manager")
-	warningAt := fault.expiry.Add(-alCertificateWarning)
+	a.check(fault.writeLeaf(a.ctx, fault.warningLeaf), "install the 24-hour warning certificate")
+	_, err = a.waitForServingCertificate(managerPods, fault.warningLeaf, fault.secret.Data["ca.crt"], alCertificateProjection)
+	a.check(err, "verify the warning certificate on every serving endpoint and scrape")
+	warningAt := warningExpiry.Add(-alCertificateWarning)
 	if !time.Now().Before(warningAt) {
 		a.fatalf("the certificate was not projected to every manager before its warning threshold")
 	}
 	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 1)), "require a fresh TLS connection before expiry")
-	a.check(harness.Wait(a.ctx, "approval admission with the short-lived certificate before expiry", alDetectionSlack, alDeliveryPoll,
+	a.check(harness.Wait(a.ctx, "approval admission with the warning certificate before expiry", alDetectionSlack, alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
-			return a.approvalCertificateProbe(ctx) == nil, "the short-lived certificate has not admitted the probe", nil
+			return a.approvalCertificateProbe(ctx) == nil, "the warning certificate has not admitted the probe", nil
 		}), "verify admission before certificate expiry")
 	delivered, index := a.waitForDelivery(alMatch{status: "firing", alertName: alCertificateAlert},
 		"the certificate expiry warning", time.Until(warningAt.Add(alDetectionSlack)), from)
@@ -87,7 +85,19 @@ func (a *alertingRun) certificateExpiry() {
 		a.fatalf("the certificate alert omitted its critical severity or usable runbook link")
 	}
 	a.logf("PASS certificate alert: signedExpiry=%s warningThreshold=%s receivedAt=%s; delivery preceded expiry by %s",
-		fault.expiry.Format(time.RFC3339), warningAt.Format(time.RFC3339), delivered.ReceivedAt.Format(time.RFC3339Nano), fault.expiry.Sub(delivered.ReceivedAt))
+		warningExpiry.Format(time.RFC3339), warningAt.Format(time.RFC3339), delivered.ReceivedAt.Format(time.RFC3339Nano), warningExpiry.Sub(delivered.ReceivedAt))
+	// The warning used the real 24-hour threshold. A separate leaf now gives
+	// the admission failure its own signed expiry without a day-long sleep.
+	fault.shortLeaf, fault.expiry, err = alServingCertificate(fault.secret.Data, time.Now(), alCertificateLifetime)
+	a.check(err, "prepare the admission expiry certificate")
+	a.check(fault.writeLeaf(a.ctx, fault.shortLeaf), "install the admission expiry certificate")
+	_, err = a.waitForServingCertificate(managerPods, fault.shortLeaf, fault.secret.Data["ca.crt"], alCertificateProjection)
+	a.check(err, "verify the admission expiry certificate on every serving endpoint and scrape")
+	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 2)), "require a fresh TLS connection before admission expiry")
+	a.check(harness.Wait(a.ctx, "approval admission before the second leaf expires", alDetectionSlack, alDeliveryPoll,
+		func(ctx context.Context) (bool, string, error) {
+			return a.approvalCertificateProbe(ctx) == nil, "the admission expiry certificate has not admitted the probe", nil
+		}), "verify admission before the second leaf expires")
 	if remaining := time.Until(fault.expiry.Add(time.Second)); remaining > 0 {
 		a.sleep(remaining)
 	}
@@ -96,7 +106,7 @@ func (a *alertingRun) certificateExpiry() {
 	// and TLS transport without changing the trusted certificates. The pinned
 	// apiserver keys its webhook client by CABundle and client-go keys its
 	// transport by the raw CAData bytes.
-	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 2)), "require a fresh admission TLS connection")
+	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 3)), "require a fresh admission TLS connection")
 	a.check(harness.Wait(a.ctx, "approval admission to refuse the expired serving certificate", time.Until(fault.expiry.Add(alDetectionSlack)), alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
 			return alExpiredApprovalError(a.approvalCertificateProbe(ctx)), "no expiry-specific admission refusal yet", nil
@@ -105,17 +115,21 @@ func (a *alertingRun) certificateExpiry() {
 	admissionIndex := a.admissionFailureDelivered(from, fault.expiry)
 	restoredAt := time.Now()
 	a.check(fault.writeLeaf(a.ctx, fault.secret.Data["tls.crt"]), "restore the valid serving certificate")
-	a.check(a.waitForCertificateExpiry(podNames, originalLeaf.NotAfter, alCertificateProjection), "observe the restored certificate on every manager")
-	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 3)), "require a fresh TLS connection after restoration")
+	restoredServedAt, err := a.waitForServingCertificate(managerPods, fault.secret.Data["tls.crt"], fault.secret.Data["ca.crt"], alCertificateProjection)
+	a.check(err, "verify the restored certificate on every serving endpoint and scrape")
+	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 4)), "require a fresh TLS connection after restoration")
 	a.check(harness.Wait(a.ctx, "approval admission after certificate restoration", alDetectionSlack, alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
 			return a.approvalCertificateProbe(ctx) == nil, "approval admission has not recovered", nil
 		}), "verify admission recovered")
 	resolved, _ := a.waitForDelivery(alMatch{status: "resolved", alertName: alCertificateAlert},
-		"the restored serving certificate's resolution", alDetectionSlack, index+1)
-	if elapsed := resolved.ReceivedAt.Sub(restoredAt); elapsed < 0 || elapsed > alCertificateProjection+alDetectionSlack {
-		a.fatalf("the certificate alert resolved after %s; want at most %s from restoration", elapsed, alCertificateProjection+alDetectionSlack)
+		"the restored serving certificate's resolution", time.Until(restoredServedAt.Add(alDetectionSlack)), index+1)
+	if resolved.ReceivedAt.Before(restoredAt) || resolved.ReceivedAt.After(restoredServedAt.Add(alDetectionSlack)) {
+		a.fatalf("the certificate resolution at %s fell outside the restoration and delivery bound ending at %s",
+			resolved.ReceivedAt.Format(time.RFC3339Nano), restoredServedAt.Add(alDetectionSlack).Format(time.RFC3339Nano))
 	}
+	a.logf("PASS certificate recovery: every serving endpoint and scrape verified at %s; originalExpiry=%s resolvedAt=%s",
+		restoredServedAt.Format(time.RFC3339Nano), originalLeaf.NotAfter.Format(time.RFC3339), resolved.ReceivedAt.Format(time.RFC3339Nano))
 	a.admissionRecovered(admissionIndex+1, restoredAt)
 	a.check(fault.writeBundle(a.ctx, fault.bundle), "restore the admission trust bundle")
 	a.check(fault.scaleRotator(a.ctx, *fault.rotator.Spec.Replicas), "restart certificate renewal")
@@ -131,25 +145,44 @@ func (a *alertingRun) approvalCertificateProbe(ctx context.Context) error {
 	return a.cluster.Client.Patch(ctx, approval, patch, client.DryRunAll, client.FieldOwner(harness.FieldOwner))
 }
 
-func (a *alertingRun) waitForCertificateExpiry(pods []string, expiry time.Time, timeout time.Duration) error {
-	return harness.Wait(a.ctx, "every manager to report the expected certificate expiry", timeout, alDeliveryPoll,
+func (a *alertingRun) waitForServingCertificate(pods []corev1.Pod, leaf, authority []byte, timeout time.Duration) (time.Time, error) {
+	expected, err := firstCertificate(leaf)
+	if err != nil {
+		return time.Time{}, errors.New("the serving certificate assertion has no readable leaf")
+	}
+	names := make([]string, 0, len(pods))
+	for _, pod := range pods {
+		names = append(names, pod.Name)
+	}
+	var verifiedAt time.Time
+	err = harness.Wait(a.ctx, "every manager to serve and scrape the exact expected certificate", timeout, alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
 			body, err := a.prometheus(ctx, "/api/v1/query", map[string]string{"query": alCertificateMetric})
 			if err != nil {
 				return false, "", err
 			}
-			return alCertificateExpiries(body, pods, expiry), "manager certificate metrics have not all changed", nil
+			if !alCertificateExpiries(body, names, expected.NotAfter) {
+				return false, "manager certificate metrics have not all changed", nil
+			}
+			for _, pod := range pods {
+				if err := a.probeServingPod(ctx, pod, authority, expected); err != nil {
+					return false, "manager " + pod.Name + ": " + err.Error(), nil
+				}
+			}
+			verifiedAt = time.Now().UTC()
+			return true, "", nil
 		})
+	return verifiedAt, err
 }
 
 type alCertificateFault struct {
-	a                 *alertingRun
-	rotator           *appsv1.Deployment
-	secret            *corev1.Secret
-	webhooks          *admissionregistrationv1.ValidatingWebhookConfiguration
-	bundle, shortLeaf []byte
-	expiry            time.Time
-	restored          bool
+	a                              *alertingRun
+	rotator                        *appsv1.Deployment
+	secret                         *corev1.Secret
+	webhooks                       *admissionregistrationv1.ValidatingWebhookConfiguration
+	bundle, warningLeaf, shortLeaf []byte
+	expiry                         time.Time
+	restored                       bool
 }
 
 func (a *alertingRun) certificateFault() *alCertificateFault {
@@ -217,7 +250,8 @@ func (f *alCertificateFault) writeLeaf(ctx context.Context, leaf []byte) error {
 				return errors.New("the serving certificate identity changed during the fault")
 			}
 		}
-		if !bytes.Equal(current.Data["tls.crt"], f.secret.Data["tls.crt"]) && !bytes.Equal(current.Data["tls.crt"], f.shortLeaf) {
+		if !bytes.Equal(current.Data["tls.crt"], f.secret.Data["tls.crt"]) &&
+			!bytes.Equal(current.Data["tls.crt"], f.warningLeaf) && !bytes.Equal(current.Data["tls.crt"], f.shortLeaf) {
 			return errors.New("the serving certificate changed outside the expiry fault")
 		}
 		current.Data["tls.crt"] = bytes.Clone(leaf)
@@ -238,7 +272,7 @@ func (f *alCertificateFault) writeBundle(ctx context.Context, bundle []byte) err
 			hook := &current.Webhooks[i]
 			if hook.Name == alApprovalWebhook {
 				known := false
-				for generation := range 4 {
+				for generation := range 5 {
 					known = known || bytes.Equal(hook.ClientConfig.CABundle, alFreshCertificateBundle(f.bundle, generation))
 				}
 				if !known {
