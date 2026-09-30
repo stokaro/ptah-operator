@@ -15,6 +15,70 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
+func TestMigrationExecutorPodBarrierRefusesManagedWorkloads(t *testing.T) {
+	t.Parallel()
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "test", UID: "database-uid",
+		Labels: map[string]string{"app.kubernetes.io/name": "mysql"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	if _, err := migrationExecutorPodBarrierSource([]corev1.Pod{pod}, "test", "mysql"); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*corev1.Pod){
+		"managed Apply": func(p *corev1.Pod) { p.Labels["app.kubernetes.io/managed-by"] = "ptah-operator" },
+		"migration":     func(p *corev1.Pod) { p.Labels[labelMigration] = "uncertain" },
+		"schema":        func(p *corev1.Pod) { p.Labels[labelSchema] = "uncertain" },
+		"Job owner": func(p *corev1.Pod) {
+			p.OwnerReferences = []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: "apply", UID: "job-uid"}}
+		},
+		"wrong namespace": func(p *corev1.Pod) { p.Namespace = "other" },
+		"wrong database":  func(p *corev1.Pod) { p.Labels["app.kubernetes.io/name"] = "postgresql" },
+		"missing UID":     func(p *corev1.Pod) { p.UID = "" },
+		"not running":     func(p *corev1.Pod) { p.Status.Phase = corev1.PodPending },
+		"deleting":        func(p *corev1.Pod) { at := metav1.Now(); p.DeletionTimestamp = &at },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := pod.DeepCopy()
+			mutate(changed)
+			if _, err := migrationExecutorPodBarrierSource([]corev1.Pod{*changed}, "test", "mysql"); err == nil {
+				t.Fatal("an invalid or managed Pod became the writable watch sentinel")
+			}
+		})
+	}
+	for _, pods := range [][]corev1.Pod{nil, {pod, pod}} {
+		if _, err := migrationExecutorPodBarrierSource(pods, "test", "mysql"); err == nil {
+			t.Fatal("an empty or ambiguous database collection passed")
+		}
+	}
+}
+
+func TestMigrationExecutorPodWatchNeedsTheExactOriginalReading(t *testing.T) {
+	t.Parallel()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "apply", Namespace: "test", UID: "original", ResourceVersion: "123"}}
+	for _, kind := range []watch.EventType{watch.Added, watch.Modified} {
+		if !migrationExecutorPodWatchReached([]watchEvent[*corev1.Pod]{{Type: kind, Object: pod.DeepCopy()}}, pod) {
+			t.Fatal("the exact original Pod reading was not recognized")
+		}
+	}
+	for name, mutate := range map[string]func(*corev1.Pod){
+		"sentinel only":   func(p *corev1.Pod) { p.Name, p.UID = "database", "database-uid" },
+		"replacement":     func(p *corev1.Pod) { p.UID = "replacement" },
+		"old version":     func(p *corev1.Pod) { p.ResourceVersion = "122" },
+		"other namespace": func(p *corev1.Pod) { p.Namespace = "other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := pod.DeepCopy()
+			mutate(changed)
+			if migrationExecutorPodWatchReached([]watchEvent[*corev1.Pod]{{Type: watch.Modified, Object: changed}}, pod) {
+				t.Fatal("a different Pod or resourceVersion closed the original workload history")
+			}
+		})
+	}
+	for _, events := range [][]watchEvent[*corev1.Pod]{nil, {{Type: watch.Deleted, Object: pod}}, {{Type: watch.Added, Object: nil}}} {
+		if migrationExecutorPodWatchReached(events, pod) {
+			t.Fatal("an absent or deleted Pod reading passed")
+		}
+	}
+}
+
 func runningMigrationExecutorFixture() (*ptahv1alpha1.PtahMigration, *ptahv1alpha1.PtahMigration, *ptahv1alpha1.PtahMigration) {
 	before, _, _, _ := migrationReplacementFixture()
 	at := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)

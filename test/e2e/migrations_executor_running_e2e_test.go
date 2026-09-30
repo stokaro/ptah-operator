@@ -59,6 +59,27 @@ func migrationExecutorWatchBarrier[T client.Object](m *migrationRun, r *watchRec
 	})
 }
 
+// Read the original workload without editing it, then write a barrier to the
+// database Pod. Its event closes the preceding history of the whole namespace,
+// which must contain the exact original Pod reading as well as the sentinel.
+func migrationExecutorPodWatchBarrier(m *migrationRun, r *watchRecorder[*corev1.Pod], original *corev1.Pod) {
+	m.t.Helper()
+	uid := original.UID
+	m.check(m.cluster.Client.Get(m.ctx, client.ObjectKeyFromObject(original), original), "read the original Pod at the %s barrier", r.name)
+	if uid == "" || original.UID != uid {
+		m.fatalf("the original Pod was replaced before the %s barrier", r.name)
+	}
+	databases := &corev1.PodList{}
+	m.check(m.list(databases, client.MatchingLabels{"app.kubernetes.io/name": m.engine.service},
+		client.MatchingFields{"status.phase": string(corev1.PodRunning)}), "find the %s database watch sentinel", m.engine.kind)
+	sentinel, err := migrationExecutorPodBarrierSource(databases.Items, m.in.TestNamespace, m.engine.service)
+	m.check(err, "bind the %s Pod watch sentinel", r.name)
+	migrationExecutorWatchBarrier(m, r, sentinel)
+	if !migrationExecutorPodWatchReached(r.snapshot(), original) {
+		m.fatalf("the %s history did not reach the exact original Pod UID and resourceVersion", r.name)
+	}
+}
+
 // Hold the real DDL on a table created by the first authorized migration. A
 // unique server-side marker is acquired only after the table lock is held.
 func (m *migrationRun) runningMigrationTableBarrier(database string) func() {
@@ -310,7 +331,7 @@ func (m *migrationRun) runningExecutorImageChange() {
 	rolloutExecutorManagers(m.t, m.ctx, m.cluster, manager, replacement, original, m.scan)
 	migrationExecutorWatchBarrier(m, migrations, current)
 	migrationExecutorWatchBarrier(m, jobs, liveJob)
-	migrationExecutorWatchBarrier(m, pods, livePod)
+	migrationExecutorPodWatchBarrier(m, pods, livePod)
 	migrationExecutorWatchBarrier(m, leases, heldLease)
 	for _, r := range recorders {
 		r.requestStop()

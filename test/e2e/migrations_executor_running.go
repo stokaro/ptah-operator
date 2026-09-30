@@ -15,6 +15,35 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
+// The database is an unmanaged sentinel in the same Pod collection. Managed
+// Apply Pods forbid metadata edits, including a test's watch annotation.
+func migrationExecutorPodBarrierSource(pods []corev1.Pod, namespace, service string) (*corev1.Pod, error) {
+	if len(pods) != 1 || namespace == "" || service == "" {
+		return nil, errors.New("the Pod watch needs exactly one database sentinel")
+	}
+	pod := &pods[0]
+	if pod.Name == "" || pod.UID == "" || pod.Namespace != namespace || pod.DeletionTimestamp != nil ||
+		pod.Status.Phase != corev1.PodRunning || pod.Labels["app.kubernetes.io/name"] != service ||
+		pod.Labels["app.kubernetes.io/managed-by"] == "ptah-operator" ||
+		pod.Labels[labelMigration] != "" || pod.Labels[labelSchema] != "" {
+		return nil, errors.New("the Pod watch sentinel is not the exact running unmanaged database")
+	}
+	for _, owner := range pod.OwnerReferences {
+		if owner.Kind == "Job" {
+			return nil, errors.New("the Pod watch sentinel belongs to a Job")
+		}
+	}
+	return pod.DeepCopy(), nil
+}
+
+func migrationExecutorPodWatchReached(events []watchEvent[*corev1.Pod], pod *corev1.Pod) bool {
+	return pod != nil && pod.UID != "" && pod.ResourceVersion != "" && slices.ContainsFunc(events, func(event watchEvent[*corev1.Pod]) bool {
+		return (event.Type == watch.Added || event.Type == watch.Modified) && event.Object != nil &&
+			event.Object.UID == pod.UID && event.Object.ResourceVersion == pod.ResourceVersion &&
+			event.Object.Name == pod.Name && event.Object.Namespace == pod.Namespace
+	})
+}
+
 func sameRunningMigration(before, current *ptahv1alpha1.PtahMigration) bool {
 	return before != nil && current != nil && before.UID != "" && before.UID == current.UID &&
 		before.Name == current.Name && before.Namespace == current.Namespace && before.Generation == current.Generation &&
