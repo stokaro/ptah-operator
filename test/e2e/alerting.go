@@ -653,7 +653,8 @@ func alNoActiveAlerts(body []byte) (bool, error) {
 	var answer struct {
 		Status string `json:"status"`
 		Data   struct {
-			Result []json.RawMessage `json:"result"`
+			ResultType string            `json:"resultType"`
+			Result     []json.RawMessage `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &answer); err != nil {
@@ -661,6 +662,9 @@ func alNoActiveAlerts(body []byte) (bool, error) {
 	}
 	if answer.Status != "success" {
 		return false, fmt.Errorf("the query answered %q", answer.Status)
+	}
+	if answer.Data.ResultType != "vector" || answer.Data.Result == nil {
+		return false, errors.New("the alert query did not return an explicit instant vector")
 	}
 	return len(answer.Data.Result) == 0, nil
 }

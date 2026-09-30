@@ -719,20 +719,25 @@ func TestAlNoActiveAlerts(t *testing.T) {
 	t.Parallel()
 	for name, body := range map[string]string{
 		"an empty vector": `{"status":"success","data":{"resultType":"vector","result":[]}}`,
-		// jq's length of null is zero.
-		"no result": `{"status":"success","data":{"resultType":"vector"}}`,
 	} {
 		if none, err := alNoActiveAlerts([]byte(body)); err != nil || !none {
 			t.Errorf("%s: %t, %v", name, none, err)
 		}
 	}
-	if none, err := alNoActiveAlerts([]byte(`{"status":"success","data":{"result":[{"metric":{"alertstate":"firing"}}]}}`)); err != nil || none {
+	if none, err := alNoActiveAlerts([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"alertstate":"firing"}}]}}`)); err != nil || none {
 		t.Errorf("an active alert read as none: %t, %v", none, err)
 	}
 	for name, body := range map[string]string{
-		"an error":  `{"status":"error","errorType":"bad_data","error":"parse error"}`,
-		"no status": `{"data":{"result":[]}}`,
-		"not JSON":  `502 Bad Gateway`,
+		"missing data":   `{"status":"success"}`,
+		"null data":      `{"status":"success","data":null}`,
+		"missing result": `{"status":"success","data":{"resultType":"vector"}}`,
+		"null result":    `{"status":"success","data":{"resultType":"vector","result":null}}`,
+		"missing type":   `{"status":"success","data":{"result":[]}}`,
+		"wrong type":     `{"status":"success","data":{"resultType":"matrix","result":[]}}`,
+		"object result":  `{"status":"success","data":{"resultType":"vector","result":{}}}`,
+		"an error":       `{"status":"error","errorType":"bad_data","error":"parse error"}`,
+		"no status":      `{"data":{"result":[]}}`,
+		"not JSON":       `502 Bad Gateway`,
 	} {
 		if _, err := alNoActiveAlerts([]byte(body)); err == nil {
 			t.Errorf("%s: read as an answer", name)
