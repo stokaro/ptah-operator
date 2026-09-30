@@ -49,6 +49,12 @@ func TestLifecyclePrivilegeInventoryReadsTheShippedChart(t *testing.T) {
 	if hookAccounts == 0 || installedAccounts == 0 {
 		t.Fatal("the inventory omitted installed or hook identities")
 	}
+	if _, err := lifecyclePrivilegeObjects(manifest.Bytes(), nil, "ptah-system"); err == nil {
+		t.Fatal("an empty hook inventory hid the hook privileges")
+	}
+	if _, err := lifecyclePrivilegeObjects(nil, hooks.Bytes(), "ptah-system"); err == nil {
+		t.Fatal("hook privileges substituted for the installed runtime")
+	}
 	for name, broken := range map[string][]byte{
 		"empty":            nil,
 		"invalid":          []byte("not: [valid"),

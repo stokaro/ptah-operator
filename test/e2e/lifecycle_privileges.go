@@ -25,6 +25,7 @@ func lifecyclePrivilegeObjects(manifest, hooks []byte, namespace string) ([]life
 	var objects []lifecyclePrivilegeObject
 	seen := map[lifecyclePrivilegeObject]bool{}
 	counts := map[string]int{}
+	accounts := map[bool]int{}
 	for _, source := range []struct {
 		raw  []byte
 		hook bool
@@ -63,12 +64,18 @@ func lifecyclePrivilegeObjects(manifest, hooks []byte, namespace string) ([]life
 			identity.hook = source.hook
 			objects = append(objects, identity)
 			counts[kind]++
+			if kind == "ServiceAccount" {
+				accounts[source.hook]++
+			}
 		}
 	}
 	for _, kind := range []string{"ServiceAccount", "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding"} {
 		if counts[kind] == 0 {
 			return nil, fmt.Errorf("release privilege inventory omitted %s", kind)
 		}
+	}
+	if accounts[false] == 0 || accounts[true] == 0 {
+		return nil, errors.New("release privilege inventory omitted installed or hook ServiceAccounts")
 	}
 	return objects, nil
 }
