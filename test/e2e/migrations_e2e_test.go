@@ -103,6 +103,10 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		struct {
 			name string
 			body func()
+		}{"unsupported-controller-state-after-approval", m.unsupportedControllerState},
+		struct {
+			name string
+			body func()
 		}{"running-apply-executor-image-change", m.runningExecutorImageChange})
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {

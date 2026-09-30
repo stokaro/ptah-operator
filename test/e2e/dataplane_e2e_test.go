@@ -74,6 +74,7 @@ func TestDataPlane(t *testing.T) {
 		{"pod-metadata-admission", d.podMetadataAdmission},
 		{"approval-executor-image-change", func() { f.executorImageChanges() }},
 		{"approval-ptah-version-change", func() { f.ptahVersionChanges() }},
+		{"unsupported-controller-state-after-approval", func() { f.unsupportedControllerStates() }},
 		{"running-apply-executor-image-change", func() { f.runningExecutorImageChanges() }},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {

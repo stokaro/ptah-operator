@@ -256,6 +256,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"pod-metadata-admission",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
+		"unsupported-controller-state-after-approval",
 		"running-apply-executor-image-change",
 	},
 	Preparation: 1,
@@ -317,6 +318,7 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 		"approval-verification-policy-content-change",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
+		"unsupported-controller-state-after-approval",
 		"running-apply-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
@@ -342,6 +344,7 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"approval-verification-policy-content-change",
 		"approval-executor-image-change",
 		"approval-ptah-version-change",
+		"unsupported-controller-state-after-approval",
 		"running-apply-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
