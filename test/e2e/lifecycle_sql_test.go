@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"os"
 	"strings"
 	"testing"
 
@@ -12,6 +13,32 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestLifecycleSQLControlReadsTheNativeBarrierStatement(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../testdata/e2e/readings/lifecycle-postgresql-barrier.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := lifecycleSQLBackend{PID: 190, Client: "172.18.0.5", Database: "ptah_external", SessionStart: "2026-09-30 16:50:19 UTC"}
+	if err := lifecycleSQLBackendControl(raw, backend); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*lifecycleSQLBackend){
+		"another process":                     func(b *lifecycleSQLBackend) { b.PID++ },
+		"another session on the same process": func(b *lifecycleSQLBackend) { b.SessionStart = "2026-09-30 16:50:20 UTC" },
+		"Pod address substituted for NAT":     func(b *lifecycleSQLBackend) { b.Client = "10.244.0.9" },
+		"administrative database":             func(b *lifecycleSQLBackend) { b.Database = "postgres" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := backend
+			mutate(&changed)
+			if err := lifecycleSQLBackendControl(raw, changed); err == nil {
+				t.Fatal("unrelated identity inherited the actual received control")
+			}
+		})
+	}
+}
 
 func TestLifecycleQuiescenceUsesCurrentConditionsAndRetainsProof(t *testing.T) {
 	t.Parallel()
