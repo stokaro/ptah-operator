@@ -576,6 +576,10 @@ func (m *migrationRun) reportMigration(migration *ptahv1alpha1.PtahMigration) {
 		"observedGeneration": status.ObservedGeneration, "phase": status.Phase,
 		"activeOperation": status.ActiveOperation, "plan": status.Plan,
 		"unresolvedRun": status.UnresolvedRun != nil, "conditions": conditionSummary(status.Conditions),
+		"nextReconciliationTime": status.NextReconciliationTime,
+	}
+	if status.History != nil {
+		report["historyObservedAt"] = status.History.ObservedAt
 	}
 	content, err := json.Marshal(report)
 	if err != nil || m.scanner.leaks(content) {

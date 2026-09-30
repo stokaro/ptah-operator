@@ -237,8 +237,11 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 			return match(resource)
 		})
 	}
+	// A refused Apply schedules its next read at spec.interval. Leave room
+	// for the manager rollout before the original approval expires, while
+	// keeping the recovery read inside the ten-minute observation window.
 	document := m.migrationDocument(migrationSpec{name: name, secret: secret, reference: reference,
-		coordinationKey: "e2e/runner-protocol/" + m.engine.name, apply: "OnApproval", interval: "1h"})
+		coordinationKey: "e2e/runner-protocol/" + m.engine.name, apply: "OnApproval", interval: "5m"})
 	document["spec"].(map[string]any)["execution"].(map[string]any)["activeDeadlineSeconds"] = int64(120)
 	m.mustCreate(document)
 	before := wait("the supported migration runner's original approval gate", func(resource *ptahv1alpha1.PtahMigration) bool {
