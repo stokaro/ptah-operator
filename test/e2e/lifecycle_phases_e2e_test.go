@@ -387,8 +387,10 @@ func (l *lifecycleRun) installTheExportedChart() {
 func (l *lifecycleRun) uninstallAndAssertRetained(failure string) {
 	l.t.Helper()
 	l.captureCertificateSecretNames()
+	privileges := l.captureReleasePrivileges()
 	l.mustHelm(failure, "uninstall", l.in.helmRelease, "-n", l.in.operatorNamespace, "--wait", "--timeout", "5m")
 	l.assertReleaseRuntimeRemoved()
+	l.assertReleasePrivilegesRemoved(privileges)
 	l.assertCRDsRetained()
 	l.assertProofUnchanged("-before")
 }
