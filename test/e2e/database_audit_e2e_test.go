@@ -26,6 +26,9 @@ type databaseSQLAudit struct {
 	engine    string
 	pgPrefix  []byte
 	started   bool
+	// External lifecycle databases use Docker exec; data-plane databases use
+	// the cluster's Deployment. Both retain the same journal checks.
+	serverExec func(context.Context, ...string) ([]byte, error)
 }
 
 // Record only the controlled approval window; a multi-hour lifecycle does
@@ -50,11 +53,11 @@ func (a *databaseSQLAudit) close() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	service, command := pgService, `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -Atq -c "ALTER SYSTEM RESET log_statement" -c "SELECT pg_reload_conf()"`
+	command := `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -Atq -c "ALTER SYSTEM RESET log_statement" -c "SELECT pg_reload_conf()"`
 	if a.engine == "mysql" {
-		service, command = mysqlService, `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=OFF"`
+		command = `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=OFF"`
 	}
-	if _, _, err := a.cluster.Kubectl(ctx, "-n", a.namespace, "exec", "deployment/"+service, "--", "sh", "-ec", command); err != nil {
+	if _, err := a.execute(ctx, "sh", "-ec", command); err != nil {
 		a.t.Errorf("could not stop %s SQL audit: %v", a.engine, err)
 		return
 	}
@@ -63,16 +66,24 @@ func (a *databaseSQLAudit) close() {
 
 func (a *databaseSQLAudit) exec(command ...string) []byte {
 	a.t.Helper()
-	service := pgService
-	if a.engine == "mysql" {
-		service = mysqlService
-	}
-	stdout, _, err := a.cluster.Kubectl(a.ctx, append([]string{"-n", a.namespace, "exec", "deployment/" + service, "--"}, command...)...)
+	stdout, err := a.execute(a.ctx, command...)
 	if err != nil {
 		// The SQL journal can carry credentials. Do not include command output.
 		a.t.Fatalf("%s SQL audit could not read its server: %v", a.engine, err)
 	}
 	return stdout
+}
+
+func (a *databaseSQLAudit) execute(ctx context.Context, command ...string) ([]byte, error) {
+	if a.serverExec != nil {
+		return a.serverExec(ctx, command...)
+	}
+	service := pgService
+	if a.engine == "mysql" {
+		service = mysqlService
+	}
+	stdout, _, err := a.cluster.Kubectl(ctx, append([]string{"-n", a.namespace, "exec", "deployment/" + service, "--"}, command...)...)
+	return stdout, err
 }
 
 func (a *databaseSQLAudit) snapshot() sqlAuditCounts {

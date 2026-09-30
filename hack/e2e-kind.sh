@@ -2490,7 +2490,11 @@ docker --context "$DOCKER_CONTEXT" create --restart=no \
 	--tmpfs '/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912' \
 	--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \
 	--label 'operator.ptah.run/e2e-component=external-postgresql' \
-	"$E2E_POSTGRES_SOURCE_IMAGE" >/dev/null
+	"$E2E_POSTGRES_SOURCE_IMAGE" postgres \
+	-c logging_collector=on -c log_destination=jsonlog \
+	-c log_directory=/tmp/ptah-sql-audit -c log_filename=statements.log \
+	-c log_rotation_age=0 -c log_rotation_size=0 \
+	-c log_min_error_statement=error -c log_hostname=off -c log_timezone=UTC >/dev/null
 # external-postgresql-container-create-end
 EXTERNAL_PG_CONTAINER_ID=$(docker --context "$DOCKER_CONTEXT" container inspect \
 	--format '{{.Id}}' "$EXTERNAL_PG_CONTAINER")
