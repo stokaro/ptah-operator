@@ -3,6 +3,7 @@ package e2e
 import (
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -244,6 +245,75 @@ func TestRunningExecutorWorkloadHistoryRejectsReplayAndOverlap(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if schemaExecutorNoReplay(jobs, changed, ftSchema, "apply", "apply-pod") {
 				t.Fatal("invalid Pod history passed")
+			}
+		})
+	}
+}
+
+func TestExecutorRecoveryRequiresImmutableProofAndFreshSource(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []ptahv1alpha1.OperationType{ptahv1alpha1.OperationObserve, ptahv1alpha1.OperationPlan} {
+		t.Run(string(operation), func(t *testing.T) {
+			before, proof, replacement := runningExecutorFixture()
+			horizon := proofTime(630).Time
+			proof.Status.ActiveOperation = proofActive(operation, "immutable-proof", "immutable-proof-job")
+			proof.Status.ActiveOperation.StartedAt = proofTime(631)
+			proof.Status.ActiveOperation.ExecutionBindingID = proofOtherEpoch
+			fresh := proof.DeepCopy()
+			fresh.Status.PendingObservation = nil
+			fresh.Status.Source.Verified = true
+			fresh.Status.ActiveOperation = proofActive(operation, "fresh-proof", "fresh-proof-job")
+			fresh.Status.ActiveOperation.JobName = "fresh-" + fresh.Status.ActiveOperation.JobName
+			fresh.Status.ActiveOperation.StartedAt = proofTime(700)
+			fresh.Status.ActiveOperation.ExecutionBindingID = proofOtherEpoch
+			jobFor := func(s *ptahv1alpha1.PtahSchema) *batchv1.Job {
+				active := s.Status.ActiveOperation
+				job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: active.JobName, Namespace: s.Namespace, UID: active.JobUID,
+					CreationTimestamp: active.StartedAt, Labels: map[string]string{labelSchema: s.Name, labelOperation: strings.ToLower(string(operation))},
+					Annotations: map[string]string{annotationOperationID: active.ID, annotationBindingID: active.ExecutionBindingID}}}
+				job.Spec.Template.Spec.Containers = []corev1.Container{{Name: "ptah", Image: replacement}}
+				return job
+			}
+			jobs := []*batchv1.Job{jobFor(proof), jobFor(fresh)}
+			events := []watchEvent[*ptahv1alpha1.PtahSchema]{{Type: watch.Modified, Object: proof}, {Type: watch.Modified, Object: fresh}}
+			check := func(e []watchEvent[*ptahv1alpha1.PtahSchema], j []*batchv1.Job) error {
+				return schemaExecutorRecoveryPair(e, before, j, replacement, horizon)
+			}
+			if err := check(events, jobs); err != nil {
+				t.Fatal(err)
+			}
+			if err := check(events, []*batchv1.Job{jobs[1], jobs[0]}); err != nil {
+				t.Fatalf("UID order must not select recovery stage: %v", err)
+			}
+			for name, mutate := range map[string]func(*ptahv1alpha1.PtahSchema){
+				"wrong resource":   func(s *ptahv1alpha1.PtahSchema) { s.UID = "other" },
+				"wrong generation": func(s *ptahv1alpha1.PtahSchema) { s.Generation++ },
+				"repeated immutable proof": func(s *ptahv1alpha1.PtahSchema) {
+					s.Status.PendingObservation = proof.Status.PendingObservation.DeepCopy()
+				},
+				"unverified source":       func(s *ptahv1alpha1.PtahSchema) { s.Status.Source.Verified = false },
+				"false Apply attribution": func(s *ptahv1alpha1.PtahSchema) { s.Status.Applied = &ptahv1alpha1.AppliedStatus{} },
+				"old binding":             func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation.ExecutionBindingID = proofEpoch },
+				"no claim":                func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation = nil },
+				"before horizon":          func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation.StartedAt = proofTime(629) },
+			} {
+				t.Run(name, func(t *testing.T) {
+					bad := fresh.DeepCopy()
+					mutate(bad)
+					changed := slices.Clone(events)
+					changed[1].Object = bad
+					if check(changed, jobs) == nil {
+						t.Fatal("incomplete recovery passed")
+					}
+				})
+			}
+			if check(events[:1], jobs) == nil || check(events, jobs[:1]) == nil || check(nil, jobs) == nil {
+				t.Fatal("missing recovery evidence passed")
+			}
+			bad := jobs[0].DeepCopy()
+			bad.CreationTimestamp = proofTime(629)
+			if check(events, []*batchv1.Job{bad, jobs[1]}) == nil {
+				t.Fatal("premature job passed")
 			}
 		})
 	}

@@ -134,6 +134,25 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		row.audit.assertRecords(row.sqlBefore, row.audit.snapshot(), row.audit.terminalPod(map[string]string{"job-name": row.run.jobName}, row.run.jobUID), true)
 		row.audit.close()
 	}
+	// Retain both engines' completed proof transports while polling. Their
+	// cleanup TTL must not make an earlier proof disappear during later work.
+	captured := map[string]exactResult{}
+	captureRecovery := func() {
+		for _, row := range rows {
+			for operation, before := range map[string]checkpoint{"observe": row.observeBefore, "plan": row.planBefore} {
+				for _, event := range f.jobs.snapshot() {
+					job := event.Object
+					if job == nil || !operationOf(job, row.name, operation) || before.holds(string(job.UID)) || !jobComplete(job) {
+						continue
+					}
+					uid := string(job.UID)
+					if _, exists := captured[uid]; !exists {
+						captured[uid] = f.captureExactJobResult(job.Name, uid, operation)
+					}
+				}
+			}
+		}
+	}
 	for _, row := range rows {
 		active := row.before.Status.ActiveOperation
 		horizon := active.ExecutionNotAfter.Add(time.Duration(active.TerminationGracePeriodSeconds) * time.Second)
@@ -149,38 +168,49 @@ func (previous *faultRun) runningExecutorImageChanges() {
 			f.assertLeaseIdentity(row.lease)
 			f.sleep(time.Second)
 		}
-		settled := f.waitForInSync(row.name, "ConvergedAfterUnknownOutcome")
+		// The retired plan cannot declare current convergence. Its proof is
+		// followed by Resolve -> Verify -> Observe -> Plan under the new epoch.
+		settled := f.waitForSchema(row.name, "fresh source verification and scoped convergence under the replacement executor", func(resource *ptahv1alpha1.PtahSchema) bool {
+			captureRecovery()
+			return inSyncFor(resource, "ScopedConverged")
+		})
 		if settled.Status.ExecutionBinding == nil || settled.Status.ExecutionBinding.ExecutorImage != replacement || settled.Status.Applied != nil || settled.Status.Plan != nil {
 			f.fatalf("recovery attributed an old executor's Apply to the new epoch")
 		}
 		f.assertApprovalConsumed(row.name+"-approval", string(row.before.Status.Plan.UID))
 		for operation, before := range map[string]checkpoint{"observe": row.observeBefore, "plan": row.planBefore} {
-			uid := f.singleNewWatchedJobUID(row.name, operation, before)
-			var job *batchv1.Job
-			for _, event := range f.jobs.snapshot() {
-				if string(event.Object.UID) == uid {
-					job = event.Object
-				}
+			uids := newAddedUIDs(f.jobs.snapshot(), row.name, operation, before)
+			if len(uids) != 2 {
+				f.fatalf("expected immutable proof and fresh-source %s Jobs for %s, found %d", operation, row.name, len(uids))
 			}
-			if job == nil || !jobUsesExecutor(job, replacement) || job.Annotations[annotationBindingID] != settled.Status.ExecutionBinding.Epoch || job.CreationTimestamp.Time.Before(horizon) {
-				f.fatalf("recovery did not use the new executor after the complete old execution horizon")
-			}
-			proof := f.captureExactJobResult(job.Name, uid, operation)
-			if operation == "plan" {
-				f.check(noChangesPlan(settled, proof.result), "the replacement executor's no-change proof")
-			} else {
-				dialects := postgresDialects
-				if row.engine == "mysql" {
-					dialects = []string{"mysql", "mariadb"}
+			var jobs []*batchv1.Job
+			for _, uid := range uids {
+				var job *batchv1.Job
+				for _, event := range f.jobs.snapshot() {
+					if string(event.Object.UID) == uid {
+						job = event.Object
+					}
 				}
-				// Raw drift may include objects outside the managed scope. The
-				// authoritative Plan above must still find no changes.
-				if proof.result.ObservedDrift {
-					f.check(driftedObserveBound(settled, proof.result, dialects...), "bind the replacement executor's drift observation")
+				jobs = append(jobs, job)
+				proof, found := captured[uid]
+				if !found {
+					f.fatalf("the %s recovery result was not retained before collection", operation)
+				}
+				if operation == "plan" {
+					f.check(noChangesPlan(settled, proof.result), "the replacement executor's no-change proof")
 				} else {
-					f.check(cleanObserve(settled, proof.result, dialects), "bind the replacement executor's clean observation")
+					dialects := postgresDialects
+					if row.engine == "mysql" {
+						dialects = []string{"mysql", "mariadb"}
+					}
+					if proof.result.ObservedDrift {
+						f.check(driftedObserveBound(settled, proof.result, dialects...), "bind the replacement executor's drift observation")
+					} else {
+						f.check(cleanObserve(settled, proof.result, dialects), "bind the replacement executor's clean observation")
+					}
 				}
 			}
+			f.check(schemaExecutorRecoveryPair(f.schemas.snapshot(), row.before, jobs, replacement, horizon), "retain both stages of replacement-executor recovery")
 		}
 		f.assertColumn(row.engine, row.database, "fault_token", 1)
 		if f.query(row.engine, row.database, "SELECT count(*) FROM e2e_widgets WHERE id=701 AND name='running-executor-control' AND note='preserve-this-row'") != "1" {

@@ -134,3 +134,70 @@ func schemaExecutorNoReplay(jobs []watchEvent[*batchv1.Job], pods []watchEvent[*
 		slices.Equal(addedUIDs(podEvents, name, "apply"), []string{podUID}) &&
 		!operationJobsOverlap(jobEvents) && !operationPodsOverlap(podEvents)
 }
+
+// A retired Apply first owes immutable-target proof. Once that proof settles,
+// the new epoch must independently refresh the source and verify convergence.
+// Distinguish the two jobs by the persisted claims, not by UID sort order.
+func schemaExecutorRecoveryPair(events []watchEvent[*ptahv1alpha1.PtahSchema], before *ptahv1alpha1.PtahSchema,
+	jobs []*batchv1.Job, replacement string, horizon time.Time,
+) error {
+	if before == nil || before.Status.ActiveOperation == nil || before.Status.Plan == nil || len(jobs) != 2 ||
+		jobs[0] == nil || jobs[1] == nil || jobs[0].UID == "" || jobs[0].UID == jobs[1].UID || jobs[0].Name == jobs[1].Name || horizon.IsZero() {
+		return errors.New("recovery needs distinct immutable-target and current-source jobs")
+	}
+	stages := map[bool]bool{}
+	newEpoch := ""
+	for _, job := range jobs {
+		matched := false
+		if job.UID == "" {
+			return errors.New("recovery job has no UID")
+		}
+		for _, event := range events {
+			current := event.Object
+			if current == nil || current.UID != before.UID || current.Namespace != before.Namespace || current.Name != before.Name ||
+				current.Generation != before.Generation || !equality.Semantic.DeepEqual(current.Spec, before.Spec) {
+				continue
+			}
+			active := current.Status.ActiveOperation
+			if active == nil || active.JobUID != job.UID || active.JobName != job.Name || active.ID != job.Annotations[annotationOperationID] {
+				continue
+			}
+			if active.ID == "" || current.Status.ExecutionBinding == nil ||
+				before.Status.ExecutionBinding == nil || current.Status.ExecutionBinding.Epoch == before.Status.ExecutionBinding.Epoch || current.Status.Applied != nil ||
+				current.Status.ExecutionBinding.ExecutorImage != replacement || active.ExecutionBindingID != current.Status.ExecutionBinding.Epoch ||
+				job.Annotations[annotationBindingID] != active.ExecutionBindingID || !jobUsesExecutor(job, replacement) ||
+				job.Namespace != before.Namespace || job.Labels[labelSchema] != before.Name ||
+				strings.ToLower(string(active.Type)) != job.Labels[labelOperation] ||
+				(active.Type != ptahv1alpha1.OperationObserve && active.Type != ptahv1alpha1.OperationPlan) ||
+				active.StartedAt.Time.Before(horizon) || job.CreationTimestamp.Time.Before(horizon) {
+				return errors.New("recovery job is not bound to a current-epoch claim after the execution horizon")
+			}
+			if newEpoch != "" && newEpoch != active.ExecutionBindingID {
+				return errors.New("recovery changed execution epoch between stages")
+			}
+			newEpoch = active.ExecutionBindingID
+			pending := current.Status.PendingObservation
+			proof := pending != nil
+			if proof {
+				if pending.Outcome != ptahv1alpha1.PendingObservationOutcomeUnknown || pending.ApplyJobUID != before.Status.ActiveOperation.JobUID ||
+					pending.ApplyOperationID != before.Status.ActiveOperation.ID || !equality.Semantic.DeepEqual(pending.Plan, *before.Status.Plan) {
+					return errors.New("recovery proof lost the retired Apply's immutable identity")
+				}
+			} else if !current.Status.Source.Verified || current.Status.Applied != nil {
+				return errors.New("fresh reconciliation did not verify its source or falsely attributed the retired Apply")
+			}
+			if stages[proof] {
+				return errors.New("recovery repeated one stage and omitted the other")
+			}
+			stages[proof], matched = true, true
+			break
+		}
+		if !matched {
+			return errors.New("recovery job has no exact persisted operation claim")
+		}
+	}
+	if !stages[true] || !stages[false] {
+		return errors.New("recovery missed immutable proof or the fresh source reconciliation")
+	}
+	return nil
+}

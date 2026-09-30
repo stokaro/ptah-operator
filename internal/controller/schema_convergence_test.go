@@ -159,3 +159,31 @@ func convergedProofPlan(
 	job, pod := terminalWorkload(schema, batchv1.JobComplete)
 	return schema, []client.Object{schema, job, pod, policyConfig}
 }
+
+// A no-change proof still owes source revalidation when the Apply's epoch
+// retired. It cannot report ConvergedAfterUnknownOutcome as current readiness.
+func TestUnknownApplyProofUnderANewEpochRequiresFreshSource(t *testing.T) {
+	t.Parallel()
+	schema, objects := convergedProofPlan(t, operatorv1alpha1.PendingObservationOutcomeUnknown)
+	schema.Status.ExecutionBinding.Epoch = "v1-55555555555555555555555555555555"
+	schema.Status.ActiveOperation.ExecutionBindingID = schema.Status.ExecutionBinding.Epoch
+	reconciler, api := fakeReconciler(t, staticLogs{}, objects...)
+	stored := safetyGetSchema(t, api, schema)
+	if _, err := reconciler.consumeResult(context.Background(), stored, nil, runner.Result{
+		Operation:            runner.OperationPlan,
+		CoordinationDigest:   stored.Status.PendingObservation.CoordinationDigest,
+		TargetIdentityDigest: stored.Status.PendingObservation.Plan.TargetIdentityDigest,
+		PlanOutcome:          runner.PlanOutcomeNoChanges,
+	}, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	proved := safetyGetSchema(t, api, schema)
+	if proved.Status.Phase != operatorv1alpha1.PhasePending || proved.Status.PendingObservation != nil ||
+		proved.Status.ActiveOperation != nil || proved.Status.Plan != nil || proved.Status.Applied != nil || proved.Status.Source.Verified {
+		t.Fatalf("retired-epoch proof did not require fresh source without Apply attribution: %#v", proved.Status)
+	}
+	condition := findCondition(proved.Status.Conditions, operatorv1alpha1.ConditionInSync)
+	if condition == nil || condition.Status != metav1.ConditionUnknown || condition.Reason != string(operatorv1alpha1.ReasonExecutionBindingChanged) {
+		t.Fatalf("old-epoch proof reported current convergence: %#v", condition)
+	}
+}
