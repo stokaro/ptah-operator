@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T21:27:04.224823+00:00",
-  "profileSourceCommit": "65c0d3ab72c4e9f24be925defcc810ff3f6c60fe",
+  "frozenAt": "2026-09-30T23:32:35.480353+00:00",
+  "profileSourceCommit": "7717f1efd297c1c37ca1789eb9b838fe33841ebc",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "6e175737bbd6ee7b0770a1690c72bfa52508352cef42ff4691398a852b400def",
-    "generatedFromCommit": "65c0d3ab72c4e9f24be925defcc810ff3f6c60fe",
+    "sha256": "aa95f35898b5c2cef6f86d3db591d7737d9947b2f8be9de13078462e3b99fcce",
+    "generatedFromCommit": "7717f1efd297c1c37ca1789eb9b838fe33841ebc",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 19,
+  "revision": 20,
   "supersedes": {
-    "freezeCommit": "34ff0c103a185667c0d9da2924b650b643a4414a",
-    "sha256": "f6813b6f5c4abc8828416fb3eae91db98d9f57c96870f8bb89653fc092645bbd"
+    "freezeCommit": "bc85d2d86796286e086fc8d1c37683a0c2e4abe4",
+    "sha256": "7ed25ed81eabb501c059f6b9763d3b986b638f3e6c25ad40f89ce1ad6c269599"
   },
-  "revisionReason": "Add the live unresolved-view-read-failures scenario for both resource families, with exact grant restoration, installation-scoped receiver notifications and native scrape histories. The manager now reads current API state within one bounded leader scrape; a warm-cache API-server control proves why cached reads concealed access failures. Source verification, API-server controls, rule/configuration checks, negative history controls, race checks and tagged vet passed. Native receiver execution remains pending. All eight source hashes, operating limits, alert targets, RPO/RTO, platform coverage, 30 required functional cells and 36 recovery combinations remain unchanged. No qualification requirement was removed; acceptance remains Not assessed."
+  "revisionReason": "Add the resource-overdue receiver scenario for both resource families on each supported minor. Actual realm refusals establish persisted recheck deadlines; an exact resource write fault holds them overdue, and a fresh Resolve claim dates recovery after an isolated grant and restored writes. Both production reconcilers, negative predicate controls, rendered/loaded rule checks, race tests, tagged vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
 }
