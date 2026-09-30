@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T00:18:12.194977+00:00",
-  "profileSourceCommit": "5506e19979da342fdd16c3b4aedc8c304b2bc9b6",
+  "frozenAt": "2026-09-30T00:46:55.245865+00:00",
+  "profileSourceCommit": "a37235210576cd3c552da4e717dda71ed3ca85f1",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "ce3bc19428d918a5deaacadbd6e6d2785b2791f11604e4299fc94c9b83bf98f5",
-    "generatedFromCommit": "5506e19979da342fdd16c3b4aedc8c304b2bc9b6",
+    "sha256": "9e9189f41e0bee3aad545b0e4a29fc301fed1c0560676afc7fd1e63961fb2844",
+    "generatedFromCommit": "a37235210576cd3c552da4e717dda71ed3ca85f1",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 11,
+  "revision": 12,
   "supersedes": {
-    "freezeCommit": "49a5042334f309eb87fe56b746b675ed517cafbf",
-    "sha256": "82016532c61328653ea220c773166815f8b2bec8803541630fb6488090bd39fc"
+    "freezeCommit": "9b9bbc8eaf400c40338feaca5451cab578958689",
+    "sha256": "52f291c1f366def6d159e847b07bbe2cf05dc85fff5761033f9f0dce68923838"
   },
-  "revisionReason": "Implement the existing Q-02/AB-09 migration executor-image transition for both engines. The migrations-postgresql and migrations-mysql approval-executor-image-change scenarios hold admitted approvals across an image-only execution-binding change, require the same migration and selected sequence under a new epoch and plan, bind both complete History results to exact Job/Pod identities and server SQL, and verify one freshly approved Apply carrying the new plan inputs and executor image. The shared rollout retains every old manager log through natural EOF and restores the original executor. The synthetic manifest preserves executable and platform identities; Ptah-version, runner-protocol, controller-state and already-dispatched transition proofs remain required. Final-identity Kubernetes execution remains required. All eight frozen source files, the 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
+  "revisionReason": "Implement the existing Q-02/AB-09 running schema Apply executor-image change on both engines. The scenario retains the exact blocked database clients across manager replacement, preserves the original Apply evidence, Lease and immutable horizon, and requires read-only convergence under the new executor without replay. Fix the MySQL schema diagnostic SQL contract to permit the explicit 45- and 60-second Plan validation lock timeouts, with complete runner/server witnesses captured after the failed 49a50423 run. That run remains failed. Migration running-Apply and the remaining Ptah-version, runner-protocol and controller-state transition proofs still require implementation/execution. Final-identity Kubernetes execution remains required. All eight frozen source files, the 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
 }
