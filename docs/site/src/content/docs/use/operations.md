@@ -1593,8 +1593,17 @@ and survive an unrelated refusal rewriting the resource's conditions.
 | --- | --- |
 | `ptah_operator_unresolved_attempts{family}` | Resources carrying a record of a mutation nobody accounted for |
 | `ptah_operator_unresolved_owed_seconds{family}` | Seconds since the operator could first have settled the oldest such record. Absent where a family has none |
-| `ptah_operator_unresolved_view_synced{}` | 1 once the view behind the two gauges has caught up |
+| `ptah_operator_unresolved_view_synced{}` | 1 when the leader read the complete state for this scrape |
 | `ptah_operator_unresolved_view_read_failures_total{}` | Scrapes that could not read that state |
+
+The leader reads both resource families and both plan kinds directly from the
+API server once per scrape, sharing those results across the unresolved,
+resource-state and plan-store gauges. All four lists share a three-second
+budget. A failed or timed-out list suppresses every state gauge for that scrape
+and increments the read-failure counter; a warm controller cache cannot conceal
+the loss of API access. Followers publish no state. Losing leadership cancels
+an in-progress read. These are separate lists, not an atomic cross-kind snapshot.
+Plan chunks and ConfigMap payloads are not listed.
 
 **Every alert on these has to require the view first.** A manager that has just
 started, or one whose read failed, publishes no counts at all and reports

@@ -14,7 +14,7 @@ import (
 // need attention now, which ones have stopped being looked at, and which
 // operation has been running for longer than anyone expected. Like the
 // unresolved gauges they are rebuilt from durable status on every scrape, read
-// through the same cached view, and published only while that view is
+// through the same API reading, and published only while that view is
 // synchronized -- so ptah_operator_unresolved_view_synced is the guard an
 // alert on these requires as well, and an empty scrape is never a fleet of
 // zero.

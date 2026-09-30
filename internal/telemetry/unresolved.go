@@ -21,16 +21,13 @@ import (
 // read the field the record lives in, which is the same field the controller
 // refuses on.
 //
-// The empty view is the trap. A cache that has not synchronized lists nothing,
-// and nothing reads exactly like "no mutation is unresolved" -- the most
-// dangerous possible false negative for this signal. So the gauges are not
-// emitted at all until the view reports itself synchronized, and a separate
-// gauge says which of those two states the scrape is in. An alert on the
-// unresolved count has to require the view gauge as well, and the
-// documentation says so.
+// An unreadable view is not a population of zero. The leader's complete API
+// reading either supplies all state for a scrape or suppresses the gauges and
+// reports an unsynchronized view. Followers publish no population. The
+// separate view and failure metrics keep missing state from looking healthy.
 
 // UnresolvedView lists the durable records the gauges are built from. It is an
-// interface so the manager can pass its cached client and a test can pass a
+// interface so the manager can pass one bounded API reading and a test can pass a
 // fixture, and so the synchronized answer comes from whoever actually knows.
 type UnresolvedView interface {
 	// Synced reports whether the view has caught up. A false answer means the
