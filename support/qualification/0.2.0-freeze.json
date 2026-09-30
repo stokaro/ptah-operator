@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T01:41:00.235975+00:00",
-  "profileSourceCommit": "0f7633e6f39b025d0db8c0054d66a7739f229d47",
+  "frozenAt": "2026-09-30T07:58:27.165114+00:00",
+  "profileSourceCommit": "8130a0de2e245b36e83ce738b4fa7f7fdcabd0b3",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "ccbb4dc972af3dbd31aefdce4074934988ff29852e3b0439d8712202a90ebae6",
-    "generatedFromCommit": "0f7633e6f39b025d0db8c0054d66a7739f229d47",
+    "sha256": "575764600caba691b17847ec5e08e242e8d34f7e4ae59272ed470589809132d7",
+    "generatedFromCommit": "8130a0de2e245b36e83ce738b4fa7f7fdcabd0b3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 13,
+  "revision": 14,
   "supersedes": {
-    "freezeCommit": "bb9a6d498982cc92f252fa60a3239e44510be560",
-    "sha256": "e52d79f8949a5e587420837678295288f4c56d42567f9da332d8356316289fb2"
+    "freezeCommit": "46c1771993e61734da423873479c7ccaf1b04f46",
+    "sha256": "3eeee1deba6b02b4fbf7bfc8f017808638cbdd08ddc389f85c2bdd2b6b7d6030"
   },
-  "revisionReason": "Implement the existing Q-02/AB-09 running migration Apply executor-image change on both engines. Fix the premature claim retirement reproduced on the earlier source: Unknown must preserve the original claim, finalizer and renewable Lease until the exact workload can no longer write, including deletion, suspension and failed workload reads. Preserve the first Unknown record; a successful old executor result is not reattributed to the replacement components. The new scenarios identify the same blocked database PID and Pod across manager replacement, let the exact original Apply finish, and require fresh History under the replacement image to settle Unknown without replay. Local controller, predicate, static and envtest checks are not final-identity cluster acceptance. Ptah-version, runner-protocol and controller-state transition proofs still require implementation/execution. All eight frozen source files, the 30 functional cells, operating limits, alert targets and RPO/RTO are unchanged; preserve prior results."
+  "revisionReason": "Implement the existing Q-05 native executable-plan size boundary for both schema engines: calibrate actual operator plans, refuse the saved native 8 MiB + 1 byte file with its measured size before storage or Apply, then approve and apply the exact 8 MiB plan in 16 full chunks and verify database defaults and received SQL. Native CLI canonical publication and Apply probes validate the fixtures only, not a Kubernetes cell. Correct the obsolete uncertain-migration immediate-retirement assertion and the running-schema scenario scanner initialization that failed CI run 36675116019 on 2af63c30; preserve that failed evidence. The added scenario changes the generated matrix inventory, not its 30 required cells. All eight frozen source files, operating limits, alert targets and RPO/RTO remain unchanged; final artifact execution and the remaining component/lifecycle proofs are still required."
 }

@@ -1,5 +1,12 @@
 {
   "schemaVersion": 1,
   "protocolVersion": 1,
-  "sourceDigest": "sha256:86b3fcf9c9bcf868de82fb7e9d3c8f6ad8ec72128351ecdd16ce3e67d43041f4"
+  "sourceDigest": "sha256:86b3fcf9c9bcf868de82fb7e9d3c8f6ad8ec72128351ecdd16ce3e67d43041f4",
+  "declared": [
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:12780012a739674513f29ea61cf5f9b7bea8fefe966dec75a03645650b89e03b",
+      "reason": "Complete the initial protocol before the first tagged 0.2.0 release. The invalid_plan_output diagnostic now includes the measured saved-file size or an honest read lower bound and the unchanged 8 MiB limit. Its error code, result shape, refusal boundaries, payload handling, and execution behavior are unchanged. No tagged release could have stored or consumed an earlier protocol-1 contract; all development contract counters remain 1."
+    }
+  ]
 }
