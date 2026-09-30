@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -261,13 +262,18 @@ func (b *lockedBuffer) Bytes() []byte {
 // runs under a context of its own that only its stop or the cleanup cancels.
 func (f *faultRun) startKubectl(arguments ...string) *backgroundCommand {
 	f.t.Helper()
+	return startKubectlBackground(f.t, f.cluster.Kubeconfig, arguments...)
+}
+
+func startKubectlBackground(t *testing.T, kubeconfig string, arguments ...string) *backgroundCommand {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	background := &backgroundCommand{cancel: cancel, done: make(chan struct{})}
-	background.command = exec.CommandContext(ctx, "kubectl", append([]string{"--kubeconfig", f.cluster.Kubeconfig}, arguments...)...) //nolint:gosec // Arguments, not a shell.
+	background.command = exec.CommandContext(ctx, "kubectl", append([]string{"--kubeconfig", kubeconfig}, arguments...)...) //nolint:gosec // Arguments, not a shell.
 	background.command.Stdout, background.command.Stderr = &background.output, &background.output
 	if err := background.command.Start(); err != nil {
 		cancel()
-		f.fatalf("could not start kubectl %s: %v", arguments[0], err)
+		t.Fatalf("could not start kubectl %s: %v", arguments[0], err)
 	}
 	go func() {
 		background.err = background.command.Wait()

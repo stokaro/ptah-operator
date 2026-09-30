@@ -91,7 +91,11 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 		struct {
 			name string
 			body func()
-		}{"approval-verification-policy-content-change", func() { m.approvalInputChange("verification-policy-content") }})
+		}{"approval-verification-policy-content-change", func() { m.approvalInputChange("verification-policy-content") }},
+		struct {
+			name string
+			body func()
+		}{"approval-executor-image-change", m.executorImageChange})
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return

@@ -310,6 +310,7 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 		"approval-artifact-change",
 		"approval-verification-policy-uid-change",
 		"approval-verification-policy-content-change",
+		"approval-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
@@ -332,6 +333,7 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"approval-artifact-change",
 		"approval-verification-policy-uid-change",
 		"approval-verification-policy-content-change",
+		"approval-executor-image-change",
 	},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.

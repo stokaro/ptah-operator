@@ -64,11 +64,8 @@ func (d *dataPlane) executorVariant() string {
 	}
 	logs := d.jobLogs(published, "publisher")
 	d.scan(logs, "executor fixture publication")
-	updated := strings.TrimPrefix(strings.TrimSpace(string(logs)), "Executor: ")
-	updatedRepository, updatedDigest, ok := strings.Cut(updated, "@")
-	if !ok || updatedRepository != repository || !sha256Pattern.MatchString(updatedDigest) || updatedDigest == oldDigest {
-		d.fatalf("executor fixture did not return a different digest in the original repository")
-	}
+	updated, err := executorVariantReference(d.in.ExecutorImage, string(logs))
+	d.check(err, "read the published executor identity")
 	d.logf("executor identity fixture: original=%s replacement=%s", d.in.ExecutorImage, updated)
 	return updated
 }
@@ -108,50 +105,7 @@ func setControllerExecutor(ctx context.Context, cluster *harness.Cluster, namesp
 func (f *faultRun) rolloutExecutor(expected, replacement string) {
 	f.t.Helper()
 	f.auditRuntime()
-	f.loadReadyManagerPodUIDs()
-	pods := f.managerPods()
-	replicas, ok := f.managerReplicas()
-	before, ready := readyManagerPodUIDs(pods, replicas)
-	if !ok || !ready || len(pods) != replicas {
-		f.fatalf("executor rollout lost its ready manager inventory")
-	}
-	var followers []*backgroundCommand
-	defer func() {
-		for _, follower := range followers {
-			follower.stop()
-		}
-	}()
-	for _, pod := range pods {
-		if !noRestarts(&pod) {
-			f.fatalf("executor rollout manager restarted before its complete log audit")
-		}
-		followers = append(followers, f.startKubectl("-n", pod.Namespace, "logs", "-f", "pod/"+pod.Name, "--all-containers"))
-	}
-	f.sleep(2 * time.Second)
-	for index, follower := range followers {
-		current := &corev1.Pod{}
-		f.check(f.cluster.Client.Get(f.ctx, client.ObjectKeyFromObject(&pods[index]), current), "confirm the streamed manager Pod")
-		if follower.exited() || current.UID != pods[index].UID || !noRestarts(current) {
-			f.fatalf("executor rollout lost a manager log before the destructive window")
-		}
-	}
-	f.check(setControllerExecutor(f.ctx, f.cluster, f.in.OperatorNamespace, f.controllerName, expected, replacement), "roll out the executor identity")
-	timer := time.NewTimer(time.Minute)
-	defer timer.Stop()
-	for _, follower := range followers {
-		select {
-		case <-follower.done:
-		case <-timer.C:
-			f.fatalf("executor rollout manager log did not reach natural EOF")
-		}
-		if follower.err != nil {
-			f.fatalf("executor rollout manager log stream failed: %v", follower.err)
-		}
-		f.scan(follower.output.Bytes(), "manager logs through the executor rollout")
-	}
-	if !managerPodsReplaced(before, f.loadReadyManagerPodUIDs()) {
-		f.fatalf("executor rollout retained or lost a manager Pod UID")
-	}
+	rolloutExecutorManagers(f.t, f.ctx, f.cluster, f.operatorKey(f.controllerName), expected, replacement, f.scan)
 	f.loadReadyManagerLeader("")
 	f.auditRuntime()
 }
