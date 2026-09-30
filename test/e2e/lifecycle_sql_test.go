@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
 	"strings"
@@ -8,7 +9,60 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestLifecycleQuiescenceUsesCurrentConditionsAndRetainsProof(t *testing.T) {
+	t.Parallel()
+	schema := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{UID: "original", Generation: 4, Finalizers: []string{"operation"}}}
+	schema.Spec.Suspend = true
+	schema.Status.ExecutionBinding = &ptahv1alpha1.ExecutionBindingStatus{Epoch: "original-epoch"}
+	schema.Status.PendingObservation = &ptahv1alpha1.PendingObservationStatus{ApplyJobUID: "original-job"}
+	schema.Status.Conditions = []metav1.Condition{{Type: string(ptahv1alpha1.ConditionSuspended), Status: metav1.ConditionTrue, ObservedGeneration: 4}}
+	before, err := lifecycleQuiescentSchemaState(schema, schema.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahSchema){
+		"replacement":       func(s *ptahv1alpha1.PtahSchema) { s.UID = "replacement" },
+		"not suspended":     func(s *ptahv1alpha1.PtahSchema) { s.Spec.Suspend = false },
+		"active claim":      func(s *ptahv1alpha1.PtahSchema) { s.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{} },
+		"stale condition":   func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions[0].ObservedGeneration-- },
+		"false condition":   func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions[0].Status = metav1.ConditionFalse },
+		"missing condition": func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions = nil },
+		"missing binding":   func(s *ptahv1alpha1.PtahSchema) { s.Status.ExecutionBinding = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := schema.DeepCopy()
+			mutate(changed)
+			if _, err := lifecycleQuiescentSchemaState(changed, schema.UID); err == nil {
+				t.Fatal("an unproven quiescent target passed")
+			}
+		})
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahSchema){
+		"released finalizer":  func(s *ptahv1alpha1.PtahSchema) { s.Finalizers = nil },
+		"lost pending proof":  func(s *ptahv1alpha1.PtahSchema) { s.Status.PendingObservation = nil },
+		"changed proof owner": func(s *ptahv1alpha1.PtahSchema) { s.Status.PendingObservation.ApplyJobUID = "another-job" },
+		"changed epoch":       func(s *ptahv1alpha1.PtahSchema) { s.Status.ExecutionBinding.Epoch = "another-epoch" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := schema.DeepCopy()
+			mutate(changed)
+			after, err := lifecycleQuiescentSchemaState(changed, schema.UID)
+			if err != nil || bytes.Equal(before, after) {
+				t.Fatal("changed durable authority disappeared from the comparison", err)
+			}
+		})
+	}
+	bookkeeping := schema.DeepCopy()
+	bookkeeping.ResourceVersion = "another-write"
+	after, err := lifecycleQuiescentSchemaState(bookkeeping, schema.UID)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("API bookkeeping changed the retained proof", err)
+	}
+}
 
 func TestLifecycleSQLBackendRequiresTheExactSessionBehindNAT(t *testing.T) {
 	t.Parallel()

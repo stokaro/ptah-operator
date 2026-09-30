@@ -287,10 +287,13 @@ func (l *lifecycleRun) nextReleaseUpgrade() {
 	l.quiesceReadOnlyJobSchema()
 	l.assertPredecessorApplyRemainsExclusiveWhileRunning()
 	l.assertRunningApplySQLUnchanged(audit, heldSQL, applyClient, "same-candidate upgrade retry")
+	l.runningApply.sqlBackend = applyClient
+	l.runningApply.sqlJournal = bytes.Clone(audit.pgPrefix)
 	audit.close()
 	l.releaseRunningApplyBarrier()
 	l.waitForPredecessorApplyJobTerminal()
 	l.waitForPredecessorApplyJobCleanup()
+	l.quiesceCompletedApply()
 	if l.deployedRevision() != l.lateRevision+1 {
 		l.fatalf("same-candidate recovery did not create exactly one retry Helm revision")
 	}
@@ -326,8 +329,12 @@ func (l *lifecycleRun) nextReleaseUpgrade() {
 // goes through.
 func (l *lifecycleRun) rollbackToTheCurrentRelease() {
 	l.t.Helper()
-	l.proveRollbackRefusedOverFutureState(l.currentReleaseRevision)
-	l.proveRollback(l.currentReleaseRevision, l.currentReleaseControllerImage)
+	l.auditQuiescentTransition("refused downgrade", func() {
+		l.proveRollbackRefusedOverFutureState(l.currentReleaseRevision)
+	})
+	l.auditQuiescentTransition("allowed rollback", func() {
+		l.proveRollback(l.currentReleaseRevision, l.currentReleaseControllerImage)
+	})
 	l.assertProofUnchanged("-before")
 	// Everything after this, including the uninstall, is held to the state
 	// the rollback leaves behind.
@@ -403,7 +410,9 @@ func (l *lifecycleRun) uninstallAndAssertRetained(failure string) {
 	l.t.Helper()
 	l.captureCertificateSecretNames()
 	privileges := l.captureReleasePrivileges()
-	l.mustHelm(failure, "uninstall", l.in.helmRelease, "-n", l.in.operatorNamespace, "--wait", "--timeout", "5m")
+	l.auditQuiescentTransition("release uninstall", func() {
+		l.mustHelm(failure, "uninstall", l.in.helmRelease, "-n", l.in.operatorNamespace, "--wait", "--timeout", "5m")
+	})
 	l.assertReleaseRuntimeRemoved()
 	l.assertReleasePrivilegesRemoved(privileges)
 	l.assertCRDsRetained()

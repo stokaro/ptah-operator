@@ -11,7 +11,31 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func lifecycleQuiescentSchemaState(schema *ptahv1alpha1.PtahSchema, uid types.UID) ([]byte, error) {
+	if schema == nil || uid == "" || schema.UID != uid || schema.Generation <= 0 || !schema.Spec.Suspend ||
+		schema.Status.ActiveOperation != nil || schema.Status.ExecutionBinding == nil || schema.Status.ExecutionBinding.Epoch == "" {
+		return nil, errors.New("lifecycle target is not the original suspended resource without an active claim")
+	}
+	suspended := false
+	for _, condition := range schema.Status.Conditions {
+		if condition.Type == string(ptahv1alpha1.ConditionSuspended) && condition.Status == metav1.ConditionTrue &&
+			condition.ObservedGeneration == schema.Generation {
+			suspended = true
+		}
+	}
+	if !suspended {
+		return nil, errors.New("lifecycle target has no current suspension verdict")
+	}
+	return json.Marshal(map[string]any{"uid": schema.UID, "generation": schema.Generation, "spec": schema.Spec,
+		"finalizers": schema.Finalizers, "executionBinding": schema.Status.ExecutionBinding,
+		"pendingObservation": schema.Status.PendingObservation})
+}
 
 type lifecycleSQLBackend struct {
 	PID          int    `json:"pid"`
