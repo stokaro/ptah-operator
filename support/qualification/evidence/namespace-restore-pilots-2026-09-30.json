@@ -1,0 +1,1804 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-30T19:47:10.227038+00:00",
+  "scope": "Idle namespace-loss and combined namespace/database-loss pilots on development images. Eight engine/family/loss combinations in an isolated Kubernetes 1.37.0 amd64 cluster.",
+  "acceptance": "Not assessed",
+  "requiredRecoveryCells": 36,
+  "pilotRows": 8,
+  "limitations": [
+    "The control plane and installed release survive namespace loss; these runs do not meet the separate-cluster restoration requirement.",
+    "Measured durations include namespace/database restoration and a fresh approved change, but no replacement cluster provisioning.",
+    "No in-flight Apply, five-minute backup lag, final-profile or final-artifact qualification.",
+    "Private encrypted backups and keys remain locally restricted pending durable storage and custody.",
+    "The temporary OCI registry was removed after the completed proofs; its artifact references are historical and are not a retained portable recovery kit."
+  ],
+  "runtime": {
+    "nodes": [
+      {
+        "name": "ptah-e2e-1-37-0-020-namespace-a715ff32ce-control-plane",
+        "uid": "f1273d2b-26a5-44f7-b318-62db3a1b61ff",
+        "architecture": "amd64",
+        "kubeletVersion": "v1.37.0"
+      },
+      {
+        "name": "ptah-e2e-1-37-0-020-namespace-a715ff32ce-control-plane2",
+        "uid": "068eeab6-db47-4169-9e98-35ba4bf702ef",
+        "architecture": "amd64",
+        "kubeletVersion": "v1.37.0"
+      },
+      {
+        "name": "ptah-e2e-1-37-0-020-namespace-a715ff32ce-control-plane3",
+        "uid": "55fd5620-67d7-4d77-9d31-5bb77de3b452",
+        "architecture": "amd64",
+        "kubeletVersion": "v1.37.0"
+      },
+      {
+        "name": "ptah-e2e-1-37-0-020-namespace-a715ff32ce-worker",
+        "uid": "83d55a24-d261-464f-9fc3-3d97fee57616",
+        "architecture": "amd64",
+        "kubeletVersion": "v1.37.0"
+      }
+    ],
+    "bootstrap": {
+      "E2E_KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-020-namespace-a715ff32ce",
+      "E2E_OPERATOR_NAMESPACE": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+      "E2E_CONTROLLER_REVISION": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "E2E_CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "E2E_EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "E2E_PTAH_REVISION": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+      "E2E_DOCKER_ENDPOINT": "ssh://buster@remote-dev",
+      "E2E_CREATED_IMAGE_REFS": "127.0.0.1:24174/alertmanager:a715ff32ce37cd59,127.0.0.1:24174/prometheus:a715ff32ce37cd59,127.0.0.1:24174/mysql:a715ff32ce37cd59,127.0.0.1:24174/postgresql:a715ff32ce37cd59,127.0.0.1:24174/ptah-runner:a715ff32ce37cd59,127.0.0.1:24174/ptah-executor:a715ff32ce37cd59,127.0.0.1:24174/e2e-fixture:a715ff32ce37cd59,127.0.0.1:24174/ptah-operator-next:a715ff32ce37cd59,127.0.0.1:24174/ptah-operator:a715ff32ce37cd59,ptah-operator-e2e.local/e2e-fixture:a715ff32ce37cd59,ptah-operator-e2e.local/ptah-operator-next:a715ff32ce37cd59,ptah-operator-e2e.local/ptah-operator:a715ff32ce37cd59,ptah-executor-e2e.local/ptah:a715ff32ce37cd59",
+      "E2E_TUNNEL_PID": "33991",
+      "E2E_TUNNEL_FORWARD": "127.0.0.1:30355:127.0.0.1:30355"
+    },
+    "dockerHost": {
+      "CPUs": 8,
+      "memoryBytes": 15979683840,
+      "architecture": "x86_64"
+    },
+    "scope": "Observed development-drill runtime; no dedicated-host capacity qualification."
+  },
+  "runs": [
+    {
+      "engine": "postgresql",
+      "family": "schema",
+      "lossType": "operator",
+      "runID": "ptah-020-restore-cc55a93c6f",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:20:37.570380+00:00",
+      "completedAt": "2026-09-30T19:23:31.705060+00:00",
+      "backupStartedAt": "2026-09-30T19:21:48.285741+00:00",
+      "backupCompletedAt": "2026-09-30T19:21:53.155472+00:00",
+      "lossInjectedAt": "2026-09-30T19:21:58.551797+00:00",
+      "serviceRestoredAt": "2026-09-30T19:23:23.766322+00:00",
+      "recoverySeconds": 85.215,
+      "databaseRPOUpperBoundSeconds": 10.266056,
+      "expectedLostRowIDs": [],
+      "observedLostRowIDs": [],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "backup retains every exact published plan chunk": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "roles wrong identity refused": true,
+        "roles decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "9a88b3e598352985c13ab999d7dededfbfc4c4cb6f5b10c4519e75704a268e22",
+          "ciphertextSHA256": "ffc194f17e96ebe2d003b7e02ee375a4f05166f2d37a71a573f5a4201b75473b",
+          "plaintextBytes": 329459,
+          "ciphertextBytes": 329739
+        },
+        "roles": {
+          "plaintextSHA256": "77cfa1674bf7dee7a6300a6af8346899692c949a80c5c55f388c601bc924d527",
+          "ciphertextSHA256": "f60271a80439e88993832daf1a3a3167d322d1a17fed3e0f6dfe1e4629f62b6a",
+          "plaintextBytes": 1237,
+          "ciphertextBytes": 1437
+        },
+        "database": {
+          "plaintextSHA256": "777de681d10495bd51c5fb19270e13e6dbe25f33f469a62f07a3bd950cbde66f",
+          "ciphertextSHA256": "8129efcad7766c2dfe7e76b6166d742caa7bdbc5a0cb034d98ebf71b162ab79b",
+          "plaintextBytes": 2342,
+          "ciphertextBytes": 2542
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "bdfbbe533da4eceba2e64ea8bcbad7a3fee9c1cb3fc3842e7fac2d298714bfd6",
+          "afterSHA256": "bdfbbe533da4eceba2e64ea8bcbad7a3fee9c1cb3fc3842e7fac2d298714bfd6"
+        },
+        "schema": {
+          "beforeSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415",
+          "afterSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415"
+        },
+        "access": {
+          "beforeSHA256": "8c2cee10d6c31d9831a940536de21802ec99684bdb682d36a4088d8d11caa310",
+          "afterSHA256": "8c2cee10d6c31d9831a940536de21802ec99684bdb682d36a4088d8d11caa310"
+        }
+      },
+      "identity": {
+        "resourceUID": "8b5d467e-8e63-4d2b-bf8c-787c441c9af4",
+        "originalResourceUID": "c3dc5090-aad9-42f2-a67b-4e6fed66dcf5",
+        "oldPlanUID": "b23fc1ca-358d-4136-a6cc-6939691ad18a",
+        "oldApprovalUID": "b26b72be-003f-4afa-a4ed-832b82008b6c",
+        "freshPlanUID": "efb14a29-65fc-4908-a62b-20302f6980d1",
+        "freshApprovalUID": "e9349487-46e2-4f3c-bf27-4e0638ac639a",
+        "originalApplyJobUIDs": [
+          "9dbe2451-99b9-42ac-829a-e494bdfd1751"
+        ],
+        "freshApplyJobUIDs": [
+          "2b9c9576-8cb9-4600-ac22-edaa79d07bd8"
+        ],
+        "originalApplyPodUIDs": [
+          "73c24ffb-faf5-4d59-8022-02c248921485"
+        ],
+        "freshApplyPodUIDs": [
+          "07e93a3c-6929-4c8d-98ae-5e9b6e9ab501"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "954293ba-03e0-4741-84b5-c6d5d8356e14",
+            "newUID": "72234145-8c34-4a86-929d-9516262fa534"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "cc0bc750-38cd-4363-8335-59fcabfc658d",
+            "newUID": "185a9a55-8156-47a0-9901-ef3e45844ba4"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "03854807-f9cd-4dfc-aacf-39c5fdcc5fc4",
+            "newUID": "0f79174c-9522-4da9-be5c-e029c08606f6"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "ac9dec9e-a3d7-48d3-a590-12109dcf080e",
+            "newUID": "7b9bf92f-3a61-4d14-9d9d-34a39e5e25c0"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "afde694d-bcac-41c2-b531-44725dec87b3",
+            "newUID": "982a4b97-128f-4dd5-9e7b-d34479f671c3"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "44e3e593-f496-427f-bd2e-6678191aee18",
+            "newUID": "5a58196f-ef01-4ee2-a661-6a4edbbd1fe8"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "6386055c-10c9-42a9-8193-417b5d83ccca",
+            "newUID": "2a975739-c274-4e58-a685-73707e552e7a"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "9c00f3cc-37b1-47d9-b23c-98e2703e35a9",
+            "newUID": "976cd212-88c2-4107-81e7-09aac2ac9d18"
+          },
+          {
+            "kind": "PtahSchema",
+            "name": "restore-case",
+            "oldUID": "c3dc5090-aad9-42f2-a67b-4e6fed66dcf5",
+            "newUID": "8b5d467e-8e63-4d2b-bf8c-787c441c9af4"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-cc55a93c6f",
+            "oldUID": "99b529a0-f25e-439b-898c-87e7c75b6094",
+            "newUID": "3de0b4b8-3209-44f6-86d9-f48dfdb63890"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-cc55a93c6f.svc.cluster.local:5000/ptah-020-restore-cc55a93c6f/schema:v1",
+          "digest": "sha256:5d6978030edd4827a615f8cf93e593d24365215947e83e59130ac23ee12827d0",
+          "publisherJobUID": "048ff14a-c8ca-41cf-b1a6-a6e212cd5a7a"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-cc55a93c6f.svc.cluster.local:5000/ptah-020-restore-cc55a93c6f/schema:v2",
+          "digest": "sha256:f37413c9bf9d518250e82882b2c4a55ec235e3a1ef15b71d2fb436ba372541c8",
+          "publisherJobUID": "c8849130-b9c3-44c0-af23-5b864459dd7a"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "c5e12397f7eb57ace8d45de9f5cb19928fbbacbb87d0e73baabda03e97ecee12",
+      "privateWatchSHA256": {
+        "jobs": "3da5d6e2bc273d0b019b5aa6d56b7f28b0cc12a6225635126da6ad48e29699be",
+        "pods": "313df400a60845d24e50b932b1e76b09376f8e8e1721e020e4403e83dbf2c400"
+      }
+    },
+    {
+      "engine": "postgresql",
+      "family": "migration",
+      "lossType": "operator",
+      "runID": "ptah-020-restore-d4865992ee",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:23:31.778938+00:00",
+      "completedAt": "2026-09-30T19:25:51.899123+00:00",
+      "backupStartedAt": "2026-09-30T19:24:24.508177+00:00",
+      "backupCompletedAt": "2026-09-30T19:24:29.120465+00:00",
+      "lossInjectedAt": "2026-09-30T19:24:34.404259+00:00",
+      "serviceRestoredAt": "2026-09-30T19:25:44.153681+00:00",
+      "recoverySeconds": 69.75,
+      "databaseRPOUpperBoundSeconds": 9.896082,
+      "expectedLostRowIDs": [],
+      "observedLostRowIDs": [],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "real migration history is populated": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "roles wrong identity refused": true,
+        "roles decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "restored history matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "fresh approved migration is recorded in actual history": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "50ef2a6120e7b7248403e576524a69058d98714716863855d5b0f4a5fe3f5a90",
+          "ciphertextSHA256": "801b53034480cff23cbcc5f28cc677534b6cb08f7727dbae28bcc6dab90025b7",
+          "plaintextBytes": 288043,
+          "ciphertextBytes": 288307
+        },
+        "roles": {
+          "plaintextSHA256": "115a860f07e542321e528656c0afc92874774182e64ab7cbaffd33e2522dc169",
+          "ciphertextSHA256": "f3c3202bc04691087f975e30a93c1943c9abe5af2228683ad479fe69ffc12cfd",
+          "plaintextBytes": 1237,
+          "ciphertextBytes": 1437
+        },
+        "database": {
+          "plaintextSHA256": "abc990ca577ca8b6cfc652e4740039a032c469c2f856a97da757788854ba26f7",
+          "ciphertextSHA256": "8800a9cf2075be88719fae85571f901464380aebf62b73a84e0818fc6ecb36e0",
+          "plaintextBytes": 5321,
+          "ciphertextBytes": 5521
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "bdfbbe533da4eceba2e64ea8bcbad7a3fee9c1cb3fc3842e7fac2d298714bfd6",
+          "afterSHA256": "bdfbbe533da4eceba2e64ea8bcbad7a3fee9c1cb3fc3842e7fac2d298714bfd6"
+        },
+        "schema": {
+          "beforeSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415",
+          "afterSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415"
+        },
+        "access": {
+          "beforeSHA256": "a02aa97045cbbbac8c13ea0d20dc8e810e2faf4f26afcf4d2946e322be464e80",
+          "afterSHA256": "a02aa97045cbbbac8c13ea0d20dc8e810e2faf4f26afcf4d2946e322be464e80"
+        },
+        "history": {
+          "beforeSHA256": "511764d42ed87b7822cafb0ae1a13fc5a5655ed7eee3f83f516ae7cf1222529f",
+          "afterSHA256": "511764d42ed87b7822cafb0ae1a13fc5a5655ed7eee3f83f516ae7cf1222529f"
+        }
+      },
+      "identity": {
+        "resourceUID": "46f62de2-9213-49c6-82c5-f9b6d203ee2c",
+        "originalResourceUID": "d073658a-9b6b-4e47-ae59-98a0fbf57d72",
+        "oldPlanUID": "8356943f-64db-4200-8279-9b26b6d3808b",
+        "oldApprovalUID": "e8de7f25-5802-4c74-adf6-988c10f3bb65",
+        "freshPlanUID": "2b04b834-7ceb-483d-a71f-59d3c0f9d63d",
+        "freshApprovalUID": "d50515d2-7043-4846-a651-6afc347cac8f",
+        "originalApplyJobUIDs": [
+          "96249176-21c7-4bed-a986-7858dcec97e5"
+        ],
+        "freshApplyJobUIDs": [
+          "c7565774-deeb-438b-8d4d-e7a4451b253f"
+        ],
+        "originalApplyPodUIDs": [
+          "c0a41a69-2b90-4858-8d1a-55f684f742e2"
+        ],
+        "freshApplyPodUIDs": [
+          "ac153ce5-bd3b-46a8-983e-0a6d3820778f"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "a11f9665-c088-419a-93d1-c668ce5f8d77",
+            "newUID": "4c9a92a7-bdd7-48f6-8668-5631a4f321a8"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "d8430af0-dedc-4652-b07d-90473fc01ec4",
+            "newUID": "63116791-017b-4573-af8c-1653bf4b3ede"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "c9f45231-f094-4cdc-bd8a-3b64d0e4e4c7",
+            "newUID": "64350758-6d6a-4828-b16a-66afd834004d"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "3df645b7-da2b-45c6-8802-2e56659befc3",
+            "newUID": "9da503cb-1abb-4d52-8ac5-092f8c25001c"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "acce9a5c-ee70-4a6e-b01c-22a9f8d05e39",
+            "newUID": "932a6084-ebc7-44a8-b0c3-95ea7cfc4806"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "3467ec8d-2275-41e2-9d7d-1d6584865777",
+            "newUID": "460e08dc-c640-4969-b0db-f0bc6b1dc2c0"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "06aa35d1-f877-44c0-8277-1af98ffbd5dd",
+            "newUID": "a5034990-7918-4627-a010-c3062f0aa5d2"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "24acac47-0137-4e88-8af2-813061671d54",
+            "newUID": "7e7a1f24-b3e7-4820-8f78-3d42e741ad33"
+          },
+          {
+            "kind": "PtahMigration",
+            "name": "restore-case",
+            "oldUID": "d073658a-9b6b-4e47-ae59-98a0fbf57d72",
+            "newUID": "46f62de2-9213-49c6-82c5-f9b6d203ee2c"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-d4865992ee",
+            "oldUID": "87ab583b-4c83-42a1-a5a9-3939378b8fff",
+            "newUID": "147188ac-53d9-40b0-8c3b-188c9f2cff63"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-d4865992ee.svc.cluster.local:5000/ptah-020-restore-d4865992ee/migration:v1",
+          "digest": "sha256:da23c21c4a40c39b8321384299f10a123232502e928fe453bd4d087aebae9200",
+          "publisherJobUID": "d8e70b3c-6afa-435f-8af5-1b6f79bc78f0"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-d4865992ee.svc.cluster.local:5000/ptah-020-restore-d4865992ee/migration:v2",
+          "digest": "sha256:64c29de57ffc92789fadf5d9d9d5c892d1720f71d94edec586cf0f6206a3f534",
+          "publisherJobUID": "ef8baff6-3172-4da0-b30e-c8b94d7a61f2"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "fb6d13950e2b45197e1a26b1e606a7e4f6c341adc7274d3c81778e1890610fb6",
+      "privateWatchSHA256": {
+        "jobs": "1d948aaa02b26e45d9c0fbf5278b2d39cedee53ec10370d48297099ce6b52a7b",
+        "pods": "1e1e5dff3f2ffb36743d92f5712fb34bf3f210fcc1ad038b78813b791dd858ff"
+      }
+    },
+    {
+      "engine": "mysql",
+      "family": "schema",
+      "lossType": "operator",
+      "runID": "ptah-020-restore-720adf5846",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:25:51.971277+00:00",
+      "completedAt": "2026-09-30T19:28:41.778188+00:00",
+      "backupStartedAt": "2026-09-30T19:27:01.548267+00:00",
+      "backupCompletedAt": "2026-09-30T19:27:05.464824+00:00",
+      "lossInjectedAt": "2026-09-30T19:27:10.777831+00:00",
+      "serviceRestoredAt": "2026-09-30T19:28:33.888141+00:00",
+      "recoverySeconds": 83.111,
+      "databaseRPOUpperBoundSeconds": 9.229564,
+      "expectedLostRowIDs": [],
+      "observedLostRowIDs": [],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "backup retains every exact published plan chunk": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "2fa91d39dff8c6e8b4e3462049da4996a4c1aaa91132b9bc305b87f1bef907de",
+          "ciphertextSHA256": "9b02dd0b74f8dea86e70228b1cee63ad0cb07aaee270d29272eb72b092d7730f",
+          "plaintextBytes": 329301,
+          "ciphertextBytes": 329581
+        },
+        "database": {
+          "plaintextSHA256": "b5d95db1e57cb5579b8dd4f99eaea142c4a0f7d9196d0bc2fc9054dd3e7d95aa",
+          "ciphertextSHA256": "7029e2d7581efd8265b622be577d91f7c84d181eaf2ddb43a821fa9b18cac3e3",
+          "plaintextBytes": 3782686,
+          "ciphertextBytes": 3783798
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "21a58a4ff59c818ba3f41c1ab104550ea8d6e457da925d31d889c5b2d8d0fb1a",
+          "afterSHA256": "21a58a4ff59c818ba3f41c1ab104550ea8d6e457da925d31d889c5b2d8d0fb1a"
+        },
+        "schema": {
+          "beforeSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862",
+          "afterSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862"
+        },
+        "access": {
+          "beforeSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356",
+          "afterSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356"
+        }
+      },
+      "identity": {
+        "resourceUID": "c44d8cb8-1fe7-4de1-b4ea-1f04c3d961af",
+        "originalResourceUID": "42e65494-f644-41b2-80df-19bbc5b76769",
+        "oldPlanUID": "ebf2d64e-7b41-4db5-84f2-c6441a639b89",
+        "oldApprovalUID": "80730441-764f-4488-94bd-36e1687cf6eb",
+        "freshPlanUID": "76be0eac-bd24-43d0-bb16-3fb169689043",
+        "freshApprovalUID": "659e18fb-1fe3-4715-9eaf-4bf05e188e47",
+        "originalApplyJobUIDs": [
+          "003b8351-9943-4f1e-99e4-0310a759a083"
+        ],
+        "freshApplyJobUIDs": [
+          "e712e422-7715-4f26-8a44-20aaf1e61b01"
+        ],
+        "originalApplyPodUIDs": [
+          "7234d9c3-e479-499a-86e7-4bc5e72a1195"
+        ],
+        "freshApplyPodUIDs": [
+          "8ead9a03-e5ed-4f9f-90fe-6aafcfb6b41b"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "304eee97-d6ee-4807-a5ca-a64ab9a58cd0",
+            "newUID": "7f392986-17de-4aa6-a334-cc4fe0a9b7fc"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "6ead0c65-8440-4ea8-9eaa-ce104937b5ac",
+            "newUID": "967d7b15-b5c4-4118-a4fd-20c957ef742d"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "43a55de4-804c-4e95-ace6-bc1b942a472f",
+            "newUID": "9554c4e3-0b85-4765-8e81-7314c4e2740b"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "b3759cb6-5b6f-4f55-bcde-5e9398deead9",
+            "newUID": "c25d9e9d-2ba7-4a5a-ac60-dcaefda2c46b"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "bffc95af-623c-4698-9f4a-4876bd43009b",
+            "newUID": "2ba678e2-1f8a-4d90-863e-fe64860311ee"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "5300c0fb-2541-4539-afb7-8bd7f70702e8",
+            "newUID": "268de77d-b364-4806-9f6c-409d7ace0ae7"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "055ff772-fae2-4f14-9126-f21dd4a7e190",
+            "newUID": "7897867b-11a8-44da-8809-672126ef98ed"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "1530cced-b075-4549-a909-3e736323781f",
+            "newUID": "48dfab88-f14f-4ab0-84b0-3a882fd43578"
+          },
+          {
+            "kind": "PtahSchema",
+            "name": "restore-case",
+            "oldUID": "42e65494-f644-41b2-80df-19bbc5b76769",
+            "newUID": "c44d8cb8-1fe7-4de1-b4ea-1f04c3d961af"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-720adf5846",
+            "oldUID": "796aa960-e3ff-4c08-bbaa-6b83cd5d81b9",
+            "newUID": "f137df22-19c4-40b8-85ed-4c5783b1596c"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-720adf5846.svc.cluster.local:5000/ptah-020-restore-720adf5846/schema:v1",
+          "digest": "sha256:3aba99d6b9c49062dc07dbdae746197f175c8e95cf227b6c3ddcba4c7b9e432f",
+          "publisherJobUID": "457cb86a-81bf-44dc-9fbb-e8f2b555640e"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-720adf5846.svc.cluster.local:5000/ptah-020-restore-720adf5846/schema:v2",
+          "digest": "sha256:9be26b3c981ab3138771506a2ce4cbb26ed688596d2629ccc573d2cccb96d3a8",
+          "publisherJobUID": "f6784948-3107-42f1-a2d2-ac9d2b63d404"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "15eecdf51b84c1e5b67b75bf4bfa4e13495c9694be220c263d477cd38aa30cf0",
+      "privateWatchSHA256": {
+        "jobs": "153abbbec10852fdba0304c1e908dce9563a962d93d535b6c1780b6ed0abbdba",
+        "pods": "951e672937134691109d62985309bf87254868fe52abc76bd499cf3e19f7ada2"
+      }
+    },
+    {
+      "engine": "mysql",
+      "family": "migration",
+      "lossType": "operator",
+      "runID": "ptah-020-restore-9a66a9b1b3",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:28:41.831267+00:00",
+      "completedAt": "2026-09-30T19:31:05.691555+00:00",
+      "backupStartedAt": "2026-09-30T19:29:38.454691+00:00",
+      "backupCompletedAt": "2026-09-30T19:29:42.276054+00:00",
+      "lossInjectedAt": "2026-09-30T19:29:47.689196+00:00",
+      "serviceRestoredAt": "2026-09-30T19:30:57.937656+00:00",
+      "recoverySeconds": 70.249,
+      "databaseRPOUpperBoundSeconds": 9.234505,
+      "expectedLostRowIDs": [],
+      "observedLostRowIDs": [],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "real migration history is populated": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "restored history matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "fresh approved migration is recorded in actual history": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "565a510476eea2c054792febfe9c02a64bdb3fcac2571d2e53ff259a96ddd94f",
+          "ciphertextSHA256": "2be2f95c5a137ef5d378d65067968592a9bd075ef382e69a42bc1af4fa9ee426",
+          "plaintextBytes": 287957,
+          "ciphertextBytes": 288221
+        },
+        "database": {
+          "plaintextSHA256": "6bb2761e9326811d236999989602b178b88f11d6139fb45ee594fd209f70f741",
+          "ciphertextSHA256": "3e17d66c1f8c2878e4dd4093ceea0172888b6b7178ac841d6f4606f6f71c7755",
+          "plaintextBytes": 3786011,
+          "ciphertextBytes": 3787123
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "21a58a4ff59c818ba3f41c1ab104550ea8d6e457da925d31d889c5b2d8d0fb1a",
+          "afterSHA256": "21a58a4ff59c818ba3f41c1ab104550ea8d6e457da925d31d889c5b2d8d0fb1a"
+        },
+        "schema": {
+          "beforeSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862",
+          "afterSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862"
+        },
+        "access": {
+          "beforeSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356",
+          "afterSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356"
+        },
+        "history": {
+          "beforeSHA256": "34f63a14d7069f3940c29c46ab8e2325ebd8a7fa244afc974b529a836928d04b",
+          "afterSHA256": "34f63a14d7069f3940c29c46ab8e2325ebd8a7fa244afc974b529a836928d04b"
+        }
+      },
+      "identity": {
+        "resourceUID": "0fdc6ff8-a7e1-46ed-bb1d-4f43d0acaae7",
+        "originalResourceUID": "ed775430-a6b6-4c11-b458-127f2a81540b",
+        "oldPlanUID": "c50f56c0-13dd-4cc6-979f-6031bbb99aac",
+        "oldApprovalUID": "913cb2c2-c76d-475f-b2f4-27a2a9ed5b9d",
+        "freshPlanUID": "6c5b460f-4f2c-4059-9734-3d784af97a0f",
+        "freshApprovalUID": "02b66886-fafb-46bb-a660-0fe69e2eb3ae",
+        "originalApplyJobUIDs": [
+          "7d1a7824-ec86-400b-9011-8fac00f5f4ba"
+        ],
+        "freshApplyJobUIDs": [
+          "57db8444-6631-44ea-a6c9-e9df35ec109d"
+        ],
+        "originalApplyPodUIDs": [
+          "9e8c0e42-bd34-4c4c-b3de-5b5720f9306f"
+        ],
+        "freshApplyPodUIDs": [
+          "ebfeb4b9-e190-4a57-a15c-f48a07c7c7bb"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "1455a367-a001-4f57-9715-7c3f07dc6a72",
+            "newUID": "ab635993-3f6d-4017-9590-eef2067ddafd"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "6c6b1353-3309-4617-85ca-603584c08732",
+            "newUID": "2a36b1ee-3e4d-4c40-8830-1c48ecbb7c2e"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "a461c043-feb4-4e52-817b-d8a058611594",
+            "newUID": "2ccbf616-a832-487e-aeb4-e41ff6720978"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "48170d19-bc52-47cb-95f3-74728f2a303c",
+            "newUID": "da2bc525-5396-40ad-8a2c-69549c5eda81"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "b2daea11-8bc7-4603-b9f5-8c36a12f32aa",
+            "newUID": "cb36f228-2c45-4861-bdeb-148c5bea380c"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "31b1bd70-2fa8-4dd1-a5b7-28afdf36f457",
+            "newUID": "c3dcff56-e3f5-4486-a850-9ce16d00117d"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "2b124847-bfd4-4785-8c2d-707eb55cb71c",
+            "newUID": "da5e06a9-d22e-4e55-b980-8aa66e824e7e"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "c81cf659-277a-4b93-beb3-9a4363728c70",
+            "newUID": "1dc1d933-b537-428b-b9d5-b5c0f7ed6a66"
+          },
+          {
+            "kind": "PtahMigration",
+            "name": "restore-case",
+            "oldUID": "ed775430-a6b6-4c11-b458-127f2a81540b",
+            "newUID": "0fdc6ff8-a7e1-46ed-bb1d-4f43d0acaae7"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-9a66a9b1b3",
+            "oldUID": "f6fcc7e2-7c09-4d4a-ae65-3f70e5489d08",
+            "newUID": "60217b9d-ea3b-48ff-bec6-ee8046acac3c"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-9a66a9b1b3.svc.cluster.local:5000/ptah-020-restore-9a66a9b1b3/migration:v1",
+          "digest": "sha256:04f17804edfc2bb262dbaba947c0c2a8bd277f9025bfccb5de6960802cbc7325",
+          "publisherJobUID": "5a257ccc-62ee-43f7-9987-07add58ff19c"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-9a66a9b1b3.svc.cluster.local:5000/ptah-020-restore-9a66a9b1b3/migration:v2",
+          "digest": "sha256:c0362aadbf06cfd2553eb3fb8749e0160daa22570799ea59f55325ae727fc90e",
+          "publisherJobUID": "e94dd0c0-acc1-4a20-a57b-8cd067d9c6f7"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "1592523545f673424cf1d9faf5dd2585433535ebcf18878ff738be1b879f210a",
+      "privateWatchSHA256": {
+        "jobs": "b2e23aba24c5b4aae84bc98c92babea1881bcafa7322ffc215419880e18a2395",
+        "pods": "5c3bc02e41c74bf79232adabeaae71b61bb15f055e5518093456c8dbf6fb0e2e"
+      }
+    },
+    {
+      "engine": "postgresql",
+      "family": "schema",
+      "lossType": "combined",
+      "runID": "ptah-020-restore-5902341fee",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:31:05.761034+00:00",
+      "completedAt": "2026-09-30T19:34:06.322460+00:00",
+      "backupStartedAt": "2026-09-30T19:32:09.389198+00:00",
+      "backupCompletedAt": "2026-09-30T19:32:14.204228+00:00",
+      "lossInjectedAt": "2026-09-30T19:32:16.327976+00:00",
+      "serviceRestoredAt": "2026-09-30T19:33:58.468186+00:00",
+      "recoverySeconds": 102.139,
+      "databaseRPOUpperBoundSeconds": 6.938778,
+      "expectedLostRowIDs": [
+        3
+      ],
+      "observedLostRowIDs": [
+        3
+      ],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "backup retains every exact published plan chunk": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "roles wrong identity refused": true,
+        "roles decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "replacement database starts without data or writer identity": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "4635a62a0ce3b608f9c34a4aca4a077b5f2d1b7b588ffb7b73ea4d2d55e1dce4",
+          "ciphertextSHA256": "0b1acbd06be821b96b0604991a9cd3a4c36550316f2dee9ae3540a4fe34e5999",
+          "plaintextBytes": 329465,
+          "ciphertextBytes": 329745
+        },
+        "roles": {
+          "plaintextSHA256": "593207bf08ba6569e7666be9ba70a5ba3d0893bd42edf90a0483075141781c20",
+          "ciphertextSHA256": "691a7d94722db336cbd02af3aba1bed07f9659b4d3327eb71b4a1b02f27812bd",
+          "plaintextBytes": 1237,
+          "ciphertextBytes": 1437
+        },
+        "database": {
+          "plaintextSHA256": "7b93a5e69d5fb448d982aa731fb7194f549c981de3fb144f0ab7667d5796d6a8",
+          "ciphertextSHA256": "6d4517a29bb1cdb0903baf0f6a777314d9ec8cf3c0fa9e3ccdf4e63f90674e16",
+          "plaintextBytes": 2342,
+          "ciphertextBytes": 2542
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "d26e8674f4983a43f8090aa4d61c5e95a33860f60eeb6fcac0d1d27e0327e7b4",
+          "afterSHA256": "d26e8674f4983a43f8090aa4d61c5e95a33860f60eeb6fcac0d1d27e0327e7b4"
+        },
+        "schema": {
+          "beforeSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415",
+          "afterSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415"
+        },
+        "access": {
+          "beforeSHA256": "8c2cee10d6c31d9831a940536de21802ec99684bdb682d36a4088d8d11caa310",
+          "afterSHA256": "8c2cee10d6c31d9831a940536de21802ec99684bdb682d36a4088d8d11caa310"
+        }
+      },
+      "identity": {
+        "resourceUID": "27fb6fff-af65-4e66-ae05-148c4e2d34ca",
+        "originalResourceUID": "053fea35-466f-49fb-ad62-c164184f00ee",
+        "oldPlanUID": "755d0320-5cc6-42f3-8cd0-f57ab3ab3e71",
+        "oldApprovalUID": "113e90cf-b37e-4c5a-b9de-c38605edc10d",
+        "freshPlanUID": "5194c9c5-7d83-4645-a320-ff51c73f17b4",
+        "freshApprovalUID": "44152b76-6897-4545-a8da-86fb8c5db596",
+        "originalApplyJobUIDs": [
+          "8cbd47b4-0212-4909-8b7d-2942fa71d557"
+        ],
+        "freshApplyJobUIDs": [
+          "d1c3d525-08db-4669-9cae-0bf0ba801186"
+        ],
+        "originalApplyPodUIDs": [
+          "9d69fe61-85dc-4346-9746-d6881008bbb2"
+        ],
+        "freshApplyPodUIDs": [
+          "39b64c07-af83-417a-bd43-ec1504528c4e"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "0bd1b028-6828-4b4c-8129-cd95d0a00018",
+            "newUID": "2ec889a5-b7de-4c6a-a8c0-702efab236b9"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "8a8a9287-9e92-4eaa-9110-c40265d88043",
+            "newUID": "6aa47b47-fa9d-46da-8c5d-a0e291fbbb2e"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "43d4c21f-1692-43ec-85fa-cbb0798d2fdf",
+            "newUID": "f8722102-a7b9-40ba-9693-001ed6181f31"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "ecdace16-bf6a-4918-b202-fd93c99daf01",
+            "newUID": "9447be6c-aa4f-444f-9110-bca340353ec9"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "b3321ecc-5837-4d8f-a7dd-0def58e1f6f2",
+            "newUID": "f224acec-f305-41af-8eb2-e0cad9253cff"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "674c305b-7395-478f-ad26-a459e3da2a37",
+            "newUID": "e1ec813e-ce24-4523-abd2-06e3a2419f9a"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "48732763-9e0c-40f6-80e8-ed06c067bdfb",
+            "newUID": "93bc331e-82eb-431b-9dbd-a16c68bcfb39"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "b96a4815-eb88-4208-b654-1448b20adbe8",
+            "newUID": "c5df856c-d6e5-4178-9b53-c180a3741139"
+          },
+          {
+            "kind": "PtahSchema",
+            "name": "restore-case",
+            "oldUID": "053fea35-466f-49fb-ad62-c164184f00ee",
+            "newUID": "27fb6fff-af65-4e66-ae05-148c4e2d34ca"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-5902341fee",
+            "oldUID": "ec9a2483-0fa9-478d-a6f1-32e46df7ff2b",
+            "newUID": "bd210b03-12e6-461f-819f-30c3db11fbda"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-5902341fee.svc.cluster.local:5000/ptah-020-restore-5902341fee/schema:v1",
+          "digest": "sha256:b18cdfca4a0accb317fb18d87b8790437e0dfca8e6e523064057157fe9083bd5",
+          "publisherJobUID": "a11cb9b9-fb21-482c-84b9-4e629183cbf1"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-5902341fee.svc.cluster.local:5000/ptah-020-restore-5902341fee/schema:v2",
+          "digest": "sha256:c789ece5a1921341a713e7ca260420070283d08b3834902b68934c61daf54d3e",
+          "publisherJobUID": "db23bf07-32d6-4632-94f5-c195dd18ac04"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "5490a700823b853f56790920984e46887a21aa8d10509a8e825800106c8756e6",
+      "privateWatchSHA256": {
+        "jobs": "a7c571e57e55cbd17490e9182db89ba5f78dec11fd6e2998b13bac885f338805",
+        "pods": "d2c11a3a00d733d2bb9adc1d5599117dc6c6c7b2fe16c95cd06d7cd480e7fa3c"
+      }
+    },
+    {
+      "engine": "postgresql",
+      "family": "migration",
+      "lossType": "combined",
+      "runID": "ptah-020-restore-cc18da743b",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:34:06.394441+00:00",
+      "completedAt": "2026-09-30T19:36:36.829490+00:00",
+      "backupStartedAt": "2026-09-30T19:35:00.183508+00:00",
+      "backupCompletedAt": "2026-09-30T19:35:04.902824+00:00",
+      "lossInjectedAt": "2026-09-30T19:35:06.985270+00:00",
+      "serviceRestoredAt": "2026-09-30T19:36:29.094167+00:00",
+      "recoverySeconds": 82.109,
+      "databaseRPOUpperBoundSeconds": 6.801762,
+      "expectedLostRowIDs": [
+        3
+      ],
+      "observedLostRowIDs": [
+        3
+      ],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "real migration history is populated": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "roles wrong identity refused": true,
+        "roles decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "replacement database starts without data or writer identity": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "restored history matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "fresh approved migration is recorded in actual history": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "dd32a01ff2e1ad4405c43ec7dd3e9f12bb991ba7bc433e722cabc7df7da95429",
+          "ciphertextSHA256": "3c543665f70622e99be0b8ec2b89d364bc2c47f0c2bdb9ebd06eb5b69a65dad7",
+          "plaintextBytes": 288043,
+          "ciphertextBytes": 288307
+        },
+        "roles": {
+          "plaintextSHA256": "a43b62efecf04f7bdc29e0b6fff2a051bd5f741bbb5ad7e80e9012bf3ce5414d",
+          "ciphertextSHA256": "6abc9aab0f8ba31cc4415f252ead5eb71441c24425f4d14bfafcb920ada926b2",
+          "plaintextBytes": 1237,
+          "ciphertextBytes": 1437
+        },
+        "database": {
+          "plaintextSHA256": "8edd9cfd3a5709834255ab9763bbf1b3c51ed8c91d0cfdae335843b5291c421a",
+          "ciphertextSHA256": "c7025560aedab0807f45c7f94d8af40ebf8bbee0d6ca0ad89d40af85580de1bb",
+          "plaintextBytes": 5321,
+          "ciphertextBytes": 5521
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "d26e8674f4983a43f8090aa4d61c5e95a33860f60eeb6fcac0d1d27e0327e7b4",
+          "afterSHA256": "d26e8674f4983a43f8090aa4d61c5e95a33860f60eeb6fcac0d1d27e0327e7b4"
+        },
+        "schema": {
+          "beforeSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415",
+          "afterSHA256": "76295aabb7480811da6de3669cc3ece68b046dca72a535fd525deb904dafb415"
+        },
+        "access": {
+          "beforeSHA256": "a02aa97045cbbbac8c13ea0d20dc8e810e2faf4f26afcf4d2946e322be464e80",
+          "afterSHA256": "a02aa97045cbbbac8c13ea0d20dc8e810e2faf4f26afcf4d2946e322be464e80"
+        },
+        "history": {
+          "beforeSHA256": "3c5e89b2df9f1243ce0389ec2ebb676f37d499f902072abb3ff6c2eace38caa3",
+          "afterSHA256": "3c5e89b2df9f1243ce0389ec2ebb676f37d499f902072abb3ff6c2eace38caa3"
+        }
+      },
+      "identity": {
+        "resourceUID": "f9b37fa6-f5ff-4243-9f15-23c666315d35",
+        "originalResourceUID": "a4ebacee-7a2f-4fef-b80b-c693b23c5d62",
+        "oldPlanUID": "1b93acd2-2677-41d1-ad1d-e9884ed3f174",
+        "oldApprovalUID": "c5a9e83f-cae4-4a83-b169-9d3d0e23c321",
+        "freshPlanUID": "713de183-fd01-4859-9a62-985d5835904c",
+        "freshApprovalUID": "808aee5c-44f3-422e-ba03-dd4436e1c738",
+        "originalApplyJobUIDs": [
+          "52235870-5e7e-4a6e-a624-7e18ec532db8"
+        ],
+        "freshApplyJobUIDs": [
+          "c2d69051-ae3a-400f-8926-d3123f2c6eb2"
+        ],
+        "originalApplyPodUIDs": [
+          "c0d965db-5699-4aa1-ac8e-390d651addbf"
+        ],
+        "freshApplyPodUIDs": [
+          "02e34215-e874-4fe1-9483-320dae36eb24"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "90eb8b3b-3d24-4f17-92e8-874ed6f8b7c7",
+            "newUID": "1b9e276c-f3da-4103-9ae3-3dff83f08247"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "827227a2-8355-4be6-b572-bb68b9b4ebbf",
+            "newUID": "c53eed8f-e3bd-408c-8030-c0980767c149"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "e761eac8-6edc-4d9b-afb8-398dc729650a",
+            "newUID": "80de4a57-2d1a-4524-8bb0-6890e2f566ec"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "509a6577-b8e0-4344-a001-7f9787151405",
+            "newUID": "9280b95c-7951-4f09-a715-dbdb12f61940"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "d49928f1-5d75-47e7-b6b9-8e687a769f8a",
+            "newUID": "7ed40b8c-0a90-4bd3-b86b-f2470be33309"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "07112ac5-098f-4bc5-ab56-c11b0d309756",
+            "newUID": "80aabb90-df89-456f-9b37-9f2103158826"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "6593920b-6391-4386-aa95-1bfb935b1890",
+            "newUID": "600d6f99-b1d1-4e78-a47b-061c699df383"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "86f042a4-cedf-4784-a7d3-ca01d5f37f81",
+            "newUID": "69f02c2e-a062-40d1-bfed-ab9d2e2b287d"
+          },
+          {
+            "kind": "PtahMigration",
+            "name": "restore-case",
+            "oldUID": "a4ebacee-7a2f-4fef-b80b-c693b23c5d62",
+            "newUID": "f9b37fa6-f5ff-4243-9f15-23c666315d35"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-cc18da743b",
+            "oldUID": "7163b166-dfea-4a02-b384-dcd945309239",
+            "newUID": "f63a01b6-7027-48f9-85eb-97e14fcccf03"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-cc18da743b.svc.cluster.local:5000/ptah-020-restore-cc18da743b/migration:v1",
+          "digest": "sha256:971204ab0c4ddb595ca5cc8fb6298b30863374c09e15bbfcedc8d52c57c7e43a",
+          "publisherJobUID": "7b2e285e-19b2-4157-848d-e8d1ffadb4c0"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-cc18da743b.svc.cluster.local:5000/ptah-020-restore-cc18da743b/migration:v2",
+          "digest": "sha256:99566490827c630269da62a8babb97f089d2c061931c8d34f890c259ce701ed5",
+          "publisherJobUID": "44c649be-a9d2-48ec-a440-59c725ad8dee"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "94e216c344a4f8f1015bef8091b4011eb92f7244d094af00871ea2b69acf5cde",
+      "privateWatchSHA256": {
+        "jobs": "054fd0c0bf551b9a27b1b3179348b4939417ed8ec20c708ff9c914610a768cb6",
+        "pods": "0f95000d2516950272145408d7ac07c3a6d91ed43d8ff22548d16d2992e60777"
+      }
+    },
+    {
+      "engine": "mysql",
+      "family": "schema",
+      "lossType": "combined",
+      "runID": "ptah-020-restore-03f316bf9c",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:36:36.901950+00:00",
+      "completedAt": "2026-09-30T19:39:45.025215+00:00",
+      "backupStartedAt": "2026-09-30T19:37:46.559925+00:00",
+      "backupCompletedAt": "2026-09-30T19:37:50.528535+00:00",
+      "lossInjectedAt": "2026-09-30T19:37:52.696369+00:00",
+      "serviceRestoredAt": "2026-09-30T19:39:36.891820+00:00",
+      "recoverySeconds": 104.196,
+      "databaseRPOUpperBoundSeconds": 6.136444,
+      "expectedLostRowIDs": [
+        3
+      ],
+      "observedLostRowIDs": [
+        3
+      ],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "backup retains every exact published plan chunk": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "replacement database starts without data or writer identity": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "3b681985e32f76c84f38e9cb8c66de27830a9622b7b4ed8e339692ea23505e8a",
+          "ciphertextSHA256": "e1466e6ae928a46f137bc1f3e52aace9b55041a768a8cb8206a7107ebc23c890",
+          "plaintextBytes": 329364,
+          "ciphertextBytes": 329644
+        },
+        "database": {
+          "plaintextSHA256": "f9ac08f714b383d2e1ed073e575e737fb23340707ae206ad097814343d89ebf3",
+          "ciphertextSHA256": "951e3da241418c77a61bc917da9f6e4e0eb3859520e8756da5fa39ba19ce19f8",
+          "plaintextBytes": 3782691,
+          "ciphertextBytes": 3783803
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "e13c8badea16d269b56c120cd96d81538f73f292c3834b01648f116efe49ca6f",
+          "afterSHA256": "e13c8badea16d269b56c120cd96d81538f73f292c3834b01648f116efe49ca6f"
+        },
+        "schema": {
+          "beforeSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862",
+          "afterSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862"
+        },
+        "access": {
+          "beforeSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356",
+          "afterSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356"
+        }
+      },
+      "identity": {
+        "resourceUID": "12b4f87d-20ff-4777-bae9-a1f64e20ce8f",
+        "originalResourceUID": "76fb5653-dbd6-4675-b8fb-5acbe766ee78",
+        "oldPlanUID": "a9080679-fac9-4ce0-8a37-10a8e738223e",
+        "oldApprovalUID": "8bccee4e-9924-4b1b-8253-21d9f10acea5",
+        "freshPlanUID": "cb21c0e3-5d31-426d-b254-8266d498fb2b",
+        "freshApprovalUID": "c4e2deeb-1182-4010-9f97-218f3232626e",
+        "originalApplyJobUIDs": [
+          "a8a0b00d-bc75-4200-9ab4-ad2ee4be9415"
+        ],
+        "freshApplyJobUIDs": [
+          "e9c02da2-f2f7-4120-8935-86a0b6fef932"
+        ],
+        "originalApplyPodUIDs": [
+          "ab4c2b21-4235-450c-b1a3-ed5319727e49"
+        ],
+        "freshApplyPodUIDs": [
+          "d4ce0881-d81b-4acb-b798-3cb1d66ef700"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "7cd89751-1968-4716-a5ff-5e82f0eb2a82",
+            "newUID": "cb087696-d2bb-4b20-a371-d6f3ec376e75"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "a84379f0-d9d9-4bce-9cc5-91c091dc37d6",
+            "newUID": "3b9a1b25-15c2-4631-bf32-309254a5d1a9"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "1c2d4215-a1b3-4abd-92c3-26f69769a14e",
+            "newUID": "9286860c-fc22-49f3-b28e-1fa04757d015"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "5afa4671-157c-4363-bf2d-5eca4eb3ed01",
+            "newUID": "4b63fddc-8fac-4dcb-b4e5-484e6ada7cdd"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "22590c82-b450-4a47-9e72-ddc7ba7ca186",
+            "newUID": "660171f4-f80b-41cd-b083-1e0113f5c703"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "addf1cd1-857f-41c5-930a-d8d4c99ae8a0",
+            "newUID": "109770f9-9c14-4eab-ac69-cb06aaed5b1e"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "74790202-f1db-4471-94f5-6f74b5f3fd9d",
+            "newUID": "d8e87e88-2498-4b5c-9c85-04ac57ebcfef"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "d6f0faca-98a8-420a-84b1-7d41177ad817",
+            "newUID": "3d74f3f7-a2e3-4f6e-bc99-d8a9f704ec88"
+          },
+          {
+            "kind": "PtahSchema",
+            "name": "restore-case",
+            "oldUID": "76fb5653-dbd6-4675-b8fb-5acbe766ee78",
+            "newUID": "12b4f87d-20ff-4777-bae9-a1f64e20ce8f"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-03f316bf9c",
+            "oldUID": "71be1066-87a3-4b18-9422-84d505b54a7c",
+            "newUID": "869e0ea5-2dc5-4699-baf2-ae9bb0d66936"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-03f316bf9c.svc.cluster.local:5000/ptah-020-restore-03f316bf9c/schema:v1",
+          "digest": "sha256:682375c0c47bad51fd0be46795cb3d51e4b2e6964ec4dafd93ec09c6ee84e479",
+          "publisherJobUID": "3d86b895-1cbf-4b40-a155-3da2cff79540"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-03f316bf9c.svc.cluster.local:5000/ptah-020-restore-03f316bf9c/schema:v2",
+          "digest": "sha256:264148dd151a0b55e0dea684962b4aff62e50ed84f19651055750f3ebb1e71a0",
+          "publisherJobUID": "2caa2d40-62e7-4e15-a919-41421aa766ef"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "b1921809655504de8b034ee5c5bd966cfda8571d092dabe74ded1faecf178667",
+      "privateWatchSHA256": {
+        "jobs": "10b21641d38a76c3d7d1476fe963ebb376009f1a537a57beb971bc9f096d8a08",
+        "pods": "f524f4ee7477bb27fb12204c88e0c7c85afbbe99b34653ad39d733bd91fa27da"
+      }
+    },
+    {
+      "engine": "mysql",
+      "family": "migration",
+      "lossType": "combined",
+      "runID": "ptah-020-restore-874197977f",
+      "status": "PASS",
+      "sourceCommit": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+      "operatorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-operator@sha256:11fcd2349de16de3c13e3cfd19e380d81ab2d5fa1ec5533a53495945ced321f8",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-020-namespace-restore-a715ff32ce.svc.cluster.local:5000/ptah-executor@sha256:72b067da2d7f1a91aa5f6c91d06219cad47f655c7d5fb850851a3aff0f805e48",
+      "image": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+      "procedureSHA256": "49ad112747591392dabdd13b55d99bbbf9e0e3da8e0a6dba31081482b9a91126",
+      "databaseProcedureSHA256": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82",
+      "startedAt": "2026-09-30T19:39:45.109346+00:00",
+      "completedAt": "2026-09-30T19:42:21.784571+00:00",
+      "backupStartedAt": "2026-09-30T19:40:41.800778+00:00",
+      "backupCompletedAt": "2026-09-30T19:40:45.609785+00:00",
+      "lossInjectedAt": "2026-09-30T19:40:47.799263+00:00",
+      "serviceRestoredAt": "2026-09-30T19:42:14.000088+00:00",
+      "recoverySeconds": 86.201,
+      "databaseRPOUpperBoundSeconds": 5.998485,
+      "expectedLostRowIDs": [
+        3
+      ],
+      "observedLostRowIDs": [
+        3
+      ],
+      "checks": {
+        "database network address is concrete": true,
+        "publisher returned immutable artifact digest 1": true,
+        "initial approval dispatched exactly one successful Apply": true,
+        "no original executor is running at the idle recovery point": true,
+        "original approval is durably consumed": true,
+        "real migration history is populated": true,
+        "recovery point contains exactly the fixture rows": true,
+        "jobs watch remains live": true,
+        "pods watch remains live": true,
+        "both workload watches reach the starting boundary": true,
+        "namespace backup contains plans and consumed approvals": true,
+        "all nine installed operator CRDs are inventoried": true,
+        "operator-checkpoint wrong identity refused": true,
+        "operator-checkpoint decrypted bytes match": true,
+        "database wrong identity refused": true,
+        "database decrypted bytes match": true,
+        "late write committed before loss": true,
+        "original namespace is absent before restoration": true,
+        "replacement database starts without data or writer identity": true,
+        "restored operator backup matches its recorded checksum": true,
+        "all rebuilt namespace and dependency identities are new": true,
+        "the rebuilt resource starts suspended with explicit approval": true,
+        "installed CRDs and admission identity survived namespace loss": true,
+        "restored rows matches the recovery point": true,
+        "restored schema matches the recovery point": true,
+        "restored access matches the recovery point": true,
+        "restored history matches the recovery point": true,
+        "only the declared data loss occurred": true,
+        "restored reader authenticates": true,
+        "restored reader cannot mutate schema": true,
+        "the rebuilt resource has a fresh execution binding": true,
+        "the target Secret was restored with a new identity": true,
+        "old approval did not replay after database restoration": true,
+        "publisher returned immutable artifact digest 2": true,
+        "recovery change has a new exact plan": true,
+        "admission refuses the original backup plan approval": true,
+        "admission refuses the old resource UID against the fresh plan": true,
+        "no Apply before fresh authorization": true,
+        "fresh authorization has one completed Apply Job": true,
+        "replacement Apply starts after original execution ended": true,
+        "the rebuilt namespace contains no recreated old approval": true,
+        "approved change reached the restored database": true,
+        "exactly one fresh Apply followed restoration": true,
+        "fresh approved migration is recorded in actual history": true,
+        "database recovery point is within five minutes of loss": true,
+        "verified recovery meets the declared loss-type bound": true
+      },
+      "backups": {
+        "operator-checkpoint": {
+          "plaintextSHA256": "a93697de91ec201db386c904ee8e5479e37998a8779c4c5771f78db7728a64bd",
+          "ciphertextSHA256": "21352b0792e21681d598154e34d9941f36c265f25c7b137c26f5664058068197",
+          "plaintextBytes": 288001,
+          "ciphertextBytes": 288265
+        },
+        "database": {
+          "plaintextSHA256": "eca58194702027a8a9b26b91e4e49be9165ebcac99e01998df9f14bb2ce2e58d",
+          "ciphertextSHA256": "92e6e7aa49c547db48a104965db14e58f11db598b20368da94efdc2ece935ec3",
+          "plaintextBytes": 3786008,
+          "ciphertextBytes": 3787120
+        }
+      },
+      "inventories": {
+        "rows": {
+          "beforeSHA256": "e13c8badea16d269b56c120cd96d81538f73f292c3834b01648f116efe49ca6f",
+          "afterSHA256": "e13c8badea16d269b56c120cd96d81538f73f292c3834b01648f116efe49ca6f"
+        },
+        "schema": {
+          "beforeSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862",
+          "afterSHA256": "ee820517db486694ea081b388370635d041fffea312816553b5b7c51de842862"
+        },
+        "access": {
+          "beforeSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356",
+          "afterSHA256": "6b3ae62bbc2410108607db56a342b732723e2eee96f0daf6f678f4e2a5781356"
+        },
+        "history": {
+          "beforeSHA256": "83a6fdd513832966d390301f6748291c8ec0a1f2f8905f068ecc42bdec036291",
+          "afterSHA256": "83a6fdd513832966d390301f6748291c8ec0a1f2f8905f068ecc42bdec036291"
+        }
+      },
+      "identity": {
+        "resourceUID": "c6d52217-e478-47e2-acf6-823e474f67c9",
+        "originalResourceUID": "d5674d6e-1417-4811-8ac5-1c04a96909a8",
+        "oldPlanUID": "9753b32e-7c15-4421-b7ab-ff5df5746ee3",
+        "oldApprovalUID": "f26f73aa-eb08-48d6-9cdf-be51da3b82ec",
+        "freshPlanUID": "40228868-e21c-42d3-9ce6-dea5d959a10d",
+        "freshApprovalUID": "ac8da9ea-e235-4074-8f74-372f2353d871",
+        "originalApplyJobUIDs": [
+          "f726eaea-a272-4d2e-bf5e-7cbf09747db1"
+        ],
+        "freshApplyJobUIDs": [
+          "fef9276b-7f7f-4528-9f04-0172a5a9ce76"
+        ],
+        "originalApplyPodUIDs": [
+          "10af4441-f126-4fe7-808c-b72cf4c0ce5c"
+        ],
+        "freshApplyPodUIDs": [
+          "2b8ab313-6b45-4463-87f1-f7e8483b0275"
+        ]
+      },
+      "rebuild": {
+        "identityMappings": [
+          {
+            "kind": "Secret",
+            "name": "restore-target",
+            "oldUID": "6d15b6a3-2353-48bb-a66f-c9a0e3ed6ed8",
+            "newUID": "672242f2-95e7-40be-84d7-46dcc488b85a"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-registry",
+            "oldUID": "d758daa7-34e8-4a66-968b-5153a91bd2b0",
+            "newUID": "b7dd79bf-ba45-4f2d-aaf7-acb7922c62cd"
+          },
+          {
+            "kind": "Secret",
+            "name": "restore-pull",
+            "oldUID": "940c7249-9614-49e1-beb5-2516e0f65b33",
+            "newUID": "9e021600-1a3c-4658-acdd-80778be5f8bc"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "restore-policy",
+            "oldUID": "53adf553-46ba-432e-89f7-40fd41134591",
+            "newUID": "301fd630-b6cc-43c1-a58f-09883efd9524"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-registry",
+            "oldUID": "9df3a1f4-6cd9-4332-83a4-af3c05ed241c",
+            "newUID": "17a0fe1a-6109-4565-8973-f56569a86765"
+          },
+          {
+            "kind": "Service",
+            "name": "restore-database",
+            "oldUID": "0f266a17-b997-46b4-9c77-95cfd7095b1f",
+            "newUID": "599a2a91-dec2-47f8-ad89-b627d25754d9"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-registry-endpoint",
+            "oldUID": "3f256533-32fd-4745-91c7-3a732336ea16",
+            "newUID": "84388d5a-1667-4b26-9b59-5fde93a9d753"
+          },
+          {
+            "kind": "EndpointSlice",
+            "name": "restore-database-endpoint",
+            "oldUID": "f48af5ab-55fe-4f8a-b9cf-e77e617a858b",
+            "newUID": "be2ea3f1-46e7-4469-aa28-4a55d0238559"
+          },
+          {
+            "kind": "PtahMigration",
+            "name": "restore-case",
+            "oldUID": "d5674d6e-1417-4811-8ac5-1c04a96909a8",
+            "newUID": "c6d52217-e478-47e2-acf6-823e474f67c9"
+          },
+          {
+            "kind": "Namespace",
+            "name": "ptah-020-restore-874197977f",
+            "oldUID": "1f8742de-f3d4-4b87-bac7-1c64f8b72bbc",
+            "newUID": "337e17e9-0261-4376-9a28-d8a589cab0c4"
+          }
+        ],
+        "preservedContractSHA256": "61cbc42ef2e2e3842102838ef46da2a7d4b15aad24235b104e8e0efb11d1f4ec",
+        "archiveOnly": "Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.",
+        "controlledSpecEdits": {
+          "suspend": true,
+          "policy.apply": "OnApproval"
+        }
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-874197977f.svc.cluster.local:5000/ptah-020-restore-874197977f/migration:v1",
+          "digest": "sha256:9d2a40cfd0f1b1f4869258f6d0b6b1c1391aaef1de666ff8385ca3b6c77b9ed3",
+          "publisherJobUID": "d248775f-7c66-48fe-9c9f-0bc33ab25a18"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-874197977f.svc.cluster.local:5000/ptah-020-restore-874197977f/migration:v2",
+          "digest": "sha256:0b95add3cb8bde976e8278c6f16f1bc848b8e1e78e6e0c366cd2402f85319bb7",
+          "publisherJobUID": "1c88b947-a1f5-42c6-9cd2-8617cb3f40d8"
+        }
+      },
+      "cleanupSucceeded": true,
+      "privateResultSHA256": "f8246c9bb1b82df197ad8a4f3c58e1778db07e1e71029d57f3ec72ea3000f9c5",
+      "privateWatchSHA256": {
+        "jobs": "da95028f1a2202f5a39c91d04d47a753f2e687c315119c26e8bdce95ce37f8b5",
+        "pods": "f19e5289e28fb64b313461f72b483e18e5ce64eba5a7140001178d0daa8fc49b"
+      }
+    }
+  ],
+  "taskCleanup": {
+    "completedAt": "2026-09-30T19:51:00.845867+00:00",
+    "cluster": "ptah-e2e-1-37-0-020-namespace-a715ff32ce",
+    "remainingOwnedDatabaseResources": {
+      "container": [],
+      "volume": [],
+      "network": []
+    },
+    "clusterAndOwnedFixtureContainersRemoved": true,
+    "apiTunnelRemoved": true,
+    "environmentFileRemoved": true,
+    "ownedRunIDsChecked": [
+      "ptah-020-restore-03f316bf9c",
+      "ptah-020-restore-5902341fee",
+      "ptah-020-restore-720adf5846",
+      "ptah-020-restore-874197977f",
+      "ptah-020-restore-9a66a9b1b3",
+      "ptah-020-restore-cc18da743b",
+      "ptah-020-restore-cc55a93c6f",
+      "ptah-020-restore-d4865992ee"
+    ],
+    "privateBackupsRetained": true,
+    "createdImageReferencesRemoved": 13,
+    "ownedTaskVolumesRemoved": true
+  }
+}

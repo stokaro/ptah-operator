@@ -356,6 +356,10 @@ class OperatorProbe(db.Probe):
         self.check('original namespace is absent before restoration',
                    gone.returncode != 0 and b'NotFound' in gone.stderr and self.namespace.encode() in gone.stderr)
 
+    def verify_restored_contract(self, original):
+        self.check('installed CRDs and admission identity survived namespace loss',
+                   original == self.preserved_contract())
+
     def restore_namespace(self, checkpoint_path, key):
         data = self.command('decrypt retained operator-state backup',
                             ['age', '-d', '-i', str(key), str(checkpoint_path)]).stdout
@@ -384,8 +388,7 @@ class OperatorProbe(db.Probe):
         paused = self.settled('Suspended')
         self.check('the rebuilt resource starts suspended with explicit approval',
                    paused['spec']['suspend'] and paused['spec']['policy']['apply'] == 'OnApproval')
-        self.check('installed CRDs and admission identity survived namespace loss',
-                   archive['preservedContract'] == self.preserved_contract())
+        self.verify_restored_contract(archive['preservedContract'])
         self.report['rebuild'] = {'identityMappings': mappings,
                                  'preservedContractSHA256': db.digest(json.dumps(archive['preservedContract'], sort_keys=True).encode()),
                                  'archiveOnly': 'Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.',

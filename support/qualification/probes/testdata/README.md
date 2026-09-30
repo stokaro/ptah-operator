@@ -17,3 +17,9 @@ resources. It contains no target Secret, backup payload or credential.
 
 The private encrypted checkpoints remain outside the repository. These are
 inputs to rejection controls, not evidence that the full recovery matrix passed.
+
+`recovery-webhooks.json` contains the public admission configurations observed
+on operator commit `4560860c717b5a69ed0bafecb12378b6728b72f4` during the
+PostgreSQL schema namespace-restore pilot. It retains public CA certificates,
+not private keys. The cold-restore controls allow regenerated API identities,
+service addresses and CAs while requiring the admission rules to remain equal.

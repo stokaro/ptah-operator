@@ -15,7 +15,8 @@
     "No in-flight Apply or five-minute operator-backup lag case.",
     "No final released artifacts, other runtime platforms, production backup-store access or owner handoff.",
     "Recovery does not require manual uncertain-run diagnosis in the idle fixture.",
-    "Private evidence and restore identities remain locally restricted pending durable archival."
+    "Private evidence and restore identities remain locally restricted pending durable archival.",
+    "The temporary OCI registry was removed after the completed proofs; its artifact references are historical and are not a retained portable recovery kit."
   ],
   "observedRuntime": {
     "nodes": [
@@ -184,6 +185,18 @@
       "privateArtifacts": {
         "jobsWatchSHA256": "4ab36813c90bf195728d811776fad237eb45f0175012d990b31113bb40dc626b",
         "podsWatchSHA256": "2bdd26825dc02d16d88aec560e2049ae3866e7f5b5ff3507bc001160bfd83911"
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-629f9d1948.svc.cluster.local:5000/ptah-020-restore-629f9d1948/schema:v1",
+          "digest": "sha256:d9bbea608474ffa1a55ad1b1dd6508f1b44e220825f659fff509881572799be6",
+          "publisherJobUID": "4924ccf7-77cf-41f9-9eb5-d79312c0a8ab"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-629f9d1948.svc.cluster.local:5000/ptah-020-restore-629f9d1948/schema:v2",
+          "digest": "sha256:8abea6bfb5dada79a8fd878c30e2f99a1d7e4e9e0e8cc013742171394c7f0277",
+          "publisherJobUID": "13c9cef7-10b5-48ca-a966-e7c90b140943"
+        }
       }
     },
     {
@@ -317,6 +330,18 @@
       "privateArtifacts": {
         "jobsWatchSHA256": "122c3856c2ea4912679c7c9f336781c300967b61e948127c9c2bd4d2216642f6",
         "podsWatchSHA256": "b2fce56bf8baa4457e9cfcc92abe2126c4735cc279b9bc1c9337e7967529f54e"
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-49c1960150.svc.cluster.local:5000/ptah-020-restore-49c1960150/migration:v1",
+          "digest": "sha256:8834bd063972c0356798da4980a91b5deed8b2c0d5bc876467ca660904bc7752",
+          "publisherJobUID": "f1495e3d-3b6e-4d37-9454-8c80b50b6328"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-49c1960150.svc.cluster.local:5000/ptah-020-restore-49c1960150/migration:v2",
+          "digest": "sha256:f72389e9ac5f3dc130366f13b0d2d94ef0e3dc5abb25d5078f73fb321e43aed5",
+          "publisherJobUID": "df877271-e993-4b0f-b67c-98d9afa2305d"
+        }
       }
     },
     {
@@ -435,6 +460,18 @@
       "privateArtifacts": {
         "jobsWatchSHA256": "b1a8ae2801542d825b468fd31775a1990c241b1466ace4e3a46ddffb99af8af3",
         "podsWatchSHA256": "f2da8a97abe93a49b0a431c2f9a3ca9006660f8d3b9c802cb4f012052e8990cb"
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-2c15c3b5e6.svc.cluster.local:5000/ptah-020-restore-2c15c3b5e6/schema:v1",
+          "digest": "sha256:064e525ea3ee03c2520f81333cc03f12e270caf43fcf86019609f74b82d73701",
+          "publisherJobUID": "6a05b24b-764c-4103-a1d6-2f42b19f801c"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-2c15c3b5e6.svc.cluster.local:5000/ptah-020-restore-2c15c3b5e6/schema:v2",
+          "digest": "sha256:d1f595d0ab4bc3d50b809408254073bdf164cb1b8cdf4c2ee84d012db0bab8e4",
+          "publisherJobUID": "a1ce0ac3-d594-4bb9-8ef5-1b925674bbfa"
+        }
       }
     },
     {
@@ -560,6 +597,18 @@
       "privateArtifacts": {
         "jobsWatchSHA256": "61c8a2f2926ca7eade2488c66381c37aa9288154a3dff24185db9f73eaae4b97",
         "podsWatchSHA256": "5229c3dc9e33f7cbeaa49d14a3c880e2346f3e6a78a86b39af4bda42c8c42872"
+      },
+      "artifacts": {
+        "1": {
+          "reference": "oci://restore-registry.ptah-020-restore-a8ab0f19d9.svc.cluster.local:5000/ptah-020-restore-a8ab0f19d9/migration:v1",
+          "digest": "sha256:ff8ab5dd17755ce278fea5d158112595882716fa8080819e9396a97acc68c7bb",
+          "publisherJobUID": "02be8fbd-842e-412a-ac68-f36d516efbae"
+        },
+        "2": {
+          "reference": "oci://restore-registry.ptah-020-restore-a8ab0f19d9.svc.cluster.local:5000/ptah-020-restore-a8ab0f19d9/migration:v2",
+          "digest": "sha256:dd3b39e77dd191b4a44cc56cf790d11f57a065af6bc08950a85df070dd470d25",
+          "publisherJobUID": "2ac345b8-8ff2-4f0c-a591-5df523cf35f4"
+        }
       }
     }
   ],

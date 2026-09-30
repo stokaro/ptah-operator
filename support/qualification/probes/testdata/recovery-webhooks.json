@@ -1,0 +1,381 @@
+{
+  "source": {
+    "operatorRevision": "4560860c717b5a69ed0bafecb12378b6728b72f4",
+    "operatorNamespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+    "controllerName": "ptah-runtime-generated-name-prefix-boundary-proof-a715ff32ce"
+  },
+  "webhooks": [
+    {
+      "kind": "MutatingWebhookConfiguration",
+      "name": "ptah-operator-admission",
+      "uid": "28b9c1b2-30ff-48f5-9e33-c189203bdde8",
+      "webhooks": [
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchPolicy": "Equivalent",
+          "name": "mapproval.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "reinvocationPolicy": "Never",
+          "rules": [
+            {
+              "apiGroups": [
+                "operator.ptah.run"
+              ],
+              "apiVersions": [
+                "v1alpha1"
+              ],
+              "operations": [
+                "CREATE"
+              ],
+              "resources": [
+                "ptahschemaapprovals"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 5
+        },
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchPolicy": "Equivalent",
+          "name": "mmigrationapproval.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "reinvocationPolicy": "Never",
+          "rules": [
+            {
+              "apiGroups": [
+                "operator.ptah.run"
+              ],
+              "apiVersions": [
+                "v1alpha1"
+              ],
+              "operations": [
+                "CREATE"
+              ],
+              "resources": [
+                "ptahmigrationapprovals"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 5
+        },
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/mutate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchPolicy": "Equivalent",
+          "name": "mmigrationrunacknowledgment.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "reinvocationPolicy": "Never",
+          "rules": [
+            {
+              "apiGroups": [
+                "operator.ptah.run"
+              ],
+              "apiVersions": [
+                "v1alpha1"
+              ],
+              "operations": [
+                "CREATE"
+              ],
+              "resources": [
+                "ptahmigrationrunacknowledgments"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 5
+        }
+      ]
+    },
+    {
+      "kind": "ValidatingWebhookConfiguration",
+      "name": "ptah-operator-admission",
+      "uid": "9c447555-aa54-4c09-a212-5a4c40ff899c",
+      "webhooks": [
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchPolicy": "Equivalent",
+          "name": "vapproval.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "rules": [
+            {
+              "apiGroups": [
+                "operator.ptah.run"
+              ],
+              "apiVersions": [
+                "v1alpha1"
+              ],
+              "operations": [
+                "CREATE",
+                "UPDATE"
+              ],
+              "resources": [
+                "ptahschemaapprovals"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 5
+        },
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchPolicy": "Equivalent",
+          "name": "vmigrationapproval.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "rules": [
+            {
+              "apiGroups": [
+                "operator.ptah.run"
+              ],
+              "apiVersions": [
+                "v1alpha1"
+              ],
+              "operations": [
+                "CREATE",
+                "UPDATE"
+              ],
+              "resources": [
+                "ptahmigrationapprovals"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 5
+        },
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/validate-operator-ptah-run-v1alpha1-ptahmigrationrunacknowledgment",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchPolicy": "Equivalent",
+          "name": "vmigrationrunacknowledgment.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "rules": [
+            {
+              "apiGroups": [
+                "operator.ptah.run"
+              ],
+              "apiVersions": [
+                "v1alpha1"
+              ],
+              "operations": [
+                "CREATE",
+                "UPDATE"
+              ],
+              "resources": [
+                "ptahmigrationrunacknowledgments"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 5
+        },
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/validate-v1-pod-ptah-operation-intent",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchConditions": [
+            {
+              "expression": "(has(object.metadata.labels) &&\n  'app.kubernetes.io/managed-by' in object.metadata.labels &&\n  object.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&\n  'app.kubernetes.io/component' in object.metadata.labels &&\n  object.metadata.labels['app.kubernetes.io/component'] in ['schema-operation', 'migration-operation']) ||\n(has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(ref,\n  ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&\n  ref.name.matches('^ptah-(m-)?(resolve|verify|observe|plan|history|apply)-'))) ||\n(request.operation == 'UPDATE' && oldObject != null && (\n  (has(oldObject.metadata.labels) &&\n    'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&\n    oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&\n    'app.kubernetes.io/component' in oldObject.metadata.labels &&\n    oldObject.metadata.labels['app.kubernetes.io/component'] in ['schema-operation', 'migration-operation']) ||\n  (has(oldObject.metadata.ownerReferences) && oldObject.metadata.ownerReferences.exists(ref,\n    ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&\n    ref.name.matches('^ptah-(m-)?(resolve|verify|observe|plan|history|apply)-')))))",
+              "name": "managed-or-operation-job-pod"
+            }
+          ],
+          "matchPolicy": "Equivalent",
+          "name": "vpodintent.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "rules": [
+            {
+              "apiGroups": [
+                ""
+              ],
+              "apiVersions": [
+                "v1"
+              ],
+              "operations": [
+                "CREATE",
+                "UPDATE"
+              ],
+              "resources": [
+                "pods",
+                "pods/ephemeralcontainers",
+                "pods/resize"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 5
+        },
+        {
+          "admissionReviewVersions": [
+            "v1"
+          ],
+          "clientConfig": {
+            "caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI2VENDQVpDZ0F3SUJBZ0lRTm1PSk9mSHcxeFkyVzNJM2xtNmtpekFLQmdncWhrak9QUVFEQWpCVk1WTXcKVVFZRFZRUURFMHB3ZEdGb0xYSjFiblJwYldVdFoyVnVaWEpoZEdWa0xXNWhiV1V0Y0hKbFptbDRMV0p2ZFc1awpZWEo1TFhCeWIyOW1MV0UzTVRWbUxYZGxZbWh2YjJzZ2QyVmlhRzl2YXlCRFFUQWVGdzB5TmpBNU16QXhPVEUxCk1qRmFGdzB5T1RBNU1qa3hPVEl3TWpGYU1GVXhVekJSQmdOVkJBTVRTbkIwWVdndGNuVnVkR2x0WlMxblpXNWwKY21GMFpXUXRibUZ0WlMxd2NtVm1hWGd0WW05MWJtUmhjbmt0Y0hKdmIyWXRZVGN4TldZdGQyVmlhRzl2YXlCMwpaV0pvYjI5cklFTkJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVWSHlSUk9reTNhK0l6b0NVClVBRW9wVkpTUUd6Y25RV3VlOEdJeVM0R2pyaEMydWt4L24xLzlmUit4Z2pQRUVDdVJjUGxtd3JMdzNScnV4RWkKV2ltL3o2TkNNRUF3RGdZRFZSMFBBUUgvQkFRREFnR0dNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdIUVlEVlIwTwpCQllFRlBCRVY4amNranJKODRZa2hwejRXM09oLzk1Vk1Bb0dDQ3FHU000OUJBTUNBMGNBTUVRQ0lFMnZuYmtsClZQaFFGOUJ0Ym1QWWh2MVloc21PQjcralNZM2RYdU8vaEZmY0FpQU83NzE0V1RuQlZhSEN6QVhMeVkrM2FOUFQKajBMRURZWW11VUZUcnNMeFJnPT0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=",
+            "service": {
+              "name": "ptah-runtime-generated-name-prefix-boundary-proof-a715f-webhook",
+              "namespace": "ptah-system-1-37-0-020-namespace-restore-a715ff32ce",
+              "path": "/validate-operator-controller-write",
+              "port": 443
+            }
+          },
+          "failurePolicy": "Fail",
+          "matchConditions": [
+            {
+              "expression": "request.userInfo.username == 'system:serviceaccount:ptah-system-1-37-0-020-namespace-restore-a715ff32ce:ptah-runtime-generated-name-prefix-boundary-proof-a715ff32ce'",
+              "name": "controller-service-account"
+            }
+          ],
+          "matchPolicy": "Exact",
+          "name": "vcontrollerwrite.operator.ptah.run",
+          "namespaceSelector": {},
+          "objectSelector": {},
+          "rules": [
+            {
+              "apiGroups": [
+                "batch"
+              ],
+              "apiVersions": [
+                "v1"
+              ],
+              "operations": [
+                "CREATE",
+                "UPDATE"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "scope": "Namespaced"
+            },
+            {
+              "apiGroups": [
+                ""
+              ],
+              "apiVersions": [
+                "v1"
+              ],
+              "operations": [
+                "CREATE"
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "scope": "Namespaced"
+            },
+            {
+              "apiGroups": [
+                "operator.ptah.run"
+              ],
+              "apiVersions": [
+                "v1alpha1"
+              ],
+              "operations": [
+                "CREATE"
+              ],
+              "resources": [
+                "ptahschemaplans",
+                "ptahschemaplanchunks",
+                "ptahmigrationplans"
+              ],
+              "scope": "Namespaced"
+            }
+          ],
+          "sideEffects": "None",
+          "timeoutSeconds": 30
+        }
+      ]
+    }
+  ]
+}
