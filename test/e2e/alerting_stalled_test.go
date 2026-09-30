@@ -176,7 +176,7 @@ func TestAlStalledDeliveryBoundsKeepSubsecondAndIncidentIdentity(t *testing.T) {
 		t.Fatal("an early firing hidden by delayed delivery passed")
 	}
 	finished := started.Add(2 * time.Minute)
-	resolved := alDelivery{StartsAt: firing.StartsAt, EndsAt: finished.Add(time.Second), ReceivedAt: finished.Add(alDetectionSlack)}
+	resolved := alDelivery{StartsAt: firing.StartsAt, EndsAt: finished.Add(time.Second), ReceivedAt: finished.Add(105 * time.Second)}
 	if !alStalledCleared(firing, resolved, finished) {
 		t.Fatal("matching native resolution rejected")
 	}

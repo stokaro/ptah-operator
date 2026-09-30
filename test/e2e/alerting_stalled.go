@@ -14,6 +14,10 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
+// The frozen profile allows 105 seconds after the operation leaves flight.
+// This includes controller observation; it is distinct from delivery slack.
+const alStalledResolution = 105 * time.Second
+
 type alStalledClaim struct {
 	family, namespace, name string
 	uid                     types.UID
@@ -77,7 +81,7 @@ func alStalledDelivered(delivery alDelivery, started time.Time) bool {
 func alStalledCleared(firing, resolved alDelivery, finished time.Time) bool {
 	return !finished.IsZero() && !firing.StartsAt.IsZero() && resolved.StartsAt.Equal(firing.StartsAt) &&
 		!resolved.EndsAt.Before(finished) && !resolved.ReceivedAt.Before(resolved.EndsAt) &&
-		!resolved.ReceivedAt.After(finished.Add(alDetectionSlack))
+		!resolved.ReceivedAt.After(finished.Add(alStalledResolution))
 }
 
 func alStalledJobMatches(job *batchv1.Job, claim alStalledClaim) bool {

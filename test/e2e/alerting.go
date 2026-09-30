@@ -44,9 +44,8 @@ const (
 	alScrapeJob = "ptah-operator"
 )
 
-// The numbers the rules are rendered with. They are this phase's, chosen to
-// keep it short, and they are not advice: the chart has no default for either
-// because the right value depends on the cluster.
+// These qualification settings follow the frozen 0.2.0 alert targets.
+// They are not chart defaults; deployments choose their own operating targets.
 const (
 	alViewUnsyncedFor = 60 * time.Second
 	alStalledAfter    = 60 * time.Second
