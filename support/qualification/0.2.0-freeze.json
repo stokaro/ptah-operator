@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T09:10:02.722323+00:00",
-  "profileSourceCommit": "a2c7876ef3089a8f19fbb5367ea45c959ec5a82d",
+  "frozenAt": "2026-09-30T10:23:29.657660+00:00",
+  "profileSourceCommit": "e77d8eea4ed50724e63a35fe21b668bb42e98f42",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "eb4f32cce1b8bfe76887f09278a264f662c48181a6b494a136f932b7a681e2ea",
-    "generatedFromCommit": "a2c7876ef3089a8f19fbb5367ea45c959ec5a82d",
+    "sha256": "229325c4787d283372056428f858f7144fc67ace149df55888e7675c5572eef0",
+    "generatedFromCommit": "e77d8eea4ed50724e63a35fe21b668bb42e98f42",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 15,
+  "revision": 16,
   "supersedes": {
-    "freezeCommit": "52eb4415cc793f2befbbe0ceb6a59544edea96b3",
-    "sha256": "deef2c130f92414e8abf880423a8b684da0d8189044cb946fb34c32695b8e9c3"
+    "freezeCommit": "d72ec94507ec8d27d1deaaf2451acfb31971fa5e",
+    "sha256": "faba0da7215b5bcfae22da756c5cf089c6738563214f70ac50d1d87f4ad91603"
   },
-  "revisionReason": "Declare separate configured Ptah-version approval controls for both resource families and database engines while retaining the identical pinned executable and image digest. The scenario toggles only the build declaration v prefix, requires an exact new execution epoch and plan, refuses the original admitted approval, audits both diagnostic controls and the full SQL refusal window, and verifies one freshly approved Apply under the new declaration. It measures binding to the configured version string, not compatibility with a different Ptah binary. Correct the managed Apply-Pod annotation that failed all six migration cells in CI run 36687215492 on 52eb4415: close the same Pod collection with an unmanaged database sentinel and require the original workload exact UID and resourceVersion. Preserve the failed evidence. The added scenario changes the inventory, not the 30 required cells. All eight frozen source files, operating limits, alert targets and RPO/RTO remain unchanged; final artifact execution and the remaining runner/state and lifecycle proofs are still required. The same run failed all three data-plane cells because the shared admission audit required LimitRange defaults for the explicitly declared plan-size task budget. Bind container resources to the exact owning Job and require defaults only for unset fields; retain all other admission, ownership, credential and transport checks. Negative controls cover altered budgets, missing defaults and ambiguous container identities. Local checks supply no runtime acceptance."
+  "revisionReason": "Declare unsupported-controller-state-after-approval in the data-plane and both migration phases. Both resource families and database engines introduce only a future stored execution-binding version after approval and manager startup. The shipping controller contract remains 1. A private name-scoped status PATCH grant preserves installed admission, grants the real manager nothing, and is removed by exact UID with an effective-permission denial control. The runtime proof requires distinct exact refusal reconciliations, unchanged full status and spec, closed resource and workload histories through natural EOF, an unconsumed exact original approval, native diagnostic SQL controls and no unauthorized SQL. Withdrawal precedes restoration of version 1, and a fresh approval must produce one exact Apply with native database effects. This measures unsupported restored input, not compatibility with a future state contract. All eight frozen source hashes, operating limits, alert targets, RPO/RTO and the 30 required cells are unchanged. Local unit, race, tagged compilation and static checks supply no runtime acceptance. The scenario requires final artifact execution; runner-protocol and lifecycle proofs and the remaining qualification issues stay open."
 }
