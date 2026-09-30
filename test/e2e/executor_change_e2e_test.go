@@ -23,9 +23,8 @@ import (
 // Publish an explicitly synthetic immutable image identity in this run's
 // registry. The referenced executable and platform descriptors stay identical;
 // the new manifest annotation changes the executor-image binding alone.
-func (d *dataPlane) executorVariant() string {
+func (d *dataPlane) executorVariant(name string) string {
 	d.t.Helper()
-	const name = "e2e-executor-variant"
 	repository, oldDigest, ok := strings.Cut(d.in.ExecutorImage, "@")
 	host, _, hasPath := strings.Cut(repository, "/")
 	if !ok || !hasPath || !sha256Pattern.MatchString(oldDigest) {
@@ -112,7 +111,7 @@ func (f *faultRun) rolloutExecutor(expected, replacement string) {
 
 func (f *faultRun) executorImageChanges() {
 	f.t.Helper()
-	replacement := f.executorVariant()
+	replacement := f.executorVariant("e2e-executor-variant")
 	original := f.in.ExecutorImage
 	// Register recovery before changing the live Deployment. It also runs if
 	// the rollout or a later proof fails; the task cluster remains inspectable.

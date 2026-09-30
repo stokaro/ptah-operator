@@ -349,6 +349,17 @@ func (f *faultRun) stopMySQLBarrier() {
 			_, _ = f.mysqlRootWith(f.ctx, "mysql", "KILL "+thread)
 		}
 	}
+	f.releaseMySQLBarrier()
+}
+
+// A running-Apply rollout keeps the original client alive. Release only the
+// barrier so that client can complete its already authorized DDL.
+func (f *faultRun) releaseMySQLBarrier() {
+	f.t.Helper()
+	barrier := f.mysqlBarrier
+	if barrier == nil {
+		f.fatalf("no MySQL metadata barrier is active")
+	}
 	id := f.query("mysql", "mysql", "SELECT IS_USED_LOCK('"+barrier.ready+"')")
 	if !decimalCount.MatchString(id) || id == "0" {
 		f.fatalf("could not identify the MySQL metadata barrier connection")

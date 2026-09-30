@@ -826,10 +826,20 @@
     {
       "engine": "mysql",
       "operations": [
+        "plan",
         "stale-apply"
       ],
       "command": "Execute",
       "statement": "SELECT GET_LOCK('ptah_schema_apply', 60)",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "plan"
+      ],
+      "command": "Execute",
+      "statement": "SELECT GET_LOCK('ptah_schema_apply', 45)",
       "parameters": ""
     }
   ]

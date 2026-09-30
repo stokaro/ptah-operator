@@ -244,3 +244,26 @@ change SQL/parameters and check the fresh Apply's actual column additions.
 Every permitted operation/statement pair still needs an actual pinned-source
 witness. This is evidence about the audit predicate; the Kubernetes scenarios
 remain unqualified until their final-candidate runs complete.
+
+
+## Configured Plan lock timeouts
+
+The full data-plane run at `49a5042334f309eb87fe56b746b675ed517cafbf`
+failed its MySQL refusal audit on `GET_LOCK('ptah_schema_apply', 45)`.
+The scenario changed the policy timeout from 30 to 45 seconds before fresh
+authorization. The Plan's saved-plan validation correctly carried that policy;
+the audit contract had admitted only the earlier 30-second value. Fault schemas
+also use 60 seconds, so their Plan validation needs that exact value.
+
+The [controlled follow-up](mysql-schema-lock-timeouts.json) binds complete
+server journals to successful Plan Jobs and Pods using both explicit timeouts.
+Both cases stayed OnApproval, produced 71 Query/Execute records and 182 total
+protocol records, and supplied no Apply authorization. The checked-in readings
+replace only the account, client address and database selectors. Timestamps,
+session ordering, SQL shape and timeout values remain as received.
+
+Plan now permits the exact 30-, 45- and 60-second named-lock statements. Observe
+permits none of them; the stale-Apply exception retains only its original
+60-second statement. The witness test consumes both complete runner journals.
+Neighboring timeout values, other lock names, extra SQL and wrong actors remain
+refused. The original full run remains failed and requires a new execution.

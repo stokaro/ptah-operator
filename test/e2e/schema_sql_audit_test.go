@@ -208,7 +208,7 @@ func TestSchemaPlanValidationLocksHaveExactScope(t *testing.T) {
 			}
 		}
 	}
-	for _, statement := range []string{"SELECT GET_LOCK('ptah_schema_apply', 30)", "SELECT RELEASE_LOCK('ptah_schema_apply')"} {
+	for _, statement := range []string{"SELECT GET_LOCK('ptah_schema_apply', 30)", "SELECT GET_LOCK('ptah_schema_apply', 45)", "SELECT GET_LOCK('ptah_schema_apply', 60)", "SELECT RELEASE_LOCK('ptah_schema_apply')"} {
 		if !my.mysql(actor, "Execute", statement, schemaAuditDatabase) {
 			t.Fatal("the schema validation lock was refused")
 		}
@@ -221,7 +221,7 @@ func TestSchemaPlanValidationLocksHaveExactScope(t *testing.T) {
 			}
 		}
 	}
-	for _, timeout := range []string{"-1", "0", "45", "60"} {
+	for _, timeout := range []string{"-1", "0", "31", "44", "46", "59", "61"} {
 		if my.mysql(actor, "Execute", "SELECT GET_LOCK('ptah_schema_apply', "+timeout+")", schemaAuditDatabase) {
 			t.Fatal("the schema validation lock timeout changed")
 		}
@@ -288,6 +288,9 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			}
 			readings = append(readings, witness{"drift-validate-plan", "plan", map[string]int{"postgresql": 43, "mysql": 17}[engine]},
 				witness{"drift-stale-apply", "stale-apply", map[string]int{"postgresql": 43, "mysql": 17}[engine]})
+			if engine == "mysql" {
+				readings = append(readings, witness{"lock-45-plan", "plan", 71}, witness{"lock-60-plan", "plan", 71})
+			}
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)
 				acceptsActor, pg, my := schemaDiagnosticActor, policy.postgres, policy.mysql
