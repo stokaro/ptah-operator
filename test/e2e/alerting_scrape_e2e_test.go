@@ -34,6 +34,10 @@ func (a *alertingRun) lostScrapeTarget() {
 		a.fatalf("the scrape fault needs a leader and distinct ready manager Pods")
 	}
 	pod := haLeaderPodName(haLeaseHolder(lease))
+	var names []string
+	for _, manager := range pods {
+		names = append(names, manager.Name)
+	}
 	checkManagers := func() {
 		currentLease, currentPods := a.managerSnapshot()
 		if !alSameManagers(currentLease, currentPods, lease, pods) {
@@ -78,28 +82,51 @@ func (a *alertingRun) lostScrapeTarget() {
 			a.fatalf("the fault no longer holds exactly one failed scrape and healthy followers")
 		}
 	}
-	delivery, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alViewNotSynced},
+	labels := map[string]string{"operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}
+	delivery, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alViewNotSynced, labels: labels},
 		"the unresolved-view alert after only the leader's scrape failed", alViewUnsyncedFor+alDetectionSlack, from, checkFault)
-	after := delivery.ReceivedAt.Sub(loaded)
-	if after < alViewUnsyncedFor || after > alViewUnsyncedFor+alDetectionSlack {
-		a.fatalf("the partial-scrape alert arrived after %s; want %s to %s after loading the fault",
-			after, alViewUnsyncedFor, alViewUnsyncedFor+alDetectionSlack)
+	reading := a.readScrapeHistory(names, pod, loaded, "firing")
+	if !alScrapeFailureDelivered(delivery, reading) {
+		a.fatalf("the partial-scrape alert did not meet its native failure bound: firstFailure=%s startsAt=%s receivedAt=%s",
+			reading.firstFailure, delivery.StartsAt, delivery.ReceivedAt)
 	}
 	if delivery.Labels["severity"] != "warning" || delivery.Annotations["runbook_url"] != a.runbookBase+"#unresolved-gauges" ||
 		!alRunbookAnchor(a.operationsPage(), "unresolved-gauges") {
 		a.fatalf("the partial-scrape alert omitted its warning severity or usable runbook link")
 	}
-	a.logf("PASS leader %s stayed ready while its scrape failed; all %d followers stayed up; receiver warned after %s", pod, a.replicas-1, after)
-	reloaded, err := a.loadScrapeConfig(a.ctx, original, "")
+	for _, label := range []string{"family", "operation", "resource", "pod", "job", "plan", "execution"} {
+		if _, present := delivery.Labels[label]; present {
+			a.fatalf("installation-wide scrape alert acquired label %s", label)
+		}
+	}
+	a.logf("leader %s stayed ready while its scrape failed; all %d followers stayed up; first failed native scrape=%s firing received=%s", pod, a.replicas-1, reading.firstFailure, delivery.ReceivedAt)
+	_, err = a.loadScrapeConfig(a.ctx, original, "")
 	a.check(err, "restore the leader's metrics path")
 	restored = true
 	a.waitForTargets()
-	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alViewNotSynced},
+	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alViewNotSynced, labels: labels},
 		"the partial-scrape alert's resolution", alDetectionSlack, index+1, checkManagers)
-	if elapsed := resolved.ReceivedAt.Sub(reloaded); elapsed < 0 || elapsed > alDetectionSlack {
-		a.fatalf("the scrape alert resolved after %s; want at most %s from restoring the scrape", elapsed, alDetectionSlack)
+	a.check(harness.Wait(a.ctx, "all scrape histories through the receiver's resolution", 2*alScrapeInterval, time.Second,
+		func(context.Context) (bool, string, error) {
+			checkManagers()
+			reading = a.readScrapeHistory(names, pod, loaded, "")
+			return !reading.scrapedThrough.Before(resolved.ReceivedAt), "a manager has not scraped through resolution", nil
+		}), "retain the complete partial-scrape recovery interval")
+	reading = a.readScrapeHistory(names, pod, loaded, "resolved")
+	queriedAt := time.Now().UTC()
+	body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{
+		"query": fmt.Sprintf(`ptah_operator_unresolved_view_synced{job=%q,pod=%q}[%ds]`, alScrapeJob, pod, int(alAdmissionHistoryWindow/time.Second)),
+		"time":  queriedAt.Format(time.RFC3339Nano),
+	})
+	a.check(err, "read the recovered leader's native synchronized-view history")
+	a.check(alRecoveredScrapeSynced(body, pod, reading, queriedAt), "bind synchronized recovery to the original leader's first healthy scrape")
+	a.logf("recovered leader view history: queriedAt=%s body=%s", queriedAt.Format(time.RFC3339Nano), body)
+	if !alScrapeFailureCleared(delivery, resolved, reading) || !a.noActiveAlerts(`ALERTS{alertname="`+alViewNotSynced+`"}`) {
+		a.fatalf("the partial-scrape incident did not resolve within 45 seconds of its native synchronized scrape")
 	}
-	a.logf("PASS the same leader's restored scrape cleared the receiver's warning")
+	a.logf("PASS leader scrape failure and recovery: leader=%s firstFailure=%s firingReceived=%s firstRecoveredScrape=%s resolvedReceived=%s",
+		pod, reading.firstFailure, delivery.ReceivedAt, reading.recovered, resolved.ReceivedAt)
+
 }
 
 func (a *alertingRun) managerSnapshot() (*coordinationv1.Lease, []corev1.Pod) {
@@ -153,4 +180,21 @@ func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) 
 			return true, "", nil
 		})
 	return loaded, err
+}
+
+func (a *alertingRun) readScrapeHistory(pods []string, leader string, started time.Time, label string) alScrapeHistory {
+	a.t.Helper()
+	queriedAt := time.Now().UTC()
+	query := func(metric string) []byte {
+		body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": alViewHistoryQuery(metric), "time": queriedAt.Format(time.RFC3339Nano)})
+		a.check(err, "read the native %s history", metric)
+		return body
+	}
+	up, durations := query("up"), query("scrape_duration_seconds")
+	history, err := alReadScrapeHistory(up, durations, pods, leader, started, queriedAt)
+	a.check(err, "validate complete leader and follower scrape histories")
+	if label != "" {
+		a.logf("scrape-fault native history %s: queriedAt=%s up=%s durations=%s", label, queriedAt.Format(time.RFC3339Nano), up, durations)
+	}
+	return history
 }
