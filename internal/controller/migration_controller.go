@@ -148,6 +148,12 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		}
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
+	// An unknown result does not stop the executor. Keep the original claim
+	// ahead of deletion, suspension and component rotation until its workload
+	// is terminal; otherwise the finalizer and the renewable realm go with it.
+	if operation, unresolved := migration.Status.ActiveOperation, migration.Status.UnresolvedRun; migrationOperation(operation).Mutating && unresolved != nil && unresolved.OperationID == operation.ID {
+		return r.reconcileUnaccountedMigrationApply(ctx, migration)
+	}
 	if migration.DeletionTimestamp != nil {
 		return r.reconcileMigrationDeletion(ctx, migration)
 	}
@@ -1715,9 +1721,9 @@ func (r *MigrationReconciler) removeMigrationFinalizer(
 	// Apply still dispatched. The contract is cheap to state here and the
 	// schema family states it, so state it.
 	//
-	// status.unresolvedRun deliberately does not appear: only a person clears
-	// that record, and a finalizer that waited for one would hold the
-	// resource for as long as nobody looked.
+	// An unresolved result may outlive every workload. Its retained active
+	// claim protects a live executor; the record alone cannot hold deletion
+	// indefinitely while waiting for a History reading or acknowledgment.
 	if migration.Status.ActiveOperation != nil {
 		return fmt.Errorf("the migration operation finalizer still protects a live %s claim",
 			migration.Status.ActiveOperation.Type)

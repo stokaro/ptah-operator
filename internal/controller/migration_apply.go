@@ -772,8 +772,8 @@ func migrationRealmClaim(operation *operatorv1alpha1.MigrationOperationStatus) m
 // A migration hands the realm back once nothing its claim dispatched can still
 // write, so the caller asks mayStillWrite before the write, not after it: the
 // obligation is recorded only where the release is safe, and a Lease left
-// under a Pod that may still be running expires on its own, which it is sized
-// to do after that Pod has stopped.
+// under a Pod that may still be running retains the claim and its renewal
+// until the API server can confirm that workload stopped.
 //
 // Staging and releasing are best effort. The write carries the evidence of
 // what a run did, which must not be lost to bookkeeping. Where the obligation
@@ -796,7 +796,14 @@ func (r *MigrationReconciler) retireMigrationClaim(
 			ctrl.LoggerFrom(ctx).Info("could not record the database release the claim owes", "error", err.Error())
 		}
 	}
-	migration.Status.ActiveOperation = nil
+	if disposition == mutationlifecycle.DispositionUnaccounted && mayStillWrite {
+		// The record explains what is unknown; the claim still names the live
+		// workload, its deadlines and its realm. Losing it would let deletion
+		// collect the executor and would stop renewal under an isolated Pod.
+		migration.Status.ActiveOperation = operation.DeepCopy()
+	} else {
+		migration.Status.ActiveOperation = nil
+	}
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return err
 	}
@@ -811,6 +818,28 @@ func (r *MigrationReconciler) retireMigrationClaim(
 	return nil
 }
 
+// An unresolved run is never harvested again, even when its original executor
+// eventually reports success. Only a fresh History reading or acknowledgment
+// can settle that record. This path waits for the workload and releases just
+// its claim, preserving the original run evidence throughout.
+func (r *MigrationReconciler) reconcileUnaccountedMigrationApply(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (ctrl.Result, error) {
+	// The common gate treats failed Job/Pod reads as still writing. Renewal
+	// must continue there too: an unreadable workload is not a stopped one.
+	if r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, nil) {
+		if _, _, err := r.acquireMigrationApplyLock(ctx, migration); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	if err := r.retireMigrationClaim(ctx, migration.DeepCopy(), migration, mutationlifecycle.DispositionUnaccounted, false); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
 // dispatchedApplyMayStillWrite reports whether the Apply this claim dispatched
 // could still be executing SQL: its Job has not reached a terminal condition,
 // or a Pod that Job owns has not stopped. The identity it asks that about comes
@@ -822,8 +851,9 @@ func (r *MigrationReconciler) retireMigrationClaim(
 // says nothing about whether the executor is still running, and releasing the
 // Lease under a live Pod is the one thing the Lease exists to prevent -- the
 // next claimant acquires it and runs DDL beside that executor. So a Pod that
-// has not stopped, and a read that could not say, both keep the Lease until it
-// expires; migrationApplyLeaseGrace is what makes the expiry outlive the Pod.
+// has not stopped, and a read that could not say, both keep the original claim
+// and its renewable Lease. migrationApplyLeaseGrace is the fallback horizon
+// if no manager can continue the renewal.
 func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 	ctx context.Context,
 	namespace string,
@@ -894,9 +924,9 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 }
 
 // finishUncertainMigrationApply is where an Apply goes when the controller
-// cannot read what it did. The claim is retired and the resource is blocked:
-// the database is the only thing that can settle it, and nothing dispatches
-// again until a person has looked.
+// cannot read what it did. The resource is blocked; the claim remains while
+// its workload may still write. A fresh database history or acknowledgment
+// settles the record before another Apply can be authorized.
 //
 // reportedTarget is the database the run said it opened, and is empty wherever
 // no result frame was read -- which is most of the ways in. A run that reached
@@ -972,7 +1002,7 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonApplyOutcomeUnknown, "What the dispatched run did is unknown until the database is read")
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
-		operatorv1alpha1.ReasonApplyOutcomeUnknown, "The dispatched run is over and may not be retried")
+		operatorv1alpha1.ReasonApplyOutcomeUnknown, "The dispatched run's outcome is unknown and may not be retried")
 	next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 	migration.Status.NextReconciliationTime = &next
 	if job != nil {
@@ -1013,6 +1043,9 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 	// requeue most was the one shape that never got it: an Apply whose create
 	// was never confirmed, or whose Job is already gone, leaves no owned
 	// object behind to produce an event at all.
+	if mayStillWrite {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
 	return requeueAtDeadline(migration.Status.NextReconciliationTime, r.now()), nil
 }
 

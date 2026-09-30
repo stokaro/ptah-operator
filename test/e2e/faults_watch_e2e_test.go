@@ -40,8 +40,9 @@ type recorder interface {
 // watchSegmentSeconds, and the recorder continues from the last
 // resourceVersion it read, so the history has no gap. A segment that records
 // nothing while the heartbeat writes to every watched kind is a stopped
-// watch, and ends the recorder with a failure; so does an error event or an
-// event that is not an object of the kind watched.
+// watch, and ends the recorder with a failure. A quiet collection resumes
+// from the same version and owes explicit barriers. Every error event or
+// event that is not an object of the kind watched fails either mode.
 type watchRecorder[T client.Object] struct {
 	name      string
 	namespace string
@@ -49,6 +50,10 @@ type watchRecorder[T client.Object] struct {
 	watcher   client.WithWatch
 	ctx       context.Context
 	cancel    context.CancelFunc
+	// quiet permits a collection with no heartbeat fixture. An empty segment
+	// resumes at the same resourceVersion; explicit watch barriers still have
+	// to be observed before any assertion or successful closure.
+	quiet bool
 
 	mu       sync.Mutex
 	events   []watchEvent[T]
@@ -100,9 +105,15 @@ func (r *watchRecorder[T]) run(resourceVersion string) {
 		case err != nil:
 			r.fail(err)
 			return
-		case count == 0 && !r.stopping.Load():
+		case count == 0 && !r.stopping.Load() && !r.quiet:
 			r.fail(errors.New("watch segment made no progress while its heartbeat was required"))
 			return
+		case count == 0 && !r.stopping.Load():
+			select {
+			case <-r.ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 		}
 	}
 }
