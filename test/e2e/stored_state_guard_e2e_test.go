@@ -157,6 +157,19 @@ func holdUnsupportedStoredState(t *testing.T, ctx context.Context, cluster *harn
 		}
 	})
 	storedStateCheck(t, barrier.pause(ctx), "hold status writes before admitting the stored-state approval")
+	// A status refusal still lets the reconciler remove and add its finalizer.
+	// Hold metadata too, so the exact resourceVersion patch reaches admission.
+	metadataBarrier := &controllerStatusBarrier{cluster: barrier.cluster, role: barrier.role,
+		user: barrier.user, namespace: barrier.namespace, resource: barrier.resource, metadataOnly: true}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := metadataBarrier.resume(cleanupCtx); err != nil {
+			t.Errorf("restore stored-state metadata authorization: %v", err)
+		}
+	})
+	storedStateCheck(t, metadataBarrier.pause(ctx), "hold finalizer writes before admitting the stored-state approval")
+
 	parts := strings.Split(barrier.user, ":")
 	managerGroups := []string{"system:serviceaccounts", "system:serviceaccounts:" + parts[2], "system:authenticated"}
 	attributes := authorizationv1.ResourceAttributes{Namespace: initial.GetNamespace(), Name: initial.GetName(),
@@ -295,7 +308,10 @@ func holdUnsupportedStoredState(t *testing.T, ctx context.Context, cluster *harn
 		scan([]byte(err.Error()), "the ordinary status writer's API refusal")
 	}
 	if !storedStateStatusRefused(err, initial, policy) {
-		t.Fatalf("installed status admission did not refuse the otherwise authorized ordinary writer: reason=%s", apierrors.ReasonForError(err))
+		current := initial.DeepCopyObject().(client.Object)
+		readErr := cluster.Client.Get(ctx, client.ObjectKeyFromObject(initial), current)
+		t.Fatalf("installed status admission did not refuse the otherwise authorized ordinary writer: reason=%s; %s; rereadSucceeded=%t resourceVersionChanged=%t",
+			apierrors.ReasonForError(err), storedStateStatusRefusalDiagnostic(err, initial, policy), readErr == nil, readErr == nil && current.GetResourceVersion() != live.GetResourceVersion())
 	}
 	storedStateCheck(t, writer.Status().Patch(ctx, live, client.RawPatch(types.JSONPatchType, patch)), "introduce exactly one unsupported controller-state field")
 	injected = true
@@ -308,6 +324,7 @@ func holdUnsupportedStoredState(t *testing.T, ctx context.Context, cluster *harn
 		}
 	})
 	storedStateCheck(t, storedStateChangedOnlyByVersion(initial, live, future), "retain every field except the controlled future version")
+	storedStateCheck(t, metadataBarrier.resume(ctx), "restore metadata writes before measuring the runtime guard")
 	storedStateCheck(t, barrier.resume(ctx), "let the installed manager enter its runtime state guard")
 	ids := map[string]bool{}
 	storedStateCheck(t, harness.Wait(ctx, "repeated runtime controller-state refusals", 90*time.Second, time.Second,

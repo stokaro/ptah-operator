@@ -54,5 +54,38 @@ func TestStatusVersionInjectionRequiresManager(t *testing.T) {
 			t.Fatal("the default policy denial lost its actual API response or resource identity")
 		}
 		t.Logf("%s: reason=%s code=%d, exact policy and binding denied; manager admitted", response.Details.Kind, response.Reason, response.Code)
+
+		// A finalizer or annotation write can invalidate the JSON Patch before
+		// admission sees it. That refusal is also Invalid (422), so reason alone
+		// cannot tell a stale test from the installed policy's verdict.
+		changed := live.DeepCopyObject().(client.Object)
+		annotations := changed.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations["e2e.ptah.run/status-version-race"] = "metadata-changed"
+		changed.SetAnnotations(annotations)
+		if err := env.Admin.Patch(ctx, changed, client.MergeFrom(live)); err != nil {
+			t.Fatal(err)
+		}
+		if changed.GetResourceVersion() == live.GetResourceVersion() {
+			t.Fatal("metadata control did not advance resourceVersion")
+		}
+		staleErr := ordinary.Status().Patch(ctx, live.DeepCopyObject().(client.Object), client.RawPatch(types.JSONPatchType, []byte(patch)), client.DryRunAll)
+		staleVerdict := policyenv.Decide(staleErr)
+		if !apierrors.IsInvalid(staleErr) || staleVerdict.Policy != "" || staleVerdict.Binding != "" {
+			t.Fatalf("stale patch must fail before the policy: %v", staleErr)
+		}
+		freshPatch := fmt.Sprintf(`[{"op":"test","path":"/metadata/resourceVersion","value":%q},{"op":"test","path":"/status/executionBinding/controllerStateVersion","value":1},{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]`, changed.GetResourceVersion())
+		freshErr := ordinary.Status().Patch(ctx, changed.DeepCopyObject().(client.Object), client.RawPatch(types.JSONPatchType, []byte(freshPatch)), client.DryRunAll)
+		freshVerdict := policyenv.Decide(freshErr)
+		if freshVerdict.Policy != policyName || freshVerdict.Binding != policyName {
+			t.Fatalf("fresh patch did not reach the status policy: %v", freshErr)
+		}
+		if err := manager.Status().Patch(ctx, changed.DeepCopyObject().(client.Object), client.RawPatch(types.JSONPatchType, []byte(freshPatch)), client.DryRunAll); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s: metadata invalidated the old patch before admission; fresh patch denied by policy and admitted for manager", response.Details.Kind)
+
 	}
 }

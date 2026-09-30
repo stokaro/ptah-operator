@@ -403,3 +403,18 @@ func TestStoredStateWorkHistoryAndSQLControlsCannotPassOnNothing(t *testing.T) {
 		t.Fatal("another History Pod supplied the allowed control")
 	}
 }
+
+func TestStatusRefusalDiagnosticDoesNotEchoSubmittedValues(t *testing.T) {
+	response := &apierrors.StatusError{ErrStatus: metav1.Status{
+		Code: 422, Status: metav1.StatusFailure, Message: "secret-in-message",
+		Details: &metav1.StatusDetails{Name: "secret-in-name", Causes: []metav1.StatusCause{{Message: "secret-in-cause"}}},
+	}}
+	object := &ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Name: "ledger"}}
+	diagnostic := storedStateStatusRefusalDiagnostic(response, object, "status-policy")
+	if strings.Contains(diagnostic, "secret") || !strings.Contains(diagnostic, "identityMatches=false") || !strings.Contains(diagnostic, "policyCauseMatches=false") {
+		t.Fatalf("unsafe or uninformative diagnostic: %s", diagnostic)
+	}
+	if got := storedStateStatusRefusalDiagnostic(errors.New("secret-in-error"), object, "status-policy"); got != "structuredStatus=false" {
+		t.Fatal(got)
+	}
+}

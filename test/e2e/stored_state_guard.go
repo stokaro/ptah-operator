@@ -40,6 +40,25 @@ func storedStateStatusRefused(err error, object client.Object, policy string) bo
 		len(status.Details.Causes) == 1 && status.Details.Causes[0].Message == denial
 }
 
+// Report only structural comparisons: API messages can echo submitted values.
+func storedStateStatusRefusalDiagnostic(err error, object client.Object, policy string) string {
+	var response apierrors.APIStatus
+	if !errors.As(err, &response) {
+		return "structuredStatus=false"
+	}
+	status := response.Status()
+	_, resource, _ := storedStateFamily(object)
+	denial := fmt.Sprintf("ValidatingAdmissionPolicy '%s' with binding '%s' denied request: %s", policy, policy, storedStateStatusDenial)
+	identity, causes, causeMatches := false, 0, false
+	if status.Details != nil {
+		identity = resource != "" && status.Details.Group == "operator.ptah.run" && status.Details.Kind == resource && status.Details.Name == object.GetName()
+		causes = len(status.Details.Causes)
+		causeMatches = causes == 1 && status.Details.Causes[0].Message == denial
+	}
+	return fmt.Sprintf("structuredStatus=true code=%d failure=%t identityMatches=%t policyMessageMatches=%t causes=%d policyCauseMatches=%t",
+		status.Code, status.Status == metav1.StatusFailure, identity, strings.HasSuffix(status.Message, denial), causes, causeMatches)
+}
+
 func storedStateVersion(object client.Object) (int32, error) {
 	switch resource := object.(type) {
 	case *ptahv1alpha1.PtahSchema:
