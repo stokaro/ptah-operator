@@ -257,14 +257,17 @@ func (l *lifecycleRun) nextReleaseUpgrade() {
 	l.prepareRunningApplyFixture()
 	audit := l.externalPostgresAudit()
 	initialSQL := audit.snapshot()
+	initialJournalBytes := len(audit.pgPrefix)
 	l.startRunningApplyFixture()
 	applyClient := l.runningApplySQLClient()
 	heldSQL := audit.snapshot()
-	controlRecords, err := sqlAuditDelta(initialSQL, heldSQL, applyClient)
+	controlRecords, err := sqlAuditDelta(initialSQL, heldSQL, applyClient.Client)
 	l.check(err, "count SQL received from the original lifecycle Apply")
 	if controlRecords <= 0 {
 		l.fatalf("the held lifecycle Apply supplied no received SQL control")
 	}
+	l.check(lifecycleSQLBackendControl(audit.pgPrefix[initialJournalBytes:], applyClient),
+		"match the received barrier statement to its exact server backend session")
 	l.stagePredecessorApplyJobUIDGapWhileRunning()
 	l.proveLateFailureRecovery(l.currentReleaseControllerImage)
 	l.assertRunningApplySQLUnchanged(audit, heldSQL, applyClient, "late upgrade failure")

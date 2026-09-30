@@ -1,9 +1,70 @@
 package e2e
 
 import (
+	"encoding/json"
 	"maps"
+	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestLifecycleSQLBackendRequiresTheExactSessionBehindNAT(t *testing.T) {
+	t.Parallel()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "original-pod"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.0.9", HostIP: "172.18.0.3"}}
+	backend := lifecycleSQLBackend{PID: 123, Client: pod.Status.HostIP, Database: "fixture", SessionStart: "2026-09-30 16:00:00 UTC"}
+	raw, err := json.Marshal(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := lifecycleSQLBackendForPod(raw, pod, "fixture"); err != nil || got != backend {
+		t.Fatalf("NAT backend = %#v, %v", got, err)
+	}
+	for name, broken := range map[string]string{
+		"multiple waiters": string(raw) + "\n" + string(raw),
+		"unknown node":     strings.ReplaceAll(string(raw), backend.Client, "172.18.0.99"),
+		"wrong database":   strings.ReplaceAll(string(raw), "fixture", "other"),
+		"no process":       strings.ReplaceAll(string(raw), `"pid":123`, `"pid":0`),
+		"no session date":  strings.ReplaceAll(string(raw), backend.SessionStart, ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := lifecycleSQLBackendForPod([]byte(broken), pod, "fixture"); err == nil {
+				t.Fatal("unrelated or ambiguous backend passed")
+			}
+		})
+	}
+	row := map[string]any{"pid": backend.PID, "remote_host": backend.Client, "dbname": backend.Database,
+		"session_start": backend.SessionStart, "message": "execute <unnamed>: " + lifecycleSQLControlStatement()}
+	journal, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycleSQLBackendControl(journal, backend); err != nil {
+		t.Fatal(err)
+	}
+	for field, value := range map[string]any{"pid": 124, "remote_host": pod.Status.PodIP, "dbname": "other",
+		"session_start": "2026-09-30 15:59:59 UTC", "message": "statement: SELECT 1"} {
+		t.Run(field, func(t *testing.T) {
+			changed := maps.Clone(row)
+			changed[field] = value
+			journal, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := lifecycleSQLBackendControl(journal, backend); err == nil {
+				t.Fatal("another session or statement substituted for the received control")
+			}
+		})
+	}
+	if err := lifecycleSQLBackendControl(append(journal, '{'), backend); err == nil {
+		t.Fatal("a positive row hid a truncated journal")
+	}
+	if err := lifecycleSQLBackendControl(nil, backend); err == nil {
+		t.Fatal("an empty journal supplied the control")
+	}
+}
 
 func TestLifecycleSQLQuiescenceRequiresTheOriginalControlAndEveryRemoteClient(t *testing.T) {
 	t.Parallel()

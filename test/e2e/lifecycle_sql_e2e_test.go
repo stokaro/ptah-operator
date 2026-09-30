@@ -25,7 +25,7 @@ func (l *lifecycleRun) externalPostgresAudit() *databaseSQLAudit {
 	}}
 }
 
-func (l *lifecycleRun) runningApplySQLClient() string {
+func (l *lifecycleRun) runningApplySQLClient() lifecycleSQLBackend {
 	l.t.Helper()
 	pod, err := l.predecessorApplyPod(l.runningApply.podName)
 	l.check(err, "read the original running Apply SQL client")
@@ -33,16 +33,20 @@ func (l *lifecycleRun) runningApplySQLClient() string {
 		!podControlledByJobUID(pod.OwnerReferences, types.UID(l.runningApply.jobUID)) {
 		l.fatalf("the lifecycle SQL control lost its original running Job and Pod")
 	}
-	return pod.Status.PodIP
+	raw, err := l.predecessorApplySQL(l.ctx, lifecycleSQLBackendQuery())
+	l.check(err, "identify the one SQL backend blocked on the lifecycle barrier")
+	backend, err := lifecycleSQLBackendForPod([]byte(raw), pod, l.runningApply.barrierDatabase)
+	l.check(err, "bind the blocked SQL backend to the original running workload")
+	return backend
 }
 
-func (l *lifecycleRun) assertRunningApplySQLUnchanged(audit *databaseSQLAudit, before sqlAuditCounts, host, boundary string) {
+func (l *lifecycleRun) assertRunningApplySQLUnchanged(audit *databaseSQLAudit, before sqlAuditCounts, backend lifecycleSQLBackend, boundary string) {
 	l.t.Helper()
-	if l.runningApplySQLClient() != host {
-		l.fatalf("%s changed the running Apply SQL client address", boundary)
+	if l.runningApplySQLClient() != backend {
+		l.fatalf("%s changed the running Apply SQL backend session", boundary)
 	}
 	after := audit.snapshot()
-	l.check(lifecycleSQLQuiescent(before, after, host), "%s SQL audit", boundary)
-	l.logf("SQL audit: boundary=%q jobUID=%s podUID=%s client=%s controlRecords=%d additionalRemoteRecords=0",
-		boundary, l.runningApply.jobUID, l.runningApply.podUID, host, before.clients[host])
+	l.check(lifecycleSQLQuiescent(before, after, backend.Client), "%s SQL audit", boundary)
+	l.logf("SQL audit: boundary=%q jobUID=%s podUID=%s serverPID=%d sessionStart=%q client=%s additionalRemoteRecords=0",
+		boundary, l.runningApply.jobUID, l.runningApply.podUID, backend.PID, backend.SessionStart, backend.Client)
 }
