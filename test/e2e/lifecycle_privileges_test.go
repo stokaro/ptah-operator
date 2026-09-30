@@ -111,3 +111,68 @@ func TestLifecyclePrivilegeAuditFindsUnlabeledAndRenamedGrants(t *testing.T) {
 		})
 	}
 }
+
+func TestLifecyclePrivilegeSnapshotsRetainAuthorityAndIgnoreBookkeeping(t *testing.T) {
+	t.Parallel()
+	fixtures := map[string]string{
+		"ServiceAccount":     `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"manager","namespace":"operator","uid":"original"},"automountServiceAccountToken":false}`,
+		"Role":               `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"leases","namespace":"operator","uid":"original"},"rules":[{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["get"]}]}`,
+		"ClusterRole":        `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"manager","uid":"original"},"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}]}`,
+		"RoleBinding":        `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"manager","namespace":"operator","uid":"original"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"leases"},"subjects":[{"kind":"ServiceAccount","name":"manager","namespace":"operator"}]}`,
+		"ClusterRoleBinding": `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"manager","uid":"original"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"manager"},"subjects":[{"kind":"ServiceAccount","name":"manager","namespace":"operator"}]}`,
+	}
+	for kind, raw := range fixtures {
+		t.Run(kind, func(t *testing.T) {
+			original := &unstructured.Unstructured{}
+			if err := original.UnmarshalJSON([]byte(raw)); err != nil {
+				t.Fatal(err)
+			}
+			before, err := lifecyclePrivilegeState(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bookkeeping := original.DeepCopy()
+			bookkeeping.SetResourceVersion("new-write")
+			bookkeeping.Object["metadata"].(map[string]any)["managedFields"] = []any{map[string]any{"manager": "helm", "operation": "Apply"}}
+			after, err := lifecyclePrivilegeState(bookkeeping)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("server bookkeeping changed the measured grant", err)
+			}
+			mutations := map[string]func(*unstructured.Unstructured){
+				"replaced identity": func(o *unstructured.Unstructured) { o.SetUID("replacement") },
+			}
+			switch kind {
+			case "ServiceAccount":
+				mutations["automatic token grant"] = func(o *unstructured.Unstructured) { o.Object["automountServiceAccountToken"] = true }
+				mutations["new pull credential"] = func(o *unstructured.Unstructured) {
+					o.Object["imagePullSecrets"] = []any{map[string]any{"name": "other"}}
+				}
+			case "Role", "ClusterRole":
+				mutations["broadened rules"] = func(o *unstructured.Unstructured) {
+					o.Object["rules"].([]any)[0].(map[string]any)["verbs"] = []any{"*"}
+				}
+				if kind == "ClusterRole" {
+					mutations["aggregation added"] = func(o *unstructured.Unstructured) {
+						o.Object["aggregationRule"] = map[string]any{"clusterRoleSelectors": []any{map[string]any{}}}
+					}
+				}
+			default:
+				mutations["another account"] = func(o *unstructured.Unstructured) { o.Object["subjects"].([]any)[0].(map[string]any)["name"] = "other" }
+				mutations["another role"] = func(o *unstructured.Unstructured) { o.Object["roleRef"].(map[string]any)["name"] = "cluster-admin" }
+			}
+			for name, mutate := range mutations {
+				t.Run(name, func(t *testing.T) {
+					changed := original.DeepCopy()
+					mutate(changed)
+					after, err := lifecyclePrivilegeState(changed)
+					if err != nil || bytes.Equal(before, after) {
+						t.Fatal("changed authority disappeared from the snapshot", err)
+					}
+				})
+			}
+		})
+	}
+	if _, err := lifecyclePrivilegeState(nil); err == nil {
+		t.Fatal("missing live identity supplied a snapshot")
+	}
+}

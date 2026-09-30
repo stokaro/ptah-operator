@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,6 +9,35 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+// Compare the authority-bearing fields of live objects. Server bookkeeping
+// such as resourceVersion and managedFields can change during Helm writes;
+// the account UID and its grants must not change in these same-contract
+// refusal/retry scenarios. Hook privileges have a separate removal inventory.
+func lifecyclePrivilegeState(object *unstructured.Unstructured) ([]byte, error) {
+	if object == nil || object.GetUID() == "" || object.GetName() == "" {
+		return nil, errors.New("privilege snapshot has no live object identity")
+	}
+	state := map[string]any{"uid": object.GetUID(), "apiVersion": object.GetAPIVersion(), "kind": object.GetKind(),
+		"namespace": object.GetNamespace(), "name": object.GetName()}
+	var fields []string
+	switch object.GetKind() {
+	case "Role":
+		fields = []string{"rules"}
+	case "ClusterRole":
+		fields = []string{"rules", "aggregationRule"}
+	case "RoleBinding", "ClusterRoleBinding":
+		fields = []string{"roleRef", "subjects"}
+	case "ServiceAccount":
+		fields = []string{"automountServiceAccountToken", "imagePullSecrets", "secrets"}
+	default:
+		return nil, errors.New("privilege snapshot has an unsupported kind")
+	}
+	for _, field := range fields {
+		state[field] = object.Object[field]
+	}
+	return json.Marshal(state)
+}
 
 type lifecyclePrivilegeObject struct {
 	apiVersion, kind, namespace, name string
