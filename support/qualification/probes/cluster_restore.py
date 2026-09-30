@@ -256,4 +256,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing)
     probe.run()
-    print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'lossType', 'status', 'recoverySeconds', 'cleanupSucceeded')}))
+    print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'lossType', 'status', 'functionalRestore', 'profileRPO', 'recoverySeconds', 'cleanupSucceeded')}))
+    raise SystemExit(0 if probe.report.get('status') == 'PASS' else 2)

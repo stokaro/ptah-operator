@@ -508,6 +508,21 @@ class OperatorProbe(db.Probe):
         self.lag_execution = later
         self.persist()
 
+    @staticmethod
+    def finalize_result(report):
+        # A completed restore is useful diagnostic evidence even if its RPO
+        # failed. Keep that distinction in both the retained record and exit
+        # status; consumers must not need to discover a hidden failed field.
+        if report.get('status') != 'PASS':
+            return
+        if report.get('cleanupSucceeded') is not True:
+            report.update(status='FAIL', failure='Owned recovery resource cleanup did not succeed')
+            return
+        rpo = report.get('profileRPO', {})
+        if any(rpo.get(name) != 'PASS' for name in ('database', 'operatorBase')) or (
+                'combinedOperatorRecoveryKit' in rpo and rpo['combinedOperatorRecoveryKit'] != 'PASS'):
+            report.update(status='FAIL', failure='Recovery completed, but the required recovery-point objective is not established')
+
     def run(self):
         try:
             self.prepare_namespace()
@@ -708,7 +723,7 @@ class OperatorProbe(db.Probe):
                     'A successful functional restore does not establish this profile RPO.')
             rto_bound = 900 if self.loss == 'operator' else 1800
             self.check('verified recovery meets the declared loss-type bound', 0 < recovery_seconds <= rto_bound)
-            self.report.update(status='PASS', expectedLostRowIDs=sorted(int(v) for v in expected_loss), observedLostRowIDs=sorted(int(v) for v in old_ids - new_ids), serviceRestoredAt=db.now(), recoverySeconds=recovery_seconds,
+            self.report.update(status='PASS', functionalRestore='PASS', expectedLostRowIDs=sorted(int(v) for v in expected_loss), observedLostRowIDs=sorted(int(v) for v in old_ids - new_ids), serviceRestoredAt=db.now(), recoverySeconds=recovery_seconds,
                 databaseRPOUpperBoundSeconds=rpo_seconds,
                 identity={'resourceUID': self.uid, 'originalResourceUID': original_uid, 'oldPlanUID': old_plan['metadata']['uid'], 'oldApprovalUID': old_approval['metadata']['uid'], 'freshPlanUID': fresh_plan['metadata']['uid'], 'freshApprovalUID': fresh_approval['metadata']['uid'], 'originalApplyJobUIDs': sorted(original_jobs), 'freshApplyJobUIDs': sorted(final_jobs - set(original_jobs)), 'originalApplyPodUIDs': [p['metadata']['uid'] for p in original_pods], 'freshApplyPodUIDs': [p['metadata']['uid'] for p in new_pods]})
             self.persist()
@@ -736,7 +751,9 @@ class OperatorProbe(db.Probe):
             for file in self.env_files:
                 file.unlink(missing_ok=True)
             (self.root / 'wrong-identity.private').unlink(missing_ok=True)
-            self.report.update(cleanupSucceeded=bool(clean), completedAt=db.now()); self.persist()
+            self.report.update(cleanupSucceeded=bool(clean), completedAt=db.now())
+            self.finalize_result(self.report)
+            self.persist()
             if not clean:
                 raise RuntimeError('owned database resource cleanup failed')
 
@@ -753,4 +770,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing)
     probe.run()
-    print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'status', 'recoverySeconds', 'cleanupSucceeded')}))
+    print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'status', 'functionalRestore', 'profileRPO', 'recoverySeconds', 'cleanupSucceeded')}))
+    raise SystemExit(0 if probe.report.get('status') == 'PASS' else 2)

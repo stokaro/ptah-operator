@@ -56,6 +56,39 @@ class RecoveryArtifactTest(unittest.TestCase):
                 OperatorProbe.artifact_files(family, revision)
 
 
+class RecoveryResultTest(unittest.TestCase):
+    def test_success_requires_both_recovery_points_and_cleanup(self):
+        good = {'status': 'PASS', 'functionalRestore': 'PASS', 'cleanupSucceeded': True,
+                'profileRPO': {'database': 'PASS', 'operatorBase': 'PASS'}}
+        result = copy.deepcopy(good)
+        OperatorProbe.finalize_result(result)
+        self.assertEqual(result, good)
+        for defect in ('database', 'operatorBase', 'missing-rpo', 'unaccepted-kit', 'cleanup', 'missing-cleanup'):
+            with self.subTest(defect=defect):
+                result = copy.deepcopy(good)
+                if defect in ('database', 'operatorBase'):
+                    result['profileRPO'][defect] = 'FAIL'
+                elif defect == 'missing-rpo':
+                    result.pop('profileRPO')
+                elif defect == 'unaccepted-kit':
+                    result['profileRPO']['combinedOperatorRecoveryKit'] = 'Not assessed'
+                elif defect == 'cleanup':
+                    result['cleanupSucceeded'] = False
+                else:
+                    result.pop('cleanupSucceeded')
+                OperatorProbe.finalize_result(result)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertEqual(result['functionalRestore'], 'PASS')
+                self.assertTrue(result['failure'])
+
+    def test_finalization_preserves_an_earlier_failure(self):
+        report = {'status': 'FAIL', 'failure': 'Exact original approval replayed',
+                  'cleanupSucceeded': True, 'profileRPO': {'database': 'PASS', 'operatorBase': 'PASS'}}
+        original = copy.deepcopy(report)
+        OperatorProbe.finalize_result(report)
+        self.assertEqual(report, original)
+
+
 class LagDiagnosisTest(unittest.TestCase):
     def setUp(self):
         self.probe = object.__new__(OperatorProbe)
