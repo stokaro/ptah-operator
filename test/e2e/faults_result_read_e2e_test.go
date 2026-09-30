@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -10,7 +11,9 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -37,6 +40,7 @@ func (f *faultRun) hungResultRead(engine, node string) {
 	// fits the generated Jobs, Pods, their labels and their result bindings.
 	name += strings.Repeat("x", 63-len(name))
 	f.createDatabase(engine, database, secret)
+	f.query(engine, database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'name-boundary', 'preserve-this-row')")
 	f.createDatabase(engine, healthyDB, healthySecret)
 	kind, reference := "PostgreSQL", f.pgReference
 	if engine == "mysql" {
@@ -46,8 +50,20 @@ func (f *faultRun) hungResultRead(engine, node string) {
 		coordinationKey: "e2e/schema-hung/" + engine, isolatedNode: node})
 	f.createSchema(faultSchema{name: healthy, engine: kind, reference: reference, secret: healthySecret,
 		coordinationKey: "e2e/schema-progress/" + engine})
-	plan := f.schemaPlan(f.waitForPlan(name))
+	inventory := &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}}
+	created := f.waitForSchema(name, "the maximum-name schema's approval gate", func(resource *ptahv1alpha1.PtahSchema) bool {
+		f.captureSchemaSQLInventory(name, inventory)
+		return planAwaitingApproval(resource)
+	})
+	plan := f.schemaPlan(created.Status.Plan.Name)
 	f.waitForPlan(healthy)
+	refused := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Name: name + "x", Namespace: created.Namespace}, Spec: *created.Spec.DeepCopy()}
+	f.check(resourceNameRefusal(f.cluster.Client.Create(f.ctx, refused), "PtahSchema", refused.Name), "refuse the schema name immediately above its executable limit")
+	if !apierrors.IsNotFound(f.get(refused.Name, &ptahv1alpha1.PtahSchema{})) {
+		f.fatalf("the refused 64-byte schema name was stored")
+	}
+	audit := &databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: engine}
+	beforeSQL, beforeApply := audit.snapshot(), f.checkpointJobs(name, "apply")
 	f.startReadBarrier()
 	f.createApproval(name, "e2e-schema-hung-approval-"+engine)
 	claimed := f.waitForSchema(name, "an Apply held before the result-read fault", applyDispatched)
@@ -85,6 +101,7 @@ func (f *faultRun) hungResultRead(engine, node string) {
 	deadline := approval.CreationTimestamp.Add(180 * time.Second)
 	timedOut, progressed := false, false
 	for time.Now().Before(deadline) {
+		f.captureSchemaSQLInventory(name, inventory)
 		current := f.schema(name)
 		if !activeIdentityKept(current, active.ID, active.JobName, string(active.JobUID)) || current.Status.ActiveOperation.LeaseEpoch != active.LeaseEpoch {
 			f.fatalf("%s discarded its Apply claim while its result was unread", name)
@@ -129,5 +146,22 @@ func (f *faultRun) hungResultRead(engine, node string) {
 		f.fatalf("schema result recovery replayed the Apply")
 	}
 	f.assertColumn(engine, database, "fault_token", 1)
+	result := f.captureOneNewJobResult(name, "apply", beforeApply, nil)
+	if f.captured.jobUID != string(active.JobUID) || f.captured.podUID != string(pod.UID) {
+		f.fatalf("maximum-name schema recovery harvested another Apply or Pod")
+	}
+	f.check(automaticApplyResult(result, plan.Spec.ContentDigest, plan.Spec.CoordinationDigest, plan.Spec.TargetIdentityDigest), "read the maximum-name schema's original exact-plan result")
+	f.poll("every maximum-name schema operation to complete with full labels", func() bool {
+		f.captureSchemaSQLInventory(name, inventory)
+		return resourceNameWorkloads(created.Namespace, "PtahSchema", name, created.UID, active.JobUID,
+			slices.Collect(maps.Values(inventory.jobs)), slices.Collect(maps.Values(inventory.pods))) == nil
+	})
+	audit.assertRecords(beforeSQL, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": active.JobName}, string(active.JobUID)), true)
+	audit.close()
+	if f.query(engine, database, "SELECT count(*) FROM e2e_widgets WHERE id=701 AND name='name-boundary' AND note='preserve-this-row'") != "1" ||
+		f.query(engine, database, "SELECT count(*) FROM e2e_widgets") != "1" {
+		f.fatalf("maximum-name schema recovery lost the preserved row")
+	}
 	f.logf("PASS %s 63-byte schema name: result read canceled in %s; independent convergence within 180s; original claim and Lease retained; recovery without replay", engine, duration)
+	f.logf("PASS %s schema name boundary: 64 bytes refused at its CEL rule; every 63-byte operation retained its complete workload name; original Apply SQL and preserved data verified", engine)
 }

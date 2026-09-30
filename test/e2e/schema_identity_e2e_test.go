@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"maps"
 	"reflect"
 	"slices"
 
@@ -71,6 +72,15 @@ func (f *faultRun) replaceSchemaIdentity(engine string) {
 		f.fatalf("the original approval was not held before dispatch")
 	}
 	f.checkpointOperationWatch(name, "apply", 0)
+	f.poll("every predecessor workload's complete credential audit before deletion", func() bool {
+		f.auditRuntime()
+		f.captureSchemaSQLInventory(name, inventory)
+		complete, err := schemaRetirementAudited(old,
+			slices.Collect(maps.Values(inventory.jobs)), slices.Collect(maps.Values(inventory.pods)),
+			f.fullyAudited.holds, f.fullyAuditedPods)
+		f.check(err, "validate the exact predecessor's credential audit inventory")
+		return complete
+	})
 	f.check(f.cluster.Client.Delete(f.ctx, old, client.Preconditions{UID: &old.UID}, client.PropagationPolicy(metav1.DeletePropagationBackground)), "delete the exact approved schema")
 	deleting := &ptahv1alpha1.PtahSchema{}
 	err := f.get(name, deleting)
