@@ -52,7 +52,7 @@ func alRenderedRule(t *testing.T) string {
 		"--set", "monitoring.prometheusRule.viewUnsyncedFor=60s",
 		"--set", "monitoring.prometheusRule.operationStalledAfterSeconds=60",
 		"--set", "monitoring.prometheusRule.certificateExpiresWithinSeconds=86400",
-		"--set", "monitoring.prometheusRule.admissionFailingFor=60s",
+		"--set", "monitoring.prometheusRule.admissionFailingFor=300s",
 		"--show-only", "templates/prometheusrule.yaml")
 }
 
@@ -180,6 +180,7 @@ func TestAlPrometheusConfig(t *testing.T) {
 	var config struct {
 		Global struct {
 			ScrapeInterval     string `json:"scrape_interval"`
+			ScrapeTimeout      string `json:"scrape_timeout"`
 			EvaluationInterval string `json:"evaluation_interval"`
 		} `json:"global"`
 		RuleFiles []string `json:"rule_files"`
@@ -209,7 +210,7 @@ func TestAlPrometheusConfig(t *testing.T) {
 	if err := yaml.UnmarshalStrict([]byte(alPrometheusConfig("monitoring", "operator", "ptah-metrics")), &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Global.ScrapeInterval != "5s" || config.Global.EvaluationInterval != "5s" {
+	if config.Global.ScrapeInterval != "5s" || config.Global.ScrapeTimeout != "4s" || config.Global.EvaluationInterval != "5s" {
 		t.Errorf("global = %+v", config.Global)
 	}
 	if !reflect.DeepEqual(config.RuleFiles, []string{"/etc/prometheus/rules.yaml"}) {

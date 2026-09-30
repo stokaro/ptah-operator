@@ -60,6 +60,7 @@ const (
 // delivery later than threshold plus slack fails the phase.
 const (
 	alScrapeInterval = 5 * time.Second
+	alScrapeTimeout  = 4 * time.Second
 	alGroupWait      = 5 * time.Second
 	alDetectionSlack = 45 * time.Second
 	alTimeout        = 300 * time.Second
@@ -132,6 +133,7 @@ func alPrometheusConfig(monitoringNamespace, operatorNamespace, metricsService s
 	seconds := int(alScrapeInterval / time.Second)
 	return fmt.Sprintf(`global:
   scrape_interval: %[1]ds
+  scrape_timeout: 4s
   evaluation_interval: %[1]ds
 rule_files:
   - /etc/prometheus/rules.yaml

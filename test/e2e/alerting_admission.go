@@ -22,8 +22,8 @@ const (
 	alAPIServerJob      = "kube-apiserver"
 	alAPIMetricsRole    = "e2e-alerting-apiserver-metrics"
 	alAdmissionAlert    = "PtahOperatorAdmissionUnavailable"
-	alAdmissionWindow   = time.Minute
-	alAdmissionRecovery = alCertificateProjection + alAdmissionWindow + 2*alDetectionSlack
+	alAdmissionWindow   = 5 * time.Minute
+	alAdmissionRecovery = alAdmissionWindow + alDetectionSlack
 )
 
 var alAdmissionRejections = fmt.Sprintf(`sum(increase(apiserver_admission_webhook_rejection_count{job=%q,name=%q,error_type="calling_webhook_error"}[%ds]))`,

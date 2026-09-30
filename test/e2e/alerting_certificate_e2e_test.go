@@ -112,15 +112,20 @@ func (a *alertingRun) certificateExpiry() {
 			return alExpiredApprovalError(a.approvalCertificateProbe(ctx)), "no expiry-specific admission refusal yet", nil
 		}), "verify admission refusal after certificate expiry")
 	a.logf("PASS approval admission refused the expired serving certificate")
-	admissionIndex := a.admissionFailureDelivered(from, fault.expiry)
+	admissionIndex, admissionHistory := a.admissionFailureDelivered(from, fault.expiry)
 	restoredAt := time.Now()
 	a.check(fault.writeLeaf(a.ctx, fault.secret.Data["tls.crt"]), "restore the valid serving certificate")
 	restoredServedAt, err := a.waitForServingCertificate(managerPods, fault.secret.Data["tls.crt"], fault.secret.Data["ca.crt"], alCertificateProjection)
 	a.check(err, "verify the restored certificate on every serving endpoint and scrape")
 	a.check(fault.writeBundle(a.ctx, alFreshCertificateBundle(fault.bundle, 4)), "require a fresh TLS connection after restoration")
+	var admissionHealthyAt time.Time
 	a.check(harness.Wait(a.ctx, "approval admission after certificate restoration", alDetectionSlack, alDeliveryPoll,
 		func(ctx context.Context) (bool, string, error) {
-			return a.approvalCertificateProbe(ctx) == nil, "approval admission has not recovered", nil
+			if a.approvalCertificateProbe(ctx) != nil {
+				return false, "approval admission has not recovered", nil
+			}
+			admissionHealthyAt = time.Now().UTC()
+			return true, "", nil
 		}), "verify admission recovered")
 	resolved, _ := a.waitForDelivery(alMatch{status: "resolved", alertName: alCertificateAlert},
 		"the restored serving certificate's resolution", time.Until(restoredServedAt.Add(alDetectionSlack)), index+1)
@@ -130,7 +135,7 @@ func (a *alertingRun) certificateExpiry() {
 	}
 	a.logf("PASS certificate recovery: every serving endpoint and scrape verified at %s; originalExpiry=%s resolvedAt=%s",
 		restoredServedAt.Format(time.RFC3339Nano), originalLeaf.NotAfter.Format(time.RFC3339), resolved.ReceivedAt.Format(time.RFC3339Nano))
-	a.admissionRecovered(admissionIndex+1, restoredAt)
+	a.admissionRecovered(admissionIndex+1, fault.expiry, restoredAt, admissionHealthyAt, admissionHistory)
 	a.check(fault.writeBundle(a.ctx, fault.bundle), "restore the admission trust bundle")
 	a.check(fault.scaleRotator(a.ctx, *fault.rotator.Spec.Replicas), "restart certificate renewal")
 	a.check(a.cluster.WaitForRollout(a.ctx, a.in.OperatorNamespace, fault.rotator.Name, alTimeout), "wait for certificate renewal to recover")

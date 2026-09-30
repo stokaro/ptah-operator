@@ -644,7 +644,8 @@ func (d *dataPlane) podMetadataAdmission() {
 	}
 	// Nothing ran beside the credential: the Job has no Pod, active or done,
 	// and the namespace holds no Pod of this schema.
-	if !refusedJobIdle(d.job(refusedJob)) {
+	refusedWorkload := d.job(refusedJob)
+	if !refusedJobIdle(refusedWorkload) {
 		d.fatalf("the refused Job %s has a Pod or a verdict, so the refusal proved nothing", refusedJob)
 	}
 	pods := &corev1.PodList{}
@@ -664,7 +665,43 @@ func (d *dataPlane) podMetadataAdmission() {
 	if len(refusals.Items) == 0 {
 		d.fatalf("%s carries no PodAdmissionRefused Event", refusedSchema)
 	}
+	// This Job never becomes terminal because admission created no Pod. Audit
+	// its exact identity and refusal while the policy still prevents execution.
+	d.mustList(pods)
+	d.check(podAdmissionRefusalAudit(matched, refusedWorkload, pods.Items, failures.Items, podMetadataPolicyName),
+		"audit the exact admission-refused Resolve before its schema is deleted")
+	if !executionIdentityOnJob(refusedWorkload, d.controller) {
+		d.fatalf("the admission-refused Job lacks its exact controller execution identity")
+	}
+	d.scan(append(append(d.jsonBytes(matched), d.jsonBytes(refusedWorkload)...),
+		append(d.jsonBytes(failures), d.jsonBytes(refusals)...)...), "the exact no-Pod admission-refusal evidence")
+	d.scan(d.jsonBytes(pods), "the complete Pod inventory before admission-refusal cleanup")
 	d.deleteAndWait(refusedSchema, deleteDeadline)
+	deadline = time.Now().Add(deleteDeadline)
+	for {
+		remaining := &batchv1.Job{}
+		err := d.get(refusedJob, remaining)
+		if apierrors.IsNotFound(err) {
+			break
+		}
+		if err != nil || remaining.UID != refusedWorkload.UID || remaining.Status.Active != 0 || remaining.Status.Succeeded != 0 || remaining.Status.Failed != 0 {
+			d.fatalf("the exact admission-refused Job changed before no-Pod cleanup completed")
+		}
+		if !time.Now().Before(deadline) {
+			d.fatalf("the exact admission-refused Job survived its deleted schema")
+		}
+		d.sleep(time.Second)
+	}
+	d.mustList(pods)
+	for _, pod := range pods.Items {
+		if podMatchesAdmissionRefusal(pod, matched.Namespace, refusedSchema, refusedWorkload.UID) {
+			d.fatalf("an admission-refused workload acquired a Pod before cleanup finished")
+		}
+	}
+	d.scan(d.jsonBytes(pods), "the complete Pod inventory after admission-refusal cleanup")
+	d.audited.add(string(refusedWorkload.UID))
+	d.fullyAudited.add(string(refusedWorkload.UID))
+	d.logf("PASS exact admission-refused Job UID %s was audited and removed without creating a Pod", refusedWorkload.UID)
 
 	// A schema that declares the opt-out and a label of its own runs every
 	// operation under the same policy: each Pod is admitted because it carries
