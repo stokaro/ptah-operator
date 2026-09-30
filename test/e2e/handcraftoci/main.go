@@ -88,6 +88,8 @@ func run(args []string) error {
 			return runVerifyCertificate(args[1:])
 		case "executor-variant":
 			return runExecutorVariant(args[1:])
+		case "runner-protocol-variant":
+			return runRunnerVariant(args[1:])
 		case "plan-size-schema":
 			return runPlanSizeSchema(args[1:])
 		}

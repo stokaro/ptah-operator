@@ -2277,6 +2277,9 @@ fi
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
 	fail "the controller image contains the test-only alert receiver"
 fi
+if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner(\.json)?$'; then
+	fail "the controller image contains the unsupported-runner fixture"
+fi
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
 	fail "the controller image does not contain /manager"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
@@ -2291,6 +2294,10 @@ tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$' ||
 	fail "the isolated fixture image does not contain /e2e-handcraft-oci"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$' ||
 	fail "the isolated fixture image does not contain /e2e-alert-sink"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner$' ||
+	fail "the isolated fixture image does not contain the unsupported runner"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner\.json$' ||
+	fail "the isolated fixture image does not contain unsupported-runner provenance"
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)(manager|ptah-runner)$'; then
 	fail "the isolated fixture image contains an operator binary"
 fi
@@ -2860,6 +2867,7 @@ E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 # engine included: each phase runs the engine its name ends in. The Docker
 # context and the cluster name reach the isolation worker's node container,
 # which is where the phase cuts that node off from the API server.
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
@@ -2876,6 +2884,7 @@ E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_ENGINE=postgresql \
 	run_recorded_phase migrations-postgresql run_go_phase migrations-postgresql
 
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \

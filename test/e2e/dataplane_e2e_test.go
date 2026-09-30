@@ -75,6 +75,7 @@ func TestDataPlane(t *testing.T) {
 		{"approval-executor-image-change", func() { f.executorImageChanges() }},
 		{"approval-ptah-version-change", func() { f.ptahVersionChanges() }},
 		{"unsupported-controller-state-after-approval", func() { f.unsupportedControllerStates() }},
+		{"unsupported-runner-protocol-after-approval", func() { f.unsupportedRunnerProtocols() }},
 		{"running-apply-executor-image-change", func() { f.runningExecutorImageChanges() }},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {

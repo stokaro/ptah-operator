@@ -30,6 +30,56 @@ func TestPtahVersionDeclarationUsesTheSameBuildAndRestoresItsExactAlias(t *testi
 	}
 }
 
+func TestRunnerImageRolloutKeepsTheSupportedContractAndAllOtherInputs(t *testing.T) {
+	t.Parallel()
+	change := executionComponentChange{"runner-image", "registry.example/operator@sha256:" + strings.Repeat("a", 64),
+		"registry.example/operator@sha256:" + strings.Repeat("b", 64)}
+	fixture := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
+		Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "manager", Image: "unchanged-manager", Args: []string{
+			"--leader-elect", "--executor-image=unchanged", "--ptah-version=v0.9.0", "--controller-state-version=1", "--runner-image=" + change.original,
+		}}}}}}}
+	want, got := fixture.DeepCopy(), fixture.DeepCopy()
+	want.Spec.Template.Spec.Containers[0].Args[4] = "--runner-image=" + change.replacement
+	if err := replaceControllerExecutionComponent(got, change); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("runner rollout changed another execution input: %v", err)
+	}
+	for range 2 {
+		if err := replaceControllerExecutionComponent(got, change.reverse()); err != nil || !reflect.DeepEqual(got, fixture) {
+			t.Fatalf("runner cleanup failed to restore the exact supported image: %v", err)
+		}
+	}
+	for name, mutate := range map[string]func(*appsv1.Deployment){
+		"duplicate manager": func(d *appsv1.Deployment) {
+			d.Spec.Template.Spec.Containers = append(d.Spec.Template.Spec.Containers, d.Spec.Template.Spec.Containers[0])
+		},
+		"missing argument": func(d *appsv1.Deployment) {
+			d.Spec.Template.Spec.Containers[0].Args = d.Spec.Template.Spec.Containers[0].Args[:4]
+		},
+		"uncontrolled image": func(d *appsv1.Deployment) { d.Spec.Template.Spec.Containers[0].Args[4] = "--runner-image=other" },
+		"duplicate argument": func(d *appsv1.Deployment) {
+			d.Spec.Template.Spec.Containers[0].Args = append(d.Spec.Template.Spec.Containers[0].Args, "--runner-image="+change.original)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := fixture.DeepCopy()
+			mutate(d)
+			if replaceControllerExecutionComponent(d, change) == nil {
+				t.Fatal("an uncontrolled runner rollout passed")
+			}
+		})
+	}
+	before := &ptahv1alpha1.ExecutionBindingStatus{Epoch: "v1-" + strings.Repeat("a", 32), ExecutorImage: "unchanged",
+		PtahVersion: "v0.9.0", RunnerProtocolVersion: 1, ControllerStateVersion: 1}
+	after := before.DeepCopy()
+	after.Epoch = "v1-" + strings.Repeat("b", 32)
+	if change.binding(before, after) {
+		t.Fatal("the recorded runner image was treated as an execution-binding change")
+	}
+	if (executionComponentChange{"runner-image", change.original, "registry.example/operator:mutable"}).valid() {
+		t.Fatal("a mutable runner replacement passed")
+	}
+}
+
 func TestPtahVersionRolloutRetainsEveryOtherManagerInput(t *testing.T) {
 	t.Parallel()
 	change := executionComponentChange{"ptah-version", "v0.9.0", "0.9.0"}

@@ -70,6 +70,9 @@ type schemaRefusalWindow struct {
 	wait                 func(string, string, func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema
 	resourceUID          types.UID
 	unusedMySQLAccount   bool
+	// Only the runner-refusal case sets this exact task image. Failed init
+	// Pods keep their own client identities and are allowed to send no SQL.
+	refusedRunnerImage string
 }
 
 // Fault waits allow the refusal under test to enter Failed and retain their
@@ -185,8 +188,18 @@ func (w *schemaRefusalWindow) assertSQL(resource *ptahv1alpha1.PtahSchema, stale
 	}
 	f.captureSchemaSQLInventory(w.name, w.inventory)
 	clients, err := w.inventory.clients(resource)
+	var refusedJobs map[types.UID]bool
+	if w.refusedRunnerImage != "" {
+		clients, refusedJobs, err = runnerRefusalSQLClients(f.t, f.ctx, f.cluster, resource, "PtahSchema", resource.Status.ExecutionBinding,
+			f.controller, w.refusedRunnerImage, w.inventory.jobs, w.inventory.pods, f.scan)
+	}
 	f.check(err, "bind schema refusal SQL to the exact resource Jobs and Pods")
 	acceptsActor, pg, my := schemaDiagnosticActor, w.policy.postgres, w.policy.mysql
+	if len(refusedJobs) > 0 {
+		acceptsActor = func(actor operationSQLClient) bool {
+			return !refusedJobs[types.UID(actor.jobUID)] && schemaDiagnosticActor(actor)
+		}
+	}
 	var harnessRead func(string, string) bool
 	if stale != nil {
 		acceptsActor, pg, my = stale.acceptsActor, stale.postgres, stale.mysql

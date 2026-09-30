@@ -41,7 +41,7 @@ func (c executionComponentChange) valid() bool {
 		return false
 	}
 	switch c.argument {
-	case "executor-image":
+	case "executor-image", "runner-image":
 		return digestSuffix.MatchString(c.original) && digestSuffix.MatchString(c.replacement)
 	case "ptah-version":
 		alias, err := ptahVersionAlias(c.original)
@@ -73,6 +73,9 @@ func (c executionComponentChange) binding(before, after *ptahv1alpha1.ExecutionB
 			return false
 		}
 		want.PtahVersion = c.replacement
+	default:
+		// The runner image is recorded, not an execution-binding component.
+		return false
 	}
 	return equality.Semantic.DeepEqual(want, after)
 }
