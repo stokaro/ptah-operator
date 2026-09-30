@@ -52,18 +52,26 @@ func TestLifecyclePrivilegeInventoryReadsTheShippedChart(t *testing.T) {
 	if _, err := lifecyclePrivilegeObjects(manifest.Bytes(), nil, "ptah-system"); err == nil {
 		t.Fatal("an empty hook inventory hid the hook privileges")
 	}
-	if _, err := lifecyclePrivilegeObjects(nil, hooks.Bytes(), "ptah-system"); err == nil {
-		t.Fatal("hook privileges substituted for the installed runtime")
-	}
-	for name, broken := range map[string][]byte{
-		"empty":            nil,
-		"invalid":          []byte("not: [valid"),
-		"missing accounts": bytes.ReplaceAll(manifest.Bytes(), []byte(`"kind":"ServiceAccount"`), []byte(`"kind":"ConfigMap"`)),
-		"duplicate":        append(bytes.Clone(manifest.Bytes()), manifest.Bytes()...),
+	for name, test := range map[string]struct {
+		manifest []byte
+		want     string
+	}{
+		"empty":   {nil, "release privilege inventory omitted installed or hook ServiceAccounts"},
+		"invalid": {[]byte("not: [valid"), "release privilege inventory contains invalid manifests"},
+		"missing accounts": {
+			bytes.ReplaceAll(manifest.Bytes(), []byte(`"kind":"ServiceAccount"`), []byte(`"kind":"ConfigMap"`)),
+			"release privilege inventory omitted installed or hook ServiceAccounts",
+		},
+		"duplicate": {
+			append(bytes.Clone(manifest.Bytes()), manifest.Bytes()...),
+			"release privilege inventory repeats an object",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := lifecyclePrivilegeObjects(broken, nil, "ptah-system"); err == nil {
-				t.Fatal("incomplete privilege inventory passed")
+			// Keep the other source valid: otherwise the missing-hook guard
+			// masks a regression in the condition this row exercises.
+			if _, err := lifecyclePrivilegeObjects(test.manifest, hooks.Bytes(), "ptah-system"); err == nil || err.Error() != test.want {
+				t.Fatalf("inventory refusal = %v, want %q", err, test.want)
 			}
 		})
 	}
