@@ -426,7 +426,7 @@ class OperatorProbe(db.Probe):
         while (remaining := completed + 300 - monotonic()) > 0:
             sleep(min(remaining, 30))
 
-    def advance_lagged_database(self, source, source_field, original_jobs, recipient, key, wrong):
+    def advance_lagged_database(self, source, source_field, original_jobs, original_pods, recipient, key, wrong):
         reference = self.publish(2)
         self.patch({'spec': {source_field: self.source_spec(reference), 'suspend': False}})
         ready = self.settled('AwaitingApproval')
@@ -438,12 +438,15 @@ class OperatorProbe(db.Probe):
         applied = self.settled('InSync')
         self.patch({'spec': {'suspend': True}})
         suspended = self.settled('Suspended')
-        jobs = self.apply_jobs()
-        added = set(jobs) - set(original_jobs)
+        live_jobs = self.apply_jobs()
+        added = set(live_jobs) - set(original_jobs)
         self.check('one approved Apply committed after the older operator backup',
-                   len(added) == 1 and set(original_jobs) <= set(jobs) and
-                   all(j.get('status', {}).get('succeeded') == 1 for j in jobs.values()))
-        pods = self.stopped_apply_pods(set(jobs))
+                   len(added) == 1 and all(j.get('status', {}).get('succeeded') == 1 for j in live_jobs.values()))
+        # The controller's completed-Job TTL is five minutes. Keep the already
+        # verified terminal evidence from the immutable recovery point rather
+        # than requiring those objects to survive the deliberate backup lag.
+        jobs = {**original_jobs, **live_jobs}
+        pods = original_pods + self.stopped_apply_pods(added)
         self.check('the intervening Apply added its actual database column',
                    self.sql(source, 'SELECT count(*) FROM recovery_canary WHERE recovered=1;').stdout.strip() == b'2')
         if self.family == 'migration':
@@ -582,7 +585,7 @@ class OperatorProbe(db.Probe):
             self.operator_backup_completed = time.monotonic()
             if self.timing == 'operator-lag':
                 before, original_jobs, original_pods = self.advance_lagged_database(
-                    source, source_field, original_jobs, recipient, key, wrong)
+                    source, source_field, original_jobs, original_pods, recipient, key, wrong)
             self.report['databaseBackupStartedAt'] = db.now()
             if self.timing == 'operator-lag':
                 lag = (db.dt.datetime.fromisoformat(self.report['databaseBackupStartedAt']) -

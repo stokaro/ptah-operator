@@ -27,6 +27,51 @@ class LagWaitTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'restore the older operator backup'):
             OperatorProbe('mysql', 'migration', Path('unused'), Path('unused'), 'database', 'operator-lag')
 
+    def test_job_expiry_during_the_lag_preserves_the_verified_original_execution(self):
+        probe = object.__new__(OperatorProbe)
+        probe.family, probe.kind = 'migration', 'PtahMigration'
+        probe.operator_backup_completed = 100
+        probe.report = {'checks': {}, 'artifacts': {'2': {'digest': 'sha256:fixture'}}}
+        probe.persist = lambda: None
+        probe.publish = lambda revision: 'oci://fixture/new'
+        probe.source_spec = lambda reference: {'ociRef': reference}
+        probe.patch = lambda value: None
+        probe.settled = lambda phase: {'status': {'plan': {'name': 'later-plan'}}}
+        plan = {'metadata': {'uid': 'later-plan-uid'}}
+        probe.read = lambda kind, name: plan
+        probe.approve = lambda *args: SimpleNamespace(stdout=b'{"metadata":{"uid":"later-approval"}}')
+        waits = []
+        probe.wait_for_backup_lag = lambda completed: waits.append(completed)
+        old_job = {'metadata': {'uid': 'original-job'}, 'status': {'succeeded': 1}}
+        later_job = {'metadata': {'uid': 'later-job'}, 'status': {'succeeded': 1}}
+        old_pod = {'metadata': {'uid': 'original-pod'}}
+        later_pod = {'metadata': {'uid': 'later-pod'}}
+        # Kubernetes has already removed the original Job and Pod. Only the
+        # watch and immutable pre-lag evidence retain that completed execution.
+        probe.apply_jobs = lambda: {'later-job': later_job}
+        polled = []
+
+        def stopped(uids):
+            polled.append(uids)
+            self.assertEqual(uids, {'later-job'})
+            return [later_pod]
+
+        probe.stopped_apply_pods = stopped
+        probe.barrier = lambda name: name
+        probe.watched_apply_jobs = lambda barrier: ({'original-job'} if barrier == 'lag-unapproved-boundary' else {'original-job', 'later-job'})
+        probe.sql = lambda source, query: SimpleNamespace(stdout=b'1\n2' if 'schema_migrations' in query else b'2')
+        archives = []
+        probe.encrypted = lambda name, payload, *args: archives.append(json.loads(payload))
+        probe.inventories = lambda source: {'rows': b'recorded'}
+        before, jobs, pods = probe.advance_lagged_database('source', 'artifact', {'original-job': old_job}, [old_pod], 'recipient', 'key', 'wrong')
+        self.assertEqual(waits, [100])
+        self.assertEqual(polled, [{'later-job'}])
+        self.assertEqual(before, {'rows': b'recorded'})
+        self.assertEqual(jobs, {'original-job': old_job, 'later-job': later_job})
+        self.assertEqual(pods, [old_pod, later_pod])
+        self.assertEqual(archives[0]['pods'], pods)
+        self.assertEqual({j['metadata']['uid'] for j in archives[0]['jobs']}, set(jobs))
+
 
 class RecoveryArtifactTest(unittest.TestCase):
     def test_revision_three_preserves_committed_migrations_and_adds_real_work(self):
