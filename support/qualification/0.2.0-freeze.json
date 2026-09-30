@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T10:23:29.657660+00:00",
-  "profileSourceCommit": "e77d8eea4ed50724e63a35fe21b668bb42e98f42",
+  "frozenAt": "2026-09-30T11:31:16.986801+00:00",
+  "profileSourceCommit": "941dabd5b0afaa27cd22860100488530236ac3e2",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -42,7 +42,7 @@
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
     "sha256": "229325c4787d283372056428f858f7144fc67ace149df55888e7675c5572eef0",
-    "generatedFromCommit": "e77d8eea4ed50724e63a35fe21b668bb42e98f42",
+    "generatedFromCommit": "941dabd5b0afaa27cd22860100488530236ac3e2",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 16,
+  "revision": 17,
   "supersedes": {
-    "freezeCommit": "d72ec94507ec8d27d1deaaf2451acfb31971fa5e",
-    "sha256": "faba0da7215b5bcfae22da756c5cf089c6738563214f70ac50d1d87f4ad91603"
+    "freezeCommit": "3d2d24b0ee058e6732702008cc6399a4e3c92442",
+    "sha256": "9006505c70712647093108fc2219a4eb267f533cc69c2a96c2d2a0f95f313436"
   },
-  "revisionReason": "Declare unsupported-controller-state-after-approval in the data-plane and both migration phases. Both resource families and database engines introduce only a future stored execution-binding version after approval and manager startup. The shipping controller contract remains 1. A private name-scoped status PATCH grant preserves installed admission, grants the real manager nothing, and is removed by exact UID with an effective-permission denial control. The runtime proof requires distinct exact refusal reconciliations, unchanged full status and spec, closed resource and workload histories through natural EOF, an unconsumed exact original approval, native diagnostic SQL controls and no unauthorized SQL. Withdrawal precedes restoration of version 1, and a fresh approval must produce one exact Apply with native database effects. This measures unsupported restored input, not compatibility with a future state contract. All eight frozen source hashes, operating limits, alert targets, RPO/RTO and the 30 required cells are unchanged. Local unit, race, tagged compilation and static checks supply no runtime acceptance. The scenario requires final artifact execution; runner-protocol and lifecycle proofs and the remaining qualification issues stay open."
+  "revisionReason": "Repair the running-Apply executor-change fixtures after exact-head CI run 36694556148 failed all nine migration and data-plane cells. Each migration proof publishes its own pristine seed and full directory, pins both digests, and binds its actual current-generation plan to the expected artifact, resource UID and exact selected checksum sequence. It cannot reuse the shared tag that earlier modified-file refusal rows deliberately changed. PostgreSQL process attribution reads host(client_addr), without the inet text netmask, and still requires one nonzero process and the exact running Pod identity and IP; IPv6 spelling is compared as an address. The original failed CI evidence remains retained. All eight source hashes, the declared scenario inventory, operating limits, alert targets, RPO/RTO and 30 required cells are unchanged. Native PostgreSQL representation checks, local unit/race/tagged compilation and static checks supply no Kubernetes acceptance. The stored-controller-state scenario added in revision 16 also remains unassessed until full execution on the final artifacts. Runner-protocol and lifecycle proofs and the remaining qualification issues stay open."
 }
