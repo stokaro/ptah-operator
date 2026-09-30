@@ -2,7 +2,10 @@ package e2e
 
 import (
 	"errors"
+	"net/netip"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -13,6 +16,28 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+// Database reads return one PID and a host address, without an inet netmask.
+// The process must still belong to the exact live workload under test.
+func executorBackendMatchesPod(backend string, pod *corev1.Pod, uid types.UID) bool {
+	if pod == nil || uid == "" || pod.UID != uid || pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	pid, host, ok := strings.Cut(backend, "/")
+	if !ok || !decimalCount.MatchString(pid) {
+		return false
+	}
+	process, err := strconv.ParseUint(pid, 10, 64)
+	if err != nil || process == 0 {
+		return false
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	podAddress, err := netip.ParseAddr(pod.Status.PodIP)
+	return err == nil && address == podAddress
+}
 
 // The old executable may still write. A new epoch therefore owes the entire
 // original Apply, its immutable horizon and its uninterrupted realm claim.

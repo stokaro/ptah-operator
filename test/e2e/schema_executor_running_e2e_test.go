@@ -6,7 +6,6 @@ import (
 	"context"
 	"maps"
 	"strconv"
-	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -30,7 +29,7 @@ func (f *faultRun) executorApplyBackend(engine, database string) string {
 	f.t.Helper()
 	if engine == "postgresql" {
 		f.assertPGApplyLockWait(database)
-		return f.query(engine, database, "SELECT a.pid::text || '/' || a.client_addr::text FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE l.locktype='advisory' AND l.classid=0 AND l.objid="+strconv.Itoa(pgApplyLockKey)+" AND l.objsubid=1 AND l.granted AND a.datname='"+database+"'")
+		return f.query(engine, database, "SELECT a.pid::text || '/' || host(a.client_addr) FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE l.locktype='advisory' AND l.classid=0 AND l.objid="+strconv.Itoa(pgApplyLockKey)+" AND l.objsubid=1 AND l.granted AND a.datname='"+database+"'")
 	}
 	f.assertMySQLApplyLockWait(database)
 	return f.query(engine, "mysql", "SELECT CONCAT(ID, '/', SUBSTRING_INDEX(HOST, ':', 1)) FROM information_schema.processlist WHERE ID=IS_USED_LOCK('ptah_schema_apply') AND DB='"+database+"' AND STATE LIKE '%metadata lock%'")
@@ -91,8 +90,7 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		row.backend = f.executorApplyBackend(row.engine, row.database)
 		pod := &corev1.Pod{}
 		f.check(f.get(row.run.podName, pod), "read the blocked Apply Pod")
-		pid, address, ok := strings.Cut(row.backend, "/")
-		if !ok || !decimalCount.MatchString(pid) || pid == "0" || address == "" || address != pod.Status.PodIP || string(pod.UID) != row.run.podUID {
+		if !executorBackendMatchesPod(row.backend, pod, types.UID(row.run.podUID)) {
 			f.fatalf("the database did not identify the exact original Apply client's PID and Pod address")
 		}
 		row.lease = f.waitForLeaseReacquisition(row.lease, "the running Apply before its executor change")

@@ -15,6 +15,78 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
+func TestRunningMigrationPlanRequiresItsOwnPublishedArtifact(t *testing.T) {
+	t.Parallel()
+	digest := proofDigest("a")
+	reference := "oci://registry.example/task/postgresql-running-executor-current@" + digest
+	plan := &ptahv1alpha1.PtahMigrationPlan{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "test", UID: "plan"},
+		Spec: ptahv1alpha1.PtahMigrationPlanSpec{
+			MigrationRef: ptahv1alpha1.ImmutableObjectReference{Name: "running", UID: "migration"}, ArtifactDigest: digest,
+			Migrations: []ptahv1alpha1.PlannedMigration{{Version: 2, Checksum: "second"}, {Version: 3, Checksum: "third"}},
+		}}
+	resource := &ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: "test", UID: "migration", Generation: 2},
+		Status: ptahv1alpha1.PtahMigrationStatus{ObservedGeneration: 2, Phase: ptahv1alpha1.MigrationPhaseAwaitingApproval,
+			Plan:     &ptahv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
+			Artifact: &ptahv1alpha1.OCIArtifactAccessBinding{Digest: digest},
+		}}
+	resource.Spec.Artifact.OCIRef = reference
+	if err := runningMigrationApprovalPlan(resource, plan, reference, digest, []int64{2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigration, *ptahv1alpha1.PtahMigrationPlan){
+		"shared mutable tag": func(r *ptahv1alpha1.PtahMigration, _ *ptahv1alpha1.PtahMigrationPlan) {
+			r.Spec.Artifact.OCIRef = "oci://registry.example/task/postgresql:stable"
+		},
+		"edited shared artifact": func(r *ptahv1alpha1.PtahMigration, p *ptahv1alpha1.PtahMigrationPlan) {
+			r.Status.Artifact.Digest, p.Spec.ArtifactDigest = proofDigest("b"), proofDigest("b")
+		},
+		"old generation": func(r *ptahv1alpha1.PtahMigration, _ *ptahv1alpha1.PtahMigrationPlan) { r.Generation++ },
+		"HistoryModified refusal": func(r *ptahv1alpha1.PtahMigration, _ *ptahv1alpha1.PtahMigrationPlan) {
+			r.Status.Phase = ptahv1alpha1.MigrationPhaseBlocked
+		},
+		"another migration": func(_ *ptahv1alpha1.PtahMigration, p *ptahv1alpha1.PtahMigrationPlan) {
+			p.Spec.MigrationRef.UID = "other"
+		},
+		"another plan":      func(_ *ptahv1alpha1.PtahMigration, p *ptahv1alpha1.PtahMigrationPlan) { p.UID = "replacement" },
+		"another namespace": func(_ *ptahv1alpha1.PtahMigration, p *ptahv1alpha1.PtahMigrationPlan) { p.Namespace = "other" },
+		"no source reading": func(r *ptahv1alpha1.PtahMigration, _ *ptahv1alpha1.PtahMigrationPlan) { r.Status.Artifact = nil },
+		"another source reading": func(r *ptahv1alpha1.PtahMigration, _ *ptahv1alpha1.PtahMigrationPlan) {
+			r.Status.Artifact.Digest = proofDigest("c")
+		},
+		"work already dispatched": func(r *ptahv1alpha1.PtahMigration, _ *ptahv1alpha1.PtahMigrationPlan) {
+			r.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{}
+		},
+		"unresolved work": func(r *ptahv1alpha1.PtahMigration, _ *ptahv1alpha1.PtahMigrationPlan) {
+			r.Status.UnresolvedRun = &ptahv1alpha1.UnresolvedMigrationRunStatus{}
+		},
+		"seed plan reused": func(_ *ptahv1alpha1.PtahMigration, p *ptahv1alpha1.PtahMigrationPlan) {
+			p.Spec.Migrations = []ptahv1alpha1.PlannedMigration{{Version: 1, Checksum: "first"}}
+		},
+		"sequence reordered": func(_ *ptahv1alpha1.PtahMigration, p *ptahv1alpha1.PtahMigrationPlan) {
+			slices.Reverse(p.Spec.Migrations)
+		},
+		"unbound file": func(_ *ptahv1alpha1.PtahMigration, p *ptahv1alpha1.PtahMigrationPlan) {
+			p.Spec.Migrations[0].Checksum = ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed, candidate := resource.DeepCopy(), plan.DeepCopy()
+			mutate(changed, candidate)
+			if err := runningMigrationApprovalPlan(changed, candidate, reference, digest, []int64{2, 3}); err == nil {
+				t.Fatal("a foreign artifact, stale gate or different selected sequence passed")
+			}
+		})
+	}
+	for _, versions := range [][]int64{nil, {0, 3}, {2, 4}} {
+		if err := runningMigrationApprovalPlan(resource, plan, reference, digest, versions); err == nil {
+			t.Fatal("an absent or different expected sequence passed")
+		}
+	}
+	if err := runningMigrationApprovalPlan(resource, plan, "oci://registry.example/task/postgresql:stable", digest, []int64{2, 3}); err == nil {
+		t.Fatal("a mutable expected reference passed")
+	}
+}
+
 func TestMigrationExecutorPodBarrierRefusesManagedWorkloads(t *testing.T) {
 	t.Parallel()
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "test", UID: "database-uid",

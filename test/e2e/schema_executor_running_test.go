@@ -8,10 +8,52 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func TestExecutorBackendRequiresTheExactRunningPodAddress(t *testing.T) {
+	t.Parallel()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "apply-pod"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.3.161"}}
+	for name, backend := range map[string]string{
+		"inet cast retains a netmask": "42/10.244.3.161/32",
+		"another Pod":                 "42/10.244.3.162",
+		"no PID":                      "/10.244.3.161",
+		"zero PID":                    "0/10.244.3.161",
+		"invalid PID":                 "+42/10.244.3.161",
+		"PID overflow":                "18446744073709551616/10.244.3.161",
+		"multiple processes":          "42/10.244.3.16143/10.244.3.161",
+		"no client address":           "42/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if executorBackendMatchesPod(backend, pod, pod.UID) {
+				t.Fatal("a process other than one exact live Apply client passed")
+			}
+		})
+	}
+	if !executorBackendMatchesPod("42/10.244.3.161", pod, pod.UID) {
+		t.Fatal("the PostgreSQL host() address did not match its actual Pod IP")
+	}
+	pod.Status.PodIP = "2001:db8::1"
+	if !executorBackendMatchesPod("42/2001:0db8:0:0:0:0:0:1", pod, pod.UID) {
+		t.Fatal("the same IPv6 address failed because of its spelling")
+	}
+	for _, uid := range []types.UID{"", "replacement"} {
+		if executorBackendMatchesPod("42/2001:db8::1", pod, uid) {
+			t.Fatal("an absent or replacement Pod identity passed")
+		}
+	}
+	pod.Status.Phase = corev1.PodSucceeded
+	if executorBackendMatchesPod("42/2001:db8::1", pod, pod.UID) {
+		t.Fatal("a stopped workload became the held SQL process")
+	}
+	if executorBackendMatchesPod("42/2001:db8::1", nil, "apply-pod") {
+		t.Fatal("an absent Pod passed")
+	}
+}
 
 func runningExecutorFixture() (before, retired *ptahv1alpha1.PtahSchema, replacement string) {
 	plan, active := proofPlan(), proofApplyActive()

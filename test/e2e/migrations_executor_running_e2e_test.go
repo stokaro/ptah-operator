@@ -138,7 +138,7 @@ func (m *migrationRun) runningMigrationTableBarrier(database string) func() {
 }
 
 func (m *migrationRun) runningMigrationBackend(database string) string {
-	statement := "SELECT DISTINCT a.pid::text || '/' || a.client_addr::text FROM pg_locks held JOIN pg_stat_activity a ON a.pid=held.pid JOIN pg_locks waiting ON waiting.pid=a.pid WHERE held.locktype='advisory' AND held.granted AND NOT waiting.granted AND waiting.locktype='relation' AND waiting.relation='e2e_migration_widgets'::regclass AND waiting.mode='AccessExclusiveLock' AND a.datname='" + database + "'"
+	statement := "SELECT DISTINCT a.pid::text || '/' || host(a.client_addr) FROM pg_locks held JOIN pg_stat_activity a ON a.pid=held.pid JOIN pg_locks waiting ON waiting.pid=a.pid WHERE held.locktype='advisory' AND held.granted AND NOT waiting.granted AND waiting.locktype='relation' AND waiting.relation='e2e_migration_widgets'::regclass AND waiting.mode='AccessExclusiveLock' AND a.datname='" + database + "'"
 	if m.engine.name == "mysql" {
 		statement = "SELECT CONCAT(ID, '/', SUBSTRING_INDEX(HOST, ':', 1)) FROM information_schema.processlist WHERE ID=IS_USED_LOCK('ptah_migrate') AND DB='" + database + "' AND STATE LIKE '%metadata lock%'"
 	}
@@ -175,19 +175,26 @@ func (m *migrationRun) runningExecutorImageChange() {
 		m.check(err, "read the exact seed migration %s", file)
 		m.check(os.WriteFile(filepath.Join(seed, file), content, 0o600), "stage the seed migration %s", file)
 	}
-	m.publish("running-executor-seed", seed, seedReference)
+	seedDigest := m.publish("running-executor-seed", seed, seedReference)
+	seedReference = strings.TrimSuffix(seedReference, ":stable") + "@" + seedDigest
+	// Earlier rows deliberately replace the shared tag with edited files.
+	// This proof owns both artifacts and pins the exact directory it publishes.
+	currentReference := m.reference("-running-executor-current")
+	currentDigest := m.publish("running-executor-current", m.fixtureDir(""), currentReference)
+	currentReference = strings.TrimSuffix(currentReference, ":stable") + "@" + currentDigest
 	m.mustCreate(m.migrationDocument(migrationSpec{name: name, secret: secret, reference: seedReference,
 		coordinationKey: "e2e/running-executor/" + m.engine.name, apply: "OnApproval", interval: "1h", lockTimeout: "4m"}))
-	waitPlan := func() *ptahv1alpha1.PtahMigrationPlan {
+	waitPlan := func(reference, digest string, versions []int64) *ptahv1alpha1.PtahMigrationPlan {
 		resource := m.waitForMigration(name, "a matching running-executor approval gate", time.Second, func(resource *ptahv1alpha1.PtahMigration) bool {
-			return resource.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval && resource.Status.Plan != nil && resource.Status.ActiveOperation == nil
+			return resource.Status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval && resource.Status.Plan != nil &&
+				resource.Status.ActiveOperation == nil && resource.Status.ObservedGeneration == resource.Generation &&
+				resource.Spec.Artifact.OCIRef == reference && resource.Status.Artifact != nil && resource.Status.Artifact.Digest == digest
 		})
-		return m.planOf(resource.Status.Plan.Name)
+		plan := m.planOf(resource.Status.Plan.Name)
+		m.check(runningMigrationApprovalPlan(resource, plan, reference, digest, versions), "bind the running executor's plan to its own exact artifact")
+		return plan
 	}
-	seedPlan := waitPlan()
-	if !slices.Equal(plannedMigrationVersions(seedPlan), []int64{1}) {
-		m.fatalf("the seed plan did not select just migration 1")
-	}
+	seedPlan := waitPlan(seedReference, seedDigest, []int64{1})
 	m.check(m.approve(name+"-seed", name, seedPlan.Name, string(seedPlan.UID), seedPlan.Spec.Fingerprint), "authorize the populated table fixture")
 	m.waitForGenerationInSync(name)
 	if m.query(restoreRevisionsQuery(m.engine.name), database) != "1" || m.query("SELECT count(*) FROM e2e_migration_widgets", database) != "3" {
@@ -200,11 +207,8 @@ func (m *migrationRun) runningExecutorImageChange() {
 	pods := migrationExecutorRecorder[*corev1.Pod](m, watcher, "pods", m.in.TestNamespace, func() client.ObjectList { return &corev1.PodList{} })
 	leases := migrationExecutorRecorder[*coordinationv1.Lease](m, watcher, "leases", manager.Namespace, func() client.ObjectList { return &coordinationv1.LeaseList{} })
 	recorders := []recorder{migrations, jobs, pods, leases}
-	m.patchMigration(name, map[string]any{"spec": map[string]any{"artifact": map[string]any{"ociRef": m.reference("")}, "interval": "15s"}})
-	plan := waitPlan()
-	if !slices.Equal(plannedMigrationVersions(plan), []int64{2, 3}) {
-		m.fatalf("the controlled Apply did not select the exact remaining migrations")
-	}
+	m.patchMigration(name, map[string]any{"spec": map[string]any{"artifact": map[string]any{"ociRef": currentReference}, "interval": "15s"}})
+	plan := waitPlan(currentReference, currentDigest, []int64{2, 3})
 	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
 	sqlBefore := audit.snapshot()
 	releaseTable := m.runningMigrationTableBarrier(database)
@@ -216,8 +220,7 @@ func (m *migrationRun) runningExecutorImageChange() {
 		return backend != ""
 	})
 	pod := m.readStopRowPod(jobUID)
-	pid, address, ok := strings.Cut(backend, "/")
-	if !ok || !decimalCount.MatchString(pid) || pid == "0" || address == "" || address != pod.Status.PodIP || pod.Status.Phase != corev1.PodRunning {
+	if !executorBackendMatchesPod(backend, pod, pod.UID) {
 		m.fatalf("the database did not identify the exact running migration Pod's PID and address")
 	}
 	before := m.migration(name)

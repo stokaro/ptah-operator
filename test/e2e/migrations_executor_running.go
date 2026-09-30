@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,30 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+func runningMigrationApprovalPlan(resource *ptahv1alpha1.PtahMigration, plan *ptahv1alpha1.PtahMigrationPlan,
+	reference, digest string, versions []int64,
+) error {
+	if resource == nil || plan == nil || resource.UID == "" || plan.UID == "" || reference == "" ||
+		!sha256Pattern.MatchString(digest) || !strings.HasSuffix(reference, "@"+digest) ||
+		resource.Spec.Artifact.OCIRef != reference || resource.Namespace != plan.Namespace ||
+		resource.Status.ObservedGeneration != resource.Generation || resource.Status.ActiveOperation != nil ||
+		resource.Status.UnresolvedRun != nil || resource.Status.Phase != ptahv1alpha1.MigrationPhaseAwaitingApproval ||
+		resource.Status.Plan == nil || *resource.Status.Plan != (ptahv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID}) ||
+		plan.Spec.MigrationRef != (ptahv1alpha1.ImmutableObjectReference{Name: resource.Name, UID: resource.UID}) ||
+		resource.Status.Artifact == nil || resource.Status.Artifact.Digest != digest || plan.Spec.ArtifactDigest != digest {
+		return errors.New("running migration has no current approval gate for its own pinned artifact")
+	}
+	if len(versions) == 0 || len(versions) != len(plan.Spec.Migrations) {
+		return errors.New("running migration has no exact selected sequence")
+	}
+	for index, version := range versions {
+		if version < 1 || plan.Spec.Migrations[index].Version != version || plan.Spec.Migrations[index].Checksum == "" {
+			return errors.New("running migration plan did not select its exact version and checksum sequence")
+		}
+	}
+	return nil
+}
 
 // The database is an unmanaged sentinel in the same Pod collection. Managed
 // Apply Pods forbid metadata edits, including a test's watch annotation.
