@@ -99,7 +99,8 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		if active := row.before.Status.ActiveOperation; active == nil || string(active.JobUID) != row.run.jobUID || active.ExecutionNotAfter == nil || row.before.Status.Plan == nil {
 			f.fatalf("the running Apply lost its immutable claim before the rollout")
 		}
-		f.assertApprovalConsumed(row.name+"-approval", string(row.before.Status.Plan.UID))
+		_, err := faultApprovalCommitted(f.unstructuredApproval(row.name+"-approval"), string(row.before.Status.Plan.UID))
+		f.check(err, "retain the committed decision while its original Apply is still running")
 	}
 	f.rolloutExecutor(original, replacement)
 	for _, row := range rows {
@@ -152,6 +153,7 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		if settled.Status.ExecutionBinding == nil || settled.Status.ExecutionBinding.ExecutorImage != replacement || settled.Status.Applied != nil || settled.Status.Plan != nil {
 			f.fatalf("recovery attributed an old executor's Apply to the new epoch")
 		}
+		f.assertApprovalConsumed(row.name+"-approval", string(row.before.Status.Plan.UID))
 		for operation, before := range map[string]checkpoint{"observe": row.observeBefore, "plan": row.planBefore} {
 			uid := f.singleNewWatchedJobUID(row.name, operation, before)
 			var job *batchv1.Job
