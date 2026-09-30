@@ -243,7 +243,7 @@ func (d *dataPlane) auditTerminalJob(name string, uid types.UID) {
 		if !terminalPodEvidence(pod, podUID, uid) {
 			d.fatalf("exact Pod %s UID %s lacks complete terminal evidence", podName, podUID)
 		}
-		if runtimeClass && !podAdmissionApplied(pod, d.controller, registryPullSecret) {
+		if runtimeClass && !podAdmissionApplied(job, pod, d.controller, registryPullSecret) {
 			d.fatalf("managed Pod %s lacks exact LimitRange, ServiceAccount, RuntimeClass, or default-toleration admission", podName)
 		}
 		containers := terminatedInStatusOrder(pod)

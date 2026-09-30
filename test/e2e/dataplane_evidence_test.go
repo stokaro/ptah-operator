@@ -303,17 +303,19 @@ func admittedPod() *corev1.Pod {
 	}
 	seconds := ptr.To[int64](300)
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
-			annotationAdmissionDigest: "sha256:" + strings.Repeat("3", 64), annotationControllerImage: identity.image,
-			annotationControllerRev: identity.revision, annotationControllerState: identity.stateVersion,
-		}},
+		ObjectMeta: metav1.ObjectMeta{Name: evidencePodName, Namespace: "test", UID: evidencePodUID,
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: evidenceJobName, UID: evidenceJobUID, Controller: ptr.To(true)}},
+			Annotations: map[string]string{
+				annotationAdmissionDigest: "sha256:" + strings.Repeat("3", 64), annotationControllerImage: identity.image,
+				annotationControllerRev: identity.revision, annotationControllerState: identity.stateVersion,
+			}},
 		Spec: corev1.PodSpec{
 			RuntimeClassName: ptr.To(admissionRuntimeClass), ServiceAccountName: "default",
 			AutomountServiceAccountToken: ptr.To(false), NodeSelector: map[string]string{"kubernetes.io/os": "linux"},
 			Overhead:         corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Mi")},
 			ImagePullSecrets: []corev1.LocalObjectReference{{Name: registryPullSecret}},
-			InitContainers:   []corev1.Container{{Name: "install-runner", Resources: resources}},
-			Containers:       []corev1.Container{{Name: "ptah", Resources: resources}},
+			InitContainers:   []corev1.Container{{Name: "install-runner", Resources: *resources.DeepCopy()}},
+			Containers:       []corev1.Container{{Name: "ptah", Resources: *resources.DeepCopy()}},
 			Tolerations: []corev1.Toleration{
 				{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: seconds},
 				{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: seconds},
@@ -323,10 +325,17 @@ func admittedPod() *corev1.Pod {
 	}
 }
 
+func admissionJob() *batchv1.Job {
+	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: evidenceJobName, Namespace: "test", UID: evidenceJobUID},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "ptah"}}, InitContainers: []corev1.Container{{Name: "install-runner"}},
+		}}}}
+}
+
 func TestPodAdmissionAppliedCarriesEveryAdmissionDefault(t *testing.T) {
 	t.Parallel()
 	identity := controllerIdentity{image: "manager@sha256:" + strings.Repeat("a", 64), revision: "abc", stateVersion: "3"}
-	if !podAdmissionApplied(admittedPod(), identity, registryPullSecret) {
+	if !podAdmissionApplied(admissionJob(), admittedPod(), identity, registryPullSecret) {
 		t.Fatal("an admitted Pod was refused")
 	}
 	for name, edit := range map[string]func(*corev1.Pod){
@@ -352,9 +361,69 @@ func TestPodAdmissionAppliedCarriesEveryAdmissionDefault(t *testing.T) {
 	} {
 		pod := admittedPod()
 		edit(pod)
-		if podAdmissionApplied(pod, identity, registryPullSecret) {
+		if podAdmissionApplied(admissionJob(), pod, identity, registryPullSecret) {
 			t.Errorf("a Pod with %s was accepted", name)
 		}
+	}
+}
+
+func TestPodAdmissionRetainsTheJobsDeclaredResourcesAndUnsetDefaults(t *testing.T) {
+	t.Parallel()
+	identity := controllerIdentity{image: "manager@sha256:" + strings.Repeat("a", 64), revision: "abc", stateVersion: "3"}
+	job, pod := admissionJob(), admittedPod()
+	budget := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("512Mi")},
+	}
+	job.Spec.Template.Spec.Containers[0].Resources = *budget.DeepCopy()
+	pod.Spec.Containers[0].Resources = *budget.DeepCopy()
+	if !podAdmissionApplied(job, pod, identity, registryPullSecret) {
+		t.Fatal("the native-plan budget with defaulted init-container resources was refused")
+	}
+	for name, mutate := range map[string]func(*corev1.Pod){
+		"overwritten declared limit": func(p *corev1.Pod) {
+			p.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory] = resource.MustParse("64Mi")
+		},
+		"overwritten declared request": func(p *corev1.Pod) {
+			p.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory] = resource.MustParse("16Mi")
+		},
+		"extra resource": func(p *corev1.Pod) {
+			p.Spec.Containers[0].Resources.Limits[corev1.ResourceEphemeralStorage] = resource.MustParse("1Gi")
+		},
+		"unset init default": func(p *corev1.Pod) { delete(p.Spec.InitContainers[0].Resources.Requests, corev1.ResourceMemory) },
+		"changed init default": func(p *corev1.Pod) {
+			p.Spec.InitContainers[0].Resources.Limits[corev1.ResourceCPU] = resource.MustParse("200m")
+		},
+		"missing init container": func(p *corev1.Pod) { p.Spec.InitContainers = nil },
+		"extra container":        func(p *corev1.Pod) { p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: "extra"}) },
+		"changed container name": func(p *corev1.Pod) { p.Spec.Containers[0].Name = "other" },
+		"replaced Job":           func(p *corev1.Pod) { p.OwnerReferences[0].UID = "replacement" },
+		"other namespace":        func(p *corev1.Pod) { p.Namespace = "other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := pod.DeepCopy()
+			mutate(changed)
+			if podAdmissionApplied(job, changed, identity, registryPullSecret) {
+				t.Fatal("an unbound budget, missing default or different workload passed the audit")
+			}
+		})
+	}
+	if podAdmissionApplied(admissionJob(), pod, identity, registryPullSecret) ||
+		podAdmissionApplied(nil, pod, identity, registryPullSecret) || podAdmissionApplied(job, nil, identity, registryPullSecret) {
+		t.Fatal("an undeclared budget or missing workload evidence passed")
+	}
+	partial, admitted := admissionJob(), admittedPod()
+	partial.Spec.Template.Spec.Containers[0].Resources.Requests = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("20m")}
+	admitted.Spec.Containers[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("20m")
+	if !podAdmissionApplied(partial, admitted, identity, registryPullSecret) {
+		t.Fatal("a partial declaration did not retain the unset memory and limit defaults")
+	}
+	duplicated := job.DeepCopy()
+	duplicated.Spec.Template.Spec.Containers = append(duplicated.Spec.Template.Spec.Containers, duplicated.Spec.Template.Spec.Containers[0])
+	actual := pod.DeepCopy()
+	actual.Spec.Containers = append(actual.Spec.Containers, actual.Spec.Containers[0])
+	if podAdmissionApplied(duplicated, actual, identity, registryPullSecret) {
+		t.Fatal("duplicate container identities passed")
 	}
 }
 
