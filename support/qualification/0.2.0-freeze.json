@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T07:58:27.165114+00:00",
-  "profileSourceCommit": "8130a0de2e245b36e83ce738b4fa7f7fdcabd0b3",
+  "frozenAt": "2026-09-30T09:10:02.722323+00:00",
+  "profileSourceCommit": "a2c7876ef3089a8f19fbb5367ea45c959ec5a82d",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "575764600caba691b17847ec5e08e242e8d34f7e4ae59272ed470589809132d7",
-    "generatedFromCommit": "8130a0de2e245b36e83ce738b4fa7f7fdcabd0b3",
+    "sha256": "eb4f32cce1b8bfe76887f09278a264f662c48181a6b494a136f932b7a681e2ea",
+    "generatedFromCommit": "a2c7876ef3089a8f19fbb5367ea45c959ec5a82d",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 14,
+  "revision": 15,
   "supersedes": {
-    "freezeCommit": "46c1771993e61734da423873479c7ccaf1b04f46",
-    "sha256": "3eeee1deba6b02b4fbf7bfc8f017808638cbdd08ddc389f85c2bdd2b6b7d6030"
+    "freezeCommit": "52eb4415cc793f2befbbe0ceb6a59544edea96b3",
+    "sha256": "deef2c130f92414e8abf880423a8b684da0d8189044cb946fb34c32695b8e9c3"
   },
-  "revisionReason": "Implement the existing Q-05 native executable-plan size boundary for both schema engines: calibrate actual operator plans, refuse the saved native 8 MiB + 1 byte file with its measured size before storage or Apply, then approve and apply the exact 8 MiB plan in 16 full chunks and verify database defaults and received SQL. Native CLI canonical publication and Apply probes validate the fixtures only, not a Kubernetes cell. Correct the obsolete uncertain-migration immediate-retirement assertion and the running-schema scenario scanner initialization that failed CI run 36675116019 on 2af63c30; preserve that failed evidence. The added scenario changes the generated matrix inventory, not its 30 required cells. All eight frozen source files, operating limits, alert targets and RPO/RTO remain unchanged; final artifact execution and the remaining component/lifecycle proofs are still required."
+  "revisionReason": "Declare separate configured Ptah-version approval controls for both resource families and database engines while retaining the identical pinned executable and image digest. The scenario toggles only the build declaration v prefix, requires an exact new execution epoch and plan, refuses the original admitted approval, audits both diagnostic controls and the full SQL refusal window, and verifies one freshly approved Apply under the new declaration. It measures binding to the configured version string, not compatibility with a different Ptah binary. Correct the managed Apply-Pod annotation that failed all six migration cells in CI run 36687215492 on 52eb4415: close the same Pod collection with an unmanaged database sentinel and require the original workload exact UID and resourceVersion. Preserve the failed evidence. The added scenario changes the inventory, not the 30 required cells. All eight frozen source files, operating limits, alert targets and RPO/RTO remain unchanged; final artifact execution and the remaining runner/state and lifecycle proofs are still required. The same run failed all three data-plane cells because the shared admission audit required LimitRange defaults for the explicitly declared plan-size task budget. Bind container resources to the exact owning Job and require defaults only for unset fields; retain all other admission, ownership, credential and transport checks. Negative controls cover altered budgets, missing defaults and ambiguous container identities. Local checks supply no runtime acceptance."
 }
