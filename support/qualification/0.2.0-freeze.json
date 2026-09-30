@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T11:31:16.986801+00:00",
-  "profileSourceCommit": "941dabd5b0afaa27cd22860100488530236ac3e2",
+  "frozenAt": "2026-09-30T15:38:21.055293+00:00",
+  "profileSourceCommit": "3b32470cedbe03dbde7c06c6a04467e512ba5c19",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "229325c4787d283372056428f858f7144fc67ace149df55888e7675c5572eef0",
-    "generatedFromCommit": "941dabd5b0afaa27cd22860100488530236ac3e2",
+    "sha256": "7c1555add16f7e0822fe81a55d961d9a1a588f78e11b4572302b2ed2f8bfe6e5",
+    "generatedFromCommit": "3b32470cedbe03dbde7c06c6a04467e512ba5c19",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 17,
+  "revision": 18,
   "supersedes": {
-    "freezeCommit": "3d2d24b0ee058e6732702008cc6399a4e3c92442",
-    "sha256": "9006505c70712647093108fc2219a4eb267f533cc69c2a96c2d2a0f95f313436"
+    "freezeCommit": "cfc4943262b1d4ab4020ee3223f6949baeab0840",
+    "sha256": "201b18ffaa1e573aa2c6e45e55f94b31135c2e5325e5ef4e11a59e459fac5aa2"
   },
-  "revisionReason": "Repair the running-Apply executor-change fixtures after exact-head CI run 36694556148 failed all nine migration and data-plane cells. Each migration proof publishes its own pristine seed and full directory, pins both digests, and binds its actual current-generation plan to the expected artifact, resource UID and exact selected checksum sequence. It cannot reuse the shared tag that earlier modified-file refusal rows deliberately changed. PostgreSQL process attribution reads host(client_addr), without the inet text netmask, and still requires one nonzero process and the exact running Pod identity and IP; IPv6 spelling is compared as an address. The original failed CI evidence remains retained. All eight source hashes, the declared scenario inventory, operating limits, alert targets, RPO/RTO and 30 required cells are unchanged. Native PostgreSQL representation checks, local unit/race/tagged compilation and static checks supply no Kubernetes acceptance. The stored-controller-state scenario added in revision 16 also remains unassessed until full execution on the final artifacts. Runner-protocol and lifecycle proofs and the remaining qualification issues stay open."
+  "revisionReason": "Add the unsupported-runner refusal and authorized-recovery scenario for both resource families and both engines. Correct the status-policy denial matcher with native API-server controls, distinguish reused PostgreSQL addresses using Pod lifetimes and server session starts, retain late-session SQL refusals, detect replay despite missing or misleading workload labels, and resolve the exact native platform from an OCI index. Full local source verification, race checks, native PostgreSQL readings and private-registry runner execution passed. These checks do not establish Kubernetes or final-artifact acceptance. CI run 36710792065 remains failed evidence; its nine failing data-plane/migration cells require fresh execution. All eight source hashes, operating limits, alert targets, RPO/RTO, platform coverage and 30 required cells remain unchanged. The scenario inventory adds the runner-refusal row; no qualification requirement is removed. Acceptance stays Not assessed; lifecycle and the remaining qualification issues stay open."
 }
