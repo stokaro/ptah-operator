@@ -119,5 +119,59 @@ class RecoveryStateTest(unittest.TestCase):
                         self.assertFalse(OperatorProbe.is_settled(changed, 'InSync'))
 
 
+class RebuildTest(unittest.TestCase):
+    def test_rebuild_keeps_uncertain_evidence_without_reusing_authority(self):
+        for kind in ('PtahSchema', 'PtahMigration'):
+            with self.subTest(kind=kind):
+                original = {'apiVersion': 'operator.ptah.run/v1alpha1', 'kind': kind,
+                            'metadata': {'name': 'source', 'namespace': 'restore', 'uid': 'old-uid',
+                                         'resourceVersion': '123', 'generation': 4, 'finalizers': ['protect-old-run'],
+                                         'ownerReferences': [{'uid': 'old-owner'}],
+                                         'annotations': {'operator.ptah.run/unresolved-run': 'original-uncertain-record'}},
+                            'spec': {'suspend': False, 'policy': {'apply': 'Always', 'transactionMode': 'file'}},
+                            'status': {'activeOperation': {'id': 'original-run'}}}
+                saved = copy.deepcopy(original)
+                rebuilt = OperatorProbe.rebuild_object(original)
+                self.assertEqual(original, saved)
+                self.assertNotIn('status', rebuilt)
+                self.assertEqual(rebuilt['metadata'], {'name': 'source', 'namespace': 'restore',
+                                 'annotations': {'operator.ptah.run/unresolved-run': 'original-uncertain-record'}})
+                self.assertEqual(rebuilt['spec'], {'suspend': True, 'policy': {'apply': 'OnApproval', 'transactionMode': 'file'}})
+
+    def test_rebuild_restores_secret_bytes_without_old_runtime_identity(self):
+        original = {'apiVersion': 'v1', 'kind': 'Secret',
+                    'metadata': {'name': 'target', 'namespace': 'restore', 'uid': 'old-secret'},
+                    'type': 'Opaque', 'immutable': True, 'data': {'url': 'Zml4dHVyZQ=='}}
+        rebuilt = OperatorProbe.rebuild_object(original)
+        self.assertEqual(rebuilt['data'], original['data'])
+        self.assertEqual(rebuilt['type'], 'Opaque')
+        self.assertTrue(rebuilt['immutable'])
+        self.assertNotIn('uid', rebuilt['metadata'])
+
+    def test_both_original_and_rebuilt_workloads_remain_in_the_watch_proof(self):
+        reading = json.loads((Path(__file__).parent / 'testdata/workload-history.json').read_text())
+        probe = object.__new__(OperatorProbe)
+        probe.family, probe.kind = 'migration', 'PtahMigration'
+        probe.name, probe.namespace = reading['identity']['name'], reading['identity']['namespace']
+        original_uid = reading['identity']['uid']
+        probe.uid = 'rebuilt-uid'
+        probe.resource_uids = {original_uid, probe.uid}
+        jobs, pods = copy.deepcopy(reading['jobs']), copy.deepcopy(reading['pods'])
+        new_job, new_pod = copy.deepcopy(jobs[0]), copy.deepcopy(pods[0])
+        new_job['metadata']['uid'] = 'fresh-job'
+        new_job['metadata']['name'] = 'fresh-job'
+        new_job['metadata']['ownerReferences'][0]['uid'] = probe.uid
+        new_pod['metadata']['uid'] = 'fresh-pod'
+        new_pod['metadata']['ownerReferences'][0].update(uid='fresh-job', name='fresh-job')
+        jobs.append(new_job); pods.append(new_pod)
+        probe.watched_objects = lambda resource, boundary: jobs if resource == 'jobs' else pods
+        self.assertEqual(probe.watched_apply_jobs({'jobs': '', 'pods': ''}),
+                         {reading['jobs'][0]['metadata']['uid'], 'fresh-job'})
+        replacement = copy.deepcopy(pods[0]); replacement['metadata']['uid'] = 'old-job-replacement-pod'
+        pods.append(replacement)
+        with self.assertRaisesRegex(RuntimeError, 'missing or replacement Pod'):
+            probe.watched_apply_jobs({'jobs': '', 'pods': ''})
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -2,6 +2,7 @@
 """Native operator/database-loss pilot; other recovery cells remain required."""
 import argparse
 import base64
+import copy
 import importlib.util
 import json
 import os
@@ -19,9 +20,10 @@ spec.loader.exec_module(db)
 
 
 class OperatorProbe(db.Probe):
-    def __init__(self, engine, family, environment, root):
+    def __init__(self, engine, family, environment, root, loss="database"):
         super().__init__(engine, root)
         self.family = family
+        self.loss = loss
         self.envs = dict(line.split('=', 1) for line in environment.read_text().splitlines() if '=' in line)
         endpoint = self.command('verify the explicit database Docker endpoint', db.DOCKER + ['context', 'inspect', db.DOCKER[-1], '--format', '{{.Endpoints.docker.Host}}']).stdout.decode().strip()
         if self.envs.get('E2E_DOCKER_ENDPOINT') != endpoint:
@@ -34,7 +36,7 @@ class OperatorProbe(db.Probe):
         self.name = 'restore-case'
         self.api = 'operator.ptah.run/v1alpha1'
         self.created_namespace = False
-        self.report.update(scope='Native database-only idle recovery pilot with a real operator; no operator-state loss, in-flight or five-minute lag proof, final-artifact or full-matrix acceptance', family=family,
+        self.report.update(scope='Native idle recovery pilot; operator loss means a namespaced-state rebuild with new UIDs. CRDs and the installed release survive. No in-flight, five-minute lag, final-artifact or full-matrix acceptance', family=family, lossType=loss,
             operatorRevision=self.envs['E2E_CONTROLLER_REVISION'], operatorImage=self.envs['E2E_CONTROLLER_IMAGE'], executorImage=self.envs['E2E_EXECUTOR_IMAGE'],
             procedureSHA256=db.digest(Path(__file__).read_bytes()), databaseProcedureSHA256=db.digest((REPO / 'support/qualification/probes/database_restore.py').read_bytes()))
         self.watches = {}
@@ -250,7 +252,7 @@ class OperatorProbe(db.Probe):
         owned, templates = {}, {}
         for job in jobs:
             meta = job['metadata']
-            owners = [o for o in meta.get('ownerReferences', []) if o.get('uid') == self.uid]
+            owners = [o for o in meta.get('ownerReferences', []) if o.get('uid') in getattr(self, 'resource_uids', {self.uid})]
             if not owners:
                 if meta.get('labels', {}).get('operator.ptah.run/' + self.family) == self.name:
                     raise RuntimeError('a Job names the resource without its exact owner identity')
@@ -295,6 +297,101 @@ class OperatorProbe(db.Probe):
         pod = self.create(self.obj('Pod', name, pod_spec))
         return {'jobs': job['metadata']['uid'], 'pods': pod['metadata']['uid']}
 
+    @staticmethod
+    def rebuild_object(original):
+        # A rebuild uses new API identities. Never rewrite the immutable backup
+        # or restore a stale owner reference, finalizer, status or generation.
+        value = copy.deepcopy(original)
+        value.pop('status', None)
+        value['metadata'] = {k: v for k, v in value['metadata'].items()
+                             if k in ('name', 'namespace', 'labels', 'annotations')}
+        if value['kind'] == 'Service':
+            for key in ('clusterIP', 'clusterIPs', 'healthCheckNodePort'):
+                value['spec'].pop(key, None)
+        if value['kind'] in ('PtahSchema', 'PtahMigration'):
+            value['spec']['suspend'] = True
+            value['spec'].setdefault('policy', {})['apply'] = 'OnApproval'
+        return value
+
+    def preserved_contract(self):
+        crds = self.read('customresourcedefinitions', False)['items']
+        selected = [r for r in crds if r['spec']['group'] == 'operator.ptah.run']
+        self.check('all nine installed operator CRDs are inventoried', len(selected) == 9)
+        result = [{'kind': 'CustomResourceDefinition', 'name': r['metadata']['name'],
+                   'uid': r['metadata']['uid'], 'spec': r['spec']} for r in selected]
+        for kind in ('mutatingwebhookconfigurations', 'validatingwebhookconfigurations'):
+            r = self.read(kind, 'ptah-operator-admission')
+            result.append({'kind': r['kind'], 'name': r['metadata']['name'],
+                           'uid': r['metadata']['uid'], 'webhooks': r['webhooks']})
+        return sorted(result, key=lambda r: (r['kind'], r['name']))
+
+    def namespace_backup(self):
+        dependencies = []
+        for kind, names in (
+                ('secrets', ('restore-target', 'restore-registry', 'restore-pull')),
+                ('configmaps', ('restore-policy',)),
+                ('services', ('restore-registry', 'restore-database')),
+                ('endpointslices', ('restore-registry-endpoint', 'restore-database-endpoint'))):
+            dependencies += [self.read(kind, name) for name in names]
+        plans = self.read(self.kind.lower() + 'plans', False)['items']
+        approvals = self.read(self.kind.lower() + 'approvals', False)['items']
+        chunks = self.read('ptahschemaplanchunks', False)['items'] if self.family == 'schema' else []
+        self.check('namespace backup contains plans and consumed approvals', bool(plans) and bool(approvals))
+        if self.family == 'schema':
+            published = {(ref['name'], ref['uid']) for plan in plans
+                         for ref in plan.get('status', {}).get('publishedChunks', [])}
+            actual = {(r['metadata']['name'], r['metadata']['uid']) for r in chunks}
+            self.check('backup retains every exact published plan chunk', bool(published) and published <= actual)
+        return {'namespace': self.read('namespaces', self.namespace), 'dependencies': dependencies,
+                'plans': plans, 'approvals': approvals, 'chunks': chunks,
+                'jobs': self.read('jobs', False)['items'], 'pods': self.read('pods', False)['items'],
+                'preservedContract': self.preserved_contract()}
+
+    def lose_namespace(self):
+        self.kubectl('destroy the original operator-state namespace',
+                     ['delete', 'namespace', self.namespace, '--wait=true', '--timeout=90s'])
+        self.created_namespace = False
+        gone = self.kubectl('verify original namespace was deleted',
+                            ['get', 'namespace', self.namespace], required=False)
+        self.check('original namespace is absent before restoration',
+                   gone.returncode != 0 and b'NotFound' in gone.stderr and self.namespace.encode() in gone.stderr)
+
+    def restore_namespace(self, checkpoint_path, key):
+        data = self.command('decrypt retained operator-state backup',
+                            ['age', '-d', '-i', str(key), str(checkpoint_path)]).stdout
+        self.check('restored operator backup matches its recorded checksum',
+                   db.digest(data) == self.report['backups']['operator-checkpoint']['plaintextSHA256'])
+        saved = json.loads(data)
+        del data
+        archive = saved['namespaceState']
+        self.kubectl('recreate the lost namespace', ['create', 'namespace', self.namespace])
+        self.created_namespace = True
+        mappings = []
+        for original in archive['dependencies']:
+            restored = self.create(self.rebuild_object(original))
+            mappings.append({'kind': original['kind'], 'name': original['metadata']['name'],
+                             'oldUID': original['metadata']['uid'], 'newUID': restored['metadata']['uid']})
+        restored = self.create(self.rebuild_object(saved['resource']))
+        self.uid = restored['metadata']['uid']
+        self.resource_uids.add(self.uid)
+        mappings.append({'kind': self.kind, 'name': self.name,
+                         'oldUID': saved['resource']['metadata']['uid'], 'newUID': self.uid})
+        ns = self.read('namespaces', self.namespace)
+        mappings.append({'kind': 'Namespace', 'name': self.namespace,
+                         'oldUID': archive['namespace']['metadata']['uid'], 'newUID': ns['metadata']['uid']})
+        self.check('all rebuilt namespace and dependency identities are new',
+                   len(mappings) == 10 and all(r['oldUID'] != r['newUID'] for r in mappings))
+        paused = self.settled('Suspended')
+        self.check('the rebuilt resource starts suspended with explicit approval',
+                   paused['spec']['suspend'] and paused['spec']['policy']['apply'] == 'OnApproval')
+        self.check('installed CRDs and admission identity survived namespace loss',
+                   archive['preservedContract'] == self.preserved_contract())
+        self.report['rebuild'] = {'identityMappings': mappings,
+                                 'preservedContractSHA256': db.digest(json.dumps(archive['preservedContract'], sort_keys=True).encode()),
+                                 'archiveOnly': 'Old plans, chunks, approvals and execution records retain their original identities in the encrypted backup. They are not re-created as authorization for new UIDs.',
+                                 'controlledSpecEdits': {'suspend': True, 'policy.apply': 'OnApproval'}}
+        self.persist()
+
     def inventories(self, container):
         result = self.inspect(container)
         if self.family == 'migration':
@@ -324,6 +421,8 @@ class OperatorProbe(db.Probe):
             source_field = 'desired' if self.family == 'schema' else 'artifact'
             resource = self.create(self.obj(self.kind, self.name, {'target': {'engine': 'PostgreSQL' if self.engine == 'postgresql' else 'MySQL', 'urlFrom': {'name': 'restore-target', 'key': 'url'}, 'coordinationKey': self.prefix}, source_field: self.source_spec(ref), 'policy': {'apply': 'OnApproval', 'transactionMode': 'file' if self.engine == 'postgresql' else 'none'}, 'interval': '1h', 'execution': {'activeDeadlineSeconds': 300, 'connectTimeout': '10s', 'failureRetryInterval': '5s', 'imagePullSecrets': [{'name': 'restore-pull'}]}}, api=self.api))
             self.uid = resource['metadata']['uid']
+            original_uid = self.uid
+            self.resource_uids = {self.uid}
             ready = self.settled('AwaitingApproval')
             old_plan = self.read(self.kind.lower() + 'plans', ready['status']['plan']['name'])
             old_approval = json.loads(self.approve(ready, old_plan, 'restore-original').stdout)
@@ -352,7 +451,9 @@ class OperatorProbe(db.Probe):
             recipient = self.command('read backup recipient', ['age-keygen', '-y', str(key)]).stdout.decode().strip()
             self.report['backupStartedAt'] = db.now()
             checkpoint = {'resource': suspended, 'initialApplied': applied, 'plan': old_plan, 'approval': stored_old_approval, 'jobs': list(original_jobs.values()), 'pods': original_pods, 'targetSecret': target_secret}
-            self.encrypted('operator-checkpoint', json.dumps(checkpoint).encode(), recipient, key, wrong)
+            if self.loss != 'database':
+                checkpoint['namespaceState'] = self.namespace_backup()
+            checkpoint_path = self.encrypted('operator-checkpoint', json.dumps(checkpoint).encode(), recipient, key, wrong)
             if self.engine == 'postgresql':
                 roles = self.command('back up roles', db.DOCKER + ['exec', source, 'pg_dumpall', '-h', '127.0.0.1', '--roles-only']).stdout
                 archive = self.command('back up database including actual history', db.DOCKER + ['exec', source, 'pg_dump', '-h', '127.0.0.1', '-Fc', '-d', 'drill']).stdout
@@ -366,39 +467,57 @@ class OperatorProbe(db.Probe):
             self.sql(source, "INSERT INTO recovery_canary VALUES(3,'after-backup-expected-loss');")
             old_ids = set(self.sql(source, 'SELECT id FROM recovery_canary ORDER BY id;').stdout.decode().splitlines())
             self.check('late write committed before loss', old_ids == {'1', '2', '3'})
+            if self.loss == 'operator':
+                before['rows'] = self.inspect(source)['rows']
             self.report['lossInjectedAt'] = db.now()
             clock = time.monotonic()
-            self.command('destroy original database instance', db.DOCKER + ['rm', '-f', source]); self.containers.remove(source)
-            self.command('destroy original database storage', db.DOCKER + ['volume', 'rm', volume]); self.volumes.remove(volume)
-            restored, _ = self.start('restored', password, False)
-            if self.engine == 'postgresql':
-                empty = self.sql(restored, "SELECT count(*) FROM pg_database WHERE datname='drill'; SELECT count(*) FROM pg_roles WHERE rolname='operator_writer';", database='postgres').stdout.strip()
+            if self.loss != 'database':
+                self.lose_namespace()
+            if self.loss == 'operator':
+                restored = source
             else:
-                empty = self.sql(restored, "SELECT count(*) FROM information_schema.schemata WHERE schema_name='drill'; SELECT count(*) FROM mysql.user WHERE user='operator_writer';", database='').stdout.strip()
-            self.check('replacement database starts without data or writer identity', empty == b'0\n0')
-            for name, path in paths:
-                data = self.command('decrypt retained backup ' + name, ['age', '-d', '-i', str(key), str(path)]).stdout
-                if self.engine == 'postgresql' and name == 'database':
-                    self.command('restore database, owners and history', db.DOCKER + ['exec', '-i', restored, 'pg_restore', '-h', '127.0.0.1', '--exit-on-error', '--create', '-d', 'postgres'], data)
+                self.command('destroy original database instance', db.DOCKER + ['rm', '-f', source]); self.containers.remove(source)
+                self.command('destroy original database storage', db.DOCKER + ['volume', 'rm', volume]); self.volumes.remove(volume)
+                restored, _ = self.start('restored', password, False)
+                if self.engine == 'postgresql':
+                    empty = self.sql(restored, "SELECT count(*) FROM pg_database WHERE datname='drill'; SELECT count(*) FROM pg_roles WHERE rolname='operator_writer';", database='postgres').stdout.strip()
                 else:
-                    self.sql(restored, data.decode(), database='postgres' if self.engine == 'postgresql' else '')
-                del data
+                    empty = self.sql(restored, "SELECT count(*) FROM information_schema.schemata WHERE schema_name='drill'; SELECT count(*) FROM mysql.user WHERE user='operator_writer';", database='').stdout.strip()
+                self.check('replacement database starts without data or writer identity', empty == b'0\n0')
+                for name, path in paths:
+                    data = self.command('decrypt retained backup ' + name, ['age', '-d', '-i', str(key), str(path)]).stdout
+                    if self.engine == 'postgresql' and name == 'database':
+                        self.command('restore database, owners and history', db.DOCKER + ['exec', '-i', restored, 'pg_restore', '-h', '127.0.0.1', '--exit-on-error', '--create', '-d', 'postgres'], data)
+                    else:
+                        self.sql(restored, data.decode(), database='postgres' if self.engine == 'postgresql' else '')
+                    del data
+            if self.loss != 'database':
+                self.restore_namespace(checkpoint_path, key)
             after = self.inventories(restored)
             self.report['inventories'] = {}
             for name in before:
                 self.check('restored ' + name + ' matches the recovery point', bool(before[name]) and before[name] == after[name])
                 self.report['inventories'][name] = {'beforeSHA256': db.digest(before[name]), 'afterSHA256': db.digest(after[name])}
             new_ids = set(self.sql(restored, 'SELECT id FROM recovery_canary ORDER BY id;').stdout.decode().splitlines())
-            self.check('only declared post-backup row was lost', old_ids - new_ids == {'3'} and not (new_ids - old_ids))
-            self.check('restored reader authenticates', self.sql(restored, 'SELECT count(*) FROM recovery_canary;', reader).stdout.strip() == b'2')
+            expected_loss = set() if self.loss == 'operator' else {'3'}
+            self.check('only the declared data loss occurred', old_ids - new_ids == expected_loss and not (new_ids - old_ids))
+            self.check('restored reader authenticates', self.sql(restored, 'SELECT count(*) FROM recovery_canary;', reader).stdout.strip() == str(len(new_ids)).encode())
             denied = self.sql(restored, 'CREATE TABLE forbidden_by_grants(id integer);', reader, required=False)
             self.check('restored reader cannot mutate schema', denied.returncode != 0 and (b'permission denied for schema public' if self.engine == 'postgresql' else b'ERROR 1142') in denied.stderr)
-            self.connect_database(restored, True)
+            if self.loss != 'operator':
+                self.connect_database(restored, True)
             self.patch({'spec': {'suspend': False}})
             recovered = self.settled('InSync')
-            self.check('operator identity survived database loss', recovered['metadata']['uid'] == self.uid)
-            self.check('execution binding survived database loss', recovered['status'].get('executionBinding') == suspended['status'].get('executionBinding') and bool(suspended['status'].get('executionBinding')))
-            self.check('target Secret identity survived database loss', self.read('secrets', 'restore-target')['metadata']['uid'] == target_secret['metadata']['uid'])
+            if self.loss == 'database':
+                self.check('operator identity survived database loss', recovered['metadata']['uid'] == original_uid)
+                self.check('execution binding survived database loss', recovered['status'].get('executionBinding') == suspended['status'].get('executionBinding') and bool(suspended['status'].get('executionBinding')))
+                self.check('target Secret identity survived database loss', self.read('secrets', 'restore-target')['metadata']['uid'] == target_secret['metadata']['uid'])
+            else:
+                self.check('the rebuilt resource has a fresh execution binding',
+                           recovered['metadata']['uid'] != original_uid and bool(recovered['status'].get('executionBinding')) and
+                           recovered['status']['executionBinding']['epoch'] != suspended['status']['executionBinding']['epoch'])
+                self.check('the target Secret was restored with a new identity',
+                           self.read('secrets', 'restore-target')['metadata']['uid'] != target_secret['metadata']['uid'])
             self.check('old approval did not replay after database restoration', self.watched_apply_jobs(self.barrier('restored-watch-boundary')) == set(original_jobs))
             fresh_ref = self.publish(2)
             self.patch({'spec': {source_field: self.source_spec(fresh_ref)}})
@@ -407,7 +526,15 @@ class OperatorProbe(db.Probe):
             self.check('recovery change has a new exact plan', fresh_plan['metadata']['uid'] != old_plan['metadata']['uid'])
             denied = self.approve(ready, old_plan, 'restore-old-replay', required=False)
             expected = b"referenced plan is no longer current for the schema" if self.family == 'schema' else b"referenced plan is no longer the migration's current plan"
-            self.check('admission rejects an old plan approval', denied.returncode != 0 and expected in denied.stderr)
+            if self.loss == 'database':
+                self.check('admission rejects an old plan approval', denied.returncode != 0 and expected in denied.stderr)
+            else:
+                expected = b'read referenced plan:' if self.family == 'schema' else b'read referenced migration plan:'
+                self.check('admission refuses the original backup plan approval',
+                           denied.returncode != 0 and expected in denied.stderr and b'not found' in denied.stderr and old_plan['metadata']['name'].encode() in denied.stderr)
+                denied_uid = self.approve(resource, fresh_plan, 'restore-old-resource', required=False)
+                self.check('admission refuses the old resource UID against the fresh plan',
+                           denied_uid.returncode != 0 and ('approval ' + self.family + ' reference does not match the plan').encode() in denied_uid.stderr)
             self.check('no Apply before fresh authorization', self.watched_apply_jobs(self.barrier('fresh-approval-watch-boundary')) == set(original_jobs))
             fresh_approval = json.loads(self.approve(ready, fresh_plan, 'restore-fresh').stdout)
             final = self.settled('InSync')
@@ -418,9 +545,15 @@ class OperatorProbe(db.Probe):
             old_finished = max(db.dt.datetime.fromisoformat(s['state']['terminated']['finishedAt'].replace('Z', '+00:00')) for p in original_pods for s in p['status']['containerStatuses'] + p['status'].get('initContainerStatuses', []))
             new_created = min(db.dt.datetime.fromisoformat(current_apply_jobs[u]['metadata']['creationTimestamp'].replace('Z', '+00:00')) for u in new_apply_uids)
             self.check('replacement Apply starts after original execution ended', new_created >= old_finished)
-            retained = self.read(self.kind.lower() + 'approvals', 'restore-original')
-            self.check('original approval identity and stamped spec are unchanged', retained['metadata']['uid'] == stored_old_approval['metadata']['uid'] and retained['spec'] == stored_old_approval['spec'])
-            self.check('approved change reached the restored database', self.sql(restored, 'SELECT count(*) FROM recovery_canary WHERE recovered=1;').stdout.strip() == b'2')
+            if self.loss == 'database':
+                retained = self.read(self.kind.lower() + 'approvals', 'restore-original')
+                self.check('original approval identity and stamped spec are unchanged', retained['metadata']['uid'] == stored_old_approval['metadata']['uid'] and retained['spec'] == stored_old_approval['spec'])
+            else:
+                absent = self.kubectl('confirm original authorization was not recreated',
+                                      ['get', self.kind.lower() + 'approvals', 'restore-original'], required=False)
+                self.check('the rebuilt namespace contains no recreated old approval',
+                           absent.returncode != 0 and b'NotFound' in absent.stderr and b'restore-original' in absent.stderr)
+            self.check('approved change reached the restored database', self.sql(restored, 'SELECT count(*) FROM recovery_canary WHERE recovered=1;').stdout.strip() == str(len(new_ids)).encode())
             final_jobs = self.watched_apply_jobs(self.barrier('final-watch-boundary'))
             self.check('exactly one fresh Apply followed restoration', len(final_jobs - set(original_jobs)) == 1 and set(original_jobs) <= final_jobs)
             if self.family == 'migration':
@@ -428,10 +561,11 @@ class OperatorProbe(db.Probe):
             recovery_seconds = round(time.monotonic()-clock, 3)
             rpo_seconds = (db.dt.datetime.fromisoformat(self.report['lossInjectedAt']) - db.dt.datetime.fromisoformat(self.report['backupStartedAt'])).total_seconds()
             self.check('database recovery point is within five minutes of loss', 0 <= rpo_seconds <= 300)
-            self.check('verified database-only recovery meets the thirty-minute bound', 0 < recovery_seconds <= 1800)
-            self.report.update(status='PASS', expectedLostRowIDs=[3], observedLostRowIDs=sorted(int(v) for v in old_ids - new_ids), serviceRestoredAt=db.now(), recoverySeconds=recovery_seconds,
+            rto_bound = 900 if self.loss == 'operator' else 1800
+            self.check('verified recovery meets the declared loss-type bound', 0 < recovery_seconds <= rto_bound)
+            self.report.update(status='PASS', expectedLostRowIDs=sorted(int(v) for v in expected_loss), observedLostRowIDs=sorted(int(v) for v in old_ids - new_ids), serviceRestoredAt=db.now(), recoverySeconds=recovery_seconds,
                 databaseRPOUpperBoundSeconds=rpo_seconds,
-                identity={'resourceUID': self.uid, 'oldPlanUID': old_plan['metadata']['uid'], 'oldApprovalUID': old_approval['metadata']['uid'], 'freshPlanUID': fresh_plan['metadata']['uid'], 'freshApprovalUID': fresh_approval['metadata']['uid'], 'originalApplyJobUIDs': sorted(original_jobs), 'freshApplyJobUIDs': sorted(final_jobs - set(original_jobs)), 'originalApplyPodUIDs': [p['metadata']['uid'] for p in original_pods], 'freshApplyPodUIDs': [p['metadata']['uid'] for p in new_pods]})
+                identity={'resourceUID': self.uid, 'originalResourceUID': original_uid, 'oldPlanUID': old_plan['metadata']['uid'], 'oldApprovalUID': old_approval['metadata']['uid'], 'freshPlanUID': fresh_plan['metadata']['uid'], 'freshApprovalUID': fresh_approval['metadata']['uid'], 'originalApplyJobUIDs': sorted(original_jobs), 'freshApplyJobUIDs': sorted(final_jobs - set(original_jobs)), 'originalApplyPodUIDs': [p['metadata']['uid'] for p in original_pods], 'freshApplyPodUIDs': [p['metadata']['uid'] for p in new_pods]})
             self.persist()
         except BaseException as exc:
             self.report.update(status='FAIL', failure=type(exc).__name__ + ': ' + str(exc)); self.persist(); raise
@@ -469,7 +603,8 @@ if __name__ == '__main__':
     parser.add_argument('family', choices=['schema', 'migration'])
     parser.add_argument('environment', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--loss', choices=['database', 'operator', 'combined'], default='database')
     args = parser.parse_args()
-    probe = OperatorProbe(args.engine, args.family, args.environment, args.output)
+    probe = OperatorProbe(args.engine, args.family, args.environment, args.output, args.loss)
     probe.run()
     print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'status', 'recoverySeconds', 'cleanupSucceeded')}))
