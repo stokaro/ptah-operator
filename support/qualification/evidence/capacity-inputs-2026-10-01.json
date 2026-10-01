@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-01T14:17:55.384809+00:00",
+  "scope": "Native capacity input verification; no operator or full capacity acceptance",
+  "acceptance": "Not assessed",
+  "results": [
+    {
+      "engine": "postgresql",
+      "verifiedSections": [
+        "schemas"
+      ],
+      "sectionAudit": "PASS",
+      "runStatus": "FAIL",
+      "attempt": "postgresql-recalibrated",
+      "reportSHA256": "85a4a3a008744244fed9d9873c1b3b34ebe6a5101a35606d44638a70d96aab14",
+      "schemas": [
+        {
+          "band": "small",
+          "rounds": 10,
+          "minBytes": 3579,
+          "maxBytes": 3948
+        },
+        {
+          "band": "medium",
+          "rounds": 10,
+          "minBytes": 253947,
+          "maxBytes": 261831
+        },
+        {
+          "band": "large",
+          "rounds": 10,
+          "minBytes": 1015803,
+          "maxBytes": 1047357
+        }
+      ],
+      "migrationTransitions": 0,
+      "completeRowInventoryReads": 33,
+      "rowsPerInventory": 10000,
+      "binarySHA256": "18f896b324479ae538f5008a8750d6558b3c796e53b3b8cedad98df8488aec95",
+      "containerID": "109bb39252e056dad7542be53550c11a88fb3b69c3c08831083422fed7921632",
+      "imageID": "sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "procedures": {
+        "capacity_fixture_verify.py": "811e29d9767e02f40bdfd046b4a30c1f7e928d2c5252206668977640e2cfb697",
+        "capacity_fixtures.py": "16061f992bd9b4807dab88fa7e38ed020bf5c10b7762651c912194ae55772b3a",
+        "capacity_bootstrap.py": "2f650e1346f100316d21f8317f5e36c1c2afba2d97cf5aafafb9646d054a572a",
+        "database_restore.py": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82"
+      },
+      "cleanupComplete": true
+    },
+    {
+      "engine": "postgresql",
+      "verifiedSections": [
+        "migrations"
+      ],
+      "sectionAudit": "PASS",
+      "runStatus": "PASS",
+      "attempt": "postgresql-migrations",
+      "reportSHA256": "9fc95fbda9ae5ac0242ff8f998fdca599aed34e7ac7937b5b66b764776de2354",
+      "schemas": [],
+      "migrationTransitions": 21,
+      "completeRowInventoryReads": 42,
+      "rowsPerInventory": 10000,
+      "binarySHA256": "18f896b324479ae538f5008a8750d6558b3c796e53b3b8cedad98df8488aec95",
+      "containerID": "a1260f5dbcd2c7a39108bd1884c315f3536d45f7e82131fde507ac8f95be45f1",
+      "imageID": "sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+      "procedures": {
+        "capacity_fixture_verify.py": "38fc188a534ea1a36c233ae2db50ba0b17345f73d182a1c12262e67a0acfc2c9",
+        "capacity_fixtures.py": "16061f992bd9b4807dab88fa7e38ed020bf5c10b7762651c912194ae55772b3a",
+        "capacity_bootstrap.py": "2f650e1346f100316d21f8317f5e36c1c2afba2d97cf5aafafb9646d054a572a",
+        "database_restore.py": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82"
+      },
+      "cleanupComplete": true
+    },
+    {
+      "engine": "mysql",
+      "verifiedSections": [
+        "schemas",
+        "migrations"
+      ],
+      "sectionAudit": "PASS",
+      "runStatus": "PASS",
+      "attempt": "mysql",
+      "reportSHA256": "158d1982df81df8836e9feb5057626c53a8cd7cd5ed1327a4c9fdcea59ddca22",
+      "schemas": [
+        {
+          "band": "small",
+          "rounds": 10,
+          "minBytes": 3584,
+          "maxBytes": 3944
+        },
+        {
+          "band": "medium",
+          "rounds": 10,
+          "minBytes": 253946,
+          "maxBytes": 261824
+        },
+        {
+          "band": "large",
+          "rounds": 10,
+          "minBytes": 1015802,
+          "maxBytes": 1047356
+        }
+      ],
+      "migrationTransitions": 21,
+      "completeRowInventoryReads": 75,
+      "rowsPerInventory": 10000,
+      "binarySHA256": "18f896b324479ae538f5008a8750d6558b3c796e53b3b8cedad98df8488aec95",
+      "containerID": "caebb0c19bd04036a2ca7e8725292eaa86d12adb2f47771a6693508619c00b01",
+      "imageID": "sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+      "procedures": {
+        "capacity_fixture_verify.py": "38fc188a534ea1a36c233ae2db50ba0b17345f73d182a1c12262e67a0acfc2c9",
+        "capacity_fixtures.py": "16061f992bd9b4807dab88fa7e38ed020bf5c10b7762651c912194ae55772b3a",
+        "capacity_bootstrap.py": "2f650e1346f100316d21f8317f5e36c1c2afba2d97cf5aafafb9646d054a572a",
+        "database_restore.py": "b228ad800cb6a96e29dd996fd6058bf144f8d64d7121f3b0af04c313c5dcbc82"
+      },
+      "cleanupComplete": true
+    }
+  ],
+  "source": {
+    "operatorBaseCommit": "39e039f1efded4bf8e536f037e5a4666cc07b667",
+    "proceduresRanFromUncommittedWorktree": true,
+    "binarySHA256": "18f896b324479ae538f5008a8750d6558b3c796e53b3b8cedad98df8488aec95",
+    "ptahCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a"
+  },
+  "environment": {
+    "architecture": "x86_64",
+    "os": "linux",
+    "cpus": 8,
+    "memoryBytes": 15979683840,
+    "dockerVersion": "29.7.2"
+  },
+  "unitValidation": {
+    "command": "make test-qualification-probes",
+    "exitCode": 0,
+    "tests": 41,
+    "seconds": 4.201,
+    "skipped": 0,
+    "result": "OK"
+  },
+  "custody": {
+    "bundle": "ptah-capacity-fixture-native-a89ooe1k",
+    "manifestSHA256": "1da926dc50df616450c4abb91ff4edd93a3108bb98af6b67f5acb217f7e3c36c",
+    "files": 4408,
+    "durableDownload": null
+  },
+  "failedAttempts": [
+    {
+      "attempt": "postgresql",
+      "status": "FAIL",
+      "error": "small-round-01: actual native plan bytes 5028 are outside [3072, 4096] or contain no SQL",
+      "reportSHA256": "e2a9ca4d2457c600978bf52941171ad79e5c7745bf59e6e9e312fe4f37171928",
+      "cleanupComplete": true
+    },
+    {
+      "attempt": "postgresql-recalibrated",
+      "status": "FAIL",
+      "error": "hash migration directory failed; private diagnostics: 0251",
+      "reportSHA256": "85a4a3a008744244fed9d9873c1b3b34ebe6a5101a35606d44638a70d96aab14",
+      "cleanupComplete": true
+    }
+  ],
+  "limitations": [
+    "Input verification only; no operator was run by these probes.",
+    "PostgreSQL schema verification completed in an attempt that then failed on the migration hash CLI flag. A focused migration rerun passed; retained procedure comparison confirms the schema path was unchanged.",
+    "This does not establish the fleet, soak, retention, fault or Kubernetes/architecture matrix requirements of #580.",
+    "Raw private evidence remains local; durable custody for #584 is pending."
+  ]
+}
