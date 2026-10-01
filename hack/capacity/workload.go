@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -33,7 +34,8 @@ type workload struct {
 	// artifact at once.
 	ChangeBatch int `json:"changeBatch"`
 	// Outage is how long operation Pods cannot reach the registry.
-	Outage duration `json:"outage"`
+	Outage duration      `json:"outage"`
+	Soak   *soakWorkload `json:"soak,omitempty"`
 }
 
 // duration reads a Go duration string from JSON.
@@ -64,6 +66,9 @@ func loadWorkload(path string) (workload, error) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&w); err != nil {
 		return workload{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return workload{}, fmt.Errorf("workload has trailing data")
 	}
 	w.Engine = w.engine()
 	return w, w.validate()
@@ -100,6 +105,9 @@ func (w workload) validate() error {
 	}
 	if w.Outage.Duration < 0 {
 		problems = append(problems, errors.New("outage cannot be negative"))
+	}
+	if w.Soak != nil {
+		problems = append(problems, w.Soak.validate(w))
 	}
 	return errors.Join(problems...)
 }

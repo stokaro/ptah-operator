@@ -1,0 +1,19 @@
+{
+  "name": "capacity-soak",
+  "description": "Ninety-minute populated-input soak with nine update and churn rounds. Retention maintenance, backlog, unrelated objects and overload remain separate qualification obligations.",
+  "engine": "PostgreSQL",
+  "schemas": 10,
+  "migrations": 10,
+  "interval": "2m",
+  "settle": "5m",
+  "steadyState": "90m",
+  "sampleEvery": "5s",
+  "changeBatch": 5,
+  "outage": "3m",
+  "soak": {
+    "rounds": 9,
+    "cadence": "10m",
+    "churnPerFamily": 2,
+    "minimumCycles": 30
+  }
+}

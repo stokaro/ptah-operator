@@ -51,19 +51,21 @@ func main() {
 
 func run() error {
 	var (
-		kubeconfig   = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
-		catalogPath  = flag.String("inputs", "", "populated per-slot input catalog prepared by the capacity harness")
-		workloadPath = flag.String("workload", "support/capacity/workload.json", "the workload to run")
-		outDir       = flag.String("out", "", "directory to write report.json and summary.md into")
-		hostPath     = flag.String("host-info", "", "JSON capacity reading from the Docker daemon hosting the lab")
-		apiCount     = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
-		managerCount = flag.Int("expected-managers", 2, "required number of independently sampled manager processes")
-		metricsPort  = flag.Int("metrics-port", 8080, "the manager's metrics port")
-		schemaV1     = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
-		schemaV2     = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
-		migrationV1  = flag.String("migration-v1", "", "the first migration artifact")
-		migrationV2  = flag.String("migration-v2", "", "the migration artifact the change batch moves to")
-		in           inputs
+		kubeconfig      = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
+		checkpointPath  = flag.String("checkpoint-probe", "", "Python database verifier for soak checkpoints")
+		checkpointState = flag.String("checkpoint-state", "", "owned capacity database state for soak checkpoints")
+		catalogPath     = flag.String("inputs", "", "populated per-slot input catalog prepared by the capacity harness")
+		workloadPath    = flag.String("workload", "support/capacity/workload.json", "the workload to run")
+		outDir          = flag.String("out", "", "directory to write report.json and summary.md into")
+		hostPath        = flag.String("host-info", "", "JSON capacity reading from the Docker daemon hosting the lab")
+		apiCount        = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
+		managerCount    = flag.Int("expected-managers", 2, "required number of independently sampled manager processes")
+		metricsPort     = flag.Int("metrics-port", 8080, "the manager's metrics port")
+		schemaV1        = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
+		schemaV2        = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
+		migrationV1     = flag.String("migration-v1", "", "the first migration artifact")
+		migrationV2     = flag.String("migration-v2", "", "the migration artifact the change batch moves to")
+		in              inputs
 	)
 	flag.StringVar(&in.namespace, "namespace", "", "comma-separated workload namespaces; the first also holds the restart approval fixture")
 	flag.StringVar(&in.operatorNamespace, "operator-namespace", "", "the namespace the manager runs in")
@@ -102,6 +104,13 @@ func run() error {
 	}
 	if err := requireInputs(in, load, *outDir); err != nil {
 		return err
+	}
+	var checkpoint func(context.Context, int, string) (databaseCheckpoint, error)
+	if load.Soak != nil {
+		checkpoint, err = checkpointProbe(*checkpointPath, *checkpointState, filepath.Dir(*catalogPath), in.catalog)
+		if err != nil {
+			return err
+		}
 	}
 	host, err := readHostCapacity(*hostPath)
 	if err != nil {
@@ -200,7 +209,7 @@ func run() error {
 	done := make(chan error, 1)
 	go func() { done <- watch.run(sampling, finishSampling) }()
 
-	steps := &scenarios{restartJobs: func() []jobRecord {
+	steps := &scenarios{checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
 		_, jobs := watch.snapshot()
 		return jobs
 	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
@@ -213,6 +222,11 @@ func run() error {
 		<-recorder.done
 	}
 	cycleProof := collectCycleEvidence(recorders)
+	if load.Soak != nil && steps.soakWindow != nil {
+		scenarioErr = errors.Join(scenarioErr, steps.validateSoakCycles(cycleProof))
+	}
+	environment["databaseCheckpoints"] = steps.databaseCheckpoints
+	environment["churn"] = steps.churnProofs
 	for _, history := range cycleProof.Histories {
 		if history.Error != "" {
 			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))
@@ -246,6 +260,20 @@ func run() error {
 // that fails ends the run, and the report still carries every window measured
 // up to it: a workload that did not converge is itself a finding.
 func runScenarios(ctx context.Context, steps *scenarios) error {
+	if steps.load.Soak != nil {
+		for _, step := range []struct {
+			name string
+			run  func(context.Context) error
+		}{
+			{"cold start", steps.create}, {"soak", steps.soak}, {"approval gate", steps.prepareApproval}, {"restart burst", steps.restart}, {"registry outage", steps.outage},
+		} {
+			slog.Info("scenario", "name", step.name)
+			if err := step.run(ctx); err != nil {
+				return fmt.Errorf("%s: %w", step.name, err)
+			}
+		}
+		return nil
+	}
 	for _, step := range []struct {
 		name string
 		run  func(context.Context) error
@@ -267,6 +295,9 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 
 func requireInputs(in inputs, load workload, outDir string) error {
 	var missing []string
+	if load.Soak != nil && in.catalog == nil {
+		missing = append(missing, "-inputs for soak")
+	}
 	for name, value := range map[string]string{
 		"-namespace": in.namespace, "-operator-namespace": in.operatorNamespace, "-out": outDir,
 	} {

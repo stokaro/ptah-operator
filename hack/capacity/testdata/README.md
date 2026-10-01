@@ -63,3 +63,10 @@ Job identity and successful terminal result, all twenty resources have accepted
 fresh convergence within 177.950996257 seconds. The regression keeps the
 180-second deadline and rejects missing, mismatched, duplicate, old, failed,
 uncompleted and chronologically impossible Job evidence.
+
+`churn-plan-export.json` retains a 3,582-byte applied MySQL schema plan, its
+committed chunk and its Apply projection from the native run on `c5e42956`.
+The source manifest identity is recorded in the fixture. The export regression
+reconstructs the captured chunk bytes through the production plan store,
+checks the projection and reimports the emitted archive. Replacement chunk
+UIDs, corrupt payloads/projections and missing pins must stop before deletion.

@@ -42,6 +42,12 @@ type inputs struct {
 }
 
 type scenarios struct {
+	checkpoint          func(context.Context, int, string) (databaseCheckpoint, error)
+	databaseCheckpoints []databaseCheckpoint
+	churnProofs         []churnProof
+	soakWindow          *window
+	evidenceDir         string
+
 	restartJobs func() []jobRecord
 	inputReader client.Reader
 	inputPlans  []inputPlanProof
@@ -133,18 +139,32 @@ func (s *scenarios) migrationObject(name string, database int, apply string, lab
 // first time, which is the cold start every installation goes through once.
 func (s *scenarios) create(ctx context.Context) error {
 	start := time.Now().UTC()
+	var targets []batchTarget
 	for index := range s.load.Schemas {
-		if _, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespaceFor(index)).Create(ctx, s.schemaObject(index), metav1.CreateOptions{}); err != nil {
+		object, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespaceFor(index)).Create(ctx, s.schemaObject(index), metav1.CreateOptions{})
+		if err != nil {
 			return fmt.Errorf("create %s: %w", s.schemaName(index), err)
 		}
+		targets = append(targets, batchTarget{family: "schema", resource: schemaResource, namespace: object.GetNamespace(), name: object.GetName(), uid: object.GetUID(), generation: object.GetGeneration(), reference: s.schemaReference(index, 0), applied: true})
 	}
 	for index := range s.load.Migrations {
-		object := s.migrationObject(s.migrationName(index), s.load.Schemas+index, "Always", true)
-		if _, err := s.dynamic.Resource(migrationResource).Namespace(object.GetNamespace()).Create(ctx, object, metav1.CreateOptions{}); err != nil {
+		desired := s.migrationObject(s.migrationName(index), s.load.Schemas+index, "Always", true)
+		object, err := s.dynamic.Resource(migrationResource).Namespace(desired.GetNamespace()).Create(ctx, desired, metav1.CreateOptions{})
+		if err != nil {
 			return fmt.Errorf("create %s: %w", s.migrationName(index), err)
 		}
+		targets = append(targets, batchTarget{family: "migration", resource: migrationResource, namespace: object.GetNamespace(), name: object.GetName(), uid: object.GetUID(), generation: object.GetGeneration(), reference: s.migrationReference(index, 0)})
 	}
-	converged, err := s.waitConverged(ctx, start, nil)
+	var converged string
+	var err error
+	if s.load.Soak != nil {
+		err = s.waitBatch(ctx, targets, start)
+		if err == nil {
+			converged = time.Since(start).String()
+		}
+	} else {
+		converged, err = s.waitConverged(ctx, start, nil)
+	}
 	s.mark("cold start", start, map[string]string{"converged": converged})
 	if err != nil {
 		return err
@@ -156,7 +176,10 @@ func (s *scenarios) create(ctx context.Context) error {
 // `after` when that is set, and satisfies `extra` for the ones it names. It
 // returns how long that took, or the budget if it never did.
 func (s *scenarios) waitConverged(ctx context.Context, after time.Time, extra func(unstructured.Unstructured) bool) (string, error) {
-	start := time.Now()
+	start := after
+	if start.IsZero() {
+		start = time.Now()
+	}
 	deadline := start.Add(s.load.Settle.Duration)
 	for time.Now().Before(deadline) {
 		done, err := s.allConverged(ctx, after, extra)
