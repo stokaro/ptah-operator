@@ -63,6 +63,8 @@ type managerReading struct {
 
 // jobRecord follows one operation Job from creation to its end.
 type jobRecord struct {
+	Namespace string     `json:"namespace"`
+	UID       string     `json:"uid"`
 	Name      string     `json:"name"`
 	Operation string     `json:"operation"`
 	Family    string     `json:"family"`
@@ -79,6 +81,7 @@ type sampler struct {
 	clientset          kubernetes.Interface
 	dynamic            dynamic.Interface
 	namespace          string
+	namespaces         []string
 	operatorNamespace  string
 	selector           string
 	managerSelector    string
@@ -135,7 +138,16 @@ func (s *sampler) take(ctx context.Context) {
 }
 
 func (s *sampler) readPods(ctx context.Context, into *sample) error {
-	pods, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{
+	for _, namespace := range workloadNamespaces(s.namespace, s.namespaces) {
+		if err := s.readPodsNamespace(ctx, into, namespace); err != nil {
+			return fmt.Errorf("namespace %s: %w", namespace, err)
+		}
+	}
+	return nil
+}
+
+func (s *sampler) readPodsNamespace(ctx context.Context, into *sample, namespace string) error {
+	pods, err := s.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/managed-by=ptah-operator",
 	})
 	if err != nil {
@@ -155,6 +167,15 @@ func (s *sampler) readPods(ctx context.Context, into *sample) error {
 // readResources measures how stale each resource's last reading is, against
 // its own timestamps rather than against when this loop looked.
 func (s *sampler) readResources(ctx context.Context, now time.Time, into *sample) error {
+	for _, namespace := range workloadNamespaces(s.namespace, s.namespaces) {
+		if err := s.readResourcesNamespace(ctx, now, into, namespace); err != nil {
+			return fmt.Errorf("namespace %s: %w", namespace, err)
+		}
+	}
+	return nil
+}
+
+func (s *sampler) readResourcesNamespace(ctx context.Context, now time.Time, into *sample, namespace string) error {
 	for _, family := range []struct {
 		resource  schema.GroupVersionResource
 		observed  []string
@@ -163,7 +184,7 @@ func (s *sampler) readResources(ctx context.Context, now time.Time, into *sample
 		{schemaResource, []string{"status", "target", "lastObservedAt"}, "InSync"},
 		{migrationResource, []string{"status", "history", "observedAt"}, "InSync"},
 	} {
-		list, err := s.dynamic.Resource(family.resource).Namespace(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: s.selector})
+		list, err := s.dynamic.Resource(family.resource).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: s.selector})
 		if err != nil {
 			return err
 		}
@@ -193,18 +214,27 @@ func timestampAt(object map[string]any, path ...string) (time.Time, bool) {
 }
 
 func (s *sampler) readRetained(ctx context.Context, into *sample) error {
+	for _, namespace := range workloadNamespaces(s.namespace, s.namespaces) {
+		if err := s.readRetainedNamespace(ctx, into, namespace); err != nil {
+			return fmt.Errorf("namespace %s: %w", namespace, err)
+		}
+	}
+	return nil
+}
+
+func (s *sampler) readRetainedNamespace(ctx context.Context, into *sample, namespace string) error {
 	for _, resource := range []schema.GroupVersionResource{schemaPlanResource, migrationPlanResource} {
-		plans, err := s.dynamic.Resource(resource).Namespace(s.namespace).List(ctx, metav1.ListOptions{})
+		plans, err := s.dynamic.Resource(resource).Namespace(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
 		into.Plans += len(plans.Items)
 	}
-	chunks, err := s.dynamic.Resource(planChunkResource).Namespace(s.namespace).List(ctx, metav1.ListOptions{})
+	chunks, err := s.dynamic.Resource(planChunkResource).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
-	into.Chunks = len(chunks.Items)
+	into.Chunks += len(chunks.Items)
 	for _, chunk := range chunks.Items {
 		// The API carries the bytes base64-encoded, which is what the store
 		// costs in etcd; the plan bytes are three quarters of it.
@@ -327,7 +357,16 @@ func hasSuffixDomain(name, domain string) bool {
 }
 
 func (s *sampler) readJobs(ctx context.Context) error {
-	jobs, err := s.clientset.BatchV1().Jobs(s.namespace).List(ctx, metav1.ListOptions{
+	for _, namespace := range workloadNamespaces(s.namespace, s.namespaces) {
+		if err := s.readJobsNamespace(ctx, namespace); err != nil {
+			return fmt.Errorf("namespace %s: %w", namespace, err)
+		}
+	}
+	return nil
+}
+
+func (s *sampler) readJobsNamespace(ctx context.Context, namespace string) error {
+	jobs, err := s.clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/managed-by=ptah-operator",
 	})
 	if err != nil {
@@ -341,6 +380,8 @@ func (s *sampler) readJobs(ctx context.Context) error {
 		if !ok {
 			record = &jobRecord{
 				Name:      job.Name,
+				Namespace: job.Namespace,
+				UID:       string(job.UID),
 				Operation: job.Labels["operator.ptah.run/operation"],
 				Created:   job.CreationTimestamp.UTC(),
 			}

@@ -111,13 +111,33 @@ every resource a database of its own, so no two share a realm or an advisory
 lock, and walks the workload through a cold start, a steady state, a restart of
 every manager at once, a batch of changes and a registry outage.
 
-The outage must produce a failed Resolve in each loaded resource family.
+The Go collector accepts `-namespace work-a,work-b` when both namespaces have
+been prepared. It distributes each resource family round-robin, so ten schemas
+and ten migrations produce five of each in each namespace. Each namespace
+needs the declared registry credentials, verification policies, image-pull
+configuration and the database Secrets for its assigned resources. Resource
+index `i` goes to namespace `i % namespaceCount` within each family; database
+Secret indices remain global, with migrations following schemas. The extra
+restart-approval fixture stays in the first namespace. The lab shell wrapper
+still prepares one namespace and does not establish the full two-namespace
+qualification profile.
+
+Samples aggregate workload reads across every declared namespace and mark the
+source incomplete if any read fails. Jobs retain their namespace and UID,
+cycle watches run separately for each namespace and family, and artifact
+updates address the resource's declared namespace. A right resource count in
+the wrong namespace does not satisfy convergence.
+
+The outage must produce a failed Resolve in each loaded resource family in
+each occupied namespace.
 The report retains each failure's Pod UID and runner frame digest. Only a Pod
 created after the fault, with a matching operation ID and a read-only
 `child_exit` result, counts. A NetworkPolicy that blocks nothing fails this
 check. Removing the policy starts the recovery clock; every workload resource
-must then converge with a fresh database observation. The policy is also
-removed if measurement fails, with its UID checked before deletion.
+must then converge with a fresh database observation. Each created policy is also
+removed if measurement fails, with its UID checked before deletion. A failure
+in the second namespace still restores the first; an existing policy that
+prevented creation is never removed by that cleanup.
 
 Throughout, it reads the cluster rather than estimating it:
 

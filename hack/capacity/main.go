@@ -59,7 +59,7 @@ func run() error {
 		migrationV2  = flag.String("migration-v2", "", "the migration artifact the change batch moves to")
 		in           inputs
 	)
-	flag.StringVar(&in.namespace, "namespace", "", "the namespace the workload runs in")
+	flag.StringVar(&in.namespace, "namespace", "", "comma-separated workload namespaces; the first also holds the restart approval fixture")
 	flag.StringVar(&in.operatorNamespace, "operator-namespace", "", "the namespace the manager runs in")
 	flag.StringVar(&in.managerSelector, "manager-selector", "app.kubernetes.io/component=controller", "label selector for the manager Pods")
 	flag.StringVar(&in.registrySecret, "registry-secret", "demo-registry", "Secret holding the registry credentials")
@@ -74,6 +74,12 @@ func run() error {
 
 	in.schemaRefs = [2]string{*schemaV1, *schemaV2}
 	in.migrationRefs = [2]string{*migrationV1, *migrationV2}
+	var err error
+	in.namespaces, err = parseNamespaces(in.namespace)
+	if err != nil {
+		return err
+	}
+	in.namespace = in.namespaces[0]
 	load, err := loadWorkload(*workloadPath)
 	if err != nil {
 		return err
@@ -110,7 +116,7 @@ func run() error {
 			return scrapeAPIPod(ctx, config, clientset, pod)
 		},
 		clientset: clientset, dynamic: dynamicClient,
-		namespace: in.namespace, operatorNamespace: in.operatorNamespace,
+		namespace: in.namespace, namespaces: in.namespaces, operatorNamespace: in.operatorNamespace,
 		selector: capacityLabel + "=" + load.Name, managerSelector: in.managerSelector,
 		metricsPort: *metricsPort, every: load.SampleEvery.Duration,
 		jobs: map[string]*jobRecord{},
@@ -118,22 +124,24 @@ func run() error {
 	workCtx, cancelWork := context.WithCancel(ctx)
 	defer cancelWork()
 	var recorders []*cycleRecorder
-	for _, family := range []struct {
-		name   string
-		client dynamic.ResourceInterface
-	}{
-		{"schema", dynamicClient.Resource(schemaResource).Namespace(in.namespace)},
-		{"migration", dynamicClient.Resource(migrationResource).Namespace(in.namespace)},
-	} {
-		recorder := newCycleRecorder(family.client, family.name, in.namespace, capacityLabel+"="+load.Name)
-		recorders = append(recorders, recorder)
-		go recorder.run(workCtx)
-		go func() {
-			<-recorder.done
-			if recorder.snapshot().Error != "" {
-				cancelWork()
-			}
-		}()
+	for _, namespace := range in.namespaces {
+		for _, family := range []struct {
+			name   string
+			client dynamic.ResourceInterface
+		}{
+			{"schema", dynamicClient.Resource(schemaResource).Namespace(namespace)},
+			{"migration", dynamicClient.Resource(migrationResource).Namespace(namespace)},
+		} {
+			recorder := newCycleRecorder(family.client, family.name, namespace, capacityLabel+"="+load.Name)
+			recorders = append(recorders, recorder)
+			go recorder.run(workCtx)
+			go func() {
+				<-recorder.done
+				if recorder.snapshot().Error != "" {
+					cancelWork()
+				}
+			}()
+		}
 	}
 	var setupErr error
 	for _, recorder := range recorders {
@@ -238,7 +246,7 @@ func requireInputs(in inputs, load workload, outDir string) error {
 // describeEnvironment records what the figures were measured on: the cluster,
 // how much it could give, and the manager that ran.
 func describeEnvironment(ctx context.Context, clientset kubernetes.Interface, in inputs) (map[string]any, error) {
-	out := map[string]any{"measuredAt": time.Now().UTC().Format(time.RFC3339)}
+	out := map[string]any{"measuredAt": time.Now().UTC().Format(time.RFC3339), "workloadNamespaces": workloadNamespaces(in.namespace, in.namespaces)}
 	version, err := clientset.Discovery().ServerVersion()
 	if err != nil {
 		return nil, fmt.Errorf("read the server version: %w", err)

@@ -27,6 +27,7 @@ const (
 // inputs are what the harness prepared on the lab before the tool runs.
 type inputs struct {
 	namespace         string
+	namespaces        []string
 	operatorNamespace string
 	managerSelector   string
 	registrySecret    string
@@ -88,7 +89,7 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 	name := s.schemaName(index)
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "operator.ptah.run/v1alpha1", "kind": "PtahSchema",
-		"metadata": map[string]any{"name": name, "namespace": s.in.namespace, "labels": map[string]any{capacityLabel: s.load.Name}},
+		"metadata": map[string]any{"name": name, "namespace": s.in.namespaceFor(index), "labels": map[string]any{capacityLabel: s.load.Name}},
 		"spec": map[string]any{
 			"target":    s.target(name, index),
 			"desired":   s.artifactSource(s.in.schemaRefs[0], s.in.schemaPolicy),
@@ -102,6 +103,7 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 func (s *scenarios) migrationObject(name string, database int, apply string, labelled bool) *unstructured.Unstructured {
 	metadata := map[string]any{"name": name, "namespace": s.in.namespace}
 	if labelled {
+		metadata["namespace"] = s.in.namespaceFor(database - s.load.Schemas)
 		metadata["labels"] = map[string]any{capacityLabel: s.load.Name}
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
@@ -122,13 +124,13 @@ func (s *scenarios) migrationObject(name string, database int, apply string, lab
 func (s *scenarios) create(ctx context.Context) error {
 	start := time.Now().UTC()
 	for index := range s.load.Schemas {
-		if _, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespace).Create(ctx, s.schemaObject(index), metav1.CreateOptions{}); err != nil {
+		if _, err := s.dynamic.Resource(schemaResource).Namespace(s.in.namespaceFor(index)).Create(ctx, s.schemaObject(index), metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("create %s: %w", s.schemaName(index), err)
 		}
 	}
 	for index := range s.load.Migrations {
 		object := s.migrationObject(s.migrationName(index), s.load.Schemas+index, "Always", true)
-		if _, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Create(ctx, object, metav1.CreateOptions{}); err != nil {
+		if _, err := s.dynamic.Resource(migrationResource).Namespace(object.GetNamespace()).Create(ctx, object, metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("create %s: %w", s.migrationName(index), err)
 		}
 	}
@@ -162,30 +164,36 @@ func (s *scenarios) waitConverged(ctx context.Context, after time.Time, extra fu
 func (s *scenarios) allConverged(ctx context.Context, after time.Time, extra func(unstructured.Unstructured) bool) (bool, error) {
 	selector := capacityLabel + "=" + s.load.Name
 	total := 0
-	for _, family := range []struct {
-		resource schema.GroupVersionResource
-		observed []string
-	}{
-		{schemaResource, []string{"status", "target", "lastObservedAt"}},
-		{migrationResource, []string{"status", "history", "observedAt"}},
-	} {
-		list, err := s.dynamic.Resource(family.resource).Namespace(s.in.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
-		if err != nil {
-			return false, err
-		}
-		for _, item := range list.Items {
-			total++
-			if phase, _, _ := unstructured.NestedString(item.Object, "status", "phase"); phase != "InSync" {
-				return false, nil
+	for _, namespace := range workloadNamespaces(s.in.namespace, s.in.namespaces) {
+		for _, family := range []struct {
+			resource schema.GroupVersionResource
+			observed []string
+		}{
+			{schemaResource, []string{"status", "target", "lastObservedAt"}},
+			{migrationResource, []string{"status", "history", "observedAt"}},
+		} {
+			list, err := s.dynamic.Resource(family.resource).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+			if err != nil {
+				return false, err
 			}
-			if !after.IsZero() {
-				observed, ok := timestampAt(item.Object, family.observed...)
-				if !ok || observed.Before(after.Truncate(time.Second)) {
+			for _, item := range list.Items {
+				wantNamespace, err := s.resourceNamespace(family.resource, item.GetName())
+				if err != nil || wantNamespace != namespace {
+					return false, fmt.Errorf("unexpected workload resource %s/%s", namespace, item.GetName())
+				}
+				total++
+				if phase, _, _ := unstructured.NestedString(item.Object, "status", "phase"); phase != "InSync" {
 					return false, nil
 				}
-			}
-			if extra != nil && !extra(item) {
-				return false, nil
+				if !after.IsZero() {
+					observed, ok := timestampAt(item.Object, family.observed...)
+					if !ok || observed.Before(after.Truncate(time.Second)) {
+						return false, nil
+					}
+				}
+				if extra != nil && !extra(item) {
+					return false, nil
+				}
 			}
 		}
 	}
@@ -208,7 +216,7 @@ func (s *scenarios) steady(ctx context.Context) error {
 // the burst can be measured against the one piece of work a person asked for.
 func (s *scenarios) prepareApproval(ctx context.Context) error {
 	object := s.migrationObject(approvalResource, s.load.Schemas+s.load.Migrations, "OnApproval", false)
-	if _, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Create(ctx, object, metav1.CreateOptions{}); err != nil {
+	if _, err := s.dynamic.Resource(migrationResource).Namespace(object.GetNamespace()).Create(ctx, object, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create %s: %w", approvalResource, err)
 	}
 	deadline := time.Now().Add(s.load.Settle.Duration)
@@ -348,8 +356,12 @@ func (s *scenarios) change(ctx context.Context) error {
 }
 
 func (s *scenarios) patchReference(ctx context.Context, resource schema.GroupVersionResource, name, field, reference string) error {
+	namespace, err := s.resourceNamespace(resource, name)
+	if err != nil {
+		return err
+	}
 	patch := fmt.Sprintf(`{"spec":{%q:{"ociRef":%q}}}`, field, reference)
-	_, err := s.dynamic.Resource(resource).Namespace(s.in.namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	_, err = s.dynamic.Resource(resource).Namespace(namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("move %s to %s: %w", name, reference, err)
 	}
