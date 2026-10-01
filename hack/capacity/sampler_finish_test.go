@@ -101,8 +101,10 @@ func TestSamplerFailsWhenFinalInventoryCannotBeRead(t *testing.T) {
 
 func TestSamplerBoundsFinalCollectionAndRetainsItsFailure(t *testing.T) {
 	s := measurementFixture(t, "", completeProcessMetrics)
-	s.every, s.collectionTimeout = time.Hour, 100*time.Millisecond
+	s.every, s.collectionTimeout = time.Hour, time.Second
+	var entered atomic.Bool
 	s.scrapeAPI = func(ctx context.Context, _ corev1.Pod) (scrape, error) {
+		entered.Store(true)
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -110,7 +112,7 @@ func TestSamplerBoundsFinalCollectionAndRetainsItsFailure(t *testing.T) {
 	close(finish)
 	started := time.Now()
 	err := s.run(t.Context(), finish)
-	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 5*time.Second {
+	if !entered.Load() || !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 5*time.Second {
 		t.Fatalf("final collection was not bounded: elapsed=%s error=%v", time.Since(started), err)
 	}
 	samples, _ := s.snapshot()
