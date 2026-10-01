@@ -324,7 +324,9 @@ controller records its uncertain outcome and retains the metadata copy.
 With the fleet suspended, the collector exports the plans, prunes only unpinned
 plans, and verifies both fault subjects and their payloads before and after
 garbage collection. It then removes its admission gate, resumes the fleet,
-requires the retained schema approval to be consumed, and requires fresh
+records whether the retained schema approval was consumed or retired by the
+fresh read. A retired approval stays retained, and recovery uses a new admitted
+approval bound to the current plan. The collector also requires fresh
 migration history to settle the unresolved run without another Apply. Complete
 database inventories check that all rows, defaults and migration versions are
 restored. These deliberately blocked resources are outside the measured soak

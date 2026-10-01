@@ -99,7 +99,7 @@ func TestRetentionFaultRequiresOriginalUnknownRunAndMetadataCopy(t *testing.T) {
 }
 
 func TestRetentionFaultPreservesPendingApprovalAndUnresolvedEvidence(t *testing.T) {
-	for _, mode := range []string{"valid", "empty before", "empty after", "changed approval UID", "changed approval spec", "consumed before", "consumed after", "missing unknown", "missing copy", "changed migration spec", "wrong namespace"} {
+	for _, mode := range []string{"valid", "empty before", "empty after", "changed approval UID", "changed approval spec", "consumed before", "consumed after", "stale after", "missing unknown", "missing copy", "changed migration spec", "wrong namespace"} {
 		t.Run(mode, func(t *testing.T) {
 			_, native := faultReading(t, "postgresql")
 			migration := faultObject(t, native)
@@ -118,12 +118,16 @@ func TestRetentionFaultPreservesPendingApprovalAndUnresolvedEvidence(t *testing.
 				after.Objects[0].Object.SetUID("replacement")
 			case "changed approval spec":
 				_ = unstructured.SetNestedField(after.Objects[0].Object.Object, "replacement", "spec", "planRef", "uid")
-			case "consumed before", "consumed after":
+			case "consumed before", "consumed after", "stale after":
 				object := after.Objects[0].Object
 				if mode == "consumed before" {
 					object = before.Objects[0].Object
 				}
-				_ = unstructured.SetNestedSlice(object.Object, []any{map[string]any{"type": "Consumed", "status": "True"}}, "status", "conditions")
+				conditionType := "Consumed"
+				if mode == "stale after" {
+					conditionType = "Stale"
+				}
+				_ = unstructured.SetNestedSlice(object.Object, []any{map[string]any{"type": conditionType, "status": "True"}}, "status", "conditions")
 			case "missing unknown":
 				unstructured.RemoveNestedField(after.Objects[1].Object.Object, "status", "unresolvedRun")
 			case "missing copy":

@@ -29,21 +29,23 @@ import (
 var schemaApprovalResource = schema.GroupVersionResource{Group: schemaResource.Group, Version: schemaResource.Version, Resource: "ptahschemaapprovals"}
 
 type retentionFaultProof struct {
-	ObsoleteSchemaPlanUID types.UID                                     `json:"obsoleteSchemaPlanUID"`
-	StartedAt             time.Time                                     `json:"startedAt"`
-	FinishedAt            time.Time                                     `json:"finishedAt"`
-	SchemaApproval        *unstructured.Unstructured                    `json:"schemaApproval,omitempty"`
-	MigrationApproval     *unstructured.Unstructured                    `json:"migrationApproval,omitempty"`
-	DispatchedMigration   *ptah.PtahMigration                           `json:"dispatchedMigration,omitempty"`
-	ApplyJob              *batchv1.Job                                  `json:"applyJob,omitempty"`
-	SuspendedMigration    *unstructured.Unstructured                    `json:"suspendedMigration,omitempty"`
-	RecoveredMigration    *unstructured.Unstructured                    `json:"recoveredMigration,omitempty"`
-	RecoveredSchema       *unstructured.Unstructured                    `json:"recoveredSchema,omitempty"`
-	GatePolicy            *admissionv1.ValidatingAdmissionPolicy        `json:"gatePolicy,omitempty"`
-	GateBinding           *admissionv1.ValidatingAdmissionPolicyBinding `json:"gateBinding,omitempty"`
-	Maintenance           retentionProof                                `json:"maintenance"`
-	Archives              []retentionArchive                            `json:"archives"`
-	Error                 string                                        `json:"error,omitempty"`
+	SchemaApprovalAfterRecovery *unstructured.Unstructured                    `json:"schemaApprovalAfterRecovery,omitempty"`
+	RecoverySchemaApproval      *unstructured.Unstructured                    `json:"recoverySchemaApproval,omitempty"`
+	ObsoleteSchemaPlanUID       types.UID                                     `json:"obsoleteSchemaPlanUID"`
+	StartedAt                   time.Time                                     `json:"startedAt"`
+	FinishedAt                  time.Time                                     `json:"finishedAt"`
+	SchemaApproval              *unstructured.Unstructured                    `json:"schemaApproval,omitempty"`
+	MigrationApproval           *unstructured.Unstructured                    `json:"migrationApproval,omitempty"`
+	DispatchedMigration         *ptah.PtahMigration                           `json:"dispatchedMigration,omitempty"`
+	ApplyJob                    *batchv1.Job                                  `json:"applyJob,omitempty"`
+	SuspendedMigration          *unstructured.Unstructured                    `json:"suspendedMigration,omitempty"`
+	RecoveredMigration          *unstructured.Unstructured                    `json:"recoveredMigration,omitempty"`
+	RecoveredSchema             *unstructured.Unstructured                    `json:"recoveredSchema,omitempty"`
+	GatePolicy                  *admissionv1.ValidatingAdmissionPolicy        `json:"gatePolicy,omitempty"`
+	GateBinding                 *admissionv1.ValidatingAdmissionPolicyBinding `json:"gateBinding,omitempty"`
+	Maintenance                 retentionProof                                `json:"maintenance"`
+	Archives                    []retentionArchive                            `json:"archives"`
+	Error                       string                                        `json:"error,omitempty"`
 }
 
 func faultGate(original *unstructured.Unstructured) (*admissionv1.ValidatingAdmissionPolicy, *admissionv1.ValidatingAdmissionPolicyBinding) {
@@ -104,7 +106,7 @@ func (s *scenarios) waitFaultResource(ctx context.Context, resource schema.Group
 
 func schemaGateReady(o *unstructured.Unstructured) bool {
 	var v ptah.PtahSchema
-	if runtime.DefaultUnstructuredConverter.FromUnstructured(o.Object, &v) != nil || v.UID == "" || v.Spec.Policy.Apply != ptah.ApplyPolicyOnApproval || v.Status.ObservedGeneration != v.Generation || v.Status.Plan == nil || v.Status.Plan.UID == "" || v.Status.ActiveOperation != nil {
+	if runtime.DefaultUnstructuredConverter.FromUnstructured(o.Object, &v) != nil || v.UID == "" || v.Spec.Policy.Apply != ptah.ApplyPolicyOnApproval || v.Status.ObservedGeneration != v.Generation || v.Status.Plan == nil || v.Status.Plan.UID == "" || v.Status.Plan.Approval != nil || v.Status.ActiveOperation != nil {
 		return false
 	}
 	for _, c := range v.Status.Conditions {
@@ -143,7 +145,7 @@ func (s *scenarios) createFaultApproval(ctx context.Context, family string, orig
 	if err != nil {
 		return nil, err
 	}
-	approval.SetName("capacity-retention-" + family)
+	approval.SetName(fmt.Sprintf("capacity-retention-%s-g%d", family, original.GetGeneration()))
 	created, err := s.dynamic.Resource(resource).Namespace(original.GetNamespace()).Create(ctx, approval, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
@@ -230,8 +232,8 @@ func faultEvidencePreserved(before, after retentionInventory, approval, migratio
 				conditions, _, _ := unstructured.NestedSlice(o.Object, "status", "conditions")
 				for _, raw := range conditions {
 					c, _ := raw.(map[string]any)
-					if c["type"] == "Consumed" && c["status"] == "True" {
-						return fmt.Errorf("pending approval was consumed during pruning")
+					if (c["type"] == "Consumed" || c["type"] == "Stale") && c["status"] == "True" {
+						return fmt.Errorf("pending approval was consumed or invalidated during pruning")
 					}
 				}
 			}
@@ -597,7 +599,24 @@ func (s *scenarios) retentionFault(ctx context.Context) (err error) {
 	if e := cleanupGate(ctx); e != nil {
 		return e
 	}
-	if e := s.resumeAndConverge(ctx, paused); e != nil {
+	recoveryStart := time.Now().UTC()
+	targets, e := s.resumeMaintenance(ctx, paused)
+	if e != nil {
+		return e
+	}
+	recoveryCtx, stopRecovery := context.WithDeadline(ctx, recoveryStart.Add(s.load.Settle.Duration))
+	defer stopRecovery()
+	expectedSchema := schemaObject.DeepCopy()
+	for _, target := range targets {
+		if target.uid == schemaObject.GetUID() {
+			expectedSchema.SetGeneration(target.generation)
+		}
+	}
+	approved, e := s.recoverFaultApproval(recoveryCtx, proof, expectedSchema)
+	if e != nil {
+		return e
+	}
+	if e := s.waitBatch(recoveryCtx, targets, recoveryStart); e != nil {
 		return e
 	}
 	proof.Maintenance.Resumed = true
@@ -617,7 +636,7 @@ func (s *scenarios) retentionFault(ctx context.Context) (err error) {
 	if e != nil {
 		return e
 	}
-	consumed, e := s.dynamic.Resource(schemaApprovalResource).Namespace(schemaObject.GetNamespace()).Get(ctx, proof.SchemaApproval.GetName(), metav1.GetOptions{})
+	consumed, e := s.dynamic.Resource(schemaApprovalResource).Namespace(schemaObject.GetNamespace()).Get(ctx, approved.GetName(), metav1.GetOptions{})
 	if e != nil {
 		return e
 	}
@@ -627,8 +646,18 @@ func (s *scenarios) retentionFault(ctx context.Context) (err error) {
 		c, _ := raw.(map[string]any)
 		accepted = accepted || (c["type"] == "Consumed" && c["status"] == "True")
 	}
-	if consumed.GetUID() != proof.SchemaApproval.GetUID() || !accepted {
-		return fmt.Errorf("resumed schema did not consume its retained approval")
+	if consumed.GetUID() != approved.GetUID() || !accepted {
+		return fmt.Errorf("resumed schema did not consume its exact recovery approval")
+	}
+	if proof.RecoverySchemaApproval != nil {
+		proof.RecoverySchemaApproval = consumed
+	}
+	proof.SchemaApprovalAfterRecovery, e = s.dynamic.Resource(schemaApprovalResource).Namespace(schemaObject.GetNamespace()).Get(ctx, proof.SchemaApproval.GetName(), metav1.GetOptions{})
+	if e != nil {
+		return e
+	}
+	if proof.SchemaApprovalAfterRecovery.GetUID() != proof.SchemaApproval.GetUID() || !reflect.DeepEqual(proof.SchemaApprovalAfterRecovery.Object["spec"], proof.SchemaApproval.Object["spec"]) {
+		return fmt.Errorf("recovery lost the retained approval identity or spec")
 	}
 	jobs, e := s.clientset.BatchV1().Jobs(migration.GetNamespace()).List(ctx, metav1.ListOptions{LabelSelector: "operator.ptah.run/migration=" + migration.GetName() + ",operator.ptah.run/operation=apply"})
 	if e != nil {
