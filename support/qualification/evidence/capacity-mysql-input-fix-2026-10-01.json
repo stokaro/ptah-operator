@@ -61,8 +61,8 @@
     "scope": "OCI bytes only; the associated operator run failed its MySQL schema policy gate."
   },
   "remaining": [
-    "Rerun the corrected inputs through the operator.",
-    "The previous 186.779581388-second recovery finding remains open.",
+    "The corrected operator rerun passed; see capacity-populated-mysql-2026-10-01.json. Full profile execution remains required.",
+    "The later 187.385885574-second PostgreSQL CI recovery finding remains open.",
     "Full capacity matrix, soak, churn, retention, approval backlog, and overload remain unqualified."
   ]
 }
