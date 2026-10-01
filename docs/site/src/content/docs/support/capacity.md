@@ -307,6 +307,11 @@ neither suspended nor deleting. Waiting for approval does not exclude a
 resource: it still refreshes. Missing timestamps, partial lists, and older
 reports without these per-resource readings cannot establish an eligible
 freshness bound; the affected values remain `null` (`n/a` in the summary).
+Freshness belongs to the scenario in which its resource list was read, even
+when collection began in an earlier scenario. Each resource collection records
+its start and finish, including failed attempts. The report counts readings
+excluded from a boundary-crossing sample as `outsideWindowReadings`; a partial
+or failed list cannot become a complete population by filtering its timestamps.
 
 Claiming an operation clears its scheduled reconciliation timestamp. A valid
 persisted claim without that timestamp counts as in flight, and its age is

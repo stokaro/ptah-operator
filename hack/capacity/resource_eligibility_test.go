@@ -42,7 +42,7 @@ func TestFreshnessRetainsNativeSuspensionAndEligiblePopulation(t *testing.T) {
 	observed, next := at.Add(-30*time.Second), at.Add(-5*time.Second)
 	active.ObservedAt = &observed
 	active.NextReconciliationTime = &next
-	s := sample{At: at, Resources: 2, ResourceFreshness: []resourceFreshness{paused, active}}
+	s := sample{At: at, ResourceReadStartedAt: at, ResourceReadFinishedAt: at, Resources: 2, ResourceFreshness: []resourceFreshness{paused, active}}
 	c := cost(window{Start: at.Add(-time.Second), End: at.Add(time.Second)}, []sample{s}, nil).EligibleFreshness
 	if c == nil || c.EligibleReadings != 1 || c.SuspendedReadings != 1 || c.ObservationAgeMaxSeconds == nil || *c.ObservationAgeMaxSeconds != 30 || c.OverdueMaxSeconds == nil || *c.OverdueMaxSeconds != 5 {
 		t.Fatalf("suspension inflated eligible bounds: %+v", c)
@@ -321,5 +321,99 @@ func TestFreshnessRequiresAnActualClaim(t *testing.T) {
 	r.ActiveOperation.ID = ""
 	if eligibleFreshness([]sample{{Resources: 1, ResourceFreshness: []resourceFreshness{r}}}) != nil {
 		t.Fatal("replayed malformed claim became evidence")
+	}
+}
+
+func TestFreshnessUsesActualReadTimeAtScenarioBoundaries(t *testing.T) {
+	at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	observed, next := at.Add(-time.Minute), at.Add(-time.Second)
+	row := resourceFreshness{Family: "schema", Namespace: "work", Name: "resource", UID: "uid", ResourceVersion: "1", Generation: 1, ReadAt: at, ObservedAt: &observed, NextReconciliationTime: &next}
+	for _, mode := range []string{"inside", "read after end", "read before start", "batch started earlier", "partial boundary batch", "failed boundary batch", "missing actual time"} {
+		t.Run(mode, func(t *testing.T) {
+			s := sample{At: at.Add(-4 * time.Second), ResourceReadStartedAt: at.Add(-3 * time.Second), ResourceReadFinishedAt: at.Add(3 * time.Second), Resources: 1, ResourceFreshness: []resourceFreshness{row}}
+			w := window{Start: at.Add(-time.Second), End: at.Add(time.Second)}
+			switch mode {
+			case "read after end":
+				s.ResourceFreshness[0].ReadAt = w.End.Add(time.Second)
+			case "read before start":
+				s.ResourceFreshness[0].ReadAt = w.Start.Add(-time.Second)
+			case "batch started earlier":
+				s.At = w.Start.Add(-time.Second)
+			case "partial boundary batch":
+				s.At = w.Start.Add(-time.Second)
+				s.Resources = 2
+			case "failed boundary batch":
+				s.At = w.Start.Add(-time.Second)
+				s.Incomplete = []string{sourceResources}
+			case "missing actual time":
+				s.ResourceFreshness[0].ReadAt = time.Time{}
+			}
+			result := cost(w, []sample{s}, nil)
+			c := result.EligibleFreshness
+			encoded := jsonObject(t, result)
+			if (string(encoded["eligibleFreshness"]) == "null") != (c == nil) {
+				t.Fatal("JSON changed the actual-read completeness verdict")
+			}
+			if mode == "partial boundary batch" || mode == "failed boundary batch" || mode == "missing actual time" {
+				if c != nil {
+					t.Fatal("partial or undated evidence became a bound", c)
+				}
+				return
+			}
+			if c == nil {
+				t.Fatal("lost retained population")
+			}
+			if mode == "read after end" || mode == "read before start" {
+				if c.OutsideWindowReadings != 1 || c.EligibleReadings != 0 || c.ObservationAgeMaxSeconds != nil || c.OverdueMaxSeconds != nil {
+					t.Fatal("outside reading entered the scenario", c)
+				}
+			} else if c.EligibleReadings != 1 || c.OutsideWindowReadings != 0 || c.ObservationAgeMaxSeconds == nil || *c.ObservationAgeMaxSeconds != 60 || c.OverdueMaxSeconds == nil || *c.OverdueMaxSeconds != 1 {
+				t.Fatal("actual in-window reading was lost", c)
+			}
+		})
+	}
+}
+
+func TestFreshnessCannotDropFailedReadsAcrossTheStartBoundary(t *testing.T) {
+	at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	observed, next := at.Add(-time.Minute), at.Add(time.Minute)
+	good := sample{At: at, ResourceReadStartedAt: at, ResourceReadFinishedAt: at.Add(time.Second), Resources: 1, ResourceFreshness: []resourceFreshness{{Family: "schema", Namespace: "work", Name: "resource", UID: "uid", ResourceVersion: "1", Generation: 1, ReadAt: at, ObservedAt: &observed, NextReconciliationTime: &next}}}
+	for _, mode := range []string{"failed list", "partial list", "missing span", "reversed span", "reading outside span"} {
+		t.Run(mode, func(t *testing.T) {
+			bad := sample{At: at.Add(-5 * time.Second), ResourceReadStartedAt: at.Add(-4 * time.Second), ResourceReadFinishedAt: at.Add(time.Second), ResourceFreshness: []resourceFreshness{}}
+			switch mode {
+			case "failed list":
+				bad.Incomplete = []string{sourceResources}
+			case "partial list":
+				bad.Resources = 1
+			case "missing span":
+				bad.ResourceReadFinishedAt = time.Time{}
+			case "reversed span":
+				bad.ResourceReadFinishedAt = at.Add(-6 * time.Second)
+			case "reading outside span":
+				bad.Resources = 1
+				bad.ResourceFreshness = append(bad.ResourceFreshness, good.ResourceFreshness[0])
+				bad.ResourceFreshness[0].ReadAt = at.Add(2 * time.Second)
+			}
+			result := cost(window{Start: at, End: at.Add(3 * time.Second)}, []sample{bad, good}, nil)
+			if result.EligibleFreshness != nil || string(jsonObject(t, result)["eligibleFreshness"]) != "null" {
+				t.Fatal("a failed boundary-crossing list became passing evidence")
+			}
+		})
+	}
+}
+
+func TestSamplerRetainsTheFailedResourceReadInterval(t *testing.T) {
+	s := measurementFixture(t, "/apis/operator.ptah.run/v1alpha1/namespaces/work/ptahmigrations", completeProcessMetrics)
+	if s.take(t.Context()) == nil {
+		t.Fatal("the failed LIST was not exercised")
+	}
+	rows, _ := s.snapshot()
+	if len(rows) != 1 || rows[0].ResourceReadStartedAt.IsZero() || rows[0].ResourceReadFinishedAt.Before(rows[0].ResourceReadStartedAt) || rows[0].ResourceReadStartedAt.Before(rows[0].At) {
+		t.Fatal("failed LIST lost its actual collection interval", rows)
+	}
+	encoded := jsonObject(t, rows[0])
+	if string(encoded["resourceFreshness"]) != "null" || string(encoded["resourceReadStartedAt"]) == "null" || string(encoded["resourceReadFinishedAt"]) == "null" {
+		t.Fatal("serialization erased failed-read timing")
 	}
 }

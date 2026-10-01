@@ -96,6 +96,7 @@ func validFreshnessClaim(r resourceFreshness) bool {
 }
 
 type freshnessCost struct {
+	OutsideWindowReadings        int      `json:"outsideWindowReadings"`
 	ScheduledReadings            int      `json:"scheduledReadings"`
 	InFlightReadings             int      `json:"inFlightReadings"`
 	ActiveOperationAgeMaxSeconds *float64 `json:"activeOperationAgeMaxSeconds"`
@@ -171,6 +172,46 @@ func eligibleFreshness(samples []sample) *freshnessCost {
 	}
 	if out.InFlightReadings > 0 {
 		out.ActiveOperationAgeMaxSeconds = &operationAge
+	}
+	return out
+}
+
+// Collection is sequential: a resource LIST can finish after the scenario in
+// which its sample began. Attribute freshness by its actual read timestamp.
+// Keep failed or partial populations unavailable rather than filtering away
+// the evidence of a missing LIST.
+func eligibleFreshnessInWindow(w window, samples []sample) *freshnessCost {
+	var selected []sample
+	outside := 0
+	for _, s := range samples {
+		start, end := s.ResourceReadStartedAt, s.ResourceReadFinishedAt
+		if start.IsZero() || end.IsZero() || end.Before(start) {
+			// Older reports cannot locate failed or delayed reads within a
+			// scenario, so they cannot establish this scoped bound.
+			return nil
+		}
+		if end.Before(w.Start) || start.After(w.End) {
+			continue
+		}
+		if eligibleFreshness([]sample{s}) == nil {
+			return nil
+		}
+		rows := make([]resourceFreshness, 0, len(s.ResourceFreshness))
+		for _, r := range s.ResourceFreshness {
+			if r.ReadAt.Before(start) || r.ReadAt.After(end) {
+				return nil
+			}
+			if !r.ReadAt.Before(w.Start) && !r.ReadAt.After(w.End) {
+				rows = append(rows, r)
+			}
+		}
+		outside += len(s.ResourceFreshness) - len(rows)
+		s.ResourceFreshness, s.Resources = rows, len(rows)
+		selected = append(selected, s)
+	}
+	out := eligibleFreshness(selected)
+	if out != nil {
+		out.OutsideWindowReadings = outside
 	}
 	return out
 }

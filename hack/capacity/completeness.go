@@ -27,12 +27,14 @@ var sampleFields = map[string][]string{
 	sourceJobs:      {}, // Job readings are retained separately; preserve the failed source.
 }
 
+// eligibleFreshness validates its own per-resource read window and population.
+// Sample-start completeness below describes the original aggregate fields.
 var scenarioFields = map[string][]string{
 	sourceCycles:            {"refreshCycles"},
 	sourceAPIContinuity:     {"apiServers", "apiRejected"},
 	sourceManagerContinuity: {"managerCPUCoresAverage", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
 	sourcePods:              {"podsPendingMax", "podsRunningMax"},
-	sourceResources:         {"observationAgeMaxSeconds", "overdueMaxSeconds", "eligibleFreshness"},
+	sourceResources:         {"observationAgeMaxSeconds", "overdueMaxSeconds"},
 	sourceRetained:          {"plansAtEnd", "chunkBytesAtEnd"},
 	sourceManagers:          {"managerRSSMaxBytes", "managerCPUCoresAverage", "workqueueDepthMax", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
 	sourceAPI:               {"apiServers", "apiRejected"},

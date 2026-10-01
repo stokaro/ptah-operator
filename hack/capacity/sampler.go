@@ -31,21 +31,23 @@ var (
 
 // sample is one reading of everything the report is built from.
 type sample struct {
-	ResourceFreshness []resourceFreshness       `json:"resourceFreshness"`
-	Incomplete        []string                  `json:"incomplete,omitempty"`
-	At                time.Time                 `json:"at"`
-	PodsPending       int                       `json:"podsPending"`
-	PodsRunning       int                       `json:"podsRunning"`
-	Resources         int                       `json:"resources"`
-	Converged         int                       `json:"converged"`
-	ObservationAgeMax time.Duration             `json:"observationAgeMax"`
-	OverdueMax        time.Duration             `json:"overdueMax"`
-	Plans             int                       `json:"plans"`
-	Chunks            int                       `json:"chunks"`
-	ChunkBytes        int64                     `json:"chunkBytes"`
-	Managers          map[string]managerReading `json:"managers"`
-	APIServers        map[string]apiReading     `json:"apiServers"`
-	APITargets        []apiIdentity             `json:"apiTargets"`
+	ResourceReadStartedAt  time.Time                 `json:"resourceReadStartedAt"`
+	ResourceReadFinishedAt time.Time                 `json:"resourceReadFinishedAt"`
+	ResourceFreshness      []resourceFreshness       `json:"resourceFreshness"`
+	Incomplete             []string                  `json:"incomplete,omitempty"`
+	At                     time.Time                 `json:"at"`
+	PodsPending            int                       `json:"podsPending"`
+	PodsRunning            int                       `json:"podsRunning"`
+	Resources              int                       `json:"resources"`
+	Converged              int                       `json:"converged"`
+	ObservationAgeMax      time.Duration             `json:"observationAgeMax"`
+	OverdueMax             time.Duration             `json:"overdueMax"`
+	Plans                  int                       `json:"plans"`
+	Chunks                 int                       `json:"chunks"`
+	ChunkBytes             int64                     `json:"chunkBytes"`
+	Managers               map[string]managerReading `json:"managers"`
+	APIServers             map[string]apiReading     `json:"apiServers"`
+	APITargets             []apiIdentity             `json:"apiTargets"`
 }
 
 // managerReading is one manager Pod's own account of itself.
@@ -194,6 +196,8 @@ func (s *sampler) readPodsNamespace(ctx context.Context, into *sample, namespace
 // readResources measures how stale each resource's last reading is, against
 // its own timestamps rather than against when this loop looked.
 func (s *sampler) readResources(ctx context.Context, now time.Time, into *sample) error {
+	into.ResourceReadStartedAt = time.Now().UTC()
+	defer func() { into.ResourceReadFinishedAt = time.Now().UTC() }()
 	into.ResourceFreshness = []resourceFreshness{}
 	for _, namespace := range workloadNamespaces(s.namespace, s.namespaces) {
 		if err := s.readResourcesNamespace(ctx, now, into, namespace); err != nil {

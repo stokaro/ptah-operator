@@ -101,7 +101,7 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 			inside = append(inside, reading)
 		}
 	}
-	out.EligibleFreshness = eligibleFreshness(inside)
+	out.EligibleFreshness = eligibleFreshnessInWindow(w, samples)
 	out.Samples = len(inside)
 	for _, reading := range inside {
 		for _, source := range reading.Incomplete {
@@ -251,7 +251,7 @@ func writeSummary(out io.Writer, r report) error {
 			figure(sourceManagerContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
 			figure(sourceAPI, "%s", apiAdmissionSummary(s.APIServers)), strings.Join(outcome, ", "))
 	}
-	b.WriteString("\nThe main table retains freshness maxima over all resources, including suspended ones. Eligible freshness below excludes only suspended or deleting resources; approval-gated resources still refresh. Active claims retain their age and stay eligible for observation freshness. Scheduled overdue measures persisted deadlines; a claim without a deadline is in flight, while a missing deadline without a claim remains unavailable. Scheduled and in-flight counts can overlap during recovery. Older reports without per-resource readings remain unavailable.\n\n")
+	b.WriteString("\nThe main table retains freshness maxima over all resources, including suspended ones. Eligible freshness below excludes only suspended or deleting resources; approval-gated resources still refresh. Freshness uses each resource list's actual read time within the scenario. Active claims retain their age and stay eligible for observation freshness. Scheduled overdue measures persisted deadlines; a claim without a deadline is in flight, while a missing deadline without a claim remains unavailable. Scheduled and in-flight counts can overlap during recovery. Older reports without per-resource readings remain unavailable.\n\n")
 	b.WriteString("| Scenario | Eligible readings | Suspended readings | Deleting readings | Missing observations | Missing deadlines | Scheduled readings | In-flight readings | Eligible oldest reading s | Scheduled overdue s | Active claim age s |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, s := range r.Scenarios {
 		f := s.EligibleFreshness
