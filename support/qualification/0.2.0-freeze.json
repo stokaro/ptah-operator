@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-09-30T23:32:35.480353+00:00",
-  "profileSourceCommit": "7717f1efd297c1c37ca1789eb9b838fe33841ebc",
+  "frozenAt": "2026-10-01T00:10:59.378651+00:00",
+  "profileSourceCommit": "18e0b0c0773775ef047f8909f76e00e2799d17c9",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "aa95f35898b5c2cef6f86d3db591d7737d9947b2f8be9de13078462e3b99fcce",
-    "generatedFromCommit": "7717f1efd297c1c37ca1789eb9b838fe33841ebc",
+    "sha256": "ad3f8dc49486cbc3df55cd218b6a4b57c4621f49a92e5fd1f83953fe597253a3",
+    "generatedFromCommit": "18e0b0c0773775ef047f8909f76e00e2799d17c9",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 20,
+  "revision": 21,
   "supersedes": {
-    "freezeCommit": "bc85d2d86796286e086fc8d1c37683a0c2e4abe4",
-    "sha256": "7ed25ed81eabb501c059f6b9763d3b986b638f3e6c25ad40f89ce1ad6c269599"
+    "freezeCommit": "ceec59d00da237923be2fb5901003fe1ca3bf1bf",
+    "sha256": "0799ed4e6de435c001f79210f7a927cf3b81388dcd73bfea2873952730cdbb6c"
   },
-  "revisionReason": "Add the resource-overdue receiver scenario for both resource families on each supported minor. Actual realm refusals establish persisted recheck deadlines; an exact resource write fault holds them overdue, and a fresh Resolve claim dates recovery after an isolated grant and restored writes. Both production reconcilers, negative predicate controls, rendered/loaded rule checks, race tests, tagged vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
+  "revisionReason": "Add ordinary-policy-waits for both resource families under OnApproval and Never, using new empty databases and the unchanged two-minute cadence. The receiver is observed for ten minutes plus delivery allowance. Complete watches refuse Apply or changed controls; native observations establish continued refresh. Only exact repeats of the separately recorded pre-existing unresolved incident are excluded. Both producer phases are explicit prerequisites. Predicate controls, race detection, tagged vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
 }
