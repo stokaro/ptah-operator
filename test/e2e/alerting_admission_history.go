@@ -71,6 +71,12 @@ func alAdmissionNativeMatrix(body []byte) ([]alAdmissionSeries, error) {
 }
 
 func alAdmissionNativeSamples(series alAdmissionSeries, since, queriedAt time.Time, integer bool) ([]alAdmissionSample, error) {
+	return alNativeSamples(series, since, queriedAt, integer, true)
+}
+
+// Ended series are expected when an alert changes state or a Pod disappears.
+// Their callers must check coverage against the native transition they prove.
+func alNativeSamples(series alAdmissionSeries, since, queriedAt time.Time, integer, fresh bool) ([]alAdmissionSample, error) {
 	if len(series.Values) == 0 || len(series.Histograms) != 0 {
 		return nil, errors.New("admission history needs native float samples")
 	}
@@ -97,7 +103,7 @@ func alAdmissionNativeSamples(series alAdmissionSeries, since, queriedAt time.Ti
 		}
 		samples = append(samples, alAdmissionSample{at: at, value: value})
 	}
-	if queriedAt.Sub(samples[len(samples)-1].at) > alAdmissionSampleGap {
+	if fresh && queriedAt.Sub(samples[len(samples)-1].at) > alAdmissionSampleGap {
 		return nil, errors.New("admission history ended before a fresh scrape")
 	}
 	return samples, nil
