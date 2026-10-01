@@ -59,6 +59,14 @@ is established. The tool never approves an Apply or edits a stored workload.
   --listen 127.0.0.1:9812
 ```
 
+Read a consistent state snapshot while the observer is running:
+
+```sh
+/tmp/ptah-upgrade-observer inspect --state /srv/ptah-upgrade/state.json
+```
+
+Inspection takes no writer lock and does not alter the retained transaction.
+
 The deadline starts at `prepare`. Start the observer, require HTTP 200 from
 `/readyz`, and confirm a successful Prometheus scrape before running Helm.
 Keep the observer alive through recovery. Serialize upgrade attempts and retry

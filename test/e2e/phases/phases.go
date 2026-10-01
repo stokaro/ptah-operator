@@ -437,7 +437,7 @@ type AlertingInputs struct {
 var Alerting = define[AlertingInputs](Phase{
 	Name:         "alerting",
 	Test:         "TestAlerting",
-	Timeout:      80 * time.Minute,
+	Timeout:      105 * time.Minute,
 	RequiresFull: []string{"assert", "migrations-postgresql", "reference-data-postgresql"},
 	Scenarios: []string{
 		"monitoring-path",
@@ -452,6 +452,7 @@ var Alerting = define[AlertingInputs](Phase{
 		"lost-scrape-target",
 		"certificate-expiry",
 		"lost-view",
+		"upgrade-alerts",
 	},
 })
 

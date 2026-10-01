@@ -51,8 +51,8 @@ func run(ctx context.Context, args []string) error {
 }
 
 func runWithListener(ctx context.Context, args []string, listenSocket func(string, string) (net.Listener, error)) error {
-	if len(args) == 0 || (args[0] != "prepare" && args[0] != "serve") {
-		return errors.New("usage: upgradealert prepare|serve --state PATH --kubeconfig PATH [--context NAME]; prepare also requires --intent, --chart and --values")
+	if len(args) == 0 || (args[0] != "prepare" && args[0] != "serve" && args[0] != "inspect") {
+		return errors.New("usage: upgradealert inspect --state PATH; prepare|serve --state PATH --kubeconfig PATH [--context NAME]; prepare also requires --intent, --chart and --values")
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	statePath := flags.String("state", "", "durable state file outside the upgraded release")
@@ -64,6 +64,12 @@ func runWithListener(ctx context.Context, args []string, listenSocket func(strin
 	listen := flags.String("listen", "127.0.0.1:9812", "metrics and readiness HTTP address")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
+	}
+	if args[0] == "inspect" {
+		if flags.NArg() != 0 || *statePath == "" || *kubeconfig != "" || *intentPath != "" || *chart != "" || *values != "" {
+			return errors.New("inspect requires only a state path")
+		}
+		return inspectState(*statePath, os.Stdout)
 	}
 	if flags.NArg() != 0 || *statePath == "" || *kubeconfig == "" {
 		return errors.New("an explicit state path and kubeconfig are required")
@@ -238,4 +244,14 @@ func (o *observer) metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE ptah_operator_upgrade_failed gauge\nptah_operator_upgrade_failed{%s} %d\n", labels, failed)
 	fmt.Fprintf(w, "# TYPE ptah_operator_upgrade_deadline_seconds gauge\nptah_operator_upgrade_deadline_seconds{%s} %.9f\n", labels, float64(s.Deadline.UnixNano())/1e9)
 	fmt.Fprintf(w, "# TYPE ptah_operator_upgrade_history_lost gauge\nptah_operator_upgrade_history_lost{%s} %d\n", labels, gap)
+}
+
+// Inspection reads one atomic state snapshot without competing with its writer.
+// The document contains identities and digests, never kubeconfig credentials.
+func inspectState(path string, w io.Writer) error {
+	s, err := loadState(path)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(s)
 }

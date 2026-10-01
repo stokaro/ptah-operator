@@ -2277,6 +2277,9 @@ fi
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$'; then
 	fail "the controller image contains the test-only alert receiver"
 fi
+if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$'; then
+	fail "the controller image contains the external upgrade observer fixture"
+fi
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner(\.json)?$'; then
 	fail "the controller image contains the unsupported-runner fixture"
 fi
@@ -2294,6 +2297,8 @@ tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$' ||
 	fail "the isolated fixture image does not contain /e2e-handcraft-oci"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-alert-sink$' ||
 	fail "the isolated fixture image does not contain /e2e-alert-sink"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$' ||
+	fail "the isolated fixture image does not contain /e2e-upgrade-observer"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner$' ||
 	fail "the isolated fixture image does not contain the unsupported runner"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner\.json$' ||

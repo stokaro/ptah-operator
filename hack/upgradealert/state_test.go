@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -240,5 +241,36 @@ func TestMissingUIDWithoutPreviousHookIsRefused(t *testing.T) {
 	j := fixtureJob(s, "", time.Second)
 	if err := s.observe(j, s.StartedAt.Add(time.Minute)); err == nil {
 		t.Fatal("empty UID was mistaken for a previous hook")
+	}
+}
+
+func TestInspectReadsWhileTheObserverOwnsTheState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	lock, err := lockState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := saveState(path, fixtureState()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := inspectState(path, &b); err != nil {
+		t.Fatal(err)
+	}
+	var state State
+	if err := json.Unmarshal(b.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.ResourceVersion != "100" || !state.Deadline.Equal(fixtureState().Deadline) {
+		t.Fatal("inspection lost the original boundary")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("inspection changed evidence")
 	}
 }

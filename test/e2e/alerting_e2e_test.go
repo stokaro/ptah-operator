@@ -70,12 +70,13 @@ func TestAlerting(t *testing.T) {
 		{"lost-scrape-target", a.lostScrapeTarget},
 		{"certificate-expiry", a.certificateExpiry},
 		{"lost-view", a.lostView},
+		{"upgrade-alerts", a.upgradeAlerts},
 	} {
 		if !run.Scenario(scenario.name, a.scenario(scenario.body)) {
 			return
 		}
 	}
-	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, an overdue resource, failed state reads, a failed leader scrape, certificate expiry, failed admission and a lost view reached the receiver; recoverable faults cleared")
+	run.Logf("e2e alerting: PASS unresolved work, a stalled operation, an overdue resource, failed state reads, a failed leader scrape, certificate expiry, failed admission, a lost view and failed or interrupted upgrades reached the receiver; recoverable faults cleared")
 }
 
 // alertingRun is what the alerting scenarios share. Each scenario runs as a
