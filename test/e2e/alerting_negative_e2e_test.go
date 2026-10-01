@@ -177,14 +177,14 @@ func (a *alertingRun) negativeControls() {
 	for _, f := range fixtures {
 		byUID[f.object.GetUID()] = f
 	}
-	checkReading := func(object client.Object) {
-		f, ok := byUID[object.GetUID()]
-		if !ok {
-			return
-		}
-		r := alNegativeReading(object)
-		if !f.initial.claim.sameResource(r.claim) || r.policy != f.initial.policy || !r.safe() {
+	checkFixture := func(f *alNegativeFixtureRun, object client.Object) {
+		if !alNegativeReading(object).unchanged(f.initial) {
 			a.fatalf("%s left its unchanged read-only policy control", object.GetName())
+		}
+	}
+	checkReading := func(object client.Object) {
+		if f := byUID[object.GetUID()]; f != nil {
+			checkFixture(f, object)
 		}
 	}
 	checkHistory := func() {
@@ -209,7 +209,7 @@ func (a *alertingRun) negativeControls() {
 		checkHistory()
 		for _, f := range fixtures {
 			a.check(a.cluster.Client.Get(a.ctx, client.ObjectKeyFromObject(f.object), f.object), "read %s during its quiet window", f.object.GetName())
-			checkReading(f.object)
+			checkFixture(f, f.object)
 			reading := alNegativeReading(f.object)
 			if !reading.readAt.Equal(lastRead[f.object.GetUID()]) {
 				a.logf("negative-control native observation: family=%s resource=%s uid=%s generation=%d policy=%s observedAt=%s", reading.claim.family, reading.claim.name, reading.claim.uid, reading.claim.generation, reading.policy, reading.readAt)

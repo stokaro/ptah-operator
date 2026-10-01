@@ -169,3 +169,28 @@ func TestAlNegativeReadOnlyRetryIsNotAnOrdinaryWait(t *testing.T) {
 		t.Fatal("a deferred failed operation counted as normal policy waiting")
 	}
 }
+
+func TestAlNegativeDirectReadRejectsAReplacedControl(t *testing.T) {
+	t.Parallel()
+	for _, family := range []string{"schema", "migration"} {
+		for _, policy := range []ptahv1.ApplyPolicy{ptahv1.ApplyPolicyOnApproval, ptahv1.ApplyPolicyNever} {
+			t.Run(family+"/"+string(policy), func(t *testing.T) {
+				object := negativeFixtureState(t, family, policy)
+				before := alNegativeReading(object)
+				if !before.unchanged(before) {
+					t.Fatal("original control rejected")
+				}
+				// A replacement can carry the same name, generation and valid
+				// policy-gate status. Its new UID must still invalidate the row.
+				object.SetUID("replacement-uid")
+				after := alNegativeReading(object)
+				if !after.gated() {
+					t.Fatal("replacement is not an otherwise valid gate")
+				}
+				if after.unchanged(before) {
+					t.Fatal("replacement counted as the original control")
+				}
+			})
+		}
+	}
+}

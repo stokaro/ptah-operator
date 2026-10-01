@@ -98,6 +98,12 @@ func (r alNegativeState) safe() bool {
 	return r.claim.phase != "Failed"
 }
 
+// A direct read must still identify the original control. Collection watches
+// can ignore unrelated UIDs, but a replacement returned for this name cannot.
+func (r alNegativeState) unchanged(before alNegativeState) bool {
+	return before.claim.sameResource(r.claim) && r.policy == before.policy && r.safe()
+}
+
 func (r alNegativeState) gated() bool {
 	return r.safe() && r.claim.id == "" && r.plan && !r.readAt.IsZero() &&
 		(r.policy == ptahv1.ApplyPolicyOnApproval && r.waiting || r.policy == ptahv1.ApplyPolicyNever && r.disabled)
