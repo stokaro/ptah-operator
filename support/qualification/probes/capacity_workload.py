@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import time
 
 from capacity_artifacts import ArtifactReader
@@ -130,8 +131,9 @@ class Workload:
         return self.command('native Ptah', ['ptah', *args], env)
 
     def forwarded(self, action):
-        log = self.root / f'database-forward-{os.getpid()}.private.log'
-        with log.open('xb') as output:
+        with tempfile.NamedTemporaryFile(mode='wb', prefix='database-forward-', suffix='.private.log',
+                                         dir=self.root, delete=False) as output:
+            log = Path(output.name)
             process = subprocess.Popen(['kubectl', '--kubeconfig', self.bootstrap.env['E2E_KUBECONFIG'],
                                         '-n', self.fixture, 'port-forward', '--address', '127.0.0.1',
                                         'service/' + self.deployment, '0:' + ('3306' if self.mysql else '5432')],
@@ -157,20 +159,39 @@ class Workload:
                         process.kill()
                         process.wait(timeout=5)
 
-    def verify(self, changed):
-        bundle = json.loads((self.root / 'bundle.json').read_text())
+    def verify(self, changed, round_number=1, checkpoint=None):
+        bundle_raw = (self.root / 'bundle.json').read_bytes()
+        bundle = json.loads(bundle_raw)
         pin, bands = calibration(self.engine)
-        if bundle['engine'] != self.engine or bundle['ptahCommit'] != pin or changed not in (0, 5):
+        if (bundle['engine'] != self.engine or bundle['ptahCommit'] != pin or type(changed) is not int or changed not in (0, 5)
+                or type(round_number) is not int or not 0 <= round_number <= 9):
             raise ValueError('verification must match the prepared workload and supported change batch')
+        if checkpoint is not None and (not isinstance(checkpoint, str) or
+                                       not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,79}', checkpoint)):
+            raise ValueError('checkpoint must be a bounded local evidence name')
+        output = self.root if checkpoint is None else self.root / 'checkpoints' / checkpoint
+        if checkpoint is not None:
+            output.parent.mkdir(mode=0o700, exist_ok=True)
+            output.mkdir(mode=0o700)
+        # Refuse a repeated legacy invocation before it can replace earlier
+        # inventories. Checkpoints reserve their own directory exclusively.
+        if checkpoint is None and any(output.glob('final-*')):
+            raise FileExistsError('database evidence already exists; use a fresh checkpoint')
+        if (output / 'database-verification.json').exists():
+            raise FileExistsError('database verification already exists')
         records = []
+
+        def retain(name, raw):
+            with (output / name).open('xb') as evidence:
+                evidence.write(raw)
 
         def inspect():
             for row in self.databases:
                 slot = row['index']
                 index = slot if row['family'] == 'schema' else slot - 10
-                version = int(index < changed)
+                version = round_number if index < changed else 0
                 raw = self.sql(row, b'SELECT id, payload FROM capacity_rows ORDER BY id;')
-                (self.root / f'final-rows-{slot:02d}.tsv').write_bytes(raw)
+                retain(f'final-rows-{slot:02d}.tsv', raw)
                 record = verify_row_inventory(raw, slot)
                 if row['family'] == 'schema':
                     band = bundle['schemas'][index]['band']
@@ -185,7 +206,7 @@ class Workload:
                         expected.append(f'{table}\t{len(value)}\t{hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()}\n')
                     queries.append('ROLLBACK;')
                     actual = self.sql(row, '\n'.join(queries).encode())
-                    (self.root / f'final-defaults-{slot:02d}.tsv').write_bytes(actual)
+                    retain(f'final-defaults-{slot:02d}.tsv', actual)
                     if actual != ''.join(expected).encode():
                         raise ValueError(f'schema slot {slot} has incorrect executable defaults')
                     record.update(band=band, round=version, defaultsVerified=tables)
@@ -195,22 +216,23 @@ class Workload:
                     count = artifact['versions']
                     raw = self.ptah(row, ['migrations', 'status', '--migrations-dir', str(self.root / artifact['path']),
                                           '--dir-format', 'ptah', '--verify-sum', '--json'])
-                    (self.root / f'final-history-{slot:02d}.json').write_bytes(raw)
+                    retain(f'final-history-{slot:02d}.json', raw)
                     status = json.loads(raw)
                     if status.get('applied_migrations') != list(range(1, count + 1)) or status.get('pending_migrations') not in (None, []):
                         raise ValueError(f'migration slot {slot} has incomplete history')
                     wrong = ' OR '.join(f'history_{v:03d} IS NULL OR history_{v:03d} <> {v}' for v in range(2, count + 1))
                     actual = self.sql(row, ('SELECT COUNT(*) FROM capacity_rows WHERE ' + wrong + ';').encode())
-                    (self.root / f'final-migration-defaults-{slot:02d}.tsv').write_bytes(actual)
+                    retain(f'final-migration-defaults-{slot:02d}.tsv', actual)
                     if actual != b'0\n':
                         raise ValueError(f'migration slot {slot} has incorrect populated column values')
                     record.update(historyLength=count, round=version)
                 records.append(record)
             return records
         self.forwarded(inspect)
-        result = {'engine': self.engine, 'ptahCommit': pin, 'changeBatch': changed, 'slots': records}
-        with (self.root / 'database-verification.json').open('x') as output:
-            output.write(json.dumps(result, indent=2) + '\n')
+        result = {'engine': self.engine, 'ptahCommit': pin, 'changeBatch': changed, 'round': round_number,
+                  'checkpoint': checkpoint, 'bundleSHA256': sha(bundle_raw), 'slots': records}
+        with (output / 'database-verification.json').open('x') as evidence:
+            evidence.write(json.dumps(result, indent=2) + '\n')
         return result
 
     def prepare(self):
@@ -273,13 +295,17 @@ def main():
     parser.add_argument('--state', required=True)
     parser.add_argument('--directory', required=True, help='new private input and evidence directory')
     parser.add_argument('--verify-changed', type=int, choices=(0, 5), help='verify databases after the driver completes')
+    parser.add_argument('--verify-round', type=int, choices=range(10), default=1, help='artifact version expected in changed slots')
+    parser.add_argument('--checkpoint', help='new evidence directory under inputs/checkpoints; never overwritten')
     args = parser.parse_args()
+    if args.verify_changed is None and (args.checkpoint is not None or args.verify_round != 1):
+        parser.error('checkpoint and verify-round require verify-changed')
     os.umask(0o077)
     workload = Workload(args.state, args.directory)
     if args.verify_changed is None:
         workload.prepare()
     else:
-        workload.verify(args.verify_changed)
+        workload.verify(args.verify_changed, args.verify_round, args.checkpoint)
 
 
 if __name__ == '__main__':

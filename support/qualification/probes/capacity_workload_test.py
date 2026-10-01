@@ -2,8 +2,10 @@
 
 import base64
 import copy
+from contextlib import contextmanager
 import json
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -102,57 +104,177 @@ class WorkloadTests(unittest.TestCase):
                 sql.assert_not_called()
                 self.assertFalse((root / 'catalog.json').exists())
 
+    @contextmanager
+    def readings(self, workload, engine, version, failure=None):
+        visited = set()
+
+        def sql(row, query):
+            slot = row['index']
+            if query.startswith(b'SELECT id, payload'):
+                visited.add(slot)
+                return b'' if failure == 'rows' and slot == 19 else row_inventory(slot)
+            if query.startswith(b'BEGIN;'):
+                if failure == 'schema-default' and slot == 9:
+                    return b'0\t0\twrong\n'
+                tables = (1, 4, 16)[slot % 3]
+                current = version if slot < 5 else 0
+                # Independently pinned outputs from native calibration. Returning
+                # round one when round nine was requested must fail this verifier.
+                repeated = {0: (241, 21013, 84133), 1: (121, 10506, 42063),
+                            9: (181, 14446, 57839)}[current][slot % 3]
+                if engine == 'MySQL':
+                    repeated = (498, 42088, 168510)[slot % 3]
+                result = []
+                for table in range(tables):
+                    # The stale-reading control deliberately returns an older
+                    # result even though the query names the new round's table.
+                    if failure != 'stale':
+                        suffix = f'_r{current:02d}' if engine == 'MySQL' else ''
+                        self.assertIn(f'INSERT INTO capacity_payload_{table:03d}{suffix} (id)'.encode(), query)
+                    value = '<' * (repeated // tables + (table < repeated % tables)) + f'r{current:02d}'
+                    result.append(f'{table}\t{len(value)}\t{hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()}\n')
+                return ''.join(result).encode()
+            if query.startswith(b'SELECT COUNT(*)'):
+                return b'1\n' if failure == 'migration-default' and slot == 19 else b'0\n'
+            raise AssertionError('unexpected SQL')
+
+        def ptah(row, args):
+            slot = row['index'] - 10
+            count = 2 + version if slot < 4 else 32 + version if slot == 4 else 32 if slot < 7 else 128
+            if failure == 'history' and slot == 9:
+                count -= 1
+            pending = [count + 1] if failure == 'pending' and slot == 9 else []
+            return json.dumps({'applied_migrations': list(range(1, count + 1)), 'pending_migrations': pending}).encode()
+
+        with patch.object(workload, 'sql', side_effect=sql), patch.object(workload, 'ptah', side_effect=ptah), \
+                patch.object(workload, 'forwarded', side_effect=lambda action: action()):
+            yield visited
+
     def test_final_database_checks_refuse_loss_wrong_defaults_and_history(self):
         for engine in ('PostgreSQL', 'MySQL'):
-            for failure in (None, 'rows', 'schema-default', 'history', 'migration-default'):
-                with self.subTest(engine=engine, failure=failure), tempfile.TemporaryDirectory() as parent:
-                    root = Path(parent) / 'inputs'
-                    workload = Workload(self.state(parent, engine), root)
-                    bundle = generate(root, engine)
-                    (root / 'bundle.json').write_text(json.dumps(bundle))
-                    visited = set()
-                    def sql(row, query):
-                        slot = row['index']
-                        if query.startswith(b'SELECT id, payload'):
-                            visited.add(slot)
-                            return b'' if failure == 'rows' and slot == 19 else row_inventory(slot)
-                        if query.startswith(b'BEGIN;'):
-                            if failure == 'schema-default' and slot == 9:
-                                return b'0\t0\twrong\n'
-                            tables = (1, 4, 16)[slot % 3]
-                            # Independently pinned outputs from the native input
-                            # calibration: changed slots use round one.
-                            repeated = ((121, 10506, 42063) if slot < 5 else (241, 21013, 84133))[slot % 3]
-                            if engine == 'MySQL':
-                                repeated = (498, 42088, 168510)[slot % 3]
-                            result = []
-                            for table in range(tables):
-                                suffix = ('_r01' if slot < 5 else '_r00') if engine == 'MySQL' else ''
-                                self.assertIn(f'INSERT INTO capacity_payload_{table:03d}{suffix} (id)'.encode(), query)
-                                value = '<' * (repeated // tables + (table < repeated % tables)) + ('r01' if slot < 5 else 'r00')
-                                result.append(f'{table}\t{len(value)}\t{hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()}\n')
-                            return ''.join(result).encode()
-                        if query.startswith(b'SELECT COUNT(*)'):
-                            return b'1\n' if failure == 'migration-default' and slot == 19 else b'0\n'
-                        raise AssertionError('unexpected SQL')
-                    def ptah(row, args):
-                        slot = row['index'] - 10
-                        count = 3 if slot < 4 else 33 if slot == 4 else 32 if slot < 7 else 128
-                        if failure == 'history' and slot == 9:
-                            count -= 1
-                        return json.dumps({'applied_migrations': list(range(1, count + 1)), 'pending_migrations': []}).encode()
-                    with patch.object(workload, 'sql', side_effect=sql), patch.object(workload, 'ptah', side_effect=ptah), \
-                            patch.object(workload, 'forwarded', side_effect=lambda action: action()):
-                        if failure:
-                            with self.assertRaises(ValueError):
-                                workload.verify(5)
-                            self.assertFalse((root / 'database-verification.json').exists())
-                        else:
-                            result = workload.verify(5)
-                            self.assertEqual(visited, set(range(20)))
-                            self.assertEqual(len(result['slots']), 20)
-                            self.assertEqual(len({r['sha256'] for r in result['slots']}), 20)
-                            self.assertTrue((root / 'database-verification.json').exists())
+            for version in (0, 1, 9):
+                for failure in (None, 'rows', 'schema-default', 'history', 'pending', 'migration-default'):
+                    with self.subTest(engine=engine, version=version, failure=failure), tempfile.TemporaryDirectory() as parent:
+                        root = Path(parent) / 'inputs'
+                        workload = Workload(self.state(parent, engine), root)
+                        bundle = generate(root, engine)
+                        (root / 'bundle.json').write_text(json.dumps(bundle))
+                        checkpoint = f'round-{version}' if version != 1 else None
+                        destination = root / 'checkpoints' / checkpoint if checkpoint else root
+                        with self.readings(workload, engine, version, failure) as visited:
+                            if failure:
+                                with self.assertRaises(ValueError):
+                                    workload.verify(5, version, checkpoint)
+                                self.assertFalse((destination / 'database-verification.json').exists())
+                            else:
+                                result = workload.verify(5, version, checkpoint)
+                                self.assertEqual(visited, set(range(20)))
+                                self.assertEqual(len(result['slots']), 20)
+                                self.assertEqual(len({r['sha256'] for r in result['slots']}), 20)
+                                self.assertEqual(result['round'], version)
+                                self.assertEqual(result['bundleSHA256'], hashlib.sha256((root / 'bundle.json').read_bytes()).hexdigest())
+                                self.assertEqual([r['round'] for r in result['slots']], ([version]*5 + [0]*5)*2)
+                                self.assertEqual(len(list(destination.glob('final-*'))), 50)
+                                self.assertTrue((destination / 'database-verification.json').exists())
+
+    def test_checkpoints_preserve_prior_results_and_refuse_stale_rounds(self):
+        for engine in ('PostgreSQL', 'MySQL'):
+            with self.subTest(engine=engine), tempfile.TemporaryDirectory() as parent:
+                root = Path(parent) / 'inputs'
+                workload = Workload(self.state(parent, engine), root)
+                (root / 'bundle.json').write_text(json.dumps(generate(root, engine)))
+                for version in (0, 1, 9):
+                    with self.readings(workload, engine, version):
+                        workload.verify(5, version, f'round-{version}')
+                before = {str(p.relative_to(root)): p.read_bytes() for p in root.glob('checkpoints/**/*') if p.is_file()}
+                with patch.object(workload, 'sql') as sql, patch.object(workload, 'forwarded') as forwarded:
+                    with self.assertRaises(FileExistsError):
+                        workload.verify(5, 9, 'round-9')
+                    sql.assert_not_called()
+                    forwarded.assert_not_called()
+                after = {str(p.relative_to(root)): p.read_bytes() for p in root.glob('checkpoints/**/*') if p.is_file()}
+                self.assertEqual(before, after)
+                with self.readings(workload, engine, 1, 'stale'):
+                    with self.assertRaisesRegex(ValueError, 'incorrect executable defaults'):
+                        workload.verify(5, 9, 'stale')
+                self.assertFalse((root / 'checkpoints/stale/database-verification.json').exists())
+                self.assertTrue((root / 'checkpoints/stale/final-defaults-00.tsv').exists())
+
+    def test_legacy_retry_cannot_overwrite_partial_or_complete_evidence(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent) / 'inputs'
+            workload = Workload(self.state(parent), root)
+            (root / 'bundle.json').write_text(json.dumps(generate(root, 'PostgreSQL')))
+            for filename in ('final-rows-00.tsv', 'database-verification.json'):
+                original = root / filename
+                original.write_bytes(b'previous evidence')
+                with patch.object(workload, 'forwarded') as forwarded, self.assertRaises(FileExistsError):
+                    workload.verify(5)
+                forwarded.assert_not_called()
+                self.assertEqual(original.read_bytes(), b'previous evidence')
+                original.unlink()
+
+    def test_unchanged_batch_requires_initial_version_even_at_round_nine(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent) / 'inputs'
+            workload = Workload(self.state(parent), root)
+            (root / 'bundle.json').write_text(json.dumps(generate(root, 'PostgreSQL')))
+            with self.readings(workload, 'PostgreSQL', 0):
+                result = workload.verify(0, 9, 'unchanged')
+            self.assertEqual([r['round'] for r in result['slots']], [0]*20)
+
+    def test_repeated_port_forwards_keep_distinct_logs_and_stop_on_failure(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent) / 'inputs'
+            root.mkdir()
+            workload = Workload(self.state(parent), root)
+            workload.bootstrap.env['E2E_KUBECONFIG'] = 'test-config'
+            processes = []
+
+            class Forward:
+                def __init__(self, args, stdout, stderr):
+                    self.stopped = False
+                    os.write(stdout.fileno(), b'Forwarding from 127.0.0.1:12345 -> 5432\n')
+                    processes.append(self)
+
+                def poll(self):
+                    return 0 if self.stopped else None
+
+                def terminate(self):
+                    self.stopped = True
+
+                def wait(self, timeout):
+                    return 0
+
+            def fail():
+                raise ValueError('database check failed')
+
+            with patch('capacity_workload.subprocess.Popen', Forward):
+                self.assertEqual(workload.forwarded(lambda: workload.port), 12345)
+                with self.assertRaisesRegex(ValueError, 'database check failed'):
+                    workload.forwarded(fail)
+            self.assertIsNone(workload.port)
+            self.assertEqual(len(processes), 2)
+            self.assertTrue(all(p.stopped for p in processes))
+            self.assertEqual(len(list(root.glob('database-forward-*.private.log'))), 2)
+
+    def test_invalid_checkpoint_and_round_fail_before_any_database_command(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent) / 'inputs'
+            workload = Workload(self.state(parent), root)
+            (root / 'bundle.json').write_text(json.dumps(generate(root, 'PostgreSQL')))
+            with patch.object(workload, 'forwarded') as forwarded:
+                for version in (-1, 10, True, '9', 1.5):
+                    with self.subTest(version=version), self.assertRaises(ValueError):
+                        workload.verify(5, version, 'invalid')
+                for checkpoint in ('', '../escape', 'sub/dir', 'A', 'a'*81, 42):
+                    with self.subTest(checkpoint=checkpoint), self.assertRaises(ValueError):
+                        workload.verify(5, 9, checkpoint)
+                for changed in (False, 1, 5.0):
+                    with self.subTest(changed=changed), self.assertRaises(ValueError):
+                        workload.verify(changed, 9, 'invalid')
+                forwarded.assert_not_called()
+            self.assertFalse((root / 'checkpoints').exists())
 
     def test_missing_reordered_or_duplicate_database_slots_are_refused(self):
         with tempfile.TemporaryDirectory() as parent:
