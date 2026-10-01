@@ -1,0 +1,4 @@
+CREATE TABLE customers (
+  id BIGINT NOT NULL PRIMARY KEY,
+  email TEXT NOT NULL
+);

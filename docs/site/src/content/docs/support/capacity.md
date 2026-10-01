@@ -104,6 +104,18 @@ make demo-up
 CAPACITY_OUT_DIR=/tmp/capacity hack/capacity.sh
 ```
 
+The default workload selects PostgreSQL. To measure MySQL on the same lab, use
+a fresh output directory and the MySQL workload:
+
+```sh
+CAPACITY_WORKLOAD=support/capacity/workload-mysql.json \
+  CAPACITY_OUT_DIR=/tmp/capacity-mysql hack/capacity.sh
+```
+
+The manual Capacity workflow also accepts an engine selection. Each run
+measures one engine and records it in the report; a PostgreSQL result supplies
+no MySQL measurement.
+
 `support/capacity/workload.json` declares the workload: how many resources of
 each family, their interval, how long each condition lasts, how many resources
 change at once, and how long the registry is unreachable. The harness gives
@@ -133,10 +145,12 @@ recovery fails the run even when the rest of the workload converges. An
 ambiguous create response followed by an existing approval is inconclusive
 and fails the measurement.
 
-PostgreSQL runs in a separate fixture namespace. Every workload database has
-its own owner login without superuser, role creation, database creation,
-replication or row-security bypass privileges. Public database access is
-revoked. Database credentials travel through stdin and Secrets; the ownership
+The selected database server runs in a separate fixture namespace. Every
+workload database has its own login. PostgreSQL owners have no superuser,
+role creation, database creation, replication or row-security bypass privileges,
+and public database access is revoked. MySQL users receive privileges on their
+own database only, without global privileges or grant options. Their database
+names contain no wildcard characters. Database credentials travel through stdin and Secrets; the ownership
 journal contains no passwords. NetworkPolicies refuse inbound traffic to task
 Pods and admit database traffic only from the workload namespaces.
 
@@ -147,8 +161,8 @@ fails, it reports the retained fixtures and journal. With the same lab environme
 loaded, retry it with `python3 support/qualification/probes/capacity_bootstrap.py
 cleanup --state /path/to/bootstrap-state.json`.
 
-This bootstrap remains a PostgreSQL lab configuration. Verified TLS, signed
-artifacts, the full egress profile, MySQL, the declared artifact/history/data
+This bootstrap remains a lab configuration. Verified TLS, signed
+artifacts, the full egress profile, the declared artifact/history/data
 sizes and the complete soak remain required for 0.2.0 qualification.
 
 Samples aggregate workload reads across every declared namespace and mark the

@@ -1,0 +1,4 @@
+CREATE TABLE shipments (
+  id BIGINT NOT NULL PRIMARY KEY,
+  reference VARCHAR(64) NOT NULL
+);

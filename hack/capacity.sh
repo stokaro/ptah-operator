@@ -4,7 +4,7 @@
 # The lab is the acceptance harness stopped after its bootstrap (make demo-up),
 # so the operator measured here is the chart and images this commit builds.
 # What this script adds is what the workload needs and the lab does not have: a
-# PostgreSQL in a fixture namespace, two isolated workload namespaces, one
+# database server in a fixture namespace, two isolated workload namespaces, one
 # database and owner login per resource, and the four artifacts the workload
 # moves between. Then it runs hack/capacity, which does the measuring.
 #
@@ -57,6 +57,20 @@ trap cleanup EXIT
 
 # The helper emits only the namespace list, never credentials or shell code.
 CAPACITY_NAMESPACES=$(python3 "$BOOTSTRAP" prepare --state "$STATE_FILE" --workload "$WORKLOAD")
+CAPACITY_ENGINE=$(python3 "$BOOTSTRAP" engine --state "$STATE_FILE")
+case "$CAPACITY_ENGINE" in
+PostgreSQL)
+	SCHEMA_DIR="$ROOT_DIR/demo/schemas"
+	MIGRATION_DIR="$ROOT_DIR/demo/migrations"
+	DIALECT=postgres
+	;;
+MySQL)
+	SCHEMA_DIR="$ROOT_DIR/support/capacity/mysql/schemas"
+	MIGRATION_DIR="$ROOT_DIR/support/capacity/mysql/migrations"
+	DIALECT=mysql
+	;;
+*) fail "unsupported workload engine: $CAPACITY_ENGINE" ;;
+esac
 
 # The artifacts, published with the Ptah the lab's executor was built from.
 eval "$("$ROOT_DIR/demo/bin/lab" credentials)"
@@ -64,7 +78,7 @@ export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
 PATH="$("$ROOT_DIR/demo/bin/lab" tools):$PATH"
 push_schema() {
 	ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/capacity:$1-$$" \
-		--schema-file "$ROOT_DIR/demo/schemas/$1.sql" --dialect postgres --plain-http |
+		--schema-file "$SCHEMA_DIR/$1.sql" --dialect "$DIALECT" --plain-http |
 		sed -n 's/^Digest: //p'
 }
 push_migrations() {
@@ -74,10 +88,10 @@ push_migrations() {
 }
 schema_v1=$(push_schema v1)
 schema_v2=$(push_schema v2)
-cp -R "$ROOT_DIR/demo/migrations" "$WORK_DIR/migrations-v2"
+cp -R "$MIGRATION_DIR" "$WORK_DIR/migrations-v2"
 printf 'ALTER TABLE shipments ADD COLUMN note TEXT;\n' >"$WORK_DIR/migrations-v2/0000000003_add_note.up.sql"
 printf 'ALTER TABLE shipments DROP COLUMN note;\n' >"$WORK_DIR/migrations-v2/0000000003_add_note.down.sql"
-migration_v1=$(push_migrations v1 "$ROOT_DIR/demo/migrations")
+migration_v1=$(push_migrations v1 "$MIGRATION_DIR")
 migration_v2=$(push_migrations v2 "$WORK_DIR/migrations-v2")
 for digest in "$schema_v1" "$schema_v2" "$migration_v1" "$migration_v2"; do
 	case "$digest" in

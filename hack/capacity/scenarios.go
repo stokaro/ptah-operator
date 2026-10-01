@@ -79,7 +79,7 @@ func (s *scenarios) artifactSource(reference, policy string) map[string]any {
 
 func (s *scenarios) target(name string, database int) map[string]any {
 	return map[string]any{
-		"engine":          "PostgreSQL",
+		"engine":          s.load.engine(),
 		"coordinationKey": "capacity/" + name,
 		"urlFrom":         map[string]any{"name": s.secretFor(database), "key": "url"},
 	}

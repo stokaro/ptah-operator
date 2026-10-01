@@ -11,13 +11,14 @@ import tempfile
 import unittest
 from urllib.parse import urlsplit
 
-from capacity_bootstrap import Bootstrap
+from capacity_bootstrap import Bootstrap, database_account
 
 
 class FakeBootstrap(Bootstrap):
     def __init__(self, state):
         super().__init__(state, {'E2E_KUBECONFIG': '/unused', 'E2E_TEST_NAMESPACE': 'shared-lab',
-                               'E2E_POSTGRES_IMAGE': 'postgres@sha256:fixture'})
+                               'E2E_POSTGRES_IMAGE': 'postgres@sha256:fixture',
+                               'E2E_MYSQL_IMAGE': 'mysql@sha256:fixture'})
         self.objects = {}
         self.commands = []
         self.sql = []
@@ -86,6 +87,55 @@ class BootstrapTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.bootstrap = FakeBootstrap(Path(self.temp.name) / 'state.json')
+
+    def test_mysql_uses_database_scoped_users_and_matching_service(self):
+        b = self.bootstrap
+        namespaces = b.prepare({'engine': 'MySQL', 'schemas': 10, 'migrations': 10})
+        self.assertEqual(b.state['engine'], 'MySQL')
+        fixture = b.state['fixtureNamespace']
+        container = b.objects['Deployment', fixture, 'capacity-mysql']['spec']['template']['spec']['containers'][0]
+        self.assertEqual(container['image'], b.env['E2E_MYSQL_IMAGE'])
+        self.assertEqual(container['env'][0]['name'], 'MYSQL_ROOT_PASSWORD')
+        self.assertNotIn('value', container['env'][0])
+        self.assertEqual(container['ports'][0]['containerPort'], 3306)
+        self.assertIn('SELECT 1', container['readinessProbe']['exec']['command'][-1])
+        service = b.objects['Service', fixture, 'capacity-mysql']
+        self.assertEqual(service['spec']['ports'][0]['targetPort'], container['ports'][0]['name'])
+        policy = b.objects['NetworkPolicy', fixture, 'capacity-database-ingress']['spec']
+        self.assertEqual(policy['ingress'][0]['ports'][0]['port'], 3306)
+        self.assertEqual(len(b.sql), 21)
+        urls = set()
+        for row, sql in zip(b.state['databases'], b.sql):
+            self.assertNotIn('_', row['database'])
+            self.assertNotIn('%', row['database'])
+            self.assertIn(f"GRANT ALL PRIVILEGES ON `{row['database']}`.* TO '{row['username']}'@'%';", sql)
+            self.assertNotIn('GRANT OPTION', sql)
+            self.assertNotIn('ON *.*', sql)
+            url = b.objects['Secret', row['namespace'], 'capacity-db-' + str(row['index'])]['stringData']['url']
+            self.assertTrue(url.startswith('mysql://' + row['username'] + ':'))
+            self.assertTrue(url.endswith(f'@tcp(capacity-mysql.{fixture}.svc.cluster.local:3306)/' + row['database']))
+            self.assertIn(row['namespace'], namespaces)
+            urls.add(url)
+        self.assertEqual(len(urls), 21)
+        self.assertTrue(all('MYSQL_PWD="$MYSQL_ROOT_PASSWORD"' in args[-1] for args, _ in b.commands if 'exec' in args))
+
+    def test_invalid_engine_and_missing_image_create_nothing(self):
+        for engine in ('mysql', 'SQLite', '', None):
+            with self.assertRaisesRegex(ValueError, 'unsupported workload engine'):
+                self.bootstrap.prepare({'engine': engine, 'schemas': 1, 'migrations': 1})
+        del self.bootstrap.env['E2E_MYSQL_IMAGE']
+        with self.assertRaisesRegex(ValueError, 'missing database image'):
+            self.bootstrap.prepare({'engine': 'MySQL', 'schemas': 1, 'migrations': 1})
+        self.assertEqual(self.bootstrap.objects, {})
+        self.assertFalse(self.bootstrap.path.exists())
+
+    def test_account_input_cannot_add_sql_or_expand_a_grant(self):
+        for engine, index, credential in [('MySQL', -1, 'a' * 48), ('MySQL', True, 'a' * 48),
+                                          ('MySQL', '0;DROP DATABASE x', 'a' * 48),
+                                          ('PostgreSQL', 0, "x';ALTER ROLE x SUPERUSER;--"),
+                                          ('SQLite', 0, 'a' * 48)]:
+            with self.assertRaises(ValueError):
+                database_account(engine, index, credential)
 
     def test_two_namespaces_have_distinct_owned_databases_and_local_dependencies(self):
         b = self.bootstrap
@@ -210,6 +260,11 @@ class BootstrapTests(unittest.TestCase):
 
 class WrapperTests(unittest.TestCase):
     def test_relative_output_and_failed_run_keep_cleanup_bound_to_original_journal(self):
+        for engine in ('PostgreSQL', 'MySQL'):
+            with self.subTest(engine=engine):
+                self.run_wrapper_cleanup_case(engine)
+
+    def run_wrapper_cleanup_case(self, engine):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'repository'
             caller = Path(directory) / 'caller'
@@ -218,20 +273,41 @@ class WrapperTests(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
             source = Path(__file__).resolve().parents[3] / 'hack/capacity.sh'
             shutil.copyfile(source, root / 'hack/capacity.sh')
-            (caller / 'workload.json').write_text('{}')
+            (caller / 'workload.json').write_text(json.dumps({'engine': engine}))
+            repository = source.parents[1]
+            for relative in ('demo/schemas', 'demo/migrations', 'support/capacity/mysql'):
+                shutil.copytree(repository / relative, root / relative, dirs_exist_ok=True)
             environment = caller / 'environment'
             environment.write_text('E2E_KUBECONFIG=/unused\nE2E_OPERATOR_NAMESPACE=operator\nE2E_REGISTRY_HOST=registry\nE2E_REGISTRY_IP=127.0.0.1\n')
             def executable(path, body):
                 path.write_text(body)
                 path.chmod(0o700)
             executable(root / 'demo/bin/lab', '#!/bin/sh\ncase "$1" in\ncredentials) echo "PTAH_OCI_USERNAME=user PTAH_OCI_PASSWORD=fixture PTAH_OCI_REGISTRY=registry" ;;\ntools) echo "' + str(bin_path) + '" ;;\nesac\n')
-            executable(bin_path / 'ptah', '#!/bin/sh\necho Digest: sha256:' + 'a' * 64 + '\n')
+            executable(bin_path / 'ptah', '#!' + sys.executable + '\n' + r'''import os,pathlib,sys
+args=sys.argv[1:]; engine=os.environ['CAPACITY_TEST_ENGINE']
+root=pathlib.Path(__file__).resolve().parents[1]
+if args[0]=='schema':
+ source=pathlib.Path(args[args.index('--schema-file')+1]).resolve()
+ expected=root/('support/capacity/mysql/schemas' if engine=='MySQL' else 'demo/schemas')
+ assert source.parent==expected and source.is_file(), 'schema source crossed engines'
+ assert args[args.index('--dialect')+1]==('mysql' if engine=='MySQL' else 'postgres')
+else:
+ source=pathlib.Path(args[args.index('--migrations-dir')+1]).resolve()
+ base=root/('support/capacity/mysql/migrations' if engine=='MySQL' else 'demo/migrations')
+ for path in base.iterdir():
+  assert (source/path.name).read_bytes()==path.read_bytes(), 'published migration prefix changed'
+ version=args[args.index('--version')+1]
+ assert len(list(source.glob('*.up.sql')))==(3 if version.startswith('v2-') else 2)
+print('Digest: sha256:'+'a'*64)
+''')
             executable(bin_path / 'python3', '#!' + sys.executable + '\n' + r'''import json,pathlib,sys
 args=sys.argv[1:]; path=pathlib.Path(args[args.index('--state')+1])
 assert path.is_absolute(), 'journal changes meaning after chdir'
 if args[1]=='prepare':
  workload=pathlib.Path(args[args.index('--workload')+1]); assert workload.is_absolute() and workload.exists()
- path.write_text('{}'); print('work-a,work-b')
+ path.write_text(workload.read_text()); print('work-a,work-b')
+elif args[1]=='engine':
+ print(json.loads(path.read_text())['engine'])
 else:
  assert path.exists(), 'cleanup lost the original journal'
  path.write_text('{"cleaned":true}')
@@ -243,7 +319,7 @@ pathlib.Path(args[args.index('-out')+1],'go-ran').write_text('yes')
 sys.exit(42)
 ''')
             env = dict(os.environ, PATH=str(bin_path) + os.pathsep + os.environ['PATH'],
-                       LAB_ENVIRONMENT=str(environment), CAPACITY_WORKLOAD='workload.json', CAPACITY_OUT_DIR='evidence')
+                       LAB_ENVIRONMENT=str(environment), CAPACITY_WORKLOAD='workload.json', CAPACITY_OUT_DIR='evidence', CAPACITY_TEST_ENGINE=engine)
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
                                     capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 42, result.stderr.decode())

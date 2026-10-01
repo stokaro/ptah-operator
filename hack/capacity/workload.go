@@ -16,6 +16,7 @@ import (
 type workload struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Engine      string `json:"engine"`
 	// Schemas and Migrations are how many resources of each family run at
 	// once, each against a database of its own, so each is its own realm.
 	Schemas    int `json:"schemas"`
@@ -64,11 +65,22 @@ func loadWorkload(path string) (workload, error) {
 	if err := decoder.Decode(&w); err != nil {
 		return workload{}, fmt.Errorf("parse %s: %w", path, err)
 	}
+	w.Engine = w.engine()
 	return w, w.validate()
+}
+
+func (w workload) engine() string {
+	if w.Engine == "" {
+		return "PostgreSQL"
+	}
+	return w.Engine
 }
 
 func (w workload) validate() error {
 	var problems []error
+	if w.engine() != "PostgreSQL" && w.engine() != "MySQL" {
+		problems = append(problems, fmt.Errorf("unsupported workload engine %q", w.Engine))
+	}
 	if w.Name == "" {
 		problems = append(problems, errors.New("name is empty"))
 	}

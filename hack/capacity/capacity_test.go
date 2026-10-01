@@ -110,12 +110,34 @@ func TestAWorkloadThatRunsNothingIsRefused(t *testing.T) {
 		"no sampling period": func(w *workload) { w.SampleEvery = duration{} },
 		"a negative outage":  func(w *workload) { w.Outage = duration{-time.Second} },
 		"no name":            func(w *workload) { w.Name = "" },
+		"unknown engine":     func(w *workload) { w.Engine = "SQLite" },
 	} {
 		w := good
 		mutate(&w)
 		if err := w.validate(); err == nil {
 			t.Errorf("%s: the workload was accepted", name)
 		}
+	}
+}
+
+func TestMySQLWorkloadSelectsBothResourceTargets(t *testing.T) {
+	load, err := loadWorkload("../../support/capacity/workload-mysql.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &scenarios{in: inputs{namespace: "work", databaseSecret: "db-%d"}, load: load}
+	if load.Engine != "MySQL" {
+		t.Fatal("report lost the selected engine")
+	}
+	for _, object := range []map[string]any{s.schemaObject(0).Object, s.migrationObject("migration", 10, "Always", true).Object} {
+		target := object["spec"].(map[string]any)["target"].(map[string]any)
+		if target["engine"] != "MySQL" {
+			t.Fatalf("MySQL measurement would run another engine: %v", target)
+		}
+	}
+	postgres, err := loadWorkload("../../support/capacity/workload.json")
+	if err != nil || postgres.Engine != "PostgreSQL" {
+		t.Fatalf("PostgreSQL lab changed engines: %+v %v", postgres, err)
 	}
 }
 

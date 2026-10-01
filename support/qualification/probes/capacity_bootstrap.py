@@ -10,6 +10,29 @@ import subprocess
 import sys
 
 
+def database_account(engine, index, credential):
+    """Create one database owner without global privileges or grant options."""
+    if type(index) is not int or index < 0 or not re.fullmatch(r'[0-9a-f]{48}', credential):
+        raise ValueError('database account needs a nonnegative slot and a generated credential')
+    username = f'capacity_user_{index:03d}'
+    if engine == 'PostgreSQL':
+        database = f'capacity_{index:03d}'
+        sql = (f"CREATE ROLE {username} LOGIN PASSWORD '{credential}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n"
+               f'CREATE DATABASE {database} OWNER {username};\n'
+               f'REVOKE ALL ON DATABASE {database} FROM PUBLIC;\n'
+               f'GRANT CONNECT ON DATABASE {database} TO {username};\n')
+    elif engine == 'MySQL':
+        # Database-level MySQL grants treat underscores as wildcards. Keep
+        # their names alphanumeric so one grant names exactly one database.
+        database = f'capacity{index:03d}'
+        sql = (f'CREATE DATABASE `{database}`;\n'
+               f"CREATE USER '{username}'@'%' IDENTIFIED BY '{credential}';\n"
+               f"GRANT ALL PRIVILEGES ON `{database}`.* TO '{username}'@'%';\n")
+    else:
+        raise ValueError('unsupported workload engine: ' + str(engine))
+    return database, username, sql
+
+
 class Bootstrap:
     def __init__(self, state, environment=None):
         self.path = Path(state)
@@ -74,6 +97,12 @@ class Bootstrap:
     def prepare(self, workload):
         if self.path.exists():
             raise RuntimeError('state file already exists; refusing to replace an ownership journal')
+        engine = workload.get('engine', 'PostgreSQL')
+        if engine not in ('PostgreSQL', 'MySQL'):
+            raise ValueError('unsupported workload engine: ' + str(engine))
+        image_key = 'E2E_MYSQL_IMAGE' if engine == 'MySQL' else 'E2E_POSTGRES_IMAGE'
+        if not self.env.get(image_key):
+            raise ValueError('missing database image: ' + image_key)
         counts = [workload.get(key) for key in ('schemas', 'migrations')]
         if any(type(n) is not int or n < 0 for n in counts) or sum(counts) == 0:
             raise ValueError('workload must declare nonnegative family counts and at least one resource')
@@ -90,7 +119,7 @@ class Bootstrap:
         if not match:
             raise ValueError('cannot pin Pod Security Admission to server version')
         minor = 'v' + match[1]
-        self.state.update(runID=secrets.token_hex(5), kubernetes=version)
+        self.state.update(runID=secrets.token_hex(5), kubernetes=version, engine=engine)
         prefix = 'ptah-capacity-' + self.state['runID']
         fixture = prefix + '-fixtures'
         namespaces = [prefix + '-a', prefix + '-b']
@@ -122,32 +151,40 @@ class Bootstrap:
 
     def database(self, fixture, namespaces, counts):
         password = secrets.token_hex(24)
-        self.create(self.object(fixture, 'Secret', 'capacity-postgres-admin',
+        engine = self.state['engine']
+        mysql = engine == 'MySQL'
+        name = 'capacity-mysql' if mysql else 'capacity-postgres'
+        port = 3306 if mysql else 5432
+        port_name = 'mysql' if mysql else 'postgresql'
+        image = self.env['E2E_MYSQL_IMAGE' if mysql else 'E2E_POSTGRES_IMAGE']
+        admin = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root --batch'] if mysql else ['psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1']
+        ready = ['sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -h 127.0.0.1 -u root --execute="SELECT 1"'] if mysql else ['pg_isready', '-U', 'postgres']
+        self.create(self.object(fixture, 'Secret', name + '-admin',
                                 stringData={'password': password}))
-        labels = {'app.kubernetes.io/name': 'capacity-postgres'}
-        self.create(self.object(fixture, 'Deployment', 'capacity-postgres', spec={
+        labels = {'app.kubernetes.io/name': name}
+        self.create(self.object(fixture, 'Deployment', name, spec={
             'replicas': 1, 'selector': {'matchLabels': labels}, 'template': {
                 'metadata': {'labels': labels}, 'spec': {
                     'automountServiceAccountToken': False,
                     'imagePullSecrets': [{'name': 'demo-registry-pull'}],
                     'containers': [{
-                        'name': 'postgres', 'image': self.env['E2E_POSTGRES_IMAGE'], 'imagePullPolicy': 'IfNotPresent',
-                        'args': ['-c', 'max_connections=500'],
-                        'env': [{'name': 'POSTGRES_PASSWORD', 'valueFrom': {
-                            'secretKeyRef': {'name': 'capacity-postgres-admin', 'key': 'password'}}}],
+                        'name': port_name, 'image': image, 'imagePullPolicy': 'IfNotPresent',
+                        'args': ['--max-connections=500'] if mysql else ['-c', 'max_connections=500'],
+                        'env': [{'name': 'MYSQL_ROOT_PASSWORD' if mysql else 'POSTGRES_PASSWORD', 'valueFrom': {
+                            'secretKeyRef': {'name': name + '-admin', 'key': 'password'}}}],
                         'resources': {'requests': {'cpu': '100m', 'memory': '256Mi'},
                                       'limits': {'cpu': '2', 'memory': '1Gi'}},
-                        'ports': [{'name': 'postgresql', 'containerPort': 5432}],
-                        'readinessProbe': {'exec': {'command': ['pg_isready', '-U', 'postgres']}, 'periodSeconds': 3}
+                        'ports': [{'name': port_name, 'containerPort': port}],
+                        'readinessProbe': {'exec': {'command': ready}, 'periodSeconds': 3}
                     }]}}}))
-        self.create(self.object(fixture, 'Service', 'capacity-postgres', spec={
-            'selector': labels, 'ports': [{'name': 'postgresql', 'port': 5432, 'targetPort': 'postgresql'}]}))
+        self.create(self.object(fixture, 'Service', name, spec={
+            'selector': labels, 'ports': [{'name': port_name, 'port': port, 'targetPort': port_name}]}))
         self.create(self.object(fixture, 'NetworkPolicy', 'capacity-database-ingress', spec={
             'podSelector': {'matchLabels': labels}, 'policyTypes': ['Ingress'], 'ingress': [{
                 'from': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': ns}}}
                          for ns in namespaces],
-                'ports': [{'protocol': 'TCP', 'port': 5432}]}]}))
-        self.command(['-n', fixture, 'rollout', 'status', 'deployment/capacity-postgres', '--timeout=300s'], timeout=330)
+                'ports': [{'protocol': 'TCP', 'port': port}]}]}))
+        self.command(['-n', fixture, 'rollout', 'status', 'deployment/' + name, '--timeout=300s'], timeout=330)
         self.state['databases'] = []
         for index in range(sum(counts) + 1):
             if index < counts[0]:
@@ -157,16 +194,12 @@ class Bootstrap:
             else:
                 family, slot = 'approval-fixture', 0
             namespace = namespaces[slot % len(namespaces)]
-            database = f'capacity_{index:03d}'
-            username = f'capacity_user_{index:03d}'
             credential = secrets.token_hex(24)
-            sql = (f"CREATE ROLE {username} LOGIN PASSWORD '{credential}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n"
-                   f'CREATE DATABASE {database} OWNER {username};\n'
-                   f'REVOKE ALL ON DATABASE {database} FROM PUBLIC;\n'
-                   f'GRANT CONNECT ON DATABASE {database} TO {username};\n')
-            self.command(['-n', fixture, 'exec', '-i', 'deploy/capacity-postgres', '--',
-                          'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], sql.encode())
-            url = f'postgres://{username}:{credential}@capacity-postgres.{fixture}.svc.cluster.local:5432/{database}?sslmode=disable'
+            database, username, sql = database_account(engine, index, credential)
+            self.command(['-n', fixture, 'exec', '-i', 'deploy/' + name, '--', *admin], sql.encode())
+            host = f'{name}.{fixture}.svc.cluster.local:{port}'
+            url = (f'mysql://{username}:{credential}@tcp({host})/{database}' if mysql else
+                   f'postgres://{username}:{credential}@{host}/{database}?sslmode=disable')
             self.create(self.object(namespace, 'Secret', f'capacity-db-{index}', stringData={'url': url}))
             self.state['databases'].append({'index': index, 'family': family, 'namespace': namespace,
                                            'database': database, 'username': username})
@@ -211,7 +244,7 @@ class Bootstrap:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('prepare', 'cleanup'))
+    parser.add_argument('action', choices=('prepare', 'cleanup', 'engine'))
     parser.add_argument('--state', required=True)
     parser.add_argument('--workload')
     args = parser.parse_args()
@@ -221,6 +254,11 @@ def main():
             parser.error('prepare requires --workload')
         namespaces = bootstrap.prepare(json.loads(Path(args.workload).read_text()))
         print(','.join(namespaces))
+    elif args.action == 'engine':
+        engine = json.loads(bootstrap.path.read_text())['engine']
+        if engine not in ('PostgreSQL', 'MySQL'):
+            raise ValueError('invalid engine in ownership journal')
+        print(engine)
     else:
         bootstrap.cleanup()
 

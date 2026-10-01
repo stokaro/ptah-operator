@@ -18,6 +18,14 @@ name: Capacity
 
 on:
   workflow_dispatch:
+    inputs:
+      engine:
+        description: Database engine for the lab measurement
+        type: choice
+        options:
+          - PostgreSQL
+          - MySQL
+        default: PostgreSQL
   schedule:
     - cron: '41 5 * * 2'
   # A change to the tool, the harness or the workload measures itself before
@@ -160,6 +168,7 @@ jobs:
       - name: Measure the workload
         env:
           CAPACITY_OUT_DIR: ${{ runner.temp }}/capacity
+          CAPACITY_WORKLOAD: ${{ inputs.engine == 'MySQL' && 'support/capacity/workload-mysql.json' || 'support/capacity/workload.json' }}
         shell: bash
         run: |
           set -euo pipefail

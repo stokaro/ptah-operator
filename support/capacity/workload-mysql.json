@@ -1,0 +1,13 @@
+{
+  "name": "lab-20-mysql",
+  "engine": "MySQL",
+  "description": "Ten PtahSchemas and ten PtahMigrations on the demonstration lab using independent MySQL databases. This lab measurement does not establish the full stable 0.2.0 capacity profile.",
+  "schemas": 10,
+  "migrations": 10,
+  "interval": "2m",
+  "settle": "20m",
+  "steadyState": "15m",
+  "sampleEvery": "15s",
+  "changeBatch": 5,
+  "outage": "3m"
+}
