@@ -15,9 +15,10 @@ import (
 // page names is either a field here or held fixed by the lab, and the report
 // says which.
 type workload struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Engine      string `json:"engine"`
+	UnrelatedObjects bool   `json:"unrelatedObjects,omitempty"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Engine           string `json:"engine"`
 	// Schemas and Migrations are how many resources of each family run at
 	// once, each against a database of its own, so each is its own realm.
 	Schemas    int `json:"schemas"`

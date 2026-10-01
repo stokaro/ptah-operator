@@ -31,6 +31,7 @@ case "$VARIED_INPUTS" in
 0|1) ;;
 *) fail "CAPACITY_VARIED_INPUTS must be 0 or 1" ;;
 esac
+UNRELATED_ENABLED=$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("unrelatedObjects",False)))' "$WORKLOAD")
 SOAK_ENABLED=$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("soak") is not None))' "$WORKLOAD")
 if [ "$SOAK_ENABLED" -eq 1 ] && [ "$VARIED_INPUTS" -ne 1 ]; then
  fail "the soak workload requires CAPACITY_VARIED_INPUTS=1"
@@ -108,7 +109,7 @@ INPUT_PROBE="$ROOT_DIR/support/qualification/probes/capacity_workload.py"
 if [ "$VARIED_INPUTS" -eq 1 ]; then
 	CHANGE_BATCH=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["changeBatch"]; assert type(v) is int and v in (0,5), "varied inputs require changeBatch 0 or 5"; print(v)' "$WORKLOAD")
 	python3 "$INPUT_PROBE" --state "$STATE_FILE" --directory "$OUT_DIR/inputs"
-	CAPACITY_ARGS=(-inputs "$OUT_DIR/inputs/catalog.json" -checkpoint-probe "$INPUT_PROBE" -checkpoint-state "$STATE_FILE")
+	CAPACITY_ARGS=(-inputs "$OUT_DIR/inputs/catalog.json" -checkpoint-probe "$INPUT_PROBE")
 	FINAL_ROUND=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("soak") or {}).get("rounds",1))' "$WORKLOAD")
 else
 	schema_v1=$(push_schema v1)
@@ -132,10 +133,14 @@ else
 	)
 fi
 
+if [ "$UNRELATED_ENABLED" -eq 1 ]; then
+	python3 "$BOOTSTRAP" verify-unrelated --state "$STATE_FILE" --checkpoint before
+fi
 cd "$ROOT_DIR"
 go run ./hack/capacity \
 	-kubeconfig "$KUBECONFIG" \
 	-host-info "$OUT_DIR/host.json" \
+	-checkpoint-state "$STATE_FILE" \
 	-workload "$WORKLOAD" \
 	-namespace "$CAPACITY_NAMESPACES" \
 	-operator-namespace "$E2E_OPERATOR_NAMESPACE" \
@@ -144,5 +149,8 @@ go run ./hack/capacity \
 	-out "$OUT_DIR"
 if [ "$VARIED_INPUTS" -eq 1 ]; then
 	python3 "$INPUT_PROBE" --state "$STATE_FILE" --directory "$OUT_DIR/inputs" --verify-changed "$CHANGE_BATCH" --verify-round "$FINAL_ROUND"
+fi
+if [ "$UNRELATED_ENABLED" -eq 1 ]; then
+	python3 "$BOOTSTRAP" verify-unrelated --state "$STATE_FILE" --checkpoint after
 fi
 CAPACITY_COMPLETED=1

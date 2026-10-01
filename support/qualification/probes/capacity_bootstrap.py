@@ -9,6 +9,8 @@ import secrets
 import subprocess
 import sys
 
+import capacity_unrelated
+
 
 def database_account(engine, index, credential):
     """Create one database owner without global privileges or grant options."""
@@ -97,6 +99,8 @@ class Bootstrap:
     def prepare(self, workload):
         if self.path.exists():
             raise RuntimeError('state file already exists; refusing to replace an ownership journal')
+        if type(workload.get('unrelatedObjects', False)) is not bool:
+            raise ValueError('unrelatedObjects must be boolean')
         engine = workload.get('engine', 'PostgreSQL')
         if engine not in ('PostgreSQL', 'MySQL'):
             raise ValueError('unsupported workload engine: ' + str(engine))
@@ -147,6 +151,8 @@ class Bootstrap:
             self.create(self.object(namespace, 'NetworkPolicy', 'capacity-no-ingress',
                                     spec={'podSelector': {}, 'policyTypes': ['Ingress'], 'ingress': []}))
         self.database(fixture, namespaces, counts)
+        if workload.get('unrelatedObjects', False):
+            capacity_unrelated.prepare(self, minor)
         return namespaces
 
     def database(self, fixture, namespaces, counts):
@@ -244,9 +250,10 @@ class Bootstrap:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('prepare', 'cleanup', 'engine'))
+    parser.add_argument('action', choices=('prepare', 'cleanup', 'engine', 'verify-unrelated'))
     parser.add_argument('--state', required=True)
     parser.add_argument('--workload')
+    parser.add_argument('--checkpoint', choices=('before', 'after'))
     args = parser.parse_args()
     bootstrap = Bootstrap(args.state)
     if args.action == 'prepare':
@@ -254,6 +261,13 @@ def main():
             parser.error('prepare requires --workload')
         namespaces = bootstrap.prepare(json.loads(Path(args.workload).read_text()))
         print(','.join(namespaces))
+    elif args.action == 'verify-unrelated':
+        if not args.checkpoint:
+            parser.error('verify-unrelated requires --checkpoint')
+        bootstrap.state = json.loads(bootstrap.path.read_text())
+        proof = capacity_unrelated.verify(bootstrap, args.checkpoint)
+        bootstrap.state['unrelated'][args.checkpoint] = proof
+        bootstrap.save()
     elif args.action == 'engine':
         engine = json.loads(bootstrap.path.read_text())['engine']
         if engine not in ('PostgreSQL', 'MySQL'):

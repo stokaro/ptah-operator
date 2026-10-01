@@ -282,6 +282,23 @@ These observed cycles are not estimates from elapsed intervals or Job totals.
 They do not yet establish the qualification profile's churn, per-slot minimum
 or full soak.
 
+The soak workload also sets `unrelatedObjects: true`. Before the cold start,
+the bootstrap creates 1,000 immutable ConfigMaps with 1 KiB payloads and 1,000
+Jobs across two additional namespaces. At most twenty of these Jobs run at
+once during preparation. Each runs a non-root, read-only shell that exits
+successfully. No service account token is mounted; a NetworkPolicy denies
+ingress and egress in each namespace. Completed
+Jobs and their Pods remain present during measurement. They carry a separate
+label and live outside the workload namespaces, so they affect the cluster
+without entering workload Job or Pod counts.
+
+The bootstrap checks the full population, original UIDs, ConfigMap bytes,
+Job completion, and each matching Pod's successful execution before and after
+the workload. The raw inventories and their hashes accompany the ownership
+journal. Cleanup deletes these namespaces with their recorded UIDs, using the
+same cleanup path as the workload fixtures. This fixture supplies the declared
+background population; its presence alone does not establish performance.
+
 Each sample retains the UID, resource version, generation, suspension/deletion
 state, read time, and database observation and reconciliation timestamps of
 every workload resource. The report keeps its original maxima across all
@@ -352,7 +369,7 @@ workload resources. Its report declares `retention-fault-only`. Keep the owned
 lab and fixture journal until the retry finishes, then run the original cleanup.
 This mode reuses preparation and does not repeat the soak.
 
-The approval backlog, unrelated objects, overload cases and the full qualified
+The approval backlog, overload cases and the full qualified
 execution matrix remain required
 by [the frozen profile](https://github.com/stokaro/ptah-operator/blob/master/support/qualification/0.2.0.md).
 

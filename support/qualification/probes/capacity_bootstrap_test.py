@@ -264,7 +264,12 @@ class WrapperTests(unittest.TestCase):
             with self.subTest(engine=engine):
                 self.run_wrapper_cleanup_case(engine)
 
-    def run_wrapper_cleanup_case(self, engine):
+    def test_unrelated_inventory_checks_bracket_execution_and_fail_closed(self):
+        for checkpoint in ('', 'before', 'after'):
+            with self.subTest(checkpoint=checkpoint):
+                self.run_wrapper_cleanup_case('PostgreSQL', unrelated=True, fail_checkpoint=checkpoint)
+
+    def run_wrapper_cleanup_case(self, engine, unrelated=False, fail_checkpoint=''):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'repository'
             caller = Path(directory) / 'caller'
@@ -273,7 +278,7 @@ class WrapperTests(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
             source = Path(__file__).resolve().parents[3] / 'hack/capacity.sh'
             shutil.copyfile(source, root / 'hack/capacity.sh')
-            (caller / 'workload.json').write_text(json.dumps({'engine': engine}))
+            (caller / 'workload.json').write_text(json.dumps({'engine': engine, 'unrelatedObjects': unrelated}))
             repository = source.parents[1]
             for relative in ('demo/schemas', 'demo/migrations', 'support/capacity/mysql'):
                 shutil.copytree(repository / relative, root / relative, dirs_exist_ok=True)
@@ -305,31 +310,47 @@ else:
  assert len(list(source.glob('*.up.sql')))==(3 if version.startswith('v2-') else 2)
 print('Digest: sha256:'+'a'*64)
 ''')
-            executable(root / 'support/qualification/probes/capacity_bootstrap.py', '#!' + sys.executable + '\n' + r'''import json,pathlib,sys
+            executable(root / 'support/qualification/probes/capacity_bootstrap.py', '#!' + sys.executable + '\n' + r'''import json,os,pathlib,sys
 args=sys.argv[1:]; path=pathlib.Path(args[args.index('--state')+1])
+action=args[0]+(':'+args[args.index('--checkpoint')+1] if args[0]=='verify-unrelated' else '')
+with (path.parent/'actions.log').open('a') as output: output.write(action+'\n')
 assert path.is_absolute(), 'journal changes meaning after chdir'
 if args[0]=='prepare':
  workload=pathlib.Path(args[args.index('--workload')+1]); assert workload.is_absolute() and workload.exists()
  path.write_text(workload.read_text()); print('work-a,work-b')
 elif args[0]=='engine':
  print(json.loads(path.read_text())['engine'])
+elif args[0]=='verify-unrelated':
+ assert json.loads(path.read_text())['unrelatedObjects']
+ if args[args.index('--checkpoint')+1]==os.environ.get('CAPACITY_TEST_FAIL_CHECKPOINT'): sys.exit(43)
 else:
+ assert args[0]=='cleanup'
  assert path.exists(), 'cleanup lost the original journal'
  path.write_text('{"cleaned":true}')
 ''')
-            executable(bin_path / 'go', '#!' + sys.executable + '\n' + r'''import json,pathlib,sys
+            executable(bin_path / 'go', '#!' + sys.executable + '\n' + r'''import json,os,pathlib,sys
 args=sys.argv[1:]; assert args[args.index('-namespace')+1]=='work-a,work-b'
 assert pathlib.Path(args[args.index('-workload')+1]).exists()
+assert pathlib.Path(args[args.index('-checkpoint-state')+1])==pathlib.Path(args[args.index('-out')+1],'bootstrap-state.json')
 assert json.loads(pathlib.Path(args[args.index('-host-info')+1]).read_text())['dockerID']=='test-daemon'
 pathlib.Path(args[args.index('-out')+1],'go-ran').write_text('yes')
-sys.exit(42)
+with pathlib.Path(args[args.index('-out')+1],'actions.log').open('a') as output: output.write('go\n')
+sys.exit(int(os.environ['CAPACITY_TEST_GO_EXIT']))
 ''')
             env = dict(os.environ, PATH=str(bin_path) + os.pathsep + os.environ['PATH'],
-                       LAB_ENVIRONMENT=str(environment), CAPACITY_WORKLOAD='workload.json', CAPACITY_OUT_DIR='evidence', CAPACITY_TEST_ENGINE=engine, CAPACITY_VARIED_INPUTS='0')
+                       LAB_ENVIRONMENT=str(environment), CAPACITY_WORKLOAD='workload.json', CAPACITY_OUT_DIR='evidence', CAPACITY_TEST_ENGINE=engine, CAPACITY_VARIED_INPUTS='0',
+                       CAPACITY_TEST_GO_EXIT='0' if unrelated else '42', CAPACITY_TEST_FAIL_CHECKPOINT=fail_checkpoint)
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
                                     capture_output=True, timeout=20)
-            self.assertEqual(result.returncode, 42, result.stderr.decode())
-            self.assertTrue((caller / 'evidence/go-ran').exists())
+            self.assertEqual(result.returncode, 43 if fail_checkpoint else (0 if unrelated else 42), result.stderr.decode())
+            self.assertEqual((caller / 'evidence/go-ran').exists(), fail_checkpoint != 'before')
+            expected = ['prepare', 'engine']
+            if unrelated: expected.append('verify-unrelated:before')
+            if fail_checkpoint != 'before':
+                expected.append('go')
+                if unrelated: expected.append('verify-unrelated:after')
+            expected.append('cleanup')
+            self.assertEqual((caller / 'evidence/actions.log').read_text().splitlines(), expected)
             journal = caller / 'evidence/bootstrap-state.json'
             self.assertEqual(json.loads(journal.read_text()), {'cleaned': True})
             journal.write_text('earlier evidence')

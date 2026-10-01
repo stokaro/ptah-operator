@@ -129,6 +129,14 @@ func run() error {
 		faultProbe = newRetentionFaultProbe(filepath.Join(filepath.Dir(*checkpointPath), "capacity_retention_fault.py"), *checkpointState, filepath.Dir(*catalogPath), *outDir)
 	}
 
+	var unrelated retentionArchive
+	if load.UnrelatedObjects {
+		unrelated, err = unrelatedEvidence(*checkpointState, *outDir, in.namespaces)
+		if err != nil {
+			return err
+		}
+	}
+
 	host, err := readHostCapacity(*hostPath)
 	if err != nil {
 		return err
@@ -170,6 +178,9 @@ func run() error {
 	if in.catalog != nil {
 		environment["inputCatalogSHA256"] = catalogDigest
 		environment["inputCatalog"] = in.catalog
+	}
+	if load.UnrelatedObjects {
+		environment["unrelatedInventory"] = unrelated
 	}
 	environment["expectedAPIServers"] = *apiCount
 	recordHostCapacity(environment, host)
