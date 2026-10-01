@@ -39,7 +39,7 @@ func alUpgradeFixture() (alUpgradeState, *batchv1.Job) {
 
 func TestAlUpgradeIncidentRequiresIndependentExactHook(t *testing.T) {
 	s, j := alUpgradeFixture()
-	events := []watchEvent[*batchv1.Job]{{Type: watch.Modified, Object: j}}
+	events := []watchEvent[*batchv1.Job]{{Type: watch.Modified, Object: j}, {Type: watch.Deleted, Object: j}}
 	at, err := alUpgradeIncident(s, events, "failed")
 	if err != nil || !at.Equal(*s.FailedAt) {
 		t.Fatal(at, err)
@@ -58,7 +58,7 @@ func TestAlUpgradeIncidentRequiresIndependentExactHook(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			changed := j.DeepCopy()
 			mutate(changed)
-			if _, err := alUpgradeIncident(s, []watchEvent[*batchv1.Job]{{Type: watch.Modified, Object: changed}}, "failed"); err == nil {
+			if _, err := alUpgradeIncident(s, []watchEvent[*batchv1.Job]{{Type: watch.Deleted, Object: changed}}, "failed"); err == nil {
 				t.Fatal("unbound incident accepted")
 			}
 		})
@@ -82,6 +82,42 @@ func TestAlUpgradeIncidentRequiresIndependentExactHook(t *testing.T) {
 	s.Attempts[0].CompletedAt = &changed
 	if _, err := alUpgradeIncident(s, events, "deadline"); err == nil {
 		t.Fatal("changed completion timestamp accepted")
+	}
+}
+
+// A retained failure cannot prove survival of deletion unless the independent
+// history contains deletion of that same hook, not only a termination request.
+func TestAlUpgradeIncidentRequiresActualDeletion(t *testing.T) {
+	s, j := alUpgradeFixture()
+	for _, mode := range []string{"failed", "deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			state, job := s, j.DeepCopy()
+			state.Attempts = append([]alUpgradeAttempt(nil), s.Attempts...)
+			if mode == "deadline" {
+				completed := state.StartedAt.Add(2 * time.Minute)
+				state.FailedAt, state.Attempts[0].FailedAt = nil, nil
+				state.Attempts[0].CompletedAt = &completed
+				job.Status.CompletionTime = &metav1.Time{Time: completed}
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(completed)}}
+			}
+			events := []watchEvent[*batchv1.Job]{{Type: watch.Modified, Object: job}}
+			if _, err := alUpgradeIncident(state, events, mode); err == nil {
+				t.Fatal("terminal hook without a deletion event accepted")
+			}
+			terminating := job.DeepCopy()
+			terminating.DeletionTimestamp = &metav1.Time{Time: state.StartedAt.Add(3 * time.Minute)}
+			if _, err := alUpgradeIncident(state, append(events, watchEvent[*batchv1.Job]{Type: watch.Modified, Object: terminating}), mode); err == nil {
+				t.Fatal("deletion request substituted for actual deletion")
+			}
+			other := job.DeepCopy()
+			other.UID = "unrelated-hook"
+			if _, err := alUpgradeIncident(state, append(events, watchEvent[*batchv1.Job]{Type: watch.Deleted, Object: other}), mode); err == nil {
+				t.Fatal("another hook's deletion accepted")
+			}
+			if _, err := alUpgradeIncident(state, append(events, watchEvent[*batchv1.Job]{Type: watch.Deleted, Object: job}), mode); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

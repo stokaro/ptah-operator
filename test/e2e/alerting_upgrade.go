@@ -102,6 +102,7 @@ func alUpgradeIncident(s alUpgradeState, events []watchEvent[*batchv1.Job], mode
 	}
 	var failed, complete *metav1.Time
 	seen := 0
+	deleted := false
 	for _, event := range events {
 		j := event.Object
 		if j == nil || string(j.UID) != attempt.UID {
@@ -111,6 +112,7 @@ func alUpgradeIncident(s alUpgradeState, events []watchEvent[*batchv1.Job], mode
 			continue
 		}
 		seen++
+		deleted = deleted || event.Type == watch.Deleted
 		if j.Namespace != s.Intent.Namespace || j.Name != s.Intent.HookJob || string(j.UID) == s.BaselineJobUID || len(j.Spec.Template.Spec.Containers) != 1 || j.Spec.Template.Spec.Containers[0].Image != s.Intent.Image || !slices.Equal(j.Spec.Template.Spec.Containers[0].Args, s.Intent.HookArgs) {
 			return time.Time{}, errors.New("observed hook differs from the candidate")
 		}
@@ -141,6 +143,9 @@ func alUpgradeIncident(s alUpgradeState, events []watchEvent[*batchv1.Job], mode
 	}
 	if seen == 0 {
 		return time.Time{}, errors.New("no independently observed hook")
+	}
+	if !deleted {
+		return time.Time{}, errors.New("hook deletion is absent from independent history")
 	}
 	switch mode {
 	case "failed":

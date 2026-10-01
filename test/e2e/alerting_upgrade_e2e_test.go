@@ -39,8 +39,30 @@ func (a *alertingRun) upgradeAlerts() {
 	a.logf("retained private upgrade evidence: %s", evidence)
 	a.check(os.WriteFile(filepath.Join(evidence, "candidate.tgz"), chart, 0600), "retain exact candidate bytes")
 	a.check(os.WriteFile(filepath.Join(evidence, "values.yaml"), values, 0600), "retain exact values bytes")
-	probes, checkProbes, recoveryBoundary, cleanup := a.upgradeProbes()
-	defer cleanup()
+	probes, checkProbes, recoveryBoundary, cleanup := a.upgradeProbes(evidence)
+	defer func() {
+		cleanup()
+		if a.t.Failed() {
+			return
+		}
+		hashes := map[string]string{}
+		a.check(filepath.WalkDir(evidence, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			relative, err := filepath.Rel(evidence, path)
+			if err != nil {
+				return err
+			}
+			hashes[filepath.ToSlash(relative)] = alUpgradeDigest(body)
+			return nil
+		}), "checksum the complete private upgrade evidence")
+		a.retainUpgradeEvidence(evidence, "manifest.json", mustJSONBytes(hashes))
+	}()
 	for _, object := range probes {
 		kind := "PtahSchema"
 		if _, ok := object.(*ptahv1.PtahMigration); ok {
@@ -135,12 +157,7 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount strin
 	a.check(os.Mkdir(directory, 0700), "create unique fault evidence directory")
 	hashes := map[string]string{}
 	retain := func(name string, body []byte) {
-		path := filepath.Join(directory, name)
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		a.check(err, "create new upgrade evidence %s", name)
-		_, err = f.Write(body)
-		a.check(err, "retain upgrade evidence")
-		a.check(f.Close(), "close upgrade evidence")
+		a.retainUpgradeEvidence(directory, name, body)
 		hashes[name] = alUpgradeDigest(body)
 	}
 	retain("intent.json", mustJSONBytes(intent))
@@ -294,7 +311,7 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount strin
 	// Fresh stored progress and the original runtime Pod transitions date the
 	// healthy installation independently of the observer's polling timestamp.
 	healthyAt := recoveryBoundary(*recovered.Attempts[1].CompletedAt)
-	runtimeAt := a.upgradeRuntimeBoundary(intent, probes, *recovered.Attempts[1].CompletedAt)
+	runtimeAt := a.upgradeRuntimeBoundary(intent, probes, *recovered.Attempts[1].CompletedAt, retain)
 	if runtimeAt.After(healthyAt) {
 		healthyAt = runtimeAt
 	}
@@ -312,6 +329,18 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount strin
 	retain("hook-history.json", mustJSONBytes(jobs.snapshot()))
 	retain("manifest.json", mustJSONBytes(hashes))
 	a.logf("PASS external upgrade %s: observerPod=%s initialHook=%s retryHook=%s trigger=%s firing=%s healthy=%s resolved=%s state=%s", mode, observer.UID, fault.Attempts[0].UID, recovered.RecoveryJobUID, trigger, firing.ReceivedAt, healthyAt, resolved.ReceivedAt, mustJSONBytes(recovered))
+}
+
+// Each file is new and private. A repeated write must not silently replace
+// evidence from an earlier observation or attempt.
+func (a *alertingRun) retainUpgradeEvidence(directory, name string, body []byte) {
+	f, err := os.OpenFile(filepath.Join(directory, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	a.check(err, "create new upgrade evidence %s", name)
+	defer f.Close()
+	_, err = f.Write(body)
+	a.check(err, "retain upgrade evidence")
+	a.check(f.Sync(), "sync upgrade evidence")
+	a.check(f.Close(), "close upgrade evidence")
 }
 
 func (a *alertingRun) requireUpgradeRuntimesStopped(intent alUpgradeIntent) {

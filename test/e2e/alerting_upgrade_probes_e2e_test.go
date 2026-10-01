@@ -22,7 +22,7 @@ import (
 
 // The four consumers have separate databases and never receive permission to
 // apply. Collection histories cover their creation, both upgrades and recovery.
-func (a *alertingRun) upgradeProbes() ([]client.Object, func(), func(time.Time) time.Time, func()) {
+func (a *alertingRun) upgradeProbes(evidence string) ([]client.Object, func(), func(time.Time) time.Time, func()) {
 	schema, migration := &ptahv1.PtahSchema{}, &ptahv1.PtahMigration{}
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-reference-postgresql"}, schema), "read the native schema producer")
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, migration), "read the native migration producer")
@@ -107,6 +107,12 @@ func (a *alertingRun) upgradeProbes() ([]client.Object, func(), func(time.Time) 
 				a.fatalf("probe %s has no nonempty resource and read-workload history", original.GetName())
 			}
 		}
+		// Save the closed histories before removing their source objects. These
+		// are the documents used to reject Apply and date post-hook recovery.
+		a.retainUpgradeEvidence(evidence, "probe-originals.json", mustJSONBytes(originals))
+		a.retainUpgradeEvidence(evidence, "probe-schemas.json", mustJSONBytes(schemas.snapshot()))
+		a.retainUpgradeEvidence(evidence, "probe-migrations.json", mustJSONBytes(migrations.snapshot()))
+		a.retainUpgradeEvidence(evidence, "probe-jobs.json", mustJSONBytes(jobs.snapshot()))
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		for _, v := range probes {
@@ -218,11 +224,12 @@ func (a *alertingRun) upgradeProbes() ([]client.Object, func(), func(time.Time) 
 
 // Runtime conditions carry the event times. Re-reading healthy objects must
 // never move the receiver deadline to the time this polling loop noticed them.
-func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []client.Object, after time.Time) time.Time {
+func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []client.Object, after time.Time, retain func(string, []byte)) time.Time {
 	boundary := after
 	for name, want := range intent.CRDDigests {
 		crd := &apiextensionsv1.CustomResourceDefinition{}
 		a.check(a.cluster.Client.Get(a.ctx, client.ObjectKey{Name: name}, crd), "read recovered candidate CRD")
+		retain("recovery-crd-"+name+".json", mustJSONBytes(crd))
 		digest, err := crdupgrade.ComputeSchemaDigest(crd)
 		a.check(err, "verify recovered schema bytes")
 		established, names := false, false
@@ -237,6 +244,7 @@ func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []cl
 	for _, name := range []string{intent.Manager, intent.Rotator} {
 		d := &appsv1.Deployment{}
 		a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: intent.Namespace, Name: name}, d), "read recovered runtime")
+		retain("recovery-deployment-"+name+".json", mustJSONBytes(d))
 		if d.Spec.Replicas == nil || *d.Spec.Replicas < 1 || d.Status.ObservedGeneration != d.Generation || d.Status.AvailableReplicas != *d.Spec.Replicas || d.Status.UpdatedReplicas != *d.Spec.Replicas || d.Status.Replicas != *d.Spec.Replicas || d.Spec.Selector == nil || len(d.Spec.Template.Spec.Containers) != 1 || d.Spec.Template.Spec.Containers[0].Image != intent.Image {
 			a.fatalf("retry runtime is not the available candidate")
 		}
@@ -247,6 +255,7 @@ func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []cl
 		}
 		pods := &corev1.PodList{}
 		a.check(a.cluster.Client.List(a.ctx, pods, client.InNamespace(intent.Namespace), client.MatchingLabelsSelector{Selector: selector}), "read all recovered runtime Pods")
+		retain("recovery-pods-"+name+".json", mustJSONBytes(pods))
 		if len(pods.Items) != int(*d.Spec.Replicas) {
 			a.fatalf("retry runtime has incomplete Pod inventory")
 		}
@@ -257,6 +266,7 @@ func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []cl
 			}
 			rs := &appsv1.ReplicaSet{}
 			a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: intent.Namespace, Name: owner.Name}, rs), "read candidate Pod lineage")
+			retain("recovery-lineage-"+pod.Name+".json", mustJSONBytes(rs))
 			parent := metav1.GetControllerOf(rs)
 			if parent == nil || parent.UID != d.UID || parent.Kind != "Deployment" || rs.UID != owner.UID || !harness.PodReady(&pod) || pod.DeletionTimestamp != nil || len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Image != intent.Image {
 				a.fatalf("runtime Pod is not owned and ready on this candidate")
@@ -279,6 +289,7 @@ func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []cl
 		if !alUpgradeProbeSafe(live, probe) {
 			a.fatalf("upgrade changed the read-only probe")
 		}
+		retain("recovery-probe-"+probe.GetName()+".json", mustJSONBytes(live))
 		before := live.DeepCopyObject().(client.Object)
 		annotations := live.GetAnnotations()
 		if annotations == nil {
@@ -287,6 +298,7 @@ func (a *alertingRun) upgradeRuntimeBoundary(intent alUpgradeIntent, probes []cl
 		annotations["qualification.ptah.run/native-upgrade-admission"] = "verified"
 		live.SetAnnotations(annotations)
 		a.check(a.cluster.Client.Patch(a.ctx, live, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}), client.DryRunAll), "verify actual recovered admission")
+		retain("recovery-admission-"+probe.GetName()+".json", mustJSONBytes(live))
 	}
 	return boundary
 }
