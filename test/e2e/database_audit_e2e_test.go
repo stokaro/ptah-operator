@@ -126,8 +126,8 @@ SELECT JSON_OBJECT('client',user_host,'count',COUNT(*)) FROM mysql.general_log W
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		raw = a.exec("cat", "/tmp/ptah-sql-audit/statements.json")
-		if !bytes.HasPrefix(raw, a.pgPrefix) {
-			a.t.Fatal("PostgreSQL SQL audit was truncated or replaced")
+		if err := postgresAuditPrefixError(a.pgPrefix, raw); err != nil {
+			a.t.Fatal(err)
 		}
 		counts, found, err := postgresAuditCounts(raw, marker)
 		if err == nil && found {

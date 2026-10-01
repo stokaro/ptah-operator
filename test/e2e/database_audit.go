@@ -2,8 +2,10 @@ package e2e
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"strings"
@@ -33,6 +35,22 @@ func databaseAuditArgs(engine string) []any {
 type sqlAuditCounts struct {
 	clients map[string]int64
 	records int64
+}
+
+// Keep the refusal strict while distinguishing a shorter read from a
+// changed prefix. SQL journals can contain credentials, so diagnostics expose
+// only lengths, the first differing offset and digests, never journal bytes.
+func postgresAuditPrefixError(before, after []byte) error {
+	if bytes.HasPrefix(after, before) {
+		return nil
+	}
+	compared := min(len(before), len(after))
+	mismatch := 0
+	for mismatch < compared && before[mismatch] == after[mismatch] {
+		mismatch++
+	}
+	return fmt.Errorf("PostgreSQL SQL audit was truncated or replaced: previousBytes=%d currentBytes=%d firstMismatchOffset=%d previousSHA256=%x currentPrefixSHA256=%x",
+		len(before), len(after), mismatch, sha256.Sum256(before), sha256.Sum256(after[:compared]))
 }
 
 func postgresAuditCounts(raw []byte, marker string) (sqlAuditCounts, bool, error) {

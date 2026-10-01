@@ -110,3 +110,49 @@ func TestAuditParserErrorsDoNotQuoteSQL(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresAuditPrefixDiagnosticsRetainTheRefusalWithoutSQL(t *testing.T) {
+	const secret = "private-fixture-password"
+	before := []byte(`{"message":"statement: SELECT '` + secret + `'"}` + "\n")
+	for name, after := range map[string][]byte{
+		"identical": append([]byte(nil), before...),
+		"append":    append(append([]byte(nil), before...), []byte(`{"message":"checkpoint complete"}`)...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := postgresAuditPrefixError(before, after); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if err := postgresAuditPrefixError(nil, before); err != nil {
+		t.Fatal(err)
+	}
+	for name, row := range map[string]struct {
+		after  []byte
+		offset string
+	}{
+		"empty read":              {nil, "firstMismatchOffset=0"},
+		"short read":              {before[:7], "firstMismatchOffset=7"},
+		"replaced first byte":     {append([]byte("X"), before[1:]...), "firstMismatchOffset=0"},
+		"changed middle":          {append(append(append([]byte(nil), before[:12]...), 'X'), before[13:]...), "firstMismatchOffset=12"},
+		"replacement then growth": {append([]byte("X"), before...), "firstMismatchOffset=0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := postgresAuditPrefixError(before, row.after)
+			if err == nil {
+				t.Fatal("lost journal evidence was accepted")
+			}
+			message := err.Error()
+			for _, required := range []string{row.offset, "previousBytes=", "currentBytes=", "previousSHA256=", "currentPrefixSHA256="} {
+				if !strings.Contains(message, required) {
+					t.Fatalf("missing safe diagnostic %s", required)
+				}
+			}
+			for _, forbidden := range []string{secret, "SELECT", "statement:", string(before)} {
+				if strings.Contains(message, forbidden) {
+					t.Fatal("SQL or a fixture credential reached the diagnostic")
+				}
+			}
+		})
+	}
+}
