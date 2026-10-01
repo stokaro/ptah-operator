@@ -769,6 +769,7 @@ func TestVerifyKindHAConfig(t *testing.T) {
       - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
+        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true`
 	for _, test := range []struct {
@@ -846,6 +847,7 @@ func TestVerifyKindHAConfigRefusesAnIsolationWorkerThatIsNotIsolated(t *testing.
 	kubeletPatch := `      - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
+        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true
 `
@@ -1775,9 +1777,11 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name: "post-creation HA topology assertion omitted",
 			old: "require_ready_nodes \"after kind cluster creation\"\n" +
 				"assert_kind_ha_topology\n" +
+				"assert_kubelet_log_budget\n" +
 				"assert_api_server_endpoint_inventory",
 			replacement: "require_ready_nodes \"after kind cluster creation\"\n" +
 				": # HA topology assertion omitted\n" +
+				"assert_kubelet_log_budget\n" +
 				"assert_api_server_endpoint_inventory",
 			wantError: "kind cluster creation",
 		},

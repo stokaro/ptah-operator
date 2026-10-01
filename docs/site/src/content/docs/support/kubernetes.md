@@ -66,3 +66,31 @@ Before creating Docker resources, the harness archives the selected Git commit
 into an isolated directory. Chart packaging, image builds, and child test scripts
 consume that snapshot. Ignored files or later edits in the original checkout
 therefore cannot change the artifacts attributed to the tested commit.
+
+## Result log retention
+
+Set kubelet `containerLogMaxSize` to at least `64Mi` on every node that can
+run operation Pods. This is a node configuration requirement; Helm cannot
+change it. Keep container logs available until the operator has collected the
+result, and do not truncate or rewrite the runner's output.
+
+An executable plan can contain 8 MiB. Sealing and base64 encoding already
+make its result larger than the default 10 MiB container log file. Other valid
+result payloads can be larger; 64 MiB leaves room for the supported frame and
+CRI record overhead. The
+[Kubernetes log API returns only the latest file](https://kubernetes.io/docs/concepts/cluster-administration/logging/#log-rotation),
+so increasing the number of rotated files does not preserve a readable result.
+A Job can exit successfully while its result header has rotated out of reach.
+
+Ask the cluster administrator to configure this before installing. Where the
+administrator can read node configuration through the API, verify the effective
+value for each eligible node:
+
+```sh
+kubectl get --raw "/api/v1/nodes/<node>/proxy/configz" \
+  | jq '.kubeletconfig.containerLogMaxSize'
+```
+
+The acceptance cluster uses 64 MiB files and checks every node's effective
+configuration before running a phase. Its maximum-plan rows still require
+exact 8 MiB plans to be read, stored, approved and applied on both engines.

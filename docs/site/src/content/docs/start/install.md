@@ -11,6 +11,9 @@ digests to choose, read [Try it locally](../try-it/) instead.
 
 - A Kubernetes cluster in the supported window, and cluster-admin on it. The
   window is [Kubernetes support](../../support/kubernetes/).
+- Every node eligible for operation Pods must use kubelet
+  `containerLogMaxSize: 64Mi` or larger. See
+  [Result log retention](../../support/kubernetes/#result-log-retention).
 - Helm 4 or newer. Helm 3 is not supported and is not tested: it reaches end of
   life before this operator's first release.
 - `kubectl`, and `jq` for the commands on the pages that follow.

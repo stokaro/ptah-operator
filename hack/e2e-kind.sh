@@ -1226,6 +1226,31 @@ assert_kind_ha_topology() {
 		fail "Kubernetes node inventory does not match the ready HA kind topology $KIND_ISOLATION_TOPOLOGY"
 }
 
+# A sealed 8 MiB plan exceeds the kubelet's default 10 MiB rotation
+# threshold. The Pod log API serves only the current file. Keep the complete
+# supported frame in one file and verify the running kubelet, not only YAML.
+assert_kubelet_log_budget() {
+	kubelet_budget_expected=4
+	if [ "$ISOLATION_WORKER" = true ]; then kubelet_budget_expected=5; fi
+	jq -er '.items[].metadata.name' "$NODE_READINESS_FILE" >"$WORK_DIR/kubelet-log-nodes.txt" ||
+		fail "could not enumerate Kubernetes nodes for the kubelet log budget"
+	kubelet_budget_count=0
+	while IFS= read -r kubelet_budget_node; do
+		[ -n "$kubelet_budget_node" ] || continue
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get \
+			--raw "/api/v1/nodes/$kubelet_budget_node/proxy/configz" \
+			>"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" ||
+			fail "could not read the effective kubelet log budget on $kubelet_budget_node"
+		jq -e '.kubeletconfig.containerLogMaxSize == "64Mi"' \
+			"$WORK_DIR/kubelet-log-config-$kubelet_budget_node.json" >/dev/null ||
+			fail "kubelet $kubelet_budget_node must retain 64Mi per container log file for complete runner results"
+		kubelet_budget_count=$((kubelet_budget_count + 1))
+	done <"$WORK_DIR/kubelet-log-nodes.txt"
+	[ "$kubelet_budget_count" -eq "$kubelet_budget_expected" ] ||
+		fail "kubelet log budget was not verified on every declared node"
+	printf 'e2e: verified 64Mi container log files on %s kubelets\n' "$kubelet_budget_count"
+}
+
 assert_api_server_endpoint_inventory() {
 	api_endpoint_deadline=$(($(date +%s) + 60))
 	while [ "$(date +%s)" -lt "$api_endpoint_deadline" ]; do
@@ -2342,6 +2367,7 @@ kind create cluster \
 	--wait 5m
 require_ready_nodes "after kind cluster creation"
 assert_kind_ha_topology
+assert_kubelet_log_budget
 assert_api_server_endpoint_inventory
 assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"
 

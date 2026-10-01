@@ -10,6 +10,7 @@ nodes:
       - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
+        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true
   - role: control-plane
@@ -17,6 +18,7 @@ nodes:
       - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
+        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true
   - role: control-plane
@@ -24,6 +26,7 @@ nodes:
       - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
+        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true
   - role: worker
@@ -31,5 +34,6 @@ nodes:
       - |
         kind: KubeletConfiguration
         apiVersion: kubelet.config.k8s.io/v1beta1
+        containerLogMaxSize: 64Mi
         featureGates:
           KubeletInUserNamespace: true
