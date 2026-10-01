@@ -260,7 +260,7 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 	a.check(err, "retain Unknown until read-only recovery is enabled")
 	suspend(false)
 	recovered := wait("fresh schema approval after observation and planning", func(v *ptahv1.PtahSchema) bool {
-		return alLockApprovalReady(v) && v.Status.Plan.UID != original.Status.Plan.UID
+		return alRecoveredSchemaApprovalReady(v, original.UID, original.Status.ActiveOperation.StartedAt.Time)
 	})
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, schemas, recovered)
 	trace, err = alReadSchemaUnresolvedTrace(schemas.snapshot(), original, true)

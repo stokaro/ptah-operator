@@ -9,10 +9,20 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
 type alSchemaUnresolvedTrace struct{ recorded, observed, accounted time.Time }
+
+// Recovery requires fresh read-only evidence and a new approval decision.
+// An immutable plan can keep its UID when its exact content has not changed.
+// The recorded Observe/Plan history is checked separately before approving it.
+func alRecoveredSchemaApprovalReady(v *ptahv1.PtahSchema, uid types.UID, after time.Time) bool {
+	return v != nil && uid != "" && v.UID == uid && !after.IsZero() &&
+		alLockApprovalReady(v) && v.Status.PendingLockRelease == nil &&
+		v.Status.Target.LastObservedAt != nil && v.Status.Target.LastObservedAt.After(after)
+}
 
 // Applying changes from True to False when Unknown is persisted. Its first
 // transition dates firing; the successful proof Plan's LastAttemptTime dates

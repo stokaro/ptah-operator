@@ -1,12 +1,61 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 )
+
+func TestRecoveredSchemaMayReuseItsImmutablePlan(t *testing.T) {
+	var recovered ptahv1.PtahSchema
+	var approval ptahv1.PtahSchemaApproval
+	for name, into := range map[string]any{"alert-schema-recovered.json": &recovered, "alert-schema-original-approval.json": &approval} {
+		raw, err := os.ReadFile(filepath.Join("../..", "testdata/e2e/readings", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, into); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if recovered.Status.Plan == nil || recovered.Status.Plan.UID != approval.Spec.PlanRef.UID {
+		t.Fatal("native reading no longer reproduces immutable plan reuse")
+	}
+	after := approval.Spec.ApprovedAt.Time
+	if !alRecoveredSchemaApprovalReady(&recovered, approval.Spec.SchemaRef.UID, after) {
+		t.Fatal("fresh native approval gate refused because the plan was reused")
+	}
+	for name, mutate := range map[string]func(*ptahv1.PtahSchema){
+		"replacement":                func(v *ptahv1.PtahSchema) { v.UID = "replacement" },
+		"stale observation":          func(v *ptahv1.PtahSchema) { v.Status.Target.LastObservedAt = &metav1.Time{Time: after} },
+		"missing observation":        func(v *ptahv1.PtahSchema) { v.Status.Target.LastObservedAt = nil },
+		"unobserved generation":      func(v *ptahv1.PtahSchema) { v.Status.ObservedGeneration-- },
+		"pending observation":        func(v *ptahv1.PtahSchema) { v.Status.PendingObservation = &ptahv1.PendingObservationStatus{} },
+		"pending release":            func(v *ptahv1.PtahSchema) { v.Status.PendingLockRelease = &ptahv1.TargetLockReleaseStatus{} },
+		"active Apply":               func(v *ptahv1.PtahSchema) { v.Status.ActiveOperation = proofApplyActive() },
+		"applied without approval":   func(v *ptahv1.PtahSchema) { v.Status.Applied = &ptahv1.AppliedStatus{} },
+		"consumed approval retained": func(v *ptahv1.PtahSchema) { v.Status.Plan.Approval = &ptahv1.ConsumedApprovalStatus{} },
+		"suspended":                  func(v *ptahv1.PtahSchema) { v.Spec.Suspend = true },
+		"no approval gate":           func(v *ptahv1.PtahSchema) { v.Status.Conditions = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := recovered.DeepCopy()
+			mutate(v)
+			if alRecoveredSchemaApprovalReady(v, approval.Spec.SchemaRef.UID, after) {
+				t.Fatal("unsafe or stale recovery accepted")
+			}
+		})
+	}
+	if alRecoveredSchemaApprovalReady(&recovered, approval.Spec.SchemaRef.UID, time.Time{}) {
+		t.Fatal("missing incident time accepted")
+	}
+}
 
 func alSchemaTraceFixture() (*ptahv1.PtahSchema, []watchEvent[*ptahv1.PtahSchema]) {
 	plan := proofPlan()
