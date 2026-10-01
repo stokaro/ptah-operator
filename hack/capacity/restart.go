@@ -104,12 +104,12 @@ func (s *scenarios) approveAndWait(ctx context.Context, start time.Time) (map[st
 }
 
 func (s *scenarios) approvalFor(ctx context.Context, migration *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if !approvalGateReady(migration) {
+	if migration.GetNamespace() == "" || !approvalGateReady(migration) {
 		return nil, fmt.Errorf("approval workload has no current approval gate")
 	}
 	planName, _, _ := unstructured.NestedString(migration.Object, "status", "plan", "name")
 	planUID, _, _ := unstructured.NestedString(migration.Object, "status", "plan", "uid")
-	plan, err := s.dynamic.Resource(migrationPlanResource).Namespace(s.in.namespace).Get(ctx, planName, metav1.GetOptions{})
+	plan, err := s.dynamic.Resource(migrationPlanResource).Namespace(migration.GetNamespace()).Get(ctx, planName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (s *scenarios) approvalFor(ctx context.Context, migration *unstructured.Uns
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "operator.ptah.run/v1alpha1", "kind": "PtahMigrationApproval",
-		"metadata": map[string]any{"name": approvalResource, "namespace": s.in.namespace},
+		"metadata": map[string]any{"name": approvalResource, "namespace": migration.GetNamespace()},
 		"spec": map[string]any{
 			"migrationRef":    map[string]any{"name": migration.GetName(), "uid": string(migration.GetUID())},
 			"planRef":         map[string]any{"name": planName, "uid": planUID},

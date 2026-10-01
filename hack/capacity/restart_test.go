@@ -258,3 +258,54 @@ func TestRestartWatchesBeforeAdmissionAndKeepsFastApply(t *testing.T) {
 		t.Fatalf("fast Apply lost its binding or recovery: %v %v", outcome, err)
 	}
 }
+
+func TestApprovalUsesMigrationNamespace(t *testing.T) {
+	for _, mode := range []string{"second namespace", "default namespace decoy", "missing namespace"} {
+		t.Run(mode, func(t *testing.T) {
+			s, original, _, _, _ := restartFixture(t)
+			// Keep the original plan in the first namespace. Its owner UID and
+			// fingerprint differ from the real plan, so a wrong lookup fails.
+			plan, err := s.dynamic.Resource(migrationPlanResource).Namespace("work").Get(t.Context(), "plan", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			original.SetNamespace("second")
+			original.SetUID("second-migration-uid")
+			_ = unstructured.SetNestedField(original.Object, "second-plan-uid", "status", "plan", "uid")
+			if mode == "second namespace" {
+				plan.SetNamespace("second")
+				plan.SetUID("second-plan-uid")
+				_ = unstructured.SetNestedField(plan.Object, "second-migration-uid", "spec", "migrationRef", "uid")
+				_ = unstructured.SetNestedField(plan.Object, "second-fingerprint", "spec", "fingerprint")
+				if _, err := s.dynamic.Resource(migrationPlanResource).Namespace("second").Create(t.Context(), plan, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "missing namespace" {
+				original.SetNamespace("")
+			}
+			client := s.dynamic.(*dynamicfake.FakeDynamicClient)
+			client.ClearActions()
+			approval, err := s.approvalFor(t.Context(), original)
+			if mode != "second namespace" {
+				if err == nil {
+					t.Fatal("created approval without the migration's own plan")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				uid, _, _ := unstructured.NestedString(approval.Object, "spec", "planRef", "uid")
+				fingerprint, _, _ := unstructured.NestedString(approval.Object, "spec", "planFingerprint")
+				if approval.GetNamespace() != "second" || uid != "second-plan-uid" || fingerprint != "second-fingerprint" {
+					t.Fatalf("approval lost its namespace or exact plan binding: %v", approval.Object)
+				}
+			}
+			for _, action := range client.Actions() {
+				if action.GetNamespace() != "second" {
+					t.Fatalf("approval lookup escaped the migration namespace: %s", action.GetNamespace())
+				}
+			}
+		})
+	}
+}
