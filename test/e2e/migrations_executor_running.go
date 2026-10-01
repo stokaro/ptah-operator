@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -11,10 +12,45 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
+
+// The pinned migrator reserves one pool connection for its advisory lock and
+// executes DDL on another. Both sessions must belong to the same live executor;
+// requiring the DDL backend itself to own the advisory lock can never match.
+func runningMigrationBackendSQL(engine, database string) (string, error) {
+	if !mysqlAuditIdentifier.MatchString(database) {
+		return "", errors.New("running migration needs a plain database identifier")
+	}
+	switch engine {
+	case "postgresql":
+		return fmt.Sprintf(`SELECT DISTINCT ddl.pid::text || '/' || host(ddl.client_addr) || '/' || holder.pid::text || '/' || host(holder.client_addr)
+FROM pg_stat_activity ddl
+JOIN pg_locks waiting ON waiting.pid=ddl.pid
+JOIN pg_stat_activity holder ON holder.datid=ddl.datid AND holder.usesysid=ddl.usesysid AND holder.client_addr=ddl.client_addr
+JOIN pg_locks held ON held.pid=holder.pid
+WHERE ddl.datname='%s' AND NOT waiting.granted AND waiting.locktype='relation'
+AND waiting.relation='e2e_migration_widgets'::regclass AND waiting.mode='AccessExclusiveLock'
+AND held.locktype='advisory' AND held.granted AND held.classid=0 AND held.objid=2705505214 AND held.objsubid=1`, database), nil
+	case "mysql":
+		return fmt.Sprintf(`SELECT CONCAT(ddl.ID, '/', SUBSTRING_INDEX(ddl.HOST, ':', 1), '/', holder.ID, '/', SUBSTRING_INDEX(holder.HOST, ':', 1))
+FROM information_schema.processlist ddl
+JOIN information_schema.processlist holder ON holder.ID=IS_USED_LOCK('ptah_migrate') AND holder.DB=ddl.DB AND holder.USER=ddl.USER
+AND SUBSTRING_INDEX(holder.HOST, ':', 1)=SUBSTRING_INDEX(ddl.HOST, ':', 1)
+WHERE ddl.DB='%s' AND ddl.STATE LIKE '%%metadata lock%%'`, database), nil
+	default:
+		return "", errors.New("running migration needs PostgreSQL or MySQL")
+	}
+}
+
+func migrationExecutorBackendMatchesPod(backend string, pod *corev1.Pod, uid types.UID) bool {
+	parts := strings.Split(backend, "/")
+	return len(parts) == 4 && executorBackendMatchesPod(strings.Join(parts[:2], "/"), pod, uid) &&
+		executorBackendMatchesPod(strings.Join(parts[2:], "/"), pod, uid)
+}
 
 func runningMigrationApprovalPlan(resource *ptahv1alpha1.PtahMigration, plan *ptahv1alpha1.PtahMigrationPlan,
 	reference, digest string, versions []int64,

@@ -87,6 +87,43 @@ func TestRunningMigrationPlanRequiresItsOwnPublishedArtifact(t *testing.T) {
 	}
 }
 
+func TestRunningMigrationAcceptsSeparateLockAndDDLConnections(t *testing.T) {
+	t.Parallel()
+	// The original PostgreSQL server journal records DDL on 8845 and advisory
+	// lock acquisition/release on 8836, both from the executor at 10.244.3.66.
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "original-executor"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.244.3.66"}}
+	for _, reading := range []string{"8845/10.244.3.66/8836/10.244.3.66", "8845/10.244.3.66/8845/10.244.3.66"} {
+		if !migrationExecutorBackendMatchesPod(reading, pod, pod.UID) {
+			t.Fatalf("valid session binding refused: %s", reading)
+		}
+	}
+	for _, reading := range []string{
+		"", "8845/10.244.3.66", "8845/10.244.3.66/0/10.244.3.66", "0/10.244.3.66/8836/10.244.3.66",
+		"8845/10.244.3.66/8836/10.244.3.67", "8845/10.244.3.67/8836/10.244.3.66",
+		"8845/10.244.3.66/8836/10.244.3.66\n8846/10.244.3.66/8836/10.244.3.66",
+	} {
+		if migrationExecutorBackendMatchesPod(reading, pod, pod.UID) {
+			t.Fatalf("incomplete, foreign or ambiguous sessions accepted: %s", reading)
+		}
+	}
+	if migrationExecutorBackendMatchesPod("8845/10.244.3.66/8836/10.244.3.66", pod, "replacement") {
+		t.Fatal("a replacement Pod accepted")
+	}
+	for _, engine := range []string{"postgresql", "mysql"} {
+		if _, err := runningMigrationBackendSQL(engine, "ptah_e2e_running_executor"); err != nil {
+			t.Fatal(err)
+		}
+		for _, database := range []string{"", "other' OR true", "two databases"} {
+			if _, err := runningMigrationBackendSQL(engine, database); err == nil {
+				t.Fatal("unsafe database identifier accepted")
+			}
+		}
+	}
+	if _, err := runningMigrationBackendSQL("unknown", "db"); err == nil {
+		t.Fatal("unknown engine accepted")
+	}
+}
+
 func TestMigrationExecutorPodBarrierRefusesManagedWorkloads(t *testing.T) {
 	t.Parallel()
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "test", UID: "database-uid",

@@ -138,12 +138,10 @@ func (m *migrationRun) runningMigrationTableBarrier(database string) func() {
 }
 
 func (m *migrationRun) runningMigrationBackend(database string) string {
-	statement := "SELECT DISTINCT a.pid::text || '/' || host(a.client_addr) FROM pg_locks held JOIN pg_stat_activity a ON a.pid=held.pid JOIN pg_locks waiting ON waiting.pid=a.pid WHERE held.locktype='advisory' AND held.granted AND NOT waiting.granted AND waiting.locktype='relation' AND waiting.relation='e2e_migration_widgets'::regclass AND waiting.mode='AccessExclusiveLock' AND a.datname='" + database + "'"
-	if m.engine.name == "mysql" {
-		statement = "SELECT CONCAT(ID, '/', SUBSTRING_INDEX(HOST, ':', 1)) FROM information_schema.processlist WHERE ID=IS_USED_LOCK('ptah_migrate') AND DB='" + database + "' AND STATE LIKE '%metadata lock%'"
-	}
+	statement, err := runningMigrationBackendSQL(m.engine.name, database)
+	m.check(err, "select the native migration session query")
 	output, err := m.sqlStatement(database, statement)
-	m.check(err, "read the advisory-lock holder blocked in the authorized migration DDL")
+	m.check(err, "read the blocked DDL session and its executor's advisory-lock session")
 	return trimmedSQL(output)
 }
 
@@ -220,8 +218,8 @@ func (m *migrationRun) runningExecutorImageChange() {
 		return backend != ""
 	})
 	pod := m.readStopRowPod(jobUID)
-	if !executorBackendMatchesPod(backend, pod, pod.UID) {
-		m.fatalf("the database did not identify the exact running migration Pod's PID and address")
+	if !migrationExecutorBackendMatchesPod(backend, pod, pod.UID) {
+		m.fatalf("the database did not bind both DDL and advisory-lock sessions to the exact running migration Pod")
 	}
 	before := m.migration(name)
 	if before.Status.ActiveOperation == nil || string(before.Status.ActiveOperation.JobUID) != jobUID {
