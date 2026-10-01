@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-01T19:36:14.332979+00:00",
+  "acceptance": "Not assessed",
+  "scope": "One-round local PostgreSQL retention diagnostic; not full capacity qualification or the three-checkpoint plateau",
+  "sourceCommit": "a076d2d3be9ee4474d78a75348e0b17d82a7e807",
+  "sourceCleanAtStart": true,
+  "exitCode": 0,
+  "engine": "PostgreSQL",
+  "kubernetes": "v1.37.0",
+  "architecture": "linux/amd64",
+  "dockerContext": "remote-dev-container",
+  "workload": {
+    "name": "retention-diagnostic",
+    "description": "One-round populated PostgreSQL retention diagnostic; not the 90-minute qualification or three-checkpoint plateau.",
+    "engine": "PostgreSQL",
+    "schemas": 10,
+    "migrations": 10,
+    "interval": "2m0s",
+    "settle": "5m0s",
+    "steadyState": "10m0s",
+    "sampleEvery": "5s",
+    "changeBatch": 5,
+    "outage": "0s",
+    "soak": {
+      "rounds": 1,
+      "cadence": "10m0s",
+      "churnPerFamily": 2,
+      "minimumCycles": 1
+    }
+  },
+  "maintenance": {
+    "reportSHA256": "0405b38e7b67cf92d5379f661b9688bb408481cdf198625e4f658ac35eb3075a",
+    "maintenanceRounds": 1,
+    "deletedPlans": 18,
+    "preservedPins": 8,
+    "retainedChunkBytes": 2804228,
+    "retainedProjectionBytes": 2804228,
+    "completeRowInventories": 120,
+    "appliedPlansVerified": 15,
+    "plateauAssessed": false
+  },
+  "garbageCollectedChunks": 6,
+  "garbageCollectedProjections": 6,
+  "postMaintenanceManagerRSSBytes": [
+    43794432,
+    67436544
+  ],
+  "scenarioOutcomes": {
+    "cold start": {
+      "converged": "1m24.902587s"
+    },
+    "soak update 01": {
+      "converged": "55.471777s",
+      "moved": "10",
+      "round": "1"
+    },
+    "soak churn 01": {
+      "converged": "47.796624s",
+      "replaced": "4",
+      "round": "1"
+    },
+    "soak maintenance 01": {
+      "deletedPlans": "18",
+      "round": "1"
+    },
+    "soak": {
+      "completedRounds": "1"
+    },
+    "restart burst": {
+      "approvalAdmitted": "13s",
+      "approvalConverged": "36s",
+      "approvalDispatched": "19s",
+      "approvalJobUID": "75cea9c0-2521-4a4c-a2fd-5d74ea8a905e",
+      "approvalMigrationUID": "f18f8eaa-7007-4a84-a402-eaf84217df52",
+      "approvalOperationID": "sha256:3874ac1a4cac421eff22c7728f6a02096f9f9a57d0f8018c6cf5ad8733117821",
+      "approvalPlanUID": "0e8ba1a7-5add-4769-b407-503584873ea0",
+      "approvalUID": "2a21e0a6-45ad-41f6-a7f3-b7976e0c2ca1",
+      "converged": "2m34.837103s",
+      "managerPods": "2"
+    }
+  },
+  "restartRecoverySeconds": 154.837103,
+  "terminalRecoveryJobsVerified": 20,
+  "samples": 174,
+  "incompleteSamples": 1,
+  "reportSHA256": "0405b38e7b67cf92d5379f661b9688bb408481cdf198625e4f658ac35eb3075a",
+  "retainedEvidence": {
+    "directory": "/private/tmp/ptah-retention-native-j7uwcb3p",
+    "files": 2138,
+    "manifestSHA256": "53384c421ad489f37f4420991469019565455852f27c3fa98dc11adf73570f03"
+  },
+  "cleanupVerified": true,
+  "localChecks": {
+    "sourceCommit": "a076d2d3be9ee4474d78a75348e0b17d82a7e807",
+    "verifySourceExitCode": 0,
+    "capacityRaceExitCode": 0,
+    "capacityPassedTestsAndSubtests": 427,
+    "pythonProbeTests": 60,
+    "pythonProbeFailuresBeforeFix": 2,
+    "pythonProbeFailuresAfterFix": 0,
+    "vetExitCode": 0,
+    "e2eStaticExitCode": 0
+  },
+  "limits": [
+    "One round cannot establish the final-three-checkpoint RSS and retained-payload plateau.",
+    "The 90-minute matrix, separate pending-approval/unresolved-Apply retention fault, within-fleet backlog, unrelated objects, overload and remaining performance gates are not assessed.",
+    "The shared Docker host is below the dedicated 16 GiB minimum; this lab uses an auxiliary twenty-first approval fixture.",
+    "One manager metric sample is incomplete during manager replacement.",
+    "The earlier 186.779581388-second restart miss remains open.",
+    "This record does not establish published artifact verification, durable external evidence custody or owner acceptance."
+  ]
+}
