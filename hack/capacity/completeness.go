@@ -15,6 +15,7 @@ const (
 	sourceAPI               = "api-server-metrics"
 	sourceAPIContinuity     = "api-server-counter-continuity"
 	sourceJobs              = "jobs"
+	sourceCycles            = "refresh-cycles"
 )
 
 var sampleFields = map[string][]string{
@@ -27,6 +28,7 @@ var sampleFields = map[string][]string{
 }
 
 var scenarioFields = map[string][]string{
+	sourceCycles:            {"refreshCycles"},
 	sourceAPIContinuity:     {"apiServers", "apiRejected"},
 	sourceManagerContinuity: {"managerCPUCoresAverage", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
 	sourcePods:              {"podsPendingMax", "podsRunningMax"},

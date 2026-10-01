@@ -115,19 +115,66 @@ func run() error {
 		metricsPort: *metricsPort, every: load.SampleEvery.Duration,
 		jobs: map[string]*jobRecord{},
 	}
-	sampling, stopSampling := context.WithCancel(ctx)
+	workCtx, cancelWork := context.WithCancel(ctx)
+	defer cancelWork()
+	var recorders []*cycleRecorder
+	for _, family := range []struct {
+		name   string
+		client dynamic.ResourceInterface
+	}{
+		{"schema", dynamicClient.Resource(schemaResource).Namespace(in.namespace)},
+		{"migration", dynamicClient.Resource(migrationResource).Namespace(in.namespace)},
+	} {
+		recorder := newCycleRecorder(family.client, family.name, in.namespace, capacityLabel+"="+load.Name)
+		recorders = append(recorders, recorder)
+		go recorder.run(workCtx)
+		go func() {
+			<-recorder.done
+			if recorder.snapshot().Error != "" {
+				cancelWork()
+			}
+		}()
+	}
+	var setupErr error
+	for _, recorder := range recorders {
+		select {
+		case err := <-recorder.ready:
+			setupErr = errors.Join(setupErr, err)
+		case <-workCtx.Done():
+			setupErr = errors.Join(setupErr, workCtx.Err())
+		}
+	}
+	sampling, stopSampling := context.WithCancel(workCtx)
 	done := make(chan struct{})
 	go func() { watch.run(sampling); close(done) }()
 
 	steps := &scenarios{in: in, load: load, clientset: clientset, dynamic: dynamicClient}
-	scenarioErr := runScenarios(ctx, steps)
+	scenarioErr := setupErr
+	if scenarioErr == nil {
+		scenarioErr = runScenarios(workCtx, steps)
+	}
+	cancelWork()
+	for _, recorder := range recorders {
+		<-recorder.done
+	}
+	cycleProof := collectCycleEvidence(recorders)
+	for _, history := range cycleProof.Histories {
+		if history.Error != "" {
+			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))
+		}
+	}
 	stopSampling()
 	<-done
 
 	samples, jobs := watch.snapshot()
-	out := report{FormatVersion: 3, Workload: load, Environment: environment, Samples: samples, Jobs: jobs}
+	out := report{Cycles: cycleProof, FormatVersion: 3, Workload: load, Environment: environment, Samples: samples, Jobs: jobs}
 	for _, w := range steps.windows {
-		out.Scenarios = append(out.Scenarios, cost(w, samples, jobs))
+		reading := cost(w, samples, jobs)
+		reading.RefreshCycles, reading.CycleProblems = cyclesInWindow(w, cycleProof)
+		if len(reading.CycleProblems) > 0 {
+			reading.Incomplete[sourceCycles] = len(reading.CycleProblems)
+		}
+		out.Scenarios = append(out.Scenarios, reading)
 	}
 	if err := writeReport(*outDir, out); err != nil {
 		return errors.Join(scenarioErr, err)

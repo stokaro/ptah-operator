@@ -20,6 +20,7 @@ type window struct {
 
 // report is the whole measurement: what ran, where, and what it cost.
 type report struct {
+	Cycles        cycleEvidence  `json:"cycles"`
 	FormatVersion int            `json:"formatVersion"`
 	Workload      workload       `json:"workload"`
 	Environment   map[string]any `json:"environment"`
@@ -31,30 +32,32 @@ type report struct {
 // scenarioCost is one window reduced to the figures the capacity page names.
 type scenarioCost struct {
 	window
-	APICounterProblems    []string           `json:"apiCounterProblems,omitempty"`
-	CounterProblems       []string           `json:"counterProblems,omitempty"`
-	Incomplete            map[string]int     `json:"incomplete,omitempty"`
-	Samples               int                `json:"samples"`
-	JobsCreated           int                `json:"jobsCreated"`
-	JobsFailed            int                `json:"jobsFailed"`
-	JobsPerMinuteAverage  float64            `json:"jobsPerMinuteAverage"`
-	JobsPerMinutePeak     int                `json:"jobsPerMinutePeak"`
-	JobStartSeconds       quantiles          `json:"jobStartSeconds"`
-	JobCompletionSeconds  quantiles          `json:"jobCompletionSeconds"`
-	PodsPendingMax        int                `json:"podsPendingMax"`
-	PodsRunningMax        int                `json:"podsRunningMax"`
-	ObservationAgeMax     float64            `json:"observationAgeMaxSeconds"`
-	OverdueMax            float64            `json:"overdueMaxSeconds"`
-	ManagerRSSMaxBytes    float64            `json:"managerRSSMaxBytes"`
-	ManagerCPUCores       float64            `json:"managerCPUCoresAverage"`
-	WorkqueueDepthMax     map[string]float64 `json:"workqueueDepthMax"`
-	QueueWaitSeconds      quantiles          `json:"queueWaitSeconds"`
-	ClientThrottleSeconds float64            `json:"clientThrottleSeconds"`
-	Requests429           float64            `json:"requests429"`
-	APIServers            map[string]apiCost `json:"apiServers"`
-	APIRejected           float64            `json:"apiRejected"`
-	PlansAtEnd            int                `json:"plansAtEnd"`
-	ChunkBytesAtEnd       int64              `json:"chunkBytesAtEnd"`
+	RefreshCycles         []resourceCycleCount `json:"refreshCycles"`
+	CycleProblems         []string             `json:"cycleProblems,omitempty"`
+	APICounterProblems    []string             `json:"apiCounterProblems,omitempty"`
+	CounterProblems       []string             `json:"counterProblems,omitempty"`
+	Incomplete            map[string]int       `json:"incomplete,omitempty"`
+	Samples               int                  `json:"samples"`
+	JobsCreated           int                  `json:"jobsCreated"`
+	JobsFailed            int                  `json:"jobsFailed"`
+	JobsPerMinuteAverage  float64              `json:"jobsPerMinuteAverage"`
+	JobsPerMinutePeak     int                  `json:"jobsPerMinutePeak"`
+	JobStartSeconds       quantiles            `json:"jobStartSeconds"`
+	JobCompletionSeconds  quantiles            `json:"jobCompletionSeconds"`
+	PodsPendingMax        int                  `json:"podsPendingMax"`
+	PodsRunningMax        int                  `json:"podsRunningMax"`
+	ObservationAgeMax     float64              `json:"observationAgeMaxSeconds"`
+	OverdueMax            float64              `json:"overdueMaxSeconds"`
+	ManagerRSSMaxBytes    float64              `json:"managerRSSMaxBytes"`
+	ManagerCPUCores       float64              `json:"managerCPUCoresAverage"`
+	WorkqueueDepthMax     map[string]float64   `json:"workqueueDepthMax"`
+	QueueWaitSeconds      quantiles            `json:"queueWaitSeconds"`
+	ClientThrottleSeconds float64              `json:"clientThrottleSeconds"`
+	Requests429           float64              `json:"requests429"`
+	APIServers            map[string]apiCost   `json:"apiServers"`
+	APIRejected           float64              `json:"apiRejected"`
+	PlansAtEnd            int                  `json:"plansAtEnd"`
+	ChunkBytesAtEnd       int64                `json:"chunkBytesAtEnd"`
 }
 
 // quantiles are over the observations a window holds. For a histogram they

@@ -1,0 +1,1970 @@
+{
+  "family": "migration",
+  "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+  "selector": "",
+  "startedAt": "2026-10-01T07:28:38.457963Z",
+  "endedAt": "2026-10-01T07:30:08.601507Z",
+  "cursor": "28813",
+  "readings": [
+    {
+      "event": "INITIAL",
+      "receivedAt": "2026-10-01T07:28:38.598121Z",
+      "resourceVersion": "27262",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Resolve",
+        "id": "sha256:b3ee7abedc0b55060d8d2213da21a1dc8d4f9a21268d72a34b1cec5f74748ff6",
+        "jobName": "ptah-m-resolve-e2e-checkpoint-postgresql-ed19622e0f7ec756",
+        "jobUID": "fc5783ed-f03c-49f5-9c7f-eb0336ed7dcc",
+        "startedAt": "2026-10-01T07:28:37Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:27:58Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:42.644553Z",
+      "resourceVersion": "27371",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:42Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:42.672314Z",
+      "resourceVersion": "27372",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:42Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:42.694866Z",
+      "resourceVersion": "27373",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:42Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:42.716102Z",
+      "resourceVersion": "27374",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Verify",
+        "id": "sha256:e024a7682d0817efac086d1741cb14743d6b017ba87e8a4ffc1522fd84ae3257",
+        "jobName": "ptah-m-verify-e2e-checkpoint-postgresql-fd7c7151d0092911",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:28:42Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:42Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:42.74015Z",
+      "resourceVersion": "27375",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Verify",
+        "id": "sha256:e024a7682d0817efac086d1741cb14743d6b017ba87e8a4ffc1522fd84ae3257",
+        "jobName": "ptah-m-verify-e2e-checkpoint-postgresql-fd7c7151d0092911",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:28:42Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:42Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:42.796048Z",
+      "resourceVersion": "27377",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Verify",
+        "id": "sha256:e024a7682d0817efac086d1741cb14743d6b017ba87e8a4ffc1522fd84ae3257",
+        "jobName": "ptah-m-verify-e2e-checkpoint-postgresql-fd7c7151d0092911",
+        "jobUID": "da55cbf8-2e3b-456e-bb02-b6f3b209e546",
+        "startedAt": "2026-10-01T07:28:42Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:42Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:48.317908Z",
+      "resourceVersion": "27484",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:48.341099Z",
+      "resourceVersion": "27486",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:48.354934Z",
+      "resourceVersion": "27487",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:48.362737Z",
+      "resourceVersion": "27488",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "History",
+        "id": "sha256:186989060b4885002e5453420e92e470ee72c05a4fc3c67f4e1757ce3645f977",
+        "jobName": "ptah-m-history-e2e-checkpoint-postgresql-e465c38097e432b9",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:28:48Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:48.385469Z",
+      "resourceVersion": "27489",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "History",
+        "id": "sha256:186989060b4885002e5453420e92e470ee72c05a4fc3c67f4e1757ce3645f977",
+        "jobName": "ptah-m-history-e2e-checkpoint-postgresql-e465c38097e432b9",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:28:48Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:48.407415Z",
+      "resourceVersion": "27491",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "History",
+        "id": "sha256:186989060b4885002e5453420e92e470ee72c05a4fc3c67f4e1757ce3645f977",
+        "jobName": "ptah-m-history-e2e-checkpoint-postgresql-e465c38097e432b9",
+        "jobUID": "90d17a62-3234-44e8-8cad-1e5fb5816d17",
+        "startedAt": "2026-10-01T07:28:48Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:37Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:07Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:57.507846Z",
+      "resourceVersion": "27722",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:57Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:28:57.532915Z",
+      "resourceVersion": "27723",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:57Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:27.012106Z",
+      "resourceVersion": "28120",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:57Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:27.0375Z",
+      "resourceVersion": "28122",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Resolve",
+        "id": "sha256:2b486fbe0d78f818c745fcb8fa3f8bd2370cae1b4d592a5a1534acc7ddcd99e6",
+        "jobName": "ptah-m-resolve-e2e-checkpoint-postgresql-5fec08a795dcc25e",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:29:27Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:27.081925Z",
+      "resourceVersion": "28127",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Resolve",
+        "id": "sha256:2b486fbe0d78f818c745fcb8fa3f8bd2370cae1b4d592a5a1534acc7ddcd99e6",
+        "jobName": "ptah-m-resolve-e2e-checkpoint-postgresql-5fec08a795dcc25e",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:29:27Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:27.240443Z",
+      "resourceVersion": "28135",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Resolve",
+        "id": "sha256:2b486fbe0d78f818c745fcb8fa3f8bd2370cae1b4d592a5a1534acc7ddcd99e6",
+        "jobName": "ptah-m-resolve-e2e-checkpoint-postgresql-5fec08a795dcc25e",
+        "jobUID": "10460352-9c7d-4948-a69c-0bbe194e8968",
+        "startedAt": "2026-10-01T07:29:27Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:28:48Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:33.010294Z",
+      "resourceVersion": "28277",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:32Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:33.087284Z",
+      "resourceVersion": "28280",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:32Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:33.109328Z",
+      "resourceVersion": "28281",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:32Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:33.110683Z",
+      "resourceVersion": "28282",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Verify",
+        "id": "sha256:6d2b96b37a39a93d8735fafc1f97c8bcc38677fdca597d689ec0b72ed6302fcd",
+        "jobName": "ptah-m-verify-e2e-checkpoint-postgresql-95cfd8027a249643",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:29:33Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:32Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:33.176996Z",
+      "resourceVersion": "28289",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Verify",
+        "id": "sha256:6d2b96b37a39a93d8735fafc1f97c8bcc38677fdca597d689ec0b72ed6302fcd",
+        "jobName": "ptah-m-verify-e2e-checkpoint-postgresql-95cfd8027a249643",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:29:33Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:32Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:33.31052Z",
+      "resourceVersion": "28292",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "Verify",
+        "id": "sha256:6d2b96b37a39a93d8735fafc1f97c8bcc38677fdca597d689ec0b72ed6302fcd",
+        "jobName": "ptah-m-verify-e2e-checkpoint-postgresql-95cfd8027a249643",
+        "jobUID": "1099b8ff-16c2-40d1-baa7-3f489313b4b3",
+        "startedAt": "2026-10-01T07:29:33Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "Unknown",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:32Z",
+          "reason": "DigestPinned",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:39.104704Z",
+      "resourceVersion": "28410",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:39.209501Z",
+      "resourceVersion": "28417",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:39.227323Z",
+      "resourceVersion": "28418",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:39.232082Z",
+      "resourceVersion": "28419",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "History",
+        "id": "sha256:51c352e966bc2c9f51ec6ab772bedebdaa9bf2277d739bef6127012632498b93",
+        "jobName": "ptah-m-history-e2e-checkpoint-postgresql-9f4937eb4773a6c7",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:29:39Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:39.300416Z",
+      "resourceVersion": "28423",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "History",
+        "id": "sha256:51c352e966bc2c9f51ec6ab772bedebdaa9bf2277d739bef6127012632498b93",
+        "jobName": "ptah-m-history-e2e-checkpoint-postgresql-9f4937eb4773a6c7",
+        "jobUID": "",
+        "startedAt": "2026-10-01T07:29:39Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:39.426591Z",
+      "resourceVersion": "28426",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "operation": {
+        "type": "History",
+        "id": "sha256:51c352e966bc2c9f51ec6ab772bedebdaa9bf2277d739bef6127012632498b93",
+        "jobName": "ptah-m-history-e2e-checkpoint-postgresql-9f4937eb4773a6c7",
+        "jobUID": "055e84f8-3fea-48d1-93f5-b9f7d8dcc612",
+        "startedAt": "2026-10-01T07:29:39Z"
+      },
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:27Z",
+          "reason": "OperationInProgress",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:28:57Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:48.310644Z",
+      "resourceVersion": "28636",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:48Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:29:48Z",
+      "pendingRelease": false,
+      "unsafe": false
+    },
+    {
+      "event": "MODIFIED",
+      "receivedAt": "2026-10-01T07:29:48.411067Z",
+      "resourceVersion": "28639",
+      "namespace": "ptah-test-a-1-37-0-020-baseline-5101109f-2c0c2ad35d",
+      "name": "e2e-checkpoint-postgresql",
+      "uid": "127c798c-b414-48fe-a050-3e9531cc452f",
+      "createdAt": "2026-10-01T09:08:32+02:00",
+      "generation": 2,
+      "observedGeneration": 2,
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:48Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:29:39Z",
+          "reason": "PolicySatisfied",
+          "message": ""
+        },
+        {
+          "type": "Blocked",
+          "status": "False",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:08:52Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "observedGeneration": 2,
+          "lastTransitionTime": "2026-10-01T07:09:14Z",
+          "reason": "HistoryMatched",
+          "message": ""
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-10-01T07:08:57Z",
+          "reason": "Satisfied",
+          "message": ""
+        }
+      ],
+      "completedAt": "2026-10-01T07:29:48Z",
+      "pendingRelease": false,
+      "unsafe": false
+    }
+  ]
+}

@@ -189,6 +189,28 @@ summary lists every server and its observation count. An empty population is
 percentile requirement. API priority/fairness rejections count all traffic;
 attribution to workload, monitoring and fixtures needs separate evidence.
 
+The collector also lists and watches the workload's `PtahSchema` and
+`PtahMigration` resources before creating them. Its identity needs `list` and
+`watch` on both kinds in the workload namespace. Watch reconnects resume the
+last resource version. An expired cursor, failed watch or full event buffer
+stops the workload and makes the cycle count incomplete; a new list cannot
+replace missing history.
+
+The report's `cycles` section retains compact readings, resource lifetimes and
+completed read-only cycles. A cycle requires Resolve/Verify/Observe/Plan for a
+schema, or Resolve/Verify/History for a migration, with distinct bound Job UIDs
+and fresh convergence for the same resource UID and generation. Initial status,
+Apply, unresolved runs and repeated completion readings do not count. A pending
+lock release must clear before a cycle counts. Condition messages are omitted.
+
+Each scenario's `refreshCycles` lists counts per resource UID, including zero.
+A replacement starts its own count, and a cycle crossing a scenario boundary
+is excluded. The final convergence reading must arrive before the window ends;
+an older observation timestamp cannot move a later lock release into that window. A history gap makes this field `null` and records `cycleProblems`.
+These observed cycles are not estimates from elapsed intervals or Job totals.
+They do not yet establish the qualification profile's churn, per-slot minimum
+or full soak.
+
 The full workload and 90-minute soak remain required for 0.2.0 qualification.
 A successful metrics collection does not establish a capacity bound.
 
