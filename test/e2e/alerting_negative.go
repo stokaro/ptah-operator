@@ -114,7 +114,7 @@ func (r alNegativeState) gated() bool {
 // Changed counts, labels, starts, receiver, or a different rule are refused.
 func alNegativeRepeat(d alDelivery, baseline map[string]alDelivery) bool {
 	old, ok := baseline[d.Labels["family"]]
-	return ok && d.AlertName == alUnresolvedApply && old.AlertName == d.AlertName && d.Status == "firing" && old.Status == "firing" &&
+	return ok && d.AlertName == alUnresolvedApply && old.AlertName == d.AlertName && d.Status == old.Status && (d.Status == "firing" || d.Status == "resolved" && !d.EndsAt.IsZero() && d.EndsAt.Equal(old.EndsAt)) &&
 		d.Receiver == old.Receiver && !d.StartsAt.IsZero() && d.StartsAt.Equal(old.StartsAt) && maps.Equal(d.Labels, old.Labels) && maps.Equal(d.Annotations, old.Annotations)
 }
 

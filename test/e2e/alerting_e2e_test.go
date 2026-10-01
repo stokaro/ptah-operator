@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +22,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
@@ -38,9 +35,9 @@ import (
 // rendered exactly as the chart renders them, an Alertmanager that has to route
 // them, and a receiver that has to be told. The phase asserts at the receiver:
 //
-//   - an Apply nobody accounted for, which the migrations phase leaves behind,
-//     reaches the receiver naming its family, with a count the runbook's own
-//     drill-down reproduces and a runbook link that resolves to a heading;
+//   - independently interrupted PostgreSQL and MySQL migration Applies reach
+//     the receiver within their persisted time bounds, then resolve after
+//     database inspection and a named acknowledgment;
 //   - an operation held off every node fires as stalled once its threshold has
 //     passed and not before, and resolves once the operation leaves flight;
 //   - every manager gone fires as a view nobody can read, and resolves once
@@ -480,37 +477,6 @@ func (a *alertingRun) waitForTargets() {
 		}
 		a.sleep(alDeliveryPoll)
 	}
-}
-
-// unresolvedApply waits for the alert on an Apply nobody accounted for. The
-// migrations phase leaves at least one: the row that removed an Apply Job
-// while its run was going. The count the runbook's drill-down finds is the
-// count the alert has to carry.
-func (a *alertingRun) unresolvedApply() {
-	a.t.Helper()
-	migrations := &ptahv1alpha1.PtahMigrationList{}
-	a.check(a.cluster.Client.List(a.ctx, migrations), "list every PtahMigration")
-	listed := alUnresolvedMigrations(migrations.Items)
-	if listed < 1 {
-		a.fatalf("no PtahMigration carries an unresolved run, so this row has nothing to alert on; the migrations phase leaves one")
-	}
-	unresolved, _ := a.waitForDelivery(
-		alMatch{status: "firing", alertName: alUnresolvedApply, labels: map[string]string{"family": "migration"}},
-		"PtahOperatorUnresolvedApply for the migration family", alTimeout, 0)
-	if unresolved.Annotations["runbook_url"] != a.runbookBase+"#unresolved-gauges" || unresolved.Labels["severity"] != "critical" {
-		a.fatalf("the unresolved alert arrived without the runbook link or severity the chart gives it: %s", unresolved.raw)
-	}
-	if !alRunbookAnchor(a.operationsPage(), "unresolved-gauges") {
-		a.fatalf("the unresolved alert links to #unresolved-gauges, and the operations page has no such heading")
-	}
-	// The summary carries the count, and the drill-down on the page has to name
-	// as many resources as the alert counted, or the page does not lead to the
-	// scope.
-	count, _ := alAlertedCount(unresolved.Annotations["summary"])
-	if count != strconv.Itoa(listed) {
-		a.fatalf("the alert counts %s unresolved migrations and the runbook's drill-down lists %d", cmp.Or(count, "nothing"), listed)
-	}
-	a.logf("PASS the receiver got PtahOperatorUnresolvedApply for %d migration(s), and the runbook lists them", listed)
 }
 
 // createHeldNamespace prepares both families' held Resolve fixtures.

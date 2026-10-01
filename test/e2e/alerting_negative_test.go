@@ -194,3 +194,28 @@ func TestAlNegativeDirectReadRejectsAReplacedControl(t *testing.T) {
 		}
 	}
 }
+
+func TestAlNegativeWindowDoesNotReopenAResolvedIncident(t *testing.T) {
+	start := time.Unix(1800000000, 0).UTC()
+	old := alDelivery{Receiver: "sink", Status: "resolved", AlertName: alUnresolvedApply, StartsAt: start, EndsAt: start.Add(time.Minute), Labels: map[string]string{"family": "migration"}}
+	baseline := map[string]alDelivery{"migration": old}
+	if !alNegativeRepeat(old, baseline) {
+		t.Fatal("an exact duplicate resolved delivery was refused")
+	}
+	for _, name := range []string{"refired", "another resolution", "missing end", "unknown status"} {
+		d := old
+		switch name {
+		case "refired":
+			d.Status = "firing"
+		case "another resolution":
+			d.EndsAt = d.EndsAt.Add(time.Second)
+		case "missing end":
+			d.EndsAt = time.Time{}
+		case "unknown status":
+			d.Status = "other"
+		}
+		if alNegativeRepeat(d, baseline) {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

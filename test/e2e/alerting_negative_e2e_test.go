@@ -136,7 +136,7 @@ func (a *alertingRun) negativeControls() {
 		}
 	}()
 	a.waitForTargets()
-	if !a.noActiveAlerts(`ALERTS{alertname!="PtahOperatorUnresolvedApply"}`) {
+	if !a.noActiveAlerts(`ALERTS`) {
 		a.fatalf("an unrelated incident is active before the negative-control window")
 	}
 	baselineLog, err := a.deploymentLog(a.ctx, "alert-sink")
@@ -150,14 +150,17 @@ func (a *alertingRun) negativeControls() {
 		}
 	}
 	if len(baseline) == 0 {
-		a.fatalf("the preceding unresolved incident has no receiver evidence")
+		a.fatalf("the preceding recovered incident has no receiver evidence")
 	}
 	for _, d := range baseline {
-		if d.Status != "firing" || d.Labels["operator_namespace"] != a.in.OperatorNamespace || d.Labels["operator_metrics_service"] != a.metricsService {
-			a.fatalf("unresolved baseline does not name this installation's active incident")
+		if d.Status != "resolved" || d.EndsAt.IsZero() || d.Labels["operator_namespace"] != a.in.OperatorNamespace || d.Labels["operator_metrics_service"] != a.metricsService {
+			a.fatalf("unresolved baseline does not name this installation's resolved incident")
 		}
 	}
 	unresolved := a.negativeUnresolvedIdentity()
+	if len(unresolved) != 0 {
+		a.fatalf("the quiet window starts with unaccounted mutation work")
+	}
 	lease, managers := a.managerSnapshot()
 	monitor := a.negativeMonitorIdentity()
 	for _, f := range fixtures {
@@ -234,7 +237,7 @@ func (a *alertingRun) negativeControls() {
 		if !alRulesLoaded(body) {
 			a.fatalf("a rule disappeared or stopped evaluating during the quiet window")
 		}
-		if !a.noActiveAlerts(`ALERTS{alertname!="PtahOperatorUnresolvedApply"}`) || !maps.Equal(unresolved, a.negativeUnresolvedIdentity()) {
+		if !a.noActiveAlerts(`ALERTS`) || !maps.Equal(unresolved, a.negativeUnresolvedIdentity()) {
 			a.fatalf("a new incident appeared during ordinary policy waiting")
 		}
 		log, err := a.deploymentLog(a.ctx, "alert-sink")
