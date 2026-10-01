@@ -92,8 +92,18 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 	}
 	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
 	a.check(err, "open operation-failure histories")
-	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "alert-failures-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
-	migrations := newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, "alert-failures-migrations", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })
+	// Only the affected family owes resource events. Watching both would
+	// require unrelated activity to satisfy closeRunnerWatches' nonempty gate.
+	var schemas *watchRecorder[*ptahv1.PtahSchema]
+	var migrations *watchRecorder[*ptahv1.PtahMigration]
+	var resources recorder
+	if family == "schema" {
+		schemas = newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, name+"-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
+		resources = schemas
+	} else {
+		migrations = newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, name+"-migrations", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })
+		resources = migrations
+	}
 	jobs := newStoredStateRecorder[*batchv1.Job](a.t, a.ctx, watcher, "alert-failures-jobs", a.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })
 	pods := newStoredStateRecorder[*corev1.Pod](a.t, a.ctx, watcher, "alert-failures-pods", a.in.TestNamespace, func() client.ObjectList { return &corev1.PodList{} })
 	lease, managers := a.managerSnapshot()
@@ -118,7 +128,7 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 		if !alRulesLoaded(body) {
 			a.fatalf("a required rule stopped evaluating during repeated operations")
 		}
-		for _, w := range []recorder{schemas, migrations, jobs, pods} {
+		for _, w := range []recorder{resources, jobs, pods} {
 			a.check(w.alive(), "retain complete repeated-operation histories")
 		}
 	}
@@ -193,11 +203,14 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 				claims[c.jobUID] = c
 			}
 		}
-		for _, e := range schemas.snapshot() {
-			claim(e.Object)
-		}
-		for _, e := range migrations.snapshot() {
-			claim(e.Object)
+		if family == "schema" {
+			for _, e := range schemas.snapshot() {
+				claim(e.Object)
+			}
+		} else {
+			for _, e := range migrations.snapshot() {
+				claim(e.Object)
+			}
 		}
 		list := &batchv1.JobList{}
 		a.check(a.cluster.Client.List(a.ctx, list, client.InNamespace(a.in.TestNamespace)), "read the real failed Jobs")
@@ -349,7 +362,7 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 	}
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, jobs, publisher)
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, pods, &owned[0])
-	closeRunnerWatches(a.t, []recorder{schemas, migrations, jobs, pods}, m.scan)
+	closeRunnerWatches(a.t, []recorder{resources, jobs, pods}, m.scan)
 	// Validate changes received between direct polls and while closing watches.
 	seen := 0
 	validate := func(v client.Object) {
