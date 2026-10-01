@@ -23,38 +23,8 @@ import (
 // the generated file and obtains only its registry credential.
 func (d *dataPlane) publishPlanSizeSchema(engine, revision, reference string, repeated, suffix int) string {
 	d.t.Helper()
-	name := "e2e-push-size-" + engine + "-" + revision
-	security := &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true),
-		Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
-	budget := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
-		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("256Mi")},
-	}
-	labels := map[string]string{"app.kubernetes.io/component": "e2e-schema-publisher"}
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: d.in.TestNamespace, Labels: labels}, Spec: batchv1.JobSpec{
-		BackoffLimit: ptr.To(int32(0)), ActiveDeadlineSeconds: ptr.To(int64(300)),
-		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false),
-			ImagePullSecrets: []corev1.LocalObjectReference{{Name: registryPullSecret}},
-			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To(int64(65532)), RunAsGroup: ptr.To(int64(65532)), FSGroup: ptr.To(int64(65532)),
-				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
-			InitContainers: []corev1.Container{{Name: "generate", Image: d.in.FixtureImage, ImagePullPolicy: corev1.PullIfNotPresent,
-				Command: []string{"/e2e-handcraft-oci"}, Args: []string{"plan-size-schema", engine, strconv.Itoa(repeated), strconv.Itoa(suffix), "/schema/schema.sql"},
-				Resources: budget, SecurityContext: security, VolumeMounts: []corev1.VolumeMount{{Name: "schema", MountPath: "/schema"}},
-			}},
-			Containers: []corev1.Container{{Name: "publisher", Image: d.in.ExecutorImage, ImagePullPolicy: corev1.PullIfNotPresent,
-				Command: []string{"/usr/local/bin/ptah"}, Args: []string{"schema", "push", reference, "--schema-file", "/schema/schema.sql", "--dialect", engine, "--version", revision, "--plain-http"},
-				Resources: budget, SecurityContext: security, Env: []corev1.EnvVar{{Name: "HOME", Value: "/work"}, {Name: "TMPDIR", Value: "/work"}},
-				VolumeMounts: []corev1.VolumeMount{{Name: "schema", MountPath: "/schema", ReadOnly: true}, {Name: "work", MountPath: "/work"}},
-			}},
-			Volumes: []corev1.Volume{{Name: "schema", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: ptr.To(resource.MustParse("8Mi"))}}},
-				{Name: "work", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: ptr.To(resource.MustParse("64Mi"))}}}},
-		}},
-	}}
-	for _, entry := range []struct{ name, key string }{{"PTAH_OCI_REGISTRY", "registry"}, {"PTAH_OCI_USERNAME", "username"}, {"PTAH_OCI_PASSWORD", "password"}} {
-		job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: entry.name,
-			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: registryAuthSecret}, Key: entry.key}}})
-	}
+	job := planSizePublisherJob(d.in.TestNamespace, d.in.FixtureImage, d.in.ExecutorImage, engine, revision, reference, repeated, suffix)
+	name := job.Name
 	d.check(d.cluster.Client.Create(d.ctx, job), "publish the exact-size native schema fixture")
 	published := d.waitForJob(name)
 	init := published.Spec.Template.Spec.InitContainers
@@ -77,6 +47,42 @@ func (d *dataPlane) publishPlanSizeSchema(engine, revision, reference string, re
 		d.fatalf("the native plan-size artifact has no published digest")
 	}
 	return digest
+}
+
+func planSizePublisherJob(namespace, fixtureImage, executorImage, engine, revision, reference string, repeated, suffix int) *batchv1.Job {
+	name := "e2e-push-size-" + engine + "-" + revision
+	security := &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true),
+		Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
+	budget := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("256Mi")},
+	}
+	labels := map[string]string{"app.kubernetes.io/component": "e2e-schema-publisher"}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels}, Spec: batchv1.JobSpec{
+		BackoffLimit: ptr.To(int32(0)), ActiveDeadlineSeconds: ptr.To(int64(300)),
+		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false),
+			ImagePullSecrets: []corev1.LocalObjectReference{{Name: registryPullSecret}},
+			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To(int64(65532)), RunAsGroup: ptr.To(int64(65532)), FSGroup: ptr.To(int64(65532)),
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+			InitContainers: []corev1.Container{{Name: "generate", Image: fixtureImage, ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/e2e-handcraft-oci"}, Args: []string{"plan-size-schema", engine, strconv.Itoa(repeated), strconv.Itoa(suffix), "/schema/schema.sql"},
+				Resources: budget, SecurityContext: security, VolumeMounts: []corev1.VolumeMount{{Name: "schema", MountPath: "/schema"}},
+			}},
+			Containers: []corev1.Container{{Name: "publisher", Image: executorImage, ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/ptah"}, Args: []string{"schema", "push", reference, "--schema-file", "/schema/schema.sql", "--dialect", engine, "--version", revision, "--plain-http"},
+				Resources: budget, SecurityContext: security, Env: []corev1.EnvVar{{Name: "HOME", Value: "/work"}, {Name: "TMPDIR", Value: "/work"}},
+				VolumeMounts: []corev1.VolumeMount{{Name: "schema", MountPath: "/schema", ReadOnly: true}, {Name: "work", MountPath: "/work"}},
+			}},
+			Volumes: []corev1.Volume{{Name: "schema", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: ptr.To(resource.MustParse("8Mi"))}}},
+				{Name: "work", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: ptr.To(resource.MustParse("64Mi"))}}}},
+		}},
+	}}
+	for _, entry := range []struct{ name, key string }{{"PTAH_OCI_REGISTRY", "registry"}, {"PTAH_OCI_USERNAME", "username"}, {"PTAH_OCI_PASSWORD", "password"}} {
+		job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: entry.name,
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: registryAuthSecret}, Key: entry.key}}})
+	}
+	return job
 }
 
 func (d *dataPlane) planSizeBoundaries() {

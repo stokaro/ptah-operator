@@ -447,6 +447,7 @@ var Alerting = define[AlertingInputs](Phase{
 		"resource-overdue",
 		"lock-release-owed",
 		"operations-failing",
+		"plan-store-large",
 		"unresolved-view-read-failures",
 		"lost-scrape-target",
 		"certificate-expiry",
