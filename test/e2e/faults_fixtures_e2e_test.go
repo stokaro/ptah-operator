@@ -683,13 +683,13 @@ func (f *faultRun) loadNewReleasedLease(before checkpoint, description string) l
 	f.t.Helper()
 	var found leaseIdentity
 	f.poll(description, func() bool {
-		identity, count, err := newReleasedLease(f.coordinationLeases(), before)
+		identity, count, released, err := newReleasedLease(f.coordinationLeases(), before)
 		switch {
 		case count > 1:
 			f.fatalf("%s created %d target Leases, expected exactly one", description, count)
 		case count == 1 && err != nil:
 			f.fatalf("%s %v", description, err)
-		case count == 1:
+		case count == 1 && released:
 			found = identity
 			return true
 		}

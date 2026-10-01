@@ -680,10 +680,10 @@ func coordinationLeaseUIDs(leases []coordinationv1.Lease) checkpoint {
 	return sortedCheckpoint(uids)
 }
 
-// newReleasedLease is the one target Lease the checkpoint does not hold, when
-// there is exactly one: it has to be released, at a valid epoch. The count of
-// new Leases is returned whatever it is.
-func newReleasedLease(leases []coordinationv1.Lease, before checkpoint) (leaseIdentity, int, error) {
+// newReleasedLease is the one target Lease the checkpoint does not hold.
+// A valid held Lease is still pending: publishing the Plan status precedes
+// releasing its Lease. The count is returned even while release is pending.
+func newReleasedLease(leases []coordinationv1.Lease, before checkpoint) (leaseIdentity, int, bool, error) {
 	var fresh []*coordinationv1.Lease
 	for index := range leases {
 		if !before.holds(string(leases[index].UID)) {
@@ -691,17 +691,14 @@ func newReleasedLease(leases []coordinationv1.Lease, before checkpoint) (leaseId
 		}
 	}
 	if len(fresh) != 1 {
-		return leaseIdentity{}, len(fresh), nil
+		return leaseIdentity{}, len(fresh), false, nil
 	}
 	lease := fresh[0]
 	identity := leaseIdentity{name: lease.Name, uid: string(lease.UID), epoch: lease.Annotations[annotationLeaseEpoch]}
-	if !holderEmpty(lease) {
-		return identity, 1, errors.New("was not released after its initial Plan")
-	}
 	if !leaseEpochPattern.MatchString(identity.epoch) {
-		return identity, 1, errors.New("has no valid released acquisition epoch")
+		return identity, 1, false, errors.New("has no valid acquisition epoch")
 	}
-	return identity, 1, nil
+	return identity, 1, holderEmpty(lease), nil
 }
 
 // reacquiredLease is the released Lease held again: the same UID, a holder,

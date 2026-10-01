@@ -1176,28 +1176,49 @@ func TestNewReleasedLease(t *testing.T) {
 	emptyHolder := ftLease("lease-2", "L2", "", ftEpoch)
 	emptyHolder.Spec.HolderIdentity = ptr.To("")
 	for _, test := range []struct {
-		name   string
-		leases []coordinationv1.Lease
-		want   leaseIdentity
-		count  int
-		fails  bool
+		name            string
+		leases          []coordinationv1.Lease
+		want            leaseIdentity
+		count           int
+		released, fails bool
 	}{
 		{"one new released Lease", []coordinationv1.Lease{*ftLease("lease-1", "L1", "h", ftOtherEpoch), *ftLease("lease-2", "L2", "", ftEpoch)},
-			leaseIdentity{name: "lease-2", uid: "L2", epoch: ftEpoch}, 1, false},
-		{"released to an empty holder", []coordinationv1.Lease{*emptyHolder}, leaseIdentity{name: "lease-2", uid: "L2", epoch: ftEpoch}, 1, false},
+			leaseIdentity{name: "lease-2", uid: "L2", epoch: ftEpoch}, 1, true, false},
+		{"released to an empty holder", []coordinationv1.Lease{*emptyHolder}, leaseIdentity{name: "lease-2", uid: "L2", epoch: ftEpoch}, 1, true, false},
 		{"still held", []coordinationv1.Lease{*ftLease("lease-2", "L2", "h1", ftEpoch)},
-			leaseIdentity{name: "lease-2", uid: "L2", epoch: ftEpoch}, 1, true},
+			leaseIdentity{name: "lease-2", uid: "L2", epoch: ftEpoch}, 1, false, false},
 		{"an invalid epoch", []coordinationv1.Lease{*ftLease("lease-2", "L2", "", "v1-bad")},
-			leaseIdentity{name: "lease-2", uid: "L2", epoch: "v1-bad"}, 1, true},
-		{"no epoch", []coordinationv1.Lease{*ftLease("lease-2", "L2", "", "")}, leaseIdentity{name: "lease-2", uid: "L2"}, 1, true},
+			leaseIdentity{name: "lease-2", uid: "L2", epoch: "v1-bad"}, 1, false, true},
+		{"held with invalid epoch", []coordinationv1.Lease{*ftLease("lease-2", "L2", "h1", "v1-bad")},
+			leaseIdentity{name: "lease-2", uid: "L2", epoch: "v1-bad"}, 1, false, true},
+		{"no epoch", []coordinationv1.Lease{*ftLease("lease-2", "L2", "", "")}, leaseIdentity{name: "lease-2", uid: "L2"}, 1, false, true},
 		{"two new Leases", []coordinationv1.Lease{*ftLease("lease-2", "L2", "", ftEpoch), *ftLease("lease-3", "L3", "", ftEpoch)},
-			leaseIdentity{}, 2, false},
-		{"none new", []coordinationv1.Lease{*ftLease("lease-1", "L1", "", ftEpoch)}, leaseIdentity{}, 0, false},
+			leaseIdentity{}, 2, false, false},
+		{"none new", []coordinationv1.Lease{*ftLease("lease-1", "L1", "", ftEpoch)}, leaseIdentity{}, 0, false, false},
 	} {
-		got, count, err := newReleasedLease(test.leases, before)
-		if got != test.want || count != test.count || (err != nil) != test.fails {
-			t.Errorf("%s: got %v %d %v, want %v %d failing %t", test.name, got, count, err, test.want, test.count, test.fails)
+		got, count, released, err := newReleasedLease(test.leases, before)
+		if got != test.want || count != test.count || released != test.released || (err != nil) != test.fails {
+			t.Errorf("%s: got %v %d released=%t %v, want %v %d released=%t failing=%t", test.name, got, count, released, err, test.want, test.count, test.released, test.fails)
 		}
+	}
+}
+
+func TestNewReleasedLeaseWaitsForReleaseAfterPlanPublication(t *testing.T) {
+	before := sortedCheckpoint([]string{"previous-lease"})
+	lease := ftLease("target", "target-uid", "plan-holder", ftEpoch)
+	// The Plan status write and Lease release are separate API operations.
+	// An arbitrary number of held readings must keep waiting, without either
+	// failing the scenario or accepting a Lease that is still held.
+	for i := range 3 {
+		_, count, released, err := newReleasedLease([]coordinationv1.Lease{*lease}, before)
+		if count != 1 || released || err != nil {
+			t.Fatalf("held reading %d did not remain pending: count=%d released=%t err=%v", i, count, released, err)
+		}
+	}
+	lease.Spec.HolderIdentity = nil
+	identity, count, released, err := newReleasedLease([]coordinationv1.Lease{*lease}, before)
+	if count != 1 || !released || err != nil || identity.uid != "target-uid" || identity.epoch != ftEpoch {
+		t.Fatalf("released original Lease refused: %v count=%d released=%t err=%v", identity, count, released, err)
 	}
 }
 
