@@ -14,6 +14,7 @@ import (
 )
 
 type soakWorkload struct {
+	RetentionFault bool     `json:"retentionFault,omitempty"`
 	Rounds         int      `json:"rounds"`
 	Cadence        duration `json:"cadence"`
 	ChurnPerFamily int      `json:"churnPerFamily"`

@@ -309,9 +309,27 @@ first checkpoint. Missing measurements and broken process continuity fail the
 comparison. A shorter diagnostic with fewer than three rounds cannot establish
 that plateau.
 
-This maintenance path does not establish the separate pending-approval and
-unresolved-Apply retention fault scenario. The approval backlog, unrelated
-objects, overload cases and the full qualified execution matrix remain required
+After the measured soak, `soak.retentionFault` exercises pending approval and
+unresolved Apply on the same twenty resource identities. Native Ptah rolls back
+one fixture migration, and the probe drops one empty schema payload table. A
+temporary admission policy prevents one schema's Apply claim from being saved;
+the collector requires the actual refusal before suspending that resource with
+its admitted approval still pending. A thirty-second database table lock holds
+the migration's native Apply while the collector suspends that migration. The
+controller records its uncertain outcome and retains the metadata copy.
+
+With the fleet suspended, the collector exports the plans, prunes only unpinned
+plans, and verifies both fault subjects and their payloads before and after
+garbage collection. It then removes its admission gate, resumes the fleet,
+requires the retained schema approval to be consumed, and requires fresh
+migration history to settle the unresolved run without another Apply. Complete
+database inventories check that all rows, defaults and migration versions are
+restored. These deliberately blocked resources are outside the measured soak
+window. A failure preserves the evidence and attempts to remove the owned gate
+and resume the exact resources it suspended.
+
+The approval backlog, unrelated objects, overload cases and the full qualified
+execution matrix remain required
 by [the frozen profile](https://github.com/stokaro/ptah-operator/blob/master/support/qualification/0.2.0.md).
 
 ## The first reading {#lab-20}

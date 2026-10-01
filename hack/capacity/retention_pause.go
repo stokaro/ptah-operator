@@ -56,6 +56,10 @@ func maintenanceSuspended(object *unstructured.Unstructured, paused pausedResour
 }
 
 func (s *scenarios) exportAndSuspend(ctx context.Context, family string, index, round int) (pausedResource, retentionArchive, error) {
+	return s.exportAndSuspendTo(ctx, family, index, round, filepath.Join(s.evidenceDir, "retention", fmt.Sprintf("round-%02d", round)))
+}
+
+func (s *scenarios) exportAndSuspendTo(ctx context.Context, family string, index, round int, directory string) (pausedResource, retentionArchive, error) {
 	resource, name, field, reference := schemaResource, s.schemaName(index), "desired", s.schemaReference(index, round)
 	if family == "migration" {
 		resource, name, field, reference = migrationResource, s.migrationName(index), "artifact", s.migrationReference(index, round)
@@ -81,7 +85,6 @@ func (s *scenarios) exportAndSuspend(ctx context.Context, family string, index, 
 			}
 			continue
 		}
-		directory := filepath.Join(s.evidenceDir, "retention", fmt.Sprintf("round-%02d", round))
 		path, digest, _, err := s.exportOwnedPlans(ctx, original, family, directory, fmt.Sprintf("%s-%s-attempt-%d.json", family, name, attempt))
 		if err != nil {
 			return pausedResource{}, retentionArchive{}, err

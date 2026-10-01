@@ -31,6 +31,7 @@ type retentionDeletion struct {
 }
 
 type retentionProof struct {
+	Name            string              `json:"name,omitempty"`
 	Round           int                 `json:"round"`
 	StartedAt       time.Time           `json:"startedAt"`
 	QuietAt         time.Time           `json:"quietAt"`
@@ -273,6 +274,21 @@ func (s *scenarios) maintenance(ctx context.Context, round int) (err error) {
 			}
 		}
 	}
+	if err := s.pruneMaintenance(ctx, paused, &proof); err != nil {
+		return err
+	}
+	if err := s.resumeAndConverge(ctx, paused); err != nil {
+		return err
+	}
+	proof.Resumed = true
+	return nil
+}
+
+func (s *scenarios) pruneMaintenance(ctx context.Context, paused []pausedResource, proof *retentionProof) error {
+	directory := fmt.Sprintf("round-%02d", proof.Round)
+	if proof.Name != "" {
+		directory = proof.Name
+	}
 	if err := s.waitMaintenanceQuiet(ctx, paused); err != nil {
 		return err
 	}
@@ -288,12 +304,12 @@ func (s *scenarios) maintenance(ctx context.Context, round int) (err error) {
 		return err
 	}
 	proof.PinsBefore = before.Pins
-	archive, err := writeRetentionEvidence(s.evidenceDir, fmt.Sprintf("retention/round-%02d/before-prune.json", round), before)
+	archive, err := writeRetentionEvidence(s.evidenceDir, filepath.Join("retention", directory, "before-prune.json"), before)
 	if err != nil {
 		return err
 	}
 	proof.Archives = append(proof.Archives, archive)
-	if err := s.pruneRetention(ctx, paused, before, &proof); err != nil {
+	if err := s.pruneRetention(ctx, paused, before, proof); err != nil {
 		return err
 	}
 	if len(proof.Deleted) == 0 {
@@ -329,7 +345,7 @@ func (s *scenarios) maintenance(ctx context.Context, round int) (err error) {
 	if err != nil {
 		return err
 	}
-	archive, err = writeRetentionEvidence(s.evidenceDir, fmt.Sprintf("retention/round-%02d/after-prune.json", round), after)
+	archive, err = writeRetentionEvidence(s.evidenceDir, filepath.Join("retention", directory, "after-prune.json"), after)
 	if err != nil {
 		return err
 	}
@@ -343,9 +359,5 @@ func (s *scenarios) maintenance(ctx context.Context, round int) (err error) {
 		return err
 	}
 	proof.Metrics = &metrics
-	if err := s.resumeAndConverge(ctx, paused); err != nil {
-		return err
-	}
-	proof.Resumed = true
 	return nil
 }

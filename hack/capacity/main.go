@@ -106,12 +106,17 @@ func run() error {
 		return err
 	}
 	var checkpoint func(context.Context, int, string) (databaseCheckpoint, error)
+	var faultProbe func(context.Context, string, int, string) error
 	if load.Soak != nil {
 		checkpoint, err = checkpointProbe(*checkpointPath, *checkpointState, filepath.Dir(*catalogPath), in.catalog)
 		if err != nil {
 			return err
 		}
 	}
+	if load.Soak != nil && load.Soak.RetentionFault {
+		faultProbe = newRetentionFaultProbe(filepath.Join(filepath.Dir(*checkpointPath), "capacity_retention_fault.py"), *checkpointState, filepath.Dir(*catalogPath), *outDir)
+	}
+
 	host, err := readHostCapacity(*hostPath)
 	if err != nil {
 		return err
@@ -209,7 +214,7 @@ func run() error {
 	done := make(chan error, 1)
 	go func() { done <- watch.run(sampling, finishSampling) }()
 
-	steps := &scenarios{sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
+	steps := &scenarios{faultProbe: faultProbe, sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
 		_, jobs := watch.snapshot()
 		return jobs
 	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
@@ -228,6 +233,7 @@ func run() error {
 	environment["databaseCheckpoints"] = steps.databaseCheckpoints
 	environment["churn"] = steps.churnProofs
 	environment["retention"] = steps.retentionProofs
+	environment["retentionFault"] = steps.retentionFaultProof
 	for _, history := range cycleProof.Histories {
 		if history.Error != "" {
 			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))
@@ -266,7 +272,7 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 			name string
 			run  func(context.Context) error
 		}{
-			{"cold start", steps.create}, {"soak", steps.soak}, {"approval gate", steps.prepareApproval}, {"restart burst", steps.restart}, {"registry outage", steps.outage},
+			{"cold start", steps.create}, {"soak", steps.soak}, {"retention fault", steps.retentionFault}, {"approval gate", steps.prepareApproval}, {"restart burst", steps.restart}, {"registry outage", steps.outage},
 		} {
 			slog.Info("scenario", "name", step.name)
 			if err := step.run(ctx); err != nil {

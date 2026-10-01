@@ -1,6 +1,6 @@
 {
   "name": "capacity-soak",
-  "description": "Ninety-minute populated-input soak with nine update, churn and retention maintenance rounds. The retention fault scenario, backlog, unrelated objects and overload remain separate qualification obligations.",
+  "description": "Ninety-minute populated-input soak with nine update, churn and retention maintenance rounds, followed by the pending-approval and unresolved-Apply retention fault. Backlog, unrelated objects and overload remain separate qualification obligations.",
   "engine": "PostgreSQL",
   "schemas": 10,
   "migrations": 10,
@@ -14,6 +14,7 @@
     "rounds": 9,
     "cadence": "10m",
     "churnPerFamily": 2,
-    "minimumCycles": 30
+    "minimumCycles": 30,
+    "retentionFault": true
   }
 }

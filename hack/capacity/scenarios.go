@@ -42,6 +42,8 @@ type inputs struct {
 }
 
 type scenarios struct {
+	faultProbe          func(context.Context, string, int, string) error
+	retentionFaultProof *retentionFaultProof
 	checkpoint          func(context.Context, int, string) (databaseCheckpoint, error)
 	databaseCheckpoints []databaseCheckpoint
 	churnProofs         []churnProof
