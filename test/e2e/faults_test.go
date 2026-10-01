@@ -1539,6 +1539,48 @@ func TestFaultApprovalConsumed(t *testing.T) {
 			}},
 		}}, planUID: "plan-uid"}
 	}
+	// Executor rotation retires the exact dispatched plan with its own reason.
+	// The production retirement path uses ExecutionBindingChanged, including
+	// after a no-change proof under the replacement epoch.
+	rotated := fresh()
+	rotated.stored.Object["status"].(map[string]any)["conditions"] = []any{
+		ftApprovalCondition("Consumed", "True", "DispatchCommitted"),
+		ftApprovalCondition("Accepted", "False", "ExecutionBindingChanged"),
+		ftApprovalCondition("Stale", "True", "ExecutionBindingChanged"),
+	}
+	if err := faultApprovalRetiredBy(rotated.stored, rotated.planUID, ptahv1alpha1.ReasonExecutionBindingChanged); err != nil {
+		t.Fatalf("a dispatched approval retired by executor rotation was refused: %v", err)
+	}
+	if faultApprovalConsumed(rotated.stored, rotated.planUID) == nil ||
+		faultApprovalRetiredBy(fresh().stored, rotated.planUID, ptahv1alpha1.ReasonExecutionBindingChanged) == nil {
+		t.Fatal("retirement for a different transition was accepted")
+	}
+	for _, reason := range []ptahv1alpha1.ConditionReason{"", "Other"} {
+		if faultApprovalRetiredBy(rotated.stored, rotated.planUID, reason) == nil {
+			t.Fatal("an unspecified or unknown retirement reason was accepted")
+		}
+	}
+	for _, change := range []string{"not consumed", "still accepted", "not stale", "missing stale", "wrong plan", "mixed reasons"} {
+		bad := rotated.stored.DeepCopy()
+		conditions := bad.Object["status"].(map[string]any)["conditions"].([]any)
+		switch change {
+		case "not consumed":
+			conditions[0].(map[string]any)["status"] = "False"
+		case "still accepted":
+			conditions[1].(map[string]any)["status"] = "True"
+		case "not stale":
+			conditions[2].(map[string]any)["status"] = "False"
+		case "missing stale":
+			bad.Object["status"].(map[string]any)["conditions"] = conditions[:2]
+		case "wrong plan":
+			bad.Object["spec"].(map[string]any)["planRef"].(map[string]any)["uid"] = "another-plan"
+		case "mixed reasons":
+			conditions[2].(map[string]any)["reason"] = "PlanNoLongerCurrent"
+		}
+		if faultApprovalRetiredBy(bad, rotated.planUID, ptahv1alpha1.ReasonExecutionBindingChanged) == nil {
+			t.Fatalf("%s passed as retirement by executor rotation", change)
+		}
+	}
 	// A dispatched approval can still authorize the current immutable plan
 	// while an unknown Apply waits for read-only recovery. Retirement is later.
 	current := fresh()

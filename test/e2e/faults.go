@@ -924,16 +924,25 @@ func faultApprovalCommitted(stored *unstructured.Unstructured, planUID string) (
 
 // faultApprovalConsumed additionally requires the dispatched plan to have retired.
 func faultApprovalConsumed(stored *unstructured.Unstructured, planUID string) error {
+	return faultApprovalRetiredBy(stored, planUID, ptahv1alpha1.ReasonPlanNoLongerCurrent)
+}
+
+// Require the reason belonging to this transition. Executor rotation retires
+// its plan as ExecutionBindingChanged; ordinary convergence uses PlanNoLongerCurrent.
+func faultApprovalRetiredBy(stored *unstructured.Unstructured, planUID string, reason ptahv1alpha1.ConditionReason) error {
+	if reason != ptahv1alpha1.ReasonPlanNoLongerCurrent && reason != ptahv1alpha1.ReasonExecutionBindingChanged {
+		return errors.New("the approval retirement needs a known transition reason")
+	}
 	approval, err := faultApprovalCommitted(stored, planUID)
 	if err != nil {
 		return err
 	}
 	conditions := approval.Status.Conditions
 	switch {
-	case !conditionIs(conditions, "Accepted", metav1.ConditionFalse, "PlanNoLongerCurrent"):
-		return errors.New("it is still Accepted")
-	case !conditionIs(conditions, "Stale", metav1.ConditionTrue, "PlanNoLongerCurrent"):
-		return errors.New("it is not Stale")
+	case !conditionIs(conditions, "Accepted", metav1.ConditionFalse, string(reason)):
+		return fmt.Errorf("Accepted is not False with reason %s", reason)
+	case !conditionIs(conditions, "Stale", metav1.ConditionTrue, string(reason)):
+		return fmt.Errorf("Stale is not True with reason %s", reason)
 	}
 	return nil
 }

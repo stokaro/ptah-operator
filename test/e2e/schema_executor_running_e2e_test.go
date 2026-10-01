@@ -177,7 +177,8 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		if settled.Status.ExecutionBinding == nil || settled.Status.ExecutionBinding.ExecutorImage != replacement || settled.Status.Applied != nil || settled.Status.Plan != nil {
 			f.fatalf("recovery attributed an old executor's Apply to the new epoch")
 		}
-		f.assertApprovalConsumed(row.name+"-approval", string(row.before.Status.Plan.UID))
+		f.check(faultApprovalRetiredBy(f.unstructuredApproval(row.name+"-approval"), string(row.before.Status.Plan.UID),
+			ptahv1alpha1.ReasonExecutionBindingChanged), "retain the dispatch decision and its executor-change retirement")
 		for operation, before := range map[string]checkpoint{"observe": row.observeBefore, "plan": row.planBefore} {
 			uids := newAddedUIDs(f.jobs.snapshot(), row.name, operation, before)
 			if len(uids) != 2 {
