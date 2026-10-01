@@ -168,7 +168,7 @@ func run() error {
 	done := make(chan struct{})
 	go func() { watch.run(sampling); close(done) }()
 
-	steps := &scenarios{in: in, load: load, clientset: clientset, dynamic: dynamicClient}
+	steps := &scenarios{in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
 	scenarioErr := setupErr
 	if scenarioErr == nil {
 		scenarioErr = runScenarios(workCtx, steps)

@@ -16,3 +16,33 @@ soak or capacity result.
 The complete private collection contained 206 events and three completed
 cycles. Its SHA-256 before selecting this resource and removing messages was
 `1d4067fd4eeec8b5a363110e8034badfe74f4a6bd8ae5b88eda3d06fbf719615`.
+
+## Restart recovery
+
+`restart-convergence.json` selects readings from the PostgreSQL lab-20 run
+[36855172004](https://github.com/stokaro/ptah-operator/actions/runs/36855172004),
+artifact `11161705978`, operator source
+`a6f3dbec27179275fe44c9d757ba888c172fb472`. The fixture records the complete
+report's SHA-256 and the selection. Each retained field comes from the report;
+conditions are limited to Ready and InSync.
+
+The original restart window lasted 274.408466 seconds. The old wait repeatedly
+listed resources, requiring simultaneous `InSync` phases and fresh observation
+timestamps, and restarted its stopwatch after approval recovery. The replacement
+uses the continuous watch: each original resource must accept a fresh database
+reading after manager deletion, with unchanged UID and generation. A bound Plan
+Job proves two live schema reads; a bound History Job proves a migration ledger
+read. Both must start after the fault. Later normal refreshes do not erase an
+already completed recovery.
+
+The last qualifying resource recovered after 174.467357646 seconds. Counting
+only fresh Ready timestamps would instead report 125.038447364 seconds and
+would include Jobs claimed before the fault. The regression requires the bound
+post-fault reads and rejects the shorter, unsupported measurement. At the end
+of the 180-second window, some recovered resources are refreshing again, so a
+simultaneous-idle predicate fails.
+
+Run `go test -race ./hack/capacity` to replay the fixture and the refusal cases.
+The full original watch histories were also replayed locally with the same
+result. This is a retained development-run measurement; it does not replace
+execution of the fixed harness or the complete qualification profile.

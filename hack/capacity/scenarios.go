@@ -45,6 +45,7 @@ type scenarios struct {
 	clientset kubernetes.Interface
 	dynamic   dynamic.Interface
 	windows   []window
+	recorders []*cycleRecorder
 }
 
 func (s *scenarios) mark(name string, start time.Time, outcome map[string]string) {
@@ -252,7 +253,7 @@ func (s *scenarios) restart(ctx context.Context) error {
 	outcome, err := s.approveAndWait(ctx, start)
 	outcome["managerPods"] = fmt.Sprint(len(pods.Items))
 	if err == nil {
-		outcome["converged"], err = s.waitConverged(ctx, start, nil)
+		outcome["converged"], err = s.waitRestartConverged(ctx, start)
 	}
 	if err != nil {
 		outcome["error"] = err.Error()
