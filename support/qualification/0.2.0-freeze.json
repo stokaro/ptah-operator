@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-01T05:46:22.451969+00:00",
-  "profileSourceCommit": "e4102243a018bd94199866b1a8f8c23176b4d0cf",
+  "frozenAt": "2026-10-01T08:23:10.982157+00:00",
+  "profileSourceCommit": "ff5cf00cec240141e87c12ebde4a09d66c88bca5",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "fcb499b56087492194690df862e9c060cbd085c014fbb6bad0331a9074b47750"
+      "sha256": "d3c3924fedec2ad7c8d5906f6ce19fedbb4d1d0acb4b0f09f2dad235d952b4ac"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -42,7 +42,7 @@
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
     "sha256": "7029224e90bb469dbb0c16e8883388dcfd6061d41f97a1069bb465ee7da72366",
-    "generatedFromCommit": "e4102243a018bd94199866b1a8f8c23176b4d0cf",
+    "generatedFromCommit": "ff5cf00cec240141e87c12ebde4a09d66c88bca5",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 25,
+  "revision": 26,
   "supersedes": {
-    "freezeCommit": "e4102243a018bd94199866b1a8f8c23176b4d0cf",
-    "sha256": "106d9f1649d80781a4961e56f7507202d909c49ba64ebc826e5d8a2096b8d883"
+    "freezeCommit": "ff5cf00cec240141e87c12ebde4a09d66c88bca5",
+    "sha256": "a7a62bc5adab5e356c532f1bb62090b0b2a247680e59f3839f3ea1cd0b8e6bff"
   },
-  "revisionReason": "Add upgrade-alerts with native failed-hook and full original-deadline incidents, unchanged candidate retry, independent hook histories, and read-only recovery probes for both families and both engines. Helper race checks, E2E-tag vet and source/static checks passed; native final-identity execution remains pending. The phase backstop accommodates the new scenario; all incident thresholds, receiver bounds, eight frozen profile inputs, 30 functional cells and 36 recovery combinations remain unchanged. No acceptance requirement was removed; acceptance remains Not assessed."
+  "revisionReason": "Add the 64 MiB kubelet result-log precondition introduced in 73862fdb; the previous freeze did not include that profile edit. Preserve revision 25 in the superseded commit. The existing 5101109f CI and native development run use the earlier profile and do not establish this precondition. Rotation loss was reproduced on a 10 MiB node; positive native qualification with 64 MiB remains pending. The 8 MiB plan limit, all other targets, 30 functional cells and 36 recovery combinations remain unchanged. Acceptance remains Not assessed."
 }

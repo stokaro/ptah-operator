@@ -177,8 +177,11 @@ their histogram percentiles from the retained samples alone.
 
 Manager samples retain the Pod UID, container ID and start time, restart count,
 and process start time. The sampler checks the container identity again after
-each scrape. A listed replica that is not running, a missing identity or a
-replacement during collection makes the manager reading incomplete.
+each scrape. `-expected-managers` declares the required population and defaults
+to two. The sampler checks the full Pod inventory before and after collection.
+A missing or extra replica, a terminating Pod, a missing identity or a
+replacement during collection makes the manager reading incomplete, including
+when a replica is absent from the first sample.
 
 Scenario counter deltas require at least two ordered readings, the same manager
 processes throughout, and no reset in any intermediate counter or histogram.

@@ -80,7 +80,7 @@ func measurementFixture(t *testing.T, failPath, managerMetrics string, mutate ..
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &sampler{expectedAPIServers: 1, scrapeAPI: func(ctx context.Context, pod corev1.Pod) (scrape, error) {
+	return &sampler{expectedManagers: 2, expectedAPIServers: 1, scrapeAPI: func(ctx context.Context, pod corev1.Pod) (scrape, error) {
 		body, err := clientset.CoreV1().RESTClient().Get().AbsPath("/metrics/" + pod.Name).DoRaw(ctx)
 		if err != nil {
 			return nil, err

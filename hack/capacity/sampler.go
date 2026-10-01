@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"sync"
 	"time"
@@ -77,6 +78,7 @@ type jobRecord struct {
 
 type sampler struct {
 	expectedAPIServers int
+	expectedManagers   int
 	scrapeAPI          func(context.Context, corev1.Pod) (scrape, error)
 	clientset          kubernetes.Interface
 	dynamic            dynamic.Interface
@@ -256,6 +258,10 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 	if err != nil {
 		return err
 	}
+	population, err := managerPopulation(pods.Items, s.expectedManagers)
+	if err != nil {
+		return err
+	}
 	var problems []error
 	for _, pod := range pods.Items {
 		identity, err := managerIdentity(&pod)
@@ -321,7 +327,34 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 	if len(into.Managers) == 0 {
 		problems = append(problems, errors.New("no running manager produced process metrics"))
 	}
+	current, err := s.clientset.CoreV1().Pods(s.operatorNamespace).List(ctx, metav1.ListOptions{LabelSelector: s.managerSelector})
+	if err != nil {
+		problems = append(problems, err)
+	} else {
+		confirmed, identityErr := managerPopulation(current.Items, s.expectedManagers)
+		if identityErr != nil || !maps.Equal(population, confirmed) {
+			problems = append(problems, errors.New("manager population changed during collection"))
+		}
+	}
 	return errors.Join(problems...)
+}
+
+func managerPopulation(pods []corev1.Pod, expected int) (map[string]processIdentity, error) {
+	if expected < 1 || len(pods) != expected {
+		return nil, fmt.Errorf("found %d manager Pods, require %d", len(pods), expected)
+	}
+	population := map[string]processIdentity{}
+	uids := map[string]bool{}
+	for _, pod := range pods {
+		identity, err := managerIdentity(&pod)
+		_, duplicate := population[pod.Name]
+		if err != nil || pod.Name == "" || pod.DeletionTimestamp != nil || duplicate || uids[identity.PodUID] {
+			return nil, fmt.Errorf("manager Pod %s does not identify a distinct live process", pod.Name)
+		}
+		population[pod.Name] = identity
+		uids[identity.PodUID] = true
+	}
+	return population, nil
 }
 
 // onlyPtah keeps the admission latency of this operator's webhooks, which are

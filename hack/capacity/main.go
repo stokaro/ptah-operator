@@ -52,6 +52,7 @@ func run() error {
 		workloadPath = flag.String("workload", "support/capacity/workload.json", "the workload to run")
 		outDir       = flag.String("out", "", "directory to write report.json and summary.md into")
 		apiCount     = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
+		managerCount = flag.Int("expected-managers", 2, "required number of independently sampled manager processes")
 		metricsPort  = flag.Int("metrics-port", 8080, "the manager's metrics port")
 		schemaV1     = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
 		schemaV2     = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
@@ -70,6 +71,9 @@ func run() error {
 	flag.Parse()
 	if *apiCount < 1 {
 		return errors.New("expected-api-servers must be positive")
+	}
+	if *managerCount < 1 {
+		return errors.New("expected-managers must be positive")
 	}
 
 	in.schemaRefs = [2]string{*schemaV1, *schemaV2}
@@ -110,8 +114,10 @@ func run() error {
 		return err
 	}
 	environment["expectedAPIServers"] = *apiCount
+	environment["expectedManagers"] = *managerCount
 	watch := &sampler{
 		expectedAPIServers: *apiCount,
+		expectedManagers:   *managerCount,
 		scrapeAPI: func(ctx context.Context, pod corev1.Pod) (scrape, error) {
 			return scrapeAPIPod(ctx, config, clientset, pod)
 		},
