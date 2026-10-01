@@ -12,6 +12,7 @@ import (
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -129,11 +130,28 @@ func (e alPlanExport) document() ([]byte, error) {
 	if p == nil || p.UID == "" || p.Name == "" || p.Namespace == "" || p.Spec.Size < 1 || p.Spec.Size > plancontract.MaxExecutableBytes || len(p.Spec.Chunks) == 0 || len(p.Spec.Chunks) > plancontract.MaxChunks || len(e.Chunks) != len(p.Spec.Chunks) {
 		return nil, errors.New("no complete retained plan payload")
 	}
+	ready := meta.FindStatusCondition(p.Status.Conditions, ptahv1.ConditionPlanStorageReady)
+	if p.Generation < 1 || p.Status.ObservedGeneration != p.Generation || ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != p.Generation || len(p.Status.PublishedChunks) != len(p.Spec.Chunks) {
+		return nil, errors.New("retained plan storage has no current publication commit")
+	}
+	// The status list is keyed by index. Its order is immaterial, but every
+	// manifest entry must bind to the concrete chunk the manager committed.
+	published := make(map[int32]ptahv1.PublishedPlanChunkStatus, len(p.Status.PublishedChunks))
+	for _, c := range p.Status.PublishedChunks {
+		if c.Index < 0 || int(c.Index) >= len(p.Spec.Chunks) || c.Name == "" || c.UID == "" {
+			return nil, errors.New("retained plan has an invalid chunk publication record")
+		}
+		if _, exists := published[c.Index]; exists {
+			return nil, errors.New("retained plan has duplicate chunk publication records")
+		}
+		published[c.Index] = c
+	}
 	var b bytes.Buffer
 	seen := map[string]bool{}
 	for i, r := range p.Spec.Chunks {
 		c := e.Chunks[i]
-		if r.Index != int32(i) || r.Name == "" || seen[r.Name] || r.Size <= 0 || int64(r.Size) > plancontract.ChunkBytes || c.Name != r.Name || c.Namespace != p.Namespace || c.UID == "" || c.DeletionTimestamp != nil ||
+		committed := published[int32(i)]
+		if r.Index != int32(i) || r.Name == "" || seen[r.Name] || r.Size <= 0 || int64(r.Size) > plancontract.ChunkBytes || c.Name != r.Name || c.Namespace != p.Namespace || c.UID == "" || committed.Name != c.Name || committed.UID != c.UID || c.DeletionTimestamp != nil ||
 			!ownedExactlyOnce(c.OwnerReferences, ptahv1.GroupVersion.String(), "PtahSchemaPlan", p.Name, p.UID) || int32(len(c.Spec.Data)) != r.Size || fmt.Sprintf("sha256:%x", sha256.Sum256(c.Spec.Data)) != r.Digest {
 			return nil, errors.New("a retained chunk lost its original identity or exact bytes")
 		}

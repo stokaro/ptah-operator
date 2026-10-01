@@ -84,6 +84,12 @@ func alPlanExportFixture() alPlanExport {
 		p.Spec.Chunks = append(p.Spec.Chunks, ptahv1.PlanChunkReference{Name: name, Index: int32(i), Size: int32(len(b)), Digest: hash(b)})
 		e.Chunks = append(e.Chunks, ptahv1.PtahSchemaPlanChunk{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.Namespace, UID: types.UID(name + "-uid"), OwnerReferences: owner("PtahSchemaPlan", p.Name, p.UID)}, Spec: ptahv1.PtahSchemaPlanChunkSpec{Data: b}})
 	}
+	p.Generation = 1
+	p.Status.ObservedGeneration = 1
+	p.Status.Conditions = []metav1.Condition{{Type: ptahv1.ConditionPlanStorageReady, Status: metav1.ConditionTrue, ObservedGeneration: 1}}
+	for i, chunk := range e.Chunks {
+		p.Status.PublishedChunks = append(p.Status.PublishedChunks, ptahv1.PublishedPlanChunkStatus{Name: chunk.Name, UID: chunk.UID, Index: int32(i)})
+	}
 	p.Spec.Size = 11
 	p.Spec.ContentDigest = hash([]byte("firstsecond"))
 	return e
@@ -102,10 +108,24 @@ func TestAlPlanExportRequiresEveryExactChunkAndRoundTrips(t *testing.T) {
 	if err != nil || string(doc) != "firstsecond" {
 		t.Fatalf("archive changed payload: %q %v", doc, err)
 	}
-	for _, mutation := range []string{"missing chunk", "extra chunk", "wrong order", "wrong owner", "wrong namespace", "missing UID", "wrong chunk digest", "wrong payload digest", "wrong size", "corrupt bytes", "empty chunks"} {
+	for _, mutation := range []string{"missing chunk", "extra chunk", "wrong order", "wrong owner", "wrong namespace", "missing UID", "wrong chunk digest", "wrong payload digest", "wrong size", "corrupt bytes", "empty chunks", "replaced chunk", "missing commit", "duplicate commit index", "wrong committed name", "uncommitted plan", "stale status", "stale ready condition"} {
 		t.Run(mutation, func(t *testing.T) {
 			bad := alPlanExportFixture()
 			switch mutation {
+			case "replaced chunk":
+				bad.Chunks[0].UID = "replacement-with-identical-bytes"
+			case "missing commit":
+				bad.Plan.Status.PublishedChunks = nil
+			case "duplicate commit index":
+				bad.Plan.Status.PublishedChunks[1].Index = 0
+			case "wrong committed name":
+				bad.Plan.Status.PublishedChunks[0].Name = "another-chunk"
+			case "uncommitted plan":
+				bad.Plan.Status.Conditions[0].Status = metav1.ConditionFalse
+			case "stale status":
+				bad.Plan.Status.ObservedGeneration = 0
+			case "stale ready condition":
+				bad.Plan.Status.Conditions[0].ObservedGeneration = 0
 			case "missing chunk":
 				bad.Chunks = bad.Chunks[:1]
 			case "extra chunk":
@@ -282,5 +302,14 @@ func TestAlPlanStoreMeasuresNativeCrossingAndRecovery(t *testing.T) {
 	h.through = resolved.ReceivedAt
 	if alPlanStoreResolved(firing, resolved, h, start.Add(16*time.Second)) {
 		t.Fatal("late resolution accepted")
+	}
+}
+
+func TestAlPlanExportAcceptsReorderedCommitRecords(t *testing.T) {
+	e := alPlanExportFixture()
+	// publishedChunks is a map list keyed by index, not a positional list.
+	e.Plan.Status.PublishedChunks[0], e.Plan.Status.PublishedChunks[1] = e.Plan.Status.PublishedChunks[1], e.Plan.Status.PublishedChunks[0]
+	if _, err := e.archive(); err != nil {
+		t.Fatalf("valid reordered commit records refused: %v", err)
 	}
 }
