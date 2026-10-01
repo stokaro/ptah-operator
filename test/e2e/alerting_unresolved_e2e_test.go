@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -351,20 +350,13 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 
 func (a *alertingRun) unresolvedHistory(pods []string, leader, family string, started time.Time, label string) alUnresolvedHistory {
 	at := time.Now().UTC()
-	query := func(expression string) []byte {
-		body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": expression, "time": at.Format(time.RFC3339Nano)})
-		a.check(err, "read native unresolved history")
-		return body
+	// Scrape health has no family label; the empty alternative retains it.
+	matchers := fmt.Sprintf(`,family=~%q`, family+"|")
+	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, matchers, alUnresolvedMetric, "up", "scrape_duration_seconds")
+	h, err := alReadUnresolvedHistory(groups[alUnresolvedMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, family, started, at)
+	if label != "" || err != nil {
+		a.logf("unresolved native history %s/%s: queriedAt=%s snapshot=%s", family, label, at.Format(time.RFC3339Nano), body)
 	}
-	gauges := query(fmt.Sprintf(`%s{job=%q,family=%q}[%ds]`, alUnresolvedMetric, alScrapeJob, family, int(alAdmissionHistoryWindow/time.Second)))
-	metric := func(name string) []byte {
-		return query(fmt.Sprintf(`%s{job=%q}[%ds]`, name, alScrapeJob, int(alAdmissionHistoryWindow/time.Second)))
-	}
-	up, duration := metric("up"), metric("scrape_duration_seconds")
-	h, err := alReadUnresolvedHistory(gauges, up, duration, pods, leader, family, started, at)
 	a.check(err, "require a complete native unresolved history")
-	if label != "" {
-		a.logf("unresolved native history %s/%s: queriedAt=%s gauges=%s up=%s durations=%s", family, label, at.Format(time.RFC3339Nano), strings.TrimSpace(string(gauges)), strings.TrimSpace(string(up)), strings.TrimSpace(string(duration)))
-	}
 	return h
 }

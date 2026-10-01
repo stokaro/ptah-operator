@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"errors"
-	"fmt"
 	"slices"
 	"time"
 
@@ -144,8 +143,4 @@ func alReadViewHistory(counterBody, upBody, durationBody []byte, pods []string, 
 		history.scrapedThrough = earlierTime(history.scrapedThrough, counter.values[len(counter.values)-1].at)
 	}
 	return history, nil
-}
-
-func alViewHistoryQuery(metric string) string {
-	return fmt.Sprintf(`%s{job=%q}[%ds]`, metric, alScrapeJob, int(alAdmissionHistoryWindow/time.Second))
 }

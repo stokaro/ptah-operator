@@ -184,17 +184,12 @@ func (a *alertingRun) loadScrapeConfig(ctx context.Context, config, pod string) 
 
 func (a *alertingRun) readScrapeHistory(pods []string, leader string, started time.Time, label string) alScrapeHistory {
 	a.t.Helper()
-	queriedAt := time.Now().UTC()
-	query := func(metric string) []byte {
-		body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": alViewHistoryQuery(metric), "time": queriedAt.Format(time.RFC3339Nano)})
-		a.check(err, "read the native %s history", metric)
-		return body
+	at := time.Now().UTC()
+	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, "", "up", "scrape_duration_seconds")
+	history, err := alReadScrapeHistory(groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+	if label != "" || err != nil {
+		a.logf("leader and follower scrape native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
 	}
-	up, durations := query("up"), query("scrape_duration_seconds")
-	history, err := alReadScrapeHistory(up, durations, pods, leader, started, queriedAt)
 	a.check(err, "validate complete leader and follower scrape histories")
-	if label != "" {
-		a.logf("scrape-fault native history %s: queriedAt=%s up=%s durations=%s", label, queriedAt.Format(time.RFC3339Nano), up, durations)
-	}
 	return history
 }

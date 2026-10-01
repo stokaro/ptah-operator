@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -471,17 +470,13 @@ func (a *alertingRun) planStorePinnedBytes(pins alPlanPinSet) map[alPlanKey]stri
 	return result
 }
 func (a *alertingRun) planStoreHistory(pods []string, leader string, started time.Time, label string) alPlanStoreHistory {
+	a.t.Helper()
 	at := time.Now().UTC()
-	query := func(metric string) []byte {
-		body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": fmt.Sprintf(`%s{job=%q}[%ds]`, metric, alScrapeJob, int(alAdmissionHistoryWindow/time.Second)), "time": at.Format(time.RFC3339Nano)})
-		a.check(err, "read native plan-store history")
-		return body
+	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, "", alPlanStoreMetric, "up", "scrape_duration_seconds")
+	history, err := alReadPlanStoreHistory(groups[alPlanStoreMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+	if label != "" || err != nil {
+		a.logf("plan-store native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
 	}
-	gauge, up, duration := query(alPlanStoreMetric), query("up"), query("scrape_duration_seconds")
-	h, err := alReadPlanStoreHistory(gauge, up, duration, pods, leader, started, at)
-	a.check(err, "require complete native plan-store measurements")
-	if label != "" {
-		a.logf("plan-store history %s: queriedAt=%s bytes=%s up=%s durations=%s", label, at.Format(time.RFC3339Nano), bytes.TrimSpace(gauge), bytes.TrimSpace(up), bytes.TrimSpace(duration))
-	}
-	return h
+	a.check(err, "validate complete plan-store histories")
+	return history
 }

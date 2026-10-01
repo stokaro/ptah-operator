@@ -3,7 +3,6 @@ package e2e
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -17,12 +16,6 @@ const (
 	// jitter, but never use such a missing observation as a healthy reading.
 	alAdmissionSampleGap = alScrapeInterval + time.Second
 )
-
-var alAdmissionCounterHistory = fmt.Sprintf(`%s{job=%q,name=~".*operator\\.ptah\\.run",error_type="calling_webhook_error"}[%ds]`,
-	alAdmissionCounterMetric, alAPIServerJob, int(alAdmissionHistoryWindow/time.Second))
-
-var alAdmissionUpHistory = fmt.Sprintf(`up{job=%q}[%ds]`, alAPIServerJob, int(alAdmissionHistoryWindow/time.Second))
-var alAdmissionScrapeHistory = fmt.Sprintf(`scrape_duration_seconds{job=%q}[%ds]`, alAPIServerJob, int(alAdmissionHistoryWindow/time.Second))
 
 type alAdmissionSample struct {
 	at    time.Time

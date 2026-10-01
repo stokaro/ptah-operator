@@ -90,21 +90,15 @@ func (a *alertingRun) admissionFailureDelivered(from int, started time.Time) (in
 func (a *alertingRun) readAdmissionHistory(ctx context.Context, started time.Time, previous *alAdmissionHistory, label string) alAdmissionHistory {
 	a.t.Helper()
 	a.requireAPIServerTargets()
-	queriedAt := time.Now().UTC()
-	query := func(expression string) []byte {
-		body, err := a.prometheus(ctx, "/api/v1/query", map[string]string{
-			"query": expression, "time": queriedAt.Format(time.RFC3339Nano),
-		})
-		a.check(err, "read the API servers' native admission history")
-		return body
+	at := time.Now().UTC()
+	// Empty label alternatives keep the scrape health series in this selector.
+	matchers := `,name=~".*operator\\.ptah\\.run|",error_type=~"calling_webhook_error|"`
+	groups, body := a.historySnapshot(ctx, at, alAPIServerJob, matchers, alAdmissionCounterMetric, "up", "scrape_duration_seconds")
+	reading, err := alReadAdmissionHistory(groups[alAdmissionCounterMetric], groups["up"], groups["scrape_duration_seconds"], a.apiServerTargets, started, at, previous)
+	if label != "" || err != nil {
+		a.logf("admission native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
 	}
-	counters, up, durations := query(alAdmissionCounterHistory), query(alAdmissionUpHistory), query(alAdmissionScrapeHistory)
-	reading, err := alReadAdmissionHistory(counters, up, durations, a.apiServerTargets, started, queriedAt, previous)
 	a.check(err, "validate the API servers' native admission history")
-	if label != "" {
-		a.logf("admission native history %s: queriedAt=%s counters=%s up=%s scrapeDurations=%s", label,
-			queriedAt.Format(time.RFC3339Nano), counters, up, durations)
-	}
 	return reading
 }
 

@@ -176,18 +176,12 @@ func (a *alertingRun) viewReadFailure(resource string) {
 
 func (a *alertingRun) readViewHistory(pods []string, leader string, started time.Time, label string) alViewReadHistory {
 	a.t.Helper()
-	queriedAt := time.Now().UTC()
-	query := func(metric string) []byte {
-		body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": alViewHistoryQuery(metric), "time": queriedAt.Format(time.RFC3339Nano)})
-		a.check(err, "read the native %s history", metric)
-		return body
+	at := time.Now().UTC()
+	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, "", alViewReadMetric, "up", "scrape_duration_seconds")
+	history, err := alReadViewHistory(groups[alViewReadMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, started, at)
+	if label != "" || err != nil {
+		a.logf("manager state-read native history %s: queriedAt=%s snapshot=%s", label, at.Format(time.RFC3339Nano), body)
 	}
-	counters, up, durations := query(alViewReadMetric), query("up"), query("scrape_duration_seconds")
-	reading, err := alReadViewHistory(counters, up, durations, pods, leader, started, queriedAt)
-	a.check(err, "validate the complete manager state-read history")
-	if label != "" {
-		a.logf("state-read native history %s: queriedAt=%s counters=%s up=%s durations=%s", label,
-			queriedAt.Format(time.RFC3339Nano), counters, up, durations)
-	}
-	return reading
+	a.check(err, "validate complete manager state-read histories")
+	return history
 }
