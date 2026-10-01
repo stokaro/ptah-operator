@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "acceptance": "Not assessed",
+  "scope": "Local replay of retained restart evidence; no new cluster or full capacity acceptance",
+  "fix": {
+    "path": "hack/capacity/restart_convergence.go",
+    "sha256": "ccdca11bcc34f4c821d8c5648e9d47577cf75a67e061764b163be4125bac94db",
+    "rule": "A claim predating the fault may qualify only through creation of its exact bound Job after the fault, successful terminal completion, and accepted convergence of the original resource UID and generation."
+  },
+  "correctedReport": {
+    "run": 36885096764,
+    "sourceCommit": "1fcdde7ea5534bbec0b5a4c48a7468b2ed6c6426",
+    "reportSHA256": "bc0c83c8cdec7b8e8a59394b83c37cd778a2e58004998f4f2a94c054248e5ae8",
+    "originalSeconds": 187.385885574,
+    "replayedSeconds": 177.950996257,
+    "limitSeconds": 180,
+    "resources": 20,
+    "withinLimit": true,
+    "recoveredClaim": {
+      "resource": "capacity-schema-007",
+      "claimStartedAt": "2026-10-01T16:04:48Z",
+      "faultAt": "2026-10-01T16:04:50.104738332Z",
+      "jobUID": "fab529d0-bb03-4de0-b83e-496692ba11fb",
+      "jobCreatedAt": "2026-10-01T16:05:12Z",
+      "jobFinishedAt": "2026-10-01T16:05:22Z"
+    }
+  },
+  "earlierReport": {
+    "run": 36870201196,
+    "reportSHA256": "67693c393658ce87d877468b16ef97723110015a6dff4c09b20408b52e3a2f3d",
+    "originalSeconds": 186.779581388,
+    "replayedSeconds": 186.779581388,
+    "limitSeconds": 180,
+    "withinLimit": false,
+    "disposition": "Recovery bound finding remains open."
+  },
+  "fixture": {
+    "path": "hack/capacity/testdata/restart-recovered-claim.json",
+    "sha256": "f03646b4d47b6ac45d6dabce8b4423251663d6f0c009d5b24a74106dc0833337",
+    "fullReportReplayMatches": true
+  },
+  "validation": {
+    "capacityRaceTests": "PASS",
+    "vet": "PASS",
+    "recoveredJobNegativeControls": 15,
+    "capacityPythonTests": 35,
+    "fullReportReplayLogSHA256": "c87666e7f430fb6ed8e2d99680235d66acdd427eaff16f38a0ab4c0c1de2cb06",
+    "e2eStatic": "PASS after removing reproducible Go cache entries; the first local attempt failed for lack of disk space",
+    "allPythonProbeTests": 60
+  },
+  "limits": [
+    "The earlier actual recovery bound miss remains unresolved.",
+    "Full soak, churn, retention, overload, environment matrix and final artifact applicability remain open."
+  ]
+}

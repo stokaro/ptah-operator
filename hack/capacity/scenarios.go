@@ -42,6 +42,7 @@ type inputs struct {
 }
 
 type scenarios struct {
+	restartJobs func() []jobRecord
 	inputReader client.Reader
 	inputPlans  []inputPlanProof
 	in          inputs

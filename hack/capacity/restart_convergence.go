@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,11 @@ func (s *scenarios) waitRestartConverged(ctx context.Context, start time.Time) (
 		for _, recorder := range s.recorders {
 			histories = append(histories, recorder.snapshot())
 		}
-		completed, missing, err := s.restartConvergence(histories, start, deadline)
+		var jobs []jobRecord
+		if s.restartJobs != nil {
+			jobs = s.restartJobs()
+		}
+		completed, missing, err := s.restartConvergence(histories, start, deadline, jobs)
 		if err != nil {
 			return "", err
 		}
@@ -36,9 +41,19 @@ func (s *scenarios) waitRestartConverged(ctx context.Context, start time.Time) (
 
 // Replay the same evidence used by the live wait. A replacement or spec change
 // cannot stand in for recovery of the workload that existed at the fault.
-func (s *scenarios) restartConvergence(histories []cycleHistory, start, deadline time.Time) (time.Time, []string, error) {
+func (s *scenarios) restartConvergence(histories []cycleHistory, start, deadline time.Time, jobs []jobRecord) (time.Time, []string, error) {
 	if start.IsZero() || !deadline.After(start) || s.load.Schemas+s.load.Migrations == 0 {
 		return time.Time{}, nil, fmt.Errorf("restart convergence requires a nonempty workload and a bounded fault window")
+	}
+	jobByUID := make(map[string]jobRecord, len(jobs))
+	for _, job := range jobs {
+		if job.UID == "" {
+			return time.Time{}, nil, fmt.Errorf("restart Job evidence lacks a UID")
+		}
+		if _, exists := jobByUID[job.UID]; exists {
+			return time.Time{}, nil, fmt.Errorf("restart Job evidence repeats UID %s", job.UID)
+		}
+		jobByUID[job.UID] = job
 	}
 	type slot struct {
 		before cycleReading
@@ -83,10 +98,10 @@ func (s *scenarios) restartConvergence(histories []cycleHistory, start, deadline
 			if state.before.UID == "" || state.before.Event == "DELETED" || r.Event == "DELETED" || r.UID != state.before.UID || r.Generation != state.before.Generation {
 				return time.Time{}, nil, fmt.Errorf("restart workload identity changed or lacks a baseline: %s", key)
 			}
-			// A fresh status timestamp alone may acknowledge work dispatched
-			// before the fault. Plan performs two live database reads; History
-			// reads the migration ledger. Require the corresponding bound Job
-			// to have been claimed after manager deletion.
+			// Plan and History read the database. A claim can survive manager
+			// deletion before its Job is created, so retain the binding even
+			// when the claim predates the fault. Freshness is decided against
+			// both the claim and the exact Job at accepted convergence.
 			if r.Unsafe {
 				state.read = nil
 			}
@@ -96,11 +111,11 @@ func (s *scenarios) restartConvergence(histories []cycleHistory, start, deadline
 				if h.Family == "migration" {
 					want = "History"
 				}
-				if !r.Unsafe && r.ObservedGeneration == r.Generation && op.Type == want && op.ID != "" && op.JobName != "" && op.JobUID != "" && op.StartedAt.After(start) && !op.StartedAt.After(r.ReceivedAt) {
+				if !r.Unsafe && r.ObservedGeneration == r.Generation && op.Type == want && op.ID != "" && op.JobName != "" && op.JobUID != "" && !op.StartedAt.IsZero() && !op.StartedAt.After(r.ReceivedAt) {
 					state.read = op
 				}
 			}
-			if state.first.IsZero() && state.read != nil && r.Event != "INITIAL" && cycleReady(h.Family, r) && r.CompletedAt.After(state.read.StartedAt) && !r.CompletedAt.After(r.ReceivedAt) {
+			if state.first.IsZero() && state.read != nil && r.Event != "INITIAL" && cycleReady(h.Family, r) && r.CompletedAt.After(state.read.StartedAt) && !r.CompletedAt.After(r.ReceivedAt) && freshRestartRead(h.Family, r, *state.read, start, jobByUID) {
 				state.first = r.ReceivedAt
 			}
 		}
@@ -116,4 +131,20 @@ func (s *scenarios) restartConvergence(histories []cycleHistory, start, deadline
 	}
 	sort.Strings(missing)
 	return completed, missing, nil
+}
+
+// A new claim proves freshness by itself. For a claim recovered across manager
+// replacement, only creation of its exact Job after the fault can supply that
+// bound: Job start/finish and status update times alone cannot date its SQL.
+func freshRestartRead(family string, reading cycleReading, op cycleOperation, fault time.Time, jobs map[string]jobRecord) bool {
+	if op.StartedAt.After(fault) {
+		return true
+	}
+	job, ok := jobs[op.JobUID]
+	return ok && job.UID == op.JobUID && job.Namespace == reading.Namespace && job.Name == op.JobName &&
+		job.Family == family && job.Resource == reading.Name && job.Operation == strings.ToLower(op.Type) &&
+		job.Created.After(fault) && !job.Created.Before(op.StartedAt) &&
+		reading.CompletedAt.After(job.Created) &&
+		job.Finished != nil && !job.Failed && !job.Finished.Before(job.Created) &&
+		!job.Finished.After(reading.CompletedAt) && !job.Finished.After(reading.ReceivedAt)
 }

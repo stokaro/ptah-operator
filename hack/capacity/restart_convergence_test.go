@@ -29,7 +29,7 @@ func restartReplayFixture(t *testing.T) (*scenarios, restartReplay) {
 
 func TestRestartConvergenceReplaysStaggeredRecovery(t *testing.T) {
 	s, f := restartReplayFixture(t)
-	at, missing, err := s.restartConvergence(f.Histories, f.Start, f.Deadline)
+	at, missing, err := s.restartConvergence(f.Histories, f.Start, f.Deadline, nil)
 	if err != nil || len(missing) != 0 {
 		t.Fatalf("retained recovery refused: %v %v", missing, err)
 	}
@@ -160,9 +160,108 @@ func TestRestartConvergenceRefusesInvalidEvidence(t *testing.T) {
 				}
 				h.Readings = rows
 			}
-			_, missing, err := s.restartConvergence(f.Histories, f.Start, f.Deadline)
+			_, missing, err := s.restartConvergence(f.Histories, f.Start, f.Deadline, nil)
 			if err == nil && len(missing) == 0 {
 				t.Fatal("invalid restart evidence passed")
+			}
+		})
+	}
+}
+
+func recoveredClaimFixture(t *testing.T) (*scenarios, restartReplay, []jobRecord) {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/restart-recovered-claim.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		restartReplay
+		Jobs []jobRecord `json:"jobs"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	s := &scenarios{in: inputs{namespace: "ptah-capacity-837dbe646e-a", namespaces: []string{"ptah-capacity-837dbe646e-a", "ptah-capacity-837dbe646e-b"}}, load: workload{Schemas: 10, Migrations: 10, Settle: duration{3 * time.Minute}}}
+	return s, f.restartReplay, f.Jobs
+}
+
+func TestRestartConvergenceAcceptsRecoveredClaimWithNewJob(t *testing.T) {
+	s, f, jobs := recoveredClaimFixture(t)
+	_, missing, err := s.restartConvergence(f.Histories, f.Start, f.Deadline, nil)
+	if err != nil || len(missing) != 1 || missing[0] != "schema/ptah-capacity-837dbe646e-b/capacity-schema-007" {
+		t.Fatalf("fixture no longer reproduces the claim-time false negative: %v %v", missing, err)
+	}
+	at, missing, err := s.restartConvergence(f.Histories, f.Start, f.Deadline, jobs)
+	if err != nil || len(missing) != 0 || !at.After(f.Start) || at.After(f.Deadline) {
+		t.Fatalf("post-fault Job rejected: %s %v %v", at, missing, err)
+	}
+	if want := 177*time.Second + 950996257*time.Nanosecond; at.Sub(f.Start) != want {
+		t.Fatalf("replayed recovery = %s, want %s", at.Sub(f.Start), want)
+	}
+	t.Logf("all twenty resources recovered in %s", at.Sub(f.Start))
+	for _, h := range f.Histories {
+		s.recorders = append(s.recorders, &cycleRecorder{history: h})
+	}
+	s.restartJobs = func() []jobRecord { return jobs }
+	got, err := s.waitRestartConverged(t.Context(), f.Start)
+	if err != nil || got != at.Sub(f.Start).String() {
+		t.Fatalf("live wait did not use retained Job identities: %q %v", got, err)
+	}
+}
+
+func TestRestartConvergenceRefusesUnprovenRecoveredJob(t *testing.T) {
+	for _, name := range []string{"missing", "duplicate", "UID", "name", "namespace", "family", "resource", "operation", "old creation", "fault second", "future creation", "unfinished", "failed", "finish before creation", "future finish"} {
+		t.Run(name, func(t *testing.T) {
+			s, f, jobs := recoveredClaimFixture(t)
+			found := false
+			for i := range jobs {
+				j := &jobs[i]
+				if j.UID != "fab529d0-bb03-4de0-b83e-496692ba11fb" {
+					continue
+				}
+				found = true
+				switch name {
+				case "missing":
+					jobs = append(jobs[:i], jobs[i+1:]...)
+				case "duplicate":
+					jobs = append(jobs, *j)
+				case "UID":
+					j.UID = "different"
+				case "name":
+					j.Name = "different"
+				case "namespace":
+					j.Namespace = "different"
+				case "family":
+					j.Family = "migration"
+				case "resource":
+					j.Resource = "capacity-schema-008"
+				case "operation":
+					j.Operation = "observe"
+				case "old creation":
+					j.Created = f.Start.Add(-time.Second)
+				case "fault second":
+					j.Created = f.Start.Truncate(time.Second)
+				case "future creation":
+					j.Created = f.Deadline.Add(time.Second)
+				case "unfinished":
+					j.Finished = nil
+				case "failed":
+					j.Failed = true
+				case "finish before creation":
+					at := j.Created.Add(-time.Second)
+					j.Finished = &at
+				case "future finish":
+					at := f.Deadline.Add(time.Second)
+					j.Finished = &at
+				}
+				break
+			}
+			if !found {
+				t.Fatal("fixture lost the recovered Job")
+			}
+			_, missing, err := s.restartConvergence(f.Histories, f.Start, f.Deadline, jobs)
+			if err == nil && len(missing) == 0 {
+				t.Fatal("unproven recovered Job passed")
 			}
 		})
 	}

@@ -200,7 +200,10 @@ func run() error {
 	done := make(chan error, 1)
 	go func() { done <- watch.run(sampling, finishSampling) }()
 
-	steps := &scenarios{inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
+	steps := &scenarios{restartJobs: func() []jobRecord {
+		_, jobs := watch.snapshot()
+		return jobs
+	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
 	scenarioErr := setupErr
 	if scenarioErr == nil {
 		scenarioErr = runScenarios(workCtx, steps)

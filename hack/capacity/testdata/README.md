@@ -46,3 +46,20 @@ Run `go test -race ./hack/capacity` to replay the fixture and the refusal cases.
 The full original watch histories were also replayed locally with the same
 result. This is a retained development-run measurement; it does not replace
 execution of the fixed harness or the complete qualification profile.
+
+`restart-recovered-claim.json` selects readings and Jobs from PostgreSQL CI
+run [36885096764](https://github.com/stokaro/ptah-operator/actions/runs/36885096764)
+on `1fcdde7ea5534bbec0b5a4c48a7468b2ed6c6426`. The source report SHA-256 is
+`bc0c83c8cdec7b8e8a59394b83c37cd778a2e58004998f4f2a94c054248e5ae8`.
+The fixture describes its projection and preserves every selected field value.
+
+The manager claimed schema 007's Plan at 16:04:48 UTC. The fault began at
+16:04:50.104738332, and the replacement manager created that claim's exact Job
+UID at 16:05:12. The Job completed at 16:05:22. Requiring a new claim wrongly
+waited for the next cycle and reported 187.385885574 seconds. Creation of the
+bound Job after the fault proves its SQL could not have run before the fault;
+its start time or completion time alone would not prove that. With the exact
+Job identity and successful terminal result, all twenty resources have accepted
+fresh convergence within 177.950996257 seconds. The regression keeps the
+180-second deadline and rejects missing, mismatched, duplicate, old, failed,
+uncompleted and chronologically impossible Job evidence.
