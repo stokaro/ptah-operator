@@ -95,8 +95,12 @@ configuration in the qualification evidence.
 `PtahOperatorUpgradeFailed` fires for a retained failed hook, the original
 fifteen-minute deadline without verified recovery, or a compacted hook history.
 Its labels identify the installation, not Job UIDs or image digests. A missing
-observer also fires `PtahOperatorUpgradeObserverUnavailable`; losing the process
-cannot become a successful upgrade. Keep an independently configured inventory
+observer also fires `PtahOperatorUpgradeObserverUnavailable`. That alert also
+covers a reachable HTTP endpoint whose Kubernetes watch is unavailable or whose
+readiness metric is missing. It waits fifteen seconds to tolerate ordinary watch
+reconnections; `/readyz` and `ptah_operator_upgrade_observer_ready` report the
+same observation state. Losing API access cannot remain healthy just because
+Prometheus can still scrape the process. Keep an independently configured inventory
 of the expected observer target so removal of a scrape target is investigated.
 
 The observer automatically marks recovery only after a completed candidate hook,

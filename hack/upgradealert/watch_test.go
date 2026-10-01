@@ -2,16 +2,22 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 func TestWatchPersistsFailureAndCursorBeforeRestart(t *testing.T) {
@@ -117,4 +123,79 @@ func TestInvalidReplacementDoesNotDestroyDurableState(t *testing.T) {
 	if string(got) != string(original) {
 		t.Fatal("invalid replacement destroyed original evidence")
 	}
+}
+
+// HTTP reachability does not prove that Kubernetes still permits observation.
+func TestWatchAuthorizationLossIsVisibleWhileMetricsRemainReachable(t *testing.T) {
+	jobs := fake.NewClientset()
+	var permit atomic.Bool
+	attempts := make(chan struct{}, 10)
+	stream := watch.NewRaceFreeFake()
+	defer stream.Stop()
+	jobs.PrependWatchReactor("jobs", func(action ktesting.Action) (bool, watch.Interface, error) {
+		select {
+		case attempts <- struct{}{}:
+		default:
+		}
+		if !permit.Load() {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "batch", Resource: "jobs"}, "ptah-crd-manager", fmt.Errorf("observation permission revoked"))
+		}
+		return true, stream, nil
+	})
+	o := &observer{state: fixtureState(), path: filepath.Join(t.TempDir(), "state.json"), jobs: jobs}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- o.watch(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not stop")
+		}
+	}()
+	select {
+	case <-attempts:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch was not attempted")
+	}
+	assertReady := func(want int) {
+		t.Helper()
+		metrics := httptest.NewRecorder()
+		o.metrics(metrics, httptest.NewRequest("GET", "/metrics", nil))
+		expected := fmt.Sprintf(`ptah_operator_upgrade_observer_ready{operator_namespace="operator",release="ptah"} %d`, want)
+		if metrics.Code != 200 || !strings.Contains(metrics.Body.String(), expected) {
+			t.Fatalf("reachable metrics did not report observation readiness %d: %s", want, metrics.Body.String())
+		}
+		ready := httptest.NewRecorder()
+		o.ready(ready, httptest.NewRequest("GET", "/readyz", nil))
+		if (ready.Code == 200) != (want == 1) {
+			t.Fatalf("readiness HTTP status differs: %d", ready.Code)
+		}
+	}
+	assertReady(0)
+	permit.Store(true)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		o.mu.RLock()
+		watching := o.watching
+		o.mu.RUnlock()
+		if watching {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("watch did not recover after authorization returned")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	assertReady(1)
+	s := o.snapshot()
+	s.HistoryLost = true
+	if err := o.persist(s); err != nil {
+		t.Fatal(err)
+	}
+	assertReady(0)
 }

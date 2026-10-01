@@ -17,7 +17,15 @@ groups:
           summary: 'Upgrade of {{ $labels.operator_namespace }}/{{ $labels.release }} has failed or has not reached verified recovery'
           runbook_url: 'https://operator.ptah.run/use/operations/#retry-upgrade'
       - alert: PtahOperatorUpgradeObserverUnavailable
-        expr: up{job="ptah-upgrade-observer"} == 0 or absent(up{job="ptah-upgrade-observer"})
+        expr: |
+          (up{job="ptah-upgrade-observer"} == 0)
+          or absent(up{job="ptah-upgrade-observer"})
+          or (
+            (up{job="ptah-upgrade-observer"} == 1)
+            unless on (job, instance)
+            (ptah_operator_upgrade_observer_ready{job="ptah-upgrade-observer"} == 1)
+          )
+        for: 15s
         labels:
           severity: critical
         annotations:

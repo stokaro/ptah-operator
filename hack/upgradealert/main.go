@@ -204,11 +204,13 @@ func (o *observer) persist(s State) error {
 	return nil
 }
 func (o *observer) setWatching(v bool) { o.mu.Lock(); o.watching = v; o.mu.Unlock() }
-func (o *observer) ready(w http.ResponseWriter, r *http.Request) {
+func (o *observer) observationReady() bool {
 	o.mu.RLock()
-	ready := o.watching && !o.state.HistoryLost
-	o.mu.RUnlock()
-	if !ready {
+	defer o.mu.RUnlock()
+	return o.watching && !o.state.HistoryLost
+}
+func (o *observer) ready(w http.ResponseWriter, r *http.Request) {
+	if !o.observationReady() {
 		http.Error(w, "hook observation is not synchronized", http.StatusServiceUnavailable)
 		return
 	}
@@ -218,7 +220,11 @@ func (o *observer) metrics(w http.ResponseWriter, r *http.Request) {
 	s := o.snapshot()
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	labels := fmt.Sprintf("operator_namespace=%q,release=%q", s.Intent.Namespace, s.Intent.Release)
-	pending, failed, gap := 0, 0, 0
+	pending, failed, gap, ready := 0, 0, 0, 0
+	if o.observationReady() {
+		ready = 1
+	}
+	fmt.Fprintf(w, "# TYPE ptah_operator_upgrade_observer_ready gauge\nptah_operator_upgrade_observer_ready{%s} %d\n", labels, ready)
 	if s.RecoveredAt == nil {
 		pending = 1
 	}
