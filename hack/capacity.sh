@@ -58,7 +58,9 @@ trap cleanup EXIT
 
 # All kind nodes share this daemon. Record its capacity once, separately from
 # Kubernetes allocatable totals. Keep the original reading with the report.
-docker --context "${E2E_DOCKER_CONTEXT:?lab environment must name its Docker context}" info \
+# The bootstrap stores its task-specific context in a separate config directory.
+DOCKER_CONFIG="${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}" \
+	docker --context "${E2E_DOCKER_CONTEXT:?lab environment must name its Docker context}" info \
 	--format '{"dockerID":{{json .ID}},"name":{{json .Name}},"cpus":{{.NCPU}},"memoryBytes":{{.MemTotal}},"architecture":{{json .Architecture}},"os":{{json .OSType}},"observedAt":{{json .SystemTime}}}' \
 	> "$OUT_DIR/host.json"
 

@@ -278,11 +278,12 @@ class WrapperTests(unittest.TestCase):
             for relative in ('demo/schemas', 'demo/migrations', 'support/capacity/mysql'):
                 shutil.copytree(repository / relative, root / relative, dirs_exist_ok=True)
             environment = caller / 'environment'
-            environment.write_text('E2E_KUBECONFIG=/unused\nE2E_DOCKER_CONTEXT=capacity-test\nE2E_OPERATOR_NAMESPACE=operator\nE2E_REGISTRY_HOST=registry\nE2E_REGISTRY_IP=127.0.0.1\n')
+            environment.write_text('E2E_KUBECONFIG=/unused\nE2E_DOCKER_CONTEXT=capacity-test\nE2E_DOCKER_CONFIG=/capacity-test-config\nE2E_OPERATOR_NAMESPACE=operator\nE2E_REGISTRY_HOST=registry\nE2E_REGISTRY_IP=127.0.0.1\n')
             def executable(path, body):
                 path.write_text(body)
                 path.chmod(0o700)
-            executable(bin_path / 'docker', '#!' + sys.executable + '\n' + r'''import json,sys
+            executable(bin_path / 'docker', '#!' + sys.executable + '\n' + r'''import json,os,sys
+assert os.environ.get('DOCKER_CONFIG')=='/capacity-test-config', 'host reading lost the task-specific Docker config'
 assert sys.argv[1:4]==['--context','capacity-test','info'], 'host reading used another daemon'
 print(json.dumps({'dockerID':'test-daemon','name':'test-host','cpus':4,'memoryBytes':17179869184,'architecture':'x86_64','os':'linux','observedAt':'2026-10-01T09:43:00Z'}))
 ''')
