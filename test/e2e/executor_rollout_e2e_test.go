@@ -66,6 +66,7 @@ func rolloutExecutionManagers(t *testing.T, ctx context.Context, cluster *harnes
 	}()
 	for _, pod := range pods {
 		if !noRestarts(&pod) {
+			reportRestartedManagerContainers(cluster, pods)
 			t.Fatal("executor rollout manager restarted before its complete log audit")
 		}
 		followers = append(followers, startKubectlBackground(t, cluster.Kubeconfig, "-n", pod.Namespace, "logs", "-f", "pod/"+pod.Name, "--all-containers"))
@@ -81,6 +82,7 @@ func rolloutExecutionManagers(t *testing.T, ctx context.Context, cluster *harnes
 			t.Fatal("confirm the streamed manager Pod:", err)
 		}
 		if follower.exited() || current.UID != pods[index].UID || !noRestarts(current) {
+			reportRestartedManagerContainers(cluster, []corev1.Pod{*current})
 			t.Fatal("executor rollout lost a manager log before the destructive window")
 		}
 	}
