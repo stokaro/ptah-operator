@@ -34,7 +34,7 @@ def seed_sql(slot):
     return ''.join(lines).encode()
 
 
-def schema_sql(engine, band, repeated, round_number=None):
+def schema_sql(engine, band, repeated, round_number=None, previous=()):
     if engine not in ('postgresql', 'mysql') or band not in BANDS:
         raise ValueError('unknown engine or plan band')
     if type(repeated) is not int or repeated < 0:
@@ -42,6 +42,22 @@ def schema_sql(engine, band, repeated, round_number=None):
     if round_number is not None and (type(round_number) is not int or not 0 <= round_number <= 9):
         raise ValueError('the frozen workload has an initial artifact and nine change rounds')
     tables = BANDS[band][2]
+    if engine == 'mysql':
+        if len(previous) != (round_number or 0):
+            raise ValueError('MySQL additions must preserve every previous round')
+        counts = (*previous, repeated) if round_number is not None else ()
+        if any(type(n) is not int or n < 0 or (n + tables - 1) // tables + 3 > 16_000 for n in counts):
+            raise ValueError('a fixture default exceeds the MySQL VARCHAR bound')
+        parts = [ROW_TABLE]
+        # MODIFY COLUMN is conservatively destructive in the operator even
+        # when Ptah labels a default change safe. Add tables and retain every
+        # prior definition so the workload needs no destructive permission.
+        for version, count in enumerate(counts):
+            for table in range(tables):
+                value = '<' * (count // tables + (table < count % tables)) + f'r{version:02d}'
+                name = payload_table(engine, table, version)
+                parts.append(f"CREATE TABLE {name} (id BIGINT NOT NULL PRIMARY KEY, payload VARCHAR(16000) DEFAULT '{value}');\n")
+        return ''.join(parts).encode()
     # These are executable column defaults, not comments or padded plan JSON.
     # The verifier measures the saved native plan before accepting a band.
     if (repeated + tables - 1) // tables + 3 > 16_000:
@@ -53,6 +69,11 @@ def schema_sql(engine, band, repeated, round_number=None):
         column_type = 'TEXT' if engine == 'postgresql' else 'VARCHAR(16000)'
         parts.append(f"CREATE TABLE capacity_payload_{table:03d} (id BIGINT NOT NULL PRIMARY KEY, payload {column_type} DEFAULT '{default}');\n")
     return ''.join(parts).encode()
+
+
+def payload_table(engine, table, version):
+    suffix = f'_r{version:02d}' if engine == 'mysql' else ''
+    return f'capacity_payload_{table:03d}{suffix}'
 
 
 def migration_sql(version):

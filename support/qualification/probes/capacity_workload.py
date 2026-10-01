@@ -15,8 +15,9 @@ import re
 import subprocess
 import time
 
+from capacity_artifacts import ArtifactReader
 from capacity_bootstrap import Bootstrap
-from capacity_fixtures import BANDS, schema_sql, seed_sql, verify_row_inventory, write_migrations
+from capacity_fixtures import BANDS, payload_table, schema_sql, seed_sql, verify_row_inventory, write_migrations
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -46,7 +47,7 @@ def generate(directory, engine):
         (root / (band + '-baseline.sql')).write_bytes(schema_sql(dialect, band, 0))
         for version, repeated in enumerate(bands[band]):
             name = f'schema-{band}-{version}'
-            content = schema_sql(dialect, band, repeated, version)
+            content = schema_sql(dialect, band, repeated, version, bands[band][:version] if dialect == 'mysql' else ())
             (root / (name + '.sql')).write_bytes(content)
             artifacts[name] = {'kind': 'schema', 'path': name + '.sql', 'sourceSHA256': sha(content)}
     for initial in (2, 32, 128):
@@ -178,8 +179,9 @@ class Workload:
                     queries, expected = ['BEGIN;'], []
                     for table in range(tables):
                         value = '<' * (repeated // tables + (table < repeated % tables)) + f'r{version:02d}'
-                        queries.append(f'INSERT INTO capacity_payload_{table:03d} (id) VALUES (0); '
-                                       f'SELECT {table}, CHAR_LENGTH(payload), MD5(payload) FROM capacity_payload_{table:03d} WHERE id=0;')
+                        name = payload_table('mysql' if self.engine == 'MySQL' else 'postgresql', table, version)
+                        queries.append(f'INSERT INTO {name} (id) VALUES (0); '
+                                       f'SELECT {table}, CHAR_LENGTH(payload), MD5(payload) FROM {name} WHERE id=0;')
                         expected.append(f'{table}\t{len(value)}\t{hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()}\n')
                     queries.append('ROLLBACK;')
                     actual = self.sql(row, '\n'.join(queries).encode())
@@ -216,6 +218,7 @@ class Workload:
         dialect = 'mysql' if self.mysql else 'postgres'
         registry = os.environ['PTAH_OCI_REGISTRY']
         internal = os.environ['E2E_REGISTRY_HOST']
+        reader = ArtifactReader(registry, os.environ['PTAH_OCI_USERNAME'], os.environ['PTAH_OCI_PASSWORD'], self.root / 'oci')
         for name, artifact in bundle['artifacts'].items():
             source = str(self.root / artifact['path'])
             kind = artifact['kind']
@@ -233,6 +236,7 @@ class Workload:
             files = [Path(source)] if kind == 'schema' else sorted(Path(source).iterdir())
             artifact['sourceFiles'] = [{'path': p.relative_to(self.root).as_posix(), 'bytes': p.stat().st_size,
                                         'sha256': sha(p.read_bytes())} for p in files]
+            artifact['readback'] = reader.read(f'oci://{registry}/{kind}s/capacity-inputs@{digests[0]}', kind, artifact['sourceFiles'])
         (self.root / 'bundle.json').write_text(json.dumps(bundle, indent=2) + '\n')
 
         def populate():

@@ -17,7 +17,7 @@ import subprocess
 import time
 
 from capacity_bootstrap import database_account
-from capacity_fixtures import (BANDS, HISTORIES, schema_sql, seed_sql,
+from capacity_fixtures import (BANDS, HISTORIES, payload_table, schema_sql, seed_sql,
                                verify_row_inventory, write_migrations)
 from database_restore import IMAGES
 
@@ -41,6 +41,7 @@ class Verification:
                        'status': 'RUNNING', 'steps': [], 'schemas': [], 'migrations': []}
         source = Path(__file__).resolve().parents[3]
         self.report['operatorSource'] = {
+            'planCheckSourceSHA256': digest((source / 'hack/capacityplancheck/main.go').read_bytes()),
             'commit': subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip(),
             'status': subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain'], text=True),
             'procedures': {name: digest(Path(__file__).with_name(name).read_bytes()) for name in
@@ -94,6 +95,11 @@ class Verification:
                                               self.container, '/work/ptah', *args])
 
     def start(self):
+        self.plancheck = self.root / 'capacityplancheck'
+        source = Path(__file__).resolve().parents[3]
+        self.call('build operator plan safety check', ['go', '-C', str(source), 'build', '-o', str(self.plancheck), './hack/capacityplancheck'])
+        self.report['planCheckSHA256'] = digest(self.plancheck.read_bytes())
+        self.save()
         binary = Path(self.args.ptah_binary).resolve()
         if digest(binary.read_bytes()) != self.args.ptah_sha256:
             raise ValueError('Ptah binary does not match its declared SHA-256')
@@ -180,13 +186,14 @@ class Verification:
                   'tables': tables, 'rowInventoryBefore': before, 'rounds': []}
         self.report['schemas'].append(record)
         self.save()
+        previous = []
         for round_number in range(10):
             name = f'{band}-round-{round_number:02d}'
             # Ptah's native SQL includes the old default in its change
             # description. Recalibrate each transition, keeping every attempt;
             # a source byte count alone cannot establish the plan's size.
             for attempt in range(3):
-                content = schema_sql(self.args.engine, band, repeated, round_number)
+                content = schema_sql(self.args.engine, band, repeated, round_number, previous if self.args.engine == 'mysql' else ())
                 remote, raw = self.plan(f'{name}-attempt-{attempt}', content)
                 plan = json.loads(raw)
                 if not plan.get('statements') or plan.get('destructive') is not False:
@@ -196,6 +203,7 @@ class Verification:
                 repeated = round(repeated + ((lower + upper) // 2 - len(raw)) / slope)
             else:
                 raise RuntimeError(f'{name}: actual native plan bytes {len(raw)} are outside [{lower}, {upper}]')
+            self.call('check operator plan safety ' + name, [str(self.plancheck), self.args.engine, str(self.root / Path(remote).name)])
             self.ptah('execute native plan ' + name, ['schema', 'apply', '--plan', remote, '--auto-approve', '--json'])
             after = self.rows(slot)
             queries, expected_rows = ['BEGIN;'], []
@@ -204,13 +212,15 @@ class Verification:
                 value = '<' * count + f'r{round_number:02d}'
                 # Execute the default, then roll back the probe row. The stable
                 # workload table still has exactly its original 10,000 rows.
-                query = (f'INSERT INTO capacity_payload_{table:03d} (id) VALUES (0); '
-                         f'SELECT {table}, CHAR_LENGTH(payload), MD5(payload) FROM capacity_payload_{table:03d} WHERE id=0;')
+                table_name = payload_table(self.args.engine, table, round_number)
+                query = (f'INSERT INTO {table_name} (id) VALUES (0); '
+                         f'SELECT {table}, CHAR_LENGTH(payload), MD5(payload) FROM {table_name} WHERE id=0;')
                 queries.append(query)
                 expected_rows.append(f'{table}\t{len(value)}\t{hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()}\n')
             queries.append('ROLLBACK;')
             if self.sql('\n'.join(queries)).stdout != ''.join(expected_rows).encode():
                 raise RuntimeError('native Apply did not install the declared executable defaults')
+            previous.append(repeated)
             record['rounds'].append({'round': round_number, 'repeated': repeated, 'sourceSHA256': digest(content),
                                      'planFile': Path(remote).name,
                                      'nativePlanBytes': len(raw), 'nativePlanSHA256': digest(raw),

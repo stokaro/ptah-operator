@@ -37,7 +37,7 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(sql.count(b'(' + number + b", '" + payload + b"')"), 1)
 
     def test_schema_rounds_change_real_defaults_without_changing_rows(self):
-        for engine in ['postgresql', 'mysql']:
+        for engine in ['postgresql']:
             for band, (_, _, tables) in BANDS.items():
                 baseline = schema_sql(engine, band, 0)
                 self.assertEqual(baseline.count(b"DEFAULT ''"), tables)
@@ -50,6 +50,27 @@ class FixtureTests(unittest.TestCase):
                     self.assertEqual(content.count(b'CREATE TABLE capacity_rows'), 1)
                     self.assertNotIn(b'--', content)
                     self.assertNotIn(b'DROP', content)
+
+    def test_mysql_rounds_only_add_tables_and_preserve_old_definitions(self):
+        for band, (_, _, tables) in BANDS.items():
+            prior = []
+            previous = schema_sql('mysql', band, 0)
+            self.assertEqual(previous.count(b'CREATE TABLE'), 1)
+            for version in range(10):
+                count = tables * (50 + version) + 1
+                current = schema_sql('mysql', band, count, version, prior)
+                self.assertTrue(current.startswith(previous))
+                addition = current[len(previous):]
+                self.assertEqual(addition.count(b'CREATE TABLE'), tables)
+                self.assertEqual(addition.count(b'<'), count)
+                self.assertEqual(addition.count(f'r{version:02d}'.encode()), tables * 2)
+                self.assertNotIn(b'ALTER', current)
+                self.assertNotIn(b'DROP', current)
+                prior.append(count)
+                previous = current
+        for previous in ([], [1, 2], [-1], [True], [16000]):
+            with self.assertRaises(ValueError):
+                schema_sql('mysql', 'small', 5, 1, previous)
 
     def test_history_lengths_include_real_up_and_down_ddl(self):
         with tempfile.TemporaryDirectory() as root:
