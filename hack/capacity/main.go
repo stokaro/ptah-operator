@@ -164,9 +164,14 @@ func run() error {
 			setupErr = errors.Join(setupErr, workCtx.Err())
 		}
 	}
-	sampling, stopSampling := context.WithCancel(workCtx)
-	done := make(chan struct{})
-	go func() { watch.run(sampling); close(done) }()
+	// Work may finish or fail while a sample is in flight. Keep collection
+	// under the parent cancellation signal and stop it through its finish
+	// channel, so normal scenario completion cannot truncate that sample.
+	sampling, stopSampling := context.WithCancel(ctx)
+	defer stopSampling()
+	finishSampling := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- watch.run(sampling, finishSampling) }()
 
 	steps := &scenarios{in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
 	scenarioErr := setupErr
@@ -183,8 +188,10 @@ func run() error {
 			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))
 		}
 	}
-	stopSampling()
-	<-done
+	close(finishSampling)
+	if err := <-done; err != nil {
+		scenarioErr = errors.Join(scenarioErr, fmt.Errorf("final capacity collection: %w", err))
+	}
 
 	samples, jobs := watch.snapshot()
 	out := report{Cycles: cycleProof, FormatVersion: 3, Workload: load, Environment: environment, Samples: samples, Jobs: jobs}

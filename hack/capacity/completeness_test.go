@@ -242,15 +242,25 @@ func TestEmptyWindowHasNoMeasuredFigures(t *testing.T) {
 	}
 }
 
-func TestCanceledFinalCollectionIsNotPublished(t *testing.T) {
+func TestCanceledCollectionPreservesMissingEvidence(t *testing.T) {
 	t.Parallel()
 	s := measurementFixture(t, "", completeProcessMetrics)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s.take(ctx)
+	if err := s.take(ctx); err == nil {
+		t.Fatal("canceled collection succeeded")
+	}
 	samples, _ := s.snapshot()
-	if len(samples) != 0 {
-		t.Fatal("the canceled final collection became a measurement")
+	if len(samples) != 1 || len(samples[0].Incomplete) != 6 {
+		t.Fatalf("canceled collection lost its missing sources: %+v", samples)
+	}
+	object := jsonObject(t, samples[0])
+	for _, fields := range sampleFields {
+		for _, field := range fields {
+			if string(object[field]) != "null" {
+				t.Errorf("canceled collection %s = %s, want null", field, object[field])
+			}
+		}
 	}
 }
 

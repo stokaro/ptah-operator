@@ -89,20 +89,44 @@ type sampler struct {
 	managerSelector    string
 	metricsPort        int
 	every              time.Duration
+	collectionTimeout  time.Duration
 
 	mu      sync.Mutex
 	samples []sample
 	jobs    map[string]*jobRecord
 }
 
-func (s *sampler) run(ctx context.Context) {
+// run stops scheduling periodic reads when finish closes, lets the current
+// bounded read finish, and collects one final inventory. Scenario completion
+// must not cancel the evidence of operations that completed just before it.
+func (s *sampler) run(ctx context.Context, finish <-chan struct{}) error {
 	ticker := time.NewTicker(s.every)
 	defer ticker.Stop()
+	budget := s.collectionTimeout
+	if budget <= 0 {
+		budget = 30 * time.Second
+	}
+	collect := func() error {
+		reading, cancel := context.WithTimeout(ctx, budget)
+		defer cancel()
+		return s.take(reading)
+	}
 	for {
-		s.take(ctx)
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
+		case <-finish:
+			return collect()
+		default:
+		}
+		// Periodic failures remain in the samples. A failed final inventory
+		// also fails the run, since no subsequent collection can fill it in.
+		_ = collect()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-finish:
+			return collect()
 		case <-ticker.C:
 		}
 	}
@@ -110,9 +134,10 @@ func (s *sampler) run(ctx context.Context) {
 
 // take preserves failed reads as missing evidence. A partly collected reading
 // cannot establish a zero count or a low maximum for the failed source.
-func (s *sampler) take(ctx context.Context) {
+func (s *sampler) take(ctx context.Context) error {
 	now := time.Now().UTC()
 	reading := sample{At: now, Managers: map[string]managerReading{}}
+	var problems []error
 	for _, source := range []struct {
 		name string
 		read func() error
@@ -126,17 +151,16 @@ func (s *sampler) take(ctx context.Context) {
 	} {
 		if err := source.read(); err != nil {
 			reading.Incomplete = append(reading.Incomplete, source.name)
+			problems = append(problems, fmt.Errorf("%s: %w", source.name, err))
 			slog.Warn("incomplete sample", "source", source.name, "error", err)
 		}
 	}
-	// Stopping the sampler can cancel an in-flight collection. It is outside
-	// the completed measurement, so discard that partial final reading.
-	if ctx.Err() != nil {
-		return
-	}
+	// Cancellation is missing evidence too. Do not erase a partially read
+	// interval or turn its missing sources into zero-valued measurements.
 	s.mu.Lock()
 	s.samples = append(s.samples, reading)
 	s.mu.Unlock()
+	return errors.Join(append(problems, ctx.Err())...)
 }
 
 func (s *sampler) readPods(ctx context.Context, into *sample) error {
