@@ -311,7 +311,10 @@ that plateau.
 
 After the measured soak, `soak.retentionFault` exercises pending approval and
 unresolved Apply on the same twenty resource identities. Native Ptah rolls back
-one fixture migration, and the probe drops one empty schema payload table. A
+one fixture migration, and the probe drops one empty schema payload table. Before approval, it changes the
+schema's lock timeout under `Never`, then restores the original policy. This
+produces an actual superseded plan whose deletion and garbage collection the
+fault must prove. A
 temporary admission policy prevents one schema's Apply claim from being saved;
 the collector requires the actual refusal before suspending that resource with
 its admitted approval still pending. A thirty-second database table lock holds
@@ -327,6 +330,16 @@ database inventories check that all rows, defaults and migration versions are
 restored. These deliberately blocked resources are outside the measured soak
 window. A failure preserves the evidence and attempts to remove the owned gate
 and resume the exact resources it suspended.
+
+For a focused local retry, the collector accepts
+`-retention-fault-baseline <prior-after-prune.json>`. Restore the failed fixture
+through ordinary reconciliation first. Use a fresh output directory and a copy
+of the original input bundle with a fresh checkpoint directory. The collector
+requires exactly the baseline's twenty UIDs, their resumed specs and current
+artifact references; it refuses replacements, changed targets and additional
+workload resources. Its report declares `retention-fault-only`. Keep the owned
+lab and fixture journal until the retry finishes, then run the original cleanup.
+This mode reuses preparation and does not repeat the soak.
 
 The approval backlog, unrelated objects, overload cases and the full qualified
 execution matrix remain required

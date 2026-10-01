@@ -204,6 +204,9 @@ func writeSummary(out io.Writer, r report) error {
 	fmt.Fprintf(&b, "# Capacity measurement: %s\n\n%s\n\n", r.Workload.Name, r.Workload.Description)
 	fmt.Fprintf(&b, "%d PtahSchemas and %d PtahMigrations, each on a database of its own, at an interval of %s.\n\n",
 		r.Workload.Schemas, r.Workload.Migrations, r.Workload.Interval)
+	if r.Environment["executionScope"] == "retention-fault-only" {
+		b.WriteString("This diagnostic reused the recorded fleet and ran only the retention fault. It did not repeat the soak, cold start, restart, or outage scenarios.\n\n")
+	}
 	keys := make([]string, 0, len(r.Environment))
 	for key := range r.Environment {
 		keys = append(keys, key)

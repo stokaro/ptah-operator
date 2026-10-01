@@ -684,7 +684,7 @@ func faultDisabledPlan(o *unstructured.Unstructured, previousUID string) bool {
 	conditions, _, _ := unstructured.NestedSlice(o.Object, "status", "conditions")
 	for _, raw := range conditions {
 		c, _ := raw.(map[string]any)
-		if c["type"] == "Blocked" && c["status"] == "True" && c["reason"] == "ApplyDisabled" && c["observedGeneration"] == o.GetGeneration() {
+		if c["type"] == "Ready" && c["status"] == "False" && c["reason"] == "ApplyDisabled" && c["observedGeneration"] == o.GetGeneration() {
 			return true
 		}
 	}

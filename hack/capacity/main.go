@@ -51,21 +51,22 @@ func main() {
 
 func run() error {
 	var (
-		kubeconfig      = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
-		checkpointPath  = flag.String("checkpoint-probe", "", "Python database verifier for soak checkpoints")
-		checkpointState = flag.String("checkpoint-state", "", "owned capacity database state for soak checkpoints")
-		catalogPath     = flag.String("inputs", "", "populated per-slot input catalog prepared by the capacity harness")
-		workloadPath    = flag.String("workload", "support/capacity/workload.json", "the workload to run")
-		outDir          = flag.String("out", "", "directory to write report.json and summary.md into")
-		hostPath        = flag.String("host-info", "", "JSON capacity reading from the Docker daemon hosting the lab")
-		apiCount        = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
-		managerCount    = flag.Int("expected-managers", 2, "required number of independently sampled manager processes")
-		metricsPort     = flag.Int("metrics-port", 8080, "the manager's metrics port")
-		schemaV1        = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
-		schemaV2        = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
-		migrationV1     = flag.String("migration-v1", "", "the first migration artifact")
-		migrationV2     = flag.String("migration-v2", "", "the migration artifact the change batch moves to")
-		in              inputs
+		faultBaselinePath = flag.String("retention-fault-baseline", "", "run only the retention fault on the exact resumed fleet in a prior maintenance inventory; requires a fresh output and checkpoint directory")
+		kubeconfig        = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
+		checkpointPath    = flag.String("checkpoint-probe", "", "Python database verifier for soak checkpoints")
+		checkpointState   = flag.String("checkpoint-state", "", "owned capacity database state for soak checkpoints")
+		catalogPath       = flag.String("inputs", "", "populated per-slot input catalog prepared by the capacity harness")
+		workloadPath      = flag.String("workload", "support/capacity/workload.json", "the workload to run")
+		outDir            = flag.String("out", "", "directory to write report.json and summary.md into")
+		hostPath          = flag.String("host-info", "", "JSON capacity reading from the Docker daemon hosting the lab")
+		apiCount          = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
+		managerCount      = flag.Int("expected-managers", 2, "required number of independently sampled manager processes")
+		metricsPort       = flag.Int("metrics-port", 8080, "the manager's metrics port")
+		schemaV1          = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
+		schemaV2          = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
+		migrationV1       = flag.String("migration-v1", "", "the first migration artifact")
+		migrationV2       = flag.String("migration-v2", "", "the migration artifact the change batch moves to")
+		in                inputs
 	)
 	flag.StringVar(&in.namespace, "namespace", "", "comma-separated workload namespaces; the first also holds the restart approval fixture")
 	flag.StringVar(&in.operatorNamespace, "operator-namespace", "", "the namespace the manager runs in")
@@ -94,6 +95,17 @@ func run() error {
 	load, err := loadWorkload(*workloadPath)
 	if err != nil {
 		return err
+	}
+	var baseline *retentionInventory
+	if *faultBaselinePath != "" {
+		if load.Soak == nil || !load.Soak.RetentionFault {
+			return fmt.Errorf("retention-fault-baseline requires a workload with the retention fault enabled")
+		}
+		inventory, e := readFaultInventory(*faultBaselinePath)
+		if e != nil {
+			return e
+		}
+		baseline = &inventory
 	}
 	var catalogDigest string
 	if *catalogPath != "" {
@@ -214,10 +226,16 @@ func run() error {
 	done := make(chan error, 1)
 	go func() { done <- watch.run(sampling, finishSampling) }()
 
-	steps := &scenarios{faultProbe: faultProbe, sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
+	steps := &scenarios{faultBaseline: baseline, faultProbe: faultProbe, sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
 		_, jobs := watch.snapshot()
 		return jobs
 	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
+	if baseline != nil {
+		archive, e := writeRetentionEvidence(*outDir, "retention-fault-baseline.json", baseline)
+		setupErr = errors.Join(setupErr, e)
+		environment["executionScope"] = "retention-fault-only"
+		environment["retentionFaultBaseline"] = archive
+	}
 	scenarioErr := setupErr
 	if scenarioErr == nil {
 		scenarioErr = runScenarios(workCtx, steps)
@@ -267,6 +285,16 @@ func run() error {
 // that fails ends the run, and the report still carries every window measured
 // up to it: a workload that did not converge is itself a finding.
 func runScenarios(ctx context.Context, steps *scenarios) error {
+	if steps.faultBaseline != nil {
+		if err := steps.validateFaultBaseline(ctx); err != nil {
+			return err
+		}
+		slog.Info("scenario", "name", "retention fault", "scope", "existing fleet only")
+		if err := steps.retentionFault(ctx); err != nil {
+			return fmt.Errorf("retention fault: %w", err)
+		}
+		return nil
+	}
 	if steps.load.Soak != nil {
 		for _, step := range []struct {
 			name string

@@ -42,6 +42,7 @@ type inputs struct {
 }
 
 type scenarios struct {
+	faultBaseline       *retentionInventory
 	faultProbe          func(context.Context, string, int, string) error
 	retentionFaultProof *retentionFaultProof
 	checkpoint          func(context.Context, int, string) (databaseCheckpoint, error)

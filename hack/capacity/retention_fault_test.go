@@ -219,7 +219,7 @@ func TestRetentionFaultRequiresAnActuallySupersededPlan(t *testing.T) {
 			o := pinSource("PtahSchema")
 			o.SetGeneration(4)
 			o.Object["spec"] = map[string]any{"policy": map[string]any{"apply": "Never"}}
-			o.Object["status"] = map[string]any{"observedGeneration": int64(4), "plan": map[string]any{"uid": "obsolete-control"}, "conditions": []any{map[string]any{"type": "Blocked", "status": "True", "reason": "ApplyDisabled", "observedGeneration": int64(4)}}}
+			o.Object["status"] = map[string]any{"observedGeneration": int64(4), "plan": map[string]any{"uid": "obsolete-control"}, "conditions": []any{map[string]any{"type": "Ready", "status": "False", "reason": "ApplyDisabled", "observedGeneration": int64(4)}}}
 			switch mode {
 			case "unchanged plan":
 				_ = unstructured.SetNestedField(o.Object, "pending", "status", "plan", "uid")
@@ -236,5 +236,31 @@ func TestRetentionFaultRequiresAnActuallySupersededPlan(t *testing.T) {
 				t.Fatalf("accepted=%v", got)
 			}
 		})
+	}
+}
+
+func TestRetentionFaultAcceptsNativeSchemaApplyDisabledCondition(t *testing.T) {
+	raw, err := os.ReadFile("testdata/retention-apply-disabled.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var object unstructured.Unstructured
+	if err := object.UnmarshalJSON(raw); err != nil {
+		t.Fatal(err)
+	}
+	if !faultDisabledPlan(&object, "previous-plan-uid") {
+		t.Fatal("the actual schema refusal was not recognized")
+	}
+	conditions, _, _ := unstructured.NestedSlice(object.Object, "status", "conditions")
+	for _, raw := range conditions {
+		c := raw.(map[string]any)
+		if c["type"] == "Ready" {
+			c["type"] = "Blocked"
+			c["status"] = "True"
+		}
+	}
+	_ = unstructured.SetNestedSlice(object.Object, conditions, "status", "conditions")
+	if faultDisabledPlan(&object, "previous-plan-uid") {
+		t.Fatal("accepted the invented schema condition")
 	}
 }
