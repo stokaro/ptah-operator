@@ -156,6 +156,7 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 	var originalJob *batchv1.Job
 	var originalPod *corev1.Pod
 	var backend string
+	var terminatePostgres string
 	wait("the original schema DDL behind its table barrier", func(v *ptahv1.PtahSchema) bool {
 		op := v.Status.ActiveOperation
 		if op == nil || op.Type != ptahv1.OperationApply || op.JobUID == "" {
@@ -175,7 +176,7 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 		if owned[0].Status.Phase != corev1.PodRunning {
 			return false
 		}
-		statement := "SELECT a.pid::text || '/' || host(a.client_addr) FROM pg_locks held JOIN pg_stat_activity a ON a.pid=held.pid JOIN pg_locks waiting ON waiting.pid=a.pid WHERE a.datname='" + database + "' AND held.locktype='advisory' AND held.granted AND held.classid=0 AND held.objid=" + strconv.Itoa(pgApplyLockKey) + " AND held.objsubid=1 AND NOT waiting.granted AND waiting.locktype='relation' AND waiting.relation='e2e_widgets'::regclass AND waiting.mode='AccessExclusiveLock'"
+		statement := "SELECT a.pid::text || '/' || host(a.client_addr) || '/' || extract(epoch FROM a.backend_start)::text FROM pg_locks held JOIN pg_stat_activity a ON a.pid=held.pid JOIN pg_locks waiting ON waiting.pid=a.pid WHERE a.datname='" + database + "' AND a.usename='" + migrationDatabaseUser + "' AND held.locktype='advisory' AND held.granted AND held.classid=0 AND held.objid=" + strconv.Itoa(pgApplyLockKey) + " AND held.objsubid=1 AND NOT waiting.granted AND waiting.locktype='relation' AND waiting.relation='e2e_widgets'::regclass AND waiting.mode='AccessExclusiveLock'"
 		if m.engine.name == "mysql" {
 			statement = "SELECT CONCAT(ID,'/',SUBSTRING_INDEX(HOST,':',1)) FROM information_schema.processlist WHERE ID=IS_USED_LOCK('ptah_schema_apply') AND DB='" + database + "' AND STATE LIKE '%metadata lock%'"
 		}
@@ -183,7 +184,11 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 		if backend == "" {
 			return false
 		}
-		if !executorBackendMatchesPod(backend, &owned[0], owned[0].UID) {
+		if m.engine.name == "postgresql" {
+			var err error
+			terminatePostgres, err = alPostgresBackendTermination(database, backend, &owned[0])
+			a.check(err, "bind the PostgreSQL writer's original session")
+		} else if !executorBackendMatchesPod(backend, &owned[0], owned[0].UID) {
 			a.fatalf("blocked DDL does not belong to the original schema executor")
 		}
 		original, originalJob, originalPod = v.DeepCopy(), j.DeepCopy(), owned[0].DeepCopy()
@@ -221,7 +226,7 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 		}
 		return true, "", nil
 	}), "stop the old schema workload before database recovery")
-	// MySQL can retain a queued DDL after its client is gone. Kill only the
+	// A database can retain queued DDL after its client is gone. Kill only the
 	// server session bound above to the original Pod before releasing its lock.
 	pid := strings.Split(backend, "/")[0]
 	if m.engine.name == "mysql" {
@@ -231,6 +236,13 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 				a.fatalf("the original schema backend identity changed")
 			}
 			sql("KILL " + pid)
+		}
+	} else {
+		result := sql(terminatePostgres)
+		// The session can finish between selection and signaling. A false
+		// result is safe only if the disappearance check below confirms it.
+		if result != "" && result != "t" && result != "f" {
+			a.fatalf("the original PostgreSQL backend could not be terminated")
 		}
 	}
 	a.check(harness.Wait(a.ctx, "the old schema database session to disappear", time.Minute, time.Second, func(context.Context) (bool, string, error) {
