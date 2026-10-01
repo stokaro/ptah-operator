@@ -291,6 +291,15 @@ func lateRefusalRecorded(status ptahv1alpha1.PtahMigrationStatus, jobUID string)
 	})
 }
 
+// Retire only the fixture whose late dispatch this row proved. Another
+// unresolved run or an operation still in flight must not be hidden by cleanup.
+func lateFixtureRetirable(resource *ptahv1alpha1.PtahMigration, uid, jobUID string) bool {
+	return resource != nil && uid != "" && string(resource.UID) == uid &&
+		resource.DeletionTimestamp == nil && resource.Spec.Policy.Apply == ptahv1alpha1.ApplyPolicyOnApproval &&
+		resource.Status.ActiveOperation == nil && resource.Status.PendingLockRelease == nil &&
+		lateRefusalRecorded(resource.Status, jobUID)
+}
+
 // restoreInSyncApplied is a migration in sync after an Applied run.
 func restoreInSyncApplied(status ptahv1alpha1.PtahMigrationStatus) bool {
 	return status.Phase == ptahv1alpha1.MigrationPhaseInSync && status.LastRun != nil &&

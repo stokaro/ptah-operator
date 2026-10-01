@@ -169,6 +169,11 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 	a.check(a.cluster.Client.List(a.ctx, all), "inventory all unresolved migrations before injection")
 	query := `ALERTS{alertname="PtahOperatorUnresolvedApply",family="migration"}`
 	if alUnresolvedMigrations(all.Items) != 0 || !a.noActiveAlerts(query) {
+		for _, existing := range all.Items {
+			if run := existing.Status.UnresolvedRun; run != nil {
+				a.logf("unresolved baseline: migration=%s/%s uid=%s jobUID=%s outcome=%s recordedAt=%s", existing.Namespace, existing.Name, existing.UID, run.JobUID, run.Outcome, run.RecordedAt.UTC().Format(time.RFC3339))
+			}
+		}
 		a.fatalf("a pre-existing migration incident would mask this fault or its resolution")
 	}
 	from := a.deliveryCount()

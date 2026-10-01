@@ -3,9 +3,11 @@
 package e2e
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -582,6 +584,7 @@ func (m *migrationRun) lateDispatchProof() {
 		coordinationKey: "e2e/late-dispatch/" + m.engine.name, apply: "OnApproval", interval: "1h",
 		execution: gatedExecution(),
 	}))
+	fixtureUID := string(m.migration(name).UID)
 	// The read-only chain has to finish before there is an Apply to delay.
 	var plan string
 	if !m.within(migrationPoll, func() bool {
@@ -645,7 +648,29 @@ func (m *migrationRun) lateDispatchProof() {
 	m.assertLateDispatchNeverReachesTheDatabase(name, database, claim.jobUID)
 	m.closeApplyGate()
 	audit.assertRecords(beforeRefusal, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": claim.jobName}, claim.jobUID), false)
-	m.logf("PASS %s refused an Apply Pod that started after its window closed", m.engine.kind)
+	// The old alert phase consumed this unresolved fixture. The current phase
+	// induces its own incidents from zero, so retain the completed refusal and
+	// remove only this exact fixture before it can contaminate later rows.
+	var retired *ptahv1alpha1.PtahMigration
+	if !m.within(time.Second, func() bool {
+		retired = m.migration(name)
+		return lateFixtureRetirable(retired, fixtureUID, claim.jobUID)
+	}) {
+		m.reportGatedState(name, true)
+		m.fatalf("%s is not the proved, drained late-dispatch fixture", name)
+	}
+	pod := audit.terminalPod(map[string]string{"job-name": claim.jobName}, claim.jobUID)
+	evidence, err := os.MkdirTemp("", "ptah-e2e-late-dispatch-evidence.")
+	m.check(err, "create private retained late-dispatch evidence")
+	m.check(m.get(claim.jobName, job), "retain the terminal late-dispatch Job")
+	body, err := json.Marshal(map[string]any{"migration": retired, "job": job, "pod": pod, "sqlBefore": beforeRefusal, "sqlAfter": audit.snapshot()})
+	m.check(err, "encode the proved late-dispatch refusal")
+	m.check(os.WriteFile(filepath.Join(evidence, "refusal.json"), body, 0600), "retain late-dispatch evidence before deleting its source")
+	m.logf("retained private late-dispatch evidence: %s sha256:%x", evidence, sha256.Sum256(body))
+	m.check(storedStateDeleteExact(m.ctx, m.cluster, retired), "finalize only the proved late-dispatch fixture")
+	m.assertNoNewApplyJob([]string{claim.jobUID}, "while retiring the late-dispatch fixture", name)
+	audit.assertRecords(beforeRefusal, audit.snapshot(), pod, false)
+	m.logf("PASS %s refused an Apply Pod that started after its window closed; exact fixture finalized", m.engine.kind)
 	audit.close()
 }
 

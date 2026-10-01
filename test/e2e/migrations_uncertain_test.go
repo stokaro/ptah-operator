@@ -612,6 +612,39 @@ func TestLateRefusalRecorded(t *testing.T) {
 	}
 }
 
+func TestLateFixtureRetirementCannotHideOtherWork(t *testing.T) {
+	fixture := muRefused()
+	fixture.Spec.Policy.Apply = ptahv1alpha1.ApplyPolicyOnApproval
+	fixture.Status.Conditions[0].Message = "dispatch_deadline_expired"
+	if !lateFixtureRetirable(fixture, "u-migration", "u-apply") {
+		t.Fatal("proved and drained late-dispatch fixture refused")
+	}
+	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigration){
+		"replacement resource": func(v *ptahv1alpha1.PtahMigration) { v.UID = "replacement" },
+		"another unknown run":  func(v *ptahv1alpha1.PtahMigration) { v.Status.UnresolvedRun.JobUID = "another-job" },
+		"another refusal":      func(v *ptahv1alpha1.PtahMigration) { v.Status.Conditions[0].Message = "another failure" },
+		"active work": func(v *ptahv1alpha1.PtahMigration) {
+			v.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{}
+		},
+		"owed lock release": func(v *ptahv1alpha1.PtahMigration) {
+			v.Status.PendingLockRelease = &ptahv1alpha1.TargetLockReleaseStatus{}
+		},
+		"automatic apply":  func(v *ptahv1alpha1.PtahMigration) { v.Spec.Policy.Apply = ptahv1alpha1.ApplyPolicyAlways },
+		"already deleting": func(v *ptahv1alpha1.PtahMigration) { v.DeletionTimestamp = &muInstant },
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := fixture.DeepCopy()
+			mutate(v)
+			if lateFixtureRetirable(v, "u-migration", "u-apply") {
+				t.Fatal("unproved or live work accepted for retirement")
+			}
+		})
+	}
+	if lateFixtureRetirable(nil, "u-migration", "u-apply") || lateFixtureRetirable(fixture, "", "u-apply") || lateFixtureRetirable(fixture, "u-migration", "") {
+		t.Fatal("missing identity accepted")
+	}
+}
+
 func TestRestoreInSyncApplied(t *testing.T) {
 	t.Parallel()
 	settled := ptahv1alpha1.PtahMigrationStatus{
