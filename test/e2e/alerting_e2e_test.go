@@ -62,6 +62,7 @@ func TestAlerting(t *testing.T) {
 	}{
 		{"monitoring-path", a.monitoringPath},
 		{"unresolved-apply", a.unresolvedApply},
+		{"ordinary-policy-waits", a.negativeControls},
 		{"stalled-operation", a.stalledOperation},
 		{"resource-overdue", a.resourceOverdue},
 		{"unresolved-view-read-failures", a.viewReadFailures},

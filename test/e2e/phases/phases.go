@@ -438,10 +438,11 @@ var Alerting = define[AlertingInputs](Phase{
 	Name:         "alerting",
 	Test:         "TestAlerting",
 	Timeout:      80 * time.Minute,
-	RequiresFull: []string{"assert"},
+	RequiresFull: []string{"assert", "migrations-postgresql", "reference-data-postgresql"},
 	Scenarios: []string{
 		"monitoring-path",
 		"unresolved-apply",
+		"ordinary-policy-waits",
 		"stalled-operation",
 		"resource-overdue",
 		"unresolved-view-read-failures",
