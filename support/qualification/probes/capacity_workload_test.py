@@ -3,6 +3,7 @@
 import base64
 import copy
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -82,6 +83,53 @@ class WorkloadTests(unittest.TestCase):
                     workload.prepare()
             self.assertTrue((root / 'initial-rows-19.tsv').exists())
             self.assertFalse((root / 'catalog.json').exists())
+
+    def test_final_database_checks_refuse_loss_wrong_defaults_and_history(self):
+        for failure in (None, 'rows', 'schema-default', 'history', 'migration-default'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as parent:
+                root = Path(parent) / 'inputs'
+                workload = Workload(self.state(parent), root)
+                bundle = generate(root, 'PostgreSQL')
+                (root / 'bundle.json').write_text(json.dumps(bundle))
+                visited = set()
+                def sql(row, query):
+                    slot = row['index']
+                    if query.startswith(b'SELECT id, payload'):
+                        visited.add(slot)
+                        return b'' if failure == 'rows' and slot == 19 else row_inventory(slot)
+                    if query.startswith(b'BEGIN;'):
+                        if failure == 'schema-default' and slot == 9:
+                            return b'0\t0\twrong\n'
+                        tables = (1, 4, 16)[slot % 3]
+                        # Independently pinned outputs from the native input
+                        # calibration: changed slots use round one.
+                        repeated = ((121, 10506, 42063) if slot < 5 else (241, 21013, 84133))[slot % 3]
+                        result = []
+                        for table in range(tables):
+                            value = '<' * (repeated // tables + (table < repeated % tables)) + ('r01' if slot < 5 else 'r00')
+                            result.append(f'{table}\t{len(value)}\t{hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()}\n')
+                        return ''.join(result).encode()
+                    if query.startswith(b'SELECT COUNT(*)'):
+                        return b'1\n' if failure == 'migration-default' and slot == 19 else b'0\n'
+                    raise AssertionError('unexpected SQL')
+                def ptah(row, args):
+                    slot = row['index'] - 10
+                    count = 3 if slot < 4 else 33 if slot == 4 else 32 if slot < 7 else 128
+                    if failure == 'history' and slot == 9:
+                        count -= 1
+                    return json.dumps({'applied_migrations': list(range(1, count + 1)), 'pending_migrations': []}).encode()
+                with patch.object(workload, 'sql', side_effect=sql), patch.object(workload, 'ptah', side_effect=ptah), \
+                        patch.object(workload, 'forwarded', side_effect=lambda action: action()):
+                    if failure:
+                        with self.assertRaises(ValueError):
+                            workload.verify(5)
+                        self.assertFalse((root / 'database-verification.json').exists())
+                    else:
+                        result = workload.verify(5)
+                        self.assertEqual(visited, set(range(20)))
+                        self.assertEqual(len(result['slots']), 20)
+                        self.assertEqual(len({r['sha256'] for r in result['slots']}), 20)
+                        self.assertTrue((root / 'database-verification.json').exists())
 
     def test_missing_reordered_or_duplicate_database_slots_are_refused(self):
         with tempfile.TemporaryDirectory() as parent:

@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-01T15:31:55.882573+00:00",
+  "acceptance": "Not assessed",
+  "scope": "PostgreSQL populated-input integration, not full capacity qualification",
+  "sourceCommit": "2db45f4f50ed60591c7c8ff2cf499887d4980a64",
+  "reportSHA256": "a7e6bd665ea2369c0513318438309443eb362fa0a9048702b9b24a410461af2a",
+  "catalogSHA256": "dfb85e6afac57f5c2d98502878e96a8dc54f96753384a9b563ab1b9fc5d16328",
+  "databaseVerificationSHA256": "49bf225f5e420ead36c5ecfdac0ede9a491d54b91a3a21d181bf19837034de6b",
+  "exitCode": 0,
+  "databaseSlots": 20,
+  "rowsPerDatabase": 10000,
+  "completeRowInventoryReads": 40,
+  "schemaPlans": [
+    {
+      "slot": 0,
+      "round": 0,
+      "band": "small",
+      "bytes": 3580,
+      "sha256": "5b17ee95b263ee5f5521b0d24747a743d44d1a09136699753a8f3a7533c64078",
+      "chunks": 1
+    },
+    {
+      "slot": 1,
+      "round": 0,
+      "band": "medium",
+      "bytes": 253948,
+      "sha256": "5354a4ba6d8baac001423a1c6e1fedc47c3885569eef9cd19ceb9b7525673926",
+      "chunks": 1
+    },
+    {
+      "slot": 2,
+      "round": 0,
+      "band": "large",
+      "bytes": 1015804,
+      "sha256": "7c1e6e3ce1bc94484173ccf11da42663e0a54f2eae6e5c5f963af6f2e1ab0be6",
+      "chunks": 2
+    },
+    {
+      "slot": 3,
+      "round": 0,
+      "band": "small",
+      "bytes": 3580,
+      "sha256": "233c80cecf823ac447138bdf79a2b01a83a04aad7bebc3fb849cf72841c3f81b",
+      "chunks": 1
+    },
+    {
+      "slot": 4,
+      "round": 0,
+      "band": "medium",
+      "bytes": 253948,
+      "sha256": "600082288e8cfe8635cd5a75b8ca11eb3cb12d50842e53c15792a72fa4ac7a96",
+      "chunks": 1
+    },
+    {
+      "slot": 5,
+      "round": 0,
+      "band": "large",
+      "bytes": 1015804,
+      "sha256": "deb5fc4d308a6284dc08e55a32a90f5d9d690dc8446741196905e637ef18826c",
+      "chunks": 2
+    },
+    {
+      "slot": 6,
+      "round": 0,
+      "band": "small",
+      "bytes": 3580,
+      "sha256": "baaf2332c521e5f3113f36bd6550cf20841e9c277b396f0e7e9b31dec2b13c75",
+      "chunks": 1
+    },
+    {
+      "slot": 7,
+      "round": 0,
+      "band": "medium",
+      "bytes": 253948,
+      "sha256": "955c3e12f538571a6f6f0d06abbfd5b7cf2539cead66dc52844dfa529b61cae5",
+      "chunks": 1
+    },
+    {
+      "slot": 8,
+      "round": 0,
+      "band": "large",
+      "bytes": 1015804,
+      "sha256": "51212245a54b43c21910efd0a28b6a841564caa1a6cb3c1514355dbb7249be56",
+      "chunks": 2
+    },
+    {
+      "slot": 9,
+      "round": 0,
+      "band": "small",
+      "bytes": 3580,
+      "sha256": "96f79c4079ea4eb00def55cc302eabec764244d6091521a1ebde441b51d2f5e6",
+      "chunks": 1
+    },
+    {
+      "slot": 0,
+      "round": 1,
+      "band": "small",
+      "bytes": 3589,
+      "sha256": "4dc37cf16203f5f2e5e643f6740921167115e3aa78882fcc011d1d8916d23fb4",
+      "chunks": 1
+    },
+    {
+      "slot": 1,
+      "round": 1,
+      "band": "medium",
+      "bytes": 253954,
+      "sha256": "47259b76fe21bc1ffc832e597128d83d83c599fc53a81e67551bdb74e080fdb6",
+      "chunks": 1
+    },
+    {
+      "slot": 2,
+      "round": 1,
+      "band": "large",
+      "bytes": 1015810,
+      "sha256": "07ec800ac73a7906e01e59947bf402fb6a7624f9e7ad7fc74ecf03650e57d03a",
+      "chunks": 2
+    },
+    {
+      "slot": 3,
+      "round": 1,
+      "band": "small",
+      "bytes": 3589,
+      "sha256": "784610826c63d62e1a10af8c1dafc9fdb0f6951abb2f3e09153b9e2b38864283",
+      "chunks": 1
+    },
+    {
+      "slot": 4,
+      "round": 1,
+      "band": "medium",
+      "bytes": 253954,
+      "sha256": "9f7c6c589a84d3e7522cb6a8c82c9b0f947d74526ca63a40f8833137c6cdf8b2",
+      "chunks": 1
+    }
+  ],
+  "migrationHistories": 10,
+  "samples": 27,
+  "jobs": 293,
+  "incompleteSamples": 0,
+  "coldStartSeconds": 83,
+  "restartRecoverySeconds": 97.962292,
+  "terminalRecoveryJobsVerified": 20,
+  "changeBatchSeconds": 146,
+  "changedResources": 10,
+  "cleanupVerified": true,
+  "validation": {
+    "goRaceTestsAndSubtests": 224,
+    "pythonTests": 46,
+    "skips": 0,
+    "vet": "PASS",
+    "shellcheck": "PASS",
+    "e2eStatic": "PASS"
+  },
+  "limitations": [
+    "PostgreSQL / Kubernetes 1.37.0 / native Linux amd64 only.",
+    "Thirty-second steady period and one change batch; no registry outage, full soak, churn, retention, overload, or within-fleet approval backlog.",
+    "An auxiliary approval fixture uses a twenty-first database.",
+    "Shared host below the frozen 16 GiB minimum; no qualified capacity cell.",
+    "Does not resolve the 186.779581388-second recovery bound miss recorded in CI run 36870201196."
+  ],
+  "localCustody": {
+    "bundle": "ptah-varied-inputs-native-vga99qv2",
+    "files": 1482,
+    "manifestSHA256": "f48460d6c4d2a7275523a8d3cff49aa80db3ee96d01cb2ce3f1563545f243a91",
+    "durableDownload": null
+  }
+}
