@@ -6,19 +6,31 @@ import (
 	"sort"
 	"time"
 
+	ptah "github.com/stokaro/ptah-operator/api/v1alpha1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type cycleOperation struct {
-	Type      string    `json:"type"`
-	ID        string    `json:"id"`
-	JobName   string    `json:"jobName"`
-	JobUID    string    `json:"jobUID"`
-	StartedAt time.Time `json:"startedAt"`
+	ApprovalRef *ptah.ImmutableObjectReference `json:"approvalRef,omitempty"`
+	PlanRef     *ptah.ImmutableObjectReference `json:"planRef,omitempty"`
+	Type        string                         `json:"type"`
+	ID          string                         `json:"id"`
+	JobName     string                         `json:"jobName"`
+	JobUID      string                         `json:"jobUID"`
+	StartedAt   time.Time                      `json:"startedAt"`
+}
+
+// Schemas retain the Apply approval in status.plan; migrations retain it in
+// activeOperation. Keep each family's fields from the same API version.
+type cycleSchemaPlan struct {
+	ptah.ImmutableObjectReference
+	Approval *ptah.ImmutableObjectReference `json:"approval,omitempty"`
 }
 
 type cycleReading struct {
+	SchemaPlan         *cycleSchemaPlan   `json:"schemaPlan,omitempty"`
 	Event              string             `json:"event"`
 	ReceivedAt         time.Time          `json:"receivedAt"`
 	ResourceVersion    string             `json:"resourceVersion"`
@@ -95,6 +107,7 @@ func readCycle(family, event string, object *unstructured.Unstructured, received
 	}
 	var status struct {
 		ObservedGeneration           int64              `json:"observedGeneration"`
+		Plan                         *cycleSchemaPlan   `json:"plan"`
 		ActiveOperation              *cycleOperation    `json:"activeOperation"`
 		Conditions                   []metav1.Condition `json:"conditions"`
 		LastSuccessfulReconciliation time.Time          `json:"lastSuccessfulReconciliation"`
@@ -119,6 +132,7 @@ func readCycle(family, event string, object *unstructured.Unstructured, received
 		r.Conditions[i].Message = ""
 	}
 	if family == "schema" {
+		r.SchemaPlan = status.Plan
 		r.CompletedAt = status.LastSuccessfulReconciliation
 	} else if family == "migration" {
 		if status.History != nil {

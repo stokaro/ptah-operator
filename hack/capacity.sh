@@ -32,9 +32,9 @@ case "$VARIED_INPUTS" in
 *) fail "CAPACITY_VARIED_INPUTS must be 0 or 1" ;;
 esac
 UNRELATED_ENABLED=$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("unrelatedObjects",False)))' "$WORKLOAD")
-SOAK_ENABLED=$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("soak") is not None))' "$WORKLOAD")
+SOAK_ENABLED=$(python3 -c 'import json,sys; w=json.load(open(sys.argv[1])); print(int(w.get("soak") is not None or w.get("approvalBacklog",False)))' "$WORKLOAD")
 if [ "$SOAK_ENABLED" -eq 1 ] && [ "$VARIED_INPUTS" -ne 1 ]; then
- fail "the soak workload requires CAPACITY_VARIED_INPUTS=1"
+ fail "soak and approval backlog workloads require CAPACITY_VARIED_INPUTS=1"
 fi
 [ -f "$LAB_ENVIRONMENT" ] || fail "no lab at $LAB_ENVIRONMENT; bring one up with make demo-up"
 set -a

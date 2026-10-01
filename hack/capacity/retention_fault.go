@@ -117,14 +117,15 @@ func schemaGateReady(o *unstructured.Unstructured) bool {
 	return false
 }
 
-func (s *scenarios) createFaultApproval(ctx context.Context, family string, original *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (s *scenarios) approvalForResource(ctx context.Context, family string, original *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if family != "schema" && family != "migration" {
+		return nil, fmt.Errorf("unknown approval family %q", family)
+	}
 	var approval *unstructured.Unstructured
 	var err error
-	resource := approvalGVR
 	if family == "migration" {
 		approval, err = s.approvalFor(ctx, original)
 	} else {
-		resource = schemaApprovalResource
 		if !schemaGateReady(original) {
 			return nil, fmt.Errorf("schema has no current approval gate")
 		}
@@ -144,6 +145,18 @@ func (s *scenarios) createFaultApproval(ctx context.Context, family string, orig
 	}
 	if err != nil {
 		return nil, err
+	}
+	return approval, nil
+}
+
+func (s *scenarios) createFaultApproval(ctx context.Context, family string, original *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	approval, err := s.approvalForResource(ctx, family, original)
+	if err != nil {
+		return nil, err
+	}
+	resource := approvalGVR
+	if family == "schema" {
+		resource = schemaApprovalResource
 	}
 	approval.SetName(fmt.Sprintf("capacity-retention-%s-g%d", family, original.GetGeneration()))
 	created, err := s.dynamic.Resource(resource).Namespace(original.GetNamespace()).Create(ctx, approval, metav1.CreateOptions{})

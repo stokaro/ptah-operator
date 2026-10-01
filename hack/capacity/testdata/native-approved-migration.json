@@ -1,0 +1,504 @@
+{
+  "kind": "PtahMigration",
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "metadata": {
+    "name": "capacity-migration-000",
+    "namespace": "ptah-capacity-a7c0c4c054-a",
+    "uid": "c6dbdcd9-788c-4004-8c15-0c4563140f26",
+    "resourceVersion": "82300",
+    "generation": 11,
+    "creationTimestamp": "2026-10-01T20:20:55Z",
+    "labels": {
+      "operator.ptah.run/capacity": "retention-fault-diagnostic"
+    },
+    "finalizers": [
+      "operator.ptah.run/migration-operation"
+    ],
+    "managedFields": [
+      {
+        "manager": "capacity",
+        "operation": "Update",
+        "apiVersion": "operator.ptah.run/v1alpha1",
+        "time": "2026-10-01T21:05:08Z",
+        "fieldsType": "FieldsV1",
+        "fieldsV1": {
+          "f:metadata": {
+            "f:labels": {
+              ".": {},
+              "f:operator.ptah.run/capacity": {}
+            }
+          },
+          "f:spec": {
+            ".": {},
+            "f:artifact": {
+              ".": {},
+              "f:ociRef": {},
+              "f:registryAuthFrom": {
+                ".": {},
+                "f:dockerConfigJSONKey": {},
+                "f:mode": {},
+                "f:name": {},
+                "f:passwordKey": {},
+                "f:tokenKey": {},
+                "f:usernameKey": {}
+              },
+              "f:transport": {
+                ".": {},
+                "f:plainHTTP": {}
+              },
+              "f:verificationPolicyFrom": {}
+            },
+            "f:execution": {
+              ".": {},
+              "f:activeDeadlineSeconds": {},
+              "f:connectTimeout": {},
+              "f:failureRetryInterval": {}
+            },
+            "f:interval": {},
+            "f:policy": {
+              ".": {},
+              "f:apply": {},
+              "f:lockTimeout": {}
+            },
+            "f:suspend": {},
+            "f:target": {
+              ".": {},
+              "f:coordinationKey": {},
+              "f:engine": {},
+              "f:sharedRealm": {},
+              "f:urlFrom": {}
+            }
+          }
+        }
+      },
+      {
+        "manager": "manager",
+        "operation": "Update",
+        "apiVersion": "operator.ptah.run/v1alpha1",
+        "time": "2026-10-01T21:08:24Z",
+        "fieldsType": "FieldsV1",
+        "fieldsV1": {
+          "f:metadata": {
+            "f:finalizers": {
+              ".": {},
+              "v:\"operator.ptah.run/migration-operation\"": {}
+            }
+          }
+        }
+      },
+      {
+        "manager": "manager",
+        "operation": "Update",
+        "apiVersion": "operator.ptah.run/v1alpha1",
+        "time": "2026-10-01T21:08:24Z",
+        "fieldsType": "FieldsV1",
+        "fieldsV1": {
+          "f:status": {
+            ".": {},
+            "f:activeOperation": {
+              ".": {},
+              "f:admissionSnapshot": {
+                ".": {},
+                "f:alwaysPullImagesEnabled": {},
+                "f:defaultNotReadyTolerationSeconds": {},
+                "f:defaultTolerationsEnabled": {},
+                "f:defaultUnreachableTolerationSeconds": {},
+                "f:digest": {},
+                "f:extendedResourceTolerationEnabled": {},
+                "f:priorityClass": {
+                  ".": {},
+                  "f:preemptionPolicy": {},
+                  "f:value": {}
+                },
+                "f:serviceAccount": {
+                  ".": {},
+                  "f:imagePullSecrets": {},
+                  "f:object": {
+                    ".": {},
+                    "f:name": {},
+                    "f:resourceVersion": {},
+                    "f:uid": {}
+                  }
+                },
+                "f:templateDigest": {},
+                "f:version": {}
+              },
+              "f:approvalRef": {
+                ".": {},
+                "f:name": {},
+                "f:uid": {}
+              },
+              "f:attempt": {},
+              "f:coordinationDigest": {},
+              "f:dispatchNotAfter": {},
+              "f:dispatchStarted": {},
+              "f:executionBindingID": {},
+              "f:executionNotAfter": {},
+              "f:id": {},
+              "f:inputFingerprint": {},
+              "f:jobName": {},
+              "f:jobUID": {},
+              "f:leaseDurationSeconds": {},
+              "f:leaseEpoch": {},
+              "f:planRef": {
+                ".": {},
+                "f:name": {},
+                "f:uid": {}
+              },
+              "f:source": {
+                ".": {},
+                "f:digest": {},
+                "f:registryAuthFrom": {
+                  ".": {},
+                  "f:dockerConfigJSONKey": {},
+                  "f:mode": {},
+                  "f:name": {},
+                  "f:passwordKey": {},
+                  "f:tokenKey": {},
+                  "f:usernameKey": {}
+                },
+                "f:resolvedReference": {},
+                "f:transport": {
+                  ".": {},
+                  "f:plainHTTP": {}
+                }
+              },
+              "f:startedAt": {},
+              "f:target": {
+                ".": {},
+                "f:engine": {},
+                "f:urlFrom": {}
+              },
+              "f:type": {}
+            },
+            "f:artifact": {
+              ".": {},
+              "f:digest": {},
+              "f:registryAuthFrom": {
+                ".": {},
+                "f:dockerConfigJSONKey": {},
+                "f:mode": {},
+                "f:name": {},
+                "f:passwordKey": {},
+                "f:tokenKey": {},
+                "f:usernameKey": {}
+              },
+              "f:resolvedReference": {},
+              "f:transport": {
+                ".": {},
+                "f:plainHTTP": {}
+              }
+            },
+            "f:conditions": {
+              ".": {},
+              "k:{\"type\":\"ApprovalRequired\"}": {
+                ".": {},
+                "f:lastTransitionTime": {},
+                "f:message": {},
+                "f:observedGeneration": {},
+                "f:reason": {},
+                "f:status": {},
+                "f:type": {}
+              },
+              "k:{\"type\":\"ArtifactVerified\"}": {
+                ".": {},
+                "f:lastTransitionTime": {},
+                "f:message": {},
+                "f:observedGeneration": {},
+                "f:reason": {},
+                "f:status": {},
+                "f:type": {}
+              },
+              "k:{\"type\":\"Blocked\"}": {
+                ".": {},
+                "f:lastTransitionTime": {},
+                "f:message": {},
+                "f:observedGeneration": {},
+                "f:reason": {},
+                "f:status": {},
+                "f:type": {}
+              },
+              "k:{\"type\":\"Progressing\"}": {
+                ".": {},
+                "f:lastTransitionTime": {},
+                "f:message": {},
+                "f:observedGeneration": {},
+                "f:reason": {},
+                "f:status": {},
+                "f:type": {}
+              },
+              "k:{\"type\":\"Ready\"}": {
+                ".": {},
+                "f:lastTransitionTime": {},
+                "f:message": {},
+                "f:observedGeneration": {},
+                "f:reason": {},
+                "f:status": {},
+                "f:type": {}
+              }
+            },
+            "f:executionBinding": {
+              ".": {},
+              "f:controllerStateVersion": {},
+              "f:epoch": {},
+              "f:executorImage": {},
+              "f:ptahVersion": {},
+              "f:runnerProtocolVersion": {}
+            },
+            "f:history": {
+              ".": {},
+              "f:appliedCount": {},
+              "f:contractVersion": {},
+              "f:currentVersion": {},
+              "f:fingerprint": {},
+              "f:observedAt": {},
+              "f:pendingCount": {},
+              "f:targetIdentityDigest": {}
+            },
+            "f:lastRun": {
+              ".": {},
+              "f:dispatchedBy": {
+                ".": {},
+                "f:controllerImage": {},
+                "f:controllerRevision": {},
+                "f:runnerImage": {}
+              },
+              "f:finishedAt": {},
+              "f:jobName": {},
+              "f:jobUID": {},
+              "f:message": {},
+              "f:outcome": {},
+              "f:startedAt": {}
+            },
+            "f:observedGeneration": {},
+            "f:phase": {},
+            "f:plan": {
+              ".": {},
+              "f:name": {},
+              "f:uid": {}
+            },
+            "f:resolvedRun": {
+              ".": {},
+              "f:operationID": {},
+              "f:outcome": {},
+              "f:resolution": {},
+              "f:resolvedAt": {}
+            }
+          }
+        },
+        "subresource": "status"
+      }
+    ]
+  },
+  "spec": {
+    "target": {
+      "engine": "PostgreSQL",
+      "coordinationKey": "capacity/capacity-migration-000",
+      "urlFrom": {
+        "name": "capacity-db-10",
+        "key": "url"
+      }
+    },
+    "artifact": {
+      "ociRef": "oci://e2e-registry.ptah-test-a-1-37-0-rfault-b3b847f4-8dcf824fc0.svc.cluster.local:5000/migrations/capacity-inputs@sha256:2736536b0c875d2a16ba1b0d1a51af799d054421adb1c5d42cc83a2f4b23efc7",
+      "registryAuthFrom": {
+        "name": "demo-registry",
+        "mode": "Environment",
+        "usernameKey": "username",
+        "passwordKey": "password",
+        "tokenKey": "token",
+        "dockerConfigJSONKey": ".dockerconfigjson"
+      },
+      "verificationPolicyFrom": {
+        "name": "demo-migration-verification-policy",
+        "key": "policy.yaml"
+      },
+      "transport": {
+        "plainHTTP": true
+      }
+    },
+    "policy": {
+      "apply": "OnApproval",
+      "lockTimeout": "30s"
+    },
+    "interval": "2m0s",
+    "execution": {
+      "activeDeadlineSeconds": 300,
+      "failureRetryInterval": "10s",
+      "connectTimeout": "30s",
+      "resources": {}
+    }
+  },
+  "status": {
+    "observedGeneration": 11,
+    "phase": "Applying",
+    "conditions": [
+      {
+        "type": "Progressing",
+        "status": "True",
+        "observedGeneration": 11,
+        "lastTransitionTime": "2026-10-01T21:08:24Z",
+        "reason": "ApprovedPlan",
+        "message": "Applying 1 planned migrations"
+      },
+      {
+        "type": "ArtifactVerified",
+        "status": "True",
+        "observedGeneration": 11,
+        "lastTransitionTime": "2026-10-01T21:07:28Z",
+        "reason": "PolicySatisfied",
+        "message": "The resolved artifact satisfied its verification policy"
+      },
+      {
+        "type": "Blocked",
+        "status": "False",
+        "observedGeneration": 11,
+        "lastTransitionTime": "2026-10-01T20:52:13Z",
+        "reason": "HistoryMatched",
+        "message": "The history continues this artifact"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 11,
+        "lastTransitionTime": "2026-10-01T21:07:35Z",
+        "reason": "AwaitingApproval",
+        "message": "The plan is waiting for the approval its policy requires"
+      },
+      {
+        "type": "ApprovalRequired",
+        "status": "False",
+        "observedGeneration": 11,
+        "lastTransitionTime": "2026-10-01T21:08:24Z",
+        "reason": "Satisfied",
+        "message": "The plan's approval requirements are satisfied"
+      }
+    ],
+    "artifact": {
+      "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-rfault-b3b847f4-8dcf824fc0.svc.cluster.local:5000/migrations/capacity-inputs@sha256:2736536b0c875d2a16ba1b0d1a51af799d054421adb1c5d42cc83a2f4b23efc7",
+      "digest": "sha256:2736536b0c875d2a16ba1b0d1a51af799d054421adb1c5d42cc83a2f4b23efc7",
+      "registryAuthFrom": {
+        "name": "demo-registry",
+        "mode": "Environment",
+        "usernameKey": "username",
+        "passwordKey": "password",
+        "tokenKey": "token",
+        "dockerConfigJSONKey": ".dockerconfigjson"
+      },
+      "transport": {
+        "plainHTTP": true
+      }
+    },
+    "executionBinding": {
+      "epoch": "v1-9954a53f6688cd7a3fd37206c6867715",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.9.0-73-gf6e562c5b",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-rfault-b3b847f4-8dcf824fc0.svc.cluster.local:5000/ptah-executor@sha256:8f56014e7d5504cb26245d37bcab0edef924098bd43fda9ab0bc72d5442f1062",
+      "runnerProtocolVersion": 1
+    },
+    "activeOperation": {
+      "type": "Apply",
+      "id": "sha256:4e1ddcff1a0b1e86f06882d082356b0a8d0e3df6716e095d4fcb45c243c1dd01",
+      "inputFingerprint": "sha256:b2afc6a47dc8faf80cae23e1e47b4185e955f0e25c66309fad9132f02e0ca802",
+      "jobName": "ptah-m-apply-capacity-migration-000-010d8ca4eb5853df",
+      "jobUID": "2bef37c0-0805-46ed-b81f-4b764b6655b6",
+      "startedAt": "2026-10-01T21:08:24Z",
+      "attempt": 1,
+      "executionBindingID": "v1-9954a53f6688cd7a3fd37206c6867715",
+      "source": {
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-rfault-b3b847f4-8dcf824fc0.svc.cluster.local:5000/migrations/capacity-inputs@sha256:2736536b0c875d2a16ba1b0d1a51af799d054421adb1c5d42cc83a2f4b23efc7",
+        "digest": "sha256:2736536b0c875d2a16ba1b0d1a51af799d054421adb1c5d42cc83a2f4b23efc7",
+        "registryAuthFrom": {
+          "name": "demo-registry",
+          "mode": "Environment",
+          "usernameKey": "username",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "dockerConfigJSONKey": ".dockerconfigjson"
+        },
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "target": {
+        "engine": "PostgreSQL",
+        "urlFrom": {
+          "name": "capacity-db-10",
+          "key": "url"
+        }
+      },
+      "coordinationDigest": "sha256:d49feba2bf4c25a0a1728ef08ca4dd7f64997a1fb8a29a15f14de6e504f7e9ec",
+      "planRef": {
+        "name": "ptah-mplan-5fb94d8d5111a9fcb8f0123c",
+        "uid": "571b6197-0c2c-4b98-95e5-7078fef9d011"
+      },
+      "dispatchStarted": true,
+      "dispatchNotAfter": "2026-10-01T21:13:24Z",
+      "executionNotAfter": "2026-10-01T21:13:24Z",
+      "leaseEpoch": "v1-53c3144c1ff2d9aa37ac28877c9e02b8",
+      "leaseDurationSeconds": 420,
+      "approvalRef": {
+        "name": "capacity-retention-migration-g11",
+        "uid": "aa5d04f1-4caa-4da5-91ed-409345a46ee7"
+      },
+      "admissionSnapshot": {
+        "version": "v1",
+        "digest": "sha256:3f0e45bb12d5fc10fe056f63b91b55465c87d0282e9ca428b1fe639386a93031",
+        "templateDigest": "sha256:118e60a7a6624fef017236bccb1576747cd7c89cd90703c32c306e14c7f2b387",
+        "serviceAccount": {
+          "object": {
+            "name": "default",
+            "uid": "87422e79-8096-406e-b73b-7b801fdd7a70",
+            "resourceVersion": "1598"
+          },
+          "imagePullSecrets": [
+            {
+              "name": "demo-registry-pull"
+            }
+          ]
+        },
+        "priorityClass": {
+          "value": 0,
+          "preemptionPolicy": "PreemptLowerPriority"
+        },
+        "defaultTolerationsEnabled": true,
+        "defaultNotReadyTolerationSeconds": 300,
+        "defaultUnreachableTolerationSeconds": 300,
+        "extendedResourceTolerationEnabled": false,
+        "alwaysPullImagesEnabled": false
+      }
+    },
+    "history": {
+      "observedAt": "2026-10-01T21:07:35Z",
+      "contractVersion": 1,
+      "currentVersion": 2,
+      "appliedCount": 2,
+      "pendingCount": 1,
+      "fingerprint": "sha256:230690d985da3b97f0bef21b70729bba1e8be15ddbae5d99be58eb3caad46e52",
+      "targetIdentityDigest": "sha256:d9ec0eca184aafe9a86b3e436d5f913803c9fd69e2fac35b3a01482b36c574d9"
+    },
+    "plan": {
+      "name": "ptah-mplan-5fb94d8d5111a9fcb8f0123c",
+      "uid": "571b6197-0c2c-4b98-95e5-7078fef9d011"
+    },
+    "lastRun": {
+      "outcome": "Unknown",
+      "jobName": "ptah-m-apply-capacity-migration-000-408a85e70919c739",
+      "jobUID": "27fdaeab-8d2e-469f-b0ef-4f1e6c2e2739",
+      "startedAt": "2026-10-01T20:50:22Z",
+      "finishedAt": "2026-10-01T20:50:53Z",
+      "dispatchedBy": {
+        "controllerImage": "e2e-registry.ptah-test-a-1-37-0-rfault-b3b847f4-8dcf824fc0.svc.cluster.local:5000/ptah-operator@sha256:8c45be0096f7fab91e1d4969aec6a45998f73c73d6df9aaf7b3595aed6d5967a",
+        "controllerRevision": "b3b847f47750373c38405f775da922eda22f849c",
+        "runnerImage": "e2e-registry.ptah-test-a-1-37-0-rfault-b3b847f4-8dcf824fc0.svc.cluster.local:5000/ptah-runner@sha256:8c45be0096f7fab91e1d4969aec6a45998f73c73d6df9aaf7b3595aed6d5967a"
+      },
+      "message": "the operation inputs changed while the Job was running"
+    },
+    "resolvedRun": {
+      "operationID": "sha256:bccd4a86642665bc1561530dada14d18bce7c4a64f8c5d5a9d7790c023243f83",
+      "outcome": "Unknown",
+      "resolution": "HistoryRead",
+      "resolvedAt": "2026-10-01T20:52:13Z"
+    }
+  }
+}

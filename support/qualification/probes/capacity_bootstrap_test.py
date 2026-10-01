@@ -269,6 +269,20 @@ class WrapperTests(unittest.TestCase):
             with self.subTest(checkpoint=checkpoint):
                 self.run_wrapper_cleanup_case('PostgreSQL', unrelated=True, fail_checkpoint=checkpoint)
 
+    def test_backlog_requires_populated_inputs_before_bootstrap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workload = root / 'backlog.json'
+            workload.write_text(json.dumps({'approvalBacklog': True}))
+            script = Path(__file__).resolve().parents[3] / 'hack/capacity.sh'
+            env = dict(os.environ, CAPACITY_WORKLOAD=str(workload),
+                       CAPACITY_VARIED_INPUTS='0', CAPACITY_OUT_DIR=str(root / 'evidence'),
+                       LAB_ENVIRONMENT=str(root / 'must-not-open'))
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('approval backlog workloads require CAPACITY_VARIED_INPUTS=1', result.stderr.decode())
+            self.assertFalse((root / 'evidence').exists())
+
     def run_wrapper_cleanup_case(self, engine, unrelated=False, fail_checkpoint=''):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'repository'

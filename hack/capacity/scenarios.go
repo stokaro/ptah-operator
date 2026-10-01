@@ -42,6 +42,7 @@ type inputs struct {
 }
 
 type scenarios struct {
+	backlogProof        *approvalBacklogProof
 	faultBaseline       *retentionInventory
 	faultProbe          func(context.Context, string, int, string) error
 	retentionFaultProof *retentionFaultProof
@@ -162,7 +163,7 @@ func (s *scenarios) create(ctx context.Context) error {
 	}
 	var converged string
 	var err error
-	if s.load.Soak != nil {
+	if s.load.Soak != nil || s.load.ApprovalBacklog {
 		err = s.waitBatch(ctx, targets, start)
 		if err == nil {
 			converged = time.Since(start).String()

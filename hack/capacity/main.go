@@ -119,7 +119,7 @@ func run() error {
 	}
 	var checkpoint func(context.Context, int, string) (databaseCheckpoint, error)
 	var faultProbe func(context.Context, string, int, string) error
-	if load.Soak != nil {
+	if load.Soak != nil || load.ApprovalBacklog {
 		checkpoint, err = checkpointProbe(*checkpointPath, *checkpointState, filepath.Dir(*catalogPath), in.catalog)
 		if err != nil {
 			return err
@@ -263,6 +263,7 @@ func run() error {
 	environment["churn"] = steps.churnProofs
 	environment["retention"] = steps.retentionProofs
 	environment["retentionFault"] = steps.retentionFaultProof
+	environment["approvalBacklog"] = steps.backlogProof
 	for _, history := range cycleProof.Histories {
 		if history.Error != "" {
 			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))
@@ -306,6 +307,18 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 		}
 		return nil
 	}
+	if steps.load.ApprovalBacklog {
+		for _, step := range []struct {
+			name string
+			run  func(context.Context) error
+		}{{"cold start", steps.create}, {"steady state", steps.steady}, {"approval backlog", steps.approvalBacklog}} {
+			slog.Info("scenario", "name", step.name)
+			if err := step.run(ctx); err != nil {
+				return fmt.Errorf("%s: %w", step.name, err)
+			}
+		}
+		return nil
+	}
 	if steps.load.Soak != nil {
 		for _, step := range []struct {
 			name string
@@ -341,8 +354,8 @@ func runScenarios(ctx context.Context, steps *scenarios) error {
 
 func requireInputs(in inputs, load workload, outDir string) error {
 	var missing []string
-	if load.Soak != nil && in.catalog == nil {
-		missing = append(missing, "-inputs for soak")
+	if (load.Soak != nil || load.ApprovalBacklog) && in.catalog == nil {
+		missing = append(missing, "-inputs for soak or approval backlog")
 	}
 	for name, value := range map[string]string{
 		"-namespace": in.namespace, "-operator-namespace": in.operatorNamespace, "-out": outDir,

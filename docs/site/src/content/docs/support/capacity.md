@@ -449,3 +449,25 @@ installation's scale:
 The reading above is one workload on one runner; it bounds none of these for
 anyone else. An installation that needs a number for any of them has to measure
 it. Saying so is more useful than a figure nobody produced.
+
+## Approval backlog
+
+Run `CAPACITY_VARIED_INPUTS=1 CAPACITY_WORKLOAD=support/capacity/backlog.json`
+with `hack/capacity.sh` to measure approval waiting and execution separately.
+The scenario starts with twenty populated resources. It changes five resources
+of each family to their next artifacts and `OnApproval` in the same update,
+keeps every resource UID, and waits a complete configured refresh interval.
+Database checkpoints must still show the original schema defaults, row digests,
+and migration histories before any approval is submitted.
+
+Each approval binds the current resource and plan in that resource's namespace.
+The five-minute execution budget begins at the earlier of the first approval's admission
+stamp and API creation timestamp and includes the final database verification. The report retains
+consumed approvals, successful Apply Jobs, plans and payloads, and continuous
+watch history through the final resource versions. Missing bindings, an Apply
+before its approval, a second Apply claim, a replaced resource, or an incomplete
+watch prevents success. Waiting is reported separately from execution.
+
+This workload adds the declared unrelated-object population by default. Its
+implementation and unit tests do not establish a backlog capacity result; that
+requires a completed run and comparison with the frozen profile's thresholds.

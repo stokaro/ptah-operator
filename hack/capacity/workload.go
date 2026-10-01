@@ -15,6 +15,7 @@ import (
 // page names is either a field here or held fixed by the lab, and the report
 // says which.
 type workload struct {
+	ApprovalBacklog  bool   `json:"approvalBacklog,omitempty"`
 	UnrelatedObjects bool   `json:"unrelatedObjects,omitempty"`
 	Name             string `json:"name"`
 	Description      string `json:"description"`
@@ -106,6 +107,9 @@ func (w workload) validate() error {
 	}
 	if w.Outage.Duration < 0 {
 		problems = append(problems, errors.New("outage cannot be negative"))
+	}
+	if w.ApprovalBacklog && (w.Soak != nil || w.Schemas != 10 || w.Migrations != 10 || w.ChangeBatch != 5) {
+		problems = append(problems, errors.New("approval backlog requires a separate populated 10+10 workload and changeBatch five"))
 	}
 	if w.Soak != nil {
 		problems = append(problems, w.Soak.validate(w))

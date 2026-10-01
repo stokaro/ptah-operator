@@ -83,3 +83,12 @@ and leave scheduled overdue unavailable when no scheduled reading exists.
 A phase without a claim, a malformed claim, and a hung claim cannot produce a
 passing freshness bound. These objects reproduce the measurement behavior;
 they do not establish the soak's outcome or a capacity acceptance result.
+
+`native-approved-migration.json` retains the dispatched migration from the
+successful PostgreSQL retention fault report recorded in
+`support/qualification/evidence/capacity-retention-fault-2026-10-01.json`.
+The report SHA-256 is
+`81b1b2779fbb2245a225f82c69a8224f87a3b095117c52c7882abd4737e86a8e`.
+The cycle-reader regression requires the actual approval and plan UIDs to
+survive collection. Backlog verification needs those bindings to distinguish
+an authorized Apply from one that happened in the same time window.
