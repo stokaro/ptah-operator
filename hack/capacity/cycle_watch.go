@@ -10,11 +10,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 )
 
 const maxCycleReadings = 200000
+const maxCycleWatchRetries = 3
 
 type cycleRecorder struct {
 	mu      sync.Mutex
@@ -34,6 +36,7 @@ func (r *cycleRecorder) snapshot() cycleHistory {
 	defer r.mu.Unlock()
 	h := r.history
 	h.Readings = append([]cycleReading(nil), h.Readings...)
+	h.Retries = append([]cycleWatchRetry(nil), h.Retries...)
 	return h
 }
 
@@ -78,28 +81,55 @@ func (r *cycleRecorder) collect(ctx context.Context) error {
 	// The cursor closes the list/watch boundary even if creation starts before
 	// the HTTP watch upgrade completes. A lost cursor ends collection.
 	r.ready <- nil
+	var retryErr error
+	retries := 0
 	for ctx.Err() == nil {
 		segment, cancel := context.WithTimeout(ctx, 45*time.Second)
 		seconds := int64(30)
 		stream, err := r.client.Watch(segment, metav1.ListOptions{LabelSelector: h.Selector, ResourceVersion: r.cursor(), AllowWatchBookmarks: true, TimeoutSeconds: &seconds})
 		if err == nil {
+			retryErr = nil
 			err = r.segment(segment, stream)
 			stream.Stop()
+			// A connected watch's normal segment timeout is not a failed
+			// connection attempt. The next segment resumes its cursor.
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = nil
+			}
 		}
 		cancel()
 		if ctx.Err() != nil {
-			return nil
+			return retryErr
 		}
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("cycle watch cannot establish continuous history: %w", err)
+		if err != nil {
+			retryErr = fmt.Errorf("cycle watch cannot establish continuous history: %w", err)
+			if !retryableCycleWatchError(err) || retries == maxCycleWatchRetries {
+				return retryErr
+			}
+			retries++
+			r.mu.Lock()
+			r.history.Retries = append(r.history.Retries, cycleWatchRetry{At: time.Now().UTC(), Cursor: r.history.Cursor, Error: err.Error()})
+			r.mu.Unlock()
+		} else {
+			retries = 0
+			retryErr = nil
 		}
 		select {
 		case <-ctx.Done():
-			return nil
+			return retryErr
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return nil
+	return retryErr
+}
+
+func retryableCycleWatchError(err error) bool {
+	// Never relist over an expired cursor, an authorization refusal, or an
+	// invalid event. A transport retry requests exactly the last recorded RV.
+	return utilnet.IsProbableEOF(err) || utilnet.IsHTTP2ConnectionLost(err) ||
+		utilnet.IsConnectionReset(err) || utilnet.IsConnectionRefused(err) || utilnet.IsTimeout(err) ||
+		apierrors.IsServiceUnavailable(err) || apierrors.IsServerTimeout(err) ||
+		apierrors.IsTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsInternalError(err)
 }
 
 func (r *cycleRecorder) segment(ctx context.Context, stream watch.Interface) error {

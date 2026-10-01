@@ -36,14 +36,23 @@ type cycleReading struct {
 }
 
 type cycleHistory struct {
-	Family    string         `json:"family"`
-	Namespace string         `json:"namespace"`
-	Selector  string         `json:"selector"`
-	StartedAt time.Time      `json:"startedAt"`
-	EndedAt   time.Time      `json:"endedAt"`
-	Cursor    string         `json:"cursor"`
-	Error     string         `json:"error,omitempty"`
-	Readings  []cycleReading `json:"readings"`
+	Family    string            `json:"family"`
+	Namespace string            `json:"namespace"`
+	Selector  string            `json:"selector"`
+	StartedAt time.Time         `json:"startedAt"`
+	EndedAt   time.Time         `json:"endedAt"`
+	Cursor    string            `json:"cursor"`
+	Error     string            `json:"error,omitempty"`
+	Readings  []cycleReading    `json:"readings"`
+	Retries   []cycleWatchRetry `json:"watchRetries,omitempty"`
+}
+
+// A resumed cursor preserves events, but the transport interruption remains
+// evidence. It must not erase failed metric samples from the same interval.
+type cycleWatchRetry struct {
+	At     time.Time `json:"at"`
+	Cursor string    `json:"cursor"`
+	Error  string    `json:"error"`
 }
 
 type completedCycle struct {
