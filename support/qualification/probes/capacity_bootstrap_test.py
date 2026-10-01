@@ -269,7 +269,7 @@ class WrapperTests(unittest.TestCase):
             root = Path(directory) / 'repository'
             caller = Path(directory) / 'caller'
             bin_path = root / 'tools'
-            for path in (root / 'hack', root / 'demo/bin', root / 'demo/migrations', root / 'support/capacity', caller, bin_path):
+            for path in (root / 'hack', root / 'demo/bin', root / 'demo/migrations', root / 'support/capacity', root / 'support/qualification/probes', caller, bin_path):
                 path.mkdir(parents=True, exist_ok=True)
             source = Path(__file__).resolve().parents[3] / 'hack/capacity.sh'
             shutil.copyfile(source, root / 'hack/capacity.sh')
@@ -305,13 +305,13 @@ else:
  assert len(list(source.glob('*.up.sql')))==(3 if version.startswith('v2-') else 2)
 print('Digest: sha256:'+'a'*64)
 ''')
-            executable(bin_path / 'python3', '#!' + sys.executable + '\n' + r'''import json,pathlib,sys
+            executable(root / 'support/qualification/probes/capacity_bootstrap.py', '#!' + sys.executable + '\n' + r'''import json,pathlib,sys
 args=sys.argv[1:]; path=pathlib.Path(args[args.index('--state')+1])
 assert path.is_absolute(), 'journal changes meaning after chdir'
-if args[1]=='prepare':
+if args[0]=='prepare':
  workload=pathlib.Path(args[args.index('--workload')+1]); assert workload.is_absolute() and workload.exists()
  path.write_text(workload.read_text()); print('work-a,work-b')
-elif args[1]=='engine':
+elif args[0]=='engine':
  print(json.loads(path.read_text())['engine'])
 else:
  assert path.exists(), 'cleanup lost the original journal'
@@ -325,7 +325,7 @@ pathlib.Path(args[args.index('-out')+1],'go-ran').write_text('yes')
 sys.exit(42)
 ''')
             env = dict(os.environ, PATH=str(bin_path) + os.pathsep + os.environ['PATH'],
-                       LAB_ENVIRONMENT=str(environment), CAPACITY_WORKLOAD='workload.json', CAPACITY_OUT_DIR='evidence', CAPACITY_TEST_ENGINE=engine)
+                       LAB_ENVIRONMENT=str(environment), CAPACITY_WORKLOAD='workload.json', CAPACITY_OUT_DIR='evidence', CAPACITY_TEST_ENGINE=engine, CAPACITY_VARIED_INPUTS='0')
             result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
                                     capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 42, result.stderr.decode())
