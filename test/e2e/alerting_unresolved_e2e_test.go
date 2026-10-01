@@ -24,7 +24,7 @@ import (
 )
 
 // Own the incident from before dispatch through the recovery notification.
-// Schema's distinct observation-based recovery remains separately required.
+// Each engine also proves Schema's distinct observation-based recovery.
 func (a *alertingRun) unresolvedApply() {
 	template := &ptahv1.PtahMigration{}
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: "e2e-migrations-postgresql"}, template), "read the native migration producer")
@@ -56,6 +56,7 @@ func (a *alertingRun) unresolvedApply() {
 			uid := object.GetUID()
 			a.check(a.cluster.Client.Delete(a.ctx, object, client.Preconditions{UID: &uid}), "remove the owned unresolved publisher")
 		}
+		a.unresolvedSchemaCase(m)
 	}
 }
 

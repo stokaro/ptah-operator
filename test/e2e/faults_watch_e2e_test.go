@@ -68,7 +68,7 @@ type watchRecorder[T client.Object] struct {
 // would replay every existing object as ADDED, as if the phase had created
 // it. The Jobs listed enter the observed ledger, since the list and the watch
 // after it are one boundary with no gap.
-func startRecorder[T client.Object](f *faultRun, name, namespace string, newList func() client.ObjectList) *watchRecorder[T] {
+func startRecorder[T client.Object](f *faultRun, name, namespace string, quiet bool, newList func() client.ObjectList) *watchRecorder[T] {
 	f.t.Helper()
 	list := newList()
 	f.check(f.cluster.Client.List(f.ctx, list, client.InNamespace(namespace)), "list the %s collection to watch from", name)
@@ -83,7 +83,7 @@ func startRecorder[T client.Object](f *faultRun, name, namespace string, newList
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &watchRecorder[T]{
-		name: name, namespace: namespace, newList: newList, watcher: f.watcher,
+		name: name, namespace: namespace, newList: newList, watcher: f.watcher, quiet: quiet,
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),
 	}
 	go r.run(resourceVersion)
@@ -245,15 +245,22 @@ func (r *watchRecorder[T]) history() ([]byte, int, error) {
 // startWatches starts the five watches every fault proof reads its history
 // from.
 func (f *faultRun) startWatches() {
+	f.startWatchesWithMode(false)
+}
+
+// Quiet watches still resume from the last resourceVersion and refuse every
+// watch error. Their caller owes explicit write barriers instead of heartbeat
+// writes through a webhook it deliberately removes during Recreate.
+func (f *faultRun) startWatchesWithMode(quiet bool) {
 	f.t.Helper()
 	test, operator := f.in.TestNamespace, f.in.OperatorNamespace
-	f.jobs = startRecorder[*batchv1.Job](f, "jobs", test, func() client.ObjectList { return &batchv1.JobList{} })
-	f.pods = startRecorder[*corev1.Pod](f, "pods", test, func() client.ObjectList { return &corev1.PodList{} })
-	f.schemas = startRecorder[*ptahv1alpha1.PtahSchema](f, "schemas", test,
+	f.jobs = startRecorder[*batchv1.Job](f, "jobs", test, quiet, func() client.ObjectList { return &batchv1.JobList{} })
+	f.pods = startRecorder[*corev1.Pod](f, "pods", test, quiet, func() client.ObjectList { return &corev1.PodList{} })
+	f.schemas = startRecorder[*ptahv1alpha1.PtahSchema](f, "schemas", test, quiet,
 		func() client.ObjectList { return &ptahv1alpha1.PtahSchemaList{} })
-	f.approvals = startRecorder[*ptahv1alpha1.PtahSchemaApproval](f, "approvals", test,
+	f.approvals = startRecorder[*ptahv1alpha1.PtahSchemaApproval](f, "approvals", test, quiet,
 		func() client.ObjectList { return &ptahv1alpha1.PtahSchemaApprovalList{} })
-	f.leases = startRecorder[*coordinationv1.Lease](f, "leases", operator,
+	f.leases = startRecorder[*coordinationv1.Lease](f, "leases", operator, quiet,
 		func() client.ObjectList { return &coordinationv1.LeaseList{} })
 }
 

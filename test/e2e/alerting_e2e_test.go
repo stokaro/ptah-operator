@@ -35,9 +35,10 @@ import (
 // rendered exactly as the chart renders them, an Alertmanager that has to route
 // them, and a receiver that has to be told. The phase asserts at the receiver:
 //
-//   - independently interrupted PostgreSQL and MySQL migration Applies reach
-//     the receiver within their persisted time bounds, then resolve after
-//     database inspection and a named acknowledgment;
+//   - independently interrupted PostgreSQL and MySQL Applies in both families
+//     reach the receiver within their persisted time bounds, then resolve after
+//     database inspection and either a migration acknowledgment or schema
+//     observation and planning; each requires fresh approval to mutate again;
 //   - an operation held off every node fires as stalled once its threshold has
 //     passed and not before, and resolves once the operation leaves flight;
 //   - every manager gone fires as a view nobody can read, and resolves once

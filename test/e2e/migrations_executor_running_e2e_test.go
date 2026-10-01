@@ -83,16 +83,23 @@ func migrationExecutorPodWatchBarrier(m *migrationRun, r *watchRecorder[*corev1.
 // Hold the real DDL on a table created by the first authorized migration. A
 // unique server-side marker is acquired only after the table lock is held.
 func (m *migrationRun) runningMigrationTableBarrier(database string) func() {
+	return m.runningTableBarrier(database, "e2e_migration_widgets")
+}
+
+func (m *migrationRun) runningTableBarrier(database, table string) func() {
+	if table != "e2e_migration_widgets" && table != "e2e_widgets" {
+		m.fatalf("unsupported proof table")
+	}
 	m.t.Helper()
 	token := "e2e_migration_executor_" + m.engine.name
 	command := []string{"-n", m.in.TestNamespace, "exec", "deployment/" + m.engine.service, "--", "sh", "-ec"}
 	ready := "SELECT pid::text FROM pg_stat_activity WHERE datname='" + database + "' AND application_name='" + token + "' AND wait_event='PgSleep'"
 	cleanupQuery := "SELECT pid::text FROM pg_stat_activity WHERE datname='" + database + "' AND application_name='" + token + "'"
 	if m.engine.name == "postgresql" {
-		command = append(command, `PGAPPNAME="$2" PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -c 'BEGIN; LOCK TABLE e2e_migration_widgets IN ACCESS SHARE MODE; SELECT pg_sleep(600); ROLLBACK'`, "sh", database, token)
+		command = append(command, `PGAPPNAME="$2" PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -c "$3"`, "sh", database, token, "BEGIN; LOCK TABLE "+table+" IN ACCESS SHARE MODE; SELECT pg_sleep(600); ROLLBACK")
 	} else {
 		command = append(command, `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`, "sh", database,
-			"SELECT GET_LOCK('"+token+"_session', 0); LOCK TABLES e2e_migration_widgets READ; SELECT GET_LOCK('"+token+"', 0); DO SLEEP(600); UNLOCK TABLES")
+			"SELECT GET_LOCK('"+token+"_session', 0); LOCK TABLES "+table+" READ; SELECT GET_LOCK('"+token+"', 0); DO SLEEP(600); UNLOCK TABLES")
 		ready = "SELECT IS_USED_LOCK('" + token + "')"
 		cleanupQuery = "SELECT IS_USED_LOCK('" + token + "_session')"
 	}

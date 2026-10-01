@@ -9,6 +9,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -55,8 +56,23 @@ func (previous *faultRun) runningExecutorImageChanges() {
 			scenario.Errorf("restore executor after the running-Apply proof: %v", err)
 		}
 	})
-	f.startWatches()
-	f.startHeartbeat()
+	// Recreate deliberately removes every webhook endpoint. Keep all five
+	// watches open across that interval, and require exact write barriers on
+	// both sides instead of requiring admission while its server is absent.
+	f.startWatchesWithMode(true)
+	barrier := func() {
+		f.jobBarrier()
+		establishBarrier(f, f.pods, &corev1.Pod{}, f.in.TestNamespace, f.databasePod())
+		establishBarrier(f, f.schemas, &ptahv1alpha1.PtahSchema{}, f.in.TestNamespace, heartbeatSchema)
+		establishBarrier(f, f.approvals, &ptahv1alpha1.PtahSchemaApproval{}, f.in.TestNamespace, heartbeatApproval)
+		establishBarrier(f, f.leases, &coordinationv1.Lease{}, f.in.OperatorNamespace, watchHeartbeatLease)
+	}
+	rollout := func(expected, next string) {
+		barrier()
+		f.rolloutExecutor(expected, next)
+		barrier()
+	}
+	barrier()
 	var rows []*executorRunningSchema
 	for _, engine := range []string{"postgresql", "mysql"} {
 		row := &executorRunningSchema{engine: engine, name: "e2e-running-executor-" + engine,
@@ -102,7 +118,7 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		_, err := faultApprovalCommitted(f.unstructuredApproval(row.name+"-approval"), string(row.before.Status.Plan.UID))
 		f.check(err, "retain the committed decision while its original Apply is still running")
 	}
-	f.rolloutExecutor(original, replacement)
+	rollout(original, replacement)
 	for _, row := range rows {
 		f.waitForSchema(row.name, "the original running Apply recorded under the replacement executor", func(resource *ptahv1alpha1.PtahSchema) bool {
 			return schemaExecutorRetirement(row.before, resource, types.UID(row.run.podUID), replacement) == nil
@@ -218,10 +234,7 @@ func (previous *faultRun) runningExecutorImageChanges() {
 			f.fatalf("the original Apply did not preserve its seeded row")
 		}
 	}
-	f.rolloutExecutor(replacement, original)
-	f.jobBarrier()
-	establishBarrier(f, f.pods, &corev1.Pod{}, f.in.TestNamespace, f.databasePod())
-	f.stopHeartbeat()
+	rollout(replacement, original)
 	f.stopWatches()
 	f.validateAndScanWatches()
 	f.recordJobsForParent()

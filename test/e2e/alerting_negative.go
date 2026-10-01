@@ -134,7 +134,7 @@ func alNegativeFixture(template client.Object, name, secret string, policy ptahv
 		r.Spec.Target.RealmRef = nil
 		r.Spec.Target.CoordinationKey = "e2e/negative/" + name
 		r.Spec.Target.URLFrom.Name = secret
-		r.Spec.Policy = ptahv1.ReconciliationPolicy{Apply: policy, AllowDestructive: true}
+		r.Spec.Policy = ptahv1.ReconciliationPolicy{Apply: policy, AllowDestructive: true, LockTimeout: v.Spec.Policy.LockTimeout}
 		return r, nil
 	case *ptahv1.PtahMigration:
 		r := &ptahv1.PtahMigration{ObjectMeta: metadata, Spec: *v.Spec.DeepCopy()}
@@ -143,7 +143,7 @@ func alNegativeFixture(template client.Object, name, secret string, policy ptahv
 		r.Spec.Target.RealmRef = nil
 		r.Spec.Target.CoordinationKey = "e2e/negative/" + name
 		r.Spec.Target.URLFrom.Name = secret
-		r.Spec.Policy = ptahv1.MigrationPolicy{Apply: policy}
+		r.Spec.Policy = ptahv1.MigrationPolicy{Apply: policy, LockTimeout: v.Spec.Policy.LockTimeout}
 		return r, nil
 	}
 	return nil, errors.New("unsupported negative-control family")
