@@ -418,3 +418,30 @@ func TestStatusRefusalDiagnosticDoesNotEchoSubmittedValues(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestStoredStateReadyWaitsForFinalizerCleanup(t *testing.T) {
+	t.Parallel()
+	for _, before := range storedStateFixtures() {
+		kind, _, _ := storedStateFamily(before)
+		t.Run(kind, func(t *testing.T) {
+			version, err := storedStateVersion(before)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := storedStateReady(before, version); err != nil {
+				t.Fatal(err)
+			}
+			pending := before.DeepCopyObject().(client.Object)
+			pending.SetFinalizers([]string{"operator.ptah.run/operation"})
+			if storedStateReady(pending, version) == nil {
+				t.Fatal("approval status with pending finalizer cleanup was accepted as a stable boundary")
+			}
+			pending.SetFinalizers(nil)
+			now := metav1.Now()
+			pending.SetDeletionTimestamp(&now)
+			if storedStateReady(pending, version) == nil {
+				t.Fatal("deleting fixture accepted")
+			}
+		})
+	}
+}

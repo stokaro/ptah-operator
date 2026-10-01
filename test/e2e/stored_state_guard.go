@@ -78,6 +78,11 @@ func storedStateReady(object client.Object, supported int32) error {
 	if err != nil || supported < 1 || version != supported || object.GetUID() == "" || object.GetGeneration() < 1 {
 		return errors.New("the stored-state control lacks its exact supported identity")
 	}
+	// Completion commits status before a later pass removes the operation
+	// finalizer. Freeze the approval boundary only after that metadata write.
+	if object.GetDeletionTimestamp() != nil || len(object.GetFinalizers()) != 0 {
+		return errors.New("the stored-state control still owes finalizer cleanup or is deleting")
+	}
 	switch resource := object.(type) {
 	case *ptahv1alpha1.PtahSchema:
 		if planAwaitingApproval(resource) && resource.Status.ActiveOperation == nil && resource.Status.PendingLockRelease == nil &&
@@ -108,10 +113,17 @@ func storedStateChangedOnlyByVersion(before, current client.Object, version int3
 	}
 	if version < 1 || before.GetName() == "" || before.GetNamespace() == "" || before.GetUID() == "" ||
 		before.GetName() != current.GetName() || before.GetNamespace() != current.GetNamespace() || before.GetUID() != current.GetUID() ||
-		before.GetGeneration() != current.GetGeneration() || !equality.Semantic.DeepEqual(before.GetFinalizers(), current.GetFinalizers()) ||
-		!equality.Semantic.DeepEqual(before.GetOwnerReferences(), current.GetOwnerReferences()) ||
-		!equality.Semantic.DeepEqual(before.GetDeletionTimestamp(), current.GetDeletionTimestamp()) {
-		return errors.New("the unsupported-state resource changed its identity, finalizers or deletion boundary")
+		before.GetGeneration() != current.GetGeneration() {
+		return errors.New("the unsupported-state resource changed its identity or generation")
+	}
+	if !equality.Semantic.DeepEqual(before.GetFinalizers(), current.GetFinalizers()) {
+		return errors.New("the unsupported-state resource changed its finalizers")
+	}
+	if !equality.Semantic.DeepEqual(before.GetOwnerReferences(), current.GetOwnerReferences()) {
+		return errors.New("the unsupported-state resource changed its owner references")
+	}
+	if !equality.Semantic.DeepEqual(before.GetDeletionTimestamp(), current.GetDeletionTimestamp()) {
+		return errors.New("the unsupported-state resource changed its deletion boundary")
 	}
 	switch original := before.(type) {
 	case *ptahv1alpha1.PtahSchema:
