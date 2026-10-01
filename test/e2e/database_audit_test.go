@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,6 +152,47 @@ func TestPostgresAuditPrefixDiagnosticsRetainTheRefusalWithoutSQL(t *testing.T) 
 			for _, forbidden := range []string{secret, "SELECT", "statement:", string(before)} {
 				if strings.Contains(message, forbidden) {
 					t.Fatal("SQL or a fixture credential reached the diagnostic")
+				}
+			}
+		})
+	}
+}
+
+func TestSQLAuditEvidenceRetainsNativeCounts(t *testing.T) {
+	for _, engine := range []string{"postgresql", "mysql"} {
+		t.Run(engine, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", engine+"-sql-audit.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var counts sqlAuditCounts
+			if engine == "postgresql" {
+				counts, _, err = postgresAuditCounts(raw, "unused")
+			} else {
+				counts, err = mysqlAuditCounts(raw)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(map[string]any{"sqlBefore": counts})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var proof struct {
+				Before struct {
+					Clients map[string]int64 `json:"clients"`
+					Records *int64           `json:"records"`
+				} `json:"sqlBefore"`
+			}
+			if err := json.Unmarshal(body, &proof); err != nil {
+				t.Fatal(err)
+			}
+			if proof.Before.Records == nil || *proof.Before.Records != counts.records || len(proof.Before.Clients) != len(counts.clients) || len(proof.Before.Clients) == 0 {
+				t.Fatalf("native audit counts disappeared from retained evidence: %s", body)
+			}
+			for client, want := range counts.clients {
+				if got, ok := proof.Before.Clients[client]; !ok || got != want {
+					t.Fatalf("client %s lost its exact count", client)
 				}
 			}
 		})

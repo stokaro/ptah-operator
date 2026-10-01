@@ -660,13 +660,8 @@ func (m *migrationRun) lateDispatchProof() {
 		m.fatalf("%s is not the proved, drained late-dispatch fixture", name)
 	}
 	pod := audit.terminalPod(map[string]string{"job-name": claim.jobName}, claim.jobUID)
-	evidence, err := os.MkdirTemp("", "ptah-e2e-late-dispatch-evidence.")
-	m.check(err, "create private retained late-dispatch evidence")
 	m.check(m.get(claim.jobName, job), "retain the terminal late-dispatch Job")
-	body, err := json.Marshal(map[string]any{"migration": retired, "job": job, "pod": pod, "sqlBefore": beforeRefusal, "sqlAfter": audit.snapshot()})
-	m.check(err, "encode the proved late-dispatch refusal")
-	m.check(os.WriteFile(filepath.Join(evidence, "refusal.json"), body, 0600), "retain late-dispatch evidence before deleting its source")
-	m.logf("retained private late-dispatch evidence: %s sha256:%x", evidence, sha256.Sum256(body))
+	m.retainMigrationFixture(retired, job, pod, beforeRefusal, audit.snapshot())
 	m.check(storedStateDeleteExact(m.ctx, m.cluster, retired), "finalize only the proved late-dispatch fixture")
 	m.assertNoNewApplyJob([]string{claim.jobUID}, "while retiring the late-dispatch fixture", name)
 	audit.assertRecords(beforeRefusal, audit.snapshot(), pod, false)
@@ -817,7 +812,9 @@ func (m *migrationRun) restoredHistoryProof() {
 			return restoredHistoryApplied(resource, initialJobUID, jobUID)
 		})
 	run := converged.Status.LastRun
-	audit.assertRecords(beforeApply, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": run.JobName}, string(run.JobUID)), true)
+	proofPod := audit.terminalPod(map[string]string{"job-name": run.JobName}, string(run.JobUID))
+	afterApply := audit.snapshot()
+	audit.assertRecords(beforeApply, afterApply, proofPod, true)
 	audit.close()
 	m.assertNoNewApplyJob([]string{initialJobUID, jobUID, string(run.JobUID)}, "after the restored history converged", name)
 	if revisions() != "1,2,3" || m.widgetColumnCount("color", database) != "1" ||
@@ -825,8 +822,25 @@ func (m *migrationRun) restoredHistoryProof() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
 		m.fatalf("%s did not establish the approved schema, rows and history after restore", name)
 	}
+	// This fixture's scheduler gate closes at the end of the row. Leaving the
+	// resource behind would strand its next read and page during alert tests.
+	proofJob := &batchv1.Job{}
+	m.check(m.get(run.JobName, proofJob), "retain the completed restored-history Job")
+	m.retainMigrationFixture(converged, proofJob, proofPod, beforeApply, afterApply)
+	m.check(storedStateDeleteExact(m.ctx, m.cluster, converged), "finalize only the proved restored-history fixture")
 	m.closeApplyGate()
-	m.logf("PASS %s refused the stale [3] decision, then applied [2 3] only after fresh approval of the restored history", m.engine.kind)
+	m.logf("PASS %s refused the stale [3] decision, then applied [2 3] only after fresh approval of the restored history; exact fixture finalized", m.engine.kind)
+}
+
+// These fixture documents outlive both their source resources and the phase's
+// temporary working directory. The phase log binds the private bytes by digest.
+func (m *migrationRun) retainMigrationFixture(resource *ptahv1alpha1.PtahMigration, job *batchv1.Job, pod *corev1.Pod, before, after sqlAuditCounts) {
+	evidence, err := os.MkdirTemp("", "ptah-e2e-migration-fixture-evidence.")
+	m.check(err, "create private retained migration fixture evidence")
+	body, err := json.Marshal(map[string]any{"migration": resource, "job": job, "pod": pod, "sqlBefore": before, "sqlAfter": after})
+	m.check(err, "encode the proved migration fixture")
+	m.check(os.WriteFile(filepath.Join(evidence, "proof.json"), body, 0600), "retain migration fixture evidence before deleting its source")
+	m.logf("retained private migration fixture evidence: %s sha256:%x", evidence, sha256.Sum256(body))
 }
 
 // waitForRestorePlan waits until the resource asks for a decision on a plan

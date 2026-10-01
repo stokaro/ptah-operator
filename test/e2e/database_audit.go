@@ -37,6 +37,15 @@ type sqlAuditCounts struct {
 	records int64
 }
 
+// The in-memory fields stay private, but retained evidence must carry the
+// actual counts rather than the empty object encoding/json otherwise emits.
+func (counts sqlAuditCounts) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Clients map[string]int64 `json:"clients"`
+		Records int64            `json:"records"`
+	}{Clients: counts.clients, Records: counts.records})
+}
+
 // Keep the refusal strict while distinguishing a shorter read from a
 // changed prefix. SQL journals can contain credentials, so diagnostics expose
 // only lengths, the first differing offset and digests, never journal bytes.
