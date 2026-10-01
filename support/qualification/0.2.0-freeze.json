@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-01T02:30:26.734470+00:00",
-  "profileSourceCommit": "62dcdf05db4eb492481999a6632107f4e073abfa",
+  "frozenAt": "2026-10-01T05:46:22.451969+00:00",
+  "profileSourceCommit": "e4102243a018bd94199866b1a8f8c23176b4d0cf",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "ca2d0101da77a3871be5fe5b21e6545f5214989fc81831d8539f0c99258a9b11",
-    "generatedFromCommit": "62dcdf05db4eb492481999a6632107f4e073abfa",
+    "sha256": "7029224e90bb469dbb0c16e8883388dcfd6061d41f97a1069bb465ee7da72366",
+    "generatedFromCommit": "e4102243a018bd94199866b1a8f8c23176b4d0cf",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 24,
+  "revision": 25,
   "supersedes": {
-    "freezeCommit": "8a8b49fc6b1051682301b73bc7ecd8702fe8214f",
-    "sha256": "55ce34a355eab74ad8e9840e2084ab2b2a9f72484d703684c2cff19134df13dd"
+    "freezeCommit": "e4102243a018bd94199866b1a8f8c23176b4d0cf",
+    "sha256": "106d9f1649d80781a4961e56f7507202d909c49ba64ebc826e5d8a2096b8d883"
   },
-  "revisionReason": "Add plan-store-large using seventeen native 8 MiB schema plans, exact chunk reconstruction, all documented plan pins, retained round-trip exports, quiescent owners, UID/resource-version deletion and native receiver bounds. Focused race controls and E2E-tag vet passed; native final-identity execution is pending. All eight profile source hashes, thresholds, operating targets, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
+  "revisionReason": "Add upgrade-alerts with native failed-hook and full original-deadline incidents, unchanged candidate retry, independent hook histories, and read-only recovery probes for both families and both engines. Helper race checks, E2E-tag vet and source/static checks passed; native final-identity execution remains pending. The phase backstop accommodates the new scenario; all incident thresholds, receiver bounds, eight frozen profile inputs, 30 functional cells and 36 recovery combinations remain unchanged. No acceptance requirement was removed; acceptance remains Not assessed."
 }
