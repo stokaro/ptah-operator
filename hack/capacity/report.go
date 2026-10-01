@@ -175,7 +175,7 @@ func managerGrowth(inside []sample) (cores, throttle, too float64, wait quantile
 		cpu += counterDelta(s.last.CPUSeconds, s.first.CPUSeconds)
 		throttle += counterDelta(s.last.ThrottleSeconds, s.first.ThrottleSeconds)
 		too += counterDelta(s.last.Requests429, s.first.Requests429)
-		total = total.add(s.last.queueWait.since(s.first.queueWait))
+		total = total.add(s.last.QueueWait.since(s.first.QueueWait))
 	}
 	elapsed := inside[len(inside)-1].At.Sub(inside[0].At).Seconds()
 	if elapsed > 0 {
@@ -198,7 +198,7 @@ func apiGrowth(inside []sample) (quantiles, float64) {
 	if first == nil || last == first {
 		return quantiles{}, 0
 	}
-	return histogramQuantiles(last.admission.since(first.admission)), counterDelta(last.Rejected, first.Rejected)
+	return histogramQuantiles(last.Admission.since(first.Admission)), counterDelta(last.Rejected, first.Rejected)
 }
 
 // writeSummary is the report as a reader of the capacity page reads it.

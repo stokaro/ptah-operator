@@ -140,12 +140,25 @@ installation. The Capacity workflow runs the same thing on a schedule, on
 request, and on any change to the measurement itself, and publishes the report
 as an artifact of the run.
 
-Report format 2 records failed reads in each sample's `incomplete` list and
+Report format 3 records failed reads in each sample's `incomplete` list and
 counts them by source in each scenario. Figures affected by a failed read are
 `null` in JSON and `n/a` in the summary, including a maximum that was only
 partly observed. Missing manager process metrics and a window with no samples
 are also missing evidence. A fault may explain a missing reading, but the
 report cannot establish a performance bound for that figure during that window.
+
+Each complete sample retains the queue-wait and admission histograms, including
+observation counts, sums and cumulative buckets. Recomputing a scenario from
+these samples preserves its histogram percentiles. Bucket upper bounds and
+percentiles above the largest finite bucket use the JSON string `"+Inf"`;
+finite values remain numbers. The summary displays this as `> largest bucket`.
+Reports written before format 3 lack these raw histograms and cannot establish
+their histogram percentiles from the retained samples alone.
+
+The current lab sampler reads admission metrics through the configured API
+endpoint. It does not identify or measure every API server separately. The
+0.2.0 qualification requires that separate measurement, the full workload and
+90-minute soak; this lab report does not satisfy that requirement.
 
 ## The first reading {#lab-20}
 

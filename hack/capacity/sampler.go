@@ -52,13 +52,13 @@ type managerReading struct {
 	WorkqueueDepth  map[string]float64 `json:"workqueueDepth"`
 	ThrottleSeconds float64            `json:"throttleSeconds"`
 	Requests429     float64            `json:"requests429"`
-	queueWait       histogram
+	QueueWait       histogram          `json:"queueWait"`
 }
 
 // apiReading is what the API server counted about the operator's admission.
 type apiReading struct {
-	Rejected  float64 `json:"rejected"`
-	admission histogram
+	Rejected  float64   `json:"rejected"`
+	Admission histogram `json:"admission"`
 }
 
 // jobRecord follows one operation Job from creation to its end.
@@ -255,7 +255,7 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 			WorkqueueDepth:  reading.maxBy("workqueue_depth", "name"),
 			ThrottleSeconds: throttle,
 			Requests429:     too,
-			queueWait:       reading.histogram("workqueue_queue_duration_seconds", nil),
+			QueueWait:       reading.histogram("workqueue_queue_duration_seconds", nil),
 		}
 	}
 	if len(into.Managers) == 0 {
@@ -272,7 +272,7 @@ func (s *sampler) readAPIServer(ctx context.Context) (*apiReading, error) {
 	rejected, _ := reading.value("apiserver_flowcontrol_rejected_requests_total", nil)
 	return &apiReading{
 		Rejected:  rejected,
-		admission: reading.histogram("apiserver_admission_webhook_admission_duration_seconds", map[string]string{"name": "*"}).onlyPtah(reading),
+		Admission: reading.histogram("apiserver_admission_webhook_admission_duration_seconds", map[string]string{"name": "*"}).onlyPtah(reading),
 	}, nil
 }
 
