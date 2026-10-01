@@ -4,15 +4,16 @@
 # The lab is the acceptance harness stopped after its bootstrap (make demo-up),
 # so the operator measured here is the chart and images this commit builds.
 # What this script adds is what the workload needs and the lab does not have: a
-# PostgreSQL of its own, with one database per resource so no two resources
-# share a realm or an advisory lock, and the four artifacts the workload moves
-# between. Then it runs hack/capacity, which does the measuring.
+# PostgreSQL in a fixture namespace, two isolated workload namespaces, one
+# database and owner login per resource, and the four artifacts the workload
+# moves between. Then it runs hack/capacity, which does the measuring.
 #
 #   make demo-up
 #   CAPACITY_OUT_DIR=/tmp/capacity hack/capacity.sh
 #
 # The workload is support/capacity/workload.json unless CAPACITY_WORKLOAD names
-# another. Everything this script creates it removes on exit.
+# another. Owned namespaces are removed on exit after workload finalizers finish.
+# A failed cleanup preserves its journal and reports the remaining fixtures.
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,92 +32,31 @@ set -a
 . "$LAB_ENVIRONMENT"
 set +a
 export KUBECONFIG=$E2E_KUBECONFIG
-NAMESPACE=$E2E_TEST_NAMESPACE
-
-k() {
-	kubectl "$@"
-}
-
-schemas=$(jq -er '.schemas' "$WORKLOAD")
-migrations=$(jq -er '.migrations' "$WORKLOAD")
-# One database per resource, and one more for the resource the restart burst
-# approves.
-databases=$((schemas + migrations + 1))
-
+BOOTSTRAP="$ROOT_DIR/support/qualification/probes/capacity_bootstrap.py"
+mkdir -p "$OUT_DIR"
+OUT_DIR=$(cd "$OUT_DIR" && pwd)
+WORKLOAD="$(cd "$(dirname "$WORKLOAD")" && pwd)/$(basename "$WORKLOAD")"
+# Keep the ownership journal outside disposable scratch space. A cleanup failure
+# must leave enough identity evidence for a safe retry.
+STATE_FILE="$OUT_DIR/bootstrap-state.json"
+[ ! -e "$STATE_FILE" ] || fail "ownership journal already exists at $STATE_FILE; use a fresh output directory"
 WORK_DIR=$(mktemp -d)
-# A refused ${VAR:?...} or an unset name under set -u ends the shell without
-# setting $?, so the handler trusts only a run that reached its end.
+umask 077
 CAPACITY_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$CAPACITY_COMPLETED" -eq 1 ] || status=1
-	k -n "$NAMESPACE" delete ptahmigrationapproval,ptahmigration,ptahschema \
-		-l operator.ptah.run/capacity --ignore-not-found --wait=false >/dev/null 2>&1 || true
-	k -n "$NAMESPACE" delete ptahmigrationapproval,ptahmigration capacity-approval \
-		--ignore-not-found --wait=false >/dev/null 2>&1 || true
-	k -n "$NAMESPACE" delete networkpolicy capacity-registry-outage --ignore-not-found >/dev/null 2>&1 || true
-	k -n "$NAMESPACE" delete deployment,service capacity-postgres --ignore-not-found >/dev/null 2>&1 || true
-	k -n "$NAMESPACE" delete secret -l operator.ptah.run/capacity-database --ignore-not-found >/dev/null 2>&1 || true
+	if ! python3 "$BOOTSTRAP" cleanup --state "$STATE_FILE"; then
+		printf 'capacity: owned fixtures remain; retry cleanup with %s\n' "$STATE_FILE" >&2
+		status=1
+	fi
 	rm -rf "$WORK_DIR"
 	exit "$status"
 }
 trap cleanup EXIT
 
-# The PostgreSQL the workload runs against, from the image the acceptance suite
-# mirrors, so it is the version this repository supports.
-password=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
-jq -n \
-	--arg namespace "$NAMESPACE" \
-	--arg image "$E2E_POSTGRES_IMAGE" \
-	--arg password "$password" '
-  def labels: {"app.kubernetes.io/name": "capacity-postgres"};
-  {
-    apiVersion: "v1", kind: "List",
-    items: [
-      {
-        apiVersion: "apps/v1", kind: "Deployment",
-        metadata: {namespace: $namespace, name: "capacity-postgres"},
-        spec: {
-          replicas: 1,
-          selector: {matchLabels: labels},
-          template: {
-            metadata: {labels: labels},
-            spec: {
-              automountServiceAccountToken: false,
-              containers: [{
-                name: "postgres", image: $image, imagePullPolicy: "IfNotPresent",
-                args: ["-c", "max_connections=500"],
-                env: [{name: "POSTGRES_PASSWORD", value: $password}],
-                ports: [{name: "postgresql", containerPort: 5432}],
-                readinessProbe: {exec: {command: ["pg_isready", "-U", "postgres"]}, periodSeconds: 3}
-              }]
-            }
-          }
-        }
-      },
-      {
-        apiVersion: "v1", kind: "Service",
-        metadata: {namespace: $namespace, name: "capacity-postgres"},
-        spec: {selector: labels, ports: [{name: "postgresql", port: 5432, targetPort: "postgresql"}]}
-      }
-    ]
-  }' >"$WORK_DIR/postgres.json"
-k apply -f "$WORK_DIR/postgres.json" >/dev/null
-k -n "$NAMESPACE" rollout status deployment/capacity-postgres --timeout=300s >/dev/null
-
-host="capacity-postgres.${NAMESPACE}.svc.cluster.local"
-index=0
-while [ "$index" -lt "$databases" ]; do
-	database=$(printf 'capacity_%03d' "$index")
-	k -n "$NAMESPACE" exec deploy/capacity-postgres -- \
-		psql -U postgres -qc "CREATE DATABASE $database" >/dev/null
-	k -n "$NAMESPACE" create secret generic "capacity-db-$index" \
-		--from-literal=url="postgres://postgres:${password}@${host}:5432/${database}?sslmode=disable" \
-		--dry-run=client -o json |
-		jq '.metadata.labels = {"operator.ptah.run/capacity-database": "true"}' |
-		k apply -f - >/dev/null
-	index=$((index + 1))
-done
+# The helper emits only the namespace list, never credentials or shell code.
+CAPACITY_NAMESPACES=$(python3 "$BOOTSTRAP" prepare --state "$STATE_FILE" --workload "$WORKLOAD")
 
 # The artifacts, published with the Ptah the lab's executor was built from.
 eval "$("$ROOT_DIR/demo/bin/lab" credentials)"
@@ -150,7 +90,7 @@ cd "$ROOT_DIR"
 go run ./hack/capacity \
 	-kubeconfig "$KUBECONFIG" \
 	-workload "$WORKLOAD" \
-	-namespace "$NAMESPACE" \
+	-namespace "$CAPACITY_NAMESPACES" \
 	-operator-namespace "$E2E_OPERATOR_NAMESPACE" \
 	-schema-v1 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v1" \
 	-schema-v2 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v2" \

@@ -118,9 +118,30 @@ needs the declared registry credentials, verification policies, image-pull
 configuration and the database Secrets for its assigned resources. Resource
 index `i` goes to namespace `i % namespaceCount` within each family; database
 Secret indices remain global, with migrations following schemas. The extra
-restart-approval fixture stays in the first namespace. The lab shell wrapper
-still prepares one namespace and does not establish the full two-namespace
-qualification profile.
+restart-approval fixture stays in the first namespace. The lab wrapper prepares
+two fresh workload namespaces with the profile's object quotas and restricted
+Pod Security Admission pinned to the server minor. It copies the lab's registry
+credentials and immutable verification policies into each namespace, and gives
+their default ServiceAccounts pull credentials without API write grants or
+automatic token mounting.
+
+PostgreSQL runs in a separate fixture namespace. Every workload database has
+its own owner login without superuser, role creation, database creation,
+replication or row-security bypass privileges. Public database access is
+revoked. Database credentials travel through stdin and Secrets; the ownership
+journal contains no passwords. NetworkPolicies refuse inbound traffic to task
+Pods and admit database traffic only from the workload namespaces.
+
+The wrapper records created namespace UIDs in `bootstrap-state.json` inside a
+fresh output directory. Cleanup uses those UIDs and waits for workload namespace
+deletion before removing the database; it never forces finalizers. If cleanup
+fails, it reports the retained fixtures and journal. With the same lab environment
+loaded, retry it with `python3 support/qualification/probes/capacity_bootstrap.py
+cleanup --state /path/to/bootstrap-state.json`.
+
+This bootstrap remains a PostgreSQL lab configuration. Verified TLS, signed
+artifacts, the full egress profile, MySQL, the declared artifact/history/data
+sizes and the complete soak remain required for 0.2.0 qualification.
 
 Samples aggregate workload reads across every declared namespace and mark the
 source incomplete if any read fails. Jobs retain their namespace and UID,
