@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-01T01:00:54.866615+00:00",
-  "profileSourceCommit": "c0970374b267615126db73276212a089c39ed9be",
+  "frozenAt": "2026-10-01T02:01:24.157944+00:00",
+  "profileSourceCommit": "b655d6e7898eeaaf8b0026ef693f5ecdf6c26dcc",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "06cf7e9fd645734ab13cf94fe8432dcac347eee082f48209c6269be77e133037",
-    "generatedFromCommit": "c0970374b267615126db73276212a089c39ed9be",
+    "sha256": "a6f11f737c18ab1de4322873d47551602a9c2ae4a612a64e80ead10a22041d9b",
+    "generatedFromCommit": "b655d6e7898eeaaf8b0026ef693f5ecdf6c26dcc",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 22,
+  "revision": 23,
   "supersedes": {
-    "freezeCommit": "38e7c689adb043f4300510a62b1e5d3654645579",
-    "sha256": "f23769db4ac8a5586e236c06d1eb45c8c542292efc61f827db1d97b6918cae5d"
+    "freezeCommit": "ff24b5eae5aae37600dfa7edacc7faac8c3041fc",
+    "sha256": "f9c897954a2a9c4c7b2df7dc7ef02a83797b89ff0d3d14bffca5d5f8f58590c2"
   },
-  "revisionReason": "Add lock-release-owed for both resource families on PostgreSQL and MySQL. Each case requires an approved real Apply, its original Lease release refusal, native receiver firing and resolution bounds, and a successful sibling Plan after the watched release. The sibling may publish a plan or prove convergence without one; stale conditions and incomplete operations are refused. Predicate controls, race detection, tagged vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
+  "revisionReason": "Add operations-failing for real Resolve failures on both resource families. The row requires four distinct failed Job results inside the unchanged five-minute window, complete native leader/follower counters, bounded receiver delivery, dependency publication without consumer edits, exact successful recovery, a full quiet window and closed workload histories. Focused race controls, E2E-tag vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
 }
