@@ -28,6 +28,7 @@ on:
       - hack/capacity.sh
       - hack/capacity/**
       - support/capacity/**
+      - support/qualification/probes/capacity_bootstrap.py
 
 permissions:
   contents: read

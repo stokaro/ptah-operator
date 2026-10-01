@@ -125,6 +125,14 @@ credentials and immutable verification policies into each namespace, and gives
 their default ServiceAccounts pull credentials without API write grants or
 automatic token mounting.
 
+The restart scenario requires a fresh approval, its exact Apply Job, and a
+fresh converged History reading for the approved migration. It watches the
+claim from before admission and checks the migration, plan, approval, and Job
+UIDs. Missing admission, a broken watch, an unrelated Job, or incomplete
+recovery fails the run even when the rest of the workload converges. An
+ambiguous create response followed by an existing approval is inconclusive
+and fails the measurement.
+
 PostgreSQL runs in a separate fixture namespace. Every workload database has
 its own owner login without superuser, role creation, database creation,
 replication or row-security bypass privileges. Public database access is

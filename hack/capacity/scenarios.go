@@ -222,12 +222,12 @@ func (s *scenarios) prepareApproval(ctx context.Context) error {
 	deadline := time.Now().Add(s.load.Settle.Duration)
 	for time.Now().Before(deadline) {
 		item, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Get(ctx, approvalResource, metav1.GetOptions{})
-		if err == nil {
-			if plan, _, _ := unstructured.NestedString(item.Object, "status", "plan", "name"); plan != "" {
-				return nil
-			}
+		if err == nil && approvalGateReady(item) {
+			return nil
 		}
-		time.Sleep(pollEvery)
+		if err := waitCapacityPoll(ctx); err != nil {
+			return err
+		}
 	}
 	return fmt.Errorf("%s published no plan within %s", approvalResource, s.load.Settle)
 }
@@ -245,76 +245,20 @@ func (s *scenarios) restart(ctx context.Context) error {
 	}
 	start := time.Now().UTC()
 	for _, pod := range pods.Items {
-		if err := s.clientset.CoreV1().Pods(s.in.operatorNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		if err := s.clientset.CoreV1().Pods(s.in.operatorNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &pod.UID}}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete manager Pod %s: %w", pod.Name, err)
 		}
 	}
-	admitted, dispatched := s.approveAndWait(ctx, start)
-	converged, err := s.waitConverged(ctx, start, nil)
-	s.mark("restart burst", start, map[string]string{
-		"converged":          converged,
-		"approvalAdmitted":   admitted,
-		"approvalDispatched": dispatched,
-		"managerPods":        fmt.Sprint(len(pods.Items)),
-	})
+	outcome, err := s.approveAndWait(ctx, start)
+	outcome["managerPods"] = fmt.Sprint(len(pods.Items))
+	if err == nil {
+		outcome["converged"], err = s.waitConverged(ctx, start, nil)
+	}
+	if err != nil {
+		outcome["error"] = err.Error()
+	}
+	s.mark("restart burst", start, outcome)
 	return err
-}
-
-// approveAndWait creates the approval as soon as admission takes it -- the
-// managers serve admission, so it is refused until one is back -- and reports
-// how long after the restart it was admitted and how long until its Apply Job
-// existed.
-func (s *scenarios) approveAndWait(ctx context.Context, start time.Time) (string, string) {
-	approval, err := s.approvalObject(ctx)
-	if err != nil {
-		slog.Warn("build the approval", "error", err)
-		return "not built", "not built"
-	}
-	admitted := "not within " + restartReadyBudget.String()
-	deadline := start.Add(restartReadyBudget)
-	for time.Now().Before(deadline) {
-		_, err := s.dynamic.Resource(approvalGVR).Namespace(s.in.namespace).Create(ctx, approval, metav1.CreateOptions{})
-		if err == nil || apierrors.IsAlreadyExists(err) {
-			admitted = time.Since(start).Round(time.Second).String()
-			break
-		}
-		time.Sleep(pollEvery)
-	}
-	dispatched := "not within " + s.load.Settle.String()
-	deadline = time.Now().Add(s.load.Settle.Duration)
-	for time.Now().Before(deadline) {
-		jobs, err := s.clientset.BatchV1().Jobs(s.in.namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: "operator.ptah.run/migration=" + approvalResource + ",operator.ptah.run/operation=apply",
-		})
-		if err == nil && len(jobs.Items) > 0 {
-			dispatched = jobs.Items[0].CreationTimestamp.Sub(start).Round(time.Second).String()
-			break
-		}
-		time.Sleep(pollEvery)
-	}
-	return admitted, dispatched
-}
-
-func (s *scenarios) approvalObject(ctx context.Context) (*unstructured.Unstructured, error) {
-	migration, err := s.dynamic.Resource(migrationResource).Namespace(s.in.namespace).Get(ctx, approvalResource, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	planName, _, _ := unstructured.NestedString(migration.Object, "status", "plan", "name")
-	plan, err := s.dynamic.Resource(migrationPlanResource).Namespace(s.in.namespace).Get(ctx, planName, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	fingerprint, _, _ := unstructured.NestedString(plan.Object, "spec", "fingerprint")
-	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "operator.ptah.run/v1alpha1", "kind": "PtahMigrationApproval",
-		"metadata": map[string]any{"name": approvalResource, "namespace": s.in.namespace},
-		"spec": map[string]any{
-			"migrationRef":    map[string]any{"name": approvalResource, "uid": string(migration.GetUID())},
-			"planRef":         map[string]any{"name": planName, "uid": string(plan.GetUID())},
-			"planFingerprint": fingerprint,
-		},
-	}}, nil
 }
 
 // change moves a batch of each family to its second artifact at once.
