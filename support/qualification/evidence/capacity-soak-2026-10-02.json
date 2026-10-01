@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-01T23:26:52.116212+00:00",
+  "acceptance": "Not assessed",
+  "scope": "Local ninety-minute PostgreSQL diagnostic, followed by retention fault, restart and registry outage; cycle coverage failed",
+  "operatorCommit": "5db6ef68b1827bdbb45f665ddecad2e3ebfa4af7",
+  "harnessCommit": "5db6ef68b1827bdbb45f665ddecad2e3ebfa4af7",
+  "harnessCleanAtStart": true,
+  "engine": "PostgreSQL",
+  "kubernetes": "v1.37.0",
+  "architecture": "linux/amd64",
+  "dockerContext": "remote-dev-container",
+  "exitCode": 1,
+  "reportSHA256": "0d4123528835b230c8e1312879f87bcd166cddf3e4eddb5650437d769611e292",
+  "durationSeconds": 5400,
+  "completedRounds": 9,
+  "cycleCoverage": {
+    "source": "Harness-reported completed claim sequences; independent cross-clock cycle audit remains incomplete",
+    "requiredPerLogicalSlot": 30,
+    "logicalSlots": 20,
+    "failedSlots": [
+      {
+        "family": "schema",
+        "namespace": "ptah-capacity-46ce9f9c4d-a",
+        "name": "capacity-schema-000",
+        "completedCycles": 28,
+        "requiredCycles": 30
+      },
+      {
+        "family": "schema",
+        "namespace": "ptah-capacity-46ce9f9c4d-a",
+        "name": "capacity-schema-002",
+        "completedCycles": 28,
+        "requiredCycles": 30
+      },
+      {
+        "family": "schema",
+        "namespace": "ptah-capacity-46ce9f9c4d-a",
+        "name": "capacity-schema-004",
+        "completedCycles": 28,
+        "requiredCycles": 30
+      },
+      {
+        "family": "schema",
+        "namespace": "ptah-capacity-46ce9f9c4d-b",
+        "name": "capacity-schema-001",
+        "completedCycles": 28,
+        "requiredCycles": 30
+      },
+      {
+        "family": "schema",
+        "namespace": "ptah-capacity-46ce9f9c4d-b",
+        "name": "capacity-schema-003",
+        "completedCycles": 27,
+        "requiredCycles": 30
+      }
+    ],
+    "minimumPerLogicalSlot": 27,
+    "maximumPerLogicalSlot": 43
+  },
+  "databaseReadback": {
+    "roundCheckpoints": 36,
+    "completeRoundRowInventories": 720,
+    "rowsPerInventory": 10000,
+    "schemaDefaultInventories": 360,
+    "migrationHistories": 360,
+    "faultRowInventories": 40,
+    "roundAuditSHA256": "a17a0776d8b0ea885b7102071ebde83f56a82fd12f00b594ad15c5c8cc29783d",
+    "faultAuditSHA256": "78e50f6e365a8fcfc4427692e4389974129835704dc95d5ff6b5dd3e4708e083"
+  },
+  "retention": {
+    "rounds": 9,
+    "removedPlans": 98,
+    "allPinsAndPayloadsPreserved": true,
+    "finalThreeRetainedChunkAndProjectionBytes": [
+      5704504,
+      5704504,
+      5704504
+    ],
+    "finalThreeManagerRSSBytes": [
+      {
+        "ptah-runtime-generated-name-prefix-boundary-proof-5190f1ddlqgmw": 73097216,
+        "ptah-runtime-generated-name-prefix-boundary-proof-5190f1ddpljfn": 40108032
+      },
+      {
+        "ptah-runtime-generated-name-prefix-boundary-proof-5190f1ddlqgmw": 69443584,
+        "ptah-runtime-generated-name-prefix-boundary-proof-5190f1ddpljfn": 40534016
+      },
+      {
+        "ptah-runtime-generated-name-prefix-boundary-proof-5190f1ddlqgmw": 69365760,
+        "ptah-runtime-generated-name-prefix-boundary-proof-5190f1ddpljfn": 39043072
+      }
+    ],
+    "managerContinuitySamples": 237,
+    "postMaintenanceRSSWithinTenPercent": true,
+    "auditSHA256": "985d06e6f6e28c98fe6fd9dc1c7094d0c5d27b105257e13de1e8d6cc44226294"
+  },
+  "restart": {
+    "recoveredResources": 20,
+    "seconds": 100.914729,
+    "withinThreeMinutes": true,
+    "auditSHA256": "b32b2796d43739dc095927bf2e23b45b6f5acf69cc9a91edd0e66b14dd1c2dec"
+  },
+  "retentionFault": {
+    "databaseLockSeconds": 30.03023,
+    "sameFleetResources": 20,
+    "applyJobsDuringFault": 1,
+    "pendingApprovalAndUnresolvedRunPreserved": true,
+    "recoveredFromFreshHistory": true
+  },
+  "samples": 1251,
+  "incompleteSamples": 0,
+  "cleanupVerified": true,
+  "cleanupProofSHA256": "23f7419767b91ee9734cadd044f33dc9b583ea1557d24721a3db83a7f89d06a8",
+  "limits": [
+    "The complete run failed: schemas 000-004 completed 27-28 read-only cycles instead of 30. The workload duration and threshold were not relaxed.",
+    "The independent cycle auditor encountered a remote claim timestamp 4.146 ms ahead of its local watch receipt. Its complete-cycle verdict is unverified; its failed audit is retained.",
+    "The shared host has 8 CPUs and 15,979,683,840 bytes of RAM, below the dedicated 16 GiB minimum. The lab uses an administrator identity and plain registry.",
+    "Only PostgreSQL, Kubernetes 1.37.0 and Linux amd64 were exercised. This run has no unrelated-object population, within-fleet backlog or overload proof.",
+    "The previously recorded 186.779581388-second restart miss remains a separate open observation.",
+    "No production artifact verification, complete qualification matrix, durable external evidence custody or owner acceptance is supplied. Issues #580 and #242 remain open."
+  ],
+  "retainedEvidence": [
+    {
+      "directory": "/private/tmp/ptah-full-soak-native-ixfrsa42",
+      "files": 4816,
+      "manifestSHA256": "5ea5fbf8fe83c63c66e22b6cc090856e6ac165c315ebfc89ed52e432db6c39e2",
+      "exitCode": 1,
+      "reportSHA256": "0d4123528835b230c8e1312879f87bcd166cddf3e4eddb5650437d769611e292"
+    }
+  ]
+}
