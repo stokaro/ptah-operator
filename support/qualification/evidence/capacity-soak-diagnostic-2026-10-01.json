@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-01T18:28:24.374596+00:00",
+  "acceptance": "Not assessed",
+  "scope": "Two-round local PostgreSQL diagnostic; not full capacity qualification",
+  "sourceCommit": "51e051add37ad58fa74a9e0a658556eb09b5f2f9",
+  "sourceCleanAtStart": true,
+  "exitCode": 0,
+  "engine": "PostgreSQL",
+  "kubernetes": "v1.37.0",
+  "architecture": "linux/amd64",
+  "dockerContext": "remote-dev-container",
+  "workload": {
+    "name": "soak-diagnostic",
+    "description": "Two-round PostgreSQL update/churn diagnostic; not the frozen 90-minute capacity acceptance.",
+    "engine": "PostgreSQL",
+    "schemas": 10,
+    "migrations": 10,
+    "interval": "2m0s",
+    "settle": "5m0s",
+    "steadyState": "12m0s",
+    "sampleEvery": "5s",
+    "changeBatch": 5,
+    "outage": "0s",
+    "soak": {
+      "rounds": 2,
+      "cadence": "6m0s",
+      "churnPerFamily": 2,
+      "minimumCycles": 2
+    }
+  },
+  "databaseSlots": 20,
+  "rowsPerDatabase": 10000,
+  "completeRowInventoryReads": 160,
+  "databaseCheckpoints": 6,
+  "replacements": 8,
+  "observedUIDLifetimes": 28,
+  "appliedSchemaPlans": 20,
+  "minimumReadOnlyCyclesPerSlot": 3,
+  "scenarioOutcomes": {
+    "cold start": {
+      "converged": "1m22.03605s"
+    },
+    "soak update 01": {
+      "converged": "55.058777s",
+      "moved": "10",
+      "round": "1"
+    },
+    "soak churn 01": {
+      "converged": "46.172942s",
+      "replaced": "4",
+      "round": "1"
+    },
+    "soak update 02": {
+      "converged": "1m7.939875s",
+      "moved": "10",
+      "round": "2"
+    },
+    "soak churn 02": {
+      "converged": "24.867573s",
+      "replaced": "4",
+      "round": "2"
+    },
+    "soak": {
+      "completedRounds": "2"
+    },
+    "restart burst": {
+      "approvalAdmitted": "15s",
+      "approvalConverged": "33s",
+      "approvalDispatched": "17s",
+      "approvalJobUID": "7c47df04-9ea2-48f8-b49f-17c9d91c24fa",
+      "approvalMigrationUID": "ce56f537-ec34-44c5-9753-efdc55583101",
+      "approvalOperationID": "sha256:db936a45c85db85d5fda1ce94315e0061c86f0bff732602863b23ed401239e20",
+      "approvalPlanUID": "e4495a40-1ca3-42a9-80fa-05bb1a678f99",
+      "approvalUID": "1ea35045-1b32-4ceb-a0f0-c43f6d499fc5",
+      "converged": "2m43.952093s",
+      "managerPods": "2"
+    }
+  },
+  "restartRecoverySeconds": 163.952093,
+  "terminalRecoveryJobsVerified": 20,
+  "samples": 199,
+  "incompleteSamples": 1,
+  "incompleteSampleReason": "Manager population changed during replacement; retained as missing metrics.",
+  "soakMetricSamplesComplete": true,
+  "artifactReadback": {
+    "status": "PASS",
+    "artifacts": 51,
+    "fileLayerReferences": 1167,
+    "distinctBlobs": 308,
+    "maximumUnpackedBytes": 87485,
+    "bundleSHA256": "4299b89453f660e40989caa31fa1e50d97f516f6b9385a6942a7634f5dae3447",
+    "catalogSHA256": "11d206c34807eef5686323796ef43facd593717af46e4491a0eed803c5899ca2"
+  },
+  "cleanupVerified": true,
+  "localTests": {
+    "race": true,
+    "passedTestsAndSubtests": 345,
+    "failed": 0,
+    "skipped": 0,
+    "vet": "PASS",
+    "e2eStatic": "PASS",
+    "shellcheck": "PASS"
+  },
+  "reportSHA256": "07426c86b7420f3c768020217d5ce21ac3f38127ab670f2cf98a178152b5176b",
+  "evidenceManifestSHA256": "940bcbc508906dcacfd8b91fe752e5a5809f6e3bb3ebd3421f3fe05aca41732a",
+  "retainedFiles": 2264,
+  "scopeLimits": [
+    "Two rounds over twelve minutes; not the frozen nine-round, ninety-minute profile.",
+    "No separate unpinned-plan maintenance, within-fleet approval backlog, unrelated-object load or overload scenarios.",
+    "Registry outage is disabled in this diagnostic.",
+    "The auxiliary approval fixture is a twenty-first database.",
+    "Shared host memory is 15979683840 bytes, below the dedicated 16 GiB minimum.",
+    "One Kubernetes minor and native architecture; no complete qualification matrix.",
+    "Plain-HTTP lab artifacts; published signed artifact qualification and durable custody remain open."
+  ],
+  "earlierPublishedCapacityCI": {
+    "run": 36898808790,
+    "sourceCommit": "16ce1881752d8b25307b6734a2bebae2158ba66c",
+    "conclusion": "success",
+    "restartRecoverySeconds": 160.312756745,
+    "terminalRecoveryJobsVerified": 20,
+    "samples": 109,
+    "incompleteSamples": 1,
+    "reportSHA256": "463488a41956670cf81593a8a0e98d7c05243ce478a4f3959ae6ca9ab850bb86",
+    "evidenceManifestSHA256": "540ef62f1a69552048efcd9f4936dbd25402db89b572db3217b4a95c6db6d0bb",
+    "scope": "Default lab-20 workload; no soak or full qualification."
+  }
+}
