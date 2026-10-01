@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-
 	"encoding/json"
 	"errors"
 	"fmt"
-	jsonpatch "github.com/evanphx/json-patch/v5"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	ptah "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
@@ -30,20 +29,21 @@ import (
 var schemaApprovalResource = schema.GroupVersionResource{Group: schemaResource.Group, Version: schemaResource.Version, Resource: "ptahschemaapprovals"}
 
 type retentionFaultProof struct {
-	StartedAt           time.Time                                     `json:"startedAt"`
-	FinishedAt          time.Time                                     `json:"finishedAt"`
-	SchemaApproval      *unstructured.Unstructured                    `json:"schemaApproval,omitempty"`
-	MigrationApproval   *unstructured.Unstructured                    `json:"migrationApproval,omitempty"`
-	DispatchedMigration *ptah.PtahMigration                           `json:"dispatchedMigration,omitempty"`
-	ApplyJob            *batchv1.Job                                  `json:"applyJob,omitempty"`
-	SuspendedMigration  *unstructured.Unstructured                    `json:"suspendedMigration,omitempty"`
-	RecoveredMigration  *unstructured.Unstructured                    `json:"recoveredMigration,omitempty"`
-	RecoveredSchema     *unstructured.Unstructured                    `json:"recoveredSchema,omitempty"`
-	GatePolicy          *admissionv1.ValidatingAdmissionPolicy        `json:"gatePolicy,omitempty"`
-	GateBinding         *admissionv1.ValidatingAdmissionPolicyBinding `json:"gateBinding,omitempty"`
-	Maintenance         retentionProof                                `json:"maintenance"`
-	Archives            []retentionArchive                            `json:"archives"`
-	Error               string                                        `json:"error,omitempty"`
+	ObsoleteSchemaPlanUID types.UID                                     `json:"obsoleteSchemaPlanUID"`
+	StartedAt             time.Time                                     `json:"startedAt"`
+	FinishedAt            time.Time                                     `json:"finishedAt"`
+	SchemaApproval        *unstructured.Unstructured                    `json:"schemaApproval,omitempty"`
+	MigrationApproval     *unstructured.Unstructured                    `json:"migrationApproval,omitempty"`
+	DispatchedMigration   *ptah.PtahMigration                           `json:"dispatchedMigration,omitempty"`
+	ApplyJob              *batchv1.Job                                  `json:"applyJob,omitempty"`
+	SuspendedMigration    *unstructured.Unstructured                    `json:"suspendedMigration,omitempty"`
+	RecoveredMigration    *unstructured.Unstructured                    `json:"recoveredMigration,omitempty"`
+	RecoveredSchema       *unstructured.Unstructured                    `json:"recoveredSchema,omitempty"`
+	GatePolicy            *admissionv1.ValidatingAdmissionPolicy        `json:"gatePolicy,omitempty"`
+	GateBinding           *admissionv1.ValidatingAdmissionPolicyBinding `json:"gateBinding,omitempty"`
+	Maintenance           retentionProof                                `json:"maintenance"`
+	Archives              []retentionArchive                            `json:"archives"`
+	Error                 string                                        `json:"error,omitempty"`
 }
 
 func faultGate(original *unstructured.Unstructured) (*admissionv1.ValidatingAdmissionPolicy, *admissionv1.ValidatingAdmissionPolicyBinding) {
@@ -338,6 +338,42 @@ func (s *scenarios) retentionFault(ctx context.Context) (err error) {
 	if e != nil {
 		return e
 	}
+	// The measured maintenance already removed obsolete plans. Publish a
+	// real plan under Never with a different lock timeout, then restore the
+	// original policy before admitting the
+	// pending approval. The Never plan is the unpinned deletion control.
+	pendingPlan, _, _ := unstructured.NestedString(schemaObject.Object, "status", "plan", "uid")
+	lockTimeout, _, _ := unstructured.NestedString(schemaObject.Object, "spec", "policy", "lockTimeout")
+	duration, parseErr := time.ParseDuration(lockTimeout)
+	if parseErr != nil {
+		return fmt.Errorf("fault schema has no valid lock timeout: %w", parseErr)
+	}
+	controlTimeout := "31s"
+	if duration == 31*time.Second {
+		controlTimeout = "32s"
+	}
+	disabled, e := s.patchFaultSpec(ctx, schemaResource, schemaObject, map[string]any{"policy": map[string]any{"apply": "Never", "lockTimeout": controlTimeout}})
+	if e != nil {
+		return e
+	}
+	disabled, e = s.waitFaultResource(ctx, schemaResource, disabled, func(o *unstructured.Unstructured) bool { return faultDisabledPlan(o, pendingPlan) })
+	if e != nil {
+		return e
+	}
+	obsoleteUID, _, _ := unstructured.NestedString(disabled.Object, "status", "plan", "uid")
+	proof.ObsoleteSchemaPlanUID = types.UID(obsoleteUID)
+	schemaObject, e = s.patchFaultSpec(ctx, schemaResource, disabled, map[string]any{"policy": map[string]any{"apply": "OnApproval", "lockTimeout": lockTimeout}})
+	if e != nil {
+		return e
+	}
+	schemaObject, e = s.waitFaultResource(ctx, schemaResource, schemaObject, schemaGateReady)
+	if e != nil {
+		return e
+	}
+	currentPlan, _, _ := unstructured.NestedString(schemaObject.Object, "status", "plan", "uid")
+	if currentPlan != pendingPlan {
+		return fmt.Errorf("restoring approval policy did not recover its original plan")
+	}
 	policy, binding := faultGate(schemaObject)
 	proof.GatePolicy, e = s.clientset.AdmissionregistrationV1().ValidatingAdmissionPolicies().Create(ctx, policy, metav1.CreateOptions{})
 	if e != nil {
@@ -540,6 +576,13 @@ func (s *scenarios) retentionFault(ctx context.Context) (err error) {
 	if e := s.pruneMaintenance(ctx, paused, &proof.Maintenance); e != nil {
 		return e
 	}
+	deletedControl := false
+	for _, deletion := range proof.Maintenance.Deleted {
+		deletedControl = deletedControl || deletion.Plan.UID == string(proof.ObsoleteSchemaPlanUID) && deletion.GarbageCollected
+	}
+	if !deletedControl {
+		return fmt.Errorf("retention fault did not garbage-collect its unpinned control plan")
+	}
 	before, e := readFaultInventory(filepath.Join(s.evidenceDir, "retention/fault/before-prune.json"))
 	if e != nil {
 		return e
@@ -627,4 +670,23 @@ func faultNoReplay(jobs []jobRecord, migration *ptah.PtahMigration, start time.T
 		return fmt.Errorf("retention fault Job history omitted the original Apply")
 	}
 	return nil
+}
+
+func faultDisabledPlan(o *unstructured.Unstructured, previousUID string) bool {
+	if !inactiveForMaintenance(o) || previousUID == "" {
+		return false
+	}
+	policy, _, _ := unstructured.NestedString(o.Object, "spec", "policy", "apply")
+	uid, _, _ := unstructured.NestedString(o.Object, "status", "plan", "uid")
+	if policy != "Never" || uid == "" || uid == previousUID {
+		return false
+	}
+	conditions, _, _ := unstructured.NestedSlice(o.Object, "status", "conditions")
+	for _, raw := range conditions {
+		c, _ := raw.(map[string]any)
+		if c["type"] == "Blocked" && c["status"] == "True" && c["reason"] == "ApplyDisabled" && c["observedGeneration"] == o.GetGeneration() {
+			return true
+		}
+	}
+	return false
 }

@@ -212,3 +212,29 @@ func TestRetentionFaultPatchBindsIdentityAndUnrelatedSpec(t *testing.T) {
 		})
 	}
 }
+
+func TestRetentionFaultRequiresAnActuallySupersededPlan(t *testing.T) {
+	for _, mode := range []string{"valid", "unchanged plan", "missing plan", "wrong policy", "stale generation", "wrong refusal"} {
+		t.Run(mode, func(t *testing.T) {
+			o := pinSource("PtahSchema")
+			o.SetGeneration(4)
+			o.Object["spec"] = map[string]any{"policy": map[string]any{"apply": "Never"}}
+			o.Object["status"] = map[string]any{"observedGeneration": int64(4), "plan": map[string]any{"uid": "obsolete-control"}, "conditions": []any{map[string]any{"type": "Blocked", "status": "True", "reason": "ApplyDisabled", "observedGeneration": int64(4)}}}
+			switch mode {
+			case "unchanged plan":
+				_ = unstructured.SetNestedField(o.Object, "pending", "status", "plan", "uid")
+			case "missing plan":
+				unstructured.RemoveNestedField(o.Object, "status", "plan")
+			case "wrong policy":
+				_ = unstructured.SetNestedField(o.Object, "Always", "spec", "policy", "apply")
+			case "stale generation":
+				_ = unstructured.SetNestedField(o.Object, int64(3), "status", "observedGeneration")
+			case "wrong refusal":
+				unstructured.RemoveNestedField(o.Object, "status", "conditions")
+			}
+			if got := faultDisabledPlan(o, "pending"); got != (mode == "valid") {
+				t.Fatalf("accepted=%v", got)
+			}
+		})
+	}
+}
