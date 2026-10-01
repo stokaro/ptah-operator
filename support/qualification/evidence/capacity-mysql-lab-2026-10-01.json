@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-01T11:16:37.794941+00:00",
+  "scope": "Completed MySQL lab-20 measurement on Kubernetes 1.37.0 / Linux amd64. This is development evidence, not the frozen production workload or full capacity matrix.",
+  "acceptance": "Not assessed",
+  "source": {
+    "observedAt": "2026-10-01T10:55:12.831923+00:00",
+    "operatorSource": "f47f3abf917c462f043a24f4b9e18a1f2432641f",
+    "wrapperSource": "8f173b99c6a7c649814ad6b6d933387a45f87f6a",
+    "sourceDifferences": [
+      "hack/capacity.sh",
+      "support/qualification/probes/capacity_bootstrap_test.py"
+    ],
+    "executorImage": "e2e-registry.ptah-test-a-1-37-0-capacity-mysql-f47f3abf-f9f320386b.svc.cluster.local:5000/ptah-executor@sha256:3a0e41f37ad8a07473ab69db0b3f96e9fb226f8fe2b16354db14d796f9d6662c",
+    "executorSource": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-capacity-mysql-f47f3abf-f9f320386b.svc.cluster.local:5000/ptah-runner@sha256:6e3b6e82dd6e7be39760090a59beb0bf69d330964221a0d1883ac36142b113ec",
+    "kubernetes": "1.37.0",
+    "managers": [
+      {
+        "name": "ptah-runtime-generated-name-prefix-boundary-proof-f9f32038skhdx",
+        "uid": "8b46d9fe-3113-469c-9486-c98cc87e830d",
+        "node": "ptah-e2e-1-37-0-capacity-mysq-f9f320386b-worker",
+        "image": "e2e-registry.ptah-test-a-1-37-0-capacity-mysql-f47f3abf-f9f320386b.svc.cluster.local:5000/ptah-operator@sha256:6e3b6e82dd6e7be39760090a59beb0bf69d330964221a0d1883ac36142b113ec",
+        "imageID": "e2e-registry.ptah-test-a-1-37-0-capacity-mysql-f47f3abf-f9f320386b.svc.cluster.local:5000/ptah-operator@sha256:6e3b6e82dd6e7be39760090a59beb0bf69d330964221a0d1883ac36142b113ec",
+        "containerID": "containerd://0f8d6baab9b6030fe768be283eb5f1abecf596e7cf77ff97e77a7fb64fb17c7b",
+        "startedAt": "2026-10-01T10:42:29Z"
+      },
+      {
+        "name": "ptah-runtime-generated-name-prefix-boundary-proof-f9f32038xdfgp",
+        "uid": "8a4c1b35-eddf-4798-baf1-4e65ea8bce56",
+        "node": "ptah-e2e-1-37-0-capacity-mysq-f9f320386b-worker",
+        "image": "e2e-registry.ptah-test-a-1-37-0-capacity-mysql-f47f3abf-f9f320386b.svc.cluster.local:5000/ptah-operator@sha256:6e3b6e82dd6e7be39760090a59beb0bf69d330964221a0d1883ac36142b113ec",
+        "imageID": "e2e-registry.ptah-test-a-1-37-0-capacity-mysql-f47f3abf-f9f320386b.svc.cluster.local:5000/ptah-operator@sha256:6e3b6e82dd6e7be39760090a59beb0bf69d330964221a0d1883ac36142b113ec",
+        "containerID": "containerd://ee2154aee08aaba8ab79c9347c0faf4d114e2a1d3678fe327e965e3c8fe411d6",
+        "startedAt": "2026-10-01T10:42:29Z"
+      }
+    ]
+  },
+  "run": {
+    "id": "capacity-mysql-f47f3abf",
+    "exitCode": 0,
+    "workloadCleanupPassed": true,
+    "labCleanupPassed": true,
+    "priorAttempts": [
+      "The first wrapper attempt failed before workload preparation because the task Docker config was not selected. Commit 8f173b99 fixed the reproduced error.",
+      "The next attempt found the API tunnel had ended with the failed process. The existing cluster was retained, the tunnel restored, and measurement restarted in a fresh output directory."
+    ]
+  },
+  "workload": {
+    "name": "lab-20-mysql",
+    "description": "Ten PtahSchemas and ten PtahMigrations on the demonstration lab using independent MySQL databases. This lab measurement does not establish the full stable 0.2.0 capacity profile.",
+    "engine": "MySQL",
+    "schemas": 10,
+    "migrations": 10,
+    "interval": "2m0s",
+    "settle": "20m0s",
+    "steadyState": "15m0s",
+    "sampleEvery": "15s",
+    "changeBatch": 5,
+    "outage": "3m0s"
+  },
+  "environment": {
+    "kubernetes": "v1.37.0",
+    "nodes": 4,
+    "managerReplicas": 2,
+    "hostCPUs": 8,
+    "hostMemoryBytes": 15979683840,
+    "hostArchitecture": "x86_64",
+    "hostCapacityObserved": true,
+    "hostCapacityScope": "one Docker daemon; exclusive CPU and memory allocation is not established",
+    "allocatableCPU": "32",
+    "allocatableMemory": "62420640Ki",
+    "nodeAllocatableScope": "sum across Kubernetes nodes; not physical host capacity"
+  },
+  "samples": 97,
+  "jobs": 804,
+  "failedSampleSources": {},
+  "scenarios": [
+    {
+      "name": "cold start",
+      "start": "2026-10-01T10:47:20.751642Z",
+      "end": "2026-10-01T10:48:35.968296Z",
+      "samples": 5,
+      "seconds": 75.216654,
+      "outcome": {
+        "converged": "1m15s"
+      }
+    },
+    {
+      "name": "steady state",
+      "start": "2026-10-01T10:48:35.968562Z",
+      "end": "2026-10-01T11:03:35.971331Z",
+      "samples": 60,
+      "seconds": 900.002769,
+      "outcome": {}
+    },
+    {
+      "name": "restart burst",
+      "start": "2026-10-01T11:03:54.505829Z",
+      "end": "2026-10-01T11:06:05.791541Z",
+      "samples": 9,
+      "seconds": 131.285712,
+      "outcome": {
+        "approvalAdmitted": "15s",
+        "approvalConverged": "35s",
+        "approvalDispatched": "20s",
+        "approvalJobUID": "16250e8d-1eed-4605-a0c5-3ef044be9265",
+        "approvalMigrationUID": "e074ed33-09ca-430e-9fba-f3d4a717e474",
+        "approvalOperationID": "sha256:a3ab81eec15b1402bd5b061976c9f00403d5523723eea1a23994c841c6d8b4aa",
+        "approvalPlanUID": "1cd45500-5124-47f7-82dd-3c5e5d696a41",
+        "approvalUID": "dc056b59-e941-4ebc-a8bd-54c0004a0c2e",
+        "converged": "1m36s",
+        "managerPods": "2"
+      }
+    },
+    {
+      "name": "change batch",
+      "start": "2026-10-01T11:06:05.79183Z",
+      "end": "2026-10-01T11:07:51.891146Z",
+      "samples": 7,
+      "seconds": 106.099316,
+      "outcome": {
+        "converged": "1m46s",
+        "moved": "10"
+      }
+    },
+    {
+      "name": "registry outage",
+      "start": "2026-10-01T11:07:51.980941Z",
+      "end": "2026-10-01T11:10:52.054011Z",
+      "samples": 12,
+      "seconds": 180.07307,
+      "outcome": {
+        "ptah-capacity-913b8b4576-a/migrationFrameDigest": "sha256:7f67bf2c203009ad1c89167ad2d797de782fd968eabddc302f7c1df095b65872",
+        "ptah-capacity-913b8b4576-a/migrationPodUID": "9ffd083f-6942-4456-9900-65b5bca14b57",
+        "ptah-capacity-913b8b4576-a/schemaFrameDigest": "sha256:d96cbac719b8c1cbd1b9b9cc84516e4a5338b37a2536b7d8e74162a2e75e23d6",
+        "ptah-capacity-913b8b4576-a/schemaPodUID": "ec17d685-25c1-415c-a711-fa4144de425b",
+        "ptah-capacity-913b8b4576-b/migrationFrameDigest": "sha256:bb3fd4711a2bcaf9faa30da2aea4454684e3dced5edc3be0b78af2e89a8cf04d",
+        "ptah-capacity-913b8b4576-b/migrationPodUID": "546095e0-f19e-4e23-a39a-4d5687435ecd",
+        "ptah-capacity-913b8b4576-b/schemaFrameDigest": "sha256:6903b440c8929f6585de89affeb6a90bb47856cacca9c59cb5eb5bd17d064cd1",
+        "ptah-capacity-913b8b4576-b/schemaPodUID": "b0127b42-05dc-4b66-b263-a3503b64a7d8"
+      }
+    },
+    {
+      "name": "recovery",
+      "start": "2026-10-01T11:10:52.054012Z",
+      "end": "2026-10-01T11:11:36.13494Z",
+      "samples": 2,
+      "seconds": 44.080928,
+      "outcome": {
+        "converged": "44s"
+      }
+    }
+  ],
+  "steadyState": {
+    "managerRSSMaxBytes": 68780032,
+    "managerCPUCoresAverage": 0.05233885513113711,
+    "jobCompletionSeconds": {
+      "count": 420,
+      "p50": 5,
+      "p95": 7,
+      "max": 10
+    },
+    "queueWaitSeconds": {
+      "count": 4176,
+      "p50": 0.1,
+      "p95": 1
+    },
+    "requests429": 0,
+    "apiRejected": 0,
+    "resourceSlots": 20,
+    "completeCyclesPerSlot": 6
+  },
+  "evidenceSHA256": {
+    "measurement-final/report.json": "3ab5ca34fb4c57dcffd01b46c27240f3eb8d02ca0e98ad278e6035abd36b209b",
+    "measurement-final/summary.md": "3a41d4d59a369eea3e0e72bca1501ba102ad1de2ff4fd2e418e200dfb844b207",
+    "measurement-final/host.json": "342e4282eb63b47f7d3d87b57e4569a8843dae34c198ef70a14a079af322a5ba",
+    "runtime-identity.json": "2dea7ca817e60f450f1460d5572e46d96cddf15edcb18a945a5330f4d281b810",
+    "restart-objects.private.json": "930df0939f8ff76c17c59b41470cdcf291b859c9c2df1d7b5d814750f7874261",
+    "installed-chart.tgz": "78b55e854f0a850b6440969f728a5ac9997784880ef0f0ef8def6774f6ac1c39",
+    "cleanup-result.json": "8e5f5467c3276b0e77e28d8c246ed1f8b50ccd69630016ba310575180fcd2883"
+  },
+  "limitations": [
+    "One Kubernetes minor and Linux amd64 only; other cells remain unexecuted.",
+    "The shared host does not establish the frozen dedicated CPU and memory allocation.",
+    "The steady interval was 15 minutes with 15-second sampling, not the frozen 90-minute soak with 5-second sampling.",
+    "The approval fixture is separate from the 20-resource fleet; the frozen approval backlog and churn workload remain unexecuted.",
+    "Two API servers had no admission observations. Their admission percentiles are unmeasured.",
+    "The restart outcome converged field measures the final fleet wait after approval recovery; use the full scenario start/end interval for total restart duration.",
+    "Large plans, long migration histories, deterministic 10000-row data, retention, overload and slow-dependency cases are not established by this lab.",
+    "Private local evidence is checksummed; durable custody remains pending under #584."
+  ]
+}
