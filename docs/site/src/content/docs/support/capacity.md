@@ -198,7 +198,12 @@ Throughout, it reads the cluster rather than estimating it:
 
 The report carries the workload and the environment beside the figures: the
 Kubernetes version, the nodes' allocatable CPU and memory, and the manager's
-image and resources. A figure without them says nothing about another
+image and resources. The lab wrapper also records the Docker daemon's CPU and
+memory once, with its identity and timestamp in `host.json`. Kind nodes share
+that host: their summed allocatable resources are scheduling capacity, not
+additional physical CPU or memory. A direct collector run without `-host-info`
+marks host capacity unobserved. Neither reading establishes exclusive use of
+the machine. A figure without its environment says nothing about another
 installation. The Capacity workflow runs the same thing on a schedule, on
 request, and on any change to the measurement itself, and publishes the report
 as an artifact of the run.

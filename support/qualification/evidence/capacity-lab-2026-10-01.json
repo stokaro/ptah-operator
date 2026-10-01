@@ -1,0 +1,748 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-01T10:21:21.993178+00:00",
+  "scope": "Completed PostgreSQL lab-20 capacity measurement on Kubernetes 1.37.0. This is not the frozen production workload or full capacity matrix.",
+  "acceptance": "Not assessed",
+  "source": {
+    "pullRequest": 585,
+    "headCommit": "f4a147a4995bd4e4ce7d9b92b825cd4aa128c724",
+    "checkoutCommit": "4072cad7f07df6a255f92ba40c60abd0d8b6ade3",
+    "tree": "a773344b625fde69e3d7975f59de6dcb2f5450f9",
+    "headAndCheckoutTreesMatch": true,
+    "operatorImage": "e2e-registry.ptah-test-a-1-37-0-capacity-36843061329-1-d317a52cf6.svc.cluster.local:5000/ptah-operator@sha256:2f260f929a947b28cb0434a2a4fb9195cb751632031bffd3eff357384bb28790",
+    "executorSourceCommit": "f6e562c5b0986cd29a53a5cc01938827336b780a"
+  },
+  "run": {
+    "id": 36843061329,
+    "attempt": 1,
+    "jobID": 110306473003,
+    "url": "https://github.com/stokaro/ptah-operator/actions/runs/36843061329/job/110306473003",
+    "conclusion": "success",
+    "artifactID": 11153499148,
+    "artifactSHA256": "sha256:2dcf0a775f9e07d2c2035a1db8d996963b11d6e7b2456c3e8b990d7cc9904553",
+    "artifactBytes": 505262,
+    "reportSHA256": "5b73b716169c73adc75b19b08f7d03ae8c3bb42c94af12fe14e50d774e26956d",
+    "summarySHA256": "f415f21dac10bd15a792376576153607ac6df6206ddff6e0f433485508d0b1de"
+  },
+  "workload": {
+    "name": "lab-20",
+    "description": "Ten PtahSchemas and ten PtahMigrations on the demonstration lab, each on a database of its own, refreshing every two minutes. Sized to finish on one GitHub-hosted runner; it describes that runner, not an installation.",
+    "schemas": 10,
+    "migrations": 10,
+    "interval": "2m0s",
+    "settle": "20m0s",
+    "steadyState": "15m0s",
+    "sampleEvery": "15s",
+    "changeBatch": 5,
+    "outage": "3m0s"
+  },
+  "environment": {
+    "allocatableCPU": "16",
+    "allocatableMemory": "65489760Ki",
+    "expectedAPIServers": 3,
+    "expectedManagers": 2,
+    "kubernetes": "v1.37.0",
+    "managerCPURequest": "50m",
+    "managerImage": "e2e-registry.ptah-test-a-1-37-0-capacity-36843061329-1-d317a52cf6.svc.cluster.local:5000/ptah-operator@sha256:2f260f929a947b28cb0434a2a4fb9195cb751632031bffd3eff357384bb28790",
+    "managerMemoryLimit": "256Mi",
+    "managerReplicas": 2,
+    "measuredAt": "2026-10-01T09:43:10Z",
+    "nodes": 4,
+    "workloadNamespaces": [
+      "ptah-capacity-28525e28b0-a",
+      "ptah-capacity-28525e28b0-b"
+    ]
+  },
+  "samples": 102,
+  "jobs": 806,
+  "failedSampleSources": {},
+  "scenarios": [
+    {
+      "name": "cold start",
+      "start": "2026-10-01T09:43:10.515886932Z",
+      "end": "2026-10-01T09:44:56.316946627Z",
+      "outcome": {
+        "converged": "1m46s"
+      },
+      "samples": 7,
+      "jobsCreated": 120,
+      "jobsFailed": 0,
+      "jobCompletionSeconds": {
+        "count": 120,
+        "p50": 11,
+        "p95": 19,
+        "max": 22
+      },
+      "managerRSSMaxBytes": 68182016,
+      "managerCPUCoresAverage": 0.1381105222124481,
+      "queueWaitSeconds": {
+        "count": 835,
+        "p50": 1,
+        "p95": 10
+      },
+      "clientThrottleSeconds": 0,
+      "requests429": 0,
+      "apiRejected": 0,
+      "apiServers": {
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "nodeUID": "8b0ca58c-0808-4a41-a02a-0d5b4e28291f",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "podUID": "1986ed29-d006-4290-8ca2-b8fbec4a6e6e",
+          "containerID": "containerd://5692f834a36040625dfc6c083f6622880d3673d18232f69c8a5eba5fc5fe4faa",
+          "containerStartedAt": "2026-10-01T09:36:12Z",
+          "processStartedAt": 1790847371.9,
+          "restartCount": 0,
+          "from": "2026-10-01T09:43:25.99204412Z",
+          "to": "2026-10-01T09:44:56.037025265Z",
+          "samples": 7,
+          "admissionSeconds": {
+            "count": 198,
+            "p50": 0.1,
+            "p95": 0.5
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "nodeUID": "381edfa7-32c9-4253-aaf9-0fa5532c16f5",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "podUID": "efe32052-15ba-4e2b-ad14-4cdb5dc191f6",
+          "containerID": "containerd://237ed0a2fc536907e800c08e3e0049dd0589ec2f55baab59cb4c72324851a020",
+          "containerStartedAt": "2026-10-01T09:37:09Z",
+          "processStartedAt": 1790847429.32,
+          "restartCount": 0,
+          "from": "2026-10-01T09:43:25.990654444Z",
+          "to": "2026-10-01T09:44:56.03300635Z",
+          "samples": 7,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "nodeUID": "259e7ef9-59fc-4359-804a-e8b7723cba27",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "podUID": "8e07ef03-9fc4-4df0-871b-f756f1f117c5",
+          "containerID": "containerd://83a65504f88e98aa5700e9a17c532a488d4f77a549578e4b3a880d1690933994",
+          "containerStartedAt": "2026-10-01T09:37:26Z",
+          "processStartedAt": 1790847446.34,
+          "restartCount": 0,
+          "from": "2026-10-01T09:43:25.990588606Z",
+          "to": "2026-10-01T09:44:56.009574844Z",
+          "samples": 7,
+          "admissionSeconds": {
+            "count": 246,
+            "p50": 0.025,
+            "p95": 0.1
+          },
+          "rejected": 0
+        }
+      },
+      "plansAtEnd": 20,
+      "chunkBytesAtEnd": 5680
+    },
+    {
+      "name": "steady state",
+      "start": "2026-10-01T09:44:56.316969616Z",
+      "end": "2026-10-01T09:59:56.317123121Z",
+      "samples": 60,
+      "jobsCreated": 425,
+      "jobsFailed": 0,
+      "jobCompletionSeconds": {
+        "count": 425,
+        "p50": 6,
+        "p95": 10,
+        "max": 15
+      },
+      "managerRSSMaxBytes": 74756096,
+      "managerCPUCoresAverage": 0.04907346180767149,
+      "queueWaitSeconds": {
+        "count": 4202,
+        "p50": 0.1,
+        "p95": 1
+      },
+      "clientThrottleSeconds": 0,
+      "requests429": 0,
+      "apiRejected": 0,
+      "apiServers": {
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "nodeUID": "8b0ca58c-0808-4a41-a02a-0d5b4e28291f",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "podUID": "1986ed29-d006-4290-8ca2-b8fbec4a6e6e",
+          "containerID": "containerd://5692f834a36040625dfc6c083f6622880d3673d18232f69c8a5eba5fc5fe4faa",
+          "containerStartedAt": "2026-10-01T09:36:12Z",
+          "processStartedAt": 1790847371.9,
+          "restartCount": 0,
+          "from": "2026-10-01T09:45:10.712292931Z",
+          "to": "2026-10-01T09:59:56.404793744Z",
+          "samples": 60,
+          "admissionSeconds": {
+            "count": 846,
+            "p50": 0.025,
+            "p95": 0.1
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "nodeUID": "381edfa7-32c9-4253-aaf9-0fa5532c16f5",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "podUID": "efe32052-15ba-4e2b-ad14-4cdb5dc191f6",
+          "containerID": "containerd://237ed0a2fc536907e800c08e3e0049dd0589ec2f55baab59cb4c72324851a020",
+          "containerStartedAt": "2026-10-01T09:37:09Z",
+          "processStartedAt": 1790847429.32,
+          "restartCount": 0,
+          "from": "2026-10-01T09:45:10.712303488Z",
+          "to": "2026-10-01T09:59:56.305461412Z",
+          "samples": 60,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "nodeUID": "259e7ef9-59fc-4359-804a-e8b7723cba27",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "podUID": "8e07ef03-9fc4-4df0-871b-f756f1f117c5",
+          "containerID": "containerd://83a65504f88e98aa5700e9a17c532a488d4f77a549578e4b3a880d1690933994",
+          "containerStartedAt": "2026-10-01T09:37:26Z",
+          "processStartedAt": 1790847446.34,
+          "restartCount": 0,
+          "from": "2026-10-01T09:45:10.711936055Z",
+          "to": "2026-10-01T09:59:56.273001006Z",
+          "samples": 60,
+          "admissionSeconds": {
+            "count": 846,
+            "p50": 0.025,
+            "p95": 0.1
+          },
+          "rejected": 0
+        }
+      },
+      "plansAtEnd": 20,
+      "chunkBytesAtEnd": 5680
+    },
+    {
+      "name": "restart burst",
+      "start": "2026-10-01T10:00:12.372001539Z",
+      "end": "2026-10-01T10:02:31.218488542Z",
+      "outcome": {
+        "approvalAdmitted": "14s",
+        "approvalDispatched": "21s",
+        "converged": "1m57s",
+        "managerPods": "2"
+      },
+      "samples": 9,
+      "jobsCreated": 71,
+      "jobsFailed": 0,
+      "jobCompletionSeconds": {
+        "count": 71,
+        "p50": 6,
+        "p95": 10,
+        "max": 11
+      },
+      "managerRSSMaxBytes": 67506176,
+      "managerCPUCoresAverage": 0.05958355644098124,
+      "queueWaitSeconds": {
+        "count": 667,
+        "p50": 0.1,
+        "p95": 1
+      },
+      "clientThrottleSeconds": 0,
+      "requests429": 0,
+      "apiRejected": 0,
+      "apiServers": {
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "nodeUID": "8b0ca58c-0808-4a41-a02a-0d5b4e28291f",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "podUID": "1986ed29-d006-4290-8ca2-b8fbec4a6e6e",
+          "containerID": "containerd://5692f834a36040625dfc6c083f6622880d3673d18232f69c8a5eba5fc5fe4faa",
+          "containerStartedAt": "2026-10-01T09:36:12Z",
+          "processStartedAt": 1790847371.9,
+          "restartCount": 0,
+          "from": "2026-10-01T10:00:25.611978415Z",
+          "to": "2026-10-01T10:02:26.504899101Z",
+          "samples": 9,
+          "admissionSeconds": {
+            "count": 278,
+            "p50": 0.025,
+            "p95": 0.1
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "nodeUID": "381edfa7-32c9-4253-aaf9-0fa5532c16f5",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "podUID": "efe32052-15ba-4e2b-ad14-4cdb5dc191f6",
+          "containerID": "containerd://237ed0a2fc536907e800c08e3e0049dd0589ec2f55baab59cb4c72324851a020",
+          "containerStartedAt": "2026-10-01T09:37:09Z",
+          "processStartedAt": 1790847429.32,
+          "restartCount": 0,
+          "from": "2026-10-01T10:00:25.61199393Z",
+          "to": "2026-10-01T10:02:26.452757201Z",
+          "samples": 9,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "nodeUID": "259e7ef9-59fc-4359-804a-e8b7723cba27",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "podUID": "8e07ef03-9fc4-4df0-871b-f756f1f117c5",
+          "containerID": "containerd://83a65504f88e98aa5700e9a17c532a488d4f77a549578e4b3a880d1690933994",
+          "containerStartedAt": "2026-10-01T09:37:26Z",
+          "processStartedAt": 1790847446.34,
+          "restartCount": 0,
+          "from": "2026-10-01T10:00:25.61196658Z",
+          "to": "2026-10-01T10:02:26.451697281Z",
+          "samples": 9,
+          "admissionSeconds": {
+            "count": 2,
+            "p50": 0.025,
+            "p95": 0.025
+          },
+          "rejected": 0
+        }
+      },
+      "plansAtEnd": 21,
+      "chunkBytesAtEnd": 5680
+    },
+    {
+      "name": "change batch",
+      "start": "2026-10-01T10:02:31.218523562Z",
+      "end": "2026-10-01T10:04:48.818474043Z",
+      "outcome": {
+        "converged": "2m17s",
+        "moved": "10"
+      },
+      "samples": 9,
+      "jobsCreated": 97,
+      "jobsFailed": 0,
+      "jobCompletionSeconds": {
+        "count": 97,
+        "p50": 8,
+        "p95": 14,
+        "max": 18
+      },
+      "managerRSSMaxBytes": 78831616,
+      "managerCPUCoresAverage": 0.09091690583040622,
+      "queueWaitSeconds": {
+        "count": 764,
+        "p50": 0.1,
+        "p95": 1
+      },
+      "clientThrottleSeconds": 0,
+      "requests429": 0,
+      "apiRejected": 0,
+      "apiServers": {
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "nodeUID": "8b0ca58c-0808-4a41-a02a-0d5b4e28291f",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "podUID": "1986ed29-d006-4290-8ca2-b8fbec4a6e6e",
+          "containerID": "containerd://5692f834a36040625dfc6c083f6622880d3673d18232f69c8a5eba5fc5fe4faa",
+          "containerStartedAt": "2026-10-01T09:36:12Z",
+          "processStartedAt": 1790847371.9,
+          "restartCount": 0,
+          "from": "2026-10-01T10:02:41.189758412Z",
+          "to": "2026-10-01T10:04:41.47593782Z",
+          "samples": 9,
+          "admissionSeconds": {
+            "count": 337,
+            "p50": 0.025,
+            "p95": 0.1
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "nodeUID": "381edfa7-32c9-4253-aaf9-0fa5532c16f5",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "podUID": "efe32052-15ba-4e2b-ad14-4cdb5dc191f6",
+          "containerID": "containerd://237ed0a2fc536907e800c08e3e0049dd0589ec2f55baab59cb4c72324851a020",
+          "containerStartedAt": "2026-10-01T09:37:09Z",
+          "processStartedAt": 1790847429.32,
+          "restartCount": 0,
+          "from": "2026-10-01T10:02:41.190566908Z",
+          "to": "2026-10-01T10:04:41.398002632Z",
+          "samples": 9,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "nodeUID": "259e7ef9-59fc-4359-804a-e8b7723cba27",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "podUID": "8e07ef03-9fc4-4df0-871b-f756f1f117c5",
+          "containerID": "containerd://83a65504f88e98aa5700e9a17c532a488d4f77a549578e4b3a880d1690933994",
+          "containerStartedAt": "2026-10-01T09:37:26Z",
+          "processStartedAt": 1790847446.34,
+          "restartCount": 0,
+          "from": "2026-10-01T10:02:41.189703262Z",
+          "to": "2026-10-01T10:04:41.394542248Z",
+          "samples": 9,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        }
+      },
+      "plansAtEnd": 31,
+      "chunkBytesAtEnd": 11340
+    },
+    {
+      "name": "registry outage",
+      "start": "2026-10-01T10:04:48.827143378Z",
+      "end": "2026-10-01T10:07:48.840816947Z",
+      "outcome": {
+        "ptah-capacity-28525e28b0-a/migrationFrameDigest": "sha256:b21de6aede6ab36a6bc28686e45dd4d6ba20ed61d3e7a91c30c7206eeffd4d88",
+        "ptah-capacity-28525e28b0-a/migrationPodUID": "180d20ec-f5d4-488e-b557-af9e223af839",
+        "ptah-capacity-28525e28b0-a/schemaFrameDigest": "sha256:99790fdf1e2a258703d729aa803fdf355a99789c4d9cde65fde35ad7b2a10e92",
+        "ptah-capacity-28525e28b0-a/schemaPodUID": "043092f9-6c87-41e3-b4eb-fc44430f4c1b",
+        "ptah-capacity-28525e28b0-b/migrationFrameDigest": "sha256:72ecf74e0fa9e7f6ce899d8170c021ad504b5c6619c2a1e445a7cfc6890d8b54",
+        "ptah-capacity-28525e28b0-b/migrationPodUID": "86588c54-f0ff-48d9-b1db-a00220bce7b9",
+        "ptah-capacity-28525e28b0-b/schemaFrameDigest": "sha256:3ead51356ebc988f2d012faa69fd5eb8281dbd5f90cff7286f98060c35072697",
+        "ptah-capacity-28525e28b0-b/schemaPodUID": "1f423282-f956-4419-9f31-25dd1f2f4068"
+      },
+      "samples": 12,
+      "jobsCreated": 44,
+      "jobsFailed": 0,
+      "jobCompletionSeconds": {
+        "count": 44,
+        "p50": 65,
+        "p95": 71,
+        "max": 71
+      },
+      "managerRSSMaxBytes": 74252288,
+      "managerCPUCoresAverage": 0.02836340032479406,
+      "queueWaitSeconds": {
+        "count": 846,
+        "p50": 9.999999999999999e-05,
+        "p95": 0.1
+      },
+      "clientThrottleSeconds": 0,
+      "requests429": 0,
+      "apiRejected": 0,
+      "apiServers": {
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "nodeUID": "8b0ca58c-0808-4a41-a02a-0d5b4e28291f",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "podUID": "1986ed29-d006-4290-8ca2-b8fbec4a6e6e",
+          "containerID": "containerd://5692f834a36040625dfc6c083f6622880d3673d18232f69c8a5eba5fc5fe4faa",
+          "containerStartedAt": "2026-10-01T09:36:12Z",
+          "processStartedAt": 1790847371.9,
+          "restartCount": 0,
+          "from": "2026-10-01T10:04:55.650589097Z",
+          "to": "2026-10-01T10:07:41.148875183Z",
+          "samples": 12,
+          "admissionSeconds": {
+            "count": 132,
+            "p50": 0.025,
+            "p95": 0.1
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "nodeUID": "381edfa7-32c9-4253-aaf9-0fa5532c16f5",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "podUID": "efe32052-15ba-4e2b-ad14-4cdb5dc191f6",
+          "containerID": "containerd://237ed0a2fc536907e800c08e3e0049dd0589ec2f55baab59cb4c72324851a020",
+          "containerStartedAt": "2026-10-01T09:37:09Z",
+          "processStartedAt": 1790847429.32,
+          "restartCount": 0,
+          "from": "2026-10-01T10:04:55.650607752Z",
+          "to": "2026-10-01T10:07:41.08046047Z",
+          "samples": 12,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "nodeUID": "259e7ef9-59fc-4359-804a-e8b7723cba27",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "podUID": "8e07ef03-9fc4-4df0-871b-f756f1f117c5",
+          "containerID": "containerd://83a65504f88e98aa5700e9a17c532a488d4f77a549578e4b3a880d1690933994",
+          "containerStartedAt": "2026-10-01T09:37:26Z",
+          "processStartedAt": 1790847446.34,
+          "restartCount": 0,
+          "from": "2026-10-01T10:04:55.650578078Z",
+          "to": "2026-10-01T10:07:41.14186691Z",
+          "samples": 12,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        }
+      },
+      "plansAtEnd": 31,
+      "chunkBytesAtEnd": 11340
+    },
+    {
+      "name": "recovery",
+      "start": "2026-10-01T10:07:48.840820479Z",
+      "end": "2026-10-01T10:08:39.735820863Z",
+      "outcome": {
+        "converged": "51s"
+      },
+      "samples": 3,
+      "jobsCreated": 43,
+      "jobsFailed": 0,
+      "jobCompletionSeconds": {
+        "count": 35,
+        "p50": 12,
+        "p95": 18,
+        "max": 19
+      },
+      "managerRSSMaxBytes": 79716352,
+      "managerCPUCoresAverage": 0.12166051307386014,
+      "queueWaitSeconds": {
+        "count": 344,
+        "p50": 1,
+        "p95": 10
+      },
+      "clientThrottleSeconds": 0,
+      "requests429": 0,
+      "apiRejected": 0,
+      "apiServers": {
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "nodeUID": "8b0ca58c-0808-4a41-a02a-0d5b4e28291f",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane",
+          "podUID": "1986ed29-d006-4290-8ca2-b8fbec4a6e6e",
+          "containerID": "containerd://5692f834a36040625dfc6c083f6622880d3673d18232f69c8a5eba5fc5fe4faa",
+          "containerStartedAt": "2026-10-01T09:36:12Z",
+          "processStartedAt": 1790847371.9,
+          "restartCount": 0,
+          "from": "2026-10-01T10:07:56.390931838Z",
+          "to": "2026-10-01T10:08:27.188608178Z",
+          "samples": 3,
+          "admissionSeconds": {
+            "count": 131,
+            "p50": 0.1,
+            "p95": 0.5
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "nodeUID": "381edfa7-32c9-4253-aaf9-0fa5532c16f5",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane2",
+          "podUID": "efe32052-15ba-4e2b-ad14-4cdb5dc191f6",
+          "containerID": "containerd://237ed0a2fc536907e800c08e3e0049dd0589ec2f55baab59cb4c72324851a020",
+          "containerStartedAt": "2026-10-01T09:37:09Z",
+          "processStartedAt": 1790847429.32,
+          "restartCount": 0,
+          "from": "2026-10-01T10:07:56.389668909Z",
+          "to": "2026-10-01T10:08:26.96164195Z",
+          "samples": 3,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        },
+        "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3": {
+          "node": "ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "nodeUID": "259e7ef9-59fc-4359-804a-e8b7723cba27",
+          "pod": "kube-apiserver-ptah-e2e-1-37-0-capacity-3684-d317a52cf6-control-plane3",
+          "podUID": "8e07ef03-9fc4-4df0-871b-f756f1f117c5",
+          "containerID": "containerd://83a65504f88e98aa5700e9a17c532a488d4f77a549578e4b3a880d1690933994",
+          "containerStartedAt": "2026-10-01T09:37:26Z",
+          "processStartedAt": 1790847446.34,
+          "restartCount": 0,
+          "from": "2026-10-01T10:07:56.389620099Z",
+          "to": "2026-10-01T10:08:27.208199556Z",
+          "samples": 3,
+          "admissionSeconds": {
+            "count": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "rejected": 0
+        }
+      },
+      "plansAtEnd": 31,
+      "chunkBytesAtEnd": 11340
+    }
+  ],
+  "steadyStateCompletedCycles": [
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-migration-000",
+      "uid": "f2535757-c626-4475-8bc3-21723153ea49",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-migration-002",
+      "uid": "e51e70f2-5288-4455-828d-e5b523fc5924",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-migration-004",
+      "uid": "b5eb2037-4932-412c-a66d-6bad0a9edf11",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-migration-006",
+      "uid": "2bbcbc4f-17d3-4753-adbf-48e4d1fbdee5",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-migration-008",
+      "uid": "6ab807e1-37ca-4b8a-b534-1fe4adf5a50e",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-migration-001",
+      "uid": "30f1cede-bfb5-4f6a-82ea-378a675ddf82",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-migration-003",
+      "uid": "fcc2b659-b832-4bfe-af2e-48355f483580",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-migration-005",
+      "uid": "b15a5cca-30ba-4cb0-bc0e-bad29023edb3",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-migration-007",
+      "uid": "9e70251b-dbc2-4d8b-a8dd-c3d88cff6cb0",
+      "completed": 6
+    },
+    {
+      "family": "migration",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-migration-009",
+      "uid": "3872569e-80f7-4e15-bf4d-3cc9a51f9a35",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-schema-000",
+      "uid": "bec06a11-417d-491c-8837-88170aae17e2",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-schema-002",
+      "uid": "1272a37d-5d52-470c-b825-4f1d5cc4c918",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-schema-004",
+      "uid": "3964504a-a9b9-4c16-820f-0badac005178",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-schema-006",
+      "uid": "fb2d99c2-84dd-4300-8322-8a3988d2c43f",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-a",
+      "name": "capacity-schema-008",
+      "uid": "6523609f-dc06-40e9-b1d6-d8655108fec6",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-schema-001",
+      "uid": "416a5145-99b5-4cdd-a705-40726e2f6f8e",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-schema-003",
+      "uid": "912e754a-3e7d-431d-b677-4cc7c2ea0080",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-schema-005",
+      "uid": "be6dfac2-4c55-4f29-88ab-a114d7ba7749",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-schema-007",
+      "uid": "5e8ba8ff-988c-41cd-bcd7-232aff7e2632",
+      "completed": 6
+    },
+    {
+      "family": "schema",
+      "namespace": "ptah-capacity-28525e28b0-b",
+      "name": "capacity-schema-009",
+      "uid": "c3daf9ca-1b02-4aaa-899c-6a70688bf096",
+      "completed": 6
+    }
+  ],
+  "limitations": [
+    "Steady state lasted 15 minutes with 15-second samples; the frozen profile requires a 90-minute soak, 5-second samples and nine churn/maintenance checkpoints.",
+    "The measured schema payloads are about 11 KiB after changes; this is not the declared plan/artifact/history/data-size population.",
+    "One API server had no admission observations during steady state. Its p95 is unmeasured, not zero; other short-window populations also fall below the required 20 observations.",
+    "Node allocatable totals describe four kind nodes on one host. The run did not record host capacity separately and cannot establish dedicated host resources.",
+    "The restart row predates the exact approval/claim/Job and approved-resource recovery fix dde6a610; its reported admission and dispatch times do not qualify that later fix.",
+    "No MySQL workload, ARM64/full-minor capacity matrix, full retention/overload/slow-database scenarios, final artifacts, durable evidence custody or owner signoff is established.",
+    "The job and artifact provide retained CI evidence subject to GitHub retention. They are not the required durable production evidence store."
+  ]
+}

@@ -186,6 +186,7 @@ jobs:
           path: |
             ${{ runner.temp }}/capacity/report.json
             ${{ runner.temp }}/capacity/summary.md
+            ${{ runner.temp }}/capacity/host.json
           if-no-files-found: warn
           retention-days: 90
       - name: Remove the lab

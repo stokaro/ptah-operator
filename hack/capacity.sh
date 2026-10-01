@@ -40,6 +40,7 @@ WORKLOAD="$(cd "$(dirname "$WORKLOAD")" && pwd)/$(basename "$WORKLOAD")"
 # must leave enough identity evidence for a safe retry.
 STATE_FILE="$OUT_DIR/bootstrap-state.json"
 [ ! -e "$STATE_FILE" ] || fail "ownership journal already exists at $STATE_FILE; use a fresh output directory"
+[ ! -e "$OUT_DIR/host.json" ] || fail "host evidence already exists; use a fresh output directory"
 WORK_DIR=$(mktemp -d)
 umask 077
 CAPACITY_COMPLETED=0
@@ -54,6 +55,12 @@ cleanup() {
 	exit "$status"
 }
 trap cleanup EXIT
+
+# All kind nodes share this daemon. Record its capacity once, separately from
+# Kubernetes allocatable totals. Keep the original reading with the report.
+docker --context "${E2E_DOCKER_CONTEXT:?lab environment must name its Docker context}" info \
+	--format '{"dockerID":{{json .ID}},"name":{{json .Name}},"cpus":{{.NCPU}},"memoryBytes":{{.MemTotal}},"architecture":{{json .Architecture}},"os":{{json .OSType}},"observedAt":{{json .SystemTime}}}' \
+	> "$OUT_DIR/host.json"
 
 # The helper emits only the namespace list, never credentials or shell code.
 CAPACITY_NAMESPACES=$(python3 "$BOOTSTRAP" prepare --state "$STATE_FILE" --workload "$WORKLOAD")
@@ -103,6 +110,7 @@ done
 cd "$ROOT_DIR"
 go run ./hack/capacity \
 	-kubeconfig "$KUBECONFIG" \
+	-host-info "$OUT_DIR/host.json" \
 	-workload "$WORKLOAD" \
 	-namespace "$CAPACITY_NAMESPACES" \
 	-operator-namespace "$E2E_OPERATOR_NAMESPACE" \

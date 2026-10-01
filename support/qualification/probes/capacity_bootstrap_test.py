@@ -278,10 +278,14 @@ class WrapperTests(unittest.TestCase):
             for relative in ('demo/schemas', 'demo/migrations', 'support/capacity/mysql'):
                 shutil.copytree(repository / relative, root / relative, dirs_exist_ok=True)
             environment = caller / 'environment'
-            environment.write_text('E2E_KUBECONFIG=/unused\nE2E_OPERATOR_NAMESPACE=operator\nE2E_REGISTRY_HOST=registry\nE2E_REGISTRY_IP=127.0.0.1\n')
+            environment.write_text('E2E_KUBECONFIG=/unused\nE2E_DOCKER_CONTEXT=capacity-test\nE2E_OPERATOR_NAMESPACE=operator\nE2E_REGISTRY_HOST=registry\nE2E_REGISTRY_IP=127.0.0.1\n')
             def executable(path, body):
                 path.write_text(body)
                 path.chmod(0o700)
+            executable(bin_path / 'docker', '#!' + sys.executable + '\n' + r'''import json,sys
+assert sys.argv[1:4]==['--context','capacity-test','info'], 'host reading used another daemon'
+print(json.dumps({'dockerID':'test-daemon','name':'test-host','cpus':4,'memoryBytes':17179869184,'architecture':'x86_64','os':'linux','observedAt':'2026-10-01T09:43:00Z'}))
+''')
             executable(root / 'demo/bin/lab', '#!/bin/sh\ncase "$1" in\ncredentials) echo "PTAH_OCI_USERNAME=user PTAH_OCI_PASSWORD=fixture PTAH_OCI_REGISTRY=registry" ;;\ntools) echo "' + str(bin_path) + '" ;;\nesac\n')
             executable(bin_path / 'ptah', '#!' + sys.executable + '\n' + r'''import os,pathlib,sys
 args=sys.argv[1:]; engine=os.environ['CAPACITY_TEST_ENGINE']
@@ -312,9 +316,10 @@ else:
  assert path.exists(), 'cleanup lost the original journal'
  path.write_text('{"cleaned":true}')
 ''')
-            executable(bin_path / 'go', '#!' + sys.executable + '\n' + r'''import pathlib,sys
+            executable(bin_path / 'go', '#!' + sys.executable + '\n' + r'''import json,pathlib,sys
 args=sys.argv[1:]; assert args[args.index('-namespace')+1]=='work-a,work-b'
 assert pathlib.Path(args[args.index('-workload')+1]).exists()
+assert json.loads(pathlib.Path(args[args.index('-host-info')+1]).read_text())['dockerID']=='test-daemon'
 pathlib.Path(args[args.index('-out')+1],'go-ran').write_text('yes')
 sys.exit(42)
 ''')
@@ -332,6 +337,15 @@ sys.exit(42)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('ownership journal already exists', result.stderr.decode())
             self.assertEqual(journal.read_text(), 'earlier evidence')
+            journal.unlink()
+            host = caller / 'evidence/host.json'
+            before = host.read_bytes()
+            result = subprocess.run(['bash', str(root / 'hack/capacity.sh')], cwd=caller, env=env,
+                                    capture_output=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('host evidence already exists', result.stderr.decode())
+            self.assertEqual(host.read_bytes(), before)
+            self.assertFalse(journal.exists())
 
 if __name__ == '__main__':
     unittest.main()

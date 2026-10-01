@@ -51,6 +51,7 @@ func run() error {
 		kubeconfig   = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
 		workloadPath = flag.String("workload", "support/capacity/workload.json", "the workload to run")
 		outDir       = flag.String("out", "", "directory to write report.json and summary.md into")
+		hostPath     = flag.String("host-info", "", "JSON capacity reading from the Docker daemon hosting the lab")
 		apiCount     = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
 		managerCount = flag.Int("expected-managers", 2, "required number of independently sampled manager processes")
 		metricsPort  = flag.Int("metrics-port", 8080, "the manager's metrics port")
@@ -91,6 +92,10 @@ func run() error {
 	if err := requireInputs(in, load, *outDir); err != nil {
 		return err
 	}
+	host, err := readHostCapacity(*hostPath)
+	if err != nil {
+		return err
+	}
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		return fmt.Errorf("read the kubeconfig: %w", err)
@@ -114,6 +119,7 @@ func run() error {
 		return err
 	}
 	environment["expectedAPIServers"] = *apiCount
+	recordHostCapacity(environment, host)
 	environment["expectedManagers"] = *managerCount
 	watch := &sampler{
 		expectedAPIServers: *apiCount,
