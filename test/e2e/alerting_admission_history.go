@@ -77,6 +77,11 @@ func alAdmissionNativeSamples(series alAdmissionSeries, since, queriedAt time.Ti
 // Ended series are expected when an alert changes state or a Pod disappears.
 // Their callers must check coverage against the native transition they prove.
 func alNativeSamples(series alAdmissionSeries, since, queriedAt time.Time, integer, fresh bool) ([]alAdmissionSample, error) {
+	return alNativeSamplesWithin(series, since, queriedAt, integer, fresh, alAdmissionHistoryWindow)
+}
+
+// The parser must enforce the same history bound as its caller's range query.
+func alNativeSamplesWithin(series alAdmissionSeries, since, queriedAt time.Time, integer, fresh bool, window time.Duration) ([]alAdmissionSample, error) {
 	if len(series.Values) == 0 || len(series.Histograms) != 0 {
 		return nil, errors.New("admission history needs native float samples")
 	}
@@ -92,7 +97,7 @@ func alNativeSamples(series alAdmissionSeries, since, queriedAt time.Time, integ
 		at := time.Unix(int64(seconds), int64(math.Round(fraction*float64(time.Second)))).UTC()
 		value, err := strconv.ParseFloat(number, 64)
 		if err != nil || math.IsInf(value, 0) || math.IsNaN(value) || value < 0 || integer && math.Trunc(value) != value || value >= 1<<53 ||
-			at.After(queriedAt) || !at.After(queriedAt.Add(-alAdmissionHistoryWindow)) {
+			at.After(queriedAt) || !at.After(queriedAt.Add(-window)) {
 			return nil, errors.New("admission history has an invalid or out-of-window sample")
 		}
 		if len(samples) != 0 {

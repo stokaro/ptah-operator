@@ -325,3 +325,65 @@ func TestAlFailuresClosedWorkloadsRequireEveryOriginalResult(t *testing.T) {
 		}
 	}
 }
+
+func TestAlFailuresBaselineWaitValidatesTheWholeHistory(t *testing.T) {
+	t.Parallel()
+	for _, partial := range []bool{false, true} {
+		f := alFailureHistoryFixtureForTest()
+		f.started = f.started.Add(100 * time.Second)
+		if partial {
+			f.counters[0].Values = f.counters[0].Values[70:]
+		}
+		if _, err := f.read(t); !errors.Is(err, errAlFailuresBaseline) {
+			t.Fatalf("healthy unready baseline (partial=%t) must remain retryable: %v", partial, err)
+		}
+	}
+	for _, fault := range []string{"later reset", "later duplicate", "missing leader after another category", "incomplete series before reset"} {
+		t.Run(fault, func(t *testing.T) {
+			f := alFailureHistoryFixtureForTest()
+			// A prior deliberate failure makes the baseline unready. It must
+			// not mask corrupt evidence later in this or another series.
+			f.started = f.started.Add(100 * time.Second)
+			switch fault {
+			case "later reset":
+				f.counters[0].Values[80] = alAdmissionHistorySampleForTest(f.started.Add(-5*time.Second), "0")
+			case "later duplicate":
+				f.counters = append(f.counters, f.counters[0])
+			case "missing leader after another category":
+				f.counters[0].Metric["category"] = "stale_input"
+			case "incomplete series before reset":
+				f.counters[0].Values[80] = alAdmissionHistorySampleForTest(f.started.Add(-5*time.Second), "0")
+				f.counters[0].Values = f.counters[0].Values[70:]
+			}
+			if _, err := f.read(t); err == nil || errors.Is(err, errAlFailuresBaseline) {
+				t.Fatalf("%s was accepted or hidden by a retryable baseline: %v", fault, err)
+			}
+		})
+	}
+}
+
+func TestAlFailuresAcceptsItsDeclaredThirtyMinuteHistory(t *testing.T) {
+	t.Parallel()
+	f := alFailureHistoryFixtureForTest()
+	prepend := func(series *alAdmissionSeries, value string) {
+		prefix := alAdmissionSeries{}
+		for second := -1300; second < -305; second += 5 {
+			prefix.Values = append(prefix.Values, alAdmissionHistorySampleForTest(f.started.Add(time.Duration(second)*time.Second), value))
+		}
+		series.Values = append(prefix.Values, series.Values...)
+	}
+	for i := range f.up {
+		prepend(&f.up[i], "1")
+		prepend(&f.durations[i], "0.125")
+	}
+	prepend(&f.counters[0], "7")
+	h, err := f.read(t)
+	if err != nil || h.increments != 5 {
+		t.Fatalf("valid thirty-minute query refused: %+v, %v", h, err)
+	}
+	// The wider query must retain an exact lower bound of its own.
+	f.counters[0].Values[0] = alAdmissionHistorySampleForTest(f.queried.Add(-alFailuresHistoryWindow), "7")
+	if _, err := f.read(t); err == nil {
+		t.Fatal("sample outside the declared query window accepted")
+	}
+}

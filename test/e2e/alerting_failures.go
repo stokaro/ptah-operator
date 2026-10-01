@@ -70,7 +70,7 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 			if item.Metric["__name__"] != metric || item.Metric["job"] != alScrapeJob || !wanted[pod] || instance == "" || result[pod].instance != "" || instances[instance] {
 				return nil, errors.New("operation-failure history has an unexpected or duplicate scrape target")
 			}
-			values, err := alAdmissionNativeSamples(item, since, queriedAt, integer)
+			values, err := alNativeSamplesWithin(item, since, queriedAt, integer, true, alFailuresHistoryWindow)
 			if err != nil {
 				return nil, err
 			}
@@ -113,6 +113,7 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 		return h, err
 	}
 	seen, sawLeader := map[string]bool{}, false
+	baselineUnready := false
 	for _, item := range series {
 		pod, category := item.Metric["pod"], item.Metric["category"]
 		key := pod + "/" + category
@@ -120,17 +121,24 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 			return h, errors.New("unexpected or duplicate operation-failure counter")
 		}
 		seen[key] = true
-		values, err := alAdmissionNativeSamples(item, since, queriedAt, true)
+		values, err := alNativeSamplesWithin(item, since, queriedAt, true, true, alFailuresHistoryWindow)
 		if err != nil {
 			return h, err
 		}
 		if len(values) < 2 || values[0].at.After(since) {
-			return h, errAlFailuresBaseline
+			baselineUnready = true
 		}
 		for len(values) > 1 && !values[1].at.After(since) {
 			values = values[1:]
 		}
 		health := up[pod]
+		// A newly instantiated counter may lack a complete baseline. Check
+		// all samples it does have before allowing the caller to wait.
+		durations := duration[pod].values
+		for len(health.values) > 1 && health.values[0].at.Before(values[0].at) {
+			health.values = health.values[1:]
+			durations = durations[1:]
+		}
 		if len(values) != len(health.values) {
 			return h, errors.New("failure counter omitted a native scrape")
 		}
@@ -149,7 +157,8 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 				continue
 			}
 			if !s.at.After(started) {
-				return h, errAlFailuresBaseline
+				baselineUnready = true
+				continue
 			}
 			if pod != leader || category != "operation" {
 				return h, errors.New("an unrelated failure contaminated the operation proof")
@@ -160,7 +169,7 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 			}
 			h.increments += delta
 			h.lastLower = previous.at
-			h.lastUpper = s.at.Add(time.Duration(duration[pod].values[i].value * float64(time.Second)))
+			h.lastUpper = s.at.Add(time.Duration(durations[i].value * float64(time.Second)))
 		}
 		if pod == leader && category == "operation" {
 			sawLeader = true
@@ -168,6 +177,10 @@ func alReadFailuresHistory(counterBody, upBody, durationBody []byte, pods []stri
 	}
 	if !sawLeader {
 		return h, errors.New("the leader's operation-failure counter is missing")
+	}
+	// Retry readiness only after every series passed its integrity checks.
+	if baselineUnready {
+		return h, errAlFailuresBaseline
 	}
 	return h, nil
 }
