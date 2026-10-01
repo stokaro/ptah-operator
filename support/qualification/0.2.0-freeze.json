@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-01T02:01:24.157944+00:00",
-  "profileSourceCommit": "b655d6e7898eeaaf8b0026ef693f5ecdf6c26dcc",
+  "frozenAt": "2026-10-01T02:30:26.734470+00:00",
+  "profileSourceCommit": "62dcdf05db4eb492481999a6632107f4e073abfa",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "a6f11f737c18ab1de4322873d47551602a9c2ae4a612a64e80ead10a22041d9b",
-    "generatedFromCommit": "b655d6e7898eeaaf8b0026ef693f5ecdf6c26dcc",
+    "sha256": "ca2d0101da77a3871be5fe5b21e6545f5214989fc81831d8539f0c99258a9b11",
+    "generatedFromCommit": "62dcdf05db4eb492481999a6632107f4e073abfa",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 23,
+  "revision": 24,
   "supersedes": {
-    "freezeCommit": "ff24b5eae5aae37600dfa7edacc7faac8c3041fc",
-    "sha256": "f9c897954a2a9c4c7b2df7dc7ef02a83797b89ff0d3d14bffca5d5f8f58590c2"
+    "freezeCommit": "8a8b49fc6b1051682301b73bc7ecd8702fe8214f",
+    "sha256": "55ce34a355eab74ad8e9840e2084ab2b2a9f72484d703684c2cff19134df13dd"
   },
-  "revisionReason": "Add operations-failing for real Resolve failures on both resource families. The row requires four distinct failed Job results inside the unchanged five-minute window, complete native leader/follower counters, bounded receiver delivery, dependency publication without consumer edits, exact successful recovery, a full quiet window and closed workload histories. Focused race controls, E2E-tag vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
+  "revisionReason": "Add plan-store-large using seventeen native 8 MiB schema plans, exact chunk reconstruction, all documented plan pins, retained round-trip exports, quiescent owners, UID/resource-version deletion and native receiver bounds. Focused race controls and E2E-tag vet passed; native final-identity execution is pending. All eight profile source hashes, thresholds, operating targets, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
 }
