@@ -445,6 +445,7 @@ var Alerting = define[AlertingInputs](Phase{
 		"ordinary-policy-waits",
 		"stalled-operation",
 		"resource-overdue",
+		"lock-release-owed",
 		"unresolved-view-read-failures",
 		"lost-scrape-target",
 		"certificate-expiry",

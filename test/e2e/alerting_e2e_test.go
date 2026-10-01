@@ -65,6 +65,7 @@ func TestAlerting(t *testing.T) {
 		{"ordinary-policy-waits", a.negativeControls},
 		{"stalled-operation", a.stalledOperation},
 		{"resource-overdue", a.resourceOverdue},
+		{"lock-release-owed", a.lockReleaseOwed},
 		{"unresolved-view-read-failures", a.viewReadFailures},
 		{"lost-scrape-target", a.lostScrapeTarget},
 		{"certificate-expiry", a.certificateExpiry},
