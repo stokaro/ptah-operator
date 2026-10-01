@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-10-01T00:10:59.378651+00:00",
-  "profileSourceCommit": "18e0b0c0773775ef047f8909f76e00e2799d17c9",
+  "frozenAt": "2026-10-01T01:00:54.866615+00:00",
+  "profileSourceCommit": "c0970374b267615126db73276212a089c39ed9be",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
@@ -41,8 +41,8 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "ad3f8dc49486cbc3df55cd218b6a4b57c4621f49a92e5fd1f83953fe597253a3",
-    "generatedFromCommit": "18e0b0c0773775ef047f8909f76e00e2799d17c9",
+    "sha256": "06cf7e9fd645734ab13cf94fe8432dcac347eee082f48209c6269be77e133037",
+    "generatedFromCommit": "c0970374b267615126db73276212a089c39ed9be",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
       "1.35",
@@ -66,10 +66,10 @@
     "disposition": "No published predecessor. Synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 21,
+  "revision": 22,
   "supersedes": {
-    "freezeCommit": "ceec59d00da237923be2fb5901003fe1ca3bf1bf",
-    "sha256": "0799ed4e6de435c001f79210f7a927cf3b81388dcd73bfea2873952730cdbb6c"
+    "freezeCommit": "38e7c689adb043f4300510a62b1e5d3654645579",
+    "sha256": "f23769db4ac8a5586e236c06d1eb45c8c542292efc61f827db1d97b6918cae5d"
   },
-  "revisionReason": "Add ordinary-policy-waits for both resource families under OnApproval and Never, using new empty databases and the unchanged two-minute cadence. The receiver is observed for ten minutes plus delivery allowance. Complete watches refuse Apply or changed controls; native observations establish continued refresh. Only exact repeats of the separately recorded pre-existing unresolved incident are excluded. Both producer phases are explicit prerequisites. Predicate controls, race detection, tagged vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
+  "revisionReason": "Add lock-release-owed for both resource families on PostgreSQL and MySQL. Each case requires an approved real Apply, its original Lease release refusal, native receiver firing and resolution bounds, and a successful sibling Plan after the watched release. The sibling may publish a plan or prove convergence without one; stale conditions and incomplete operations are refused. Predicate controls, race detection, tagged vet and the complete source/API-server gate passed. Native final-identity execution remains pending. All eight profile source hashes, operating targets, alert thresholds, RPO/RTO, 30 functional cells and 36 recovery combinations remain unchanged. No requirement was removed; acceptance remains Not assessed."
 }
