@@ -251,12 +251,12 @@ func writeSummary(out io.Writer, r report) error {
 			figure(sourceManagerContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
 			figure(sourceAPI, "%s", apiAdmissionSummary(s.APIServers)), strings.Join(outcome, ", "))
 	}
-	b.WriteString("\nThe main table retains freshness maxima over all resources, including suspended ones. Eligible freshness below excludes only suspended or deleting resources; approval-gated resources still refresh. Missing timestamps or an older report without per-resource readings remain unavailable.\n\n")
-	b.WriteString("| Scenario | Eligible readings | Suspended readings | Deleting readings | Missing observations | Missing deadlines | Eligible oldest reading s | Eligible overdue s |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("\nThe main table retains freshness maxima over all resources, including suspended ones. Eligible freshness below excludes only suspended or deleting resources; approval-gated resources still refresh. Active claims retain their age and stay eligible for observation freshness. Scheduled overdue measures persisted deadlines; a claim without a deadline is in flight, while a missing deadline without a claim remains unavailable. Scheduled and in-flight counts can overlap during recovery. Older reports without per-resource readings remain unavailable.\n\n")
+	b.WriteString("| Scenario | Eligible readings | Suspended readings | Deleting readings | Missing observations | Missing deadlines | Scheduled readings | In-flight readings | Eligible oldest reading s | Scheduled overdue s | Active claim age s |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, s := range r.Scenarios {
 		f := s.EligibleFreshness
 		if f == nil {
-			fmt.Fprintf(&b, "| %s | n/a | n/a | n/a | n/a | n/a | n/a | n/a |\n", s.Name)
+			fmt.Fprintf(&b, "| %s | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |\n", s.Name)
 			continue
 		}
 		number := func(v *float64) string {
@@ -265,7 +265,7 @@ func writeSummary(out io.Writer, r report) error {
 			}
 			return fmt.Sprintf("%.0f", *v)
 		}
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %s | %s |\n", s.Name, f.EligibleReadings, f.SuspendedReadings, f.DeletingReadings, f.MissingObservations, f.MissingDeadlines, number(f.ObservationAgeMaxSeconds), number(f.OverdueMaxSeconds))
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %s | %s | %s |\n", s.Name, f.EligibleReadings, f.SuspendedReadings, f.DeletingReadings, f.MissingObservations, f.MissingDeadlines, f.ScheduledReadings, f.InFlightReadings, number(f.ObservationAgeMaxSeconds), number(f.OverdueMaxSeconds), number(f.ActiveOperationAgeMaxSeconds))
 	}
 	_, err := io.WriteString(out, b.String())
 	return err

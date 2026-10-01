@@ -70,3 +70,16 @@ The source manifest identity is recorded in the fixture. The export regression
 reconstructs the captured chunk bytes through the production plan store,
 checks the projection and reimports the emitted archive. Replacement chunk
 UIDs, corrupt payloads/projections and missing pins must stop before deletion.
+
+`soak-active-schema-freshness.json` and
+`soak-active-migration-freshness.json` retain API objects read during the
+PostgreSQL soak on Kubernetes 1.37.0 on 2026-10-01, operator source
+`5db6ef68b1827bdbb45f665ddecad2e3ebfa4af7`. Only `managedFields` is removed.
+The schema has a Plan claim and the migration has an Apply claim; both omit
+`nextReconciliationTime` while work is in flight. The tests set the measurement
+clock seventeen seconds after the captured claim began, preserving the native
+object fields. They require a retained claim, keep observation age measurable,
+and leave scheduled overdue unavailable when no scheduled reading exists.
+A phase without a claim, a malformed claim, and a hung claim cannot produce a
+passing freshness bound. These objects reproduce the measurement behavior;
+they do not establish the soak's outcome or a capacity acceptance result.

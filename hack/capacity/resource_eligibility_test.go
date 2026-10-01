@@ -180,11 +180,146 @@ func TestFreshnessSummaryPreservesUnavailableBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range []string{
-		"| older | n/a | n/a | n/a | n/a | n/a | n/a | n/a |",
-		"| paused | 0 | 20 | 0 | 0 | 0 | n/a | n/a |",
+		"| older | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |",
+		"| paused | 0 | 20 | 0 | 0 | 0 | 0 | 0 | n/a | n/a | n/a |",
 	} {
 		if strings.Count(text.String(), row) != 1 {
 			t.Fatalf("missing or duplicated freshness row %q", row)
 		}
+	}
+}
+
+func nativeActiveFreshness(t *testing.T, family string) (*unstructured.Unstructured, resourceFreshness) {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/soak-active-" + family + "-freshness.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &unstructured.Unstructured{}
+	if err := json.Unmarshal(raw, o); err != nil {
+		t.Fatal(err)
+	}
+	started, _, err := unstructured.NestedString(o.Object, "status", "activeOperation", "startedAt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, err := time.Parse(time.RFC3339Nano, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := []string{"status", "target", "lastObservedAt"}
+	if family == "migration" {
+		path = []string{"status", "history", "observedAt"}
+	}
+	r, err := readResourceFreshness(family, o, at.Add(17*time.Second), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return o, r
+}
+
+func TestFreshnessRetainsNativeActiveClaims(t *testing.T) {
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			_, r := nativeActiveFreshness(t, family)
+			if r.ActiveOperation == nil || r.NextReconciliationTime != nil || r.ObservedAt == nil {
+				t.Fatalf("fixture does not reproduce the in-flight reading: %+v", r)
+			}
+			s := sample{Resources: 1, ResourceFreshness: []resourceFreshness{r}}
+			// Replay from retained JSON, as a later report audit does.
+			raw, err := json.Marshal(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored sample
+			if err := json.Unmarshal(raw, &restored); err != nil {
+				t.Fatal(err)
+			}
+			c := eligibleFreshness([]sample{restored})
+			if c == nil || c.EligibleReadings != 1 || c.InFlightReadings != 1 || c.ScheduledReadings != 0 || c.MissingDeadlines != 0 || c.OverdueMaxSeconds != nil || c.ActiveOperationAgeMaxSeconds == nil || *c.ActiveOperationAgeMaxSeconds != 17 || c.ObservationAgeMaxSeconds == nil || *c.ObservationAgeMaxSeconds != r.ReadAt.Sub(*r.ObservedAt).Seconds() {
+				t.Fatalf("active work lost its age or fabricated a scheduled bound: %+v", c)
+			}
+
+			// Recovery may retain a scheduled retry beside the active claim.
+			// Keep measuring that deadline rather than exempting all claims.
+			due := r.ReadAt.Add(-42 * time.Second)
+			s.ResourceFreshness[0].NextReconciliationTime = &due
+			c = eligibleFreshness([]sample{s})
+			if c == nil || c.ScheduledReadings != 1 || c.InFlightReadings != 1 || c.OverdueMaxSeconds == nil || *c.OverdueMaxSeconds != 42 {
+				t.Fatalf("active claim hid its overdue retry: %+v", c)
+			}
+			// A hung claim must increase age, not vanish from freshness.
+			s.ResourceFreshness[0].ReadAt = r.ReadAt.Add(time.Hour)
+			c = eligibleFreshness([]sample{s})
+			if c == nil || *c.ActiveOperationAgeMaxSeconds != 3617 || *c.ObservationAgeMaxSeconds != r.ReadAt.Sub(*r.ObservedAt).Seconds()+3600 {
+				t.Fatalf("hung claim hid stale observations: %+v", c)
+			}
+		})
+	}
+}
+
+func TestFreshnessRequiresAnActualClaim(t *testing.T) {
+	for _, family := range []string{"schema", "migration"} {
+		for _, mode := range []string{"phase only", "empty", "no id", "no job", "no start", "future start", "unknown type", "wrong family", "wrong field type", "before job creation"} {
+			t.Run(family+"/"+mode, func(t *testing.T) {
+				o, r := nativeActiveFreshness(t, family)
+				claim, _, _ := unstructured.NestedMap(o.Object, "status", "activeOperation")
+				switch mode {
+				case "phase only":
+					unstructured.RemoveNestedField(o.Object, "status", "activeOperation")
+				case "empty":
+					claim = map[string]any{}
+				case "no id":
+					delete(claim, "id")
+				case "no job":
+					delete(claim, "jobName")
+				case "no start":
+					delete(claim, "startedAt")
+				case "future start":
+					claim["startedAt"] = r.ReadAt.Add(time.Second).Format(time.RFC3339Nano)
+				case "unknown type":
+					claim["type"] = "FutureOperation"
+				case "wrong family":
+					claim["type"] = "History"
+					if family == "migration" {
+						claim["type"] = "Plan"
+					}
+				case "wrong field type":
+					claim["id"] = true
+				case "before job creation":
+					delete(claim, "jobUID")
+				}
+				if mode != "phase only" {
+					if err := unstructured.SetNestedMap(o.Object, claim, "status", "activeOperation"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				got, err := readResourceFreshness(family, o, r.ReadAt, []string{"status", "unusedObservation"})
+				if mode != "phase only" && mode != "before job creation" {
+					if err == nil {
+						t.Fatal("malformed claim became in-flight evidence")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				c := eligibleFreshness([]sample{{Resources: 1, ResourceFreshness: []resourceFreshness{got}}})
+				if c == nil || c.OverdueMaxSeconds != nil {
+					t.Fatalf("fabricated a scheduled bound: %+v", c)
+				}
+				if mode == "phase only" && (c.MissingDeadlines != 1 || c.InFlightReadings != 0 || c.ActiveOperationAgeMaxSeconds != nil) {
+					t.Fatalf("phase label invented a claim: %+v", c)
+				}
+				if mode == "before job creation" && (c.MissingDeadlines != 0 || c.InFlightReadings != 1) {
+					t.Fatalf("discarded claim before Job creation: %+v", c)
+				}
+			})
+		}
+	}
+	_, r := nativeActiveFreshness(t, "schema")
+	r.ActiveOperation.ID = ""
+	if eligibleFreshness([]sample{{Resources: 1, ResourceFreshness: []resourceFreshness{r}}}) != nil {
+		t.Fatal("replayed malformed claim became evidence")
 	}
 }

@@ -300,13 +300,22 @@ same cleanup path as the workload fixtures. This fixture supplies the declared
 background population; its presence alone does not establish performance.
 
 Each sample retains the UID, resource version, generation, suspension/deletion
-state, read time, and database observation and reconciliation timestamps of
+state, read time, active operation claim, and database observation and reconciliation timestamps of
 every workload resource. The report keeps its original maxima across all
 resources and separately computes `eligibleFreshness` for resources that are
 neither suspended nor deleting. Waiting for approval does not exclude a
 resource: it still refreshes. Missing timestamps, partial lists, and older
 reports without these per-resource readings cannot establish an eligible
 freshness bound; the affected values remain `null` (`n/a` in the summary).
+
+Claiming an operation clears its scheduled reconciliation timestamp. A valid
+persisted claim without that timestamp counts as in flight, and its age is
+reported separately. It remains eligible for observation age: a long-running
+operation cannot hide stale database observations. A phase name alone cannot
+establish a claim. A missing deadline without a claim remains unavailable,
+and a population with no scheduled readings has no scheduled overdue bound.
+Recovery can retain both a claim and a deadline; those readings contribute to
+both counts, and their actual deadline still determines scheduled overdue.
 
 The full workload and 90-minute soak remain required for 0.2.0 qualification.
 A successful metrics collection does not establish a capacity bound.
