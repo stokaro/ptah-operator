@@ -285,6 +285,35 @@ or full soak.
 The full workload and 90-minute soak remain required for 0.2.0 qualification.
 A successful metrics collection does not establish a capacity bound.
 
+## Repeated updates and retention maintenance
+
+`CAPACITY_VARIED_INPUTS=1 CAPACITY_WORKLOAD=support/capacity/soak.json`
+selects the populated 90-minute workload. Each ten-minute round updates five
+resources of each family, replaces two idle resources of each family, and
+checks the databases before and after those changes.
+
+The round then exports retained plans and suspends all twenty resources. It
+waits for the controllers to acknowledge suspension and for every workload Job
+and Pod to finish. Managers remain running. Before each obsolete-plan deletion,
+the collector re-reads every documented retention pin, including the unresolved
+migration record's metadata copy, and verifies the exported bytes. Deletions
+carry the plan UID and resource version. The collector waits for the plan and
+its owned chunks and projections to disappear, verifies pinned plans again,
+then resumes the resources and checks convergence and database contents.
+
+The report records the before/after inventories, archive hashes, exact deleted
+identities, garbage collection results and a complete post-cleanup metric
+sample. The final three checkpoints require non-growing retained payload within
+128 MiB and the same manager processes, each within 192 MiB RSS and 10% of its
+first checkpoint. Missing measurements and broken process continuity fail the
+comparison. A shorter diagnostic with fewer than three rounds cannot establish
+that plateau.
+
+This maintenance path does not establish the separate pending-approval and
+unresolved-Apply retention fault scenario. The approval backlog, unrelated
+objects, overload cases and the full qualified execution matrix remain required
+by [the frozen profile](https://github.com/stokaro/ptah-operator/blob/master/support/qualification/0.2.0.md).
+
 ## The first reading {#lab-20}
 
 The Capacity workflow ran the `lab-20` workload on 2026-09-26, run

@@ -72,6 +72,10 @@ func churnReplacement(original *unstructured.Unstructured, family, workloadName 
 // the only retained SQL. Loading through the plan store verifies every bound
 // chunk and the reconstructed digest before any DELETE can be submitted.
 func (s *scenarios) exportChurn(ctx context.Context, original *unstructured.Unstructured, family string, round, attempt int) (string, string, []retainedObject, error) {
+	return s.exportOwnedPlans(ctx, original, family, filepath.Join(s.evidenceDir, "churn"), fmt.Sprintf("round-%02d-%s-%s-attempt-%d.json", round, family, original.GetName(), attempt))
+}
+
+func (s *scenarios) exportOwnedPlans(ctx context.Context, original *unstructured.Unstructured, family, directory, filename string) (string, string, []retainedObject, error) {
 	if s.inputReader == nil {
 		return "", "", nil, fmt.Errorf("churn requires a plan-store reader")
 	}
@@ -168,11 +172,10 @@ func (s *scenarios) exportChurn(ctx context.Context, original *unstructured.Unst
 	if err != nil {
 		return "", "", nil, err
 	}
-	directory := filepath.Join(s.evidenceDir, "churn")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", "", nil, err
 	}
-	path := filepath.Join(directory, fmt.Sprintf("round-%02d-%s-%s-attempt-%d.json", round, family, original.GetName(), attempt))
+	path := filepath.Join(directory, filename)
 	output, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", "", nil, err

@@ -209,7 +209,7 @@ func run() error {
 	done := make(chan error, 1)
 	go func() { done <- watch.run(sampling, finishSampling) }()
 
-	steps := &scenarios{checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
+	steps := &scenarios{sampleSnapshot: func() []sample { samples, _ := watch.snapshot(); return samples }, checkpoint: checkpoint, evidenceDir: *outDir, restartJobs: func() []jobRecord {
 		_, jobs := watch.snapshot()
 		return jobs
 	}, inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
@@ -223,10 +223,11 @@ func run() error {
 	}
 	cycleProof := collectCycleEvidence(recorders)
 	if load.Soak != nil && steps.soakWindow != nil {
-		scenarioErr = errors.Join(scenarioErr, steps.validateSoakCycles(cycleProof))
+		scenarioErr = errors.Join(scenarioErr, steps.validateSoakCycles(cycleProof), steps.validateRetentionPlateau())
 	}
 	environment["databaseCheckpoints"] = steps.databaseCheckpoints
 	environment["churn"] = steps.churnProofs
+	environment["retention"] = steps.retentionProofs
 	for _, history := range cycleProof.Histories {
 		if history.Error != "" {
 			scenarioErr = errors.Join(scenarioErr, fmt.Errorf("%s cycles: %s", history.Family, history.Error))

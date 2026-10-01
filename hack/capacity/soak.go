@@ -241,7 +241,13 @@ func (s *scenarios) soakRound(ctx context.Context, round int, deadline time.Time
 	if err := s.churn(ctx, round); err != nil {
 		return err
 	}
-	return s.checkpointDatabase(ctx, round, fmt.Sprintf("round-%02d-after-churn", round))
+	if err := s.checkpointDatabase(ctx, round, fmt.Sprintf("round-%02d-after-churn", round)); err != nil {
+		return err
+	}
+	if err := s.maintenance(ctx, round); err != nil {
+		return err
+	}
+	return s.checkpointDatabase(ctx, round, fmt.Sprintf("round-%02d-after-maintenance", round))
 }
 
 func (s *scenarios) validateSoakCycles(evidence cycleEvidence) error {

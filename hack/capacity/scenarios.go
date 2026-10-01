@@ -45,6 +45,8 @@ type scenarios struct {
 	checkpoint          func(context.Context, int, string) (databaseCheckpoint, error)
 	databaseCheckpoints []databaseCheckpoint
 	churnProofs         []churnProof
+	retentionProofs     []retentionProof
+	sampleSnapshot      func() []sample
 	soakWindow          *window
 	evidenceDir         string
 
