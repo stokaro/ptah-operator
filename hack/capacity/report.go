@@ -31,6 +31,7 @@ type report struct {
 
 // scenarioCost is one window reduced to the figures the capacity page names.
 type scenarioCost struct {
+	EligibleFreshness *freshnessCost `json:"eligibleFreshness"`
 	window
 	RefreshCycles         []resourceCycleCount `json:"refreshCycles"`
 	CycleProblems         []string             `json:"cycleProblems,omitempty"`
@@ -100,6 +101,7 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 			inside = append(inside, reading)
 		}
 	}
+	out.EligibleFreshness = eligibleFreshness(inside)
 	out.Samples = len(inside)
 	for _, reading := range inside {
 		for _, source := range reading.Incomplete {
@@ -248,6 +250,22 @@ func writeSummary(out io.Writer, r report) error {
 			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagerContinuity, "%.2f", s.ManagerCPUCores),
 			figure(sourceManagerContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
 			figure(sourceAPI, "%s", apiAdmissionSummary(s.APIServers)), strings.Join(outcome, ", "))
+	}
+	b.WriteString("\nThe main table retains freshness maxima over all resources, including suspended ones. Eligible freshness below excludes only suspended or deleting resources; approval-gated resources still refresh. Missing timestamps or an older report without per-resource readings remain unavailable.\n\n")
+	b.WriteString("| Scenario | Eligible readings | Suspended readings | Deleting readings | Missing observations | Missing deadlines | Eligible oldest reading s | Eligible overdue s |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, s := range r.Scenarios {
+		f := s.EligibleFreshness
+		if f == nil {
+			fmt.Fprintf(&b, "| %s | n/a | n/a | n/a | n/a | n/a | n/a | n/a |\n", s.Name)
+			continue
+		}
+		number := func(v *float64) string {
+			if v == nil {
+				return "n/a"
+			}
+			return fmt.Sprintf("%.0f", *v)
+		}
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %s | %s |\n", s.Name, f.EligibleReadings, f.SuspendedReadings, f.DeletingReadings, f.MissingObservations, f.MissingDeadlines, number(f.ObservationAgeMaxSeconds), number(f.OverdueMaxSeconds))
 	}
 	_, err := io.WriteString(out, b.String())
 	return err

@@ -57,7 +57,7 @@ func measurementFixture(t *testing.T, failPath, managerMetrics string, mutate ..
 		case strings.HasPrefix(r.URL.Path, "/apis/operator.ptah.run/v1alpha1/namespaces/work/"):
 			list["apiVersion"] = "operator.ptah.run/v1alpha1"
 			if strings.HasSuffix(r.URL.Path, "/ptahschemas") || strings.HasSuffix(r.URL.Path, "/ptahschemaplans") {
-				list["items"] = []any{map[string]any{"metadata": map[string]any{"name": "already-read"}}}
+				list["items"] = []any{map[string]any{"metadata": map[string]any{"name": "already-read", "namespace": "work", "uid": "already-read-uid", "resourceVersion": "1", "generation": int64(1)}}}
 			}
 		default:
 			t.Errorf("unexpected API request: %s", r.URL.Path)
@@ -175,8 +175,12 @@ func TestFailedReadsAreMissingEvidence(t *testing.T) {
 				if !strings.HasPrefix(line, "| probe |") {
 					continue
 				}
-				rows++
 				parts := strings.Split(line, "|")
+				// The separate freshness table has eight columns.
+				if len(parts) != 15 {
+					continue
+				}
+				rows++
 				for _, column := range columns[source] {
 					if strings.TrimSpace(parts[column]) != "n/a" {
 						t.Errorf("summary column %d still reports %q after a failed read", column, parts[column])

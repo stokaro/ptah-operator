@@ -20,7 +20,7 @@ const (
 
 var sampleFields = map[string][]string{
 	sourcePods:      {"podsPending", "podsRunning"},
-	sourceResources: {"resources", "converged", "observationAgeMax", "overdueMax"},
+	sourceResources: {"resources", "converged", "observationAgeMax", "overdueMax", "resourceFreshness"},
 	sourceRetained:  {"plans", "chunks", "chunkBytes"},
 	sourceManagers:  {"managers"},
 	sourceAPI:       {"apiServers"},
@@ -32,7 +32,7 @@ var scenarioFields = map[string][]string{
 	sourceAPIContinuity:     {"apiServers", "apiRejected"},
 	sourceManagerContinuity: {"managerCPUCoresAverage", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
 	sourcePods:              {"podsPendingMax", "podsRunningMax"},
-	sourceResources:         {"observationAgeMaxSeconds", "overdueMaxSeconds"},
+	sourceResources:         {"observationAgeMaxSeconds", "overdueMaxSeconds", "eligibleFreshness"},
 	sourceRetained:          {"plansAtEnd", "chunkBytesAtEnd"},
 	sourceManagers:          {"managerRSSMaxBytes", "managerCPUCoresAverage", "workqueueDepthMax", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
 	sourceAPI:               {"apiServers", "apiRejected"},

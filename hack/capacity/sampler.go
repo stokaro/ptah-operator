@@ -31,6 +31,7 @@ var (
 
 // sample is one reading of everything the report is built from.
 type sample struct {
+	ResourceFreshness []resourceFreshness       `json:"resourceFreshness"`
 	Incomplete        []string                  `json:"incomplete,omitempty"`
 	At                time.Time                 `json:"at"`
 	PodsPending       int                       `json:"podsPending"`
@@ -193,6 +194,7 @@ func (s *sampler) readPodsNamespace(ctx context.Context, into *sample, namespace
 // readResources measures how stale each resource's last reading is, against
 // its own timestamps rather than against when this loop looked.
 func (s *sampler) readResources(ctx context.Context, now time.Time, into *sample) error {
+	into.ResourceFreshness = []resourceFreshness{}
 	for _, namespace := range workloadNamespaces(s.namespace, s.namespaces) {
 		if err := s.readResourcesNamespace(ctx, now, into, namespace); err != nil {
 			return fmt.Errorf("namespace %s: %w", namespace, err)
@@ -214,7 +216,17 @@ func (s *sampler) readResourcesNamespace(ctx context.Context, now time.Time, int
 		if err != nil {
 			return err
 		}
+		readAt := time.Now().UTC()
 		for _, item := range list.Items {
+			familyName := "schema"
+			if family.resource == migrationResource {
+				familyName = "migration"
+			}
+			freshness, err := readResourceFreshness(familyName, &item, readAt, family.observed)
+			if err != nil {
+				return err
+			}
+			into.ResourceFreshness = append(into.ResourceFreshness, freshness)
 			into.Resources++
 			if phase, _, _ := unstructured.NestedString(item.Object, "status", "phase"); phase == family.converged {
 				into.Converged++
