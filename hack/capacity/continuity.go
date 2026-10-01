@@ -11,19 +11,23 @@ import (
 )
 
 type processIdentity struct {
-	PodUID             string
-	ContainerID        string
-	ContainerStartedAt time.Time
-	ProcessStartedAt   float64
-	RestartCount       int32
+	PodUID             string    `json:"podUID"`
+	ContainerID        string    `json:"containerID"`
+	ContainerStartedAt time.Time `json:"containerStartedAt"`
+	ProcessStartedAt   float64   `json:"processStartedAt"`
+	RestartCount       int32     `json:"restartCount"`
 }
 
 func managerIdentity(pod *corev1.Pod) (processIdentity, error) {
+	return containerIdentity(pod, "manager")
+}
+
+func containerIdentity(pod *corev1.Pod, name string) (processIdentity, error) {
 	if pod.UID == "" || pod.Status.Phase != corev1.PodRunning {
-		return processIdentity{}, fmt.Errorf("manager %s has no running Pod identity", pod.Name)
+		return processIdentity{}, fmt.Errorf("Pod %s has no running identity", pod.Name)
 	}
 	for _, container := range pod.Status.ContainerStatuses {
-		if container.Name != "manager" {
+		if container.Name != name {
 			continue
 		}
 		if container.ContainerID == "" || container.State.Running == nil || container.State.Running.StartedAt.IsZero() {
@@ -32,7 +36,7 @@ func managerIdentity(pod *corev1.Pod) (processIdentity, error) {
 		return processIdentity{PodUID: string(pod.UID), ContainerID: container.ContainerID,
 			ContainerStartedAt: container.State.Running.StartedAt.Time, RestartCount: container.RestartCount}, nil
 	}
-	return processIdentity{}, fmt.Errorf("manager %s has no running manager container identity", pod.Name)
+	return processIdentity{}, fmt.Errorf("Pod %s has no running %s container identity", pod.Name, name)
 }
 
 func validProcessStart(started float64) bool {

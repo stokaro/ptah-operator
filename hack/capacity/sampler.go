@@ -42,7 +42,8 @@ type sample struct {
 	Chunks            int                       `json:"chunks"`
 	ChunkBytes        int64                     `json:"chunkBytes"`
 	Managers          map[string]managerReading `json:"managers"`
-	APIServer         *apiReading               `json:"apiServer,omitempty"`
+	APIServers        map[string]apiReading     `json:"apiServers"`
+	APITargets        []apiIdentity             `json:"apiTargets"`
 }
 
 // managerReading is one manager Pod's own account of itself.
@@ -60,12 +61,6 @@ type managerReading struct {
 	QueueWait          histogram          `json:"queueWait"`
 }
 
-// apiReading is what the API server counted about the operator's admission.
-type apiReading struct {
-	Rejected  float64   `json:"rejected"`
-	Admission histogram `json:"admission"`
-}
-
 // jobRecord follows one operation Job from creation to its end.
 type jobRecord struct {
 	Name      string     `json:"name"`
@@ -79,14 +74,16 @@ type jobRecord struct {
 }
 
 type sampler struct {
-	clientset         kubernetes.Interface
-	dynamic           dynamic.Interface
-	namespace         string
-	operatorNamespace string
-	selector          string
-	managerSelector   string
-	metricsPort       int
-	every             time.Duration
+	expectedAPIServers int
+	scrapeAPI          func(context.Context, corev1.Pod) (scrape, error)
+	clientset          kubernetes.Interface
+	dynamic            dynamic.Interface
+	namespace          string
+	operatorNamespace  string
+	selector           string
+	managerSelector    string
+	metricsPort        int
+	every              time.Duration
 
 	mu      sync.Mutex
 	samples []sample
@@ -119,11 +116,7 @@ func (s *sampler) take(ctx context.Context) {
 		{sourceResources, func() error { return s.readResources(ctx, now, &reading) }},
 		{sourceRetained, func() error { return s.readRetained(ctx, &reading) }},
 		{sourceManagers, func() error { return s.readManagers(ctx, &reading) }},
-		{sourceAPI, func() error {
-			var err error
-			reading.APIServer, err = s.readAPIServer(ctx)
-			return err
-		}},
+		{sourceAPI, func() error { return s.readAPIServers(ctx, &reading) }},
 		{sourceJobs, func() error { return s.readJobs(ctx) }},
 	} {
 		if err := source.read(); err != nil {
@@ -299,18 +292,6 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 		problems = append(problems, errors.New("no running manager produced process metrics"))
 	}
 	return errors.Join(problems...)
-}
-
-func (s *sampler) readAPIServer(ctx context.Context) (*apiReading, error) {
-	reading, err := scrapeAPIServer(ctx, s.clientset)
-	if err != nil {
-		return nil, err
-	}
-	rejected, _ := reading.value("apiserver_flowcontrol_rejected_requests_total", nil)
-	return &apiReading{
-		Rejected:  rejected,
-		Admission: reading.histogram("apiserver_admission_webhook_admission_duration_seconds", map[string]string{"name": "*"}).onlyPtah(reading),
-	}, nil
 }
 
 // onlyPtah keeps the admission latency of this operator's webhooks, which are

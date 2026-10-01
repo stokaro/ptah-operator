@@ -43,8 +43,17 @@ apiserver_admission_webhook_admission_duration_seconds_count{name="ptah.operator
 			admission := (histogram{}).onlyPtah(metrics)
 			base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 			samples := []sample{
-				{At: base, Managers: map[string]managerReading{"manager": identifiedManager("manager", managerReading{})}, APIServer: &apiReading{}},
-				{At: base.Add(time.Minute), Managers: map[string]managerReading{"manager": identifiedManager("manager", managerReading{QueueWait: queue})}, APIServer: &apiReading{Admission: admission}},
+				{At: base, Managers: map[string]managerReading{"manager": identifiedManager("manager", managerReading{})}},
+				{At: base.Add(time.Minute), Managers: map[string]managerReading{"manager": identifiedManager("manager", managerReading{QueueWait: queue})}},
+			}
+			for i := range samples {
+				h := histogram{}
+				if i == 1 {
+					h = admission
+				}
+				api := identifiedAPI("api", samples[i].At, h)
+				samples[i].APIServers = map[string]apiReading{"api": api}
+				samples[i].APITargets = []apiIdentity{api.apiIdentity}
 			}
 			w := window{Name: name, Start: base, End: base.Add(time.Minute)}
 			original := cost(w, samples, nil)
@@ -68,12 +77,12 @@ apiserver_admission_webhook_admission_duration_seconds_count{name="ptah.operator
 			if beyond {
 				want = math.Inf(1)
 			}
-			for _, q := range []quantiles{original.QueueWaitSeconds, original.AdmissionSeconds, restored.QueueWaitSeconds, restored.AdmissionSeconds, retained.Scenarios[0].QueueWaitSeconds, retained.Scenarios[0].AdmissionSeconds} {
+			for _, q := range []quantiles{original.QueueWaitSeconds, original.APIServers["api"].AdmissionSeconds, restored.QueueWaitSeconds, restored.APIServers["api"].AdmissionSeconds, retained.Scenarios[0].QueueWaitSeconds, retained.Scenarios[0].APIServers["api"].AdmissionSeconds} {
 				if q.Count != 20 || q.P50 != 0.1 || q.P95 != want {
 					t.Errorf("retained or recomputed percentile = %+v, want 20 observations, p50 0.1, p95 %v", q, want)
 				}
 			}
-			for _, h := range []histogram{retained.Samples[1].Managers["manager"].QueueWait, retained.Samples[1].APIServer.Admission} {
+			for _, h := range []histogram{retained.Samples[1].Managers["manager"].QueueWait, retained.Samples[1].APIServers["api"].Admission} {
 				if h.count != 20 || h.sum != 8 || len(h.buckets) != 3 || h.buckets[math.Inf(1)] != 20 {
 					t.Errorf("raw histogram lost: %+v", h)
 				}

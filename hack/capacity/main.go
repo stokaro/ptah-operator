@@ -51,6 +51,7 @@ func run() error {
 		kubeconfig   = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
 		workloadPath = flag.String("workload", "support/capacity/workload.json", "the workload to run")
 		outDir       = flag.String("out", "", "directory to write report.json and summary.md into")
+		apiCount     = flag.Int("expected-api-servers", 3, "required number of independently sampled control-plane API servers")
 		metricsPort  = flag.Int("metrics-port", 8080, "the manager's metrics port")
 		schemaV1     = flag.String("schema-v1", "", "the first schema artifact, as an oci:// reference by digest")
 		schemaV2     = flag.String("schema-v2", "", "the schema artifact the change batch moves to")
@@ -67,6 +68,9 @@ func run() error {
 	flag.StringVar(&in.databaseSecret, "database-secret", "capacity-db-%d", "Secret name pattern, one database per resource")
 	flag.StringVar(&in.registryIP, "registry-ip", "", "the registry's address, for the outage")
 	flag.Parse()
+	if *apiCount < 1 {
+		return errors.New("expected-api-servers must be positive")
+	}
 
 	in.schemaRefs = [2]string{*schemaV1, *schemaV2}
 	in.migrationRefs = [2]string{*migrationV1, *migrationV2}
@@ -99,7 +103,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	environment["expectedAPIServers"] = *apiCount
 	watch := &sampler{
+		expectedAPIServers: *apiCount,
+		scrapeAPI: func(ctx context.Context, pod corev1.Pod) (scrape, error) {
+			return scrapeAPIPod(ctx, config, clientset, pod)
+		},
 		clientset: clientset, dynamic: dynamicClient,
 		namespace: in.namespace, operatorNamespace: in.operatorNamespace,
 		selector: capacityLabel + "=" + load.Name, managerSelector: in.managerSelector,

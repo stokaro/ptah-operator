@@ -13,6 +13,7 @@ const (
 	sourceManagers          = "manager-metrics"
 	sourceManagerContinuity = "manager-counter-continuity"
 	sourceAPI               = "api-server-metrics"
+	sourceAPIContinuity     = "api-server-counter-continuity"
 	sourceJobs              = "jobs"
 )
 
@@ -21,17 +22,18 @@ var sampleFields = map[string][]string{
 	sourceResources: {"resources", "converged", "observationAgeMax", "overdueMax"},
 	sourceRetained:  {"plans", "chunks", "chunkBytes"},
 	sourceManagers:  {"managers"},
-	sourceAPI:       {"apiServer"},
+	sourceAPI:       {"apiServers"},
 	sourceJobs:      {}, // Job readings are retained separately; preserve the failed source.
 }
 
 var scenarioFields = map[string][]string{
+	sourceAPIContinuity:     {"apiServers", "apiRejected"},
 	sourceManagerContinuity: {"managerCPUCoresAverage", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
 	sourcePods:              {"podsPendingMax", "podsRunningMax"},
 	sourceResources:         {"observationAgeMaxSeconds", "overdueMaxSeconds"},
 	sourceRetained:          {"plansAtEnd", "chunkBytesAtEnd"},
 	sourceManagers:          {"managerRSSMaxBytes", "managerCPUCoresAverage", "workqueueDepthMax", "queueWaitSeconds", "clientThrottleSeconds", "requests429"},
-	sourceAPI:               {"admissionSeconds", "apiRejected"},
+	sourceAPI:               {"apiServers", "apiRejected"},
 	sourceJobs:              {"jobsCreated", "jobsFailed", "jobsPerMinuteAverage", "jobsPerMinutePeak", "jobStartSeconds", "jobCompletionSeconds"},
 }
 
@@ -64,7 +66,7 @@ func (s sample) MarshalJSON() ([]byte, error) {
 }
 
 func (s scenarioCost) missing(source string) bool {
-	return s.Samples == 0 || s.Incomplete[source] > 0 || source == sourceManagerContinuity && s.Incomplete[sourceManagers] > 0
+	return s.Samples == 0 || s.Incomplete[source] > 0 || source == sourceManagerContinuity && s.Incomplete[sourceManagers] > 0 || source == sourceAPI && s.Incomplete[sourceAPIContinuity] > 0
 }
 
 func (s scenarioCost) MarshalJSON() ([]byte, error) {

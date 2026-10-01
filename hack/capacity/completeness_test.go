@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -26,12 +27,20 @@ func measurementFixture(t *testing.T, failPath, managerMetrics string, mutate ..
 			_, _ = w.Write([]byte(managerMetrics))
 			return
 		}
-		if r.URL.Path == "/metrics" {
-			_, _ = w.Write([]byte("# TYPE apiserver_flowcontrol_rejected_requests_total counter\napiserver_flowcontrol_rejected_requests_total 0\n"))
+		if strings.HasPrefix(r.URL.Path, "/metrics/") {
+			_, _ = w.Write([]byte("# TYPE apiserver_flowcontrol_rejected_requests_total counter\napiserver_flowcontrol_rejected_requests_total 0\n# TYPE process_start_time_seconds gauge\nprocess_start_time_seconds 1790812800\n"))
 			return
 		}
 		list := map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{}}
 		switch {
+		case r.URL.Path == "/api/v1/nodes":
+			list["kind"] = "NodeList"
+			list["items"] = []any{map[string]any{"metadata": map[string]any{"name": "control-one", "uid": "node-uid", "labels": map[string]any{"node-role.kubernetes.io/control-plane": ""}}}}
+		case r.URL.Path == "/api/v1/namespaces/kube-system/pods":
+			list["kind"] = "PodList"
+			list["items"] = []any{fixtureAPIPod()}
+		case r.URL.Path == "/api/v1/namespaces/kube-system/pods/api-one":
+			list = fixtureAPIPod()
 		case r.URL.Path == "/api/v1/namespaces/operator/pods":
 			list["kind"] = "PodList"
 			list["items"] = []any{
@@ -71,7 +80,13 @@ func measurementFixture(t *testing.T, failPath, managerMetrics string, mutate ..
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &sampler{clientset: clientset, dynamic: dynamicClient, namespace: "work", operatorNamespace: "operator",
+	return &sampler{expectedAPIServers: 1, scrapeAPI: func(ctx context.Context, pod corev1.Pod) (scrape, error) {
+		body, err := clientset.CoreV1().RESTClient().Get().AbsPath("/metrics/" + pod.Name).DoRaw(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return parseScrape(body)
+	}, clientset: clientset, dynamic: dynamicClient, namespace: "work", operatorNamespace: "operator",
 		metricsPort: 8080, jobs: map[string]*jobRecord{}}
 }
 
@@ -85,6 +100,16 @@ func fixtureManager(name string) map[string]any {
 				"state": map[string]any{"running": map[string]any{"startedAt": "2026-10-01T00:00:00Z"}}},
 		}},
 	}
+}
+
+func fixtureAPIPod() map[string]any {
+	pod := fixtureManager("api-one")
+	meta := pod["metadata"].(map[string]any)
+	meta["namespace"] = "kube-system"
+	meta["labels"] = map[string]any{"component": "kube-apiserver"}
+	pod["spec"] = map[string]any{"nodeName": "control-one"}
+	pod["status"].(map[string]any)["containerStatuses"].([]any)[0].(map[string]any)["name"] = "kube-apiserver"
+	return pod
 }
 
 func jsonObject(t *testing.T, value any) map[string]json.RawMessage {
@@ -107,7 +132,7 @@ func TestFailedReadsAreMissingEvidence(t *testing.T) {
 		sourceResources: "/apis/operator.ptah.run/v1alpha1/namespaces/work/ptahmigrations",
 		sourceRetained:  "/apis/operator.ptah.run/v1alpha1/namespaces/work/ptahschemaplanchunks",
 		sourceManagers:  "/api/v1/namespaces/operator/pods/manager:8080/proxy/metrics",
-		sourceAPI:       "/metrics",
+		sourceAPI:       "/metrics/api-one",
 		sourceJobs:      "/apis/batch/v1/namespaces/work/jobs",
 	} {
 		t.Run(source, func(t *testing.T) {

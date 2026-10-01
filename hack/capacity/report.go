@@ -31,6 +31,7 @@ type report struct {
 // scenarioCost is one window reduced to the figures the capacity page names.
 type scenarioCost struct {
 	window
+	APICounterProblems    []string           `json:"apiCounterProblems,omitempty"`
 	CounterProblems       []string           `json:"counterProblems,omitempty"`
 	Incomplete            map[string]int     `json:"incomplete,omitempty"`
 	Samples               int                `json:"samples"`
@@ -50,7 +51,7 @@ type scenarioCost struct {
 	QueueWaitSeconds      quantiles          `json:"queueWaitSeconds"`
 	ClientThrottleSeconds float64            `json:"clientThrottleSeconds"`
 	Requests429           float64            `json:"requests429"`
-	AdmissionSeconds      quantiles          `json:"admissionSeconds"`
+	APIServers            map[string]apiCost `json:"apiServers"`
 	APIRejected           float64            `json:"apiRejected"`
 	PlansAtEnd            int                `json:"plansAtEnd"`
 	ChunkBytesAtEnd       int64              `json:"chunkBytesAtEnd"`
@@ -121,7 +122,12 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 		out.Incomplete[sourceManagerContinuity] = len(out.CounterProblems)
 	}
 	out.ManagerCPUCores, out.ClientThrottleSeconds, out.Requests429, out.QueueWaitSeconds = managerGrowth(inside)
-	out.AdmissionSeconds, out.APIRejected = apiGrowth(inside)
+	var apiProblems []string
+	out.APIServers, out.APIRejected, apiProblems = apiGrowth(inside)
+	if len(apiProblems) > 0 {
+		out.Incomplete[sourceAPIContinuity] += len(apiProblems)
+		out.APICounterProblems = apiProblems
+	}
 
 	perMinute := map[int64]int{}
 	var starts, completions []float64
@@ -189,23 +195,6 @@ func managerGrowth(inside []sample) (cores, throttle, too float64, wait quantile
 	return cores, throttle, too, histogramQuantiles(total)
 }
 
-func apiGrowth(inside []sample) (quantiles, float64) {
-	var first, last *apiReading
-	for index := range inside {
-		if inside[index].APIServer == nil {
-			continue
-		}
-		if first == nil {
-			first = inside[index].APIServer
-		}
-		last = inside[index].APIServer
-	}
-	if first == nil || last == first {
-		return quantiles{}, 0
-	}
-	return histogramQuantiles(last.Admission.since(first.Admission)), counterDelta(last.Rejected, first.Rejected)
-}
-
 // writeSummary is the report as a reader of the capacity page reads it.
 func writeSummary(out io.Writer, r report) error {
 	var b strings.Builder
@@ -252,7 +241,7 @@ func writeSummary(out io.Writer, r report) error {
 			figure(sourceResources, "%.0f", s.ObservationAgeMax), figure(sourceResources, "%.0f", s.OverdueMax),
 			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagerContinuity, "%.2f", s.ManagerCPUCores),
 			figure(sourceManagerContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
-			figure(sourceAPI, "%s", atMost(s.AdmissionSeconds)), strings.Join(outcome, ", "))
+			figure(sourceAPI, "%s", apiAdmissionSummary(s.APIServers)), strings.Join(outcome, ", "))
 	}
 	_, err := io.WriteString(out, b.String())
 	return err

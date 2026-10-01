@@ -29,16 +29,6 @@ func scrapePod(ctx context.Context, clientset kubernetes.Interface, namespace, p
 	return parseScrape(raw)
 }
 
-// scrapeAPIServer reads the API server's own metrics, which is where admission
-// latency and priority-and-fairness rejections are counted.
-func scrapeAPIServer(ctx context.Context, clientset kubernetes.Interface) (scrape, error) {
-	raw, err := clientset.CoreV1().RESTClient().Get().AbsPath("/metrics").DoRaw(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("scrape the API server: %w", err)
-	}
-	return parseScrape(raw)
-}
-
 func parseScrape(raw []byte) (scrape, error) {
 	parser := expfmt.NewTextParser(model.UTF8Validation)
 	families, err := parser.TextToMetricFamilies(bytes.NewReader(raw))

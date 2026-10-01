@@ -129,7 +129,7 @@ Throughout, it reads the cluster rather than estimating it:
 | Manager memory and CPU | Each manager Pod's `process_resident_memory_bytes` and `process_cpu_seconds_total` |
 | Queue depth and wait | `workqueue_depth` and `workqueue_queue_duration_seconds` |
 | Client throttling | `rest_client_rate_limiter_duration_seconds` and HTTP 429 responses |
-| Admission latency | The API server's `apiserver_admission_webhook_admission_duration_seconds` for this operator's webhooks |
+| Admission latency | Each API server's own `apiserver_admission_webhook_admission_duration_seconds` for this operator's webhooks |
 | Retained plans and SQL | The plan objects, the bytes in their chunks, and the ConfigMaps each applied plan was projected into |
 | Time to serve an approval during a restart | The approval's admission and its Apply Job's creation |
 
@@ -169,10 +169,28 @@ queue-wait percentiles then become `null`/`n/a`; complete RSS and queue-depth
 readings remain available. A planned restart explains this gap but does not
 supply the missing counter measurements.
 
-The current lab sampler reads admission metrics through the configured API
-endpoint. It does not identify or measure every API server separately. The
-0.2.0 qualification requires that separate measurement, the full workload and
-90-minute soak; this lab report does not satisfy that requirement.
+The sampler requires one running kube-apiserver Pod per control-plane node.
+`-expected-api-servers` declares the count and defaults to three for the 0.2.0
+profile. Each collection checks the node and Pod inventory before and after
+scraping. It opens a bounded Pod-specific port-forward to port 6443 and uses
+HTTPS with the kubeconfig's cluster CA, client credentials and
+`kubernetes.default.svc` certificate name. Insecure TLS and redirects are
+refused. The lab identity needs node and Pod reads, Pod port-forward access in
+`kube-system`, and `get /metrics`; the sampler creates no RBAC grants.
+
+Each sample's `apiTargets` retains the declared node and container identities.
+`apiServers` holds separate process identities, scrape timestamps, admission
+histograms and API priority/fairness rejection counters. Each scenario reports
+admission percentiles, population size and time boundaries per server. A
+missing member, identity change or counter reset makes the affected scenario
+figures incomplete; `apiCounterProblems` records continuity failures. The
+summary lists every server and its observation count. An empty population is
+`n/a`, and fewer than 20 admission observations cannot meet the qualification's
+percentile requirement. API priority/fairness rejections count all traffic;
+attribution to workload, monitoring and fixtures needs separate evidence.
+
+The full workload and 90-minute soak remain required for 0.2.0 qualification.
+A successful metrics collection does not establish a capacity bound.
 
 ## The first reading {#lab-20}
 
