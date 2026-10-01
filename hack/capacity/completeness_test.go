@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func measurementFixture(t *testing.T, failPath, managerMetrics string) *sampler {
+func measurementFixture(t *testing.T, failPath, managerMetrics string, mutate ...func(string, map[string]any)) *sampler {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == failPath {
@@ -35,9 +35,12 @@ func measurementFixture(t *testing.T, failPath, managerMetrics string) *sampler 
 		case r.URL.Path == "/api/v1/namespaces/operator/pods":
 			list["kind"] = "PodList"
 			list["items"] = []any{
-				map[string]any{"metadata": map[string]any{"name": "manager"}, "status": map[string]any{"phase": "Running"}},
-				map[string]any{"metadata": map[string]any{"name": "manager-2"}, "status": map[string]any{"phase": "Running"}},
+				fixtureManager("manager"), fixtureManager("manager-2"),
 			}
+		case r.URL.Path == "/api/v1/namespaces/operator/pods/manager":
+			list = fixtureManager("manager")
+		case r.URL.Path == "/api/v1/namespaces/operator/pods/manager-2":
+			list = fixtureManager("manager-2")
 		case r.URL.Path == "/api/v1/namespaces/work/pods":
 			list["kind"] = "PodList"
 		case r.URL.Path == "/apis/batch/v1/namespaces/work/jobs":
@@ -53,6 +56,9 @@ func measurementFixture(t *testing.T, failPath, managerMetrics string) *sampler 
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		for _, change := range mutate {
+			change(r.URL.Path, list)
+		}
 		_ = json.NewEncoder(w).Encode(list)
 	}))
 	t.Cleanup(server.Close)
@@ -69,7 +75,17 @@ func measurementFixture(t *testing.T, failPath, managerMetrics string) *sampler 
 		metricsPort: 8080, jobs: map[string]*jobRecord{}}
 }
 
-const completeProcessMetrics = "# TYPE process_resident_memory_bytes gauge\nprocess_resident_memory_bytes 104857600\n# TYPE process_cpu_seconds_total counter\nprocess_cpu_seconds_total 2\n"
+const completeProcessMetrics = "# TYPE process_resident_memory_bytes gauge\nprocess_resident_memory_bytes 104857600\n# TYPE process_cpu_seconds_total counter\nprocess_cpu_seconds_total 2\n# TYPE process_start_time_seconds gauge\nprocess_start_time_seconds 1790812800\n"
+
+func fixtureManager(name string) map[string]any {
+	return map[string]any{"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]any{"name": name, "uid": name + "-uid"},
+		"status": map[string]any{"phase": "Running", "containerStatuses": []any{
+			map[string]any{"name": "manager", "containerID": "containerd://" + name, "restartCount": 0,
+				"state": map[string]any{"running": map[string]any{"startedAt": "2026-10-01T00:00:00Z"}}},
+		}},
+	}
+}
 
 func jsonObject(t *testing.T, value any) map[string]json.RawMessage {
 	t.Helper()
@@ -172,7 +188,12 @@ func TestSuccessfulZeroIsDistinctFromFailedRead(t *testing.T) {
 func TestMissingProcessMetricsInvalidateTheManagerReading(t *testing.T) {
 	t.Parallel()
 	for _, metrics := range []string{"", strings.ReplaceAll(completeProcessMetrics, "process_cpu_seconds_total 2", "process_cpu_seconds_total NaN"),
-		strings.ReplaceAll(completeProcessMetrics, "104857600", "0")} {
+		strings.ReplaceAll(completeProcessMetrics, "104857600", "0"),
+		strings.ReplaceAll(completeProcessMetrics, "1790812800", "NaN"),
+		strings.ReplaceAll(completeProcessMetrics, "1790812800", "0"),
+		completeProcessMetrics + "# TYPE rest_client_rate_limiter_duration_seconds_sum counter\nrest_client_rate_limiter_duration_seconds_sum NaN\n",
+		completeProcessMetrics + "# TYPE rest_client_requests_total counter\nrest_client_requests_total{code=\"429\"} +Inf\n",
+		completeProcessMetrics + "# TYPE workqueue_depth gauge\nworkqueue_depth{name=\"schema\"} NaN\n"} {
 		s := measurementFixture(t, "", metrics)
 		s.take(context.Background())
 		samples, _ := s.snapshot()
@@ -205,5 +226,44 @@ func TestCanceledFinalCollectionIsNotPublished(t *testing.T) {
 	samples, _ := s.snapshot()
 	if len(samples) != 0 {
 		t.Fatal("the canceled final collection became a measurement")
+	}
+}
+
+func TestManagerScrapeRetainsAndConfirmsProcessIdentity(t *testing.T) {
+	s := measurementFixture(t, "", completeProcessMetrics)
+	s.take(context.Background())
+	samples, _ := s.snapshot()
+	if len(samples) != 1 || len(samples[0].Incomplete) != 0 || len(samples[0].Managers) != 2 {
+		t.Fatalf("complete manager collection refused: %+v", samples)
+	}
+	for name, reading := range samples[0].Managers {
+		if reading.PodUID != name+"-uid" || reading.ContainerID != "containerd://"+name || reading.ContainerStartedAt.IsZero() || reading.ProcessStartedAt != 1790812800 {
+			t.Errorf("lost process identity: %+v", reading)
+		}
+	}
+	for _, mode := range []string{"Pod replaced during scrape", "container restarted during scrape", "listed replica stopped"} {
+		t.Run(mode, func(t *testing.T) {
+			s := measurementFixture(t, "", completeProcessMetrics, func(path string, object map[string]any) {
+				switch mode {
+				case "Pod replaced during scrape":
+					if path == "/api/v1/namespaces/operator/pods/manager" {
+						object["metadata"].(map[string]any)["uid"] = "replacement"
+					}
+				case "container restarted during scrape":
+					if path == "/api/v1/namespaces/operator/pods/manager" {
+						object["status"].(map[string]any)["containerStatuses"].([]any)[0].(map[string]any)["containerID"] = "replacement"
+					}
+				case "listed replica stopped":
+					if path == "/api/v1/namespaces/operator/pods" {
+						object["items"].([]any)[0].(map[string]any)["status"].(map[string]any)["phase"] = "Pending"
+					}
+				}
+			})
+			s.take(context.Background())
+			samples, _ := s.snapshot()
+			if len(samples) != 1 || len(samples[0].Incomplete) != 1 || samples[0].Incomplete[0] != sourceManagers || string(jsonObject(t, samples[0])["managers"]) != "null" {
+				t.Fatal("partial or mixed-identity scrape was published as complete")
+			}
+		})
 	}
 }

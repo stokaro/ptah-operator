@@ -59,6 +59,11 @@ func TestAWindowCountsWhatHappenedInsideIt(t *testing.T) {
 		{At: at(120), Managers: map[string]managerReading{"new": {RSSBytes: 80, CPUSeconds: 31}}},
 		{At: at(180), PodsPending: 99, Managers: map[string]managerReading{"new": {RSSBytes: 9999, CPUSeconds: 999}}},
 	}
+	for i := range samples {
+		for name, manager := range samples[i].Managers {
+			samples[i].Managers[name] = identifiedManager(name, manager)
+		}
+	}
 	jobs := []jobRecord{
 		{Created: at(-30), Finished: ptr(at(10))},
 		{Created: at(5), Started: ptr(at(7)), Finished: ptr(at(25))},
@@ -79,7 +84,12 @@ func TestAWindowCountsWhatHappenedInsideIt(t *testing.T) {
 	if got.PodsPendingMax != 4 || got.ManagerRSSMaxBytes != 300 {
 		t.Errorf("pending %d rss %v, want 4 and 300: the sample after the window leaked in", got.PodsPendingMax, got.ManagerRSSMaxBytes)
 	}
-	// 30 CPU-seconds on the old process and 30 on the new one, over 120s.
+	// The provisional total still describes the observed spans. The report
+	// cannot publish it as a bound across the unobserved replacement interval.
+	if string(jsonObject(t, got)["managerCPUCoresAverage"]) != "null" {
+		t.Fatal("replacement gap became a measured CPU bound")
+	}
+	// 30 CPU-seconds on each observed process, over 120s.
 	if math.Abs(got.ManagerCPUCores-0.5) > 1e-9 {
 		t.Errorf("manager cores = %v, want 0.5", got.ManagerCPUCores)
 	}

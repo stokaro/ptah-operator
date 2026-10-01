@@ -31,6 +31,7 @@ type report struct {
 // scenarioCost is one window reduced to the figures the capacity page names.
 type scenarioCost struct {
 	window
+	CounterProblems       []string           `json:"counterProblems,omitempty"`
 	Incomplete            map[string]int     `json:"incomplete,omitempty"`
 	Samples               int                `json:"samples"`
 	JobsCreated           int                `json:"jobsCreated"`
@@ -115,6 +116,10 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 		last := inside[len(inside)-1]
 		out.PlansAtEnd, out.ChunkBytesAtEnd = last.Plans, last.ChunkBytes
 	}
+	out.CounterProblems = managerCounterContinuity(inside)
+	if len(out.CounterProblems) > 0 {
+		out.Incomplete[sourceManagerContinuity] = len(out.CounterProblems)
+	}
 	out.ManagerCPUCores, out.ClientThrottleSeconds, out.Requests429, out.QueueWaitSeconds = managerGrowth(inside)
 	out.AdmissionSeconds, out.APIRejected = apiGrowth(inside)
 
@@ -148,9 +153,9 @@ func cost(w window, samples []sample, jobs []jobRecord) scenarioCost {
 }
 
 // managerGrowth is what the manager processes spent inside a window, summed
-// over the Pods that served in it. Each Pod's counters are compared with its
-// own first reading, so a restart in the window starts a new process rather
-// than a negative delta.
+// over the Pods that served in it. These provisional deltas are publishable
+// only when managerCounterContinuity proves every intermediate reading came
+// from the same processes without a reset or collection gap.
 func managerGrowth(inside []sample) (cores, throttle, too float64, wait quantiles) {
 	type span struct {
 		first, last managerReading
@@ -245,8 +250,8 @@ func writeSummary(out io.Writer, r report) error {
 			figure(sourceJobs, "%.1f (%d)", s.JobsPerMinuteAverage, s.JobsPerMinutePeak), completion,
 			figure(sourcePods, "%d", s.PodsPendingMax),
 			figure(sourceResources, "%.0f", s.ObservationAgeMax), figure(sourceResources, "%.0f", s.OverdueMax),
-			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagers, "%.2f", s.ManagerCPUCores),
-			figure(sourceManagers, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagers, "%.1f", s.ClientThrottleSeconds),
+			figure(sourceManagers, "%.0f", s.ManagerRSSMaxBytes/(1<<20)), figure(sourceManagerContinuity, "%.2f", s.ManagerCPUCores),
+			figure(sourceManagerContinuity, "%s", atMost(s.QueueWaitSeconds)), figure(sourceManagerContinuity, "%.1f", s.ClientThrottleSeconds),
 			figure(sourceAPI, "%s", atMost(s.AdmissionSeconds)), strings.Join(outcome, ", "))
 	}
 	_, err := io.WriteString(out, b.String())

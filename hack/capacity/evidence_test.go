@@ -43,8 +43,8 @@ apiserver_admission_webhook_admission_duration_seconds_count{name="ptah.operator
 			admission := (histogram{}).onlyPtah(metrics)
 			base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 			samples := []sample{
-				{At: base, Managers: map[string]managerReading{"manager": {}}, APIServer: &apiReading{}},
-				{At: base.Add(time.Minute), Managers: map[string]managerReading{"manager": {QueueWait: queue}}, APIServer: &apiReading{Admission: admission}},
+				{At: base, Managers: map[string]managerReading{"manager": identifiedManager("manager", managerReading{})}, APIServer: &apiReading{}},
+				{At: base.Add(time.Minute), Managers: map[string]managerReading{"manager": identifiedManager("manager", managerReading{QueueWait: queue})}, APIServer: &apiReading{Admission: admission}},
 			}
 			w := window{Name: name, Start: base, End: base.Add(time.Minute)}
 			original := cost(w, samples, nil)

@@ -155,6 +155,20 @@ finite values remain numbers. The summary displays this as `> largest bucket`.
 Reports written before format 3 lack these raw histograms and cannot establish
 their histogram percentiles from the retained samples alone.
 
+Manager samples retain the Pod UID, container ID and start time, restart count,
+and process start time. The sampler checks the container identity again after
+each scrape. A listed replica that is not running, a missing identity or a
+replacement during collection makes the manager reading incomplete.
+
+Scenario counter deltas require at least two ordered readings, the same manager
+processes throughout, and no reset in any intermediate counter or histogram.
+A replacement, missing replica or counter reset adds
+`manager-counter-continuity` to the scenario's `incomplete` counts and records
+its reason in `counterProblems`. CPU, client throttling, HTTP 429 counts and
+queue-wait percentiles then become `null`/`n/a`; complete RSS and queue-depth
+readings remain available. A planned restart explains this gap but does not
+supply the missing counter measurements.
+
 The current lab sampler reads admission metrics through the configured API
 endpoint. It does not identify or measure every API server separately. The
 0.2.0 qualification requires that separate measurement, the full workload and

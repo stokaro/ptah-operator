@@ -47,12 +47,17 @@ type sample struct {
 
 // managerReading is one manager Pod's own account of itself.
 type managerReading struct {
-	RSSBytes        float64            `json:"rssBytes"`
-	CPUSeconds      float64            `json:"cpuSeconds"`
-	WorkqueueDepth  map[string]float64 `json:"workqueueDepth"`
-	ThrottleSeconds float64            `json:"throttleSeconds"`
-	Requests429     float64            `json:"requests429"`
-	QueueWait       histogram          `json:"queueWait"`
+	PodUID             string             `json:"podUID"`
+	ContainerID        string             `json:"containerID"`
+	ContainerStartedAt time.Time          `json:"containerStartedAt"`
+	ProcessStartedAt   float64            `json:"processStartedAt"`
+	RestartCount       int32              `json:"restartCount"`
+	RSSBytes           float64            `json:"rssBytes"`
+	CPUSeconds         float64            `json:"cpuSeconds"`
+	WorkqueueDepth     map[string]float64 `json:"workqueueDepth"`
+	ThrottleSeconds    float64            `json:"throttleSeconds"`
+	Requests429        float64            `json:"requests429"`
+	QueueWait          histogram          `json:"queueWait"`
 }
 
 // apiReading is what the API server counted about the operator's admission.
@@ -230,7 +235,9 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 	}
 	var problems []error
 	for _, pod := range pods.Items {
-		if pod.Status.Phase != corev1.PodRunning {
+		identity, err := managerIdentity(&pod)
+		if err != nil {
+			problems = append(problems, err)
 			continue
 		}
 		reading, err := scrapePod(ctx, s.clientset, s.operatorNamespace, pod.Name, s.metricsPort)
@@ -244,18 +251,48 @@ func (s *sampler) readManagers(ctx context.Context, into *sample) error {
 			problems = append(problems, fmt.Errorf("manager %s has no valid process memory or CPU reading", pod.Name))
 			continue
 		}
+		started, hasStarted := reading.value("process_start_time_seconds", nil)
+		if !hasStarted || !validProcessStart(started) {
+			problems = append(problems, fmt.Errorf("manager %s has no valid process start time", pod.Name))
+			continue
+		}
+		// A scrape by Pod name must still belong to the container listed before it.
+		current, err := s.clientset.CoreV1().Pods(s.operatorNamespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			problems = append(problems, fmt.Errorf("confirm manager %s after scrape: %w", pod.Name, err))
+			continue
+		}
+		confirmed, err := managerIdentity(current)
+		if err != nil || confirmed != identity {
+			problems = append(problems, fmt.Errorf("manager %s changed identity during scrape", pod.Name))
+			continue
+		}
+		identity.ProcessStartedAt = started
 		throttle, _ := reading.value("rest_client_rate_limiter_duration_seconds_sum", nil)
 		if throttle == 0 {
 			throttle = reading.histogram("rest_client_rate_limiter_duration_seconds", nil).sum
 		}
 		too, _ := reading.value("rest_client_requests_total", map[string]string{"code": "429"})
+		queue := reading.histogram("workqueue_queue_duration_seconds", nil)
+		depths := reading.maxBy("workqueue_depth", "name")
+		validDepths := true
+		for _, depth := range depths {
+			validDepths = validDepths && counterContinues(0, depth)
+		}
+		if !validDepths || !counterContinues(0, throttle) || !counterContinues(0, too) || !validHistogram(queue) {
+			problems = append(problems, fmt.Errorf("manager %s has invalid client or queue counters", pod.Name))
+			continue
+		}
 		into.Managers[pod.Name] = managerReading{
+			PodUID: identity.PodUID, ContainerID: identity.ContainerID,
+			ContainerStartedAt: identity.ContainerStartedAt, ProcessStartedAt: identity.ProcessStartedAt,
+			RestartCount:    identity.RestartCount,
 			RSSBytes:        rss,
 			CPUSeconds:      cpu,
-			WorkqueueDepth:  reading.maxBy("workqueue_depth", "name"),
+			WorkqueueDepth:  depths,
 			ThrottleSeconds: throttle,
 			Requests429:     too,
-			QueueWait:       reading.histogram("workqueue_queue_duration_seconds", nil),
+			QueueWait:       queue,
 		}
 	}
 	if len(into.Managers) == 0 {
