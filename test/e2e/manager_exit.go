@@ -40,27 +40,35 @@ func readManagerExit(ctx context.Context, clientset kubernetes.Interface, snapsh
 		out.Read = "identity_changed"
 		return out
 	}
-	stream, err := pods.GetLogs(snapshot.Name, &corev1.PodLogOptions{
-		Container: status.Name, Previous: true, TailLines: ptr.To[int64](512), LimitBytes: ptr.To[int64](managerExitLogLimit),
-	}).Stream(ctx)
-	if err != nil {
-		return out
-	}
-	defer stream.Close()
-	body, err := io.ReadAll(io.LimitReader(stream, managerExitLogLimit+1))
-	if err != nil {
-		return out
+	var body []byte
+	// LimitBytes caps output starting at the first selected line. A verbose
+	// tail can therefore lose the final exit record. Narrow the line window
+	// until it fits, keeping every request and local read bounded.
+	for _, lines := range []int64{512, 64, 8, 1} {
+		stream, err := pods.GetLogs(snapshot.Name, &corev1.PodLogOptions{
+			Container: status.Name, Previous: true, TailLines: ptr.To(lines), LimitBytes: ptr.To[int64](managerExitLogLimit),
+		}).Stream(ctx)
+		if err != nil {
+			return managerExitDiagnostic{Read: "unavailable"}
+		}
+		body, err = io.ReadAll(io.LimitReader(stream, managerExitLogLimit+1))
+		_ = stream.Close()
+		if err != nil {
+			return managerExitDiagnostic{Read: "unavailable"}
+		}
+		if len(body) < managerExitLogLimit {
+			break
+		}
+		out.Limited = true
 	}
 	after, err := pods.Get(ctx, snapshot.Name, metav1.GetOptions{})
 	if err != nil {
 		return out
 	}
 	if !sameRestartedContainer(after, snapshot, status) {
-		out.Read = "identity_changed"
-		return out
+		return managerExitDiagnostic{Read: "identity_changed"}
 	}
 	out.Read = "read"
-	out.Limited = len(body) >= managerExitLogLimit
 	if len(body) > managerExitLogLimit {
 		body = body[:managerExitLogLimit]
 	}
