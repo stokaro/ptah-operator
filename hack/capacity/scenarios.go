@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -26,6 +27,7 @@ const (
 
 // inputs are what the harness prepared on the lab before the tool runs.
 type inputs struct {
+	catalog           *inputCatalog
 	namespace         string
 	namespaces        []string
 	operatorNamespace string
@@ -40,12 +42,14 @@ type inputs struct {
 }
 
 type scenarios struct {
-	in        inputs
-	load      workload
-	clientset kubernetes.Interface
-	dynamic   dynamic.Interface
-	windows   []window
-	recorders []*cycleRecorder
+	inputReader client.Reader
+	inputPlans  []inputPlanProof
+	in          inputs
+	load        workload
+	clientset   kubernetes.Interface
+	dynamic     dynamic.Interface
+	windows     []window
+	recorders   []*cycleRecorder
 }
 
 func (s *scenarios) mark(name string, start time.Time, outcome map[string]string) {
@@ -93,7 +97,7 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 		"metadata": map[string]any{"name": name, "namespace": s.in.namespaceFor(index), "labels": map[string]any{capacityLabel: s.load.Name}},
 		"spec": map[string]any{
 			"target":    s.target(name, index),
-			"desired":   s.artifactSource(s.in.schemaRefs[0], s.in.schemaPolicy),
+			"desired":   s.artifactSource(s.schemaReference(index, 0), s.in.schemaPolicy),
 			"policy":    map[string]any{"apply": "Always", "allowDestructive": false, "driftSeverity": "all"},
 			"interval":  s.load.Interval.String(),
 			"execution": s.execution(),
@@ -102,6 +106,10 @@ func (s *scenarios) schemaObject(index int) *unstructured.Unstructured {
 }
 
 func (s *scenarios) migrationObject(name string, database int, apply string, labelled bool) *unstructured.Unstructured {
+	migrationIndex := 0
+	if labelled {
+		migrationIndex = database - s.load.Schemas
+	}
 	metadata := map[string]any{"name": name, "namespace": s.in.namespace}
 	if labelled {
 		metadata["namespace"] = s.in.namespaceFor(database - s.load.Schemas)
@@ -112,7 +120,7 @@ func (s *scenarios) migrationObject(name string, database int, apply string, lab
 		"metadata": metadata,
 		"spec": map[string]any{
 			"target":    s.target(name, database),
-			"artifact":  s.artifactSource(s.in.migrationRefs[0], s.in.migrationPolicy),
+			"artifact":  s.artifactSource(s.migrationReference(migrationIndex, 0), s.in.migrationPolicy),
 			"policy":    map[string]any{"apply": apply, "lockTimeout": "30s"},
 			"interval":  s.load.Interval.String(),
 			"execution": s.execution(),
@@ -137,7 +145,10 @@ func (s *scenarios) create(ctx context.Context) error {
 	}
 	converged, err := s.waitConverged(ctx, start, nil)
 	s.mark("cold start", start, map[string]string{"converged": converged})
-	return err
+	if err != nil {
+		return err
+	}
+	return s.verifyInputPlans(ctx, 0)
 }
 
 // waitConverged waits until every workload resource is InSync, read after
@@ -271,17 +282,17 @@ func (s *scenarios) change(ctx context.Context) error {
 	moved := map[string]string{}
 	for index := range min(s.load.ChangeBatch, s.load.Schemas) {
 		name := s.schemaName(index)
-		if err := s.patchReference(ctx, schemaResource, name, "desired", s.in.schemaRefs[1]); err != nil {
+		if err := s.patchReference(ctx, schemaResource, name, "desired", s.schemaReference(index, 1)); err != nil {
 			return err
 		}
-		moved["PtahSchema/"+name] = digestOf(s.in.schemaRefs[1])
+		moved["PtahSchema/"+name] = digestOf(s.schemaReference(index, 1))
 	}
 	for index := range min(s.load.ChangeBatch, s.load.Migrations) {
 		name := s.migrationName(index)
-		if err := s.patchReference(ctx, migrationResource, name, "artifact", s.in.migrationRefs[1]); err != nil {
+		if err := s.patchReference(ctx, migrationResource, name, "artifact", s.migrationReference(index, 1)); err != nil {
 			return err
 		}
-		moved["PtahMigration/"+name] = digestOf(s.in.migrationRefs[1])
+		moved["PtahMigration/"+name] = digestOf(s.migrationReference(index, 1))
 	}
 	converged, err := s.waitConverged(ctx, start, func(item unstructured.Unstructured) bool {
 		want, ok := moved[item.GetKind()+"/"+item.GetName()]
@@ -297,7 +308,10 @@ func (s *scenarios) change(ctx context.Context) error {
 		return got == want
 	})
 	s.mark("change batch", start, map[string]string{"converged": converged, "moved": fmt.Sprint(len(moved))})
-	return err
+	if err != nil {
+		return err
+	}
+	return s.verifyInputPlans(ctx, 1)
 }
 
 func (s *scenarios) patchReference(ctx context.Context, resource schema.GroupVersionResource, name, field, reference string) error {

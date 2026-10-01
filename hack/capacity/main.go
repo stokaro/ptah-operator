@@ -31,12 +31,15 @@ import (
 	"syscall"
 	"time"
 
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func main() {
@@ -49,6 +52,7 @@ func main() {
 func run() error {
 	var (
 		kubeconfig   = flag.String("kubeconfig", os.Getenv("KUBECONFIG"), "kubeconfig of the lab cluster")
+		catalogPath  = flag.String("inputs", "", "populated per-slot input catalog prepared by the capacity harness")
 		workloadPath = flag.String("workload", "support/capacity/workload.json", "the workload to run")
 		outDir       = flag.String("out", "", "directory to write report.json and summary.md into")
 		hostPath     = flag.String("host-info", "", "JSON capacity reading from the Docker daemon hosting the lab")
@@ -89,6 +93,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	var catalogDigest string
+	if *catalogPath != "" {
+		in.catalog, catalogDigest, err = readInputCatalog(*catalogPath, load, os.Getenv("E2E_PTAH_REVISION"))
+		if err != nil {
+			return err
+		}
+	}
 	if err := requireInputs(in, load, *outDir); err != nil {
 		return err
 	}
@@ -112,11 +123,27 @@ func run() error {
 		return err
 	}
 
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return err
+	}
+	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+		return err
+	}
+	inputReader, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	environment, err := describeEnvironment(ctx, clientset, in)
 	if err != nil {
 		return err
+	}
+	if in.catalog != nil {
+		environment["inputCatalogSHA256"] = catalogDigest
+		environment["inputCatalog"] = in.catalog
 	}
 	environment["expectedAPIServers"] = *apiCount
 	recordHostCapacity(environment, host)
@@ -173,7 +200,7 @@ func run() error {
 	done := make(chan error, 1)
 	go func() { done <- watch.run(sampling, finishSampling) }()
 
-	steps := &scenarios{in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
+	steps := &scenarios{inputReader: inputReader, in: in, load: load, clientset: clientset, dynamic: dynamicClient, recorders: recorders}
 	scenarioErr := setupErr
 	if scenarioErr == nil {
 		scenarioErr = runScenarios(workCtx, steps)
@@ -193,6 +220,9 @@ func run() error {
 		scenarioErr = errors.Join(scenarioErr, fmt.Errorf("final capacity collection: %w", err))
 	}
 
+	if in.catalog != nil {
+		environment["inputPlans"] = steps.inputPlans
+	}
 	samples, jobs := watch.snapshot()
 	out := report{Cycles: cycleProof, FormatVersion: 3, Workload: load, Environment: environment, Samples: samples, Jobs: jobs}
 	for _, w := range steps.windows {
@@ -241,10 +271,10 @@ func requireInputs(in inputs, load workload, outDir string) error {
 			missing = append(missing, name)
 		}
 	}
-	if load.Schemas > 0 && (in.schemaRefs[0] == "" || load.ChangeBatch > 0 && in.schemaRefs[1] == "") {
+	if in.catalog == nil && load.Schemas > 0 && (in.schemaRefs[0] == "" || load.ChangeBatch > 0 && in.schemaRefs[1] == "") {
 		missing = append(missing, "-schema-v1/-schema-v2")
 	}
-	if in.migrationRefs[0] == "" || load.ChangeBatch > 0 && in.migrationRefs[1] == "" {
+	if in.catalog == nil && (in.migrationRefs[0] == "" || load.ChangeBatch > 0 && in.migrationRefs[1] == "") {
 		missing = append(missing, "-migration-v1/-migration-v2")
 	}
 	if load.Outage.Duration > 0 && in.registryIP == "" {

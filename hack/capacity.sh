@@ -19,6 +19,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 LAB_ENVIRONMENT=${LAB_ENVIRONMENT:-$ROOT_DIR/demo/.lab/environment}
 WORKLOAD=${CAPACITY_WORKLOAD:-$ROOT_DIR/support/capacity/workload.json}
+VARIED_INPUTS=${CAPACITY_VARIED_INPUTS:-0}
 OUT_DIR=${CAPACITY_OUT_DIR:?set CAPACITY_OUT_DIR to where the report goes}
 
 fail() {
@@ -26,6 +27,10 @@ fail() {
 	exit 1
 }
 
+case "$VARIED_INPUTS" in
+0|1) ;;
+*) fail "CAPACITY_VARIED_INPUTS must be 0 or 1" ;;
+esac
 [ -f "$LAB_ENVIRONMENT" ] || fail "no lab at $LAB_ENVIRONMENT; bring one up with make demo-up"
 set -a
 # shellcheck disable=SC1090 # The lab's own NAME=value file.
@@ -95,19 +100,32 @@ push_migrations() {
 		--migrations-dir "$2" --dir-format ptah --version "$1-$$" --plain-http |
 		sed -n 's/^Digest: //p'
 }
-schema_v1=$(push_schema v1)
-schema_v2=$(push_schema v2)
-cp -R "$MIGRATION_DIR" "$WORK_DIR/migrations-v2"
-printf 'ALTER TABLE shipments ADD COLUMN note TEXT;\n' >"$WORK_DIR/migrations-v2/0000000003_add_note.up.sql"
-printf 'ALTER TABLE shipments DROP COLUMN note;\n' >"$WORK_DIR/migrations-v2/0000000003_add_note.down.sql"
-migration_v1=$(push_migrations v1 "$MIGRATION_DIR")
-migration_v2=$(push_migrations v2 "$WORK_DIR/migrations-v2")
-for digest in "$schema_v1" "$schema_v2" "$migration_v1" "$migration_v2"; do
-	case "$digest" in
-	sha256:*) ;;
-	*) fail "a push returned no digest" ;;
-	esac
-done
+INPUT_PROBE="$ROOT_DIR/support/qualification/probes/capacity_workload.py"
+if [ "$VARIED_INPUTS" -eq 1 ]; then
+	CHANGE_BATCH=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["changeBatch"]; assert type(v) is int and v in (0,5), "varied inputs require changeBatch 0 or 5"; print(v)' "$WORKLOAD")
+	python3 "$INPUT_PROBE" --state "$STATE_FILE" --directory "$OUT_DIR/inputs"
+	CAPACITY_ARGS=(-inputs "$OUT_DIR/inputs/catalog.json")
+else
+	schema_v1=$(push_schema v1)
+	schema_v2=$(push_schema v2)
+	cp -R "$MIGRATION_DIR" "$WORK_DIR/migrations-v2"
+	printf 'ALTER TABLE shipments ADD COLUMN note TEXT;\n' >"$WORK_DIR/migrations-v2/0000000003_add_note.up.sql"
+	printf 'ALTER TABLE shipments DROP COLUMN note;\n' >"$WORK_DIR/migrations-v2/0000000003_add_note.down.sql"
+	migration_v1=$(push_migrations v1 "$MIGRATION_DIR")
+	migration_v2=$(push_migrations v2 "$WORK_DIR/migrations-v2")
+	for digest in "$schema_v1" "$schema_v2" "$migration_v1" "$migration_v2"; do
+		case "$digest" in
+		sha256:*) ;;
+		*) fail "a push returned no digest" ;;
+		esac
+	done
+	CAPACITY_ARGS=(
+		-schema-v1 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v1"
+		-schema-v2 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v2"
+		-migration-v1 "oci://$E2E_REGISTRY_HOST/migrations/capacity@$migration_v1"
+		-migration-v2 "oci://$E2E_REGISTRY_HOST/migrations/capacity@$migration_v2"
+	)
+fi
 
 cd "$ROOT_DIR"
 go run ./hack/capacity \
@@ -116,10 +134,10 @@ go run ./hack/capacity \
 	-workload "$WORKLOAD" \
 	-namespace "$CAPACITY_NAMESPACES" \
 	-operator-namespace "$E2E_OPERATOR_NAMESPACE" \
-	-schema-v1 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v1" \
-	-schema-v2 "oci://$E2E_REGISTRY_HOST/schemas/capacity@$schema_v2" \
-	-migration-v1 "oci://$E2E_REGISTRY_HOST/migrations/capacity@$migration_v1" \
-	-migration-v2 "oci://$E2E_REGISTRY_HOST/migrations/capacity@$migration_v2" \
+	"${CAPACITY_ARGS[@]}" \
 	-registry-ip "$E2E_REGISTRY_IP" \
 	-out "$OUT_DIR"
+if [ "$VARIED_INPUTS" -eq 1 ]; then
+	python3 "$INPUT_PROBE" --state "$STATE_FILE" --directory "$OUT_DIR/inputs" --verify-changed "$CHANGE_BATCH"
+fi
 CAPACITY_COMPLETED=1
