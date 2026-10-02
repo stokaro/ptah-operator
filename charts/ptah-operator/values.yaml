@@ -342,3 +342,15 @@ podDisruptionBudget:
   enabled: true
   # Replicas that must stay available during a voluntary disruption.
   minAvailable: 1
+
+# Development installation of durable runner delivery. Keep disabled until
+# retention, restore, and the default-logging acceptance workflow are qualified.
+# Requires the built-in certificate rotator and generated webhook trust.
+resultDelivery:
+  enabled: false
+  networkPolicy:
+    # Requires a CNI that enforces NetworkPolicy. Supply peers allowed to reach
+    # webhook, health, and metrics ports; the chart cannot infer API server
+    # source addresses. Empty peers are refused when this policy is enabled.
+    enabled: false
+    infrastructurePeers: []

@@ -32,17 +32,22 @@ const egressExample = "../../examples/networkpolicy-egress.yaml"
 
 // operationPod is one built Pod and what its containers actually reach.
 type operationPod struct {
-	name      string
-	labels    map[string]string
-	database  bool
-	registry  bool
-	component string
+	name           string
+	labels         map[string]string
+	database       bool
+	registry       bool
+	component      string
+	resultDelivery bool
 }
 
-func builtOperationPods(t *testing.T) []operationPod {
+func builtOperationPods(t *testing.T, endpoints ...string) []operationPod {
 	t.Helper()
 	builder := builderFixture()
+	if len(endpoints) > 0 {
+		builder.ResultEndpoint = endpoints[0]
+	}
 	schema := schemaFixture()
+	schema.Generation = 1
 	plan := planFixture(schema, builder)
 
 	var pods []operationPod
@@ -63,6 +68,7 @@ func builtOperationPods(t *testing.T) []operationPod {
 	}
 
 	migration := migrationFixture()
+	migration.Generation = 1
 	for _, operation := range []operatorv1alpha1.MigrationOperationType{
 		operatorv1alpha1.MigrationOperationResolve, operatorv1alpha1.MigrationOperationVerify,
 		operatorv1alpha1.MigrationOperationHistory, operatorv1alpha1.MigrationOperationApply,
@@ -85,6 +91,11 @@ func describePod(t *testing.T, name string, template corev1.PodTemplateSpec) ope
 	t.Helper()
 	pod := operationPod{name: name, labels: template.Labels, component: template.Labels[LabelComponent]}
 	for _, container := range append(append([]corev1.Container{}, template.Spec.InitContainers...), template.Spec.Containers...) {
+		for _, arg := range container.Args {
+			if arg == "--result-endpoint" {
+				pod.resultDelivery = true
+			}
+		}
 		for _, env := range container.Env {
 			if env.Name == runner.EnvDatabaseURL {
 				pod.database = true
@@ -231,6 +242,37 @@ func TestTheEgressExampleSelectsNothingElse(t *testing.T) {
 			if selects(t, policy, foreign) {
 				t.Errorf("policy %s selects %s", policy.Name, foreign.name)
 			}
+		}
+	}
+}
+
+func TestTheEgressExampleRoutesEveryDurableOperationToTheReceiver(t *testing.T) {
+	policies := readEgressPolicies(t)
+	var found *networkingv1.NetworkPolicy
+	for i := range policies {
+		if policies[i].Name == "ptah-operations-results" {
+			if found != nil {
+				t.Fatal("duplicate receiver policy")
+			}
+			found = &policies[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("receiver egress policy missing")
+	}
+	if len(found.Spec.Egress) != 1 {
+		t.Fatal("receiver policy has extra destinations")
+	}
+	rule := found.Spec.Egress[0]
+	if len(rule.To) != 1 || rule.To[0].NamespaceSelector == nil || rule.To[0].PodSelector == nil || rule.To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "ptah-system" || rule.To[0].PodSelector.MatchLabels["app.kubernetes.io/component"] != "controller" || rule.To[0].PodSelector.MatchLabels["app.kubernetes.io/instance"] != "ptah" {
+		t.Fatal("receiver destination widened")
+	}
+	if len(rule.Ports) != 1 || rule.Ports[0].Port == nil || rule.Ports[0].Port.IntVal != 9444 || rule.Ports[0].Protocol == nil || *rule.Ports[0].Protocol != corev1.ProtocolTCP {
+		t.Fatal("receiver port widened")
+	}
+	for _, pod := range builtOperationPods(t, "https://ptah-ptah-operator-results.ptah-system.svc") {
+		if !pod.resultDelivery || !selects(t, *found, pod) {
+			t.Fatalf("durable %s cannot reach receiver", pod.name)
 		}
 	}
 }

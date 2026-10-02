@@ -1,0 +1,103 @@
+{{- if .Values.resultDelivery.enabled }}
+{{- if or (not .Values.certificateRotation.enabled) .Values.webhook.existingSecret }}
+{{- fail "resultDelivery requires built-in certificate rotation and generated webhook trust" }}
+{{- end }}
+{{- range $entry := list (dict "name" (include "ptah-operator.resultSecretName" .) "role" "projection") (dict "name" (include "ptah-operator.resultJournalName" .) "role" "journal") }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $entry.name }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    meta.helm.sh/release-name: {{ $.Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ $.Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    operator.ptah.run/result-trust: {{ $entry.role | quote }}
+type: Opaque
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ptah-operator.resultPolicyName" . }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    operator.ptah.run/result-trust: enrollment
+---
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: {{ include "ptah-operator.resultLeaseName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+spec: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ptah-operator.resultServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ptah-operator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: 443
+      targetPort: results
+      protocol: TCP
+{{- if .Values.resultDelivery.networkPolicy.enabled }}
+{{- if empty .Values.resultDelivery.networkPolicy.infrastructurePeers }}
+{{- fail "resultDelivery.networkPolicy requires infrastructurePeers for webhook, health, and metrics ingress" }}
+{{- end }}
+---
+# NetworkPolicies union. Review existing allow rules as well as this policy;
+# an existing allow-all policy also opens the result port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ptah-operator.resultServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ptah-operator.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- toYaml .Values.resultDelivery.networkPolicy.infrastructurePeers | nindent 8 }}
+      ports:
+        - {protocol: TCP, port: webhook}
+        - {protocol: TCP, port: health}
+        - {protocol: TCP, port: metrics}
+    - from:
+        # Both resource families can run in any managed namespace. mTLS and
+        # live operation/Job/Pod admission remain the authority boundary.
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: ptah-operator
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [schema-operation, migration-operation]
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "ptah-operator.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: certificate-rotation
+      ports:
+        - {protocol: TCP, port: results}
+{{- end }}
+{{- end }}

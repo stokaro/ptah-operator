@@ -2,13 +2,14 @@
 
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
 The target is stable 0.2.0. This document does not qualify the transport or
-authorize a release. Installed Jobs still use log frames. The storage, TLS
-delivery, live authorization, credential issuer, runner command, and optional
-workload projection are implemented. Explicit manager flags now connect the
-listener, issuer, admission validator, and background consumer. The chart routes
-credential and Pod admission guards, verified against a local API server, but
-does not yet enable these flags or provide the receiver trust, Service,
-NetworkPolicy, and result-record permissions. The certificate rotator now implements provisioning and coordinated CA rotation as an optional independent loop; chart activation and result retention remain incomplete.
+authorize a release. Default installations still use log frames. The storage,
+TLS delivery, live authorization, credential issuer, runner command, and workload
+projection are implemented. The chart can enable the listener, issuer, admission
+validator, background consumer, and independent certificate rotation through
+`resultDelivery.enabled`. That development path is disabled by default until
+retention, restore, and installed acceptance are complete. It provisions trust
+objects and a Service, grants scoped permissions, and can render a receiver
+NetworkPolicy with explicit infrastructure peers.
 
 ## Storage boundary
 
@@ -30,7 +31,8 @@ read a multi-chunk result using only `get` and `create` on this resource while
 Secret GET remains forbidden. The chart routes all record writes through the
 controller-write webhook. With delivery trust configured, that guard admits
 credential and publication records under the rules below. Installed manager RBAC
-remains pending; the chart does not grant result-record writes yet.
+uses GET and CREATE on result records when durable delivery is enabled; no
+record list, watch, update, or deletion grant is added.
 
 The record binds namespace, resource kind/name/UID/generation, execution binding,
 input fingerprint, operation type/ID, attempt Job name/UID, and Pod name/UID.
@@ -393,7 +395,7 @@ removing their signer refuses further delivery but does not affect reading
 already acknowledged records.
 
 Automatic provisioning and coordinated rotation are implemented in the rotator
-loop described below; their chart installation remains pending. The
+loop described below and wired by the development chart option. The
 rotator must establish trust on every serving replica before selecting a new
 signer. Server CA rotation must first give new runners the expanded bundle and
 keep serving a certificate old runners trust until their bounded attempts retire.
@@ -447,7 +449,9 @@ ServiceAccount namespace. The ConfigMap has exactly `version: "1"`, `clientCA`
 (the SHA-256 of the exact PEM bundle issued to new runners). It contains no keys.
 The installation rotator owns writes; the manager needs only GET on this exact
 ConfigMap. A missing, terminating, malformed, foreign, or unreadable policy
-refuses new issuance. The chart has not provisioned this object or its RBAC yet.
+refuses new issuance. The enabled chart precreates this object and grants the
+rotator GET/UPDATE on its exact name. The manager retains its existing ConfigMap
+read grant and cannot update the policy.
 
 An issuer reads the policy directly before generating a credential and again
 before its canonical-record CREATE. Admission separately requires the current
@@ -537,15 +541,46 @@ can read the exact policy and cannot update it in this fixture. Restoring the
 policy admits the same previously refused request. These tests establish the
 fence, not installed rotation or cluster-wide least-privilege permissions.
 
-## Installation still required
+## Development installation
 
-The chart must provision and rotate dedicated trust, expose the receiver Service,
-route allowed runner traffic through NetworkPolicy, grant the required record
-and credential-create permissions, and pass the manager flags. Installed
-admission must protect publication and original-Pod credentials under those
-permissions before the new path is enabled. No runner receives Kubernetes API
-credentials. HA, key overlap, restore, and rollout must preserve acknowledged
-results and outstanding deliveries.
+`resultDelivery.enabled=true` selects durable delivery for new Jobs and requires
+built-in certificate rotation with generated webhook trust. The manager mounts
+only the six-file projection, read-only with mode 0440 and its existing fsGroup;
+it does not mount the private journal or receive Secret-read permission. The
+rotator can GET/UPDATE only the named projection, journal, policy, and Leases.
+The manager receives result-record GET/CREATE and Secret CREATE. Since RBAC cannot
+scope CREATE by name, every manager Secret request reaches the fail-closed
+controller-write webhook, which accepts only an exact canonical delivery
+credential. Other writers still cannot create reserved delivery credentials.
+The enabled manager ClusterRole has no `pods/log` permission.
+
+The ClusterIP Service uses port 443 and targets the manager's result listener on
+9444. The chart can restrict that listener with
+`resultDelivery.networkPolicy.enabled=true`. This requires explicit
+`infrastructurePeers` for webhook, health, and metrics traffic; the chart cannot
+infer the API server's source addresses. Result ingress is limited to operation
+Pods of both families and this release's certificate rotator. Existing policies
+union with this policy, so an existing broad ingress grant can still open the
+port. A CNI that enforces NetworkPolicy is required to enforce these rules.
+`examples/networkpolicy-egress.yaml` adds the receiver destination for all nine
+operations; installations must substitute their release identity and namespace.
+No runner receives Kubernetes API credentials.
+
+Local API-server verification installs the enabled chart's actual RBAC, Service,
+NetworkPolicy, and precreated objects. It checks allowed and forbidden manager/rotator operations,
+persists bootstrap material through the rotator identity, restarts the rotator
+from its journal, and loads the persisted projection through `resultservice.New`.
+A manager Secret GET remains Forbidden. No Deployment, kubelet, or CNI runs in
+that test: copying the six files to disk is explicit, and an absent endpoint
+refuses rotation readiness. Separate admission tests prove that the real API
+server refuses arbitrary manager Secret creation while allowing canonical
+credentials and ordinary administrator Secrets.
+
+This option is not yet a qualified installation mode. Retention, authorized
+cleanup, backup/restore, metrics, HA, complete key rotation, and the installed
+Job-to-controller workflow remain required before enabling it by default. HA,
+key overlap, restore, and rollout must preserve acknowledged results and
+outstanding deliveries.
 
 The implemented receiver rechecks live authority after upload; consumers retain
 their own epoch and provenance checks. Persistence is evidence, not permission

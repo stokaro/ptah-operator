@@ -84,9 +84,22 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
+  {{- if .Values.resultDelivery.enabled }}
+  # The receiver reads immutable records directly; it never caches or watches
+  # payloads. Cleanup permissions are withheld until retention is qualified.
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahresultrecords"]
+    verbs: ["get", "create"]
+  # RBAC cannot constrain CREATE by name. The controller-write webhook checks
+  # every manager Secret request and allows only exact canonical credentials.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  {{- else }}
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  {{- end }}
   # Admission snapshots are resolved in each PtahSchema namespace. These
   # resources contain scheduling metadata but no Secret payloads.
   - apiGroups: [""]

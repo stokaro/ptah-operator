@@ -53,6 +53,10 @@ rules:
     resourceNames:
       - {{ $secretName | quote }}
       - {{ $stagingSecretName | quote }}
+      {{- if .Values.resultDelivery.enabled }}
+      - {{ include "ptah-operator.resultSecretName" . | quote }}
+      - {{ include "ptah-operator.resultJournalName" . | quote }}
+      {{- end }}
     verbs: ["get", "update"]
   {{- if .Values.certificateRotation.recreateMissingSecret }}
   # Kubernetes RBAC cannot scope CREATE by resourceName. The fail-closed
@@ -64,8 +68,18 @@ rules:
   {{- end }}
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    resourceNames: [{{ $leaseName | quote }}]
+    resourceNames:
+      - {{ $leaseName | quote }}
+      {{- if .Values.resultDelivery.enabled }}
+      - {{ include "ptah-operator.resultLeaseName" . | quote }}
+      {{- end }}
     verbs: ["get", "update"]
+  {{- if .Values.resultDelivery.enabled }}
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ include "ptah-operator.resultPolicyName" . | quote }}]
+    verbs: ["get", "update"]
+  {{- end }}
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["list"]

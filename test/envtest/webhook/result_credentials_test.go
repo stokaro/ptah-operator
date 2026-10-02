@@ -166,6 +166,9 @@ func TestResultCredentialAdmission(t *testing.T) {
 	t.Run("collection deletion cannot erase an active pin", func(t *testing.T) {
 		requireDenied(t, admin.DeleteAllOf(ctx, &corev1.Secret{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": secret.Name}, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
 	})
+	t.Run("manager cannot create ordinary Secrets with its CREATE grant", func(t *testing.T) {
+		requireDenied(t, managerAPI.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: fixture.namespace, Name: "ordinary-manager"}}, client.DryRunAll), controllerWriteWebhook, "outside the result credential namespace")
+	})
 	t.Run("ordinary Secrets remain outside the guard", func(t *testing.T) {
 		if err := admin.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: fixture.namespace, Name: "ordinary"}}, client.DryRunAll); err != nil {
 			t.Fatal(err)

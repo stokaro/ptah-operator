@@ -38,7 +38,7 @@ func controllerWriteMatchExpression(expected RuntimeInvariants) string {
 // ControllerWriteMatchExpression includes reserved credentials for every writer.
 func ControllerWriteMatchExpression(controllerUser string) string {
 	return fmt.Sprintf(`(request.resource.resource == 'ptahresultrecords') ||
- (request.resource.resource != 'secrets' && request.resource.resource != 'ptahresultrecords' && request.userInfo.username ==
+ (request.userInfo.username ==
  '%s') ||
  (request.resource.resource == 'secrets' && (
  (object != null && object.metadata.name.startsWith('ptah-result-key-')) ||

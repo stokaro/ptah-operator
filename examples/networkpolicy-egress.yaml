@@ -176,3 +176,33 @@ spec:
               app.kubernetes.io/name: application-database
       ports:
         - {protocol: TCP, port: 5432}
+---
+# Durable delivery sends every operation's result to the manager. Use the
+# installed release namespace and Service's Pod selector. This opens no API
+# server access; receiver authentication still binds the exact operation Pod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-operations-results
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [schema-operation, migration-operation]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ptah-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ptah-operator
+              app.kubernetes.io/instance: ptah
+              app.kubernetes.io/component: controller
+      ports:
+        - {protocol: TCP, port: 9444}

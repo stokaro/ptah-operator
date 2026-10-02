@@ -320,7 +320,7 @@ webhooks:
       - name: controller-service-account
         expression: >-
           (request.resource.resource == 'ptahresultrecords') ||
-          (request.resource.resource != 'secrets' && request.resource.resource != 'ptahresultrecords' && request.userInfo.username ==
+          (request.userInfo.username ==
           'system:serviceaccount:{{ .Release.Namespace }}:{{ include "ptah-operator.serviceAccountName" . }}') ||
           (request.resource.resource == 'secrets' && (
             (object != null && object.metadata.name.startsWith('ptah-result-key-')) ||
