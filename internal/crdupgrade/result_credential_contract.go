@@ -50,3 +50,25 @@ func ControllerWriteMatchExpression(controllerUser string) string {
 func MatchExpressionsEqual(actual, expected string) bool {
 	return normalizeExpression(actual) == normalizeExpression(expected)
 }
+
+// The credential projection is the only additional volume durable delivery
+// introduces. Its exact operation-derived name and frozen Pod template are
+// checked by the controller-write webhook; this policy holds the isolated
+// Secret projection and mount boundary even before that lookup.
+const controllerJobResultCredentialExpression = `dyn(object).spec.template.spec.volumes.filter(v, v.name == "result-credentials").size() <= 1 &&
+dyn(object).spec.template.spec.volumes.all(v, v.name != "result-credentials" || (
+  has(v.secret) && v.secret.secretName.matches("^ptah-result-key-[0-9a-f]{32}$") &&
+  has(v.secret.defaultMode) && v.secret.defaultMode == 288 &&
+  (!has(v.secret.optional) || !v.secret.optional) &&
+  has(v.secret.items) && v.secret.items.size() == 3 &&
+  v.secret.items.map(item, item.key) == ["tls.crt", "tls.key", "ca.crt"] &&
+  v.secret.items.all(item, item.path == item.key && !has(item.mode)) &&
+  dyn(object).spec.template.spec.containers.all(c,
+    has(c.volumeMounts) && c.volumeMounts.filter(m, m.name == "result-credentials").size() == 1 &&
+    c.volumeMounts.all(m, m.name != "result-credentials" || (
+      m.mountPath == "/credentials/result" && has(m.readOnly) && m.readOnly &&
+      (!has(m.subPath) || m.subPath == "") && (!has(m.subPathExpr) || m.subPathExpr == "") &&
+      (!has(m.mountPropagation) || m.mountPropagation == "None")))) &&
+  dyn(object).spec.template.spec.initContainers.all(c,
+    !has(c.volumeMounts) || c.volumeMounts.all(m, m.name != "result-credentials"))
+))`
