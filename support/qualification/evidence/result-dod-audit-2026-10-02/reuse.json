@@ -15,7 +15,8 @@
       "test/envtest": "7eedd9dbd689bd54c159e835c6a843961a83cdab",
       "go.mod": "ec3cbabc37daa70c793c0ca710c7ddcb740ddcef",
       "go.sum": "dd966eed73aa50892faaeacfafe47dcc3fe6af5b"
-    }
+    },
+    "logFile": "verify-source.txt"
   },
   "scope": "Case mapping of existing executions; no repeat of unchanged component or installed tests. Installed bundles keep their actual runtime identities. The remaining logging matrix and final acceptance remain open."
 }
