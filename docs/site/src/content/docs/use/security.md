@@ -157,7 +157,9 @@ The operator separates five authorities:
    [Refusing a self-approval](#refusing-a-self-approval).
 3. The controller may manage plans and their chunks, Jobs, Leases, status, and
    Events, and create the ConfigMaps an Apply mounts its plan through. Its
-   shipped ClusterRole contains no Secret permission. Typed admission policies
+   default ClusterRole contains no Secret permission. The development
+   `resultDelivery.enabled` option adds Secret CREATE for operation-bound
+   delivery credentials, guarded by admission; it grants no Secret reads. Typed admission policies
    that ship with the release constrain its main-resource writes to structural
    Job, immutable plan, immutable chunk and immutable projection shapes; a
    fail-closed webhook then reconstructs and compares the complete write

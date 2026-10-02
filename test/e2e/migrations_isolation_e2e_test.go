@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -927,7 +928,13 @@ func (r *egressRow) render() {
 	}
 	port, err := strconv.ParseInt(m.engine.port, 10, 64)
 	m.check(err, "read the %s port", m.engine.kind)
-	r.policies, err = renderEgressPolicies(example, m.in.TestNamespace, r.target.registry, m.engine.service, port)
+	deployments := &appsv1.DeploymentList{}
+	m.check(m.cluster.Client.List(m.ctx, deployments, client.MatchingLabels{"app.kubernetes.io/component": "controller"}), "find the result receiver Deployment")
+	if len(deployments.Items) != 1 || len(deployments.Items[0].Spec.Selector.MatchExpressions) != 0 {
+		m.fatalf("egress rendering needs one manager Deployment with an exact label selector")
+	}
+	receiver := deployments.Items[0]
+	r.policies, err = renderEgressPolicies(example, m.in.TestNamespace, r.target.registry, m.engine.service, port, receiver.Namespace, receiver.Spec.Selector.MatchLabels)
 	m.check(err, "render the egress example")
 	// What the row is about has to be the example's, byte for byte.
 	if !egressSelectorsKept(example, r.policies) {

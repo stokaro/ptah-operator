@@ -668,12 +668,12 @@ func miObjectName(object map[string]any) string {
 	return name
 }
 
-// egressExampleShaped is the example the row adapts: seven NetworkPolicies,
-// two each named for the default deny, the registry and the database. The
+// egressExampleShaped holds the complete policy set: two each for default
+// deny, the registry and the database, plus DNS and durable result delivery. The
 // policies are found by the suffix the example names them with, so a renamed
 // one fails here rather than keeping its in-cluster selector.
 func egressExampleShaped(items []map[string]any) bool {
-	if len(items) != 7 {
+	if len(items) != 8 {
 		return false
 	}
 	counts := map[string]int{}
@@ -681,13 +681,13 @@ func egressExampleShaped(items []map[string]any) bool {
 		if item["kind"] != "NetworkPolicy" {
 			return false
 		}
-		for _, suffix := range []string{"-registry", "-database", "-default-deny"} {
+		for _, suffix := range []string{"-registry", "-database", "-default-deny", "-dns", "-results"} {
 			if strings.HasSuffix(miObjectName(item), suffix) {
 				counts[suffix]++
 			}
 		}
 	}
-	return counts["-registry"] == 2 && counts["-database"] == 2 && counts["-default-deny"] == 2
+	return counts["-registry"] == 2 && counts["-database"] == 2 && counts["-default-deny"] == 2 && counts["-dns"] == 1 && counts["-results"] == 1
 }
 
 // renderEgressPolicies is the example with what it tells a reader to replace
@@ -696,7 +696,10 @@ func egressExampleShaped(items []map[string]any) bool {
 // the database, which runs in the namespace under the suite's own labels and
 // port. Every policy carries the proof label, so removing them does not depend
 // on a name list that could fall behind the example.
-func renderEgressPolicies(items []map[string]any, namespace, registry, database string, databasePort int64) ([]map[string]any, error) {
+func renderEgressPolicies(items []map[string]any, namespace, registry, database string, databasePort int64, receiverNamespace string, receiverLabels map[string]string) ([]map[string]any, error) {
+	if receiverNamespace == "" || len(receiverLabels) == 0 {
+		return nil, errors.New("receiver namespace and Pod selector are required")
+	}
 	rendered := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		policy := runtime.DeepCopyJSON(item)
@@ -715,6 +718,17 @@ func renderEgressPolicies(items []map[string]any, namespace, registry, database 
 		name := miObjectName(policy)
 		var rewrite func(rule map[string]any)
 		switch {
+		case strings.HasSuffix(name, "-results"):
+			rewrite = func(rule map[string]any) {
+				labels := map[string]any{}
+				for key, value := range receiverLabels {
+					labels[key] = value
+				}
+				rule["to"] = []any{map[string]any{
+					"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": receiverNamespace}},
+					"podSelector":       map[string]any{"matchLabels": labels},
+				}}
+			}
 		case strings.HasSuffix(name, "-registry"):
 			rewrite = func(rule map[string]any) {
 				rule["to"] = []any{map[string]any{"ipBlock": map[string]any{"cidr": registry + "/32"}}}

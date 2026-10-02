@@ -820,7 +820,7 @@ func TestEgressExampleShaped(t *testing.T) {
 func TestRenderEgressPolicies(t *testing.T) {
 	t.Parallel()
 	example := miEgressExample(t)
-	rendered, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432)
+	rendered, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"})
 	if err != nil {
 		t.Fatalf("render the example: %v", err)
 	}
@@ -841,6 +841,13 @@ func TestRenderEgressPolicies(t *testing.T) {
 	if selector["app.kubernetes.io/name"] != "e2e-postgresql" || port["port"] != int64(5432) || port["protocol"] != "TCP" {
 		t.Fatalf("the database rule was rendered as %v", database)
 	}
+	resultRule := miPolicy(t, rendered, "ptah-operations-results")["spec"].(map[string]any)["egress"].([]any)[0].(map[string]any)
+	peer := resultRule["to"].([]any)[0].(map[string]any)
+	if peer["namespaceSelector"].(map[string]any)["matchLabels"].(map[string]any)["kubernetes.io/metadata.name"] != "operator-system" ||
+		peer["podSelector"].(map[string]any)["matchLabels"].(map[string]any)["app.kubernetes.io/instance"] != "test-release" ||
+		len(resultRule["to"].([]any)) != 1 {
+		t.Fatalf("receiver destination was not bound to the installed manager: %v", resultRule)
+	}
 	// What the example does not tell a reader to replace stays the example's.
 	dns := miPolicy(t, rendered, "ptah-operations-dns")["spec"]
 	if !miEqualJSON(t, dns, miPolicy(t, example, "ptah-operations-dns")["spec"]) {
@@ -858,7 +865,7 @@ func TestRenderEgressPolicies(t *testing.T) {
 		},
 		"a policy type added": func(spec map[string]any) { spec["policyTypes"] = []any{"Egress", "Ingress"} },
 	} {
-		moved, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432)
+		moved, err := renderEgressPolicies(example, "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -873,7 +880,7 @@ func TestRenderEgressPolicies(t *testing.T) {
 			delete(item.(map[string]any)["spec"].(map[string]any), "egress")
 		}
 	}
-	if _, err := renderEgressPolicies(miFromAny(broken), "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432); err == nil {
+	if _, err := renderEgressPolicies(miFromAny(broken), "ptah-e2e", "172.18.0.9", "e2e-postgresql", 5432, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"}); err == nil {
 		t.Fatal("a registry policy with no rules to adapt was rendered")
 	}
 }
@@ -881,7 +888,7 @@ func TestRenderEgressPolicies(t *testing.T) {
 func TestEgressProbeCopy(t *testing.T) {
 	t.Parallel()
 	render := func() []map[string]any {
-		rendered, err := renderEgressPolicies(miEgressExample(t), "ptah-e2e", "172.18.0.9", "e2e-mysql", 3306)
+		rendered, err := renderEgressPolicies(miEgressExample(t), "ptah-e2e", "172.18.0.9", "e2e-mysql", 3306, "operator-system", map[string]string{"app.kubernetes.io/instance": "test-release"})
 		if err != nil {
 			t.Fatal(err)
 		}
