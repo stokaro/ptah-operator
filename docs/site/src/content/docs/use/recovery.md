@@ -112,6 +112,11 @@ A backup that omits any of these turns a consistent restore into a rebuild.
   immutable payload. These internal records can contain SQL or delivery key
   material; keep them in the restricted backup. Partial publications and records
   with changed identities cannot establish an acknowledged result.
+- With durable result delivery enabled, the receiver trust Secret, its private
+  rotation journal Secret, and the public enrollment-policy ConfigMap. Preserve
+  their UIDs together: the journal binds the projection and policy identities.
+  Keep operation credential records and their Secret projections in the same
+  restricted backup. Reinstalling the chart does not restore these identities.
 - Every `PtahRealm`. A realm has no status, but a restore without it refuses
   every resource that names it.
 - The verification-policy ConfigMaps the plans and approvals bind by UID and
@@ -144,7 +149,9 @@ holder that no longer exists and makes it wait out an interval for nothing.
    establish that. Preserve the old operation identities and uncertain results
    before removing anything, and keep the fence in place through recovery.
 2. Restore or reinstall the release: CRDs, the chart, the admission singleton,
-   the certificate Secret.
+   the certificate Secret. For a consistent durable-result restore, restore the
+   receiver trust, rotation journal and enrollment policy together before either
+   the certificate rotator or manager starts.
 3. Restore the Secrets and the verification-policy ConfigMaps.
 4. Restore the `PtahRealm` objects, then the seven namespaced kinds with their
    status, then the plan chunks and result records.

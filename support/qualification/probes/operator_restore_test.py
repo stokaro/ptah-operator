@@ -1,9 +1,30 @@
 import copy
+import base64
 import json
 from pathlib import Path
 import unittest
 
 from operator_restore import OperatorProbe
+
+
+class ResultBackupInventoryTest(unittest.TestCase):
+    def test_requires_keys_and_original_journal_bindings(self):
+        trust = {'metadata': {'uid': 'trust'}, 'data': {k: 'eA==' for k in
+            ('tls.crt', 'tls.key', 'ca.crt', 'client-ca.crt', 'client-ca.key', 'client-trust.crt')}}
+        policy = {'metadata': {'uid': 'policy'}, 'data': {'enrollment.json': '{}'}}
+        journal = {'data': {'rotation.json': base64.b64encode(json.dumps(
+            {'projectionUID': 'trust', 'policyUID': 'policy'}).encode()).decode()}}
+        OperatorProbe.validate_result_material(trust, journal, policy)
+        for fault in ('missing key', 'empty journal', 'missing policy', 'replaced trust', 'replaced policy'):
+            with self.subTest(fault=fault):
+                t, j, p = copy.deepcopy((trust, journal, policy))
+                if fault == 'missing key': t['data'].pop('client-ca.key')
+                if fault == 'empty journal': j['data'] = {}
+                if fault == 'missing policy': p['data'] = {}
+                if fault == 'replaced trust': t['metadata']['uid'] = 'replacement'
+                if fault == 'replaced policy': p['metadata']['uid'] = 'replacement'
+                with self.assertRaises(RuntimeError):
+                    OperatorProbe.validate_result_material(t, j, p)
 
 
 class WorkloadHistoryTest(unittest.TestCase):

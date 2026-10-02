@@ -10,7 +10,7 @@ import signal
 import ssl
 import subprocess
 
-from operator_restore import OperatorProbe, REPO, db
+from operator_restore import OPERATOR_CRDS, OperatorProbe, REPO, db
 
 
 class ClusterRestoreProbe(OperatorProbe):
@@ -181,8 +181,9 @@ class ClusterRestoreProbe(OperatorProbe):
         result = copy.deepcopy(items)
         crds = [r for r in result if r['kind'] == 'CustomResourceDefinition']
         webhooks = [r for r in result if r['kind'] in ('MutatingWebhookConfiguration', 'ValidatingWebhookConfiguration')]
-        if len(crds) != 9 or len(webhooks) != 2 or len(result) != 11:
-            raise RuntimeError('Cold restore must account for nine CRDs and both admission configurations')
+        if (len(crds) != len(OPERATOR_CRDS) or {r['name'] for r in crds} != OPERATOR_CRDS
+                or len(webhooks) != 2 or len(result) != len(OPERATOR_CRDS) + 2):
+            raise RuntimeError('Cold restore must account for every operator CRD and both admission configurations')
         expected_service = controller[:55].rstrip('-') + '-webhook'
         controller_user = 'system:serviceaccount:' + namespace + ':' + controller
         for item in result:
@@ -214,7 +215,7 @@ class ClusterRestoreProbe(OperatorProbe):
         old_uids = {r['uid'] for r in original}
         new_uids = {r['uid'] for r in current}
         self.check('every installed contract has a new control-plane identity',
-                   len(old_uids) == len(new_uids) == 11 and old_uids.isdisjoint(new_uids))
+                   len(old_uids) == len(new_uids) == len(OPERATOR_CRDS) + 2 and old_uids.isdisjoint(new_uids))
         self.report['reinstalledContractSHA256'] = db.digest(json.dumps(current, sort_keys=True).encode())
 
     def run(self):

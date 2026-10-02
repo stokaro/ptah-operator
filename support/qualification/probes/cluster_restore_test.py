@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from cluster_restore import ClusterRestoreProbe
-from operator_restore import OperatorProbe
+from operator_restore import OPERATOR_CRDS, OperatorProbe
 
 
 class ColdRestoreContractTest(unittest.TestCase):
@@ -20,9 +20,9 @@ class ColdRestoreContractTest(unittest.TestCase):
         self.controller = self.reading['source']['controllerName']
         # CRD specifications are compared as opaque full objects; the native
         # webhook documents exercise the installation-specific normalization.
-        self.original = [{'kind': 'CustomResourceDefinition', 'name': 'crd-' + str(i),
+        self.original = [{'kind': 'CustomResourceDefinition', 'name': name,
                           'uid': 'source-crd-' + str(i), 'spec': {'contract': i}}
-                         for i in range(9)] + copy.deepcopy(self.reading['webhooks'])
+                         for i, name in enumerate(sorted(OPERATOR_CRDS))] + copy.deepcopy(self.reading['webhooks'])
 
     def compare(self, values, namespace=None, controller=None):
         return ClusterRestoreProbe.comparable_contract(values, namespace or self.namespace, controller or self.controller)
@@ -44,11 +44,15 @@ class ColdRestoreContractTest(unittest.TestCase):
         self.assertEqual(original, self.original)
 
     def test_missing_contracts_or_invalid_certificates_are_refused(self):
-        for defect in ('missing-crd', 'missing-webhook', 'empty-webhooks', 'missing-uid', 'wrong-service', 'invalid-ca'):
+        for defect in ('missing-crd', 'missing-results-crd', 'duplicate-crd', 'missing-webhook', 'empty-webhooks', 'missing-uid', 'wrong-service', 'invalid-ca'):
             with self.subTest(defect=defect):
                 changed = copy.deepcopy(self.original)
                 if defect == 'missing-crd':
                     changed.pop(0)
+                elif defect == 'missing-results-crd':
+                    changed = [r for r in changed if r['name'] != 'ptahresultrecords.operator.ptah.run']
+                elif defect == 'duplicate-crd':
+                    changed[1] = copy.deepcopy(changed[0])
                 elif defect == 'missing-webhook':
                     changed.pop()
                 elif defect == 'empty-webhooks':

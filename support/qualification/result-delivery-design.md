@@ -1039,3 +1039,22 @@ This completes the receiver network case on the recorded environment. It does
 not replace the other denied-destination egress rows in #578, the supported-minor
 payload matrix, restore coverage or final acceptance. The lifecycle checkbox
 and default transport setting remain unchanged.
+
+
+## Durable storage backup readback
+
+[Encrypted snapshot restoration](evidence/result-backup-restore-2026-10-02/summary.json)
+now preserves the installed result/key representation on Kubernetes 1.37 Linux
+amd64. A separately identified etcd member, restored from the encrypted archive,
+returns the exact bytes and UIDs for 74 selected objects. Eleven publications
+reconstruct from the restored records across both resource families and native
+engines. Trust, the private rotation journal, enrollment policy and operation
+credential projections are included; no stored binding is rewritten.
+
+The revised recovery inventory includes `PtahResultRecord` and requires the
+journal's original projection/policy identities. The proof retains only safe
+identities and checksums in Git. Its encrypted archive and key remain private.
+The isolated member and plaintext files are removed, and source schemas return
+to suspension with their original policies. This proves storage restoration;
+restored manager/rotator execution, service RPO/RTO, loss during Apply and lagged
+operator backups remain requirements of #579. The lifecycle checkbox stays open.
