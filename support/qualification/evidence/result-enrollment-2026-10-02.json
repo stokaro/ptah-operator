@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Direct-policy enrollment fence verified locally; automatic rotation and installed delivery remain incomplete",
+  "testedCommit": "f4ca746f59a632ac1838ab10bbeeef933c3cc5a7",
+  "recordedAt": "2026-10-02T05:09:55.390637+00:00",
+  "sourceSHA256": {
+    "cmd/manager/main.go": "c2a25f6b0cb20b28813d6eb6c8c5193745a09e660309ebec2d666e4d4d6f4632",
+    "internal/resultcredentials/admission.go": "617544b0444ce9615b00f2b2231f92d72eec2e7031f66676567be9783215e2ac",
+    "internal/resultcredentials/enrollment.go": "2c16ca3795ed71dcfe1842da1843bc345d7140f308ae2303b002fde051fe36ad",
+    "internal/resultcredentials/enrollment_test.go": "a49aa63ba2b66b7d1f27c3d963a4c79139010d730f7e8fe3d33b7023e3f86652",
+    "internal/resultcredentials/issuer.go": "768650bb220bfe7f3c1f8e3b3531e49cb14fb4a903dcc45068fa890f4160f874",
+    "internal/resultservice/service.go": "6b9ba169ff94bccbd63c2ee0b58826bce1138343f3e7688f3cef3095596bfb7c",
+    "internal/resultservice/trust.go": "973744936b7c569121fb5433196fb5c5877eff45297fac9998e11865c1f0adca",
+    "internal/resultservice/trust_test.go": "5c2b05deb040e95b0ccd66d6a3114933cd534ae65f5c0e5826a526803ccae76c",
+    "support/qualification/result-delivery-design.md": "9da07fec93bedda7e17a2d374df782d217870a5e06f080c15e451c75e109a68b",
+    "test/envtest/webhook/result_credentials_test.go": "e5f738be3f0c1e693f8c11de08f3f29550531556f8a18135c7052f0e19a99627"
+  },
+  "environment": {
+    "go": "go version go1.27.1 darwin/arm64",
+    "API": "Fake clients for unit tests; Kubernetes 1.37.0 kube-apiserver and etcd for admission tests",
+    "Docker": "Not used"
+  },
+  "checks": [
+    {
+      "command": "GOFLAGS=-p=1 go test -race -count=1 -json ./internal/resultcredentials ./internal/resultservice ./internal/controllerwrite ./internal/controller",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 1310,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultcredentials",
+          "elapsedSeconds": 5.147
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/resultservice",
+          "elapsedSeconds": 2.66
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/controllerwrite",
+          "elapsedSeconds": 2.916
+        },
+        {
+          "name": "github.com/stokaro/ptah-operator/internal/controller",
+          "elapsedSeconds": 8.304
+        }
+      ]
+    },
+    {
+      "command": "KUBEBUILDER_ASSETS=<Kubernetes 1.37.0 darwin/arm64 assets> PTAH_REQUIRE_ENVTEST=1 GOFLAGS=-p=1 go test -count=1 -json ./test/envtest/webhook -run TestResult",
+      "exitCode": 0,
+      "passingTestsAndSubtests": 27,
+      "skips": [],
+      "packages": [
+        {
+          "name": "github.com/stokaro/ptah-operator/test/envtest/webhook",
+          "elapsedSeconds": 13.676
+        }
+      ]
+    },
+    {
+      "command": "GOFLAGS=-p=1 make fmt-check vet verify-runner-protocol",
+      "exitCode": 0
+    }
+  ],
+  "proved": [
+    "New enrollment uses a direct GET of an exact public ConfigMap with the selected client CA certificate digest and issued server-trust bundle digest. Missing, terminating, malformed, foreign, unreadable, or stale policy refuses new credentials. Unit tests also change policy between key generation and canonical-record CREATE and verify no record is written.",
+    "Canonical-record admission requires the selected local signer, not any signer accepted during overlap, then directly checks the shared enrollment policy. Existing canonical credentials retain their original bytes, projection permissions, and live publication authority after enrollment advances.",
+    "The real API-server test advances only the ConfigMap while issuer and webhook retain their old CA. Both refuse new enrollment; no canonical record is persisted. An already-issued credential remains unchanged and publishes a result through the installed webhook. Restoring the policy admits the same previously refused request and permits issuance and publication.",
+    "The test manager identity can GET the exact enrollment ConfigMap and cannot UPDATE it. This is a fixture RBAC proof, not installed chart authorization. Admission reads still use the test administrator.",
+    "The service directly checks enrollment in its bounded background refresh, becomes unready when its mounted snapshot is stale, and recovers when the policy matches. Admission refusal is immediate on its direct read and does not wait for readiness polling. Existing canonical credentials still authorize publication while enrollment is stale.",
+    "The manager requires result-endpoint, result-cert-dir, and result-enrollment-policy together. The public policy is in the manager ServiceAccount namespace. MaxCredentialLifetime centralizes the existing 24-hour-and-12-minute certificate bound for the future rotation wait."
+  ],
+  "notProved": [
+    "The rotation journal, automatic certificate provisioning, synchronized policy/Secret publication, persisted retirement waits, endpoint convergence, CA retirement, and HA installation remain unimplemented.",
+    "Helm still does not enable durable delivery, provision the public policy, mount receiver trust, expose its Service, or grant the required NetworkPolicy and record permissions. Installed Jobs still use logs.",
+    "A real installed manager, kubelet Secret projection, SQL execution, database convergence, maximum Plan/default-logging workflow, or measured concurrent Lease and progress budgets.",
+    "Retention, authorized deletion, quota, garbage collection, backup/restore, metrics, full supported Kubernetes/engine acceptance, and full make verify on this commit.",
+    "Issue 586 end-to-end DoDs, issue 242 closure, and release authorization remain open."
+  ],
+  "localLogs": {
+    "/private/tmp/ptah-enrollment-race-current.jsonl": {
+      "sha256": "af0bd606df3e62ab2e9246069ecc4bca6e49a31d6583c558cbc60f71aab12a89",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-enrollment-api-current.jsonl": {
+      "sha256": "df3776a2b986740bf8daf515e60905474172fa080f4d53ea7516d585588dec8b",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    },
+    "/private/tmp/ptah-enrollment-gates-final.log": {
+      "sha256": "926154b37099c55ecd7849e395748581f1ec27b2c9ba344d8a173b0c5182e1b1",
+      "custody": "Local diagnostic log; final release evidence custody remains pending"
+    }
+  }
+}
