@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import pathlib
 import unittest
@@ -58,6 +59,29 @@ class ConcurrentDeliveryTests(unittest.TestCase):
                 target[path[-1]] = replacement
                 with self.assertRaises(ValueError):
                     verify_evidence(value)
+
+    def test_replays_installed_native_results_and_previous_defect(self):
+        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-concurrent-2026-10-02'
+        summary = json.loads((root / 'summary.json').read_text())
+        self.assertEqual(set(summary['engines']), {'PostgreSQL', 'MySQL'})
+        for engine, entry in summary['engines'].items():
+            with self.subTest(engine=engine):
+                directory = root / entry['directory']
+                for filename, expected in entry['files'].items():
+                    self.assertEqual(hashlib.sha256((directory / filename).read_bytes()).hexdigest(), expected)
+                proof = json.loads((directory / 'concurrent.json').read_text())
+                ack = json.loads((directory / 'lost-ack.json').read_text())
+                self.assertEqual(verify_evidence(proof), entry['verification'])
+                self.assertEqual(proof['receipt'], ack['proxy']['attempts'][0]['receipt'])
+                records = json.loads((directory / 'publication.json').read_text())
+                _, complete, payload = publication(records, ack['jobUID'])
+                self.assertEqual(complete['metadata']['uid'], proof['receipt']['UID'])
+                self.assertEqual(digest(payload), proof['originalDigest'])
+                self.assertEqual(digest(changed_payload(payload)), proof['changedDigest'])
+        before = (root / summary['regression']['file']).read_bytes()
+        self.assertEqual(hashlib.sha256(before).hexdigest(), summary['regression']['sha256'])
+        with self.assertRaisesRegex(ValueError, 'expected 409, received 503'):
+            verify_evidence(json.loads(before))
 
     def test_mutation_preserves_native_result_structure(self):
         root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-receiver-restart-2026-10-02'

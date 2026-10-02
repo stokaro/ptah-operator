@@ -797,9 +797,29 @@ independently report version 1 applied with nothing pending. This covers a fully
 applied migration after loss of both execution objects; partial work and human
 acknowledgment with fresh approval remain separate acceptance cases.
 
-This proves one lost acknowledgment for each recorded native migration row.
-Concurrent duplicate requests, failures beyond the recorded receiver replacement,
-and other minor combinations still require installed proof. Remaining failure cases,
+[Concurrent redelivery evidence](evidence/result-concurrent-2026-10-02/summary.json)
+uses manager revision `b0a51ff7`, the packaged chart, and the existing
+`b2576f9b` runner and fixture on the same Kubernetes 1.37 installation. For each
+native engine, the first result was persisted and its acknowledgment lost. The
+harness held the runner retry and sent six requests in overlapping pairs through
+both receiver Pods. Identical pairs returned the original receipt, changed
+canonical documents returned 409, and mixed pairs preserved both outcomes. Every
+immutable publication member remained unchanged. The original runner then
+received its receipt and completed the same Job and Pod with one calibrated SQL
+effect and current-generation `HistoryMatched`.
+
+This row found a real error-classification defect: admission refused changed
+bytes before storage could answer `AlreadyExists`, so the receiver returned a
+temporary 503. A direct read now identifies the immutable conflict without
+converting other write failures into a receipt. The retained pre-fix response
+fails the same verifier that accepts both corrected native runs. This exercises
+concurrent redelivery of an existing publication; it does not force a race
+between first publishers of an absent intent or saturation of one receiver.
+The privileged harness uses per-Pod port forwards, so it proves no NetworkPolicy
+behavior.
+
+Failures beyond the recorded cases and other minor combinations still require
+installed proof. Remaining failure cases,
 abandoned partial-publication cleanup,
 restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option
