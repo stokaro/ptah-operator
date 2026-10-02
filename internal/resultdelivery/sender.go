@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,15 +50,7 @@ func NewSender(endpoint string, identity Identity, tlsConfig *tls.Config, retry 
 	if tlsConfig.ServerName != "" && tlsConfig.ServerName != parsed.Hostname() {
 		return nil, ErrAuthority
 	}
-	certificate := tlsConfig.Certificates[0]
-	if len(certificate.Certificate) == 0 {
-		return nil, ErrAuthority
-	}
-	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-	if err != nil || len(leaf.URIs) != 1 {
-		return nil, ErrAuthority
-	}
-	bound, err := certificateIdentity(leaf.URIs[0])
+	bound, err := ClientIdentity(tlsConfig.Certificates[0])
 	if err != nil || bound != identity {
 		return nil, ErrAuthority
 	}

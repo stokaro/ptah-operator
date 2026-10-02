@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "issue": 586,
+  "status": "Runner command delivery verified locally; installed workflow incomplete",
+  "sourceBase": "c25e609c52a6c0a599e3a012030221b432b4f27b",
+  "sourceSHA256": {
+    "cmd/ptah-runner/main.go": "980cf1b9d387f366bcb0e3ef372220c3a4f87e45adcb38892557fc65b81cea65",
+    "cmd/ptah-runner/delivery.go": "8dc405068e8cd01338d48d271879aefdd3fda086acc64cc57b84593a381aedd8",
+    "cmd/ptah-runner/delivery_test.go": "c39ca52945bf5d9291ccb420b98017ed00325f3cff1ce318c20c59d408a22740",
+    "internal/runner/runner.go": "be48c059d884bb34f4521ca8f8e54abeacfcacdeb8d59082cc1c1865daad16ba",
+    "internal/runner/summary.go": "994936373e72f1bcd17ad08656687bf3f69d8a0ac4029b1aa8fcd7b663b3a70b",
+    "internal/runner/durable_test.go": "a7c08dda6f7512b5a5032c2fb4a2b7f7451fb5e998995ab5d2c65db21e2dccb9",
+    "internal/resultdelivery/protocol.go": "09e274d228de954a57cb89a2ab097d388ee9e844a7f0f8d216d20d818b929675",
+    "internal/resultdelivery/sender.go": "8ee18e25d404ade2c2092574120fca4c6a44e42971474854826db7aaea4dfdc5",
+    "support/runner-protocol.json": "0055325d4a40c5dba12b6321fd582b20db7c5f470b3cad7bbb134ce42422919f"
+  },
+  "environment": {
+    "go": "go1.27.1",
+    "host": "darwin/arm64",
+    "TLS": "real local sockets with client and server certificate verification",
+    "execution": "real child process returning a native migration Apply report; no database transaction",
+    "storage": "real resultstore over controller-runtime fake client; not a cluster API"
+  },
+  "checks": [
+    {
+      "command": "go test -race -count=1 -json ./cmd/ptah-runner ./internal/runner ./internal/resultdelivery",
+      "package": "github.com/stokaro/ptah-operator/internal/resultdelivery",
+      "passedTestsAndSubtests": 28,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 33.97
+    },
+    {
+      "command": "go test -race -count=1 -json ./cmd/ptah-runner ./internal/runner ./internal/resultdelivery",
+      "package": "github.com/stokaro/ptah-operator/cmd/ptah-runner",
+      "passedTestsAndSubtests": 33,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 8.778
+    },
+    {
+      "command": "go test -race -count=1 -json ./cmd/ptah-runner ./internal/runner ./internal/resultdelivery",
+      "package": "github.com/stokaro/ptah-operator/internal/runner",
+      "passedTestsAndSubtests": 554,
+      "failed": 0,
+      "skipped": 0,
+      "elapsedSeconds": 17.742
+    },
+    {
+      "command": "go vet ./cmd/ptah-runner ./internal/runner ./internal/resultdelivery",
+      "exitCode": 0
+    },
+    {
+      "command": "go run ./hack/verifyrunnerprotocol",
+      "exitCode": 0,
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:926c2691a4565b5f1e36248fa60e4137cb47bbd3aa829a446074782e5735c6f2"
+    },
+    {
+      "command": "GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /private/tmp/ptah-runner-durable ./cmd/ptah-runner",
+      "exitCode": 0,
+      "binaryBytes": 25485472,
+      "binarySHA256": "e0170561ef0b1ade14110c157b61aa3c84e7f23e176fed7ebd5cc211870af848",
+      "existingRunnerVolumeBytes": 67108864
+    }
+  ],
+  "localLogs": {
+    "/private/tmp/ptah-runner-delivery-race.jsonl": {
+      "sha256": "5d8b98ac0d6d448f677b90c5c920a349678294c5f8ac3ab5494590d6db779dcf",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-runner-delivery-tests.jsonl": {
+      "sha256": "16809c496c5d4efcf3c37b07af62e253a43f8a4ce0c711f71ccdc0ff320c95b6",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-runner-delivery-command.jsonl": {
+      "sha256": "547e8999c682dc7047ce3ff9333d895940c8782315216e0f7bb43d4af5c4fe53",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-runner-delivery-vet.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "custody": "local diagnostic log; not final release evidence custody"
+    },
+    "/private/tmp/ptah-runner-delivery-protocol.log": {
+      "sha256": "7656dc4249d9de94b079688a85f1a5c2f2ed07b07506f47ac733f229c1e88b01",
+      "custody": "local diagnostic log; not final release evidence custody"
+    }
+  },
+  "proved": [
+    "Runner validates delivery configuration and operation/Pod identity before child dispatch; malformed, missing, oversized, expired, or foreign credentials refuse before execution",
+    "Lost acknowledgment after persistence sends the same payload again and invokes the Apply child exactly once",
+    "Canceling execution context after first persistence does not cancel the bounded redelivery",
+    "Definitive receiver denial does not replay the child or fall back to diagnostic log frames; bounded execution summary remains",
+    "Durable Plan returns exact supported 8 MiB raw plan bytes without a manager process key and rejects maximum plus one",
+    "Termination summary digest matches the durably stored payload digest",
+    "Linux amd64 runner fits the existing 64 MiB installer volume"
+  ],
+  "notProved": [
+    "Actual database mutation followed by receipt loss; this command test uses a native-report fixture child",
+    "Certificate issuance, exact Pod Secret projection, immutable original-generation pin, or CA lifecycle",
+    "Workload builders select durable delivery; installed Jobs still use legacy log frames",
+    "Manager listener, controller consumption, admission, RBAC, retention, or installed default-log acceptance",
+    "Final-head CI or complete supported environment matrix"
+  ],
+  "earlierAttempts": [
+    {
+      "log": "/private/tmp/ptah-runner-delivery-tests.jsonl",
+      "finding": "Lost-ACK wrapper originally hid the real ResponseWriter socket deadline interface, causing receiver HTTP 500. Added Unwrap to preserve deadlines while withholding only the response; final test persists first, drops ACK, then verifies one child execution and two identical deliveries."
+    }
+  ]
+}

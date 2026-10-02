@@ -2,10 +2,10 @@
 
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
 The target is stable 0.2.0. This document does not qualify the transport or
-authorize a release. The current runner still writes result frames to logs.
-The storage, TLS delivery, and live Kubernetes authorization components are
-implemented. The installation, certificate issuer, runner command, and
-controllers do not use the delivery path yet.
+authorize a release. Installed Jobs still use log frames. The storage, TLS
+delivery, live authorization, and runner command path are implemented, but
+workload builders do not select durable delivery yet. The certificate issuer,
+manager listener, chart, and controller consumption remain unconnected.
 
 ## Storage boundary
 
@@ -103,7 +103,7 @@ whose identity matches the supplied binding. It refuses redirects and validates
 the returned receipt name, UID, length, and digest. Network failures and explicit
 transient statuses retry the same copied bytes within bounded attempts and an
 overall deadline. Definitive refusals stop delivery. The sender has no SQL or
-executor callback. Wiring this into the runner must preserve that boundary.
+executor callback. The runner invokes it only after its one execution returns.
 
 The local TLS tests cover a lost acknowledgment after persistence, a new receiver
 reading the existing store, conflicting retransmission, invalid client/server
@@ -142,6 +142,43 @@ Jobs that workload tests hold to the production builders, plus authority changes
 API outages, retirement during reads, and Pod replacement. These are local
 predicate tests, not installed certificate or cluster acceptance evidence.
 
+## Runner delivery path
+
+The runner accepts `--result-endpoint` and `--result-credentials` together. The
+credentials directory contains `tls.crt`, `tls.key`, and `ca.crt`; each file is
+bounded to 64 KiB. The command verifies the key pair, client certificate lifetime
+and usage, receiver configuration, and the certificate's operation, operation
+ID, target engine, and actual Pod namespace/name/UID before starting a child.
+The Pod identity must come from downward API values `PTAH_RESULT_POD_NAMESPACE`,
+`PTAH_RESULT_POD_NAME`, and `PTAH_RESULT_POD_UID`. Duplicate binding variables
+are refused. These are delivery credentials, not Kubernetes API credentials.
+The receiver remains responsible for authenticating the issuer and current
+claim. Config validation does not promise the receiver is reachable.
+
+After execution, the runner encodes one immutable result, writes a bounded
+termination summary, and sends the payload. The summary's existing
+`frameDigest` field names the canonical payload SHA-256, which is also the
+receipt digest; a summary never claims durable acceptance. Delivery permits
+four attempts, each bounded to 30 seconds, within a two-minute total deadline.
+It has its own context so execution cancellation can still be reported. The
+kubelet's termination grace can kill the process before delivery completes;
+unknown-outcome recovery remains necessary.
+
+Durable Plan execution preserves the validated raw plan bytes and their digest
+without requiring an ephemeral manager key. The limit is still exactly 8 MiB.
+The new command path never writes the payload to stdout and never falls back to
+log framing on failure. Jobs without delivery flags still use the old sealed
+log protocol until the issuer, workload, and consumer integration is ready.
+Removing that installation dependency remains required for #586.
+
+Local command tests run a real child process that returns a native migration
+Apply report, persist its result through TLS and the Secret store, then lose the
+first acknowledgment. The runner redelivers identical bytes and starts the child
+only once, including when the execution context has been canceled after the
+first persistence. The API client in this test is fake; it does not prove a real
+database commit, installed admission, or a Job lifecycle. Plan tests exercise
+exact-limit and maximum-plus-one output without a process key.
+
 ## Installation and runner integration still required
 
 The receiver runs independently of family reconcile workers, behind its own TLS
@@ -168,11 +205,9 @@ receiver writes to the same publication intent and protect the metadata as well
 as the immutable payload. Deleting/recreating a Secret is not prevented by
 `immutable: true`.
 
-The runner must validate receiver configuration before executing SQL, retain the
-one completed result in memory, and retry only transmission within a fixed
-delivery deadline. It must not call its executor again after a lost response.
-The summary remains bounded and digest-bound; stdout/stderr become diagnostics.
-There must be no correctness fallback to `pods/log`.
+Workload builders must supply the receiver configuration, projected credentials,
+and downward API identity to the implemented runner path. Controllers must use
+durable results without a correctness fallback to `pods/log`.
 
 The new TLS payload must carry usable plan bytes, not an old per-process sealed
 Plan. Storing those bytes in access-controlled Secrets removes the dependency on

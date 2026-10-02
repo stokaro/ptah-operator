@@ -44,6 +44,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	operationFlag := flags.String("operation", "", "operation: resolve, verify, observe, plan, apply, migration-history, or migration-apply")
 	installTo := flags.String("install-to", "", "copy this executable to the fixed Job runner path")
 	validateOCISource := flags.String("validate-oci-source", "", "validate OCI source authority grants without network access")
+	resultEndpoint := flags.String("result-endpoint", "", "HTTPS origin for durable result delivery")
+	resultCredentials := flags.String("result-credentials", "", "directory containing result-delivery tls.crt, tls.key, and ca.crt")
 	snapshotOCICATo := flags.String("snapshot-oci-ca-to", "", "copy a validated OCI CA to an exclusive snapshot path")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
@@ -138,7 +140,25 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		return 2
 	}
 
+	var delivery *runnerDelivery
+	deliveryRequested := false
+	flags.Visit(func(current *flag.Flag) {
+		if current.Name == "result-endpoint" || current.Name == "result-credentials" {
+			deliveryRequested = true
+		}
+	})
+	if deliveryRequested {
+		var err error
+		delivery, err = prepareDelivery(*resultEndpoint, *resultCredentials, operation, environment)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: invalid result delivery configuration")
+			return 2
+		}
+		defer delivery.sender.Close()
+	}
+
 	result := runner.Run(ctx, runner.Config{
+		DurableResult:  delivery != nil,
 		Operation:      operation,
 		PtahBinary:     *ptahBinary,
 		MaxResultBytes: *maxResultBytes,
@@ -146,6 +166,9 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		Environment:    environment,
 		Diagnostics:    stderr,
 	})
+	if delivery != nil {
+		return delivery.deliver(ctx, result, stderr, terminationLog)
+	}
 	encoded, err := runner.EncodeResult(result)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "ptah-runner: could not write the result frame")

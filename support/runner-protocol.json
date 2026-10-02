@@ -12,6 +12,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:b2da427538fa9ab6f68af5f253a739638d11d2306a4a43fb2c53f1d6800663d7",
       "reason": "Expose the existing decoded-result validator for authenticated delivery without changing the runner command, execution checks, result fields, log framing, or acceptance rules. The new function requires an explicit operation and ID and delegates to the same validator used by the existing parser. The receiver and sender are not yet connected to the runner command; protocol version 1 remains unchanged."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:926c2691a4565b5f1e36248fa60e4137cb47bbd3aa829a446074782e5735c6f2",
+      "reason": "Complete the initial durable result transport before the first tagged 0.2.0 release. Explicit TLS delivery validates projected credentials and operation/Pod identity before child dispatch, sends the completed result with bounded retries, and never falls back to logs. Durable Plan results contain the exact validated plaintext bytes instead of process-key ciphertext; termination summaries retain their payload digest and do not claim acknowledgment. Jobs without delivery configuration retain their existing log protocol during integration. No tagged release could have stored or consumed an earlier protocol-1 contract; the development contract counters remain 1."
     }
   ]
 }

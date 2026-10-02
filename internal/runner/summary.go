@@ -111,6 +111,28 @@ func EncodeResult(result Result) (EncodedResult, error) {
 	return encoded, nil
 }
 
+// EncodeSummary returns the bounded termination summary of the canonical JSON
+// payload, without constructing or emitting a diagnostic log frame. FrameDigest
+// retains its wire name and hashes the same payload as durable delivery. This is
+// execution evidence only: it does not claim the receiver persisted the result.
+func EncodeSummary(result Result) ([]byte, error) {
+	if result.ProtocolVersion == 0 {
+		result.ProtocolVersion = ProtocolVersion
+	}
+	if err := validateResult(result, ParseOptions{}); err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > DefaultMaxFrameBytes {
+		return nil, ErrFrameTooLarge
+	}
+	digest := sha256.Sum256(payload)
+	return marshalSummary(summaryOf(result, "sha256:"+hex.EncodeToString(digest[:])))
+}
+
 // WriteTerminationSummary writes a summary to the termination message file.
 //
 // The file is opened, never created. The kubelet mounts it into every

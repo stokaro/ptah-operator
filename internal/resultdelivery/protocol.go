@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -66,6 +67,26 @@ func CertificateURI(identity Identity) (*url.URL, error) {
 		return nil, ErrAuthority
 	}
 	return &url.URL{Scheme: "ptah-result", Host: "operator.ptah.run", Path: "/v1/" + base64.RawURLEncoding.EncodeToString(b)}, nil
+}
+
+// ClientIdentity reads the binding from a locally provisioned client
+// certificate. It refuses an expired or non-client leaf, but does not authenticate
+// its issuer; the receiver's TLS verification establishes that trust.
+func ClientIdentity(certificate tls.Certificate) (Identity, error) {
+	if len(certificate.Certificate) == 0 || certificate.PrivateKey == nil {
+		return Identity{}, ErrAuthority
+	}
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	now := time.Now()
+	if err != nil || leaf.IsCA || len(leaf.URIs) != 1 || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+		return Identity{}, ErrAuthority
+	}
+	for _, usage := range leaf.ExtKeyUsage {
+		if usage == x509.ExtKeyUsageClientAuth {
+			return certificateIdentity(leaf.URIs[0])
+		}
+	}
+	return Identity{}, ErrAuthority
 }
 
 func certificateIdentity(uri *url.URL) (Identity, error) {
