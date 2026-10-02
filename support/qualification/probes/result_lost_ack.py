@@ -15,9 +15,9 @@ def verify_evidence(value):
     binding = value['binding']
     proxy = value['proxy']
     version = value.get('evidenceVersion', 1)
-    require(version in (1, 2), 'Unknown evidence version')
+    require(version in (1, 2, 3), 'Unknown evidence version')
     # Version 1 was the PostgreSQL-only probe. New executions name their engine.
-    if version == 2:
+    if version >= 2:
         require(value.get('engine') in ('PostgreSQL', 'MySQL'), 'Missing supported engine')
         calibration = value['rollbackCalibration']
         expected = '0:1:true'
@@ -44,6 +44,21 @@ def verify_evidence(value):
     require(receipt['Name'] == value['receiptName'] and receipt['UID'] == value['receiptUID'] and (receipt['Digest'] == value['payloadDigest']) and (receipt['Size'] == value['payloadBytes'] > 0), 'Proxy evidence does not match persisted publication')
     times = [dt.datetime.fromisoformat(a['receivedAt'].replace('Z', '+00:00')) for a in attempts]
     require(times[0] < times[1] <= dt.datetime.fromisoformat(value['completedAt']), 'Retry timing does not precede completed acceptance')
+    if version == 3:
+        restart = value['receiverRestart']
+        old, new = restart['before'], restart['after']
+        require(len(old) == len(new) == 2 and len(set(old)) == len(set(new)) == 2
+                and all(old) and all(new) and set(old).isdisjoint(new), 'Receiver processes were not replaced')
+        require(restart['oldPodsAbsent'] is True and restart['newPodsReady'] is True,
+                'Receiver replacement was incomplete')
+        require(restart['receiptUIDBeforeRestart'] == value['receiptUID']
+                and restart['databaseBeforeRestart'] == '1:1:true', 'No durable SQL result before restart')
+        require(proxy.get('retryGateEnabled') is True and proxy.get('retryWaits', 0) > 0,
+                'No retry held before receiver replacement')
+        removed = dt.datetime.fromisoformat(restart['oldPodsAbsentAt'])
+        ready = dt.datetime.fromisoformat(restart['newPodsReadyAt'])
+        resumed = dt.datetime.fromisoformat(proxy['retryResumedAt'].replace('Z', '+00:00'))
+        require(times[0] < removed <= ready < resumed < times[1], 'Retry reached receivers before replacement')
     require(any((c['type'] == 'Ready' and c['status'] == 'True' and (c.get('reason') == 'HistoryMatched') and (c.get('observedGeneration') == binding['generation']) for c in value['conditions'])), 'No current-generation database convergence')
     return {'deliveries': 2, 'sqlExecutions': 1, 'receiptUID': receipt['UID']}
 
@@ -51,6 +66,10 @@ def main():
     if not __debug__:
         raise RuntimeError('Run without Python optimization; acceptance assertions are required')
     E = os.environ
+    restart_receiver = E.get('RESULT_PROBE_RESTART_RECEIVER', '0')
+    if restart_receiver not in ('0', '1'):
+        raise ValueError('RESULT_PROBE_RESTART_RECEIVER must be 0 or 1')
+    restart_receiver = restart_receiver == '1'
     engine = E['RESULT_PROBE_ENGINE']
     if engine not in ('PostgreSQL', 'MySQL'):
         raise ValueError('RESULT_PROBE_ENGINE must be PostgreSQL or MySQL')
@@ -192,6 +211,8 @@ def main():
     pf = None
     copied = False
     proxy_created = False
+    backend_service = None
+    receiver_restart = None
     proxy_name = ns + '-proxy'
     client_secret = ns + '-client'
 
@@ -199,8 +220,8 @@ def main():
         assert get('service', service_name, opns)['metadata']['uid'] == service['metadata']['uid']
         k('patch', 'service', service_name, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/selector', 'value': original_selector}]), namespace=opns)
 
-    def endpoints_are(expected):
-        slices = json.loads(k('get', 'endpointslices', '-l', 'kubernetes.io/service-name=' + service_name, '-o', 'json', namespace=opns))['items']
+    def endpoints_are(expected, name=service_name):
+        slices = json.loads(k('get', 'endpointslices', '-l', 'kubernetes.io/service-name=' + name, '-o', 'json', namespace=opns))['items']
         uids = {e.get('targetRef', {}).get('uid') for s in slices for e in s.get('endpoints', []) if e.get('conditions', {}).get('ready')}
         return uids == expected
     try:
@@ -242,6 +263,14 @@ def main():
         create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': client_secret, 'namespace': opns}, 'type': 'kubernetes.io/tls', 'immutable': True, 'data': dec(credential)})
         copied = True
         spec = {'restartPolicy': 'Never', 'automountServiceAccountToken': False, 'securityContext': {'runAsNonRoot': True, 'runAsUser': 65532, 'runAsGroup': 65532, 'fsGroup': 65532, 'seccompProfile': {'type': 'RuntimeDefault'}}, 'imagePullSecrets': manager['spec']['template']['spec'].get('imagePullSecrets', []), 'containers': [{'name': 'proxy', 'image': fixture, 'command': ['/e2e-handcraft-oci'], 'args': ['result-ack-proxy', '--backend-address=' + backend['status']['podIP'] + ':9444', '--server-name=' + host, '--trust-directory=/trust', '--credential-directory=/credential'], 'ports': [{'name': 'results', 'containerPort': 9444}], 'securityContext': {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True, 'capabilities': {'drop': ['ALL']}}, 'resources': {'requests': {'cpu': '20m', 'memory': '32Mi'}, 'limits': {'cpu': '500m', 'memory': '256Mi'}}, 'volumeMounts': [{'name': 'trust', 'mountPath': '/trust', 'readOnly': True}, {'name': 'credential', 'mountPath': '/credential', 'readOnly': True}]}], 'volumes': [{'name': 'trust', 'secret': {'secretName': trust['metadata']['name'], 'defaultMode': 288, 'items': [{'key': key, 'path': key} for key in ['tls.crt', 'tls.key', 'client-trust.crt']]}}, {'name': 'credential', 'secret': {'secretName': client_secret, 'defaultMode': 288}}]}
+        if restart_receiver:
+            backend_service = create({'apiVersion': 'v1', 'kind': 'Service',
+                                      'metadata': {'name': ns + '-backend', 'namespace': opns},
+                                      'spec': {'selector': original_selector,
+                                               'ports': [{'port': 9444, 'targetPort': 'results'}]}})
+            wait(lambda: endpoints_are({p['metadata']['uid'] for p in managers}, backend_service['metadata']['name']), 30)
+            spec['containers'][0]['args'][1] = '--backend-address=' + backend_service['spec']['clusterIP'] + ':9444'
+            spec['containers'][0]['args'].append('--pause-retry')
         proxy = create({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': proxy_name, 'namespace': opns, 'labels': {'acceptance-proxy': ns}}, 'spec': spec})
         proxy_created = True
         k('wait', '--for=condition=Ready', 'pod/' + proxy_name, '--timeout=120s', namespace=opns)
@@ -266,6 +295,34 @@ def main():
         k('delete', 'validatingadmissionpolicy', gate)
         gated = False
         print('Apply released through the ACK-loss proxy:', job_name, flush=True)
+
+        if restart_receiver:
+            def retry_paused():
+                value = admin('/evidence')
+                return value if value and value.get('retryWaits', 0) > 0 and value['dropped'] and len(value['attempts']) == 1 else None
+            paused = wait(retry_paused, 60)
+            assert witness() == '1:1:true'
+            _, committed, _ = publication({r['metadata']['name']: r for r in records()}, job_uid)
+            assert committed['metadata']['uid'] == paused['attempts'][0]['receipt']['UID']
+            old_uids = {p['metadata']['uid'] for p in managers}
+            for p in managers:
+                assert get('pod', p['metadata']['name'], opns)['metadata']['uid'] == p['metadata']['uid']
+            k('delete', 'pods', *[p['metadata']['name'] for p in managers], '--wait=true', '--timeout=90s', namespace=opns)
+            absent_at = dt.datetime.now(dt.timezone.utc).isoformat()
+            def replacements_ready():
+                pods = json.loads(k('get', 'pods', '-l', selector, '-o', 'json', namespace=opns))['items']
+                return pods if len(pods) == 2 and old_uids.isdisjoint({p['metadata']['uid'] for p in pods}) and all(
+                    not p['metadata'].get('deletionTimestamp') and any(c['type'] == 'Ready' and c['status'] == 'True'
+                        for c in p.get('status', {}).get('conditions', [])) for p in pods) else None
+            managers = wait(replacements_ready, 90)
+            wait(lambda: endpoints_are({p['metadata']['uid'] for p in managers}, backend_service['metadata']['name']), 20)
+            receiver_restart = {'before': sorted(old_uids), 'after': sorted(p['metadata']['uid'] for p in managers),
+                                'oldPodsAbsent': True, 'newPodsReady': True, 'oldPodsAbsentAt': absent_at,
+                                'newPodsReadyAt': dt.datetime.now(dt.timezone.utc).isoformat(),
+                                'receiptUIDBeforeRestart': committed['metadata']['uid'], 'databaseBeforeRestart': '1:1:true'}
+            save('receiver-restart.json', receiver_restart)
+            assert admin('/resume-retry', True) == 204
+            print('Both receiving managers replaced before retry forwarding', flush=True)
 
         def retry_saved():
             value = admin('/evidence')
@@ -306,6 +363,8 @@ def main():
         assert finalproxy['released'] and finalproxy['attempts'] == evidence['attempts']
         result = {'commit': E['E2E_CONTROLLER_REVISION'], 'fixtureImage': fixture, 'credentialCertificateDigest': certificate_digest, 'credentialUID': credential['metadata']['uid'], 'namespace': ns, 'database': database, 'resourceUID': resource['metadata']['uid'], 'binding': dec(intent)['binding'], 'jobUID': job_uid, 'podUID': pod['metadata']['uid'], 'intentUID': intent['metadata']['uid'], 'receiptUID': complete['metadata']['uid'], 'payloadDigest': dec(intent)['digest'], 'receiptName': complete['metadata']['name'], 'payloadBytes': len(data), 'proxy': finalproxy, 'databaseBeforeRelease': before, 'databaseAfterRelease': after, 'databaseBeforeExecution': '0:1:false', 'applyJobs': 1, 'podRestarts': 0, 'podPhase': finalpod['status']['phase'], 'executionPods': len(execution_pods), 'runnerAPICredentials': False, 'converged': True, 'conditions': final['status']['conditions'], 'procedureSHA256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(), 'completedAt': dt.datetime.now(dt.timezone.utc).isoformat()}
         result.update(evidenceVersion=2, engine=engine, rollbackCalibration=calibration, databaseServerVersion=server_version)
+        if restart_receiver:
+            result.update(evidenceVersion=3, receiverRestart=receiver_restart)
         verify_evidence(result)
         save('lost-ack.json', result)
         print('PASS: identical receipt redelivered after lost ACK; one native migration SQL execution', flush=True)
@@ -324,6 +383,8 @@ def main():
                 pf.wait()
         if proxy_created:
             k('delete', 'pod', proxy_name, '--ignore-not-found', '--wait=true', '--timeout=60s', namespace=opns)
+        if backend_service:
+            k('delete', 'service', backend_service['metadata']['name'], '--ignore-not-found', namespace=opns)
         if copied:
             k('delete', 'secret', client_secret, '--ignore-not-found', namespace=opns)
 if __name__ == '__main__':

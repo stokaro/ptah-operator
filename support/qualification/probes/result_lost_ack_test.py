@@ -65,6 +65,41 @@ class LostAcknowledgmentEvidenceTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         verify_evidence(value)
 
+    def test_receiver_restart_requires_new_processes_before_redelivery(self):
+        value = self.fixture()
+        value.update(evidenceVersion=3, engine='MySQL',
+                     rollbackCalibration={'afterRollback': '0:1:true', 'afterReset': '0:1:false',
+                                          'storageEngine': 'InnoDB'},
+                     receiverRestart={'before': ['old-a', 'old-b'], 'after': ['new-a', 'new-b'],
+                                      'oldPodsAbsent': True, 'newPodsReady': True,
+                                      'oldPodsAbsentAt': '2026-10-02T11:00:01.1+00:00',
+                                      'newPodsReadyAt': '2026-10-02T11:00:01.2+00:00',
+                                      'receiptUIDBeforeRestart': 'receipt', 'databaseBeforeRestart': '1:1:true'})
+        value['proxy'].update(retryGateEnabled=True, retryWaits=1,
+                              retryResumedAt='2026-10-02T11:00:01.3Z')
+        self.assertEqual(verify_evidence(value)['sqlExecutions'], 1)
+        mutations = [
+            ('receiverRestart', 'before', []),
+            ('receiverRestart', 'after', ['new-a', 'new-a']),
+            ('receiverRestart', 'after', ['old-a', 'new-b']),
+            ('receiverRestart', 'after', ['', 'new-b']),
+            ('receiverRestart', 'oldPodsAbsent', False),
+            ('receiverRestart', 'newPodsReady', False),
+            ('receiverRestart', 'receiptUIDBeforeRestart', 'other'),
+            ('receiverRestart', 'databaseBeforeRestart', '0:1:false'),
+            ('receiverRestart', 'oldPodsAbsentAt', '2026-10-02T11:00:00+00:00'),
+            ('receiverRestart', 'newPodsReadyAt', '2026-10-02T11:00:01.4+00:00'),
+            ('proxy', 'retryGateEnabled', False),
+            ('proxy', 'retryWaits', 0),
+            ('proxy', 'retryResumedAt', '2026-10-02T11:00:02.1Z'),
+        ]
+        for section, field, replacement in mutations:
+            with self.subTest(section=section, field=field, value=replacement):
+                bad = copy.deepcopy(value)
+                bad[section][field] = replacement
+                with self.assertRaises(ValueError):
+                    verify_evidence(bad)
+
     def test_refuses_absent_fault_replay_or_changed_identity(self):
         mutations = [
             ('absent commit', ['commit'], ''),

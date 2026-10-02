@@ -39,6 +39,9 @@ type ackEvidence struct {
 	Attempts                []ackAttempt `json:"attempts"`
 	Dropped                 bool         `json:"dropped"`
 	Released                bool         `json:"released"`
+	RetryGateEnabled        bool         `json:"retryGateEnabled,omitempty"`
+	RetryWaits              int          `json:"retryWaits,omitempty"`
+	RetryResumedAt          *time.Time   `json:"retryResumedAt,omitempty"`
 }
 
 // Only the disposable fixture holds these keys. It forwards one original Pod's
@@ -46,17 +49,18 @@ type ackEvidence struct {
 // holds the identical retry until the harness restores the ordinary Service.
 // Neither payload bytes nor credentials appear in its evidence or errors.
 type resultACKProxy struct {
-	client     *http.Client
-	origin     string
-	clientLeaf []byte
-	mu         sync.Mutex
-	evidence   ackEvidence
-	slot       chan struct{}
-	release    chan struct{}
+	client      *http.Client
+	origin      string
+	clientLeaf  []byte
+	mu          sync.Mutex
+	evidence    ackEvidence
+	slot        chan struct{}
+	release     chan struct{}
+	resumeRetry chan struct{}
 }
 
 func newResultACKProxy(client *http.Client, origin string, clientLeaf []byte) *resultACKProxy {
-	return &resultACKProxy{client: client, origin: origin, clientLeaf: bytes.Clone(clientLeaf), slot: make(chan struct{}, 1), release: make(chan struct{}), evidence: ackEvidence{ClientCertificateDigest: digest(clientLeaf), Attempts: []ackAttempt{}}}
+	return &resultACKProxy{client: client, origin: origin, clientLeaf: bytes.Clone(clientLeaf), slot: make(chan struct{}, 1), release: make(chan struct{}), resumeRetry: make(chan struct{}), evidence: ackEvidence{ClientCertificateDigest: digest(clientLeaf), Attempts: []ackAttempt{}}}
 }
 
 func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +91,21 @@ func (p *resultACKProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && conflict {
 		http.Error(w, "unexpected fixture retry", http.StatusConflict)
 		return
+	}
+	if r.Method == http.MethodPut && count == 1 {
+		p.mu.Lock()
+		paused := p.evidence.RetryGateEnabled && p.evidence.RetryResumedAt == nil
+		if paused {
+			p.evidence.RetryWaits++
+		}
+		p.mu.Unlock()
+		if paused {
+			select {
+			case <-p.resumeRetry:
+			case <-r.Context().Done():
+				return
+			}
+		}
 	}
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, p.origin+r.URL.Path, bytes.NewReader(body))
 	if err != nil {
@@ -164,6 +183,17 @@ func (p *resultACKProxy) admin(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/evidence":
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(p.evidence)
+	case r.Method == http.MethodPost && r.URL.Path == "/resume-retry":
+		if !p.evidence.RetryGateEnabled || !p.evidence.Dropped || p.evidence.RetryWaits == 0 {
+			http.Error(w, "retry is not paused", http.StatusConflict)
+			return
+		}
+		if p.evidence.RetryResumedAt == nil {
+			now := time.Now().UTC()
+			p.evidence.RetryResumedAt = &now
+			close(p.resumeRetry)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPost && r.URL.Path == "/release":
 		if !p.evidence.Dropped || len(p.evidence.Attempts) != 2 {
 			http.Error(w, "retry is not ready", http.StatusConflict)
@@ -186,6 +216,7 @@ func runResultACKProxy(args []string) error {
 	serverName := flags.String("server-name", "", "")
 	trustDir := flags.String("trust-directory", "", "")
 	credentialDir := flags.String("credential-directory", "", "")
+	pauseRetry := flags.Bool("pause-retry", false, "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *serverName == "" || strings.ContainsAny(*serverName, "/:@?#") || !filepath.IsAbs(*trustDir) || !filepath.IsAbs(*credentialDir) {
 		return errors.New("invalid result ACK proxy configuration")
 	}
@@ -222,6 +253,7 @@ func runResultACKProxy(args []string) error {
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("fixture refuses redirects") }}
 	proxy := newResultACKProxy(client, "https://"+*serverName, credential.Certificate[0])
+	proxy.evidence.RetryGateEnabled = *pauseRetry
 	dataServer := &http.Server{Handler: proxy, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: log.New(io.Discard, "", 0), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{server}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientRoots, NextProtos: []string{"http/1.1"}}}
 	adminServer := &http.Server{Handler: http.HandlerFunc(proxy.admin), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, MaxHeaderBytes: 4 << 10}
 	dataListener, err := net.Listen("tcp", ":9444")

@@ -83,6 +83,31 @@ Each run proves a single lost acknowledgment for its recorded engine and
 Kubernetes minor. Concurrent duplicate delivery, receiver failure during retry,
 and the other engine/minor combinations remain separate requirements.
 
+## Receiver replacement during retry
+
+Set `RESULT_PROBE_RESTART_RECEIVER=1` for the same migration probe to replace
+both manager Pods between the first persisted receipt and its redelivery.
+The fixture's `--pause-retry` flag holds the retry before any upstream request;
+`retryWaits` records that the runner actually reached this boundary. The gate
+honors request cancellation and does not change the runner's retry budget.
+`POST /resume-retry` is refused until a retry has reached the gate after a lost
+acknowledgment. Resuming the gate is idempotent.
+
+The harness creates a temporary backend Service with the ordinary manager
+selector, separate from the result Service routed through the proxy. After
+independently reconstructing the first publication and observing one SQL effect,
+it deletes both original manager Pods, verifies that neither UID remains, waits
+for two distinct ready replacements and their backend endpoints, and resumes
+the retry. The replacement receivers must return the original receipt. Restoring
+the ordinary result Service and releasing the held response then permits the
+original runner to finish. The backend Service is removed in `finally`.
+
+`receiver-restart.json` records the old and new UID sets, readiness observation,
+and persisted receipt identity. Version 3 evidence rejects overlapping or
+missing replicas, an absent retry gate, or a second receipt obtained before
+replacement. This row does not prove certificate rotation, concurrent duplicate
+requests, or behavior after the runner exhausts its delivery deadline.
+
 ## First harvest
 
 `result_first_harvest.py` runs a native PostgreSQL plan of exactly 8 MiB

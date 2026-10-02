@@ -250,3 +250,73 @@ func TestResultACKProxyRefusesFalseReceiptEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestResultACKProxyPausesRetryBeforeReachingReceiver(t *testing.T) {
+	f := newACKFixture(t)
+	f.proxy.mu.Lock()
+	f.proxy.evidence.RetryGateEnabled = true
+	f.proxy.mu.Unlock()
+	if f.admin(http.MethodPost, "/resume-retry").Code != http.StatusConflict {
+		t.Fatal("resumed before a retry reached the gate")
+	}
+	if response, err := f.put(f.body); err == nil || response != nil {
+		t.Fatal("first acknowledgment was not lost")
+	}
+	type result struct {
+		response *http.Response
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() { response, err := f.put(f.body); done <- result{response, err} }()
+	read := func() ackEvidence {
+		var e ackEvidence
+		if err := json.Unmarshal(f.admin(http.MethodGet, "/evidence").Body.Bytes(), &e); err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	wait := func(ready func(ackEvidence) bool) ackEvidence {
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			e := read()
+			if ready(e) {
+				return e
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("retry did not reach the required boundary")
+		return ackEvidence{}
+	}
+	e := wait(func(e ackEvidence) bool { return e.RetryWaits == 1 })
+	if len(e.Attempts) != 1 || f.calls.Load() != 1 || e.RetryResumedAt != nil {
+		t.Fatal("paused retry reached the old receiver")
+	}
+	if f.admin(http.MethodPost, "/release").Code != http.StatusConflict {
+		t.Fatal("released a retry before it reached the new receiver")
+	}
+	for range 2 {
+		if f.admin(http.MethodPost, "/resume-retry").Code != http.StatusNoContent {
+			t.Fatal("retry resume was not idempotent")
+		}
+	}
+	e = wait(func(e ackEvidence) bool { return len(e.Attempts) == 2 })
+	if e.RetryResumedAt == nil || !e.RetryResumedAt.After(e.Attempts[0].ReceivedAt) || !e.Attempts[1].ReceivedAt.After(*e.RetryResumedAt) {
+		t.Fatal("receipt did not follow retry resumption")
+	}
+	select {
+	case <-done:
+		t.Fatal("response escaped before route restoration")
+	default:
+	}
+	if f.admin(http.MethodPost, "/release").Code != http.StatusNoContent {
+		t.Fatal("could not release the persisted retry")
+	}
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	defer got.response.Body.Close()
+	if got.response.StatusCode != http.StatusOK || f.calls.Load() != 2 {
+		t.Fatal("retry did not reach the receiver exactly once after resumption")
+	}
+}
