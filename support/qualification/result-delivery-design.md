@@ -3,9 +3,9 @@
 Implementation design for [#586](https://github.com/stokaro/ptah-operator/issues/586).
 The target is stable 0.2.0. This document does not qualify the transport or
 authorize a release. The current runner still writes result frames to logs.
-The storage and TLS delivery components are implemented; the installation,
-certificate issuer, live Kubernetes authorizer, and controllers do not use them
-yet.
+The storage, TLS delivery, and live Kubernetes authorization components are
+implemented. The installation, certificate issuer, runner command, and
+controllers do not use the delivery path yet.
 
 ## Storage boundary
 
@@ -70,8 +70,9 @@ publication, including their validity on reused TLS connections.
 
 The receiver requires an explicit live-authorizer callback. No callback that
 permits arbitrary requests is supplied by production code. The Kubernetes
-implementation still has to check the exact claim, epoch, Job, Pod, and engine;
-the TLS tests use controlled authorization callbacks and do not prove this part.
+implementation is `internal/resultauthority.Authorizer.Check`, which requires
+an uncached API reader. The TLS tests use controlled authorization callbacks;
+the separate authorizer tests check the Kubernetes predicates with a fake client.
 A definitive authority refusal is HTTP 403. A temporary API failure is HTTP 503,
 so a runner may retry delivery without mistaking an outage for revoked authority.
 
@@ -110,6 +111,36 @@ trust, authority retirement at each check, a stalled body, saturation, redirects
 and an exact 8 MiB escaping-heavy plan. They use the real Secret store over a fake
 API client; the separate envtest suite covers the real API's storage behavior.
 Neither is a complete Job-to-controller acceptance run.
+
+## Live result authority
+
+`internal/resultauthority` holds a certificate identity to the current schema or
+migration UID, generation, active operation, input fingerprint, and execution
+epoch. It verifies the exact recorded Job UID through `jobclaim.Match`, then
+holds the Pod UID, owner, generated name, metadata, and workload to the persisted
+admission snapshot. Controllers and delivery share `podintent.ValidateStoredPod`.
+The Job must still have the one-shot admission envelope and no cleanup TTL.
+A bounded Pod list must identify only the original Pod; a second Pod, incomplete
+list, or empty list refuses publication. The subject is read again after these
+checks, and a changed claim refuses publication.
+
+A missing recorded Job UID is temporary: the runner may finish before the
+controller persists adoption. API outages are also retryable; missing objects,
+changed authority, and lost Lease continuity are definitive refusals. Mutating
+claims must have persisted `DispatchStarted`; read-only claims do not set it.
+An expired execution deadline or a terminating original Pod does not itself
+refuse an outcome that the runner has already produced. This grants permission
+to deliver evidence, never permission to execute SQL.
+
+The authorizer does not issue credentials, install admission, or establish a
+transaction across its reads and the completion write. The issuer must freeze
+the original generation and attempt before signing, and must not remint an old
+attempt for a newer generation. Consumers still decide whether evidence is
+current and whether the SQL process has stopped under the existing Lease and
+unknown-outcome rules. Tests cover all nine operation types using the golden
+Jobs that workload tests hold to the production builders, plus authority changes,
+API outages, retirement during reads, and Pod replacement. These are local
+predicate tests, not installed certificate or cluster acceptance evidence.
 
 ## Installation and runner integration still required
 

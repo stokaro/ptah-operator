@@ -4487,46 +4487,8 @@ func builtSchemaJobClaim(
 	return claim
 }
 
-func validatePodIntent(
-	pod *corev1.Pod,
-	job *batchv1.Job,
-	snapshot *operatorv1alpha1.PodAdmissionSnapshot,
-) error {
-	if pod == nil || job == nil || job.UID == "" ||
-		!exactControllerOwner(pod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job", job.Name, job.UID) {
-		return fmt.Errorf("Pod is not controller-owned by the exact Job UID")
-	}
-	if err := podintent.ValidateGeneratedPodName(pod, job.Name); err != nil {
-		return fmt.Errorf("Pod does not have the exact Job-generated name: %w", err)
-	}
-	for key, expected := range job.Spec.Template.Labels {
-		if pod.Labels[key] != expected {
-			return fmt.Errorf("Pod operation labels do not match the Job template")
-		}
-	}
-	for key, expected := range job.Spec.Template.Annotations {
-		if pod.Annotations[key] != expected {
-			return fmt.Errorf("Pod operation annotations do not match the Job template")
-		}
-	}
-	for key, expected := range map[string]string{
-		"controller-uid":                     string(job.UID),
-		"batch.kubernetes.io/controller-uid": string(job.UID),
-		"job-name":                           job.Name,
-		"batch.kubernetes.io/job-name":       job.Name,
-	} {
-		if value, ok := pod.Labels[key]; ok && value != expected {
-			return fmt.Errorf("Pod has an invalid generated Job identity label")
-		}
-	}
-
-	if snapshot == nil || job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] != snapshot.Digest {
-		return fmt.Errorf("Job template is not bound to the persisted admission snapshot")
-	}
-	if err := podintent.ValidatePodSpec(&pod.Spec, &job.Spec.Template, snapshot); err != nil {
-		return fmt.Errorf("Pod workload spec does not match the validated Job template: %w", err)
-	}
-	return nil
+func validatePodIntent(pod *corev1.Pod, job *batchv1.Job, snapshot *operatorv1alpha1.PodAdmissionSnapshot) error {
+	return podintent.ValidateStoredPod(pod, job, snapshot)
 }
 
 func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, status metav1.ConditionStatus, reason operatorv1alpha1.ConditionReason, message string) {
