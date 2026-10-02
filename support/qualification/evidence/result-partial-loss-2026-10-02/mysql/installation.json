@@ -1,0 +1,67 @@
+{
+  "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+  "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+  "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+  "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+  "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+  "chartSHA256": "43c718af58a8ef74824b1081917d431290ea985e99fb99ba94efa2997de2260e",
+  "nodes": [
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane2",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-control-plane3",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    },
+    {
+      "name": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "version": "v1.37.0",
+      "architecture": "amd64",
+      "containerLogMaxSize": "10Mi"
+    }
+  ],
+  "receiverUIDs": [
+    "94ca2cc7-f383-440e-b5a2-d919e600f279",
+    "8cfe6173-7210-4f55-a824-ae0c3e96b79f"
+  ],
+  "quotaRemoved": true,
+  "credentialGateRemoved": true,
+  "publications": {
+    "history-before-approval": {
+      "jobUID": "c3759c51-8c50-4e7d-ba3e-a70f8aa970a0",
+      "jobCreatedAt": "2026-10-02T16:54:02Z",
+      "receiptUID": "6a4e4cbb-5560-4334-9d15-cb5b32d6dc3b",
+      "receiptCreatedAt": "2026-10-02T16:54:06Z",
+      "digest": "sha256:540379cdfa1c2d0d8ae67f0c616edb94245c1c9b84b52e831b81579750324784",
+      "operation": "migration-history"
+    },
+    "fresh-apply": {
+      "jobUID": "b880d19b-eaf4-41ca-baf2-53d56f2f1e3c",
+      "jobCreatedAt": "2026-10-02T16:54:15Z",
+      "receiptUID": "06d84a2e-90cd-4c76-a0de-d5a96584a633",
+      "receiptCreatedAt": "2026-10-02T16:54:20Z",
+      "digest": "sha256:a8829665d9ad722af10a16ddf8e2a8639e6a51081e7face5ebce71a3bd065e7e",
+      "operation": "migration-apply"
+    }
+  },
+  "acknowledgedAt": "2026-10-02T16:52:02Z",
+  "freshApprovalCreatedAt": "2026-10-02T16:54:15Z",
+  "verification": {
+    "originalPartialExecutions": 1,
+    "humanAcknowledgments": 1,
+    "freshApprovedExecutions": 1,
+    "unapprovedExecutions": 0
+  }
+}

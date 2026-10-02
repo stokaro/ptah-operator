@@ -89,16 +89,18 @@ def verify_evidence(e):
             and original['spec']['planFingerprint'] != fresh['spec']['planFingerprint'], 'Approval did not bind a fresh plan')
     require(e['freshJob']['metadata']['creationTimestamp'] >= fresh['metadata']['creationTimestamp'], 'New Apply predates its approval')
     require(e['finalWitness'] == '1:2:true' and e['originalPublications'] == 0 and e['freshApplyJobs'] == 1, 'Missing authorized retry or extra SQL execution')
-    require(has_condition(e['final'], 'Ready', 'HistoryMatched') and not e['final']['status'].get('unresolvedRun'), 'No resolved convergence')
+    require(has_condition(e['final'], 'Ready', 'HistoryMatched') and not e['final']['status'].get('unresolvedRun')
+            and any(c['type'] == 'Ready' and c['status'] == 'True' and c.get('observedGeneration') == e['final']['metadata']['generation']
+                    for c in e['final']['status']['conditions']), 'No resolved current-generation convergence')
     require(e['final']['metadata']['uid'] == e['resourceUID'], 'Resource was replaced')
     return {'originalPartialExecutions': 1, 'humanAcknowledgments': 1, 'freshApprovedExecutions': 1, 'unapprovedExecutions': 0}
 
 
 def run(*, k, get, create, wait, save, witness, records, open_gate, resource, pod,
-        operation, engine, environment, calibration, sql, migration_sql, publish_template, initial):
+        operation, engine, environment, calibration, sql, migration_sql, publish_template, initial, resume=None):
     ns, name = resource['metadata']['namespace'], resource['metadata']['name']
     job_name, job_uid = operation['jobName'], operation['jobUID']
-    pod_name = pod['metadata']['name']
+    pod_name = pod['metadata'].get('name', '')
     quota_created = False
     passed = False
     evidence = {'engine': engine, 'commit': environment['E2E_CONTROLLER_REVISION'], 'namespace': ns,
@@ -130,48 +132,81 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
             time.sleep(2)
 
     try:
-        key = 'count/ptahresultrecords.operator.ptah.run'
-        census = len(records())
-        assert census > 0 and not publications()
-        quota = create({'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'hold-partial-result', 'namespace': ns}, 'spec': {'hard': {key: str(census)}}})
-        quota_created = True
-        def quota_ready():
-            status = get('resourcequota', 'hold-partial-result').get('status', {})
-            return status.get('used', {}).get(key) == str(census) and status.get('hard', {}).get(key) == str(census)
-        wait(quota_ready, 30)
-        evidence['quota'] = {'uid': quota['metadata']['uid'], 'hard': census}
-        open_gate()
-        wait(lambda: witness() == '1:1:true' and sql("SELECT count(*) FROM schema_migrations WHERE state <> 'applied';").splitlines()[-1] == '1', 90)
-        current_pod = get('pod', pod_name)
-        evidence['beforeLoss'] = {'witness': witness(), 'dirtyRevisions': int(sql("SELECT count(*) FROM schema_migrations WHERE state <> 'applied';").splitlines()[-1]), 'podPhase': current_pod['status']['phase'], 'publications': len(publications())}
-        assert current_pod['metadata']['uid'] == pod['metadata']['uid'] and current_pod['status']['phase'] == 'Running' and not publications()
-        assert get('job', job_name)['metadata']['uid'] == job_uid
-        k('delete', 'job', job_name, '--cascade=background', '--wait=false')
-        k('delete', 'pod', pod_name, '--ignore-not-found', '--grace-period=0', '--force', '--wait=true', '--timeout=60s')
-        evidence['originalJobAbsent'] = not k('get', 'job', job_name, '--ignore-not-found', '-o', 'name').strip()
-        evidence['originalPodAbsent'] = not k('get', 'pod', pod_name, '--ignore-not-found', '-o', 'name').strip()
+        if resume is None:
+            key = 'count/ptahresultrecords.operator.ptah.run'
+            census = len(records())
+            assert census > 0 and not publications()
+            quota = create({'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'hold-partial-result', 'namespace': ns}, 'spec': {'hard': {key: str(census)}}})
+            quota_created = True
+            def quota_ready():
+                status = get('resourcequota', 'hold-partial-result').get('status', {})
+                return status.get('used', {}).get(key) == str(census) and status.get('hard', {}).get(key) == str(census)
+            wait(quota_ready, 30)
+            evidence['quota'] = {'uid': quota['metadata']['uid'], 'hard': census}
+            open_gate()
+            wait(lambda: witness() == '1:1:true' and sql("SELECT count(*) FROM schema_migrations WHERE state <> 'applied';").splitlines()[-1] == '1', 90)
+            current_pod = get('pod', pod_name)
+            evidence['beforeLoss'] = {'witness': witness(), 'dirtyRevisions': int(sql("SELECT count(*) FROM schema_migrations WHERE state <> 'applied';").splitlines()[-1]), 'podPhase': current_pod['status']['phase'], 'publications': len(publications())}
+            assert current_pod['metadata']['uid'] == pod['metadata']['uid'] and current_pod['status']['phase'] == 'Running' and not publications()
+            assert get('job', job_name)['metadata']['uid'] == job_uid
+            k('delete', 'job', job_name, '--cascade=background', '--wait=false')
+            k('delete', 'pod', pod_name, '--ignore-not-found', '--grace-period=0', '--force', '--wait=true', '--timeout=60s')
+            evidence['originalJobAbsent'] = not k('get', 'job', job_name, '--ignore-not-found', '-o', 'name').strip()
+            evidence['originalPodAbsent'] = not k('get', 'pod', pod_name, '--ignore-not-found', '-o', 'name').strip()
 
-        def unknown():
+            def unknown():
+                current = get('ptahmigration', name)
+                u = current.get('status', {}).get('unresolvedRun', {})
+                return current if u.get('jobUID') == job_uid and u.get('outcome') == 'Unknown' else None
+            evidence['unknown'] = snapshot_migration(wait(unknown, 120))
+            k('delete', 'resourcequota', 'hold-partial-result')
+            quota_created = False
+            wait(lambda: get('ptahmigration', name).get('status', {}).get('history', {}).get('dirty'), 120)
+            print('Partial SQL and dirty revision retained after original Job/Pod loss; holding against replay', flush=True)
+            evidence['beforeAcknowledgment'] = hold(True)
+            # A person's explicit repair removes only the failed operation's effect;
+            # it does not reset the calibrated allocation counter.
+            sql("DELETE FROM delivery_probe_calls WHERE n=1; DELETE FROM schema_migrations WHERE state <> 'applied';")
+            evidence['afterManualRepair'] = witness()
+            assert evidence['afterManualRepair'] == '0:1:true'
+        else:
             current = get('ptahmigration', name)
-            u = current.get('status', {}).get('unresolvedRun', {})
-            return current if u.get('jobUID') == job_uid and u.get('outcome') == 'Unknown' else None
-        evidence['unknown'] = snapshot_migration(wait(unknown, 120))
-        k('delete', 'resourcequota', 'hold-partial-result')
-        quota_created = False
-        wait(lambda: get('ptahmigration', name).get('status', {}).get('history', {}).get('dirty'), 120)
-        print('Partial SQL and dirty revision retained after original Job/Pod loss; holding against replay', flush=True)
-        evidence['beforeAcknowledgment'] = hold(True)
-        # A person's explicit repair removes only the failed operation's effect;
-        # it does not reset the calibrated allocation counter.
-        sql("DELETE FROM delivery_probe_calls WHERE n=1; DELETE FROM schema_migrations WHERE state <> 'applied';")
-        evidence['afterManualRepair'] = witness()
-        assert evidence['afterManualRepair'] == '0:1:true'
+            unresolved = current['status']['unresolvedRun']
+            assert current['metadata']['uid'] == resume['resourceUID'] and unresolved['operationID'] == operation['id']
+            assert unresolved['jobUID'] == job_uid and witness() == '0:1:true' and not publications() and not apply_jobs()
+            current_procedures = evidence['procedureSHA256']
+            evidence = copy.deepcopy(resume)
+            evidence['interruptionProcedureSHA256'] = evidence['procedureSHA256']
+            evidence['procedureSHA256'] = current_procedures
+            evidence['resume'] = {'checkpointSHA256': hashlib.sha256(pathlib.Path(environment['RESULT_PROBE_PARTIAL_CHECKPOINT']).read_bytes()).hexdigest(),
+                                  'sourceCommit': environment['RESULT_PROBE_PARTIAL_CHECKPOINT_COMMIT'],
+                                  'observedAt': dt.datetime.now(dt.timezone.utc).isoformat(),
+                                  'resourceGeneration': current['metadata']['generation'],
+                                  'databaseWitness': witness(), 'cause': 'The first recovery publisher was refused by the write-once tag policy. Resume uses a distinct tag and the same unresolved execution.'}
+            k('patch', 'ptahmigration', name, '--type=json', '-p', json.dumps([
+                {'op': 'test', 'path': '/metadata/uid', 'value': current['metadata']['uid']},
+                {'op': 'test', 'path': '/metadata/resourceVersion', 'value': current['metadata']['resourceVersion']},
+                {'op': 'add', 'path': '/spec/suspend', 'value': False}]))
+            print('Resumed the saved partial-loss checkpoint with the same Unknown execution and calibrated counter', flush=True)
         config = get('configmap', 'ack-migrations')
         config['data']['0000000001_record_delivery.up.sql'] = migration_sql + '\n'
         k('replace', '-f', '-', data=json.dumps(config))
-        create({'apiVersion': 'batch/v1', 'kind': 'Job', 'metadata': {'name': 'repaired-publish', 'namespace': ns}, 'spec': {'backoffLimit': 0, 'activeDeadlineSeconds': 300, 'template': copy.deepcopy(publish_template)}})
-        k('wait', '--for=condition=complete', 'job/repaired-publish', '--timeout=300s')
-        digest = re.search('^Digest: (sha256:[0-9a-f]{64})$', k('logs', 'job/repaired-publish'), re.M).group(1)
+        template = copy.deepcopy(publish_template)
+        template['metadata'] = {}
+        args = template['spec']['containers'][0]['args']
+        prefix = 'oci://' + environment['E2E_REGISTRY_HOST'] + '/migrations/demo:'
+        tags = [i for i, arg in enumerate(args) if arg.startswith(prefix)]
+        assert len(tags) == 1
+        args[tags[0]] = prefix + ns + '-repaired'
+        args[args.index('--version') + 1] = ns + '-repaired'
+        create({'apiVersion': 'batch/v1', 'kind': 'Job', 'metadata': {'name': 'repaired-publish-final', 'namespace': ns}, 'spec': {'backoffLimit': 0, 'activeDeadlineSeconds': 300, 'template': template}})
+        def published():
+            job = get('job', 'repaired-publish-final')
+            if has_condition(job, 'Failed'):
+                raise RuntimeError('The repaired artifact publisher failed')
+            return has_condition(job, 'Complete')
+        wait(published, 300)
+        digest = re.search('^Digest: (sha256:[0-9a-f]{64})$', k('logs', 'job/repaired-publish-final'), re.M).group(1)
         ref = 'oci://' + environment['E2E_REGISTRY_HOST'] + '/migrations/demo@' + digest
         k('patch', 'ptahmigration', name, '--type=merge', '-p', json.dumps({'spec': {'artifact': {'ociRef': ref}}}))
         wait(lambda: get('ptahmigration', name)['status'].get('artifact', {}).get('digest') == digest, 120)

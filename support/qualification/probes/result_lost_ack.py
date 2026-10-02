@@ -175,6 +175,30 @@ def main():
         assert owner == E['E2E_KIND_CLUSTER_NAME']
         config = json.loads(k('get', '--raw', '/api/v1/nodes/' + name + '/proxy/configz'))
         assert config['kubeletconfig']['containerLogMaxSize'] == '10Mi'
+    if E.get('RESULT_PROBE_PARTIAL_CHECKPOINT'):
+        if not partial_loss:
+            raise ValueError('A checkpoint requires the partial-loss case')
+        checkpoint = json.loads(pathlib.Path(E['RESULT_PROBE_PARTIAL_CHECKPOINT']).read_text())
+        source_commit = E['RESULT_PROBE_PARTIAL_CHECKPOINT_COMMIT']
+        assert re.fullmatch('[0-9a-f]{40}', source_commit)
+        assert checkpoint['namespace'] == ns and checkpoint['engine'] == engine and checkpoint['commit'] == E['E2E_CONTROLLER_REVISION']
+        assert set(checkpoint['procedureSHA256']) == {'result_partial_loss.py', 'result_lost_ack.py'}
+        for filename, expected in checkpoint['procedureSHA256'].items():
+            source_bytes = subprocess.check_output(['git', 'show', source_commit + ':support/qualification/probes/' + filename])
+            assert hashlib.sha256(source_bytes).hexdigest() == expected
+        assert get('namespace', ns)['metadata']['labels']['operator.ptah.run/acceptance-owner'] == E['E2E_KIND_CLUSTER_NAME']
+        resource = get('ptahmigration', 'lost-ack')
+        assert resource['metadata']['uid'] == checkpoint['resourceUID']
+        operation = {'id': checkpoint['operationID'], 'jobUID': checkpoint['jobUID'],
+                     'jobName': checkpoint['unknown']['status']['unresolvedRun']['jobName']}
+        from result_partial_loss import run as run_partial
+        run_partial(k=k, get=get, create=create, wait=wait, save=save, witness=witness, records=records,
+                    open_gate=None, resource=resource, pod={'metadata': {'uid': checkpoint['podUID']}},
+                    operation=operation, engine=engine, environment=E, calibration=checkpoint['calibration'],
+                    sql=sql, migration_sql=get('configmap', 'ack-migrations')['data']['0000000001_record_delivery.up.sql'].strip(),
+                    publish_template=get('job', 'repaired-publish')['spec']['template'],
+                    initial=checkpoint['initial'], resume=checkpoint)
+        return
     services = [s for s in get('services', namespace=opns)['items'] if any((p.get('targetPort') == 'results' for p in s['spec']['ports']))]
     assert len(services) == 1
     service = services[0]

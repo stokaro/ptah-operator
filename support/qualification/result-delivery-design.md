@@ -921,8 +921,27 @@ credential-retirement waits; the existing local state-machine tests retain that
 separate timing claim. Both installed rotation cases use unchanged production
 code, default log sizes, and the recorded runtime identities.
 
-Other minor combinations still require installed proof. Remaining partial-Apply authorization,
-abandoned partial-publication cleanup,
-restore, enforced NetworkPolicy, and the complete
-Kubernetes and database matrix remain explicit #586 acceptance work. The option
-remains disabled by default.
+## Acknowledged-result survival evidence mapping
+
+| Required boundary | Retained result |
+| --- | --- |
+| Acknowledged result before first consumption, producing Pod/log loss and receiving process/key loss | `result-first-harvest-2026-10-02.json` reconstructs the same native 8 MiB plan and digest after replacing both managers; ordinary approval and one Apply reach database-verified convergence. |
+| HA and key rotation | `result-leaf-rotation-2026-10-02/summary.json` and `result-ca-rotation-2026-10-02/summary.json` preserve that first-harvest result through interrupted serving-key renewal and expired pending CA recovery. The bounds of each case are described above. |
+| Loss before acknowledgment, fully committed SQL | `result-runner-loss-2026-10-02/` retains Unknown followed by fresh history resolution with no second Apply on PostgreSQL and MySQL. |
+| Loss before acknowledgment, partially committed SQL requiring a person | `result-partial-loss-2026-10-02/summary.json` retains Unknown, dirty history, manual repair without resetting the execution counter, authenticated acknowledgment, and a distinct fresh approval on both engines. Each of the two 90-second holds refuses automatic replay. One separately approved recovery Apply then converges. |
+
+The partial-loss archive includes the exact original operation and authenticated
+resolution, both approval bindings, independent complete history and Apply
+publications, native allocation counters and default kubelet configuration.
+PostgreSQL resumed the same unresolved operation after a recovery-publisher test
+error; both procedure identities and its unchanged checkpoint are retained.
+MySQL completed the corrected procedure without interruption. These are the
+recorded Kubernetes 1.37 Linux amd64 results, not a final matrix claim.
+
+This completes the case inventory for acknowledged-result survival. It does not
+make database execution and result publication atomic. The existing recovery
+and fresh-authorization requirements remain necessary.
+
+Other minor combinations, abandoned partial-publication cleanup, restore,
+enforced NetworkPolicy, and the complete Kubernetes and database matrix remain
+explicit #586 acceptance work. The option remains disabled by default.

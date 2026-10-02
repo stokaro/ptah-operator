@@ -141,6 +141,46 @@ case loses both the Job and Pod after a fully applied migration. It does not
 prove recovery from a partially applied migration, the human acknowledgment and
 fresh-approval path, or the complete supported-minor matrix.
 
+## Partial Apply loss and fresh authorization
+
+Set `RESULT_PROBE_PARTIAL_LOSS=1` together with `RESULT_PROBE_RUNNER_LOSS=1`;
+leave the other fault modes disabled and use `RESULT_PROBE_FAMILY=PtahMigration`.
+Run once per native engine with distinct owned namespace and database inputs.
+The resource uses `OnApproval`. The installed approver role authorizes the
+original approval, the later run acknowledgment, and the separate fresh approval.
+
+The migration commits a calibrated allocation-counter insert outside a
+transaction, then fails on a missing table. With result publication blocked by
+quota, the probe removes the original Job and Pod and retains their exact
+`Unknown` execution. A 90-second hold requires dirty native history, no new
+Apply Job, and an unchanged counter. A person then removes the partial effect
+and dirty revision without resetting the counter. The corrected artifact uses
+a distinct immutable tag. Publisher failure stops the probe immediately.
+
+The run acknowledgment must resolve the original operation under the named
+person's identity. Another 90-second hold requires no SQL or Apply until a new
+approval binds the corrected plan. One fresh Apply must then converge, with the
+counter showing exactly the original execution and the separately authorized
+recovery execution. `partial-loss.json` retains the observations;
+`result_partial_loss_test.py` replays both installed engines and refusal cases.
+The adjacent publication bundles independently reconstruct the native history
+before approval and the successful fresh Apply.
+
+The PostgreSQL checkpoint preserves an initial publisher refusal: the first
+procedure reused a write-once tag. Recovery resumed the same unresolved resource
+and calibrated counter after fixing that test error. To resume that exact stage,
+set `RESULT_PROBE_PARTIAL_CHECKPOINT` and
+`RESULT_PROBE_PARTIAL_CHECKPOINT_COMMIT`; the launcher verifies the committed
+source hashes, resource UID, operation and counter before continuing. The archive
+records both procedure identities. MySQL completed without this interruption.
+PostgreSQL's History Job was collected by TTL during archival. Its retained
+operation certificate establishes issuance after acknowledgment; the immutable
+receipt precedes approval. No missing Job timestamp is inferred.
+
+Completed resources were suspended after convergence. The quota and credential
+holds were removed. This proves the partial-loss authorization case on Kubernetes
+1.37 Linux amd64; it does not replace the supported-minor matrix or restore tests.
+
 ## First harvest
 
 `result_first_harvest.py` runs a native PostgreSQL plan of exactly 8 MiB

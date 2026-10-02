@@ -1,0 +1,1814 @@
+{
+  "engine": "MySQL",
+  "commit": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+  "namespace": "ptah-result-partial-mysql",
+  "resourceUID": "62c9f247-ecdf-4164-89f0-4b43cb5e6304",
+  "jobUID": "5fca89c3-cad4-4c54-8237-bca1ce2e7a5a",
+  "podUID": "76b4b692-5e7c-455b-980f-d871d30d8904",
+  "operationID": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+  "policy": "OnApproval",
+  "calibration": {
+    "storageEngine": "InnoDB",
+    "afterRollback": "0:1:true",
+    "afterReset": "0:1:false"
+  },
+  "initial": {
+    "identity": {
+      "person": "qualification-approver@example.test",
+      "group": "qualification:partial-result"
+    },
+    "plan": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahMigrationPlan",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T16:48:52Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/migration": "lost-ack"
+        },
+        "name": "ptah-mplan-c0d09a41095190e0a91161f8",
+        "namespace": "ptah-result-partial-mysql",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahMigration",
+            "name": "lost-ack",
+            "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+          }
+        ],
+        "resourceVersion": "62160",
+        "uid": "c58099d5-0678-483b-9409-defb98432938"
+      },
+      "spec": {
+        "artifactDigest": "sha256:d7b1631984dfecfa82bdd003b9c57d3ce334bbaec0456f18e55d5c74000e099c",
+        "contractVersion": 1,
+        "controllerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+        "controllerRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+        "controllerStateVersion": 1,
+        "coordinationDigest": "sha256:19437ac1df7e4974170075a66779651c7499a418d9f2c20c64e147ac776491d9",
+        "createdAt": "2026-10-02T16:48:52Z",
+        "currentVersion": 0,
+        "executionBindingID": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "fingerprint": "sha256:c0d09a41095190e0a91161f816d6baa36087790459bb9122341a77598fece998",
+        "historyFingerprint": "sha256:850adadf66b1e568a8de51d84805932cc16bee59632babd8815a98f96e9d2599",
+        "migrationRef": {
+          "name": "lost-ack",
+          "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+        },
+        "migrations": [
+          {
+            "checksum": "7f0af63cfefe7045dacad5637786d10f3205854494e3b197d2e3810feef0edec",
+            "description": "Record Delivery",
+            "transactionMode": "none",
+            "version": 1,
+            "versionKey": "1"
+          }
+        ],
+        "policyFingerprint": "sha256:ef471bfdf386e1fdcf3af8eeed7f8509895387e5f79615f431d2524eb79047cd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+        "runnerProtocolVersion": 1,
+        "targetIdentityDigest": "sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad",
+        "verificationPolicyDigest": "sha256:6115db38c28b242ff9a6934d1b5a4658d23615ceaed595a8c716a7431f2ad5ed",
+        "verificationPolicyUID": "19e75d0a-0629-45c0-bc9b-c09448bd86e6"
+      }
+    },
+    "approval": {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahMigrationApproval",
+      "metadata": {
+        "creationTimestamp": "2026-10-02T16:48:53Z",
+        "generation": 1,
+        "name": "authorize-original",
+        "namespace": "ptah-result-partial-mysql",
+        "resourceVersion": "62173",
+        "uid": "ec5768d4-c0a8-4c77-a0d6-7da816a30263"
+      },
+      "spec": {
+        "approvedAt": "2026-10-02T16:48:53Z",
+        "approver": {
+          "groups": [
+            "qualification:partial-result",
+            "system:authenticated"
+          ],
+          "username": "qualification-approver@example.test"
+        },
+        "migrationRef": {
+          "name": "lost-ack",
+          "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+        },
+        "mutationRequestUID": "01b52c95-805d-4a2d-96b9-b15d41c622a2",
+        "planFingerprint": "sha256:c0d09a41095190e0a91161f816d6baa36087790459bb9122341a77598fece998",
+        "planRef": {
+          "name": "ptah-mplan-c0d09a41095190e0a91161f8",
+          "uid": "c58099d5-0678-483b-9409-defb98432938"
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-02T16:48:53Z",
+            "message": "The approved plan was dispatched",
+            "observedGeneration": 1,
+            "reason": "DispatchCommitted",
+            "status": "True",
+            "type": "Consumed"
+          }
+        ],
+        "observedGeneration": 1
+      }
+    },
+    "approverRole": "ptah-runtime-generated-name-prefix-boundary-proof-5a0ef2fe7d-approver"
+  },
+  "procedureSHA256": {
+    "result_partial_loss.py": "bdc3b075adb9877d33d81dc7ab0c5907dd264c041803b3339e0aa8c699575744",
+    "result_lost_ack.py": "fda71fd4cb7aaa309113fdb0908ab553c47a48fa8fdc3a167c230e512b399e05"
+  },
+  "quota": {
+    "uid": "b8438eed-5b13-40b1-bc13-2c08affeae03",
+    "hard": 16
+  },
+  "beforeLoss": {
+    "witness": "1:1:true",
+    "dirtyRevisions": 1,
+    "podPhase": "Running",
+    "publications": 0
+  },
+  "originalJobAbsent": true,
+  "originalPodAbsent": true,
+  "unknown": {
+    "metadata": {
+      "name": "lost-ack",
+      "namespace": "ptah-result-partial-mysql",
+      "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304",
+      "generation": 1,
+      "annotations": {
+        "operator.ptah.run/unresolved-run": "{\"outcome\":\"Unknown\",\"operationID\":\"sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80\",\"jobName\":\"ptah-m-apply-lost-ack-0cb08cd0e7c26c70\",\"jobUID\":\"5fca89c3-cad4-4c54-8237-bca1ce2e7a5a\",\"planRef\":{\"name\":\"ptah-mplan-c0d09a41095190e0a91161f8\",\"uid\":\"c58099d5-0678-483b-9409-defb98432938\"},\"targetIdentityDigest\":\"sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad\",\"recordedAt\":\"2026-10-02T16:49:06Z\"}"
+      }
+    },
+    "status": {
+      "activeOperation": {
+        "admissionSnapshot": {
+          "alwaysPullImagesEnabled": false,
+          "defaultNotReadyTolerationSeconds": 300,
+          "defaultTolerationsEnabled": true,
+          "defaultUnreachableTolerationSeconds": 300,
+          "digest": "sha256:8b02b4592bef701e738a194af9d3bec6b43fdade015ae0cc5496f8182148a997",
+          "extendedResourceTolerationEnabled": false,
+          "priorityClass": {
+            "preemptionPolicy": "PreemptLowerPriority",
+            "value": 0
+          },
+          "serviceAccount": {
+            "imagePullSecrets": [
+              {
+                "name": "demo-registry-pull"
+              }
+            ],
+            "object": {
+              "name": "default",
+              "resourceVersion": "61705",
+              "uid": "44f7ea4b-f16e-42e6-9dcd-2f4f62cb0bdb"
+            }
+          },
+          "templateDigest": "sha256:2e512596b9ae288d6bef31756918c478fa5d5393d8d31410d39527ee4004f641",
+          "version": "v1"
+        },
+        "approvalRef": {
+          "name": "authorize-original",
+          "uid": "ec5768d4-c0a8-4c77-a0d6-7da816a30263"
+        },
+        "attempt": 1,
+        "coordinationDigest": "sha256:19437ac1df7e4974170075a66779651c7499a418d9f2c20c64e147ac776491d9",
+        "dispatchNotAfter": "2026-10-02T17:03:53Z",
+        "dispatchStarted": true,
+        "executionBindingID": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "executionNotAfter": "2026-10-02T17:03:53Z",
+        "id": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+        "inputFingerprint": "sha256:2b3baf400730476b124c971ec40787d28b6cf39d5d536044f1dc27a8a8db6b7a",
+        "jobName": "ptah-m-apply-lost-ack-0cb08cd0e7c26c70",
+        "jobUID": "5fca89c3-cad4-4c54-8237-bca1ce2e7a5a",
+        "leaseDurationSeconds": 1020,
+        "leaseEpoch": "v1-89eedd44663f3ff33358d350cf6fbb43",
+        "planRef": {
+          "name": "ptah-mplan-c0d09a41095190e0a91161f8",
+          "uid": "c58099d5-0678-483b-9409-defb98432938"
+        },
+        "source": {
+          "digest": "sha256:d7b1631984dfecfa82bdd003b9c57d3ce334bbaec0456f18e55d5c74000e099c",
+          "registryAuthFrom": {
+            "dockerConfigJSONKey": ".dockerconfigjson",
+            "mode": "Environment",
+            "name": "demo-registry",
+            "passwordKey": "password",
+            "tokenKey": "token",
+            "usernameKey": "username"
+          },
+          "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:d7b1631984dfecfa82bdd003b9c57d3ce334bbaec0456f18e55d5c74000e099c",
+          "transport": {
+            "plainHTTP": true
+          }
+        },
+        "startedAt": "2026-10-02T16:48:53Z",
+        "target": {
+          "engine": "MySQL",
+          "urlFrom": {
+            "key": "url",
+            "name": "ack-database"
+          }
+        },
+        "type": "Apply"
+      },
+      "artifact": {
+        "digest": "sha256:d7b1631984dfecfa82bdd003b9c57d3ce334bbaec0456f18e55d5c74000e099c",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:d7b1631984dfecfa82bdd003b9c57d3ce334bbaec0456f18e55d5c74000e099c",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T16:49:06Z",
+          "message": "The dispatched run's outcome is unknown and may not be retried",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "False",
+          "type": "Progressing"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:48:41Z",
+          "message": "The resolved artifact satisfied its verification policy",
+          "observedGeneration": 1,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:49:06Z",
+          "message": "the dispatched Apply Job is missing and will not be recreated",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "True",
+          "type": "Blocked"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:48:52Z",
+          "message": "What the dispatched run did is unknown until the database is read",
+          "observedGeneration": 1,
+          "reason": "ApplyOutcomeUnknown",
+          "status": "False",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:48:53Z",
+          "message": "The plan's approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        }
+      ],
+      "executionBinding": {
+        "controllerStateVersion": 1,
+        "epoch": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerProtocolVersion": 1
+      },
+      "history": {
+        "appliedCount": 0,
+        "contractVersion": 1,
+        "currentVersion": 0,
+        "fingerprint": "sha256:850adadf66b1e568a8de51d84805932cc16bee59632babd8815a98f96e9d2599",
+        "observedAt": "2026-10-02T16:48:52Z",
+        "pendingCount": 1,
+        "targetIdentityDigest": "sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad"
+      },
+      "lastRun": {
+        "finishedAt": "2026-10-02T16:49:06Z",
+        "jobName": "ptah-m-apply-lost-ack-0cb08cd0e7c26c70",
+        "jobUID": "5fca89c3-cad4-4c54-8237-bca1ce2e7a5a",
+        "message": "the dispatched Apply Job is missing and will not be recreated",
+        "outcome": "Unknown",
+        "startedAt": "2026-10-02T16:48:53Z"
+      },
+      "nextReconciliationTime": "2026-10-02T16:49:36Z",
+      "observedGeneration": 1,
+      "phase": "Blocked",
+      "unresolvedRun": {
+        "jobName": "ptah-m-apply-lost-ack-0cb08cd0e7c26c70",
+        "jobUID": "5fca89c3-cad4-4c54-8237-bca1ce2e7a5a",
+        "operationID": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+        "outcome": "Unknown",
+        "planRef": {
+          "name": "ptah-mplan-c0d09a41095190e0a91161f8",
+          "uid": "c58099d5-0678-483b-9409-defb98432938"
+        },
+        "recordedAt": "2026-10-02T16:49:06Z",
+        "targetIdentityDigest": "sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad"
+      }
+    }
+  },
+  "beforeAcknowledgment": [
+    {
+      "at": 2882901.595429833,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882904.228247458,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882906.930476458,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882909.556338666,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882912.236655458,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882914.847786625,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882917.494193458,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882920.123922166,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882922.747299083,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882925.386775,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882928.086125208,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882930.709360833,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882933.351089666,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882936.020802083,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882938.641250166,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882941.269532875,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882943.931144416,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882946.575949375,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882949.210935541,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882951.84341925,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882954.452934416,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882957.042663041,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882959.668271375,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882962.27386525,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882964.891178541,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882967.51646275,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882970.108980583,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882972.703859708,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882975.31618575,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882977.9405215,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882980.555873666,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882983.1864515,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882985.815316041,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882988.823100208,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    },
+    {
+      "at": 2882991.848515625,
+      "witness": "1:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+      "dirty": true
+    }
+  ],
+  "afterManualRepair": "0:1:true",
+  "acknowledged": {
+    "metadata": {
+      "name": "lost-ack",
+      "namespace": "ptah-result-partial-mysql",
+      "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304",
+      "generation": 2,
+      "annotations": {}
+    },
+    "status": {
+      "activeOperation": {
+        "admissionSnapshot": {
+          "alwaysPullImagesEnabled": false,
+          "defaultNotReadyTolerationSeconds": 300,
+          "defaultTolerationsEnabled": true,
+          "defaultUnreachableTolerationSeconds": 300,
+          "digest": "sha256:38e89c07d7fe7cf2da92523327eeffb90394f89fd8a4e2f84a1c01f194cb4a1b",
+          "extendedResourceTolerationEnabled": false,
+          "priorityClass": {
+            "preemptionPolicy": "PreemptLowerPriority",
+            "value": 0
+          },
+          "serviceAccount": {
+            "imagePullSecrets": [
+              {
+                "name": "demo-registry-pull"
+              }
+            ],
+            "object": {
+              "name": "default",
+              "resourceVersion": "61705",
+              "uid": "44f7ea4b-f16e-42e6-9dcd-2f4f62cb0bdb"
+            }
+          },
+          "templateDigest": "sha256:4b0ebdd73de9d4de16f7a800fb41e8b0071557089f866512e7a01a6aa74e6c29",
+          "version": "v1"
+        },
+        "attempt": 1,
+        "coordinationDigest": "sha256:19437ac1df7e4974170075a66779651c7499a418d9f2c20c64e147ac776491d9",
+        "executionBindingID": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "id": "sha256:e57dd4d7969beeaceba93a97a8473314f004819cd30eba0ff26adc05f4343d46",
+        "inputFingerprint": "sha256:a8ce4941f04842d2934ee832a9dbfd9fb2895c35d5e39cef75c0dde6b556e853",
+        "jobName": "ptah-m-history-lost-ack-e7a35a86e0d31666",
+        "jobUID": "fe42784c-d649-47cb-95a0-8a0905a38196",
+        "source": {
+          "digest": "sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+          "registryAuthFrom": {
+            "dockerConfigJSONKey": ".dockerconfigjson",
+            "mode": "Environment",
+            "name": "demo-registry",
+            "passwordKey": "password",
+            "tokenKey": "token",
+            "usernameKey": "username"
+          },
+          "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+          "transport": {
+            "plainHTTP": true
+          }
+        },
+        "startedAt": "2026-10-02T16:52:02Z",
+        "target": {
+          "engine": "MySQL",
+          "urlFrom": {
+            "key": "url",
+            "name": "ack-database"
+          }
+        },
+        "type": "History"
+      },
+      "artifact": {
+        "digest": "sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T16:51:42Z",
+          "message": "History operation is in progress",
+          "observedGeneration": 2,
+          "reason": "OperationInProgress",
+          "status": "True",
+          "type": "Progressing"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:52:02Z",
+          "message": "The resolved artifact satisfied its verification policy",
+          "observedGeneration": 2,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:52:02Z",
+          "message": "qualification-approver@example.test acknowledged the Unknown run; the database is read again before anything is planned",
+          "observedGeneration": 2,
+          "reason": "RunAcknowledged",
+          "status": "False",
+          "type": "Blocked"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:48:52Z",
+          "message": "The revision table holds a dirty row",
+          "observedGeneration": 1,
+          "reason": "HistoryDirty",
+          "status": "False",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:48:53Z",
+          "message": "The plan's approval requirements are satisfied",
+          "observedGeneration": 1,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        }
+      ],
+      "executionBinding": {
+        "controllerStateVersion": 1,
+        "epoch": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerProtocolVersion": 1
+      },
+      "history": {
+        "appliedCount": 0,
+        "contractVersion": 1,
+        "currentVersion": 0,
+        "dirty": true,
+        "fingerprint": "sha256:44af4de019fb9ee0b675baa32f4a88cb6b0777750a4d13782787794089d32804",
+        "observedAt": "2026-10-02T16:51:06Z",
+        "pendingCount": 1,
+        "targetIdentityDigest": "sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad"
+      },
+      "lastRun": {
+        "finishedAt": "2026-10-02T16:49:06Z",
+        "jobName": "ptah-m-apply-lost-ack-0cb08cd0e7c26c70",
+        "jobUID": "5fca89c3-cad4-4c54-8237-bca1ce2e7a5a",
+        "message": "the dispatched Apply Job is missing and will not be recreated",
+        "outcome": "Unknown",
+        "startedAt": "2026-10-02T16:48:53Z"
+      },
+      "observedGeneration": 2,
+      "phase": "Reading",
+      "resolvedRun": {
+        "acknowledgedBy": {
+          "groups": [
+            "qualification:partial-result",
+            "system:authenticated"
+          ],
+          "username": "qualification-approver@example.test"
+        },
+        "acknowledgmentRef": {
+          "name": "account-for-partial-run",
+          "uid": "72b86d28-d064-42d0-8c5e-6619f71153d5"
+        },
+        "operationID": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+        "outcome": "Unknown",
+        "resolution": "Acknowledged",
+        "resolvedAt": "2026-10-02T16:52:02Z"
+      }
+    }
+  },
+  "acknowledgment": {
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahMigrationRunAcknowledgment",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T16:51:53Z",
+      "generation": 1,
+      "name": "account-for-partial-run",
+      "namespace": "ptah-result-partial-mysql",
+      "resourceVersion": "63561",
+      "uid": "72b86d28-d064-42d0-8c5e-6619f71153d5"
+    },
+    "spec": {
+      "acknowledgedAt": "2026-10-02T16:51:53Z",
+      "acknowledgedBy": {
+        "groups": [
+          "qualification:partial-result",
+          "system:authenticated"
+        ],
+        "username": "qualification-approver@example.test"
+      },
+      "migrationRef": {
+        "name": "lost-ack",
+        "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+      },
+      "mutationRequestUID": "11ec0508-b514-4ecd-be55-dea8005a4806",
+      "operationID": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80"
+    },
+    "status": {
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T16:52:02Z",
+          "message": "The acknowledgment settled the unresolved run it names",
+          "observedGeneration": 1,
+          "reason": "RunAcknowledged",
+          "status": "True",
+          "type": "Consumed"
+        }
+      ],
+      "observedGeneration": 1
+    }
+  },
+  "beforeFreshApproval": [
+    {
+      "at": 2883029.439624791,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883032.032785958,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883034.691853916,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883037.30607375,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883039.961857833,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883042.579101208,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883045.250368,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883047.925185916,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883050.58919825,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883053.20252075,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883055.893217166,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883058.525574041,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883061.1516735,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883063.795069416,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883066.4107865,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883069.043153875,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883071.675256,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883074.306618041,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883076.939729083,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883079.582417416,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883082.205174916,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883084.834536708,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883087.459087375,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883090.078979458,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883092.69197925,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883095.313175,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883097.932609416,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883100.53053175,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883103.155429791,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883105.773857333,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883108.464283208,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883111.082448958,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883113.700113125,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883116.3404755,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883118.961807375,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    },
+    {
+      "at": 2883121.596938333,
+      "witness": "0:1:true",
+      "applyJobUIDs": [],
+      "unresolvedOperation": null,
+      "dirty": false
+    }
+  ],
+  "freshPlan": {
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahMigrationPlan",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T16:52:13Z",
+      "generation": 1,
+      "labels": {
+        "operator.ptah.run/migration": "lost-ack"
+      },
+      "name": "ptah-mplan-a95ce90dff82704541115012",
+      "namespace": "ptah-result-partial-mysql",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "lost-ack",
+          "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+        }
+      ],
+      "resourceVersion": "63647",
+      "uid": "2ad8a379-16c1-4b02-9ebe-43328c95ad99"
+    },
+    "spec": {
+      "artifactDigest": "sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+      "contractVersion": 1,
+      "controllerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+      "controllerRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+      "controllerStateVersion": 1,
+      "coordinationDigest": "sha256:19437ac1df7e4974170075a66779651c7499a418d9f2c20c64e147ac776491d9",
+      "createdAt": "2026-10-02T16:52:13Z",
+      "currentVersion": 0,
+      "executionBindingID": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+      "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+      "fingerprint": "sha256:a95ce90dff827045411150122d2f99b15a48be8358ee95fae39767326179adf3",
+      "historyFingerprint": "sha256:342a3f14aefb8317c4236fe8a9e7b62c46f3ec809147d386748e8f1ed14c73c7",
+      "migrationRef": {
+        "name": "lost-ack",
+        "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+      },
+      "migrations": [
+        {
+          "checksum": "290b8d53fac5bdd6f21b629fa58fb5f31ee071fff4e748c155a8c7a6c13261b6",
+          "description": "Record Delivery",
+          "version": 1,
+          "versionKey": "1"
+        }
+      ],
+      "policyFingerprint": "sha256:ef471bfdf386e1fdcf3af8eeed7f8509895387e5f79615f431d2524eb79047cd",
+      "ptahVersion": "v0.9.0-73-gf6e562c5b",
+      "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+      "runnerProtocolVersion": 1,
+      "targetIdentityDigest": "sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad",
+      "verificationPolicyDigest": "sha256:6115db38c28b242ff9a6934d1b5a4658d23615ceaed595a8c716a7431f2ad5ed",
+      "verificationPolicyUID": "19e75d0a-0629-45c0-bc9b-c09448bd86e6"
+    }
+  },
+  "freshApproval": {
+    "apiVersion": "operator.ptah.run/v1alpha1",
+    "kind": "PtahMigrationApproval",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T16:54:15Z",
+      "generation": 1,
+      "name": "authorize-repaired-plan",
+      "namespace": "ptah-result-partial-mysql",
+      "resourceVersion": "64597",
+      "uid": "be4d5aea-3282-4480-b24d-915cf11fbed5"
+    },
+    "spec": {
+      "approvedAt": "2026-10-02T16:54:15Z",
+      "approver": {
+        "groups": [
+          "qualification:partial-result",
+          "system:authenticated"
+        ],
+        "username": "qualification-approver@example.test"
+      },
+      "migrationRef": {
+        "name": "lost-ack",
+        "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+      },
+      "mutationRequestUID": "9d9e2e90-2471-4a21-bb4b-602766a14b5d",
+      "planFingerprint": "sha256:a95ce90dff827045411150122d2f99b15a48be8358ee95fae39767326179adf3",
+      "planRef": {
+        "name": "ptah-mplan-a95ce90dff82704541115012",
+        "uid": "2ad8a379-16c1-4b02-9ebe-43328c95ad99"
+      }
+    }
+  },
+  "final": {
+    "metadata": {
+      "name": "lost-ack",
+      "namespace": "ptah-result-partial-mysql",
+      "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304",
+      "generation": 2,
+      "annotations": {}
+    },
+    "status": {
+      "artifact": {
+        "digest": "sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+        "registryAuthFrom": {
+          "dockerConfigJSONKey": ".dockerconfigjson",
+          "mode": "Environment",
+          "name": "demo-registry",
+          "passwordKey": "password",
+          "tokenKey": "token",
+          "usernameKey": "username"
+        },
+        "resolvedReference": "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+        "transport": {
+          "plainHTTP": true
+        }
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-10-02T16:54:39Z",
+          "message": "Nothing is pending",
+          "observedGeneration": 2,
+          "reason": "HistoryMatched",
+          "status": "False",
+          "type": "Progressing"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:54:02Z",
+          "message": "The resolved artifact satisfied its verification policy",
+          "observedGeneration": 2,
+          "reason": "PolicySatisfied",
+          "status": "True",
+          "type": "ArtifactVerified"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:52:02Z",
+          "message": "The history continues this artifact",
+          "observedGeneration": 2,
+          "reason": "HistoryMatched",
+          "status": "False",
+          "type": "Blocked"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:54:39Z",
+          "message": "The database has every migration this artifact carries",
+          "observedGeneration": 2,
+          "reason": "HistoryMatched",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-10-02T16:54:15Z",
+          "message": "The plan's approval requirements are satisfied",
+          "observedGeneration": 2,
+          "reason": "Satisfied",
+          "status": "False",
+          "type": "ApprovalRequired"
+        }
+      ],
+      "executionBinding": {
+        "controllerStateVersion": 1,
+        "epoch": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+        "ptahVersion": "v0.9.0-73-gf6e562c5b",
+        "runnerProtocolVersion": 1
+      },
+      "history": {
+        "appliedCount": 1,
+        "contractVersion": 1,
+        "currentVersion": 1,
+        "fingerprint": "sha256:d84425cbd67304ef55ee4163861fddc6630894379593d04edccfa05b8e8b2ce9",
+        "observedAt": "2026-10-02T16:54:39Z",
+        "pendingCount": 0,
+        "targetIdentityDigest": "sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad"
+      },
+      "lastRun": {
+        "appliedVersions": [
+          1
+        ],
+        "dispatchedBy": {
+          "controllerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+          "controllerRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+          "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6"
+        },
+        "finishedAt": "2026-10-02T16:54:27Z",
+        "jobName": "ptah-m-apply-lost-ack-929688cd3166bfa9",
+        "jobUID": "b880d19b-eaf4-41ca-baf2-53d56f2f1e3c",
+        "message": "1 migrations are recorded applied",
+        "outcome": "Applied",
+        "startedAt": "2026-10-02T16:54:15Z"
+      },
+      "nextReconciliationTime": "2026-10-02T16:55:09Z",
+      "observedGeneration": 2,
+      "phase": "InSync",
+      "resolvedRun": {
+        "acknowledgedBy": {
+          "groups": [
+            "qualification:partial-result",
+            "system:authenticated"
+          ],
+          "username": "qualification-approver@example.test"
+        },
+        "acknowledgmentRef": {
+          "name": "account-for-partial-run",
+          "uid": "72b86d28-d064-42d0-8c5e-6619f71153d5"
+        },
+        "operationID": "sha256:ce5065df58e7f6321a897575ca76fbfb338b2f26fe573a0a24dcb539ce45ba80",
+        "outcome": "Unknown",
+        "resolution": "Acknowledged",
+        "resolvedAt": "2026-10-02T16:52:02Z"
+      }
+    }
+  },
+  "finalWitness": "1:2:true",
+  "freshApplyJobs": 1,
+  "freshJob": {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+      "annotations": {
+        "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+        "operator.ptah.run/admission-snapshot-digest": "sha256:5c4ce651ea0f0fa119db4bce97938fe4767bc0e9eeef84c897d18e4047c767b9",
+        "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+        "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+        "operator.ptah.run/controller-state-version": "1",
+        "operator.ptah.run/execution-binding-id": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+        "operator.ptah.run/input-fingerprint": "sha256:d01d6008474e91c7e454c11e01457e51632af1bb43b8dfa750e30c18b6b2fa88",
+        "operator.ptah.run/operation-id": "sha256:aedf1f9bc5b8be056b771ae8608c3adcc3516edc339534d3b5dae88bd34a77cb",
+        "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+      },
+      "creationTimestamp": "2026-10-02T16:54:15Z",
+      "generation": 2,
+      "labels": {
+        "app.kubernetes.io/component": "migration-operation",
+        "app.kubernetes.io/managed-by": "ptah-operator",
+        "operator.ptah.run/migration": "lost-ack",
+        "operator.ptah.run/operation": "apply",
+        "operator.ptah.run/operation-id": "e630fc1b37f273e0"
+      },
+      "name": "ptah-m-apply-lost-ack-929688cd3166bfa9",
+      "namespace": "ptah-result-partial-mysql",
+      "ownerReferences": [
+        {
+          "apiVersion": "operator.ptah.run/v1alpha1",
+          "blockOwnerDeletion": true,
+          "controller": true,
+          "kind": "PtahMigration",
+          "name": "lost-ack",
+          "uid": "62c9f247-ecdf-4164-89f0-4b43cb5e6304"
+        }
+      ],
+      "resourceVersion": "64687",
+      "uid": "b880d19b-eaf4-41ca-baf2-53d56f2f1e3c"
+    },
+    "spec": {
+      "activeDeadlineSeconds": 960,
+      "backoffLimit": 0,
+      "completionMode": "NonIndexed",
+      "completions": 1,
+      "manualSelector": false,
+      "parallelism": 1,
+      "podReplacementPolicy": "Failed",
+      "selector": {
+        "matchLabels": {
+          "batch.kubernetes.io/controller-uid": "b880d19b-eaf4-41ca-baf2-53d56f2f1e3c"
+        }
+      },
+      "suspend": false,
+      "template": {
+        "metadata": {
+          "annotations": {
+            "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+            "operator.ptah.run/admission-snapshot-digest": "sha256:5c4ce651ea0f0fa119db4bce97938fe4767bc0e9eeef84c897d18e4047c767b9",
+            "operator.ptah.run/controller-image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+            "operator.ptah.run/controller-revision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+            "operator.ptah.run/controller-state-version": "1",
+            "operator.ptah.run/execution-binding-id": "v1-8a24b2fd86676034a93f3c5cfbf7ac16",
+            "operator.ptah.run/input-fingerprint": "sha256:d01d6008474e91c7e454c11e01457e51632af1bb43b8dfa750e30c18b6b2fa88",
+            "operator.ptah.run/operation-id": "sha256:aedf1f9bc5b8be056b771ae8608c3adcc3516edc339534d3b5dae88bd34a77cb",
+            "operator.ptah.run/ptah-version": "v0.9.0-73-gf6e562c5b"
+          },
+          "labels": {
+            "app.kubernetes.io/component": "migration-operation",
+            "app.kubernetes.io/managed-by": "ptah-operator",
+            "batch.kubernetes.io/controller-uid": "b880d19b-eaf4-41ca-baf2-53d56f2f1e3c",
+            "batch.kubernetes.io/job-name": "ptah-m-apply-lost-ack-929688cd3166bfa9",
+            "controller-uid": "b880d19b-eaf4-41ca-baf2-53d56f2f1e3c",
+            "job-name": "ptah-m-apply-lost-ack-929688cd3166bfa9",
+            "operator.ptah.run/migration": "lost-ack",
+            "operator.ptah.run/operation": "apply",
+            "operator.ptah.run/operation-id": "e630fc1b37f273e0"
+          }
+        },
+        "spec": {
+          "activeDeadlineSeconds": 960,
+          "automountServiceAccountToken": false,
+          "containers": [
+            {
+              "args": [
+                "--ptah-binary",
+                "/usr/local/bin/ptah",
+                "--max-result-bytes",
+                "8388608",
+                "--max-plan-bytes",
+                "8388608",
+                "--operation",
+                "migration-apply",
+                "--result-endpoint",
+                "https://ptah-runtime-generated-name-prefix-boundary-proof-5a0ef-results.ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc",
+                "--result-credentials",
+                "/credentials/result"
+              ],
+              "command": [
+                "/runner/ptah-runner"
+              ],
+              "env": [
+                {
+                  "name": "HOME",
+                  "value": "/work"
+                },
+                {
+                  "name": "PTAH_CONNECT_TIMEOUT",
+                  "value": "30s"
+                },
+                {
+                  "name": "PTAH_COORDINATION_DIGEST",
+                  "value": "sha256:19437ac1df7e4974170075a66779651c7499a418d9f2c20c64e147ac776491d9"
+                },
+                {
+                  "name": "PTAH_DB_URL",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "url",
+                      "name": "ack-database"
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_DISPATCH_NOT_AFTER",
+                  "value": "2026-10-02T17:09:15Z"
+                },
+                {
+                  "name": "PTAH_EXECUTION_NOT_AFTER",
+                  "value": "2026-10-02T17:09:15Z"
+                },
+                {
+                  "name": "PTAH_EXPECTED_COORDINATION_DIGEST",
+                  "value": "sha256:19437ac1df7e4974170075a66779651c7499a418d9f2c20c64e147ac776491d9"
+                },
+                {
+                  "name": "PTAH_EXPECTED_DATABASE_ENGINE",
+                  "value": "MySQL"
+                },
+                {
+                  "name": "PTAH_EXPECTED_MIGRATION_HISTORY_FINGERPRINT",
+                  "value": "sha256:342a3f14aefb8317c4236fe8a9e7b62c46f3ec809147d386748e8f1ed14c73c7"
+                },
+                {
+                  "name": "PTAH_EXPECTED_MIGRATION_SEQUENCE",
+                  "value": "[{\"version\":1,\"version_key\":\"1\",\"checksum\":\"290b8d53fac5bdd6f21b629fa58fb5f31ee071fff4e748c155a8c7a6c13261b6\",\"checkpoint\":false,\"transaction_mode\":\"\"}]"
+                },
+                {
+                  "name": "PTAH_EXPECTED_MIGRATION_SEQUENCE_DIGEST",
+                  "value": "sha256:0fbded759213e871d268e190ef698e5ddcd904c5c4879e29891a475e93c6a564"
+                },
+                {
+                  "name": "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
+                  "value": "sha256:dd1476b948ab36c4f1bb3cb9a03c089b10380935958720c57b615895f9c0c6ad"
+                },
+                {
+                  "name": "PTAH_MIGRATIONS_DIR",
+                  "value": "/source/migrations"
+                },
+                {
+                  "name": "PTAH_MIGRATION_LOCK_TIMEOUT",
+                  "value": "30s"
+                },
+                {
+                  "name": "PTAH_OPERATION_ID",
+                  "value": "sha256:aedf1f9bc5b8be056b771ae8608c3adcc3516edc339534d3b5dae88bd34a77cb"
+                },
+                {
+                  "name": "PTAH_RESULT_GENERATION",
+                  "value": "2"
+                },
+                {
+                  "name": "PTAH_RESULT_POD_NAME",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "metadata.name"
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_RESULT_POD_NAMESPACE",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "metadata.namespace"
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_RESULT_POD_UID",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "metadata.uid"
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                  "value": "1"
+                },
+                {
+                  "name": "PTAH_TERMINATION_GRACE_PERIOD_SECONDS",
+                  "value": "30"
+                },
+                {
+                  "name": "TMPDIR",
+                  "value": "/work"
+                }
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "ptah",
+              "resources": {},
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsGroup": 65532,
+                "runAsNonRoot": true,
+                "runAsUser": 65532,
+                "seccompProfile": {
+                  "type": "RuntimeDefault"
+                }
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/runner",
+                  "name": "runner",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/work",
+                  "name": "work"
+                },
+                {
+                  "mountPath": "/source",
+                  "name": "schema-source",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/credentials/result",
+                  "name": "result-credentials",
+                  "readOnly": true
+                }
+              ],
+              "workingDir": "/work"
+            }
+          ],
+          "dnsPolicy": "ClusterFirst",
+          "enableServiceLinks": false,
+          "initContainers": [
+            {
+              "args": [
+                "--install-to",
+                "/runner/ptah-runner"
+              ],
+              "command": [
+                "/ptah-runner"
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "install-runner",
+              "resources": {},
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsGroup": 65532,
+                "runAsNonRoot": true,
+                "runAsUser": 65532,
+                "seccompProfile": {
+                  "type": "RuntimeDefault"
+                }
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/runner",
+                  "name": "runner"
+                }
+              ]
+            },
+            {
+              "args": [
+                "--validate-oci-source",
+                "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1"
+              ],
+              "command": [
+                "/runner/ptah-runner"
+              ],
+              "env": [
+                {
+                  "name": "PTAH_OCI_REGISTRY",
+                  "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                },
+                {
+                  "name": "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "allowPlainHTTP",
+                      "name": "demo-registry"
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_OPERATOR_OCI_AUTH_MODE",
+                  "value": "Environment"
+                },
+                {
+                  "name": "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "registry",
+                      "name": "demo-registry"
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_PLAIN_HTTP",
+                  "value": "true"
+                },
+                {
+                  "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                  "value": "1"
+                }
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "validate-source-authority",
+              "resources": {},
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsGroup": 65532,
+                "runAsNonRoot": true,
+                "runAsUser": 65532,
+                "seccompProfile": {
+                  "type": "RuntimeDefault"
+                }
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/runner",
+                  "name": "runner",
+                  "readOnly": true
+                }
+              ]
+            },
+            {
+              "args": [
+                "migrations",
+                "pull",
+                "oci://e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/migrations/demo@sha256:fbc9754d80aab61ba9fbbc2ced6056b65c9eafd502a99123e125a2af5b1568e1",
+                "--out",
+                "/source/migrations"
+              ],
+              "command": [
+                "/usr/local/bin/ptah"
+              ],
+              "env": [
+                {
+                  "name": "HOME",
+                  "value": "/fetch-work"
+                },
+                {
+                  "name": "PTAH_OCI_PASSWORD",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "password",
+                      "name": "demo-registry",
+                      "optional": true
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_OCI_REGISTRY",
+                  "value": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000"
+                },
+                {
+                  "name": "PTAH_OCI_TOKEN",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "token",
+                      "name": "demo-registry",
+                      "optional": true
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_OCI_USERNAME",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "username",
+                      "name": "demo-registry",
+                      "optional": true
+                    }
+                  }
+                },
+                {
+                  "name": "PTAH_PLAIN_HTTP",
+                  "value": "true"
+                },
+                {
+                  "name": "TMPDIR",
+                  "value": "/fetch-work"
+                }
+              ],
+              "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+              "imagePullPolicy": "IfNotPresent",
+              "name": "fetch-migrations",
+              "resources": {},
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "runAsGroup": 65532,
+                "runAsNonRoot": true,
+                "runAsUser": 65532,
+                "seccompProfile": {
+                  "type": "RuntimeDefault"
+                }
+              },
+              "terminationMessagePath": "/dev/termination-log",
+              "terminationMessagePolicy": "File",
+              "volumeMounts": [
+                {
+                  "mountPath": "/source",
+                  "name": "schema-source"
+                },
+                {
+                  "mountPath": "/fetch-work",
+                  "name": "fetch-work"
+                }
+              ],
+              "workingDir": "/fetch-work"
+            }
+          ],
+          "restartPolicy": "Never",
+          "schedulerName": "default-scheduler",
+          "securityContext": {
+            "fsGroup": 65532,
+            "fsGroupChangePolicy": "OnRootMismatch",
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccount": "default",
+          "serviceAccountName": "default",
+          "terminationGracePeriodSeconds": 30,
+          "volumes": [
+            {
+              "emptyDir": {
+                "medium": "Memory",
+                "sizeLimit": "64Mi"
+              },
+              "name": "runner"
+            },
+            {
+              "emptyDir": {
+                "medium": "Memory",
+                "sizeLimit": "128Mi"
+              },
+              "name": "work"
+            },
+            {
+              "emptyDir": {
+                "medium": "Memory",
+                "sizeLimit": "64Mi"
+              },
+              "name": "schema-source"
+            },
+            {
+              "emptyDir": {
+                "medium": "Memory",
+                "sizeLimit": "64Mi"
+              },
+              "name": "fetch-work"
+            },
+            {
+              "name": "result-credentials",
+              "secret": {
+                "defaultMode": 288,
+                "items": [
+                  {
+                    "key": "tls.crt",
+                    "path": "tls.crt"
+                  },
+                  {
+                    "key": "tls.key",
+                    "path": "tls.key"
+                  },
+                  {
+                    "key": "ca.crt",
+                    "path": "ca.crt"
+                  }
+                ],
+                "secretName": "ptah-result-key-58e4145f22de7d9a40dd2be007ca6176"
+              }
+            }
+          ]
+        }
+      },
+      "ttlSecondsAfterFinished": 300
+    },
+    "status": {
+      "completionTime": "2026-10-02T16:54:22Z",
+      "conditions": [
+        {
+          "lastProbeTime": "2026-10-02T16:54:22Z",
+          "lastTransitionTime": "2026-10-02T16:54:22Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "SuccessCriteriaMet"
+        },
+        {
+          "lastProbeTime": "2026-10-02T16:54:22Z",
+          "lastTransitionTime": "2026-10-02T16:54:22Z",
+          "message": "Reached expected number of succeeded pods",
+          "reason": "CompletionsReached",
+          "status": "True",
+          "type": "Complete"
+        }
+      ],
+      "ready": 0,
+      "startTime": "2026-10-02T16:54:15Z",
+      "succeeded": 1,
+      "terminating": 0,
+      "uncountedTerminatedPods": {}
+    }
+  },
+  "originalPublications": 0,
+  "completedAt": "2026-10-02T16:54:40.952072+00:00",
+  "verification": {
+    "originalPartialExecutions": 1,
+    "humanAcknowledgments": 1,
+    "freshApprovedExecutions": 1,
+    "unapprovedExecutions": 0
+  }
+}
