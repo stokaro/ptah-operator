@@ -1006,3 +1006,36 @@ early deletion, missing members and changed pinned evidence. The temporary
 API audit captures no result or credential write bodies. Its original manifests
 are restored after the proof. This completes this cleanup case; backup/restore,
 enforced NetworkPolicy and final profile acceptance remain separate requirements.
+
+
+## Installed receiver network evidence
+
+[Retained network evidence](evidence/result-network-2026-10-02/summary.json)
+proves the packaged chart's receiver ingress and the example's result egress on
+Kubernetes 1.37 Linux amd64 with enforcing kindnet, two ready receivers and
+unchanged `10Mi` kubelet logs. A client without operation labels reaches both
+receiver Pod addresses and the Service before the policy, reaches none while
+it is installed, and reaches all three after removal.
+
+With ingress enforced and all eight example egress policies installed, native
+PtahSchema and PtahMigration workflows converge on PostgreSQL 17.11 and MySQL
+8.4.11. Each workflow has one Apply Job and the expected database state. Every
+supported operation has a complete independently reconstructed publication:
+five schema and four migration operations on each engine. Recorded producer
+Pod and Job UIDs bind the publications; actual Pod labels match both policies.
+Only destination namespaces, labels, registry/database addresses and database
+ports are adapted to the installed lab, as the example instructs.
+
+The archive retains policy API objects, actual producer and receiver Pods,
+traffic readings, resources, Jobs, receipts, database metadata, runtime image
+identities and the executed procedure. Offline replay refuses changed selectors,
+Pod/Job bindings, missing operations, extra Apply Jobs, changed chunks and absent
+traffic controls. Temporary policies, probe Pods and four databases are removed after capture.
+Deletion is requested for the four namespaces; result-retention admission delays
+their removal until collection becomes eligible. No guard or retention window is
+bypassed. The shared qualification lab remains for remaining work.
+
+This completes the receiver network case on the recorded environment. It does
+not replace the other denied-destination egress rows in #578, the supported-minor
+payload matrix, restore coverage or final acceptance. The lifecycle checkbox
+and default transport setting remain unchanged.

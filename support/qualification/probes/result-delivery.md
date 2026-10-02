@@ -532,3 +532,43 @@ Replay the frozen collection with `result_retention_evidence.verify_abandoned`;
 its refusal tests reject a completed or replaced publication, missing quota
 fault, incomplete collection, early DELETE and lost pinned evidence. A running
 checkpoint or elapsed timer is not a passing result.
+
+
+## Enforced receiver networking
+
+`result_network.py` runs in the existing owned four-node kind lab with two
+receivers and default `10Mi` logs. It uses the same environment as the preceding
+result probes, plus `RESULT_PROBE_EVIDENCE_DIR`. The four namespaces and databases
+named `ptah-result-network-{pg,mysql}-{schema,migration}` and
+`result_network_{pg,mysql}_{schema,migration}` must not already exist.
+
+The probe installs only the NetworkPolicy rendered from the packaged chart's
+`result-delivery.yaml`, with explicit infrastructure peers. It does not apply
+its Secret templates. An unselected Pod tests both receiver addresses and the
+Service before, during and after the policy. It adapts only documented
+destinations in all eight shipped egress policies and runs native schemas and
+migrations on both engines. The source templates are the completed small schema
+budget and corrected partial-migration fixtures; no fault is injected into SQL.
+
+Each workflow must converge at its current generation with one Apply, its native
+database witness and complete durable results for every operation. The probe
+suspends resources and removes its policies and traffic Pods even on failure.
+Namespaces and databases remain for capture or diagnosis; the retained
+`cleanup.py` removes this run's databases and requests deletion of its owned
+namespaces. Result-retention admission can keep those namespaces terminating
+until their publications become eligible for collection. Failed runs must
+be inspected before cleanup or retry.
+
+Replay the installed archive without a cluster:
+
+```bash
+PYTHONPATH=support/qualification/probes python3 -c \
+  'from result_network import verify_archive; print(verify_archive("support/qualification/evidence/result-network-2026-10-02"))'
+python3 -m unittest discover -s support/qualification/probes -p result_network_test.py -v
+```
+
+The archive preserves the procedure actually executed. The current probe also
+captures receiver and producer API objects automatically; those documents were
+captured separately during this recorded run. Initial local harness failures in
+multi-document JSON parsing and the example namespace occurred before native
+execution; they are not operator defects or passing network evidence.

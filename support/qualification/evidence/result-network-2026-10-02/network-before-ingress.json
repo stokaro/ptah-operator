@@ -1,0 +1,223 @@
+{
+  "pod": {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:13Z",
+      "generation": 1,
+      "name": "network-before-ingress",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87052",
+      "uid": "cd0abcdc-58cc-43c6-82b6-4a038f029603"
+    },
+    "spec": {
+      "automountServiceAccountToken": false,
+      "containers": [
+        {
+          "command": [
+            "/bin/sh",
+            "-ec",
+            "sleep 5\nif timeout 8 nc -z -w 4 10.244.4.33 9444; then echo open; else echo closed; fi\nif timeout 8 nc -z -w 4 10.244.4.34 9444; then echo open; else echo closed; fi\nif timeout 8 nc -z -w 4 10.96.249.133 443; then echo open; else echo closed; fi"
+          ],
+          "image": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/postgresql@sha256:7456ef82e5f5bc43d997f4781bbd7c0d6389bff397564649a356e206ba473aee",
+          "imagePullPolicy": "IfNotPresent",
+          "name": "probe",
+          "resources": {
+            "limits": {
+              "cpu": "100m",
+              "memory": "32Mi"
+            },
+            "requests": {
+              "cpu": "10m",
+              "memory": "16Mi"
+            }
+          },
+          "securityContext": {
+            "allowPrivilegeEscalation": false,
+            "capabilities": {
+              "drop": [
+                "ALL"
+              ]
+            },
+            "readOnlyRootFilesystem": true
+          },
+          "terminationMessagePath": "/dev/termination-log",
+          "terminationMessagePolicy": "File"
+        }
+      ],
+      "dnsPolicy": "ClusterFirst",
+      "enableServiceLinks": true,
+      "imagePullSecrets": [
+        {
+          "name": "demo-registry-pull"
+        }
+      ],
+      "nodeName": "ptah-e2e-1-37-0-result-restar-5a0ef2fe7d-worker",
+      "preemptionPolicy": "PreemptLowerPriority",
+      "priority": 0,
+      "restartPolicy": "Never",
+      "schedulerName": "default-scheduler",
+      "securityContext": {
+        "runAsGroup": 65532,
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "seccompProfile": {
+          "type": "RuntimeDefault"
+        }
+      },
+      "serviceAccount": "default",
+      "serviceAccountName": "default",
+      "terminationGracePeriodSeconds": 30,
+      "tolerations": [
+        {
+          "effect": "NoExecute",
+          "key": "node.kubernetes.io/not-ready",
+          "operator": "Exists",
+          "tolerationSeconds": 300
+        },
+        {
+          "effect": "NoExecute",
+          "key": "node.kubernetes.io/unreachable",
+          "operator": "Exists",
+          "tolerationSeconds": 300
+        }
+      ]
+    },
+    "status": {
+      "allocatedResources": {
+        "cpu": "10m",
+        "memory": "16Mi"
+      },
+      "conditions": [
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T18:50:21Z",
+          "message": "pod sandbox is not ready",
+          "observedGeneration": 1,
+          "reason": "PodSandboxNotReady",
+          "status": "False",
+          "type": "PodReadyToStartContainers"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T18:50:13Z",
+          "observedGeneration": 1,
+          "reason": "PodCompleted",
+          "status": "True",
+          "type": "Initialized"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T18:50:20Z",
+          "observedGeneration": 1,
+          "reason": "PodCompleted",
+          "status": "False",
+          "type": "Ready"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T18:50:20Z",
+          "observedGeneration": 1,
+          "reason": "PodCompleted",
+          "status": "False",
+          "type": "ContainersReady"
+        },
+        {
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-10-02T18:50:13Z",
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "PodScheduled"
+        }
+      ],
+      "containerStatuses": [
+        {
+          "allocatedResources": {
+            "cpu": "10m",
+            "memory": "16Mi"
+          },
+          "containerID": "containerd://a3c73dce7290b059569ef3e7143c32e3cd1b9531334828e3758d20017ef64bef",
+          "image": "sha256:1bea307dfb3ee30541a7acf7de14b58bcd6948da98e5d31a04c627c4d35ec64b",
+          "imageID": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/postgresql@sha256:7456ef82e5f5bc43d997f4781bbd7c0d6389bff397564649a356e206ba473aee",
+          "lastState": {},
+          "name": "probe",
+          "ready": false,
+          "resources": {
+            "limits": {
+              "cpu": "100m",
+              "memory": "32Mi"
+            },
+            "requests": {
+              "cpu": "10m",
+              "memory": "16Mi"
+            }
+          },
+          "restartCount": 0,
+          "started": false,
+          "state": {
+            "terminated": {
+              "containerID": "containerd://a3c73dce7290b059569ef3e7143c32e3cd1b9531334828e3758d20017ef64bef",
+              "exitCode": 0,
+              "finishedAt": "2026-10-02T18:50:19Z",
+              "reason": "Completed",
+              "startedAt": "2026-10-02T18:50:14Z"
+            }
+          },
+          "user": {
+            "linux": {
+              "gid": 65532,
+              "supplementalGroups": [
+                65532
+              ],
+              "uid": 65532
+            }
+          }
+        }
+      ],
+      "hostIP": "172.18.0.6",
+      "hostIPs": [
+        {
+          "ip": "172.18.0.6"
+        }
+      ],
+      "observedGeneration": 1,
+      "phase": "Succeeded",
+      "podIP": "10.244.4.158",
+      "podIPs": [
+        {
+          "ip": "10.244.4.158"
+        }
+      ],
+      "qosClass": "Burstable",
+      "resources": {
+        "limits": {
+          "cpu": "100m",
+          "memory": "32Mi"
+        },
+        "requests": {
+          "memory": "16Mi"
+        }
+      },
+      "startTime": "2026-10-02T18:50:13Z"
+    }
+  },
+  "reading": [
+    "open",
+    "open",
+    "open"
+  ],
+  "targets": [
+    [
+      "10.244.4.33",
+      9444
+    ],
+    [
+      "10.244.4.34",
+      9444
+    ],
+    [
+      "10.96.249.133",
+      443
+    ]
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "issue": 586,
+  "status": "passed",
+  "scope": "Receiver ingress and result egress on Kubernetes 1.37 Linux amd64 with native PostgreSQL and MySQL workflows.",
+  "verification": {
+    "nativeWorkflows": 4,
+    "familyOperationEnginePairs": 18,
+    "deniedReceiverPaths": 3
+  },
+  "runtime": {
+    "operatorRevision": "b0a51ff740784beaf6cd1ebb2fe8c2715583e1b5",
+    "operatorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/operator@sha256:f338a4c98d77e4908426d0c4b45a1b177ffc8c2916cae3029217b9ec12cd6f36",
+    "runnerRevision": "b2576f9bbbe72979ba392456846fb16da1f0f03a",
+    "runnerImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6",
+    "chartSHA256": "43c718af58a8ef74824b1081917d431290ea985e99fb99ba94efa2997de2260e",
+    "ptahRevision": "f6e562c5b0986cd29a53a5cc01938827336b780a",
+    "executorImage": "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+    "observedJobImages": [
+      "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-executor@sha256:45530f0f2c41f4d649c207fe8221dad268946ca8da13b503244805c016f3c9dd",
+      "e2e-registry.ptah-test-a-1-37-0-result-restart-b2576f9b-5a0ef2fe7d.svc.cluster.local:5000/ptah-runner@sha256:7e2199f5c03660f094244b00962ec7e222f752f9cfc86276ac7cea296ce5d4b6"
+    ]
+  },
+  "cleanup": {
+    "namespaces": [
+      {
+        "name": "ptah-result-network-pg-schema",
+        "uid": "179e1358-9c21-4087-a4bd-889c80747126",
+        "deletionRequested": true,
+        "pendingRetention": true
+      },
+      {
+        "name": "ptah-result-network-pg-migration",
+        "uid": "4e608e00-b7bf-442e-947b-7eccd2e61ffe",
+        "deletionRequested": true,
+        "pendingRetention": true
+      },
+      {
+        "name": "ptah-result-network-mysql-schema",
+        "uid": "a050e51a-fdfd-4e5a-b069-235e48484080",
+        "deletionRequested": true,
+        "pendingRetention": true
+      },
+      {
+        "name": "ptah-result-network-mysql-migration",
+        "uid": "68778f96-5569-42dd-8d89-5833ca61f202",
+        "deletionRequested": true,
+        "pendingRetention": true
+      }
+    ],
+    "databases": [
+      {
+        "name": "result_network_pg_schema",
+        "dropSucceeded": true
+      },
+      {
+        "name": "result_network_mysql_schema",
+        "dropSucceeded": true
+      },
+      {
+        "name": "result_network_pg_migration",
+        "dropSucceeded": true
+      },
+      {
+        "name": "result_network_mysql_migration",
+        "dropSucceeded": true
+      }
+    ],
+    "operatorPoliciesAbsent": true,
+    "sharedLabRetainedForRemainingQualification": true,
+    "namespaceRetentionNote": "Result retention admission delays namespace collection until eligible; no guard, finalizer or retention window was bypassed."
+  },
+  "notProved": [
+    "Other Kubernetes minors or architectures.",
+    "The other denied-destination egress rows in #578.",
+    "Complete receiver lifecycle, durable-record/key restore, final artifacts, or #242 acceptance.",
+    "Namespace removal is pending the unchanged result-retention window."
+  ],
+  "filesSHA256": {
+    "cleanup.json": "fe2c1ae2ef741ea901b7ee02ecaf8ba48770ce32466b4aef6c21cf3ed2b6cfda",
+    "cleanup.py": "dff0a90c8c1404f2a1ec792a98664102cfe8154502c46692a2ba4e8f755d4e45",
+    "executed-procedure.py": "d3311e51f34b271caa7347cd992f3862f9a1038a0c2b419a1c1e32f50f771e29",
+    "installation.json": "8e971980f3ea2826ab617e6ec24538609e6980a58dbafa6f6c7117973c1339ae",
+    "network-after-ingress-1.json": "435cf7ce25cc98b94ce9d6a6f580c1d99471ad24dc8c9fdc823468540bf92787",
+    "network-after-removal.json": "66c8ad10576b3f34173447e8d98ca829c001007189cb57e82fe6c5af2136f654",
+    "network-before-ingress.json": "b9cb4b30a53a07177e03daa079b1cb99d590d88f747a34987925e04ac412db09",
+    "network-values.json": "cf230eafe64136feb7bcd98662e915204329e8e72dbdb4c26a5105fde9e55d03",
+    "network.json": "fcd138a7b77471a1b60b26f3b469c6520f91852adc8082f404421c3e98cffbaa",
+    "output.txt": "b65df2cf05362d95a037f472c08dacdb76650b6a2bf4fd67942e22788edf767b",
+    "ptah-result-network-mysql-migration-pods.json": "49ffddbf0918374293e724706d00cfb15a9b95bc041326b7cfae2f5d3a273e26",
+    "ptah-result-network-mysql-migration-policies.json": "87b1f3a840df758aec0fbac5498aa9a6044719b647dd0da5a6608be98058543e",
+    "ptah-result-network-mysql-migration-workflow.json": "b99c6e1b3ddbb0e75c7ba6fb90bf233045d5b22268989bdfb8f4c8d8e5b694e0",
+    "ptah-result-network-mysql-schema-pods.json": "d1dcce77130456f928663c1ac0c516f22f68afe705edf24bf719571855642861",
+    "ptah-result-network-mysql-schema-policies.json": "3c7c3459dba4ac18479d7e38ce00869d0903b8cbad7a99d40f38c2e23e3b0a99",
+    "ptah-result-network-mysql-schema-workflow.json": "ec8605297852843f30157e16f477d9823dc811c27128e1a5092a13a711e3c5f7",
+    "ptah-result-network-pg-migration-pods.json": "9cdf5bf984bb358268b3b7dfc242b1514ff5d14398a092df63bba38f7023deaf",
+    "ptah-result-network-pg-migration-policies.json": "94aac9ee1c81828889058ecf2984df04de2da39ea85b9e1549a0d4feac46e545",
+    "ptah-result-network-pg-migration-workflow.json": "c751006953cd01df08236f48d36cb8dc3c37bbaf9442da4e4629e89ca5fd69ae",
+    "ptah-result-network-pg-schema-pods.json": "173670b8549b997b91fc3954348ed3208cf1bd2e406003b68fc992cde79b64a3",
+    "ptah-result-network-pg-schema-policies.json": "597e2bee1abafabf32d2f7e9dbd2c69ebb226bd1fcf4062a1a6c60ee154d9e7e",
+    "ptah-result-network-pg-schema-workflow.json": "3bee3b5fc3d87fe7c6ac6e8f6955401b51bcaccdc9d9d7698effb2f9d117e705",
+    "receiver-policy.json": "ab0a09767da4ff0d364d529ce9bd456af732be16a0cfc2966537b0479b37682c"
+  }
+}

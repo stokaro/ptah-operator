@@ -1,0 +1,371 @@
+[
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:45Z",
+      "generation": 1,
+      "name": "ptah-schema-operations-default-deny",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87134",
+      "uid": "9c5cd9c4-e171-4210-91b3-348652e0ff9a"
+    },
+    "spec": {
+      "podSelector": {
+        "matchLabels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:45Z",
+      "generation": 1,
+      "name": "ptah-migration-operations-default-deny",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87135",
+      "uid": "e206163c-4b0b-4f61-9a18-5d3680190b07"
+    },
+    "spec": {
+      "podSelector": {
+        "matchLabels": {
+          "app.kubernetes.io/component": "migration-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:45Z",
+      "generation": 1,
+      "name": "ptah-operations-dns",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87137",
+      "uid": "635f3a2a-6fae-41d4-b5ce-e6881687426f"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 53,
+              "protocol": "UDP"
+            },
+            {
+              "port": 53,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "namespaceSelector": {
+                "matchLabels": {
+                  "kubernetes.io/metadata.name": "kube-system"
+                }
+              },
+              "podSelector": {
+                "matchLabels": {
+                  "k8s-app": "kube-dns"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchExpressions": [
+          {
+            "key": "app.kubernetes.io/component",
+            "operator": "In",
+            "values": [
+              "schema-operation",
+              "migration-operation"
+            ]
+          }
+        ],
+        "matchLabels": {
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:45Z",
+      "generation": 1,
+      "name": "ptah-schema-operations-registry",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87139",
+      "uid": "feefab3f-ed2f-46e6-9aa6-26e3f9464a2b"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 5000,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "ipBlock": {
+                "cidr": "172.18.0.7/32"
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchExpressions": [
+          {
+            "key": "operator.ptah.run/operation",
+            "operator": "In",
+            "values": [
+              "resolve",
+              "verify",
+              "observe",
+              "plan"
+            ]
+          }
+        ],
+        "matchLabels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:45Z",
+      "generation": 1,
+      "name": "ptah-migration-operations-registry",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87141",
+      "uid": "d9fa8cfd-63fa-42aa-b08d-febd0f740172"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 5000,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "ipBlock": {
+                "cidr": "172.18.0.7/32"
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchExpressions": [
+          {
+            "key": "operator.ptah.run/operation",
+            "operator": "In",
+            "values": [
+              "resolve",
+              "verify",
+              "history",
+              "apply"
+            ]
+          }
+        ],
+        "matchLabels": {
+          "app.kubernetes.io/component": "migration-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:46Z",
+      "generation": 1,
+      "name": "ptah-schema-operations-database",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87142",
+      "uid": "6406c24d-262f-44c8-a420-fad999864a4e"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 5432,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "ipBlock": {
+                "cidr": "172.18.0.8/32"
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchExpressions": [
+          {
+            "key": "operator.ptah.run/operation",
+            "operator": "In",
+            "values": [
+              "observe",
+              "plan",
+              "apply"
+            ]
+          }
+        ],
+        "matchLabels": {
+          "app.kubernetes.io/component": "schema-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:46Z",
+      "generation": 1,
+      "name": "ptah-migration-operations-database",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87143",
+      "uid": "8efe33b7-ec01-4bbd-ab58-653f2d00496c"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 5432,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "ipBlock": {
+                "cidr": "172.18.0.8/32"
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchExpressions": [
+          {
+            "key": "operator.ptah.run/operation",
+            "operator": "In",
+            "values": [
+              "history",
+              "apply"
+            ]
+          }
+        ],
+        "matchLabels": {
+          "app.kubernetes.io/component": "migration-operation",
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "creationTimestamp": "2026-10-02T18:50:46Z",
+      "generation": 1,
+      "name": "ptah-operations-results",
+      "namespace": "ptah-result-network-pg-schema",
+      "resourceVersion": "87145",
+      "uid": "4d5c1fd5-53a9-4bae-8d36-a8aed1614d3f"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 9444,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "namespaceSelector": {
+                "matchLabels": {
+                  "kubernetes.io/metadata.name": "ptah-system-1-37-0-result-restart-b2576f9b-5a0ef2fe7d"
+                }
+              },
+              "podSelector": {
+                "matchLabels": {
+                  "app.kubernetes.io/component": "controller",
+                  "app.kubernetes.io/instance": "ptah-1-37-0-result-resta-5a0ef2fe7d",
+                  "app.kubernetes.io/name": "ptah-operator"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchExpressions": [
+          {
+            "key": "app.kubernetes.io/component",
+            "operator": "In",
+            "values": [
+              "schema-operation",
+              "migration-operation"
+            ]
+          }
+        ],
+        "matchLabels": {
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  }
+]

@@ -1,0 +1,30 @@
+{
+  "resultDelivery": {
+    "enabled": true,
+    "networkPolicy": {
+      "enabled": true,
+      "infrastructurePeers": [
+        {
+          "ipBlock": {
+            "cidr": "172.18.0.3/32"
+          }
+        },
+        {
+          "ipBlock": {
+            "cidr": "172.18.0.5/32"
+          }
+        },
+        {
+          "ipBlock": {
+            "cidr": "172.18.0.4/32"
+          }
+        },
+        {
+          "ipBlock": {
+            "cidr": "172.18.0.6/32"
+          }
+        }
+      ]
+    }
+  }
+}

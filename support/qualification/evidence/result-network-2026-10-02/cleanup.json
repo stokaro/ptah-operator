@@ -1,0 +1,49 @@
+{
+  "namespaces": [
+    {
+      "name": "ptah-result-network-pg-schema",
+      "uid": "179e1358-9c21-4087-a4bd-889c80747126",
+      "deletionRequested": true,
+      "pendingRetention": true
+    },
+    {
+      "name": "ptah-result-network-pg-migration",
+      "uid": "4e608e00-b7bf-442e-947b-7eccd2e61ffe",
+      "deletionRequested": true,
+      "pendingRetention": true
+    },
+    {
+      "name": "ptah-result-network-mysql-schema",
+      "uid": "a050e51a-fdfd-4e5a-b069-235e48484080",
+      "deletionRequested": true,
+      "pendingRetention": true
+    },
+    {
+      "name": "ptah-result-network-mysql-migration",
+      "uid": "68778f96-5569-42dd-8d89-5833ca61f202",
+      "deletionRequested": true,
+      "pendingRetention": true
+    }
+  ],
+  "databases": [
+    {
+      "name": "result_network_pg_schema",
+      "dropSucceeded": true
+    },
+    {
+      "name": "result_network_mysql_schema",
+      "dropSucceeded": true
+    },
+    {
+      "name": "result_network_pg_migration",
+      "dropSucceeded": true
+    },
+    {
+      "name": "result_network_mysql_migration",
+      "dropSucceeded": true
+    }
+  ],
+  "operatorPoliciesAbsent": true,
+  "sharedLabRetainedForRemainingQualification": true,
+  "namespaceRetentionNote": "Result retention admission delays namespace collection until eligible; no guard, finalizer or retention window was bypassed."
+}
