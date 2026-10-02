@@ -1,5 +1,6 @@
 // Package controllerwrite validates the narrow set of workload and plan
-// writes issued by the operator manager identity.
+// writes issued by the operator manager identity, and protects reserved result
+// credentials against writes from any principal.
 package controllerwrite
 
 import (
@@ -28,6 +29,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -83,6 +85,9 @@ type Validator struct {
 	Reader          client.Reader
 	Jobs            JobBuilder
 	ManagerUsername string
+	// ResultCredentials remains nil until the installation has delivery trust.
+	// Reserved credential writes are still guarded while issuance is disabled.
+	ResultCredentials *resultcredentials.Issuer
 }
 
 // ValidationHandler adapts Validator to controller-runtime admission.
@@ -109,7 +114,7 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 			return cradmission.Denied(failed.Error())
 		}
 	}
-	return cradmission.Allowed("operator manager write matches its exact controller contract")
+	return cradmission.Allowed("write matches the operator admission contract")
 }
 
 // Validate verifies one admission request. It performs no mutation and treats
@@ -120,6 +125,9 @@ func (v *Validator) Validate(ctx context.Context, req admissionv1.AdmissionReque
 	}
 	if req.UID == "" {
 		return badRequestf("admission request UID is empty")
+	}
+	if req.Resource == (metav1.GroupVersionResource{Version: "v1", Resource: "secrets"}) {
+		return v.validateResultCredential(ctx, req)
 	}
 	if req.UserInfo.Username != v.ManagerUsername {
 		return denyf("request username is not the configured operator manager identity")

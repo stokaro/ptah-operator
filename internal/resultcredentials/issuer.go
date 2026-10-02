@@ -15,6 +15,7 @@ import (
 	"errors"
 	"math/big"
 	"net/url"
+	"reflect"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -27,11 +28,25 @@ import (
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultauthority"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials/binding"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 )
 
 var ErrCredential = errors.New("result delivery credential is absent, invalid, or bound to another attempt")
+
+const (
+	AnnotationPodUID      = binding.PodUID
+	AnnotationPodName     = binding.PodName
+	AnnotationJobUID      = binding.JobUID
+	AnnotationOperationID = binding.OperationID
+)
+
+func annotations(identity resultdelivery.Identity) map[string]string {
+	b := identity.Binding
+	return map[string]string{AnnotationPodUID: string(b.PodUID), AnnotationPodName: b.PodName,
+		AnnotationJobUID: string(b.JobUID), AnnotationOperationID: b.OperationID}
+}
 
 type Issuer struct {
 	writer      client.Client
@@ -158,7 +173,7 @@ func (i *Issuer) issue(identity resultdelivery.Identity, name string, now, notAf
 		return nil, err
 	}
 	b := identity.Binding
-	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: b.Namespace, Name: name, Labels: map[string]string{"app.kubernetes.io/managed-by": "ptah-operator", "app.kubernetes.io/component": "result-credential"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: b.Kind, Name: b.Name, UID: b.UID, Controller: ptr.To(true), BlockOwnerDeletion: ptr.To(true)}}}, Immutable: ptr.To(true), Type: corev1.SecretTypeTLS, Data: map[string][]byte{"tls.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), "tls.key": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), "ca.crt": bytes.Clone(i.serverTrust)}}, nil
+	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: b.Namespace, Name: name, Annotations: annotations(identity), Labels: map[string]string{"app.kubernetes.io/managed-by": "ptah-operator", "app.kubernetes.io/component": "result-credential"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: b.Kind, Name: b.Name, UID: b.UID, Controller: ptr.To(true), BlockOwnerDeletion: ptr.To(true)}}}, Immutable: ptr.To(true), Type: corev1.SecretTypeTLS, Data: map[string][]byte{"tls.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), "tls.key": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), "ca.crt": bytes.Clone(i.serverTrust)}}, nil
 }
 
 func (i *Issuer) validate(secret *corev1.Secret, identity resultdelivery.Identity) (Credential, error) {
@@ -170,7 +185,7 @@ func (i *Issuer) validate(secret *corev1.Secret, identity resultdelivery.Identit
 	if owner.APIVersion != api.GroupVersion.String() || owner.Kind != b.Kind || owner.Name != b.Name || owner.UID != b.UID || owner.Controller == nil || !*owner.Controller || owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
 		return Credential{}, ErrCredential
 	}
-	if secret.Labels["app.kubernetes.io/managed-by"] != "ptah-operator" || secret.Labels["app.kubernetes.io/component"] != "result-credential" || !bytes.Equal(secret.Data["ca.crt"], i.serverTrust) {
+	if secret.Labels["app.kubernetes.io/managed-by"] != "ptah-operator" || secret.Labels["app.kubernetes.io/component"] != "result-credential" || !reflect.DeepEqual(secret.Annotations, annotations(identity)) || !bytes.Equal(secret.Data["ca.crt"], i.serverTrust) {
 		return Credential{}, ErrCredential
 	}
 	for _, data := range secret.Data {

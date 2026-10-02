@@ -17,13 +17,14 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials/binding"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // ValidationHandler rejects an operator Pod before it can be scheduled when
 // its final, post-mutation PodSpec falls outside the persisted admission
 // snapshot. It reads only credential-free admission objects, Jobs, and
-// PtahSchema status; it never reads Secrets.
+// PtahSchema status. Credential checks read Secret metadata, never Secret data.
 type ValidationHandler struct {
 	Reader  client.Reader
 	Decoder cradmission.Decoder
@@ -80,6 +81,9 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 
 	jobOwner, ok := uniqueControllerReference(pod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job")
 	if !ok {
+		if len(binding.References(pod)) != 0 || len(binding.References(oldPod)) != 0 {
+			return cradmission.Denied("result credentials may only be projected by their operation Pod")
+		}
 		if managedPodIdentity(pod.Labels) || oldPod != nil && managedPodIdentity(oldPod.Labels) {
 			return cradmission.Denied("managed Pod has no exact Job controller identity")
 		}
@@ -99,6 +103,9 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 	}
 	subject, ok := operationSubjectFor(job.OwnerReferences)
 	if !ok {
+		if len(binding.References(pod)) != 0 || len(binding.References(oldPod)) != 0 {
+			return cradmission.Denied("result credentials may only be projected by their operation Pod")
+		}
 		if managedPodIdentity(pod.Labels) || managedPodIdentity(job.Labels) ||
 			oldPod != nil && managedPodIdentity(oldPod.Labels) {
 			return cradmission.Denied("managed Pod Job has no exact operator controller identity")
@@ -193,6 +200,9 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 	}
 	if err := ValidatePodSpec(&pod.Spec, &job.Spec.Template, claim.snapshot); err != nil {
 		return cradmission.Denied("managed Pod is outside the persisted admission envelope: " + err.Error())
+	}
+	if response := h.validateResultCredential(ctx, req.Operation, pod, job, claim.operationID); response != nil {
+		return *response
 	}
 	return cradmission.Allowed("managed Pod matches the persisted admission envelope")
 }

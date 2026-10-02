@@ -5,8 +5,9 @@ The target is stable 0.2.0. This document does not qualify the transport or
 authorize a release. Installed Jobs still use log frames. The storage, TLS
 delivery, live authorization, credential issuer, runner command, and optional
 workload projection are implemented. The manager does not select or issue these
-credentials yet. Its listener, chart, admission, and result consumption remain
-unconnected.
+credentials yet. The chart routes credential and Pod admission guards, verified
+against a local API server. The receiver listener, installation permissions and
+trust lifecycle, and controller result consumption remain unconnected.
 
 ## Storage boundary
 
@@ -212,14 +213,41 @@ during that overlap. This is not proof of installed CA rotation. Server trust
 is immutable in the credential: installation rotation must preserve old runners'
 trust until their bounded attempts finish, rather than rewriting their Secrets.
 
-Before enabling issuance, admission must protect credential creation, metadata,
-and deletion, and prevent unrelated Pods from projecting these Secrets. Deleting
-an active credential and allowing reminting would erase its original-Pod pin;
-resource ownership and `immutable: true` alone do not prevent that. Restore and
-retention must preserve active pins. Issuance and authority reads are not a
-cross-object transaction, so consumer and receiver checks remain required.
-Component tests use production Job fixtures and a fake API. They do not prove
-kubelet projection, garbage collection, installed authorization, or backup.
+The chart routes reserved credential Secret names to the controller-write
+webhook for CREATE, UPDATE, and DELETE, regardless of the writer's identity.
+CREATE requires the configured manager, trusted certificate bytes, exact public
+binding metadata, and current operation authority. Without an issuer configured
+in the manager, creation is refused. UPDATE preserves data, ownership, labels,
+annotations, and finalizers. DELETE reads the owner directly and refuses while
+that exact operation ID remains active, including after Pod loss, generation
+changes, Lease loss, or the start of resource deletion. A retired operation or
+absent/replaced owner allows cleanup. Resource ownership and `immutable: true`
+alone do not preserve this first-Pod pin.
+
+The Pod webhook also receives direct references to reserved credential names,
+including unlabeled Pods, environment sources, image-pull credentials, projected
+volumes, inline CSI, and legacy storage sources. It refuses them outside the
+exact admitted operation workload. The first Pod can precede its Secret; later
+CREATEs cannot reuse an existing credential. An UPDATE verifies the original
+Pod identity through a metadata-only Secret GET. The runner independently checks
+its downward-API UID against the certificate before executing anything, including
+when a second Pod races the first credential publication.
+
+Metadata-only reads still require Secret GET authorization. The current chart
+does not grant it: installation integration must preserve the existing boundary
+that the manager cannot read database credentials. Do not solve that boundary by
+granting unrestricted Secret reads in workload namespaces. The result store and
+issuer need an explicit storage and RBAC design before activation.
+
+Local API-server tests use the actual issuer, chart routing, and admission
+handlers. They prove creation/readback, metadata protection, active deletion
+refusal, original-Pod updates, replacement refusal, and retirement cleanup.
+Removing each webhook admits its otherwise-refused request; restoring it
+restores the refusal. These tests run no kubelet or garbage collector and use
+an administrator as the admission reader, so they do not prove installed RBAC,
+Secret projection, garbage collection, or backup. Restore and retention must
+preserve active pins. Issuance and authority reads are not a cross-object
+transaction, so consumer and receiver checks remain required.
 
 ## Installation and runner integration still required
 
@@ -272,10 +300,10 @@ certificate authority needed for outstanding delivery credentials. Restore must
 not accept an incomplete publication or reactivate retired delivery authority.
 
 The current tests prove component publication integrity, TLS identity checking,
-bounded redelivery, and Kubernetes Secret persistence/immutability. They do not
-prove live claim authorization, credential issuance, installed RBAC/admission,
-garbage collection, manager failover, Lease independence, or the complete
-Job-to-controller workflow at the supported plan limit. Those remain the
+bounded redelivery, Secret persistence, issuer authority predicates, and chart
+credential admission through a local API server. They do not prove installed
+RBAC and trust rotation, garbage collection, manager failover, Lease independence,
+or the complete Job-to-controller workflow at the supported plan limit. Those remain the
 explicit #586 acceptance rows.
 Keep the 64 MiB workaround until the complete workflow passes with the default
 10 MiB kubelet configuration, deliberate log removal, and manager replacement.

@@ -31,7 +31,7 @@ type dispatchFixture struct {
 	job       *batchv1.Job
 }
 
-func newDispatchFixture(t *testing.T, prefix string) dispatchFixture {
+func newDispatchFixture(t *testing.T, prefix string, resultEndpoint ...string) dispatchFixture {
 	t.Helper()
 	ctx := context.Background()
 	namespace := newNamespace(t, prefix)
@@ -42,6 +42,9 @@ func newDispatchFixture(t *testing.T, prefix string) dispatchFixture {
 	}
 	schema := createSchema(t, namespace, "orders")
 	builder := manager.builder()
+	if len(resultEndpoint) != 0 {
+		builder.ResultEndpoint = resultEndpoint[0]
+	}
 
 	operation := operatorv1alpha1.ActiveOperationStatus{
 		Type:               operatorv1alpha1.OperationResolve,

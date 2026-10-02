@@ -397,9 +397,12 @@ func serveManagerHandlers() (func(), error) {
 	server.Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: admin, Decoder: decoder,
 	}})
+	if err := setupResultCredentialIssuer(); err != nil {
+		return nil, err
+	}
 	server.Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{
 		Validator: &controllerwrite.Validator{
-			Reader: admin, Jobs: manager.builder(), ManagerUsername: manager.username,
+			Reader: admin, Jobs: manager.builder(), ManagerUsername: manager.username, ResultCredentials: resultCredentialIssuer,
 		},
 	}})
 
