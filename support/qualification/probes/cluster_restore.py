@@ -14,7 +14,7 @@ from operator_restore import OPERATOR_CRDS, OperatorProbe, REPO, db
 
 
 class ClusterRestoreProbe(OperatorProbe):
-    def __init__(self, engine, family, environment, root, loss, timing='idle'):
+    def __init__(self, engine, family, environment, root, loss, timing='idle', result_delivery=False):
         if loss not in ('operator', 'combined'):
             raise ValueError('Cold cluster recovery requires operator or combined loss')
         super().__init__(engine, family, environment, root, loss, timing)
@@ -27,6 +27,7 @@ class ClusterRestoreProbe(OperatorProbe):
         self.target_environment = root / 'target-environment'
         self.archived_workloads = {'jobs': [], 'pods': []}
         self.target_active = False
+        self.result_delivery = result_delivery
         self.report.update(scope='Development-image cold-cluster recovery. The original kind control plane is destroyed, a separate cluster is provisioned after loss, and namespace state is rebuilt from an encrypted backup. Final-profile, in-flight and final-artifact acceptance remain required.',
                            procedureSHA256=db.digest(Path(__file__).read_bytes()),
                            operatorProcedureSHA256=db.digest((REPO / 'support/qualification/probes/operator_restore.py').read_bytes()))
@@ -55,6 +56,9 @@ class ClusterRestoreProbe(OperatorProbe):
                                'nodeNames': sorted(r['metadata']['name'] for r in nodes)}
         archive['sourceCluster'] = self.source_cluster
         archive['release'] = self.release_state(self.source_envs)
+        self.source_result_delivery = archive['release']['values'].get('resultDelivery', {}).get('enabled', False)
+        self.check('requested durable delivery is enabled before the backup',
+                   not self.result_delivery or self.source_result_delivery)
         self.report['sourceReleaseArchiveSHA256'] = db.digest(json.dumps(archive['release'], sort_keys=True).encode())
         self.report['sourceCluster'] = self.source_cluster
         return archive
@@ -126,6 +130,8 @@ class ClusterRestoreProbe(OperatorProbe):
                    target['E2E_CONTROLLER_REVISION'] == self.source_envs['E2E_CONTROLLER_REVISION'] and
                    target['E2E_PTAH_REVISION'] == self.source_envs['E2E_PTAH_REVISION'])
         self.envs = target
+        if self.source_result_delivery:
+            self.enable_result_delivery(target)
         target_uid = self.read('namespaces', 'kube-system')['metadata']['uid']
         self.check('restoration uses a newly provisioned separate control plane',
                    target_uid != self.source_cluster['uid'] and
@@ -218,8 +224,25 @@ class ClusterRestoreProbe(OperatorProbe):
                    len(old_uids) == len(new_uids) == len(OPERATOR_CRDS) + 2 and old_uids.isdisjoint(new_uids))
         self.report['reinstalledContractSHA256'] = db.digest(json.dumps(current, sort_keys=True).encode())
 
+    def enable_result_delivery(self, environment):
+        helm = ['helm', '--kubeconfig', environment['E2E_KUBECONFIG'], '--namespace', environment['E2E_OPERATOR_NAMESPACE']]
+        self.command('enable durable delivery on the recorded recovery installation', helm + [
+            'upgrade', environment['E2E_HELM_RELEASE'], environment['E2E_CHART_PACKAGE'],
+            '--reuse-values', '--set', 'resultDelivery.enabled=true', '--wait', '--timeout', '5m'])
+        values = json.loads(self.command('verify effective recovery delivery mode', helm + [
+            'get', 'values', environment['E2E_HELM_RELEASE'], '--all', '-o', 'json']).stdout)
+        self.check('recovery installation uses durable delivery', values.get('resultDelivery', {}).get('enabled') is True)
+
+    def cleanup_namespace(self):
+        # The finally block removes both entire owned clusters. A namespace-only
+        # delete would wait for result retention just before destroying its store.
+        self.report['namespaceCleanup'] = 'Included in required source and replacement cluster teardown'
+        return True
+
     def run(self):
         try:
+            if getattr(self, 'result_delivery', False):
+                self.enable_result_delivery(self.source_envs)
             super().run()
         finally:
             outcomes = []
@@ -254,8 +277,9 @@ if __name__ == '__main__':
     parser.add_argument('output', type=Path)
     parser.add_argument('--loss', choices=['operator', 'combined'], required=True)
     parser.add_argument('--timing', choices=['idle', 'operator-lag'], default='idle')
+    parser.add_argument('--result-delivery', action='store_true', help='Enable durable delivery before backup and on the replacement installation')
     args = parser.parse_args()
-    probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing)
+    probe = ClusterRestoreProbe(args.engine, args.family, args.environment, args.output, args.loss, args.timing, args.result_delivery)
     probe.run()
     print(json.dumps({k: probe.report.get(k) for k in ('engine', 'family', 'lossType', 'status', 'functionalRestore', 'profileRPO', 'recoverySeconds', 'cleanupSucceeded')}))
     raise SystemExit(0 if probe.report.get('status') == 'PASS' else 2)

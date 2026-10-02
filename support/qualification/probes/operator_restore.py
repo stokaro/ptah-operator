@@ -799,7 +799,7 @@ class OperatorProbe(db.Probe):
                     clean = False
                 output.close()
             if self.created_namespace:
-                clean &= self.kubectl('remove owned recovery namespace', ['delete', 'namespace', self.namespace, '--wait=true', '--timeout=90s'], required=False).returncode == 0
+                clean &= self.cleanup_namespace()
             for container in reversed(self.containers):
                 clean &= self.command('remove owned container', db.DOCKER + ['rm', '-f', container], required=False).returncode == 0
             for volume in reversed(self.volumes):
@@ -814,6 +814,11 @@ class OperatorProbe(db.Probe):
             self.persist()
             if not clean:
                 raise RuntimeError('owned database resource cleanup failed')
+
+    def cleanup_namespace(self):
+        return self.kubectl('remove owned recovery namespace',
+                            ['delete', 'namespace', self.namespace, '--wait=true', '--timeout=90s'],
+                            required=False).returncode == 0
 
 
 if __name__ == '__main__':

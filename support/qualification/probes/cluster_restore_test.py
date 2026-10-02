@@ -83,6 +83,26 @@ class ColdRestoreContractTest(unittest.TestCase):
 
 
 class ColdRestoreCleanupTest(unittest.TestCase):
+    def test_durable_mode_requires_effective_helm_readback(self):
+        environment = {'E2E_KUBECONFIG': '/target/kubeconfig', 'E2E_OPERATOR_NAMESPACE': 'target-system',
+                       'E2E_HELM_RELEASE': 'target-release', 'E2E_CHART_PACKAGE': '/target/operator.tgz'}
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as directory:
+                probe = object.__new__(ClusterRestoreProbe)
+                probe.root = Path(directory); probe.report = {'checks': {}}
+                responses = [subprocess.CompletedProcess(['helm'], 0), subprocess.CompletedProcess(
+                    ['helm'], 0, stdout=json.dumps({'resultDelivery': {'enabled': enabled}}).encode())]
+                with patch.object(probe, 'command', side_effect=responses) as command:
+                    if enabled:
+                        probe.enable_result_delivery(environment)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'uses durable delivery'):
+                            probe.enable_result_delivery(environment)
+                argv = command.call_args_list[0].args[1]
+                self.assertIn('/target/operator.tgz', argv)
+                self.assertEqual(argv[:5], ['helm', '--kubeconfig', '/target/kubeconfig', '--namespace', 'target-system'])
+                self.assertIn('resultDelivery.enabled=true', argv)
+
     def test_replacement_cleanup_failure_still_cleans_the_source(self):
         for failure in (subprocess.TimeoutExpired('lab', 180), OSError('unavailable'),
                         subprocess.CompletedProcess(['lab'], 1)):
