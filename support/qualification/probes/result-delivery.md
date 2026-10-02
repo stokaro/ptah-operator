@@ -108,6 +108,39 @@ missing replicas, an absent retry gate, or a second receipt obtained before
 replacement. This row does not prove certificate rotation, concurrent duplicate
 requests, or behavior after the runner exhausts its delivery deadline.
 
+## Job and Pod loss before publication
+
+Set `RESULT_PROBE_RUNNER_LOSS=1` and `RESULT_PROBE_RESTART_RECEIVER=0` to run the
+same native migration setup with a publication quota instead of the proxy fault.
+The engine, namespace, and database inputs remain required. The probe sets a
+30-second reconciliation interval for recovery observations.
+
+After the original Apply credential is recorded but before its Secret is
+projected, the probe fills a namespace quota for result records at its current
+census. It waits for the API to report both the hard limit and used count, then
+releases execution. After observing one committed SQL effect while the Pod still
+reports `Running`, it requires the original Apply intent to be absent and removes
+the original Job and Pod. The quota prevents a result from being persisted while
+the producer is stopped; deleting both objects also removes termination-summary
+recovery from this row.
+
+The controller must record the exact operation and Job UID as `Unknown`, with
+an identical unresolved-run copy in metadata. Only after retaining that record
+does the probe remove the quota. A fresh native history reading must resolve
+the same operation through `HistoryRead`, reach current-generation
+`HistoryMatched`, and leave the calibrated SQL counter at one. No replacement
+Apply Job may exist, and the original Apply publication must still be absent.
+`runner-loss.json` retains these observations and both procedure hashes;
+`result_runner_loss.verify_evidence` and its refusal tests replay the verdict.
+The retained installed evidence also includes the independently reconstructed
+fresh history publication and exact runtime identities.
+
+A failed probe suspends its migration and removes the quota. As with the other
+rows, namespaces and databases remain until the owning lab is removed. This
+case loses both the Job and Pod after a fully applied migration. It does not
+prove recovery from a partially applied migration, the human acknowledgment and
+fresh-approval path, or the complete supported-minor matrix.
+
 ## First harvest
 
 `result_first_harvest.py` runs a native PostgreSQL plan of exactly 8 MiB

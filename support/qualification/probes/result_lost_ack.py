@@ -70,6 +70,10 @@ def main():
     if restart_receiver not in ('0', '1'):
         raise ValueError('RESULT_PROBE_RESTART_RECEIVER must be 0 or 1')
     restart_receiver = restart_receiver == '1'
+    runner_loss = E.get('RESULT_PROBE_RUNNER_LOSS', '0')
+    if runner_loss not in ('0', '1') or (runner_loss == '1' and restart_receiver):
+        raise ValueError('Select either runner loss or receiver replacement')
+    runner_loss = runner_loss == '1'
     engine = E['RESULT_PROBE_ENGINE']
     if engine not in ('PostgreSQL', 'MySQL'):
         raise ValueError('RESULT_PROBE_ENGINE must be PostgreSQL or MySQL')
@@ -235,7 +239,7 @@ def main():
             return p.returncode and 'Acceptance probe holds migration Apply credentials' in p.stderr
         wait(gate_ready, 30)
         env = E.copy()
-        env.update(APPLY='Always', INTERVAL='2h')
+        env.update(APPLY='Always', INTERVAL='30s' if runner_loss else '2h')
         manifest = subprocess.run(['demo/bin/lab', 'manifest', 'shipments', digest], env=env, text=True, capture_output=True, check=True).stdout
         migration = json.loads(k('create', '--dry-run=client', '--validate=false', '-f', '-', '-o', 'json', data=manifest, namespace=source))
         migration['metadata'] = {'name': 'lost-ack', 'namespace': ns}
@@ -260,6 +264,18 @@ def main():
         job_name = operation['jobName']
         job_uid = operation['jobUID']
         assert witness() == '0:1:false'
+        def open_execution_gate():
+            nonlocal gated
+            k('delete', 'validatingadmissionpolicybinding', gate)
+            k('delete', 'validatingadmissionpolicy', gate)
+            gated = False
+
+        if runner_loss:
+            from result_runner_loss import run as run_loss
+            run_loss(k=k, get=get, create=create, wait=wait, save=save, witness=witness,
+                     records=records, open_gate=open_execution_gate, resource=resource, pod=pod,
+                     operation=operation, engine=engine, environment=E, calibration=calibration)
+            return
         create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': client_secret, 'namespace': opns}, 'type': 'kubernetes.io/tls', 'immutable': True, 'data': dec(credential)})
         copied = True
         spec = {'restartPolicy': 'Never', 'automountServiceAccountToken': False, 'securityContext': {'runAsNonRoot': True, 'runAsUser': 65532, 'runAsGroup': 65532, 'fsGroup': 65532, 'seccompProfile': {'type': 'RuntimeDefault'}}, 'imagePullSecrets': manager['spec']['template']['spec'].get('imagePullSecrets', []), 'containers': [{'name': 'proxy', 'image': fixture, 'command': ['/e2e-handcraft-oci'], 'args': ['result-ack-proxy', '--backend-address=' + backend['status']['podIP'] + ':9444', '--server-name=' + host, '--trust-directory=/trust', '--credential-directory=/credential'], 'ports': [{'name': 'results', 'containerPort': 9444}], 'securityContext': {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True, 'capabilities': {'drop': ['ALL']}}, 'resources': {'requests': {'cpu': '20m', 'memory': '32Mi'}, 'limits': {'cpu': '500m', 'memory': '256Mi'}}, 'volumeMounts': [{'name': 'trust', 'mountPath': '/trust', 'readOnly': True}, {'name': 'credential', 'mountPath': '/credential', 'readOnly': True}]}], 'volumes': [{'name': 'trust', 'secret': {'secretName': trust['metadata']['name'], 'defaultMode': 288, 'items': [{'key': key, 'path': key} for key in ['tls.crt', 'tls.key', 'client-trust.crt']]}}, {'name': 'credential', 'secret': {'secretName': client_secret, 'defaultMode': 288}}]}
@@ -291,9 +307,7 @@ def main():
         k('patch', 'service', service_name, '--type=json', '-p', json.dumps([{'op': 'replace', 'path': '/spec/selector', 'value': {'acceptance-proxy': ns}}]), namespace=opns)
         routed = True
         wait(lambda: endpoints_are({proxy['metadata']['uid']}), 30)
-        k('delete', 'validatingadmissionpolicybinding', gate)
-        k('delete', 'validatingadmissionpolicy', gate)
-        gated = False
+        open_execution_gate()
         print('Apply released through the ACK-loss proxy:', job_name, flush=True)
 
         if restart_receiver:

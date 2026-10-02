@@ -784,6 +784,19 @@ current-generation `HistoryMatched` with one SQL effect. The evidence retains
 the old and new manager UID sets, ordering observations, immutable publication,
 calibrated database counters, and exact runtime identities.
 
+[Unpublished execution-loss evidence](evidence/result-runner-loss-2026-10-02/summary.json)
+uses the same packaged runtime and both native engines. A real result-record
+quota was filled before releasing the original Apply credential. After one SQL
+effect committed, with no original Apply intent and the Pod still reporting
+`Running`, the probe removed that Job and Pod. The controller recorded the exact
+run as `Unknown` and preserved its metadata copy. Removing the quota allowed a
+new native history reading to settle the run through `HistoryRead`. Both runs
+reached current-generation `HistoryMatched`, with no replacement Apply, no
+original Apply publication, and one SQL effect. Retained history publications
+independently report version 1 applied with nothing pending. This covers a fully
+applied migration after loss of both execution objects; partial work and human
+acknowledgment with fresh approval remain separate acceptance cases.
+
 This proves one lost acknowledgment for each recorded native migration row.
 Concurrent duplicate requests, failures beyond the recorded receiver replacement,
 and other minor combinations still require installed proof. Remaining failure cases,
