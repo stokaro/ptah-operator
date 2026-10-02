@@ -10,6 +10,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -153,6 +154,14 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 	marker := &api.PtahResultRecord{}
 	err = c.policy.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, marker)
 	if apierrors.IsNotFound(err) && record.Spec.Type != "retired" {
+		if !record.DeletionTimestamp.IsZero() {
+			if _, err := c.policy.foregroundBinding(ctx, record); err != nil {
+				return retry, err
+			}
+			err = c.collect(ctx, nil, b)
+			c.observe("delete", err)
+			return retry, err
+		}
 		marker, err = resultretention.Record(b, resultretention.Source{Name: record.Name, UID: record.UID, Type: record.Spec.Type}, c.policy.Window)
 		if err == nil {
 			err = c.writer.Create(ctx, marker)
@@ -161,6 +170,17 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 			}
 		}
 		c.observe("retire", err)
+		if apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause) {
+			if err := c.policy.AuthorizeForegroundRetirement(ctx, record); err != nil {
+				return retry, err
+			}
+			err = c.writer.Delete(ctx, record, &client.DeleteOptions{
+				Preconditions:     &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion},
+				PropagationPolicy: ptr.To(metav1.DeletePropagationForeground),
+			})
+			c.observe("retire", err)
+			return retry, err
+		}
 	}
 	if err != nil {
 		return retry, err
@@ -181,6 +201,20 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 }
 
 func (c *Collector) collect(ctx context.Context, marker *api.PtahResultRecord, b resultstore.Binding) error {
+	if marker == nil {
+		// A credential can outlive its original intent. Never use its attempt
+		// index to collect a restored intent carrying a different full binding.
+		name, _ := resultstore.Name(b)
+		intent := &api.PtahResultRecord{}
+		if err := c.policy.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, intent); err == nil {
+			binding, err := RootBinding(intent)
+			if err != nil || binding != b {
+				return ErrRetained
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
 	// The member index also finds children left after an interrupted restore
 	// omitted their intent. Admission checks each child's immutable binding.
 	members, err := c.policy.members(ctx, b)
@@ -198,7 +232,10 @@ func (c *Collector) collect(ctx context.Context, marker *api.PtahResultRecord, b
 			return err
 		}
 	}
-	return c.remove(ctx, client.ObjectKeyFromObject(marker), marker.UID)
+	if marker != nil {
+		return c.remove(ctx, client.ObjectKeyFromObject(marker), marker.UID)
+	}
+	return nil
 }
 
 func (c *Collector) remove(ctx context.Context, key client.ObjectKey, uid types.UID) error {
@@ -214,6 +251,11 @@ func (c *Collector) remove(ctx context.Context, key client.ObjectKey, uid types.
 	}
 	if err := c.policy.AuthorizeDelete(ctx, record); err != nil {
 		return err
+	}
+	if !record.DeletionTimestamp.IsZero() && len(record.Finalizers) == 1 && record.Finalizers[0] == metav1.FinalizerDeleteDependents {
+		// The garbage collector finishes the foreground DELETE already in
+		// progress. Admission applies the same policy to its finalizer removal.
+		return nil
 	}
 	options := &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion}, PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)}
 	if err := c.writer.Delete(ctx, record, options); err != nil && !apierrors.IsNotFound(err) {

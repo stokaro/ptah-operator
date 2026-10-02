@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 var errWrite = errors.New("lost API response")
@@ -238,6 +239,65 @@ func TestMarkerWriteFailureNeverDeletes(t *testing.T) {
 	}
 	if len(f.c.deletes) != 0 || len(remaining(t, f.c)) != 4 {
 		t.Fatal("failed retirement deleted evidence")
+	}
+}
+
+func TestForegroundRetirementPreservesPinsAndWindow(t *testing.T) {
+	for _, reason := range []string{"eligible", "before-window", "active", "job", "longer-window", "late-child", "foreign-owner", "foreign-binding", "list-error"} {
+		t.Run(reason, func(t *testing.T) {
+			f := fixture(t)
+			objects := []client.Object{f.f.Subject, f.f.Pod}
+			for _, record := range remaining(t, f.c) {
+				if record.Spec.Type == "intent" {
+					if err := f.p.AuthorizeForegroundRetirement(t.Context(), &record); err != nil {
+						t.Fatal(err)
+					}
+					if err := f.p.AuthorizeDelete(t.Context(), &record); err == nil {
+						t.Fatal("ordinary DELETE bypasses foreground retirement")
+					}
+					record.DeletionTimestamp = &metav1.Time{Time: f.c.now}
+					record.Finalizers = []string{metav1.FinalizerDeleteDependents}
+					if reason == "foreign-binding" {
+						record.Spec.Data = bytes.ReplaceAll(record.Spec.Data, []byte(`"jobUID":"job-uid"`), []byte(`"jobUID":"replacement-job"`))
+					}
+				}
+				if record.Spec.Type == "complete" {
+					if reason == "foreign-owner" {
+						record.OwnerReferences[0].UID = "another-intent"
+					}
+					if reason == "late-child" {
+						record.CreationTimestamp = metav1.NewTime(f.c.now.Add(2 * time.Hour))
+					}
+				}
+				objects = append(objects, record.DeepCopy())
+			}
+			f.c.now = f.c.now.Add(2 * time.Hour)
+			switch reason {
+			case "before-window":
+				f.c.now = f.c.now.Add(-time.Hour - time.Second)
+			case "active":
+				f.f.Subject.(*api.PtahSchema).Status.ActiveOperation = &api.ActiveOperationStatus{ID: f.f.Identity.Binding.OperationID}
+			case "job":
+				objects = append(objects, f.f.Job)
+			case "longer-window":
+				f.p.Window = 3 * time.Hour
+			}
+			f.c.Client = fake.NewClientBuilder().WithScheme(f.c.Scheme()).WithObjects(objects...).Build()
+			if reason == "list-error" {
+				f.p.Reader = listFailure{Reader: f.c}
+			}
+			err := f.collector(t).collect(t.Context(), nil, f.f.Identity.Binding)
+			if reason == "eligible" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(f.c.deletes) != 3 || len(remaining(t, f.c)) != 1 {
+					t.Fatal("eligible members must disappear while the API foreground root remains")
+				}
+			} else if err == nil || len(f.c.deletes) != 0 {
+				t.Fatalf("unsafe foreground cleanup: err=%v deleted=%v", err, f.c.deletes)
+			}
+		})
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -66,6 +67,9 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 		}
 		marker = &api.PtahResultRecord{}
 		if err := p.Reader.Get(ctx, client.ObjectKey{Namespace: record.Namespace, Name: record.OwnerReferences[0].Name + "-retired"}, marker); err != nil {
+			if apierrors.IsNotFound(err) {
+				return p.authorizeForeground(ctx, record)
+			}
 			return err
 		}
 		r, decodeErr := resultretention.Decode(marker)
@@ -84,6 +88,9 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 		}
 		marker = &api.PtahResultRecord{}
 		if err := p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, marker); err != nil {
+			if apierrors.IsNotFound(err) {
+				return p.authorizeForeground(ctx, record)
+			}
 			return err
 		}
 	}
@@ -124,6 +131,13 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	}
 	// Keep the fence while the original Job can authenticate its original Pod.
 	// A replacement Job has a new UID and cannot revive the retired claim.
+	if err := p.requireJobAbsent(ctx, b); err != nil {
+		return err
+	}
+	return p.deletionOrder(ctx, record, b)
+}
+
+func (p Policy) requireJobAbsent(ctx context.Context, b resultstore.Binding) error {
 	job := &batchv1.Job{}
 	if err := p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: b.JobName}, job); err == nil {
 		if job.UID == b.JobUID {
@@ -132,6 +146,10 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
+	return nil
+}
+
+func (p Policy) deletionOrder(ctx context.Context, record *api.PtahResultRecord, b resultstore.Binding) error {
 	intentName, _ := resultstore.Name(b)
 	switch record.Spec.Type {
 	case "chunk":
@@ -152,6 +170,73 @@ func (p Policy) AuthorizeDelete(ctx context.Context, record *api.PtahResultRecor
 	default:
 		return ErrRetained
 	}
+}
+
+// AuthorizeForegroundRetirement permits only the start of a foreground
+// deletion. Its API-controlled timestamp supplies the retirement clock when
+// namespace termination forbids creating a separate marker. Admission protects
+// the foreground finalizer until AuthorizeDelete permits destruction of bytes.
+func (p Policy) AuthorizeForegroundRetirement(ctx context.Context, record *api.PtahResultRecord) error {
+	if p.Reader == nil || p.Window < resultretention.MinimumWindow || record == nil || record.UID == "" ||
+		!record.DeletionTimestamp.IsZero() || len(record.Finalizers) != 0 ||
+		(record.Spec.Type != "intent" && record.Spec.Type != "credential") {
+		return ErrRetained
+	}
+	b, err := RootBinding(record)
+	if err != nil {
+		return err
+	}
+	name, _ := resultretention.Name(b)
+	if err := p.Reader.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: name}, &api.PtahResultRecord{}); !apierrors.IsNotFound(err) {
+		if err == nil {
+			return ErrRetained
+		}
+		return err
+	}
+	if err := resultretention.CheckUnpinned(ctx, p.Reader, b); err != nil {
+		return err
+	}
+	return p.requireJobAbsent(ctx, b)
+}
+
+func (p Policy) foregroundBinding(ctx context.Context, record *api.PtahResultRecord) (resultstore.Binding, error) {
+	root := record
+	if record.Spec.Type == "chunk" || record.Spec.Type == "complete" {
+		if len(record.OwnerReferences) != 1 || record.OwnerReferences[0].Kind != "PtahResultRecord" {
+			return resultstore.Binding{}, ErrRetained
+		}
+		root = &api.PtahResultRecord{}
+		if err := p.Reader.Get(ctx, client.ObjectKey{Namespace: record.Namespace, Name: record.OwnerReferences[0].Name}, root); err != nil {
+			return resultstore.Binding{}, err
+		}
+		if root.Spec.Type != "intent" || root.UID != record.OwnerReferences[0].UID {
+			return resultstore.Binding{}, ErrRetained
+		}
+	}
+	b, err := RootBinding(root)
+	if err != nil || (root.Spec.Type != "intent" && root.Spec.Type != "credential") ||
+		root.DeletionTimestamp.IsZero() || len(root.Finalizers) != 1 || root.Finalizers[0] != metav1.FinalizerDeleteDependents ||
+		(root != record && !resultstore.MemberOf(record, b)) {
+		return resultstore.Binding{}, ErrRetained
+	}
+	if err := resultretention.CheckUnpinned(ctx, p.Reader, b); err != nil {
+		return b, err
+	}
+	if err := p.requireJobAbsent(ctx, b); err != nil {
+		return b, err
+	}
+	if record.CreationTimestamp.IsZero() || p.now().Before(root.DeletionTimestamp.Add(p.Window)) || p.now().Before(record.CreationTimestamp.Add(p.Window)) {
+		return b, resultretention.ErrWindow
+	}
+	return b, nil
+}
+
+func (p Policy) authorizeForeground(ctx context.Context, record *api.PtahResultRecord) error {
+	b, err := p.foregroundBinding(ctx, record)
+	if err != nil {
+		return err
+	}
+	return p.deletionOrder(ctx, record, b)
 }
 
 func (p Policy) requireAbsent(ctx context.Context, namespace, name string) error {

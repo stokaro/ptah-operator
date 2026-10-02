@@ -7,10 +7,108 @@ import (
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/resultcleanup"
+	"github.com/stokaro/ptah-operator/internal/resultstore"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func TestResultCollectorInTerminatingNamespace(t *testing.T) {
+	f, identity, store := publicationFixture(t, true)
+	payload := publicationPayload(t, identity)
+	if _, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload)); err != nil {
+		t.Fatal(err)
+	}
+	name, _ := resultstore.Name(identity.Binding)
+	intent := &api.PtahResultRecord{ObjectMeta: metav1.ObjectMeta{Namespace: f.namespace, Name: name}}
+	if err := admin.Delete(t.Context(), intent, client.PropagationPolicy(metav1.DeletePropagationForeground)); err == nil {
+		t.Fatal("foreground retirement bypassed the active claim")
+	}
+	f.schema.Status.ActiveOperation = nil
+	writeStatus(t, f.schema)
+	if err := admin.Delete(t.Context(), intent, client.PropagationPolicy(metav1.DeletePropagationForeground)); err == nil {
+		t.Fatal("foreground retirement bypassed the original Job")
+	}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: f.namespace, Name: identity.Binding.JobName}}
+	if err := admin.Delete(t.Context(), job, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.Delete(t.Context(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: f.namespace}}); err != nil {
+		t.Fatal(err)
+	}
+	p := cleanupPolicy()
+	p.Reader = namespaceReader{store.Reader, f.namespace}
+	c, err := resultcleanup.New(store.Client, p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatalf("retire existing records after namespace deletion: %v", err)
+	}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatalf("retire credentials after namespace deletion: %v", err)
+	}
+	list := &api.PtahResultRecordList{}
+	if err := store.Reader.List(t.Context(), list, client.InNamespace(f.namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 4 {
+		t.Fatalf("retirement must preserve all bytes: %d records", len(list.Items))
+	}
+	for _, record := range list.Items {
+		if record.Spec.Type == "intent" {
+			if record.DeletionTimestamp.IsZero() || len(record.Finalizers) != 1 || record.Finalizers[0] != metav1.FinalizerDeleteDependents {
+				t.Fatal("the API did not persist a foreground retirement timestamp")
+			}
+			withoutFence := record.DeepCopy()
+			withoutFence.Finalizers = nil
+			if err := admin.Update(t.Context(), withoutFence); err == nil {
+				t.Fatal("early finalizer removal discarded the retirement fence")
+			}
+		}
+		if err := admin.Delete(t.Context(), &record); err == nil {
+			t.Fatalf("early deletion of %s bypassed the retention window", record.Spec.Type)
+		}
+	}
+	// Envtest has no garbage collector. Advance only the existing policy test
+	// clock, then require the actual collector to remove the retained objects.
+	cleanupClockOffset.Store(int64(2 * time.Hour))
+	defer cleanupClockOffset.Store(0)
+	p = cleanupPolicy()
+	p.Reader = namespaceReader{store.Reader, f.namespace}
+	c, err = resultcleanup.New(store.Client, p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Reader.List(t.Context(), list, client.InNamespace(f.namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("expected only the two foreground roots after member collection: %d", len(list.Items))
+	}
+	// The real garbage collector is absent here. Submit its exact finalizer
+	// removal in dependency order; admission must permit it only now.
+	for _, kind := range []string{"intent", "credential"} {
+		for _, record := range list.Items {
+			if record.Spec.Type == kind {
+				record.Finalizers = nil
+				if err := admin.Update(t.Context(), &record); err != nil {
+					t.Fatalf("eligible %s finalizer: %v", kind, err)
+				}
+			}
+		}
+	}
+	if err := store.Reader.List(t.Context(), list, client.InNamespace(f.namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Fatalf("foreground completion left %d records", len(list.Items))
+	}
+}
 
 // Limit the collector's scan to this fixture's Role grant. The chart's actual
 // cluster-wide LIST/DELETE grant is checked by the installation RBAC test.

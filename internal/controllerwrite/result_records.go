@@ -2,6 +2,7 @@ package controllerwrite
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -84,6 +85,13 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		} else {
 			err = resultstore.ValidateRecordUpdate(old, next)
 		}
+		// Foreground retirement may be the only persistent clock available in
+		// a terminating namespace. Even the garbage collector must retain this
+		// API finalizer until the full window and current pins permit deletion.
+		if err == nil && !old.DeletionTimestamp.IsZero() && len(old.Finalizers) == 1 &&
+			old.Finalizers[0] == metav1.FinalizerDeleteDependents && len(next.Finalizers) == 0 && v.ResultCleanup != nil {
+			err = v.ResultCleanup.AuthorizeDelete(ctx, old)
+		}
 	case admissionv1.Delete:
 		old, decodeErr := decode(req.OldObject.Raw)
 		if decodeErr != nil {
@@ -99,6 +107,11 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		}
 		if v.ResultCleanup != nil {
 			err = v.ResultCleanup.AuthorizeDelete(ctx, old)
+			var options metav1.DeleteOptions
+			if err != nil && len(req.Options.Raw) != 0 && json.Unmarshal(req.Options.Raw, &options) == nil &&
+				options.PropagationPolicy != nil && *options.PropagationPolicy == metav1.DeletePropagationForeground {
+				err = v.ResultCleanup.AuthorizeForegroundRetirement(ctx, old)
+			}
 			if err != nil && old.Spec.Type != "credential" {
 				return denyf("result publication retention has not authorized deletion")
 			}

@@ -644,6 +644,24 @@ plus thirty-minute combined recovery objective. A longer saved or current policy
 wins, and every eligibility check re-reads the live pins. This timing rule is not
 proof that a backup was made or that restore meets those objectives.
 
+Namespace termination forbids creating a retirement record. If that is the
+API's refusal, the collector starts foreground deletion of the existing intent
+and credential instead. This requires absent execution/recovery pins and an
+absent original Job. The API-assigned deletion timestamp starts the same full
+retention window; namespace age and publication age cannot shorten it.
+Admission protects the foreground finalizer as well as every DELETE. After the
+window, completion and chunks are collected in order, and Kubernetes may finish
+the roots' foreground deletion. Late children still receive their own full
+window. This path uses the existing DELETE grant and creates no new resource.
+The terminating namespace's bytes remain available for backup during retention;
+foreground retirement does not authorize delivery or execution to resume.
+
+A real-API regression reproduces the NamespaceLifecycle refusal before this
+fallback and checks refused early deletion/finalizer removal, absent Job and
+active-claim gates, and permitted completion after the window. Envtest has no
+garbage collector: its finalizer-removal requests model that actor. Installed
+namespace deletion and its real retention interval require separate evidence.
+
 Both authority checks around a delivery read the retirement fence. A restored
 active claim cannot issue credentials, resume a partial publication, or obtain a
 new delivery acknowledgment for an attempt with a retirement record. Existing
