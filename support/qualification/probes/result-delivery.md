@@ -35,12 +35,15 @@ acceptance must also retain the original Job/Pod identities, successful runner
 completion, the matching persisted receipt, and an independent database witness
 showing one execution before and after redelivery.
 
-`result_lost_ack.py` runs that installed PostgreSQL migration proof. Use the
+`result_lost_ack.py` runs that installed PostgreSQL or MySQL migration proof. Use the
 owned bootstrap environment and fixture digest described below, with the lab's
 `demo-migration-verification-policy` and completed `result-schema-publish` Job
 available in the source namespace. Choose a fresh namespace and database:
 
 ```sh
+export LAB_ENVIRONMENT=/path/to/owned-bootstrap.env
+export LAB_WORK=/path/to/owned-lab-work
+export RESULT_PROBE_ENGINE=PostgreSQL  # Or MySQL; the engine is required.
 export RESULT_PROBE_NAMESPACE=ptah-result-lost-ack
 export RESULT_PROBE_DATABASE=result_lost_ack
 export RESULT_PROBE_EVIDENCE_DIR=/path/to/lost-ack-evidence
@@ -50,10 +53,19 @@ python3 support/qualification/probes/result_lost_ack.py
 The probe gates Apply credentials before execution, creates the test proxy,
 and moves only the receiver Service selector. It checks two identical receipts
 while the original runner is still running. A migration inserts a row using a
-PostgreSQL sequence: a committed replay changes the row count, and a rolled-back
-replay still advances the sequence. Both must remain one before and after the
-retry is released. The original Job and Pod must complete without replacements
-or restarts, and migration history must converge at the current generation.
+PostgreSQL sequence or an InnoDB `AUTO_INCREMENT` column. A committed replay
+changes the row count; a rolled-back replay still advances the allocated counter.
+The MySQL witness reads `information_schema.TABLES.AUTO_INCREMENT` with
+`information_schema_stats_expiry=0` to bypass cached statistics. Both counts must
+remain one before and after the retry is released. Before execution, the probe
+inserts and rolls back a row, requires zero rows and an advanced counter, and
+resets the witness. It refuses an ineffective witness or a non-InnoDB table.
+MySQL uses the lab's `demo-mysql` Deployment and `demo-mysql-database` Secret;
+its migration keeps the ordinary file transaction mode. See MySQL's
+[auto-increment behavior](https://dev.mysql.com/doc/refman/8.4/en/innodb-auto-increment-handling.html)
+and [statistics cache](https://dev.mysql.com/doc/refman/8.4/en/information-schema-tables-table.html).
+The original Job and Pod must complete without replacements or restarts, and
+migration history must converge at the current generation.
 
 The probe reconstructs the persisted publication independently and records its
 binding and receipt identity in `lost-ack.json`, the held retry in
@@ -67,7 +79,7 @@ The Service selector is restored and the proxy Pod and copied credential are
 removed in `finally`. `receiver-service-before.json` retains the original
 selector for recovery after a killed probe process; verify its UID before
 restoring it. The namespace and database remain until the owning lab is removed.
-This row proves a single lost acknowledgment for PostgreSQL on the recorded
+Each run proves a single lost acknowledgment for its recorded engine and
 Kubernetes minor. Concurrent duplicate delivery, receiver failure during retry,
 and the other engine/minor combinations remain separate requirements.
 

@@ -762,9 +762,20 @@ Service route before releasing the retry and removed its proxy and copied
 credential afterward. Retained evidence includes the exact immutable publication,
 receipt observations, runtime identities, and original Job/Pod completion.
 
-This proves one lost acknowledgment for the recorded PostgreSQL migration row.
-Concurrent duplicate requests, receiver failure during retry, and other engine
-and minor combinations still require installed proof. Remaining failure cases,
+[Calibrated engine evidence](evidence/result-lost-ack-engines-2026-10-02/summary.json)
+repeats the fault for PostgreSQL 17.11 and MySQL 8.4.11 on the same packaged
+`ded02b25` installation. MySQL uses InnoDB and the ordinary file transaction mode.
+Before either migration, an actual rolled-back insertion proves that its counter
+advances without a committed row; the witness is then reset. MySQL reads the
+allocated auto-increment value with cached statistics disabled. Both original
+Apply Pods returned the same durable receipt on retry and completed once, with
+one committed row and one allocated counter value. The retained publications
+were reconstructed and their digests checked independently. Both probes restored
+the Service route and removed their proxies and copied credentials.
+
+This proves one lost acknowledgment for each recorded native migration row.
+Concurrent duplicate requests, receiver failure during retry, and other minor
+combinations still require installed proof. Remaining failure cases,
 abandoned partial-publication cleanup,
 restore, CA rotation, enforced NetworkPolicy, Lease contention, and the complete
 Kubernetes and database matrix remain explicit #586 acceptance work. The option

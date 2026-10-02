@@ -38,6 +38,33 @@ class LostAcknowledgmentEvidenceTests(unittest.TestCase):
         self.assertEqual(verify_evidence(self.fixture()), {
             'deliveries': 2, 'sqlExecutions': 1, 'receiptUID': 'receipt'})
 
+    def test_requires_calibrated_witness_for_each_explicit_engine(self):
+        for engine, expected, storage in [
+                ('PostgreSQL', '0:1:true', 'PostgreSQL sequence'),
+                ('MySQL', '0:1:true', 'InnoDB')]:
+            with self.subTest(engine=engine):
+                value = self.fixture()
+                value.update(evidenceVersion=2, engine=engine,
+                             rollbackCalibration={'afterRollback': expected,
+                                                  'afterReset': '0:1:false',
+                                                  'storageEngine': storage})
+                self.assertEqual(verify_evidence(value)['sqlExecutions'], 1)
+                for field, replacement in [('afterRollback', '0:1:false'),
+                                           ('afterReset', expected)]:
+                    bad = copy.deepcopy(value)
+                    bad['rollbackCalibration'][field] = replacement
+                    with self.assertRaises(ValueError):
+                        verify_evidence(bad)
+                for bad_engine in ['', 'SQLite']:
+                    bad = copy.deepcopy(value)
+                    bad['engine'] = bad_engine
+                    with self.assertRaises(ValueError):
+                        verify_evidence(bad)
+                if engine == 'MySQL':
+                    value['rollbackCalibration']['storageEngine'] = 'MyISAM'
+                    with self.assertRaises(ValueError):
+                        verify_evidence(value)
+
     def test_refuses_absent_fault_replay_or_changed_identity(self):
         mutations = [
             ('absent commit', ['commit'], ''),

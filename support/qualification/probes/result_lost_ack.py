@@ -14,6 +14,17 @@ def verify_evidence(value):
             raise ValueError(message)
     binding = value['binding']
     proxy = value['proxy']
+    version = value.get('evidenceVersion', 1)
+    require(version in (1, 2), 'Unknown evidence version')
+    # Version 1 was the PostgreSQL-only probe. New executions name their engine.
+    if version == 2:
+        require(value.get('engine') in ('PostgreSQL', 'MySQL'), 'Missing supported engine')
+        calibration = value['rollbackCalibration']
+        expected = '0:1:true'
+        require(calibration['afterRollback'] == expected
+                and calibration['afterReset'] == '0:1:false', 'Ineffective rollback witness')
+        if value['engine'] == 'MySQL':
+            require(calibration['storageEngine'] == 'InnoDB', 'Nontransactional MySQL witness')
     require(re.fullmatch('[0-9a-f]{40}', value['commit']), 'Missing source revision')
     require(re.fullmatch('[0-9a-f]{64}', value['procedureSHA256']), 'Missing procedure identity')
     require(binding['kind'] == 'PtahMigration' and binding['operation'] == 'migration-apply', 'The receipt does not describe migration Apply')
@@ -40,6 +51,9 @@ def main():
     if not __debug__:
         raise RuntimeError('Run without Python optimization; acceptance assertions are required')
     E = os.environ
+    engine = E['RESULT_PROBE_ENGINE']
+    if engine not in ('PostgreSQL', 'MySQL'):
+        raise ValueError('RESULT_PROBE_ENGINE must be PostgreSQL or MySQL')
     ns = E['RESULT_PROBE_NAMESPACE']
     database = E['RESULT_PROBE_DATABASE']
     source = E['E2E_TEST_NAMESPACE']
@@ -84,9 +98,22 @@ def main():
         return get('ptahresultrecords')['items']
 
     def sql(query, db=None):
+        if engine == 'MySQL':
+            return k('exec', '-i', 'deployment/demo-mysql', '--', 'sh', '-ec',
+                     'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --protocol=TCP -h 127.0.0.1 -u root --batch --skip-column-names "$1"',
+                     'probe', db or database, data=query + '\n', namespace=source).strip()
         return run(['docker', '--context', E['E2E_DOCKER_CONTEXT'], 'exec', '-i', E['E2E_EXTERNAL_POSTGRES_CONTAINER_ID'], 'sh', '-ec', 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -At -v ON_ERROR_STOP=1', 'probe', db or database], query + '\n').strip()
 
     def witness():
+        if engine == 'MySQL':
+            # Read the allocated counter, including rolled-back attempts. Cached
+            # information_schema statistics would hide a replay.
+            return sql("SET SESSION information_schema_stats_expiry=0; "
+                       "SELECT CONCAT((SELECT COUNT(*) FROM delivery_probe_calls), ':', "
+                       "GREATEST(AUTO_INCREMENT - 1, 1), ':', "
+                       "IF(AUTO_INCREMENT > 1, 'true', 'false')) "
+                       "FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() "
+                       "AND TABLE_NAME='delivery_probe_calls';").splitlines()[-1]
         return sql("SELECT (SELECT count(*) FROM delivery_probe_calls)::text || ':' || last_value::text || ':' || is_called::text FROM delivery_probe_sequence;").splitlines()[-1]
     endpoint = run(['docker', '--context', E['E2E_DOCKER_CONTEXT'], 'context', 'inspect', E['E2E_DOCKER_CONTEXT'], '--format', '{{.Endpoints.docker.Host}}']).strip()
     assert endpoint == E['E2E_DOCKER_ENDPOINT']
@@ -119,14 +146,34 @@ def main():
         o['metadata'] = {'name': name, 'namespace': ns}
         create(o)
     k('patch', 'serviceaccount', 'default', '--type=merge', '-p', json.dumps({'imagePullSecrets': [{'name': 'demo-registry-pull'}]}))
-    creds = json.loads(pathlib.Path(E['E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE']).read_text())
-    owner = '"' + creds['username'].replace('"', '""') + '"'
-    sql('CREATE DATABASE ' + database + ' OWNER ' + owner + ';', urllib.parse.urlsplit(creds['url']).path[1:])
-    sql('SET ROLE ' + owner + '; CREATE SEQUENCE delivery_probe_sequence; CREATE TABLE delivery_probe_calls(n bigint NOT NULL);')
+    if engine == 'MySQL':
+        creds = {key: base64.b64decode(value).decode() for key, value in get('secret', 'demo-mysql-database', source)['data'].items()}
+        assert creds['username'] == 'demo'
+        sql('CREATE DATABASE `' + database + '`; GRANT ALL ON `' + database + '`.* TO \'demo\'@\'%\';', 'mysql')
+        sql('CREATE TABLE delivery_probe_calls(n BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB;')
+        storage_engine = sql("SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='delivery_probe_calls';")
+        assert storage_engine == 'InnoDB'
+        migration_sql = 'INSERT INTO delivery_probe_calls VALUES (NULL);'
+        expected_rollback = '0:1:true'
+    else:
+        creds = json.loads(pathlib.Path(E['E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE']).read_text())
+        owner = '"' + creds['username'].replace('"', '""') + '"'
+        sql('CREATE DATABASE ' + database + ' OWNER ' + owner + ';', urllib.parse.urlsplit(creds['url']).path[1:])
+        sql('SET ROLE ' + owner + '; CREATE SEQUENCE delivery_probe_sequence; CREATE TABLE delivery_probe_calls(n bigint NOT NULL);')
+        migration_sql = "INSERT INTO delivery_probe_calls(n) VALUES (nextval('delivery_probe_sequence'));"
+        storage_engine = 'PostgreSQL sequence'
+        expected_rollback = '0:1:true'
     assert witness() == '0:1:false'
+    sql('BEGIN; ' + migration_sql + ' ROLLBACK;')
+    calibration = {'storageEngine': storage_engine, 'afterRollback': witness()}
+    assert calibration['afterRollback'] == expected_rollback
+    sql('TRUNCATE delivery_probe_calls;' if engine == 'MySQL' else 'ALTER SEQUENCE delivery_probe_sequence RESTART WITH 1;')
+    calibration['afterReset'] = witness()
+    assert calibration['afterReset'] == '0:1:false'
+    server_version = sql('SELECT VERSION();')
     url = urllib.parse.urlunsplit(urllib.parse.urlsplit(creds['url'])._replace(path='/' + database))
     create({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'ack-database', 'namespace': ns}, 'stringData': {'url': url}})
-    create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ack-migrations', 'namespace': ns}, 'data': {'0000000001_record_delivery.up.sql': "INSERT INTO delivery_probe_calls(n) VALUES (nextval('delivery_probe_sequence'));\n", '0000000001_record_delivery.down.sql': 'DELETE FROM delivery_probe_calls;\n'}})
+    create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ack-migrations', 'namespace': ns}, 'data': {'0000000001_record_delivery.up.sql': migration_sql + '\n', '0000000001_record_delivery.down.sql': 'DELETE FROM delivery_probe_calls;\n'}})
     original = get('job', 'result-schema-publish', source)
     template = copy.deepcopy(original['spec']['template'])
     template['metadata'] = {}
@@ -173,6 +220,7 @@ def main():
         migration['metadata'] = {'name': 'lost-ack', 'namespace': ns}
         migration['spec']['target']['coordinationKey'] = 'acceptance/' + ns
         migration['spec']['target']['urlFrom']['name'] = 'ack-database'
+        migration['spec']['target']['engine'] = engine
         migration['spec']['execution']['activeDeadlineSeconds'] = 900
         resource = create(migration)
 
@@ -257,6 +305,7 @@ def main():
         finalproxy = admin('/evidence')
         assert finalproxy['released'] and finalproxy['attempts'] == evidence['attempts']
         result = {'commit': E['E2E_CONTROLLER_REVISION'], 'fixtureImage': fixture, 'credentialCertificateDigest': certificate_digest, 'credentialUID': credential['metadata']['uid'], 'namespace': ns, 'database': database, 'resourceUID': resource['metadata']['uid'], 'binding': dec(intent)['binding'], 'jobUID': job_uid, 'podUID': pod['metadata']['uid'], 'intentUID': intent['metadata']['uid'], 'receiptUID': complete['metadata']['uid'], 'payloadDigest': dec(intent)['digest'], 'receiptName': complete['metadata']['name'], 'payloadBytes': len(data), 'proxy': finalproxy, 'databaseBeforeRelease': before, 'databaseAfterRelease': after, 'databaseBeforeExecution': '0:1:false', 'applyJobs': 1, 'podRestarts': 0, 'podPhase': finalpod['status']['phase'], 'executionPods': len(execution_pods), 'runnerAPICredentials': False, 'converged': True, 'conditions': final['status']['conditions'], 'procedureSHA256': hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(), 'completedAt': dt.datetime.now(dt.timezone.utc).isoformat()}
+        result.update(evidenceVersion=2, engine=engine, rollbackCalibration=calibration, databaseServerVersion=server_version)
         verify_evidence(result)
         save('lost-ack.json', result)
         print('PASS: identical receipt redelivered after lost ACK; one native migration SQL execution', flush=True)

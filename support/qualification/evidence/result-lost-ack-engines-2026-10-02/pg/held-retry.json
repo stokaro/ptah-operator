@@ -1,0 +1,34 @@
+{
+  "proxy": {
+    "clientCertificateDigest": "sha256:61bc6f2cb3a76756d0232dc4d2df856fb0a1e8d84fd514fc379be2e6081f2d4c",
+    "preflights": 1,
+    "attempts": [
+      {
+        "receivedAt": "2026-10-02T12:07:39.131388654Z",
+        "receipt": {
+          "Name": "ptah-result-446fb049e25a27ea3cad045c2a7adb850c1e943e9b73d5269a6fdba4e6a72272-complete",
+          "UID": "e104243f-f5fb-479d-9b8b-c0d4568a1740",
+          "Digest": "sha256:db24d653e23c69ce3f4c6eb3057062de7c0b8619ab8d3f64d05b8998d02d4a77",
+          "Size": 873
+        }
+      },
+      {
+        "receivedAt": "2026-10-02T12:07:40.244816607Z",
+        "receipt": {
+          "Name": "ptah-result-446fb049e25a27ea3cad045c2a7adb850c1e943e9b73d5269a6fdba4e6a72272-complete",
+          "UID": "e104243f-f5fb-479d-9b8b-c0d4568a1740",
+          "Digest": "sha256:db24d653e23c69ce3f4c6eb3057062de7c0b8619ab8d3f64d05b8998d02d4a77",
+          "Size": 873
+        }
+      }
+    ],
+    "dropped": true,
+    "released": false
+  },
+  "jobUID": "50799b9b-bacd-4bdd-b1f2-005ef118c39f",
+  "podUID": "8230f8f9-1c58-46e8-8a75-8f7bd24b0b88",
+  "intentUID": "51b6977c-3f4d-4150-921e-1caf2e17230d",
+  "receiptUID": "e104243f-f5fb-479d-9b8b-c0d4568a1740",
+  "databaseWitness": "1:1:true",
+  "observedAt": "2026-10-02T12:07:41.891276+00:00"
+}
