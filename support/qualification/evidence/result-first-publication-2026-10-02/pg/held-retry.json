@@ -1,0 +1,55 @@
+{
+  "proxy": {
+    "firstGateEnabled": true,
+    "firstWaits": 1,
+    "firstResumedAt": "2026-10-02T14:04:28.33029349Z",
+    "firstAdmissions": [
+      {
+        "requestUID": "042ac845-d48d-4052-a469-e79b6ba9c92d",
+        "managerPodUID": "9f56f618-6da6-474d-a085-8822f875bb8f",
+        "intentName": "ptah-result-69b5130fd73b1844abf41772daa7f79460f650fbfb6e63c4e10acc41eacfb5ac",
+        "payloadDigest": "sha256:78ce29e286dbaf9f2d2e5b57cdebe3bed781cfcd429ce775c0791c37688d5d23",
+        "arrivedAt": "2026-10-02T14:04:26.98554835Z",
+        "releasedAt": "2026-10-02T14:04:27.002992113Z"
+      },
+      {
+        "requestUID": "c17e917c-d601-416d-af79-f84795a8ad58",
+        "managerPodUID": "28e464d4-c934-4040-a585-f886f8194da5",
+        "intentName": "ptah-result-69b5130fd73b1844abf41772daa7f79460f650fbfb6e63c4e10acc41eacfb5ac",
+        "payloadDigest": "sha256:78ce29e286dbaf9f2d2e5b57cdebe3bed781cfcd429ce775c0791c37688d5d23",
+        "arrivedAt": "2026-10-02T14:04:27.00290648Z",
+        "releasedAt": "2026-10-02T14:04:27.002909076Z"
+      }
+    ],
+    "clientCertificateDigest": "sha256:109a44750fd4a68667287168ffaf3972a36b5dbc1105ef72c0f5c85b56dc3a70",
+    "preflights": 1,
+    "attempts": [
+      {
+        "receivedAt": "2026-10-02T14:04:28.433408763Z",
+        "receipt": {
+          "Name": "ptah-result-69b5130fd73b1844abf41772daa7f79460f650fbfb6e63c4e10acc41eacfb5ac-complete",
+          "UID": "033ab4dc-900b-4987-8f4a-83ef45bef2cc",
+          "Digest": "sha256:78ce29e286dbaf9f2d2e5b57cdebe3bed781cfcd429ce775c0791c37688d5d23",
+          "Size": 873
+        }
+      },
+      {
+        "receivedAt": "2026-10-02T14:04:29.544584488Z",
+        "receipt": {
+          "Name": "ptah-result-69b5130fd73b1844abf41772daa7f79460f650fbfb6e63c4e10acc41eacfb5ac-complete",
+          "UID": "033ab4dc-900b-4987-8f4a-83ef45bef2cc",
+          "Digest": "sha256:78ce29e286dbaf9f2d2e5b57cdebe3bed781cfcd429ce775c0791c37688d5d23",
+          "Size": 873
+        }
+      }
+    ],
+    "dropped": true,
+    "released": false
+  },
+  "jobUID": "060e68a0-f227-416e-9e5c-8d8d41e60c33",
+  "podUID": "2de2140c-015e-47d3-9596-0a109de9cd05",
+  "intentUID": "decee577-56c0-4b2a-9577-b6f78ed35cf2",
+  "receiptUID": "033ab4dc-900b-4987-8f4a-83ef45bef2cc",
+  "databaseWitness": "1:1:true",
+  "observedAt": "2026-10-02T14:04:31.365120+00:00"
+}

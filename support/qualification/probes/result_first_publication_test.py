@@ -1,8 +1,13 @@
 import copy
+import hashlib
+import json
+import pathlib
 import unittest
 
 import result_concurrent_test as concurrent_tests
 from result_first_publication import verify_evidence
+from result_lost_ack import verify_evidence as verify_ack
+from result_first_harvest import publication
 
 
 class FirstPublicationTests(unittest.TestCase):
@@ -24,6 +29,29 @@ class FirstPublicationTests(unittest.TestCase):
     def test_requires_both_installed_creates_before_either_release(self):
         self.assertEqual(verify_evidence(self.fixture()),
                          {'simultaneousIntentCreates': 2, 'receiptUID': 'receipt'})
+
+    def test_replays_both_installed_first_publications(self):
+        root = pathlib.Path(__file__).resolve().parents[1] / 'evidence/result-first-publication-2026-10-02'
+        summary = json.loads((root / 'summary.json').read_text())
+        self.assertEqual(set(summary['engines']), {'PostgreSQL', 'MySQL'})
+        for engine, entry in summary['engines'].items():
+            with self.subTest(engine=engine):
+                directory = root / entry['directory']
+                self.assertEqual(set(entry['files']), {'first-publication.json', 'before-first-publication.json',
+                    'concurrent.json', 'lost-ack.json', 'held-retry.json', 'publication.json', 'installation.json'})
+                for name, expected in entry['files'].items():
+                    self.assertEqual(hashlib.sha256((directory / name).read_bytes()).hexdigest(), expected)
+                proof = json.loads((directory / 'first-publication.json').read_text())
+                ack = json.loads((directory / 'lost-ack.json').read_text())
+                self.assertEqual(verify_evidence(proof), entry['verification'])
+                self.assertEqual(verify_ack(ack)['sqlExecutions'], 1)
+                self.assertEqual(proof['concurrent']['receipt'], ack['proxy']['attempts'][0]['receipt'])
+                self.assertEqual(proof['barrier']['firstAdmissions'], ack['proxy']['firstAdmissions'])
+                records = json.loads((directory / 'publication.json').read_text())
+                intent, complete, payload = publication(records, ack['jobUID'])
+                self.assertEqual(intent['metadata']['uid'], proof['intentUID'])
+                self.assertEqual(complete['metadata']['uid'], proof['concurrent']['receipt']['UID'])
+                self.assertEqual('sha256:' + hashlib.sha256(payload).hexdigest(), proof['concurrent']['originalDigest'])
 
     def test_refuses_prior_publication_missing_or_serial_admissions(self):
         mutations = [

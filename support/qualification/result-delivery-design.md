@@ -818,6 +818,21 @@ between first publishers of an absent intent or saturation of one receiver.
 The privileged harness uses per-Pod port forwards, so it proves no NetworkPolicy
 behavior.
 
+[First-publication race evidence](evidence/result-first-publication-2026-10-02/summary.json)
+adds both native engines using manager `b0a51ff7`, runner `b2576f9b`, and fixture
+`5cf47289`. The proxy held the original authenticated result before its first
+upstream request. Independent API reads confirmed that its intent and completion
+did not exist. Two receiving managers then reached CREATE for the same intent;
+a namespace-only admission barrier held both until distinct manager Pod and
+admission request UIDs were present. Neither write was released before both
+arrived. Both receivers returned one receipt, and the subsequent conflicting
+and mixed pairs preserved it. Each original runner then completed its lost-ACK
+row with one calibrated SQL effect and no replacement execution. The evidence
+retains the absent-record census, overlapping admission timestamps, publication,
+and restored Service ports and webhook cleanup. This forces identical first
+writes; competing different first payloads and same-receiver saturation are
+separate cases.
+
 Failures beyond the recorded cases and other minor combinations still require
 installed proof. Remaining failure cases,
 abandoned partial-publication cleanup,

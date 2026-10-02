@@ -1,0 +1,86 @@
+{
+  "observedAt": "2026-10-02T14:06:26.145870+00:00",
+  "readCompletedNs": 2873081474501375,
+  "records": [
+    {
+      "name": "ptah-result-0c58d4697dbbd7765906fa98e05cd53071614e118e8ba08cd60f0ca61977a47f",
+      "uid": "c7de2e36-9eb3-4efc-9f8b-00d2225afdbc",
+      "type": "intent"
+    },
+    {
+      "name": "ptah-result-0c58d4697dbbd7765906fa98e05cd53071614e118e8ba08cd60f0ca61977a47f-000",
+      "uid": "09cb60d9-1a43-4345-9f72-929faa6ff245",
+      "type": "chunk"
+    },
+    {
+      "name": "ptah-result-0c58d4697dbbd7765906fa98e05cd53071614e118e8ba08cd60f0ca61977a47f-complete",
+      "uid": "bd072bc2-1033-4332-8b64-ae122f6d056d",
+      "type": "complete"
+    },
+    {
+      "name": "ptah-result-0c58d4697dbbd7765906fa98e05cd53071614e118e8ba08cd60f0ca61977a47f-retired",
+      "uid": "433f2682-cd64-46dc-832a-70eaa173a741",
+      "type": "retired"
+    },
+    {
+      "name": "ptah-result-65b0e45ddb7653c900c0559cc754864111967d74a283dcb0ff3f64e01970b9c3",
+      "uid": "84f5310e-2dd1-4b1e-a11a-9a5e2ab446d9",
+      "type": "intent"
+    },
+    {
+      "name": "ptah-result-65b0e45ddb7653c900c0559cc754864111967d74a283dcb0ff3f64e01970b9c3-000",
+      "uid": "33d751df-ee64-4eee-8c1f-598083e3c624",
+      "type": "chunk"
+    },
+    {
+      "name": "ptah-result-65b0e45ddb7653c900c0559cc754864111967d74a283dcb0ff3f64e01970b9c3-complete",
+      "uid": "979f4d84-c2b5-4784-b224-8c085c7bf4a7",
+      "type": "complete"
+    },
+    {
+      "name": "ptah-result-65b0e45ddb7653c900c0559cc754864111967d74a283dcb0ff3f64e01970b9c3-retired",
+      "uid": "8ba47ccf-b8ee-4d4e-896e-03201dec5460",
+      "type": "retired"
+    },
+    {
+      "name": "ptah-result-844ada48bd1990a89e5aca1df7ed63bf0548e143532c0407ad37ff2c9885b956",
+      "uid": "b28581f9-dc83-490a-b39f-13ad8c10d11f",
+      "type": "intent"
+    },
+    {
+      "name": "ptah-result-844ada48bd1990a89e5aca1df7ed63bf0548e143532c0407ad37ff2c9885b956-000",
+      "uid": "c7b88ef7-0db4-4058-8bb8-e217cb405175",
+      "type": "chunk"
+    },
+    {
+      "name": "ptah-result-844ada48bd1990a89e5aca1df7ed63bf0548e143532c0407ad37ff2c9885b956-complete",
+      "uid": "daecc9e0-a1cf-4bd6-a3f0-bff24ddfae9a",
+      "type": "complete"
+    },
+    {
+      "name": "ptah-result-844ada48bd1990a89e5aca1df7ed63bf0548e143532c0407ad37ff2c9885b956-retired",
+      "uid": "355bc291-c61e-40f3-a784-4742a61718a4",
+      "type": "retired"
+    },
+    {
+      "name": "ptah-result-key-3622a2d3f79acd11c8ecdb0c42124b4c",
+      "uid": "b785eb03-a658-474a-b11b-b96387984ba3",
+      "type": "credential"
+    },
+    {
+      "name": "ptah-result-key-628e47931261b352f039c6b507ef285e",
+      "uid": "ea144f06-8c4c-424a-9da3-4ccd071a8c10",
+      "type": "credential"
+    },
+    {
+      "name": "ptah-result-key-6c572a940b38618c4a591e6ac576c603",
+      "uid": "78d8c0e5-4679-4aa9-9136-478a5ed1d579",
+      "type": "credential"
+    },
+    {
+      "name": "ptah-result-key-93a4f3f2db05cac88d94a30237da695b",
+      "uid": "25c1c67a-acd0-4730-b8a8-260f440483cb",
+      "type": "credential"
+    }
+  ]
+}
